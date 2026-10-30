@@ -7,6 +7,9 @@ use std::fs;
 use std::path::Path;
 use thiserror::Error;
 
+pub mod tmux_os;
+use tmux_os::render_tmux_keys;
+
 #[derive(Error, Debug)]
 pub enum UnitGenError {
     #[error("IO error: {0}")]
@@ -143,6 +146,20 @@ pub enum DeploymentKind {
 /// Shared mobile keyboard contract. Reject collisions before writing any file;
 /// the same table drives SSH/tmux, compositor, desktop, and editor surfaces.
 pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
+    render_keybindings_for(ssot, "linux")
+}
+
+/// `platform` is `linux` (the image, the runtime projection) or `windows` (the native host tmux render, which
+/// drops every row and menu item whose `platforms` omits it and every Linux-only MiOS-Tmux helper).
+pub fn render_keybindings_for(
+    ssot: &str,
+    platform: &str,
+) -> Result<BTreeMap<String, String>, UnitGenError> {
+    if !matches!(platform, "linux" | "windows") {
+        return Err(UnitGenError::GoldenMaster(format!(
+            "keybindings platform must be linux or windows, not {platform:?}"
+        )));
+    }
     let doc: toml::Value = toml::from_str(ssot)?;
     let config = config_value(&doc, "root", "keybindings")?;
     let string = |table: &toml::Value, key: &str| -> Result<String, UnitGenError> {
@@ -198,6 +215,7 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
                 UnitGenError::GoldenMaster("[keybindings].actions must not be empty".into())
             })?;
         let mut paths = Vec::new();
+        let mut tmux_actions = Vec::new();
         for action in actions {
             let key = string(action, "key")?;
             let id = string(action, "id")?;
@@ -225,7 +243,7 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
                     "[keybindings].actions {id}: GVariant quote is unsupported"
                 )));
             }
-            tmux += &format!("bind-key {key} {}\n", string(action, "tmux_command")?);
+            tmux_actions.push((key.clone(), string(action, "tmux_command")?, label.clone()));
             hypr += &format!("bind = {modifier}, {key}, exec, {desktop_command}\n");
             let sway_modifier = modifier
                 .split_whitespace()
@@ -257,132 +275,7 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
             "\n[org/gnome/settings-daemon/plugins/media-keys]\ncustom-keybindings=[{}]\n",
             paths.join(", ")
         );
-        for binding in config_value(config, "keybindings", "tmux")?
-            .get("bindings")
-            .and_then(toml::Value::as_array)
-            .ok_or_else(|| {
-                UnitGenError::GoldenMaster("[keybindings.tmux].bindings must be an array".into())
-            })?
-        {
-            let key = string(binding, "key")?;
-            if !(key == "Tab" || key.len() == 1 && key.as_bytes()[0].is_ascii_lowercase())
-                || !keys.insert(key.clone())
-            {
-                return Err(UnitGenError::GoldenMaster(format!(
-                    "[keybindings.tmux].bindings duplicate or non-mobile key: {key}"
-                )));
-            }
-            tmux += &format!("bind-key {key} {}\n", string(binding, "command")?);
-        }
-        // Touch: long-press / right-click opens tmux actions only when the application
-        // has not requested mouse events. Mouse-aware TUIs own their context menus.
-        // Wheel and border-drag keep tmux's stock root bindings (mouse on).
-        // Menu entries reuse the (platform-resolved) command of the matching bound key, so a
-        // Windows host render never carries Linux-only run-shell paths.
-        let bound = |key: &str, fallback: &str| -> String {
-            config_value(config, "keybindings", "tmux")
-                .ok()
-                .and_then(|t| t.get("bindings").and_then(toml::Value::as_array).cloned())
-                .and_then(|bs| {
-                    bs.iter()
-                        .find(|b| b.get("key").and_then(toml::Value::as_str) == Some(key))
-                        .and_then(|b| b.get("command").and_then(toml::Value::as_str))
-                        .map(str::to_owned)
-                })
-                .unwrap_or_else(|| fallback.to_owned())
-        };
-        let quote = |c: String| format!("\"{}\"", c.replace('\\', "\\\\").replace('"', "\\\""));
-        let next_cmd = quote(bound("o", "select-pane -t :.+"));
-        let view_cmd = quote(bound("f", "resize-pane -Z"));
-        let items = format!(
-            "'Next pane' o {next_cmd} 'Zoom' z 'resize-pane -Z' 'Compact / auto view' f {view_cmd} 'Copy / scroll' y 'copy-mode -e' 'New window' t 'new-window' 'Detach' d 'detach-client'"
-        );
-        let menu = format!("display-menu -T 'MiOS' -t = -x M -y M {items}");
-        let tmux_table = config_value(config, "keybindings", "tmux")?;
-        // The same menu as a server command alias, centred and without the mouse target, so a controller (Guide tap
-        // on a VT) or any client opens it by name without a prefix key: `tmux -L <socket> mios-menu`.
-        if let Some(alias) = tmux_table.get("menu_alias").and_then(toml::Value::as_str).filter(|a| !a.is_empty()) {
-            if !alias.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
-                return Err(UnitGenError::GoldenMaster(format!(
-                    "[keybindings.tmux].menu_alias must be [a-z0-9-]: {alias}"
-                )));
-            }
-            let index = tmux_table
-                .get("menu_alias_index")
-                .and_then(toml::Value::as_integer)
-                .filter(|i| (6..=999).contains(i))
-                .ok_or_else(|| {
-                    UnitGenError::GoldenMaster(
-                        "[keybindings.tmux].menu_alias_index must be 6..=999 (tmux ships 0-5)".into(),
-                    )
-                })?;
-            tmux += &format!(
-                "set -s command-alias[{index}] {}\n",
-                quote(format!("{alias}=display-menu -T 'MiOS' -x C -y C {items}"))
-            );
-        }
-        // Mouse reporting on client terminals whose terminfo lacks it (the Linux VT with gpm): the "mouse" feature.
-        let mouse_terms = tmux_table
-            .get("mouse_terms")
-            .and_then(toml::Value::as_array)
-            .map(|a| a.iter().map(|t| t.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>())
-            .unwrap_or(Some(Vec::new()))
-            .ok_or_else(|| UnitGenError::GoldenMaster("[keybindings.tmux].mouse_terms must be strings".into()))?;
-        if !mouse_terms.is_empty() && config_bool(config, "keybindings", "mouse")? {
-            let base = tmux_table
-                .get("mouse_features_index")
-                .and_then(toml::Value::as_integer)
-                .filter(|i| (0..=999).contains(i))
-                .ok_or_else(|| {
-                    UnitGenError::GoldenMaster("[keybindings.tmux].mouse_features_index must be 0..=999".into())
-                })?;
-            for (i, term) in mouse_terms.iter().enumerate() {
-                if term.is_empty() || !term.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_*.+".contains(&b)) {
-                    return Err(UnitGenError::GoldenMaster(format!(
-                        "[keybindings.tmux].mouse_terms invalid terminal pattern: {term}"
-                    )));
-                }
-                tmux += &format!("set -s terminal-features[{}] \"{term}:mouse\"\n", base + i as i64);
-            }
-        }
-        if config_bool(config, "keybindings", "mouse")? {
-            // Resolve mouse_any_flag after selecting the clicked pane: using the previously
-            // active pane would route another pane's right-click to the wrong owner.
-            tmux += &format!(
-                "bind-key -T root MouseDown3Pane select-pane -t = \\; if-shell -F '#{{mouse_any_flag}}' {{ send-keys -M }} {{ {menu} }}\nbind-key -T root MouseDown3Status {menu}\n"
-            );
-        }
-        // One accept chord for every agent CLI (mobile-safe, no Ctrl-K): tmux receives it
-        // (extended-keys csi-u) and sends the key the focused CLI's adapter expects.
-        let agent = config_value(config, "keybindings", "agent")?;
-        if let Some(chord) = agent.get("accept_chord").and_then(toml::Value::as_str) {
-            let mut command = format!("send-keys {chord}");
-            for adapter in agent
-                .get("adapters")
-                .and_then(toml::Value::as_array)
-                .into_iter()
-                .flatten()
-                .rev()
-            {
-                let kind = string(adapter, "kind")?;
-                let keys = adapter
-                    .get("accept_keys")
-                    .and_then(toml::Value::as_array)
-                    .map(|k| k.iter().filter_map(toml::Value::as_str).collect::<Vec<_>>().join(" "))
-                    .unwrap_or_default();
-                if !kind.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-                    || keys.is_empty()
-                {
-                    return Err(UnitGenError::GoldenMaster(format!(
-                        "[keybindings.agent].adapters invalid adapter: {kind}"
-                    )));
-                }
-                command = format!(
-                    "if-shell -F '#{{m:*{kind}*,#{{pane_current_command}} #{{pane_title}}}}' 'send-keys {keys}' \"{command}\""
-                );
-            }
-            tmux += &format!("bind-key -n {chord} {command}\n");
-        }
+        tmux += &render_tmux_keys(&doc, config, platform, &mut keys, &tmux_actions)?;
     }
     let passthrough = config_value(config, "keybindings", "vscode_passthrough_commands")?
         .as_array()
@@ -408,6 +301,9 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
     Ok(BTreeMap::from([
         ("usr/share/mios/tmux/mios-keys.tmux.conf".into(), tmux),
         ("etc/tmux.conf".into(), format!("{header}source-file /usr/share/mios/tmux/mios-theme.tmux.conf\nsource-file /usr/share/mios/tmux/mios-keys.tmux.conf\n")),
+        // The retired hand-written Blink layer: every mobile key now lives in [keybindings.tmux]; legacy
+        // `source-file` references keep working by loading the one global profile.
+        ("usr/share/mios/tmux/blink-mobile-keys.tmux.conf".into(), format!("{header}# Retired Blink mobile layer: the global MiOS-Tmux profile carries every mobile key ([keybindings.tmux]).\nsource-file /etc/tmux.conf\n")),
         ("usr/share/mios/hyprland/mios-keys.conf".into(), hypr),
         ("usr/share/mios/sway/mios-keys.conf".into(), sway),
         ("etc/dconf/db/local.d/10-mios-keybindings".into(), desktop),
@@ -1120,9 +1016,9 @@ mod tests {
     fn mobile_keybindings_project_all_surfaces() {
         let ssot = include_str!("../../../../usr/share/mios/mios.toml");
         let profiles = super::render_keybindings(ssot).unwrap();
-        assert_eq!(profiles.len(), 10);
+        assert_eq!(profiles.len(), 11);
         assert!(profiles["usr/share/mios/tmux/mios-keys.tmux.conf"]
-            .contains("bind-key Tab send-keys BTab"));
+            .contains(" Tab send-keys BTab\n"));
         assert!(profiles["usr/share/mios/hyprland/mios-keys.conf"]
             .contains("bind = CTRL ALT SHIFT, a, exec,"));
         let editor: serde_json::Value =
@@ -1145,15 +1041,20 @@ mod tests {
         let ssot = include_str!("../../../../usr/share/mios/mios.toml");
         let profiles = super::render_keybindings(ssot).unwrap();
         let tmux = &profiles["usr/share/mios/tmux/mios-keys.tmux.conf"];
-        assert!(tmux.contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{mouse_any_flag}' { send-keys -M } { display-menu"));
-        assert!(tmux.contains("display-menu -T 'MiOS' -t = -x M -y M"));
+        // Right-click passes through when the application tracks the mouse (stock tmux 3.7c rule; copy and
+        // view mode keep the menu) and otherwise opens the generated pane menu alias.
+        assert!(tmux.contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
+        assert!(tmux.contains("'send-keys -M' \"if-shell -F '#{e|<:#{client_height},"));
+        assert!(tmux.contains("mios-menu-pane=display-menu"));
+        assert!(tmux.contains("\"mios-menu-root=display-menu -T MiOS -x "));
         // The master toggle must disable menu interception as well as mouse capture.
         let mut doc: toml::Value = toml::from_str(ssot).unwrap();
         doc["keybindings"]["mouse"] = toml::Value::Boolean(false);
         let disabled = super::render_keybindings(&toml::to_string(&doc).unwrap()).unwrap();
         let disabled_tmux = &disabled["usr/share/mios/tmux/mios-keys.tmux.conf"];
         assert!(!disabled_tmux.contains("set -g mouse on"));
-        assert!(!disabled_tmux.contains("bind-key -T root MouseDown3"));
+        assert!(!disabled_tmux.contains("-T root MouseDown3Pane select-pane"));
+        assert!(!disabled_tmux.contains("-T root MouseDown3Status \"if-shell"));
     }
 
     fn tmux_conf(doc: &toml::Value) -> Result<String, String> {
@@ -1162,48 +1063,25 @@ mod tests {
             .map_err(|e| e.to_string())
     }
 
-    /// U1 C-10': the MiOS menu is a centred command alias with exactly the MouseDown3 items; a planted non-mobile
-    /// prefix key (PPage) is still rejected and the mouse menu bindings are unchanged.
-    #[test]
-    fn menu_alias_carries_the_mouse_menu_items() {
-        let doc: toml::Value = toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
-        let tmux = tmux_conf(&doc).unwrap();
-        let alias = tmux.lines().find(|l| l.starts_with("set -s command-alias[100] \"mios-menu=display-menu -T 'MiOS' -x C -y C ")).expect("menu alias");
-        let mouse = tmux.lines().find(|l| l.starts_with("bind-key -T root MouseDown3Status ")).unwrap();
-        let mouse_items = mouse.split_once("-x M -y M ").unwrap().1;
-        let alias_items = alias.split_once("-x C -y C ").unwrap().1.strip_suffix('"').unwrap().replace("\\\"", "\"");
-        assert_eq!(alias_items, mouse_items, "alias and MouseDown3 menu share one item list");
-        assert!(!alias.contains("-t ="), "the alias has no mouse target");
-        assert!(tmux.contains("bind-key -T root MouseDown3Pane select-pane -t = \\; if-shell -F '#{mouse_any_flag}' { send-keys -M } { display-menu -T 'MiOS' -t = -x M -y M"));
-        let mut off = doc.clone();
-        off["keybindings"]["tmux"]["menu_alias"] = toml::Value::String(String::new());
-        assert!(!tmux_conf(&off).unwrap().contains("command-alias"), "an empty alias emits nothing");
-        let mut bad = doc.clone();
-        bad["keybindings"]["tmux"]["menu_alias"] = toml::Value::String("mios menu;kill-server".into());
-        assert!(tmux_conf(&bad).unwrap_err().contains("menu_alias must be"));
-        let mut slot = doc.clone();
-        slot["keybindings"]["tmux"]["menu_alias_index"] = toml::Value::Integer(3);
-        assert!(tmux_conf(&slot).unwrap_err().contains("menu_alias_index"), "never overwrite tmux's own aliases");
-        let mut ppage = doc.clone();
-        let row: toml::Value = toml::from_str("key = 'PPage'\ncommand = 'copy-mode -u'").unwrap();
-        ppage["keybindings"]["tmux"]["bindings"].as_array_mut().unwrap().push(row);
-        assert!(tmux_conf(&ppage).unwrap_err().contains("non-mobile key: PPage"));
-    }
-
     /// U1 C-18: mouse_terms gives the Linux VT the tmux mouse feature; without it (or with mouse off) nothing changes.
     #[test]
     fn mouse_terms_add_the_mouse_terminal_feature() {
         let doc: toml::Value = toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
-        assert!(tmux_conf(&doc).unwrap().contains("set -s terminal-features[130] \"linux:mouse\"\n"));
+        assert!(tmux_conf(&doc).unwrap().contains("set -s terminal-features[130] 'linux:mouse'\n"));
         let mut none = doc.clone();
         none["keybindings"]["tmux"].as_table_mut().unwrap().remove("mouse_terms");
-        assert!(!tmux_conf(&none).unwrap().contains(":mouse\""));
+        assert!(!tmux_conf(&none).unwrap().contains(":mouse'"));
         let mut off = doc.clone();
         off["keybindings"]["mouse"] = toml::Value::Boolean(false);
-        assert!(!tmux_conf(&off).unwrap().contains(":mouse\""), "the mouse master toggle wins");
+        let off_conf = tmux_conf(&off).unwrap();
+        assert!(!off_conf.contains(":mouse'"), "the mouse master toggle wins");
+        assert!(off_conf.contains("set -su terminal-features[130]\n"), "the owned slots are still cleared on reload");
         let mut bad = doc.clone();
         bad["keybindings"]["tmux"]["mouse_terms"] = toml::Value::Array(vec![toml::Value::String("linux\" ; run-shell x".into())]);
         assert!(tmux_conf(&bad).unwrap_err().contains("invalid terminal pattern"));
+        let mut overlap = doc.clone();
+        overlap["keybindings"]["tmux"]["mouse_features_index"] = toml::Value::Integer(125);
+        assert!(tmux_conf(&overlap).unwrap_err().contains("overlaps the extended-keys"), "never clobber the extkeys slots");
     }
 
     #[test]
@@ -1226,7 +1104,7 @@ mod tests {
         assert_eq!(
             super::project_deployment(root.path(), super::DeploymentKind::Keybindings, false, None)
                 .unwrap(),
-            10
+            11
         );
         super::project_deployment(root.path(), super::DeploymentKind::Keybindings, true, None)
             .unwrap();

@@ -1,6 +1,7 @@
 // AI-hint: MiOS status island. Width follows its live contents: drawer mark, workspace, network/sound/battery, system
 // monitor (Sysmon.qml: CPU, RAM, GPU, hottest temperature, network rate, [desktop.topbar.sysmon]; hover or tap opens
-// its details), brief date (opens a native calendar),
+// its details), frames per second ("<output> FPS/<focused window> FPS", the window part from mios-pacing's
+// focused-window meter, hidden when unknown), brief date (opens a native calendar),
 // SSOT 12/24-hour clock, and a power menu with settings and account. Every command and format
 // resolves from [desktop.topbar] through the SSOT bridge. Popups grow out of their trigger and melt
 // back into it (MeltPopup.qml, [desktop.topbar] popup_ms); IPC target "topbar" opens them headlessly.
@@ -55,6 +56,12 @@ QS.PanelWindow {
         return typeof shellState.topbarShown === "function" ? shellState.topbarShown(key) : (!bar.visibility || bar.visibility[key] !== false)
     }
     readonly property real outputFps: typeof shellState.fpsFor === "function" ? shellState.fpsFor(screen.name) : -1
+    // The focused window's own frame rate beside the output's: "<host> FPS/<window> FPS"; the window part is hidden
+    // when unknown (mios-pacing's focused-window meter; only the island of the window's output shows it).
+    readonly property real windowFps: typeof shellState.windowFpsFor === "function" ? shellState.windowFpsFor(screen.name) : -1
+    readonly property string fpsText: (remoteFrames ? (outputFps >= 0 ? outputFps.toFixed(1) + " RDP FPS" : "RDP FPS —")
+                                                    : (outputFps >= 0 ? outputFps + " FPS" : "FPS —"))
+                                      + (windowFps >= 0 ? "/" + windowFps + " FPS" : "")
     readonly property bool remoteFrames: typeof shellState.isRemoteOutput === "function" && shellState.isRemoteOutput(screen.name)
     property bool batteryHoverOpen: false
     property bool batteryPanelHovered: false
@@ -611,8 +618,7 @@ QS.PanelWindow {
                 Glyph {
                     id: fpsGlyph
                     visible: pill.shown("fps")
-                    text: pill.remoteFrames ? (pill.outputFps >= 0 ? pill.outputFps.toFixed(1) + " RDP FPS" : "RDP FPS —")
-                                           : (pill.outputFps >= 0 ? pill.outputFps + " FPS" : "FPS —")
+                    text: pill.fpsText
                     Hit { onClicked: pill.popup = pill.popup === "sysmon" ? "" : "sysmon" }
                 }
 
@@ -869,6 +875,7 @@ QS.PanelWindow {
             return JSON.stringify({ popup: pill.popup, calendar: calendarPanel.progress, power: powerPanel.progress,
                                     sysmon: sysmonPanel.progress, sysmon_hover: pill.sysmonHoverOpen,
                                     sysmon_items: sysmonItems.fitted, island_width: pill.width, fps: pill.outputFps,
+                                    window_fps: pill.windowFps, fps_text: fpsGlyph.visible ? fpsGlyph.text : "",
                                     fps_source: pill.remoteFrames ? "rdp-delivered" : "compositor",
                                     visibility: pill.shellState.topbarConfig ? pill.shellState.topbarConfig.visibility : ({}),
                                     batteries: pill.batteryDevices.map(d => ({name: pill.batteryName(d), kind: pill.batteryKind(d), icon: pill.batteryIcon(d), percentage: Math.round(d.percentage * 100)})),

@@ -165,7 +165,7 @@ pub fn host_tmux_config_with_font(config: &Value, font_verified: bool) -> Result
         }
     }
     let keys =
-        mios_unit_gen::render_keybindings(&toml::to_string(&doc).map_err(|e| e.to_string())?)
+        mios_unit_gen::render_keybindings_for(&toml::to_string(&doc).map_err(|e| e.to_string())?, "windows")
             .map_err(|e| e.to_string())?;
     let keys = keys
         .get("usr/share/mios/tmux/mios-keys.tmux.conf")

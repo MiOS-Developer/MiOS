@@ -1,8 +1,9 @@
-// AI-hint: miosd sessions: global tmux session selector, the default entry of every interactive MiOS login (local and tailnet nodes).
-// AI-related: usr/share/mios/mios.toml [terminal.sessions] [keybindings], usr/libexec/mios/mios-terminal
+// AI-hint: miosd sessions: global tmux session selector, the default entry of every interactive MiOS login (local and tailnet nodes), with the shared Apps and TUIs launcher section; keyboard, controller vocabulary and mouse driven, Linux-console safe.
+// AI-related: usr/share/mios/mios.toml [terminal.sessions] [terminal.tui_launcher] [[terminal.tuis]] [keybindings] [theme.tmux.console], usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs
 //! Global tmux session selector (`miosd sessions`): the default entry of every interactive
 //! MiOS login. Lists [keybindings].socket_name sessions on this node and on tailnet MiOS
-//! nodes ([terminal.sessions]), starts new bare Tmux-OS sessions, and execs the choice.
+//! nodes ([terminal.sessions]), starts new bare Tmux-OS sessions, opens the MiOS AI workspace
+//! and the TUIs of [[terminal.tuis]] in Tmux-OS, and execs the choice.
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -12,8 +13,11 @@ use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind,
+};
+use ratatui::crossterm::execute;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
@@ -48,6 +52,20 @@ struct Config {
     ssh_port: i64,
     ssh_timeout: i64,
     palette: [Color; 5],
+    /// Session-name prefixes no picker lists (float shells, agent worker parking).
+    hidden: Vec<String>,
+    /// TUIs installed on this node that this terminal can show ([[terminal.tuis]], console-filtered).
+    apps: Vec<App>,
+    /// This terminal is a Linux console: named colours, plain borders, ASCII glyphs, argv_vt TUIs.
+    console: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct App {
+    id: String,
+    label: String,
+    section: String,
+    mode: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -67,12 +85,36 @@ pub struct Node {
     sessions: Vec<Session>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 enum Choice {
     Attach { node: usize, session: String },
     New { node: usize },
+    /// The MiOS AI workspace ([keybindings].terminal_session) when it is not running yet.
+    Workspace,
+    App { id: String },
     Shell,
 }
+
+/// Glyphs that the Linux console font cannot draw get ASCII stand-ins there.
+struct Glyphs {
+    sep: &'static str,
+    more: &'static str,
+    pick: &'static str,
+    help: &'static str,
+}
+
+const UNICODE: Glyphs = Glyphs {
+    sep: "  \u{b7}  ",
+    more: "\u{2026}",
+    pick: "\u{203a} ",
+    help: "\u{2191}\u{2193} PgUp PgDn select \u{b7} Enter open \u{b7} e apps \u{b7} Tab/n new \u{b7} S-Tab section \u{b7} r refresh \u{b7} s shell",
+};
+const ASCII: Glyphs = Glyphs {
+    sep: "  -  ",
+    more: "...",
+    pick: "> ",
+    help: "Up/Down PgUp/PgDn select - Enter open - e apps - Tab/n new - S-Tab section - r refresh - s shell",
+};
 
 fn text<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
     path.split('.')
@@ -96,6 +138,18 @@ fn color(hex: &str) -> Color {
 
 fn config(root: &Path) -> Result<Config, String> {
     let v = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let ssh = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].iter().any(|k| std::env::var(k).is_ok_and(|v| !v.is_empty()));
+    let console = mios_unit_gen::tmux_os::console_client(&v, &std::env::var("TERM").unwrap_or_default(), ssh)?;
+    let launcher = mios_resolver::terminal_tuis::launcher(&v)?;
+    let catalog = mios_resolver::terminal_tuis::catalog(&v)?;
+    let apps = if launcher.enabled {
+        mios_resolver::terminal_tuis::visible(&catalog, console, mios_resolver::terminal_tuis::is_installed)
+            .into_iter()
+            .map(|t| App { id: t.id.clone(), label: t.label.clone(), section: t.section.clone(), mode: t.mode.as_str().into() })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let node_os = text(&v, "terminal.sessions.node_os")?
         .as_array()
         .ok_or("terminal.sessions.node_os must be an array")?
@@ -112,14 +166,27 @@ fn config(root: &Path) -> Result<Config, String> {
         ssh_user: if user.is_empty() { std::env::var("USER").unwrap_or_default() } else { user },
         ssh_port: integer(&v, "terminal.sessions.ssh_port")?,
         ssh_timeout: integer(&v, "terminal.sessions.ssh_timeout_s")?,
-        palette: [
-            color(&string(&v, "colors.bg").unwrap_or_default()),
-            color(&string(&v, "colors.fg").unwrap_or_default()),
-            color(&string(&v, "colors.cursor").unwrap_or_default()),
-            color(&string(&v, "colors.subtle").unwrap_or_default()),
-            color(&string(&v, "colors.muted").unwrap_or_default()),
-        ],
+        palette: if console {
+            // The kernel console has 8/16 colours: RGB would collapse; mios-controls uses the same set.
+            [Color::Black, Color::White, Color::Yellow, Color::Gray, Color::DarkGray]
+        } else {
+            [
+                color(&string(&v, "colors.bg").unwrap_or_default()),
+                color(&string(&v, "colors.fg").unwrap_or_default()),
+                color(&string(&v, "colors.cursor").unwrap_or_default()),
+                color(&string(&v, "colors.subtle").unwrap_or_default()),
+                color(&string(&v, "colors.muted").unwrap_or_default()),
+            ]
+        },
+        hidden: mios_unit_gen::tmux_os::hidden_session_prefixes(&v)?,
+        apps,
+        console,
     })
+}
+
+/// Internal sessions (float shells, worker parking) are never offered for attaching.
+fn visible_sessions(c: &Config, sessions: Vec<Session>) -> Vec<Session> {
+    sessions.into_iter().filter(|s| !mios_unit_gen::tmux_os::is_hidden_session(&c.hidden, &s.name)).collect()
 }
 
 fn parse_sessions(out: &str) -> Vec<Session> {
@@ -200,7 +267,7 @@ fn local_sessions(c: &Config) -> Result<Vec<Session>, String> {
     )
     .map_err(|e| format!("tmux: {e}"))?;
     // No server yet is an empty list, not an error.
-    Ok(parse_sessions(&String::from_utf8_lossy(&out.stdout)))
+    Ok(visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&out.stdout))))
 }
 
 fn ssh_args(c: &Config, address: &str) -> Vec<String> {
@@ -232,7 +299,7 @@ fn remote_sessions(c: &Config, address: &str, deadline: Instant) -> Result<Vec<S
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(err.lines().last().unwrap_or("unreachable").trim().to_owned());
     }
-    Ok(parse_sessions(&String::from_utf8_lossy(&out.stdout)))
+    Ok(visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&out.stdout))))
 }
 
 /// Deadline for one whole tailnet sweep (see PEER_DEADLINE_GRACE).
@@ -369,6 +436,8 @@ impl TermGuard {
 
 impl Drop for TermGuard {
     fn drop(&mut self) {
+        // ratatui::restore leaves mouse reporting on; the exec'd tmux or shell must get a clean terminal.
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
         ratatui::restore();
         for (sig, old) in &self.previous {
             // SAFETY: reinstating the disposition sigaction returned earlier.
@@ -377,7 +446,7 @@ impl Drop for TermGuard {
     }
 }
 
-fn rows(nodes: &[Node], querying: bool) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+fn rows(nodes: &[Node], querying: bool, apps: &[App], workspace: Option<&str>, g: &Glyphs) -> Vec<(Option<Choice>, Line<'static>, Style)> {
     let mut out = Vec::new();
     for (i, n) in nodes.iter().enumerate() {
         let state = if n.local {
@@ -389,7 +458,7 @@ fn rows(nodes: &[Node], querying: bool) -> Vec<(Option<Choice>, Line<'static>, S
         } else {
             n.address.clone()
         };
-        out.push((None, Line::from(format!("{}  ·  {state}", n.name)), Style::default().add_modifier(Modifier::BOLD)));
+        out.push((None, Line::from(format!("{}{}{state}", n.name, g.sep)), Style::default().add_modifier(Modifier::BOLD)));
         for s in &n.sessions {
             let mark = if s.attached { "attached" } else { "detached" };
             out.push((
@@ -398,50 +467,82 @@ fn rows(nodes: &[Node], querying: bool) -> Vec<(Option<Choice>, Line<'static>, S
                 Style::default(),
             ));
         }
+        if i == 0 {
+            if let Some(name) = workspace.filter(|w| !n.sessions.iter().any(|s| s.name == *w)) {
+                out.push((Some(Choice::Workspace), Line::from(format!("    + MiOS AI workspace ({name})")), Style::default()));
+            }
+        }
         if n.online && n.error.is_none() {
             out.push((Some(Choice::New { node: i }), Line::from("    + new bare Tmux-OS session"), Style::default()));
         }
+        // This node's TUIs follow its own block at once, so tailnet rows arriving later never move them.
+        if i == 0 && !apps.is_empty() {
+            out.push((None, Line::from(format!("TUI apps{}this node", g.sep)), Style::default().add_modifier(Modifier::BOLD)));
+            for a in apps {
+                out.push((
+                    Some(Choice::App { id: a.id.clone() }),
+                    Line::from(format!("    {:<28} {} {}", a.label, a.section, a.mode)),
+                    Style::default(),
+                ));
+            }
+        }
     }
     if querying {
-        out.push((None, Line::from("tailnet nodes  ·  querying…"), Style::default().add_modifier(Modifier::DIM)));
+        out.push((None, Line::from(format!("tailnet nodes{}querying{}", g.sep, g.more)), Style::default().add_modifier(Modifier::DIM)));
     }
     out.push((Some(Choice::Shell), Line::from("Plain shell (no tmux)"), Style::default()));
     out
 }
 
-/// What a key does in the session selector. The controller's nav grammar reaches every entry: D-pad = arrows,
-/// South = Enter, East = Esc, West = Tab (new session).
-#[derive(Debug, PartialEq, Eq)]
-enum SelectorKey {
-    Down,
-    Up,
-    Open,
-    New,
-    Refresh,
-    Shell,
+/// Index of the selected row for the next frame: the remembered choice where it still is (rows may shift
+/// when tailnet peers arrive), else the default session, else the first selectable row.
+fn select_index(table: &[(Option<Choice>, Line<'static>, Style)], remembered: Option<&Choice>, default_session: &str) -> Option<usize> {
+    remembered
+        .and_then(|want| table.iter().position(|r| r.0.as_ref() == Some(want)))
+        .or_else(|| table.iter().position(|r| matches!(&r.0, Some(Choice::Attach { session, .. }) if session == default_session)))
+        .or_else(|| table.iter().position(|r| r.0.is_some()))
 }
 
-fn selector_key(code: KeyCode) -> Option<SelectorKey> {
-    match code {
-        KeyCode::Down | KeyCode::Char('j') => Some(SelectorKey::Down),
-        KeyCode::Up | KeyCode::Char('k') => Some(SelectorKey::Up),
-        KeyCode::Enter => Some(SelectorKey::Open),
-        KeyCode::Char('n') | KeyCode::Tab => Some(SelectorKey::New),
-        KeyCode::Char('r') => Some(SelectorKey::Refresh),
-        KeyCode::Char('s') | KeyCode::Char('q') | KeyCode::Esc => Some(SelectorKey::Shell),
-        _ => None,
+/// Keyboard/controller navigation over selectable rows: arrows, PgUp/PgDn, Home/End, BackTab (next section;
+/// Tab is "new session" so the controller's West button reaches it, FINAL.md C-33), and `e` (first TUI app).
+fn navigate(table: &[(Option<Choice>, Line<'static>, Style)], cur: usize, key: KeyCode, page: usize) -> usize {
+    let selectable: Vec<usize> = table.iter().enumerate().filter(|r| r.1 .0.is_some()).map(|r| r.0).collect();
+    let first_after = |i: usize| selectable.iter().copied().find(|&s| s > i);
+    let last_before = |i: usize| selectable.iter().rev().copied().find(|&s| s < i);
+    let section_starts: Vec<usize> = table
+        .iter()
+        .enumerate()
+        .filter(|r| r.1 .0.is_none())
+        .filter_map(|r| first_after(r.0))
+        .chain(selectable.last().copied())
+        .collect();
+    let pos = selectable.iter().position(|&s| s == cur).unwrap_or(0);
+    match key {
+        KeyCode::Down | KeyCode::Char('j') => first_after(cur).unwrap_or(cur),
+        KeyCode::Up | KeyCode::Char('k') => last_before(cur).unwrap_or(cur),
+        KeyCode::PageDown => selectable.get((pos + page).min(selectable.len().saturating_sub(1))).copied().unwrap_or(cur),
+        KeyCode::PageUp => selectable.get(pos.saturating_sub(page)).copied().unwrap_or(cur),
+        KeyCode::Home => selectable.first().copied().unwrap_or(cur),
+        KeyCode::End => selectable.last().copied().unwrap_or(cur),
+        KeyCode::BackTab => section_starts.iter().copied().find(|&s| s > cur).or_else(|| section_starts.first().copied()).unwrap_or(cur),
+        KeyCode::Char('e') => table.iter().position(|r| matches!(r.0, Some(Choice::App { .. }))).unwrap_or(cur),
+        _ => cur,
     }
 }
 
 fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     let guard = TermGuard::arm();
     let mut terminal = ratatui::init();
+    let _ = execute!(std::io::stdout(), EnableMouseCapture);
     // This node renders immediately; tailnet peers arrive from a worker when they answer
     // (or time out), so a slow peer never holds the raw-mode terminal.
     let mut nodes = vec![local_node(c)];
     let mut pending = Some(spawn_remote(c));
     let mut state = ListState::default();
+    let mut remembered: Option<Choice> = None;
+    let mut last_click: Option<(usize, Instant)> = None;
     let [bg, fg, accent, subtle, muted] = c.palette;
+    let g = if c.console { &ASCII } else { &UNICODE };
     let result = loop {
         if let Some(rx) = &pending {
             match rx.try_recv() {
@@ -454,12 +555,8 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        let table = rows(&nodes, pending.is_some());
-        if state.selected().map_or(true, |i| table.get(i).map_or(true, |r| r.0.is_none())) {
-            state.select(table.iter().position(|r| {
-                matches!(&r.0, Some(Choice::Attach { session, .. }) if *session == c.default_session)
-            }).or_else(|| table.iter().position(|r| r.0.is_some())));
-        }
+        let table = rows(&nodes, pending.is_some(), &c.apps, Some(&c.default_session), g);
+        state.select(select_index(&table, remembered.as_ref(), &c.default_session));
         let items: Vec<ListItem> = table
             .iter()
             .map(|(choice, line, style)| {
@@ -467,57 +564,72 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 ListItem::new(line.clone()).style(base)
             })
             .collect();
+        let mut list_area = Rect::default();
         terminal
             .draw(|f| {
                 let [body, help] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
+                list_area = body;
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                    .border_type(if c.console { BorderType::Plain } else { BorderType::Rounded })
                     .border_style(Style::default().fg(subtle))
                     .title(Span::styled(" MiOS sessions ", Style::default().fg(accent).add_modifier(Modifier::BOLD)))
                     .style(Style::default().bg(bg).fg(fg));
                 let list = List::new(items)
                     .block(block)
                     .highlight_style(Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD))
-                    .highlight_symbol("› ");
+                    .highlight_symbol(g.pick);
                 f.render_stateful_widget(list, body, &mut state);
-                f.render_widget(
-                    Paragraph::new("↑↓ select · Enter open · n/Tab new here · r refresh · s shell · q quit")
-                        .style(Style::default().fg(muted).bg(bg)),
-                    help,
-                );
+                f.render_widget(Paragraph::new(g.help).style(Style::default().fg(muted).bg(bg)), help);
             })
             .map_err(|e| e.to_string())?;
         if !event::poll(Duration::from_millis(250)).map_err(|e| e.to_string())? {
             continue;
         }
-        let Event::Key(key) = event::read().map_err(|e| e.to_string())? else { continue };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-        let selectable: Vec<usize> = table.iter().enumerate().filter(|r| r.1 .0.is_some()).map(|r| r.0).collect();
         let cur = state.selected().unwrap_or(0);
-        match selector_key(key.code) {
-            Some(SelectorKey::Down) => {
-                state.select(selectable.iter().copied().find(|&i| i > cur).or(Some(cur)))
-            }
-            Some(SelectorKey::Up) => {
-                state.select(selectable.iter().rev().copied().find(|&i| i < cur).or(Some(cur)))
-            }
-            Some(SelectorKey::Open) => {
-                if let Some(Some(choice)) = table.get(cur).map(|r| r.0.clone()) {
-                    break Ok(choice);
+        let page = list_area.height.saturating_sub(2).max(1) as usize;
+        let mut activate = false;
+        let next = match event::read().map_err(|e| e.to_string())? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                KeyCode::Enter => {
+                    activate = true;
+                    cur
                 }
-            }
-            Some(SelectorKey::New) => break Ok(Choice::New { node: 0 }),
-            Some(SelectorKey::Refresh) => {
-                nodes[0] = local_node(c);
-                if pending.is_none() {
-                    pending = Some(spawn_remote(c));
+                KeyCode::Char('n') | KeyCode::Tab => break Ok(Choice::New { node: 0 }),
+                KeyCode::Char('r') => {
+                    nodes[0] = local_node(c);
+                    if pending.is_none() {
+                        pending = Some(spawn_remote(c));
+                    }
+                    cur
                 }
+                KeyCode::Char('s') | KeyCode::Char('q') | KeyCode::Esc => break Ok(Choice::Shell),
+                code => navigate(&table, cur, code, page),
+            },
+            Event::Mouse(m) => match m.kind {
+                MouseEventKind::ScrollDown => navigate(&table, cur, KeyCode::Down, page),
+                MouseEventKind::ScrollUp => navigate(&table, cur, KeyCode::Up, page),
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let inside = m.column > list_area.x && m.row > list_area.y && m.row + 1 < list_area.y + list_area.height;
+                    let row = state.offset() + m.row.saturating_sub(list_area.y + 1) as usize;
+                    if inside && table.get(row).is_some_and(|r| r.0.is_some()) {
+                        // A second click on the same row within half a second opens it.
+                        activate = last_click.is_some_and(|(r, t)| r == row && t.elapsed() < Duration::from_millis(500));
+                        last_click = Some((row, Instant::now()));
+                        row
+                    } else {
+                        cur
+                    }
+                }
+                _ => cur,
+            },
+            _ => cur,
+        };
+        remembered = table.get(next).and_then(|r| r.0.clone());
+        if activate {
+            if let Some(choice) = remembered.clone() {
+                break Ok(choice);
             }
-            Some(SelectorKey::Shell) => break Ok(Choice::Shell),
-            None => {}
         }
     };
     drop(guard);
@@ -527,6 +639,8 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
 fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
     let err = match choice {
         Choice::Attach { node, session } if nodes[node].local => Command::new(TERMINAL).args(["--session", &session]).exec(),
+        Choice::Workspace => Command::new(TERMINAL).args(["--action", "ai"]).exec(),
+        Choice::App { id } => Command::new(TERMINAL).args(["--app", &id, "--console", if c.console { "1" } else { "0" }]).exec(),
         Choice::New { node } if nodes[node].local => Command::new(TERMINAL).arg("--new").exec(),
         Choice::Attach { node, session } => Command::new("ssh")
             .arg("-t")
@@ -550,7 +664,8 @@ fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
 pub fn run(root: &Path, list: bool) -> Result<(), String> {
     let c = config(root)?;
     if list {
-        println!("{}", serde_json::to_string_pretty(&discover(&c)).map_err(|e| e.to_string())?);
+        let out = serde_json::json!({ "nodes": discover(&c), "apps": c.apps });
+        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
         return Ok(());
     }
     let (choice, nodes) = pick(&c)?;
@@ -559,21 +674,6 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::KeyCode;
-
-    #[test]
-    fn controller_west_tab_opens_a_new_session_and_the_rest_is_unchanged() {
-        assert_eq!(super::selector_key(KeyCode::Tab), Some(super::SelectorKey::New));
-        assert_eq!(super::selector_key(KeyCode::Char('n')), Some(super::SelectorKey::New));
-        // negative controls: Esc still drops to a shell, j/k and the arrows still move, BackTab does nothing
-        assert_eq!(super::selector_key(KeyCode::Esc), Some(super::SelectorKey::Shell));
-        assert_eq!(super::selector_key(KeyCode::Char('j')), Some(super::SelectorKey::Down));
-        assert_eq!(super::selector_key(KeyCode::Char('k')), Some(super::SelectorKey::Up));
-        assert_eq!(super::selector_key(KeyCode::Down), Some(super::SelectorKey::Down));
-        assert_eq!(super::selector_key(KeyCode::Enter), Some(super::SelectorKey::Open));
-        assert_eq!(super::selector_key(KeyCode::BackTab), None);
-    }
-
     #[test]
     fn peer_name_uses_unique_tailnet_name() {
         assert_eq!(super::peer_name("fedora-1.tail1234.ts.net.", "fedora"), "fedora-1");
@@ -614,6 +714,9 @@ mod tests {
             ssh_port: 22,
             ssh_timeout,
             palette: [Color::Reset; 5],
+            hidden: vec!["mios-float-".into(), "mios-workspace-".into()],
+            apps: vec![],
+            console: false,
         }
     }
 
@@ -687,8 +790,8 @@ mod tests {
     #[test]
     fn rows_show_a_querying_marker_while_peers_are_pending() {
         let local = Node { name: "here".into(), address: String::new(), local: true, online: true, error: None, sessions: vec![] };
-        assert!(rows(std::slice::from_ref(&local), true).iter().any(|r| r.1.to_string().contains("querying")));
-        assert!(!rows(&[local], false).iter().any(|r| r.1.to_string().contains("querying")));
+        assert!(rows(std::slice::from_ref(&local), true, &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
+        assert!(!rows(&[local], false, &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
     }
 
     #[test]
@@ -696,9 +799,93 @@ mod tests {
         let node = |online: bool, error: Option<String>| Node {
             name: "n".into(), address: "n.ts".into(), local: false, online, error, sessions: vec![],
         };
-        let table = rows(&[node(true, None), node(false, None), node(true, Some("denied".into()))], false);
+        let table = rows(&[node(true, None), node(false, None), node(true, Some("denied".into()))], false, &[], None, &UNICODE);
         let news = table.iter().filter(|r| matches!(r.0, Some(Choice::New { .. }))).count();
         assert_eq!(news, 1);
         assert!(matches!(table.last().unwrap().0, Some(Choice::Shell)));
+    }
+
+    fn app(id: &str) -> App {
+        App { id: id.into(), label: id.into(), section: "system".into(), mode: "window".into() }
+    }
+
+    fn local(sessions: &[&str]) -> Node {
+        Node {
+            name: "here".into(),
+            address: String::new(),
+            local: true,
+            online: true,
+            error: None,
+            sessions: sessions.iter().map(|n| Session { name: (*n).into(), windows: 1, attached: false }).collect(),
+        }
+    }
+
+    fn peer(name: &str) -> Node {
+        Node { name: name.into(), address: format!("{name}.ts"), local: false, online: true, error: None, sessions: vec![] }
+    }
+
+    #[test]
+    fn app_rows_follow_this_node_and_never_move_when_peers_arrive() {
+        let apps = [app("btop"), app("top")];
+        let before = rows(&[local(&["mios"])], true, &apps, Some("mios"), &UNICODE);
+        let after = rows(&[local(&["mios"]), peer("a"), peer("b")], false, &apps, Some("mios"), &UNICODE);
+        let pos = |t: &[(Option<Choice>, Line<'static>, Style)], id: &str| t.iter().position(|r| r.0 == Some(Choice::App { id: id.into() })).unwrap();
+        assert_eq!(pos(&before, "btop"), pos(&after, "btop"));
+        assert!(pos(&after, "top") < after.iter().position(|r| matches!(r.0, Some(Choice::New { node: 1 }))).unwrap());
+        assert!(matches!(after.last().unwrap().0, Some(Choice::Shell)));
+    }
+
+    #[test]
+    fn selection_identity_survives_a_row_shift() {
+        let apps = [app("btop")];
+        let before = rows(&[local(&[])], true, &apps, None, &UNICODE);
+        let shell = Choice::Shell;
+        let after = rows(&[local(&[]), peer("a"), peer("b")], false, &apps, None, &UNICODE);
+        let i = select_index(&after, Some(&shell), "mios").unwrap();
+        assert_eq!(after[i].0, Some(Choice::Shell));
+        assert_ne!(select_index(&before, Some(&shell), "mios"), Some(i), "the row index did shift");
+    }
+
+    #[test]
+    fn hidden_sessions_are_filtered_and_the_ai_workspace_is_offered_when_missing() {
+        let c = cfg(3);
+        let visible = visible_sessions(&c, parse_sessions("mios\t2\t1\nmios-float-3\t1\t0\nmios-workspace-4\t1\t0\ntmux-os\t1\t0\n"));
+        assert_eq!(visible.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["mios", "tmux-os"]);
+        let without = rows(&[local(&["tmux-os"])], false, &[], Some("mios"), &UNICODE);
+        assert!(without.iter().any(|r| r.0 == Some(Choice::Workspace)));
+        let with = rows(&[local(&["mios"])], false, &[], Some("mios"), &UNICODE);
+        assert!(!with.iter().any(|r| r.0 == Some(Choice::Workspace)));
+    }
+
+    #[test]
+    fn controller_vocabulary_navigates_rows_and_sections() {
+        let apps = [app("btop"), app("top"), app("vim")];
+        let t = rows(&[local(&["mios", "tmux-os"])], false, &apps, Some("mios"), &UNICODE);
+        let at = |c: Choice| t.iter().position(|r| r.0.as_ref() == Some(&c)).unwrap();
+        let mios = at(Choice::Attach { node: 0, session: "mios".into() });
+        assert_eq!(navigate(&t, mios, KeyCode::Down, 5), at(Choice::Attach { node: 0, session: "tmux-os".into() }));
+        assert_eq!(navigate(&t, mios, KeyCode::Up, 5), mios, "Up at the top stays");
+        assert_eq!(navigate(&t, mios, KeyCode::End, 5), at(Choice::Shell));
+        assert_eq!(navigate(&t, at(Choice::Shell), KeyCode::Home, 5), mios);
+        assert_eq!(navigate(&t, mios, KeyCode::Char('e'), 5), at(Choice::App { id: "btop".into() }));
+        assert_eq!(navigate(&t, mios, KeyCode::BackTab, 5), at(Choice::App { id: "btop".into() }), "Shift-Tab jumps to the next section");
+        assert_eq!(navigate(&t, at(Choice::App { id: "btop".into() }), KeyCode::BackTab, 5), at(Choice::Shell));
+        assert_eq!(navigate(&t, at(Choice::Shell), KeyCode::BackTab, 5), mios, "wraps to the first section");
+        assert_eq!(navigate(&t, mios, KeyCode::Tab, 5), mios, "Tab is handled by pick() as new session");
+        assert_eq!(navigate(&t, mios, KeyCode::PageDown, 2), at(Choice::New { node: 0 }));
+        assert_eq!(navigate(&t, at(Choice::Shell), KeyCode::PageUp, 100), mios);
+        for r in &t {
+            assert!(r.0.is_some() || r.1.to_string().contains("this node"));
+        }
+    }
+
+    #[test]
+    fn console_rows_and_help_are_ascii() {
+        let t = rows(&[local(&["mios"]), peer("a")], true, &[app("btop")], Some("mios"), &ASCII);
+        for r in &t {
+            assert!(r.1.to_string().is_ascii(), "{}", r.1);
+        }
+        assert!(ASCII.help.is_ascii() && ASCII.pick.is_ascii());
+        assert!(!UNICODE.help.is_ascii());
     }
 }

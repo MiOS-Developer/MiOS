@@ -358,8 +358,11 @@ class TestMcpAio(unittest.IsolatedAsyncioTestCase):
         thread.start()
         try:
             with tempfile.TemporaryDirectory() as cache:
+                # Native catalog only: an empty caller tier federates no caller-owned [mcp.servers].
                 env = dict(os.environ, MIOS_AGENT_PIPE_URL=f"http://127.0.0.1:{backend.server_port}",
-                           MIOS_MCP_TOOLS_CACHE=str(Path(cache) / "tools.json"))
+                           MIOS_MCP_TOOLS_CACHE=str(Path(cache) / "tools.json"),
+                           MIOS_USER_TOML=str(Path(cache) / "user.toml"),
+                           MIOS_USER_TOML_D=str(Path(cache) / "user.d"))
                 async with Client(StdioServerParameters(command=sys.executable, args=[str(RELAY)], env=env)) as client:
                     names = {t.name for t in (await client.list_tools()).tools}
                     self.assertEqual({n for n in names if not n.startswith(("mios_tmux_", "mios_agent_")) and n != "translate_frames"}, {t["name"] for t in catalog})

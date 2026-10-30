@@ -1442,6 +1442,31 @@ fn run(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::E
     }
     Ok(result)
 }
+/// tmux 3.7 floating panes are not part of a tiled layout: a layout preset would merge or move them.
+/// Workspace code never lays out a window that holds one (MiOS-Tmux opens floats elsewhere in managed
+/// windows; this is the defensive half). Older tmux has no pane_floating_flag and reports no floats.
+fn has_floating_pane(
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+    window: &str,
+) -> Result<bool, String> {
+    Ok(tmux(&["list-panes", "-t", window, "-F", "#{pane_floating_flag}"])?
+        .lines()
+        .any(|l| l.trim() == "1"))
+}
+
+/// `select-layout` unless the window holds a floating pane (logged, then skipped).
+fn select_layout_tiled_only(
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+    window: &str,
+    layout: &str,
+) -> Result<(), String> {
+    if has_floating_pane(tmux, window)? {
+        // Silent: hooks run this under run-shell -b, which would show any output in the pane.
+        return Ok(());
+    }
+    tmux(&["select-layout", "-t", window, layout]).map(|_| ())
+}
+
 // The workspace owns blank reservations explicitly. MCP may claim those panes;
 // it must never infer ownership from an idle shell in the operator's window.
 fn workspace_tmux(socket: &str, args: &[&str]) -> Result<String, String> {
@@ -1482,7 +1507,12 @@ fn workspace_resize_hook(witness: &str, head: &str, socket: &str) -> Result<Stri
         quote(head),
         quote(socket)
     );
-    Ok(format!("run-shell -b {}", quote(&command)))
+    // Guarded inside tmux: a resize our own pass already laid out (the usual case) starts no process at all.
+    Ok(format!(
+        "if-shell -F {} {{ run-shell -b {} }}",
+        quote(&workspace_hook::spawn_guard()),
+        quote(&command)
+    ))
 }
 
 fn workspace_lock(path: &Path, name: &str) -> Result<fs::File, String> {
@@ -2187,20 +2217,26 @@ fn workspace(request: &Value) -> Result<Value, String> {
         if !tmux(&["display-message", "-p", "-t", &head, "#{@mios-mcp-owner}"])?.is_empty() {
             return Ok(json!({"managed":false,"layout":"automation"}));
         }
+        // Bare Tmux-OS sessions (and the float shells MiOS-Tmux keeps per session) never become workspaces.
+        if tmux(&["display-message", "-p", "-t", &head, "#{@mios-bare}"])? == "1" {
+            return Ok(json!({"managed":false,"layout":"bare"}));
+        }
         let rows = tmux(&[
             "list-panes",
             "-t",
             &window,
             "-F",
-            "#{pane_id}|#{@mios-mcp-owner}",
+            "#{pane_id}|#{pane_floating_flag}|#{@mios-mcp-owner}",
         ])?;
         let mut workers = Vec::new();
         let mut owner = String::new();
         for row in rows.lines() {
-            let Some((pane, candidate)) = row.split_once(['\t', '|']) else {
+            let mut fields = row.splitn(3, '|');
+            let (Some(pane), Some(floating), Some(candidate)) = (fields.next(), fields.next(), fields.next()) else {
                 return Err("invalid startup pane record".into());
             };
-            if pane == head {
+            // Only tiled panes count: a floating pane is the operator's overlay, not a workspace member.
+            if pane == head || floating == "1" {
                 continue;
             }
             if candidate.is_empty() || (!owner.is_empty() && owner != candidate) {
@@ -2230,7 +2266,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 ])?;
                 created.push(pane.clone());
                 tmux(&["set-option", "-p", "-t", &pane, "@mios-mcp-owner", &owner])?;
-                tmux(&["select-layout", "-t", &window, "tiled"])?;
+                select_layout_tiled_only(&tmux, &window, "tiled")?;
             }
             let mut adopt = request.clone();
             adopt["action"] = json!("adopt");
@@ -3155,7 +3191,7 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 anchor.clone()
             };
             tmux(&["join-pane", "-d", "-s", pane, "-t", &target])?;
-            tmux(&["select-layout", "-t", &destination, "tiled"])?;
+            select_layout_tiled_only(&tmux, &destination, "tiled")?;
         }
     }
     if !compact && resource.is_empty() {
@@ -3238,6 +3274,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
     }
     for (key, value) in borders {
         tmux(&["set-option", "-w", "-t", window, key, &value])?;
+    }
+    if has_floating_pane(&tmux, window)? {
+        // Reported in the result, never printed (run-shell -b would show it in the pane).
+        return Ok(json!({"managed":true,"layout":"floating"}));
     }
     tmux(&["select-layout", "-t", window, &layout])?;
     // Older tmux releases ignore pane IDs in a saved layout and assign cells
@@ -3585,6 +3625,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 3 && args[1] == "--workspace-hook" {
         workspace_hook::main(&args);
+    }
+    if args.len() >= 2 && matches!(args[1].as_str(), "--workspace-focus" | "--workspace-view") {
+        workspace_hook::key_main(&args);
     }
     let result = (|| -> Result<Value, Box<dyn std::error::Error>> {
         if args.len() == 2 && args[1] == "--workspace-menu" {
