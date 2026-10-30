@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-30T03:41:36.183059+00:00",
+  "last_updated": "2026-10-30T03:43:07.709588+00:00",
   "total_artifacts": 78,
   "artifacts": [
     {
@@ -843,10 +843,10 @@
       "path": "automation/manifest.json",
       "artifact_type": "source",
       "created_at": "2026-10-30T03:41:36.183059+00:00",
-      "sha256": "efe70b2c813fed916f0b17c064f30fe7aa8e6f65db41624ba204dc6ccc1cc9d5",
-      "size_bytes": 2918579,
+      "sha256": "62517eefdd1686319a4c317e6d2b52da58c13edac7b108c0c9cf54192f060be2",
+      "size_bytes": 2924447,
       "metadata": {
-        "verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-wire-activation.json",
+        "verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-ai-manifest-check.log",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "checkpoint_at": "2026-10-30T03:41:36.183059+00:00",
         "candidate_status": "live_microphone_and_wire_stats_other_remote_devices_unfinished",
