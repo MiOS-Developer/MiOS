@@ -167,19 +167,44 @@ fn entry_runs(ssot: &Value, path: &str, e: &Value) -> Option<String> {
     }
 }
 
-/// Whether an entry that runs `runs` realizes `action`: exactly its [keybindings.global.action_argv], the `exec:`
-/// program, or the same hypr: verb. (mios-gen applies the same rule to the literal Lua binds, global_bindings.rs.)
-fn runs_action(argv: Option<&toml::Table>, action: &str, runs: &str) -> bool {
-    if let Some(a) = argv.and_then(|t| t.get(action)).and_then(Value::as_array) {
-        let words: Vec<&str> = a.iter().filter_map(Value::as_str).collect();
-        return !words.is_empty() && words.join(" ") == runs;
-    }
-    if let Some(prog) = action.strip_prefix("exec:") {
-        return runs.split_whitespace().any(|t| t == prog || t.ends_with(&format!("/{prog}")));
-    }
-    action.starts_with("hypr:") && action == runs
+/// Whether an entry that runs `runs` realizes `action`: the shared exact rule (mios-gen applies it to the literal Lua
+/// binds): its [keybindings.global.action_argv], `exec:mios-terminal` = the SSOT terminal action's command, any other
+/// `exec:<prog>` = `prog` alone, or the same hypr: verb. Sharing a word with the command is not running it (V1).
+fn runs_action(ssot: &Value, action: &str, runs: &str) -> bool {
+    (action.starts_with("hypr:") && action == runs) || mios_resolver::keybindings::command_realizes(ssot, action, runs)
 }
 
+/// The literal binds of the generated session per chord, each with its dispatcher expression (`hl.dsp.*`). A
+/// projection dispatch handle (`mios_native_hl.bind(chord, d)`) carries the `local d=` exec it binds.
+fn lua_bind_dispatchers(lua: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut last_d = String::new();
+    for line in lua.lines() {
+        let t = line.trim_start();
+        if let Some((_, d)) = t.split_once("local d=") {
+            last_d = d.replace("mios_native_hl.dsp.", "hl.dsp.");
+        }
+        if t.starts_with("local up=mios_native_hl.bind(") { continue; }
+        let rest = if let Some(rest) = t.strip_prefix("hl.bind(") { rest }
+            else if let Some((_, rest)) = t.split_once("mios_native_hl.bind(") { rest }
+            else { continue };
+        let mut quoted = false;
+        let mut escaped = false;
+        let mut end = None;
+        for (i, c) in rest.char_indices() {
+            if escaped { escaped = false; continue }
+            if c == '\\' && quoted { escaped = true; continue }
+            if c == '"' { quoted = !quoted }
+            if c == ',' && !quoted { end = Some(i); break }
+        }
+        let Some(end) = end else { continue };
+        let Some(chord) = lua_literal(&rest[..end]) else { continue };
+        let d = rest[end + 1..].trim().replace("mios_native_hl.dsp.", "hl.dsp.");
+        let is_d = d == "d" || d.starts_with("d,") || d.starts_with("d)");
+        out.push((chord, if is_d { last_d.clone() } else { d }));
+    }
+    out
+}
 /// The prefix keys [keybindings.tmux] binds by name rather than in `bindings` (MiOS-Tmux menus, launcher, float
 /// panes) and the agent accept key: `tmux:key` may send them too (`tmux:key Space` opens the MiOS menu).
 fn tmux_named_keys(ssot: &Value) -> Vec<String> {
@@ -298,6 +323,8 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
     let mut bound: Vec<Bound> = Vec::new();
     let mut ids = BTreeSet::new();
     let mut realized: Vec<(String, Vec<String>, String)> = Vec::new();
+    // Tier-2 (VM) rows are bound by the projection's own VM handles, not by a literal or a dispatch handle.
+    let mut vm_realized: BTreeSet<String> = BTreeSet::new();
 
     let entries = global
         .get("bindings")
@@ -411,6 +438,9 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
             }
             if !realized_by.is_empty() {
                 realized.push((tag.clone(), steps.clone(), action.to_string()));
+                if e.get("tier").and_then(Value::as_integer) == Some(2) {
+                    vm_realized.insert(tag.clone());
+                }
             }
             bound.push(Bound {
                 source: "keybindings.global".into(),
@@ -487,13 +517,12 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
 
     // A realized_by row whose chord a compositor-table entry holds must be realized BY that entry (it runs the row's
     // action). Otherwise the row is shadowed or dead and the realized-row exemption below would hide it (D1).
-    let argv = global.get("action_argv").and_then(Value::as_table);
     for (tag, steps, action) in &realized {
         let owners: Vec<&Bound> = bound
             .iter()
             .filter(|b| b.legacy && b.source != "hyprland.lua" && &b.steps == steps)
             .collect();
-        if !owners.is_empty() && !owners.iter().any(|b| b.runs.as_deref().is_some_and(|r| runs_action(argv, action, r))) {
+        if !owners.is_empty() && !owners.iter().any(|b| b.runs.as_deref().is_some_and(|r| runs_action(ssot, action, r))) {
             findings.push(format!(
                 "{tag}: realized_by hyprland on {} but that chord is {} in the compositor tables, which does not run {action}",
                 steps.join(" "),
@@ -532,6 +561,38 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                 "{tag}: realized_by hyprland but no compositor binding for {} exists",
                 steps.join(" ")
             ));
+        }
+    }
+
+    // ...and every bind the session holds on its chord must BE its realization: a literal that runs the row's action
+    // exactly (the shared rule) or the projection's dispatch handle for it. A literal from any other table (the
+    // terminal and launcher keys, [keybindings.actions]) that runs something else leaves the row dead (V1).
+    if let Some(lua) = lua {
+        let binds: Vec<(Vec<String>, String)> = lua_bind_dispatchers(lua)
+            .into_iter()
+            .filter_map(|(c, d)| normalize_chord(&c, false).ok().map(|s| (s, d)))
+            .collect();
+        for (tag, steps, action) in &realized {
+            if vm_realized.contains(tag) {
+                continue;
+            }
+            let own = mios_resolver::keybindings::dispatch_command(action);
+            let foreign: Vec<&str> = binds
+                .iter()
+                .filter(|(s, _)| s == steps)
+                .map(|(_, d)| d.as_str())
+                .filter(|d| {
+                    !mios_resolver::keybindings::lua_dispatcher_realizes(ssot, action, d)
+                        && mios_resolver::keybindings::lua_exec_command(d).as_deref() != Some(own.as_str())
+                })
+                .collect();
+            if !foreign.is_empty() {
+                findings.push(format!(
+                    "{tag}: realized_by hyprland on {} but hyprland.lua binds that chord to {}, which does not run {action}",
+                    steps.join(" "),
+                    foreign.join(" and ")
+                ));
+            }
         }
     }
 
@@ -1027,6 +1088,30 @@ passthrough = ["vm-passthrough"]
         // positive controls: the entry runs exactly the row's argv / hypr: verb
         assert!(probe("SUPER+K", "mios:session-scale-up").is_empty(), "{:?}", probe("SUPER+K", "mios:session-scale-up"));
         assert!(probe("SUPER+C", "hypr:killactive").is_empty(), "{:?}", probe("SUPER+C", "hypr:killactive"));
+    }
+
+    /// V1 (round-2 verifier): a realized `exec:<prog>` row on a chord whose hyprland.lua literal merely mentions the
+    /// program (CTRL+ALT+SHIFT+m: the [keybindings.actions] system terminal) is a finding. The literal comes from no
+    /// compositor table, so only the Lua check sees it. Controls: the old any-word rule accepted it; the same row on a
+    /// free chord with its own dispatch handle, and the terminal row on its literal, are clean.
+    #[test]
+    fn exec_row_on_an_unrelated_lua_literal_is_found() {
+        let term = "alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal";
+        let ssot = |chord: &str, action: &str| format!("{BASE}\n[[keybindings.actions]]\nid = \"terminal\"\ndesktop_command = \"{term}\"\n[[keybindings.global.bindings]]\nid = \"probe\"\ntier = 1\nchord = \"{chord}\"\naction = \"{action}\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n");
+        let lua = format!("hl.bind(\"SUPER + Return\", hl.dsp.exec_cmd(\"{term}\"))\nhl.bind(\"CTRL + ALT + SHIFT + m\", hl.dsp.exec_cmd(\"{term} --action system\"))\n do local d=mios_native_hl.dsp.exec_cmd(\"/usr/libexec/mios/mios-inputd dispatch 'exec:alacritty'\")\n local b=mios_native_hl.bind(\"CTRL+ALT+SHIFT+f9\",d)\n if b then end end\n");
+        let f = |chord: &str, action: &str| analyze(&ssot(chord, action).parse().unwrap(), Some(&lua)).unwrap().findings;
+        let bad = f("CTRL+ALT+SHIFT+m", "exec:alacritty");
+        assert!(bad.iter().any(|x| x.contains("probe: realized_by hyprland on CTRL+ALT+SHIFT+m but hyprland.lua binds that chord to") && x.contains("--action system") && x.contains("does not run exec:alacritty")), "{bad:?}");
+        let bad = f("CTRL+ALT+SHIFT+m", "exec:mios-terminal");
+        assert!(bad.iter().any(|x| x.contains("does not run exec:mios-terminal")), "{bad:?}");
+        let bad = f("SUPER+Return", "exec:env");
+        assert!(bad.iter().any(|x| x.contains("does not run exec:env")), "{bad:?}");
+        // negative control: the pre-fix any-word rule took the system terminal as the realization of exec:alacritty
+        let old_rule = |prog: &str, cmd: &str| cmd.split_whitespace().any(|t| t == prog || t.ends_with(&format!("/{prog}")));
+        assert!(old_rule("alacritty", &format!("{term} --action system")) && old_rule("env", term));
+        // positive controls
+        assert!(f("CTRL+ALT+SHIFT+F9", "exec:alacritty").is_empty(), "{:?}", f("CTRL+ALT+SHIFT+F9", "exec:alacritty"));
+        assert!(f("SUPER+Return", "exec:mios-terminal").is_empty(), "{:?}", f("SUPER+Return", "exec:mios-terminal"));
     }
 
     /// (b) [desktop.hyprland.hypr3d].toggle_key is audited: SUPER+G is ShaderGlass, so the room toggle there collides

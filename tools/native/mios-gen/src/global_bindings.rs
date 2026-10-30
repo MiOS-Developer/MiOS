@@ -54,38 +54,14 @@ pub fn literal_binds(lua: &str, sep: &str) -> std::collections::BTreeMap<String,
 pub fn literal_chords(lua: &str, sep: &str) -> std::collections::BTreeSet<String> {
     literal_binds(lua,sep).into_keys().collect()
 }
-/// The command of a literal `hl.dsp.exec_cmd("...")` dispatcher (Lua string escapes undone), else None.
-fn exec_command(dispatcher: &str) -> Option<String> {
-    let body=dispatcher.strip_prefix("hl.dsp.exec_cmd(")?.trim_start().strip_prefix('"')?;
-    let mut out=String::new(); let mut chars=body.chars();
-    while let Some(c)=chars.next() {
-        match c {
-            '"' => return Some(out),
-            '\\' => match chars.next()? { 'n'=>out.push('\n'), 't'=>out.push('\t'), 'r'=>out.push('\r'), d if d.is_ascii_digit() => {
-                let mut n=d.to_digit(10)?; for _ in 0..2 { let d=chars.next()?.to_digit(10)?; n=n*10+d; } out.push(char::from_u32(n)?);
-            } o => out.push(o) },
-            c => out.push(c),
-        }
-    }
-    None
-}
 /// Whether a literal compositor `dispatcher` runs `binding`'s own action, i.e. the literal bind IS the row's
-/// realization: an action with [keybindings.global.action_argv] runs exactly that argv, `exec:<prog>` runs `prog`,
-/// and the hypr: verbs the compositor tables carry map to their native dispatchers. Anything else is another action.
+/// realization. The rule is shared with the gate (mios_resolver::keybindings::lua_dispatcher_realizes): exactly the
+/// action's [keybindings.global.action_argv], `exec:mios-terminal` = the SSOT terminal action's command, any other
+/// `exec:<prog>` = `prog` alone, and the native dispatchers of the hypr: verbs. A literal that merely mentions the
+/// program (`alacritty -e ... --action system` for `exec:alacritty`) is another action (V1).
 pub fn realizes(data: &Value, binding: &Value, dispatcher: &str) -> bool {
-    let Some(action)=binding.get("action").and_then(Value::as_str) else {return false};
-    if let Some(argv)=at(data,"keybindings.global.action_argv").and_then(|a|a.get(action)).and_then(Value::as_array) {
-        let argv=argv.iter().map(Value::as_str).collect::<Option<Vec<_>>>().unwrap_or_default();
-        return !argv.is_empty() && exec_command(dispatcher).as_deref()==Some(argv.join(" ").as_str());
-    }
-    if let Some(prog)=action.strip_prefix("exec:") {
-        return exec_command(dispatcher).is_some_and(|cmd| cmd.split_whitespace().any(|t| t==prog || t.ends_with(&format!("/{prog}"))));
-    }
-    match action {
-        "hypr:killactive" => dispatcher.starts_with("hl.dsp.window.close("),
-        "hypr:fullscreen" => dispatcher.starts_with("hl.dsp.window.fullscreen(") && dispatcher.contains("\"fullscreen\""),
-        _ => false,
-    }
+    binding.get("action").and_then(Value::as_str)
+        .is_some_and(|action| mios_resolver::keybindings::lua_dispatcher_realizes(data,action,dispatcher))
 }
 pub fn prelude(data: &Value) -> Result<String,String> {
     if at(data,"keybindings.global.enabled").and_then(Value::as_bool)!=Some(true) {return Ok(String::new());}
@@ -158,24 +134,26 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
         let flags=if escape {",{dont_inhibit=true,submap_universal=true}"} else {""};
         // C-22: the literal bind on this chord realizes the row -> no second handle. A literal that runs a different
         // action would make the row dead (no handle of its own) and hide the collision, so it is an error (D1).
+        // Every literal on the chord must be the row's realization: one foreign literal is a second action on the key.
         let realized=match bound.get(&chord) {
             None => false,
-            Some(dispatchers) if dispatchers.iter().any(|d| realizes(data,binding,d)) => true,
+            Some(dispatchers) if dispatchers.iter().all(|d| realizes(data,binding,d)) => true,
             Some(dispatchers) => {
                 let id=binding.get("id").and_then(Value::as_str).unwrap_or("?");
                 let action=binding.get("action").and_then(Value::as_str).unwrap_or("?");
                 if binding.get("tier").and_then(Value::as_integer)!=Some(2) {
-                    return Err(format!("[keybindings.global] {id}: chord {chord} is already bound by the compositor to {} (not {action}); choose a free chord", dispatchers.join(" and ")));
+                    let foreign=dispatchers.iter().filter(|d| !realizes(data,binding,d)).cloned().collect::<Vec<_>>();
+                    return Err(format!("[keybindings.global] {id}: chord {chord} is already bound by the compositor to {} (not {action}); choose a free chord", foreign.join(" and ")));
                 }
                 false
             }
         };
         if binding.get("tier").and_then(Value::as_integer)!=Some(2) && !realized {
             let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
-            let quoted=format!("'{}'",action.replace('\'', "'\\''"));
+
             // The dispatcher is kept with the handle so a `bypass` on this row binds the same action (escapes below).
             // do ... end scopes d and b to this row: the section's closure keeps its Lua local budget (200) for rows.
-            out+=&format!(" do local d=mios_native_hl.dsp.exec_cmd({})\n local b=mios_native_hl.bind({},d{flags})\n if b then table.insert(mios_input_handles,{{handle=b,key={},dispatcher=d,escape={escape}}}) end end\n",q(&format!("/usr/libexec/mios/mios-inputd dispatch {quoted}")),q(&chord),q(&chord));
+            out+=&format!(" do local d=mios_native_hl.dsp.exec_cmd({})\n local b=mios_native_hl.bind({},d{flags})\n if b then table.insert(mios_input_handles,{{handle=b,key={},dispatcher=d,escape={escape}}}) end end\n",q(&mios_resolver::keybindings::dispatch_command(action)),q(&chord),q(&chord));
         }
         if binding.get("tier").and_then(Value::as_integer)==Some(2) {
             let action=binding.get("action").and_then(Value::as_str).ok_or("VM action missing")?;
@@ -726,13 +704,42 @@ end
         let b=|t:&str| -> Value { toml::from_str(t).unwrap() };
         assert!(realizes(&v,&b("action='mios:screenshot-region'"),"hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))"));
         assert!(!realizes(&v,&b("action='mios:screenshot-region'"),"hl.dsp.exec_cmd(\"/usr/bin/mios-shot window\"))"));
-        assert!(realizes(&v,&b("action='exec:mios-terminal'"),"hl.dsp.exec_cmd(\"alacritty -e /usr/libexec/mios/mios-terminal\"))"));
+        assert!(realizes(&v,&b("action='exec:mios-terminal'"),"hl.dsp.exec_cmd(\"alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal\"))"));
         assert!(!realizes(&v,&b("action='exec:mios-terminal'"),"hl.dsp.exec_cmd(\"alacritty\"))"));
+        assert!(!realizes(&v,&b("action='exec:mios-terminal'"),"hl.dsp.exec_cmd(\"alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action ai\"))"));
+        assert!(!realizes(&v,&b("action='exec:alacritty'"),"hl.dsp.exec_cmd(\"alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal --action system\"))"));
         assert!(realizes(&v,&b("action='hypr:killactive'"),"hl.dsp.window.close())"));
         assert!(!realizes(&v,&b("action='hypr:killactive'"),"hl.dsp.layout(\"togglesplit\"))"));
         assert!(realizes(&v,&b("action='hypr:fullscreen'"),"hl.dsp.window.fullscreen({[\"mode\"] = \"fullscreen\", [\"action\"] = \"toggle\"}))"));
         assert!(!realizes(&v,&b("action='hypr:fullscreen'"),"hl.dsp.window.fullscreen({[\"mode\"] = \"maximized\"}))"));
-        assert_eq!(exec_command("hl.dsp.exec_cmd(\"a \\\"b\\\" \\065\")"),Some("a \"b\" A".into()));
+    }
+
+    /// V1 (round-2 verifier): an `exec:<prog>` row moved onto a chord whose literal merely mentions the program among
+    /// its words was taken as realized -> no dispatch handle, a dead row, and a key that runs another action. Every
+    /// probe the verifier ran goes through the FULL projection (the literals come from [keybindings.actions], the
+    /// terminal and launcher keys, not the compositor tables). Positive control: the same row on a free chord gets its
+    /// own dispatch handle, and the shipped terminal row stays realized by its literal (no second handle).
+    #[test]
+    fn exec_row_on_an_unrelated_literal_chord_is_rejected() {
+        use crate::render::render_hyprland::project;
+        let shipped=project(&vendor()).unwrap();
+        assert!(!shipped.contains("mios-inputd dispatch 'exec:mios-terminal'"),"control: the terminal row is realized by SUPER+Return's literal");
+        for (action,chord,literal) in [
+            ("exec:alacritty","CTRL+ALT+SHIFT+m","--action system"),
+            ("exec:mios-terminal","CTRL+ALT+SHIFT+a","--action ai"),
+            ("exec:quickshell","SUPER+R","call drawer toggle"),
+            ("exec:env","SUPER+Q","mios-terminal\")"),
+        ] {
+            let mut d=vendor();
+            row_mut(&mut d,"session-scale-up")["action"]=Value::String(action.into());
+            row_mut(&mut d,"session-scale-up")["chord"]=Value::String(chord.into());
+            let err=project(&d).unwrap_err();
+            assert!(err.contains("session-scale-up: chord") && err.contains(&format!("(not {action})")) && err.contains(literal),"{action} on {chord}: {err}");
+            // positive control: a free chord renders, with the row's own dispatch handle
+            row_mut(&mut d,"session-scale-up")["chord"]=Value::String("CTRL+ALT+SHIFT+F9".into());
+            let lua=project(&d).unwrap();
+            assert!(lua.contains(&format!("mios-inputd dispatch '{action}'")) && lua.contains("mios_native_hl.bind(\"CTRL+ALT+SHIFT+f9\",d"),"{action}: no dispatch handle on the free chord");
+        }
     }
 
     /// Verifier observation 2: each dispatch row used to declare two section-level locals (d, b), halving the 200-local
