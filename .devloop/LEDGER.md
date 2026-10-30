@@ -3673,3 +3673,8 @@ Camera channels and native PipeWire sources are live at bb6dcd8f3ef84e7b217daf40
 ## 2026-10-30T20:11:31.806725+00:00 — mios-global-launch-camera-normalization
 
 Shared native application preflight and all dock/drawer/search call sites are LIVE; all11 installed Flatpak sandbox probes and mapped Spotify/Discord window checks pass. Source/static build audit, five native tests, one desktop metadata test, five private portal controls and actual shared-QML failure/timeout tests passed. Normalized camera build 3c556268b307306135dc0b14ae0a20a1447257df88e22b5a32e566ece87c110e LIVE,71 regular/four source-preparer/two codec/seven native camera cases passed. Phone disconnected; physical camera proof pending. Primary760519/apps/geometry preserved. Evidence and limitations in docs/design/mios-desktop-continuation-handoff.md. No desktop restart or push.
+
+
+## 2026-10-30T21:17:44.738884+00:00 — mios-obs-camera-format-publication
+
+Native NV12 output replaces the I420 format unsupported by OBS32.1.1 PipeWire camera input. Real advertised format readiness gates idle capture; decoded timing normalized; readable sanitized client labels.72 regular/four source-preparation/two codec/seven native graph and consumer cases pass. LIVE 59e6e1fd9e0ed155d9fcd6fd30d754824cd49a2f7733f13ccee8999ea8eed1d2, idle listener-only update preserved current primary/apps/geometry. Physical OBS preview pending; unrelated audio/MIDI camera-dropdown filtering remains open. Evidence in mios-camera-obs-* under /var/lib/mios-build/rdp-delivery.

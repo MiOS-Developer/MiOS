@@ -36,6 +36,8 @@ def main():
         assert len(proof)==1
         entry=json.loads(proof[0]);entry.update(format=format_name,case=case_name)
         assert entry['frames']==12 and entry['bytes']==1382400
+        assert entry['advertised_video_format'] and not entry['consumer_dimensions_forced']
+        assert entry['native_format']=='NV12'
         assert entry['permission_controls'] and entry['consumer_idle_deactivates'] and entry['consumer_reopen_resumes'] and entry['disconnect_cleanup']
         results.append(entry)
         print(json.dumps({'case':case_name,'format':format_name,'passed':True,'native_frames':entry['frames']}),flush=True)

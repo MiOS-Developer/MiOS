@@ -683,7 +683,7 @@ impl Worker {
         if self.cfg.native.log_negotiation && std::env::var_os("GST_DEBUG").is_none() {
             cmd.env("GST_DEBUG", "2");
         }
-        cmd.args(pipeline_args(self.media, name))
+        cmd.args(pipeline_args(self.media, name, &self.display_name))
             .env(
                 "PIPEWIRE_RUNTIME_DIR",
                 format!("/run/user/{}", self.cfg.operator_uid),
@@ -716,7 +716,16 @@ impl Worker {
                     let Some(output) = self.read_graph(name)? else {
                         break;
                     };
-                    if let Some((id, active)) = video_node(&output, name) {
+                    if let Some((id, active, formats_ready)) = video_node(&output, name) {
+                        // A provider node exists before its first decoded caps.
+                        // Stopping capture here leaves camera consumers with an
+                        // empty format list and no way to request a stream.
+                        if !formats_ready {
+                            if started.elapsed() > Duration::from_millis(self.cfg.native.camera_timeout_ms) {
+                                anyhow::bail!("native camera did not publish usable video formats");
+                            }
+                        }
+                        if formats_ready {
                         node_seen = true;
                         let mut nodes = self.stats.camera_sources.lock().unwrap();
                         let entry = json!({"name":name,"node_id":id,"active":active,"device":self.display_name,"width":self.media.width,"height":self.media.height,"format":format!("{:?}",self.media.format)});
@@ -731,6 +740,7 @@ impl Worker {
                             if active {
                                 last_sample = Instant::now();
                             }
+                        }
                         }
                     }
                     poll_at =
@@ -791,7 +801,7 @@ impl Worker {
         result
     }
 }
-fn pipeline_args(media: MediaType, name: &str) -> Vec<String> {
+fn pipeline_args(media: MediaType, name: &str, display_name: &str) -> Vec<String> {
     let mut args: Vec<String> = [
         "-q",
         "fdsrc",
@@ -837,6 +847,9 @@ fn pipeline_args(media: MediaType, name: &str) -> Vec<String> {
     args.extend(decode);
     args.extend([
         "!".into(),
+        "capssetter".into(),
+        format!("caps=video/x-raw,framerate=(fraction){}/{}",media.frame_rate_numerator,media.frame_rate_denominator),
+        "!".into(),
         "videoconvert".into(),
         "!".into(),
         "videoscale".into(),
@@ -852,24 +865,29 @@ fn pipeline_args(media: MediaType, name: &str) -> Vec<String> {
                 .map(String::from),
         );
     }
-    args.extend(["pipewiresink".into(),"mode=provide".into(),"sync=false".into(),"async=false".into(),format!("stream-properties=props,node.name=(string){name},node.description=(string)MiOS-Remote-Camera,media.class=(string)Video/Source,node.virtual=(boolean)true")]);
+    // Keep the native device label readable; the internal node name carries
+    // connection ownership. Client labels cannot inject structure syntax.
+    let label: String = display_name.chars().take(64).map(|c| if c.is_alphanumeric() || c == ' ' {c} else {'-'}).collect();
+    let label = if label.trim().is_empty() {"Camera"} else {label.trim()};
+    args.extend(["pipewiresink".into(),"mode=provide".into(),"sync=false".into(),"async=false".into(),format!("stream-properties=\"props,node.name=(string){name},node.description=(string)\\\"{label}\\\",media.class=(string)Video/Source,media.type=(string)Video,media.role=(string)Camera,node.virtual=(boolean)true\"")]);
     args
 }
 // Normalize the decoded frame to the selected native source dimensions. A
 // client may encode a larger camera frame than the negotiated media type.
 fn output_caps(media: MediaType) -> String {
     format!(
-        "video/x-raw,format=I420,width={},height={}",
+        "video/x-raw,format=NV12,width={},height={}",
         media.width, media.height
     )
 }
-fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool)> {
+fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool, bool)> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     value.as_array()?.iter().find_map(|v| {
         if v["type"] != "PipeWire:Interface:Node" || v["info"]["props"]["node.name"] != name {
             return None;
         }
-        Some((v["id"].as_u64()?, v["info"]["state"] == "running"))
+        let ready = v["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["mediaSubtype"] == "raw" && f["size"]["width"].as_u64().unwrap_or(0) > 0 && f["size"]["height"].as_u64().unwrap_or(0) > 0 && f["framerate"]["num"].as_u64().unwrap_or(0) > 0 && f["framerate"]["denom"].as_u64().unwrap_or(0) > 0));
+        Some((v["id"].as_u64()?, v["info"]["state"] == "running", ready))
     })
 }
 #[allow(unsafe_code)]
@@ -934,7 +952,7 @@ mod tests {
         let media = MediaType::new(MediaFormat::H264, 720, 1280, 30, 1, 1, 1, 1).unwrap();
         assert_eq!(
             output_caps(media),
-            "video/x-raw,format=I420,width=720,height=1280"
+            "video/x-raw,format=NV12,width=720,height=1280"
         );
         let raw = MediaType::new(MediaFormat::I420, 720, 1280, 30, 1, 1, 1, 0).unwrap();
         assert!(!output_caps(raw).contains(';'));
@@ -1073,9 +1091,20 @@ mod tests {
     #[test]
     fn camera_node_inspection_requires_its_exact_name_and_type() {
         let bytes=br#"[{"id":8,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"node.name":"mios-test"}}}]"#;
-        assert_eq!(video_node(bytes, "mios-test"), Some((8, true)));
+        assert_eq!(video_node(bytes, "mios-test"), Some((8, true, false)));
         assert_eq!(video_node(bytes, "other"), None);
         assert_eq!(video_node(b"invalid", "mios-test"), None);
+    }
+    #[test]
+    fn camera_publication_requires_usable_advertised_video_formats() {
+        let mut graph = json!([{"id":8,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"node.name":"mios-test"},"params":{"EnumFormat":[{"mediaType":"video","mediaSubtype":"raw","format":"I420","size":{"width":720,"height":1280},"framerate":{"num":30,"denom":1}}]}}}]);
+        assert_eq!(video_node(&serde_json::to_vec(&graph).unwrap(), "mios-test"), Some((8,false,true)));
+        graph[0]["info"]["params"]["EnumFormat"][0]["framerate"]["num"] = json!(0);
+        assert_eq!(video_node(&serde_json::to_vec(&graph).unwrap(), "mios-test"), Some((8,false,false)));
+        let args=pipeline_args(media(MediaFormat::H264),"mios-test-9","Front Camera,evil=(string)bad!");
+        let props=args.last().unwrap();
+        assert!(props.contains("node.description=(string)\\\"Front Camera-evil--string-bad-\\\""));
+        assert!(!props.contains("evil=(string)"));
     }
     #[test]
     fn camera_permission_disables_dynamic_factory() {
@@ -1361,6 +1390,10 @@ mod tests {
         };
         let output =
             std::env::temp_dir().join(format!("mios-camera-native-{}.i420", std::process::id()));
+        let graph = Command::new("pw-dump").args(["-N",node["name"].as_str().unwrap()]).output().unwrap();
+        assert!(graph.status.success());
+        let graph: serde_json::Value = serde_json::from_slice(&graph.stdout).unwrap();
+        assert!(graph.as_array().unwrap().iter().any(|n| n["info"]["props"]["node.name"] == node["name"] && n["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["format"] == "NV12"))), "Camera must advertise an OBS-compatible native NV12 format");
         assert!(!output.exists());
         let mut consumer = Command::new("gst-launch-1.0")
             .args([
@@ -1369,11 +1402,9 @@ mod tests {
                 &format!("target-object={}", node["name"].as_str().unwrap()),
                 "num-buffers=12",
                 "!",
-                &format!(
-                    "video/x-raw,format=I420,width={},height={}",
-                    dimensions().0,
-                    dimensions().1
-                ),
+                "videoconvert",
+                "!",
+                "video/x-raw,format=I420",
                 "!",
                 "filesink",
                 &format!("location={}", output.display()),
@@ -1435,6 +1466,8 @@ mod tests {
                 "pipewiresrc",
                 &format!("target-object={}", node["name"].as_str().unwrap()),
                 "num-buffers=6",
+                "!",
+                "videoconvert",
                 "!",
                 &format!(
                     "video/x-raw,format=I420,width={},height={}",
@@ -1521,7 +1554,7 @@ mod tests {
         }
         println!(
             "MIOS_CAMERA_NATIVE_PROOF {}",
-            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
+            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"advertised_video_format":true,"native_format":"NV12","consumer_dimensions_forced":false,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
         );
     }
     fn jpeg_frames() -> Vec<Vec<u8>> {
