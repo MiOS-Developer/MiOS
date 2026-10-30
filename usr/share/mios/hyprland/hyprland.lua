@@ -64,6 +64,7 @@ hl.window_rule({["name"] = "mios-placement", ["match"] = {["float"] = false}, ["
 hl.window_rule({["name"] = "mios-nested-desktop", ["match"] = {["class"] = "^aquamarine$", ["initial_title"] = "^aquamarine - WAYLAND-[0-9]+$"}, ["float"] = true, ["pin"] = true, ["no_initial_focus"] = true, ["no_follow_mouse"] = true, ["focus_on_activate"] = false, ["tag"] = "+mios-nested-desktop"})
 hl.window_rule({["name"] = "mios-managed-pip-aspect", ["match"] = {["tag"] = "^mios-pip-managed$"}, ["keep_aspect_ratio"] = true, ["no_follow_mouse"] = true, ["focus_on_activate"] = false})
 hl.window_rule({["name"] = "mios-browser-pip", ["match"] = {["class"] = "^(app\\.zen_browser\\.zen|zen|firefox|org\\.mozilla\\.firefox|mios-webshell|mios-portal)$", ["title"] = "^(Picture-in-Picture)$"}, ["float"] = true, ["pin"] = true, ["keep_aspect_ratio"] = true, ["size"] = "monitor_w*0.236 monitor_w*0.13275", ["move"] = "monitor_w*0.75 monitor_h*0.68"})
+hl.window_rule({["name"] = "mios-chromium-pip", ["match"] = {["class"] = "^(chromium|chromium-browser|Chromium-browser|org\\.chromium\\.Chromium|google-chrome|brave-browser|com\\.brave\\.Browser|microsoft-edge)$", ["title"] = "^(Picture in picture)$"}, ["float"] = true, ["pin"] = true, ["keep_aspect_ratio"] = true, ["size"] = "monitor_w*0.236 monitor_w*0.13275", ["move"] = "monitor_w*0.75 monitor_h*0.68"})
 hl.window_rule({["name"] = "mios-browser-dialogs", ["match"] = {["class"] = "^(app\\.zen_browser\\.zen|zen|firefox|org\\.mozilla\\.firefox|mios-webshell|mios-portal|org\\.gnome\\.Epiphany)$", ["title"] = "^(Library|About .*|Extension: .*|Page Info.*|Downloads|Print.*|Save As.*|Open File.*|Choose .*|Enter name of file.*)$"}, ["float"] = true, ["center"] = true})
 hl.window_rule({["name"] = "mios-portal", ["match"] = {["class"] = "^(mios-portal)$"}, ["float"] = true, ["center"] = true, ["size"] = "window_w window_h"})
 hl.window_rule({["name"] = "mios-modal-dialogs", ["match"] = {["modal"] = true}, ["float"] = true, ["center"] = true})
@@ -233,8 +234,10 @@ do
 end
 hl.window_rule({["name"] = "mios-fx-open", ["match"] = {["class"] = ".*"}, ["tag"] = "+shader_open_default:" .. mios_fx .. "glass-dissolve-open.glsl"})
 hl.window_rule({["name"] = "mios-fx-close", ["match"] = {["class"] = ".*"}, ["tag"] = "+shader_close_default:" .. mios_fx .. "glass-dissolve-close.glsl"})
-hl.window_rule({["name"] = "mios-fx-pip-open", ["match"] = {["title"] = "^(Picture-in-Picture)$"}, ["tag"] = "+shader_open:" .. mios_fx .. "none-open.glsl"})
-hl.window_rule({["name"] = "mios-fx-pip-close", ["match"] = {["title"] = "^(Picture-in-Picture)$"}, ["tag"] = "+shader_close:" .. mios_fx .. "none-close.glsl"})
+hl.window_rule({["name"] = "mios-fx-pip-open", ["match"] = {["title"] = "^(Picture-in-Picture|Picture in picture)$"}, ["tag"] = "+shader_open:" .. mios_fx .. "none-open.glsl"})
+hl.window_rule({["name"] = "mios-fx-pip-close", ["match"] = {["title"] = "^(Picture-in-Picture|Picture in picture)$"}, ["tag"] = "+shader_close:" .. mios_fx .. "none-close.glsl"})
+hl.window_rule({["name"] = "mios-fx-pip-popout-open", ["match"] = {["initial_title"] = "^Discord Popout$"}, ["tag"] = "+shader_open:" .. mios_fx .. "none-open.glsl"})
+hl.window_rule({["name"] = "mios-fx-pip-popout-close", ["match"] = {["initial_title"] = "^Discord Popout$"}, ["tag"] = "+shader_close:" .. mios_fx .. "none-close.glsl"})
 hl.window_rule({["name"] = "mios-fx-modal-open", ["match"] = {["modal"] = true}, ["tag"] = "+shader_open:" .. mios_fx .. "none-open.glsl"})
 hl.window_rule({["name"] = "mios-fx-modal-close", ["match"] = {["modal"] = true}, ["tag"] = "+shader_close:" .. mios_fx .. "none-close.glsl"})
 hl.window_rule({["name"] = "mios-fx-portals-open", ["match"] = {["class"] = "^(xdg-desktop-portal-gtk|xdg-desktop-portal-gnome|org\\.freedesktop\\.impl\\.portal\\..*)$"}, ["tag"] = "+shader_open:" .. mios_fx .. "none-open.glsl"})
@@ -244,8 +247,9 @@ mios_section("mios-wobbly", function()
 hl.plugin.load("/usr/lib64/mios/mios-wobbly.so")
 pcall(hl.config, {["plugin"] = {["mios_wobbly"] = {["spring_k"] = 520, ["anchor_k"] = 40, ["friction"] = 11, ["max_stretch"] = 0.3, ["grid"] = 24, ["pane_fade"] = 1, ["tag"] = "mios-wobbly", ["exclude_tag"] = "mios-nowobbly"}}})
 hl.window_rule({["name"] = "mios-wobbly", ["match"] = {["class"] = ".*"}, ["tag"] = "+mios-wobbly"})
-hl.window_rule({["name"] = "mios-wobbly-skip-0", ["match"] = {["title"] = "^(Picture-in-Picture)$"}, ["tag"] = "+mios-nowobbly"})
-hl.window_rule({["name"] = "mios-wobbly-skip-1", ["match"] = {["modal"] = true}, ["tag"] = "+mios-nowobbly"})
+hl.window_rule({["name"] = "mios-wobbly-skip-0", ["match"] = {["title"] = "^(Picture-in-Picture|Picture in picture)$"}, ["tag"] = "+mios-nowobbly"})
+hl.window_rule({["name"] = "mios-wobbly-skip-1", ["match"] = {["initial_title"] = "^Discord Popout$"}, ["tag"] = "+mios-nowobbly"})
+hl.window_rule({["name"] = "mios-wobbly-skip-2", ["match"] = {["modal"] = true}, ["tag"] = "+mios-nowobbly"})
 end)
 mios_section("mios-lamp", function()
 if hl.plugin.mios_lamp then
@@ -400,7 +404,8 @@ end)
 -- outputs without an operator-saved scale when apply_to allows (deferred to a one-shot timer, never
 -- inside the event), and its mobile flag (logical short side under the breakpoint) selects the
 -- phone profile: a per-output workspace rule (one-window layout, no top gap so the window meets the
--- shell's shoulders) and a window rule that tiles new windows there. Mobile windows keep the GLOBAL
+-- shell's shoulders) and a window rule that tiles new windows there (never a window class whose own rule
+-- floats and pins it: the ShaderGlass pane; this rule is made later, so it would win). Mobile windows keep the GLOBAL
 -- decoration (rounding, border, shadow, hyprglass) exactly like desktop windows. Their controls:
 -- hyprbars_tab = "mobile" puts them on the window's own glass split into two touch tabs (hyprbars:mobile,
 -- when the plugin took the mobile keys: mios_state.hyprbars_mobile; otherwise the shell draws them),
@@ -561,7 +566,7 @@ end
     rules[name] = {
      hl.workspace_rule({workspace = sel, layout = M.layout, gaps_in = M.gaps_in,
       gaps_out = {top = 0, right = M.gaps_out, bottom = M.gaps_out, left = M.gaps_out}}),
-     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false}, tile = true}),
+     hl.window_rule({name = "mios-mobile-" .. name, match = {workspace = sel, float = false, class = "negative:^(shaderglass\\.exe)$"}, tile = true}),
     }
     local tabbed = false
     if mobiletabs then

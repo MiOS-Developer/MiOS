@@ -1658,7 +1658,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_CONFIG_PANE_FADE:=1.0}"
 : "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_CONFIG_SPRING_K:=520.0}"
 : "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_ENABLED:=true}"
-[ -n "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_EXCLUDE+x}" ] || MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_EXCLUDE='{ match = { title = "^(Picture-in-Picture)$" } },{ match = { modal = true } }'
+[ -n "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_EXCLUDE+x}" ] || MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_EXCLUDE='{ match = { title = "^(Picture-in-Picture|Picture in picture)$" } },{ match = { initial_title = "^Discord Popout$" } },{ match = { modal = true } }'
 : "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_EXCLUDE_TAG:=mios-nowobbly}"
 : "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_PATH:=/usr/lib64/mios/mios-wobbly.so}"
 : "${MIOS_DESKTOP_HYPRLAND_MIOS_WOBBLY_SOURCE_PATH:=usr/share/mios/hyprland/plugins/mios-wobbly}"
@@ -1689,12 +1689,12 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_CLOSE:=glass-dissolve-close}"
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_ENABLED:=true}"
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_OPEN:=glass-dissolve-open}"
-[ -n "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_OVERRIDES+x}" ] || MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_OVERRIDES='{ close = "none-close", name = "mios-fx-pip", open = "none-open", match = { title = "^(Picture-in-Picture)$" } },{ close = "none-close", name = "mios-fx-modal", open = "none-open", match = { modal = true } },{ close = "none-close", name = "mios-fx-portals", open = "none-open", match = { class = '"'"'^(xdg-desktop-portal-gtk|xdg-desktop-portal-gnome|org\.freedesktop\.impl\.portal\..*)$'"'"' } }'
+[ -n "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_OVERRIDES+x}" ] || MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_OVERRIDES='{ close = "none-close", name = "mios-fx-pip", open = "none-open", match = { title = "^(Picture-in-Picture|Picture in picture)$" } },{ close = "none-close", name = "mios-fx-pip-popout", open = "none-open", match = { initial_title = "^Discord Popout$" } },{ close = "none-close", name = "mios-fx-modal", open = "none-open", match = { modal = true } },{ close = "none-close", name = "mios-fx-portals", open = "none-open", match = { class = '"'"'^(xdg-desktop-portal-gtk|xdg-desktop-portal-gnome|org\.freedesktop\.impl\.portal\..*)$'"'"' } }'
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_PATCHES:=usr/share/mios/hyprland/patches/windowshade-build.patch}"
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_PATH:=/usr/lib64/mios/windowshade.so}"
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_SHADER_DIR:=/usr/share/mios/hyprland/shaders}"
 : "${MIOS_DESKTOP_HYPRLAND_WINDOWSHADE_SOURCE_REPOSITORY:=https://github.com/ManofJELLO/HyprWindowShade.git}"
-[ -n "${MIOS_DESKTOP_HYPRLAND_WINDOW_RULES+x}" ] || MIOS_DESKTOP_HYPRLAND_WINDOW_RULES='{ float = true, focus_on_activate = false, name = "mios-nested-desktop", no_follow_mouse = true, no_initial_focus = true, pin = true, tag = "+mios-nested-desktop", match = { class = "^aquamarine$", initial_title = "^aquamarine - WAYLAND-[0-9]+$" } },{ focus_on_activate = false, keep_aspect_ratio = true, name = "mios-managed-pip-aspect", no_follow_mouse = true, match = { tag = "^mios-pip-managed$" } },{ float = true, keep_aspect_ratio = true, move = "monitor_w*0.75 monitor_h*0.68", name = "mios-browser-pip", pin = true, size = "monitor_w*0.236 monitor_w*0.13275", match = { class = '"'"'^(app\.zen_browser\.zen|zen|firefox|org\.mozilla\.firefox|mios-webshell|mios-portal)$'"'"', title = "^(Picture-in-Picture)$" } },{ center = true, float = true, name = "mios-browser-dialogs", match = { class = '"'"'^(app\.zen_browser\.zen|zen|firefox|org\.mozilla\.firefox|mios-webshell|mios-portal|org\.gnome\.Epiphany)$'"'"', title = "^(Library|About .*|Extension: .*|Page Info.*|Downloads|Print.*|Save As.*|Open File.*|Choose .*|Enter name of file.*)$" } },{ center = true, float = true, name = "mios-portal", size = "window_w window_h", match = { class = "^(mios-portal)$" } },{ center = true, float = true, name = "mios-modal-dialogs", match = { modal = true } },{ center = true, float = true, name = "mios-file-portals", match = { class = '"'"'^(xdg-desktop-portal-gtk|xdg-desktop-portal-gnome|org\.freedesktop\.impl\.portal\..*)$'"'"' } },{ center = true, float = true, name = "mios-looking-glass", match = { class = "^(looking-glass-client)$" } }'
+[ -n "${MIOS_DESKTOP_HYPRLAND_WINDOW_RULES+x}" ] || MIOS_DESKTOP_HYPRLAND_WINDOW_RULES='{ float = true, focus_on_activate = false, name = "mios-nested-desktop", no_follow_mouse = true, no_initial_focus = true, pin = true, tag = "+mios-nested-desktop", match = { class = "^aquamarine$", initial_title = "^aquamarine - WAYLAND-[0-9]+$" } },{ focus_on_activate = false, keep_aspect_ratio = true, name = "mios-managed-pip-aspect", no_follow_mouse = true, match = { tag = "^mios-pip-managed$" } },{ float = true, keep_aspect_ratio = true, move = "monitor_w*0.75 monitor_h*0.68", name = "mios-browser-pip", pin = true, size = "monitor_w*0.236 monitor_w*0.13275", match = { class = '"'"'^(app\.zen_browser\.zen|zen|firefox|org\.mozilla\.firefox|mios-webshell|mios-portal)$'"'"', title = "^(Picture-in-Picture)$" } },{ float = true, keep_aspect_ratio = true, move = "monitor_w*0.75 monitor_h*0.68", name = "mios-chromium-pip", pin = true, size = "monitor_w*0.236 monitor_w*0.13275", match = { class = '"'"'^(chromium|chromium-browser|Chromium-browser|org\.chromium\.Chromium|google-chrome|brave-browser|com\.brave\.Browser|microsoft-edge)$'"'"', title = "^(Picture in picture)$" } },{ center = true, float = true, name = "mios-browser-dialogs", match = { class = '"'"'^(app\.zen_browser\.zen|zen|firefox|org\.mozilla\.firefox|mios-webshell|mios-portal|org\.gnome\.Epiphany)$'"'"', title = "^(Library|About .*|Extension: .*|Page Info.*|Downloads|Print.*|Save As.*|Open File.*|Choose .*|Enter name of file.*)$" } },{ center = true, float = true, name = "mios-portal", size = "window_w window_h", match = { class = "^(mios-portal)$" } },{ center = true, float = true, name = "mios-modal-dialogs", match = { modal = true } },{ center = true, float = true, name = "mios-file-portals", match = { class = '"'"'^(xdg-desktop-portal-gtk|xdg-desktop-portal-gnome|org\.freedesktop\.impl\.portal\..*)$'"'"' } },{ center = true, float = true, name = "mios-looking-glass", match = { class = "^(looking-glass-client)$" } }'
 : "${MIOS_DESKTOP_HYPRLAND_WORKSPACE_COUNT:=10}"
 : "${MIOS_DESKTOP_HYPRLAND_XDPH_ALLOW_TOKEN_BY_DEFAULT:=true}"
 : "${MIOS_DESKTOP_HYPRLAND_XDPH_CONFIG:=hypr/xdph.conf}"
@@ -1921,6 +1921,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_PIP_GRAVITY_CONFIG_POLL_MS:=2000}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_ENABLED:=true}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_FIT_DEFAULT_WINDOW:=true}"
+: "${MIOS_DESKTOP_PIP_GRAVITY_FULLSCREEN_RELEASE_MS:=600}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_HUD_GAP:=theme.shell.edge_margin_px}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_HUD_MAX_HEIGHT_FRAC:=0.25}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_HUD_NAMESPACES:=mios-topbar,mios-dock,mios-appmenu}"
@@ -1928,12 +1929,14 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_PIP_GRAVITY_IDLE_POLL_MS:=120}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_INITIAL_WIDTH_FRAC:=0.24}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_KEEP_ABOVE:=true}"
-[ -n "${MIOS_DESKTOP_PIP_GRAVITY_MATCH+x}" ] || MIOS_DESKTOP_PIP_GRAVITY_MATCH='{ title = "^(Picture-in-Picture)$" },{ class = "(?i)^discord$", initial_title = "^Discord Popout$" },{ class = "^chromium-browser$", sibling_class = "(?i)^spotify$" }'
+[ -n "${MIOS_DESKTOP_PIP_GRAVITY_MATCH+x}" ] || MIOS_DESKTOP_PIP_GRAVITY_MATCH='{ title = "^(Picture-in-Picture|Picture in picture)$" },{ class = '"'"'(?i)^(discord|discordptb|discordcanary|vesktop|com\.discordapp\.discord(ptb|canary)?)$'"'"', initial_title = "^Discord Popout$" },{ class = "^(chromium-browser|Chromium-browser|chromium)$", sibling_class = '"'"'(?i)^(spotify|com\.spotify\.client)$'"'"' }'
 : "${MIOS_DESKTOP_PIP_GRAVITY_MAX_WIDTH_FRAC:=1.0}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_MIN_WIDTH_FRAC:=0.02}"
+: "${MIOS_DESKTOP_PIP_GRAVITY_MIN_WIDTH_PX:=160}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_RAILS:=left,right}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_RAIL_MARGIN:=theme.shell.edge_margin_px}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_SETTLE_MS:=350}"
+: "${MIOS_DESKTOP_PIP_GRAVITY_SIZE_SNAP_PX:=24}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_SPRING_DAMPING:=22.0}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_SPRING_STIFFNESS:=260.0}"
 : "${MIOS_DESKTOP_PIP_GRAVITY_STACK_GAP:=theme.shell.edge_margin_px}"
@@ -2080,7 +2083,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_SHADERGLASS_APP_ID:=org.mios.ShaderGlass}"
 [ -n "${MIOS_DESKTOP_SHADERGLASS_ASSET_PATTERN+x}" ] || MIOS_DESKTOP_SHADERGLASS_ASSET_PATTERN='^ShaderGlass-[0-9][0-9A-Za-z.+-]*-win-x64\.zip$'
 : "${MIOS_DESKTOP_SHADERGLASS_BINARY:=/usr/bin/mios-shaderglass}"
-[ -n "${MIOS_DESKTOP_SHADERGLASS_BINDINGS+x}" ] || MIOS_DESKTOP_SHADERGLASS_BINDINGS='{ args = "toggle", key = "SUPER + G", label = "ShaderGlass: overlay on the active window on/off" },{ args = "cycle", key = "SUPER + SHIFT + G", label = "ShaderGlass: cycle shader preset" },{ args = "setup", key = "SUPER + ALT + G", label = "ShaderGlass: pane setup (shader menu) / back to overlay" }'
+[ -n "${MIOS_DESKTOP_SHADERGLASS_BINDINGS+x}" ] || MIOS_DESKTOP_SHADERGLASS_BINDINGS='{ args = "toggle", key = "SUPER + G", label = "ShaderGlass: overlay on the active window on/off" },{ args = "cycle", key = "SUPER + SHIFT + G", label = "ShaderGlass: next shader (kept for the app)" },{ args = "setup", key = "SUPER + ALT + G", label = "ShaderGlass: pane setup (shader menu) / back to overlay" }'
 : "${MIOS_DESKTOP_SHADERGLASS_CAPTURE_CURSOR:=hidden}"
 : "${MIOS_DESKTOP_SHADERGLASS_CAPTURE_PICKER:=mios}"
 : "${MIOS_DESKTOP_SHADERGLASS_CAPTURE_REQUEST_TTL_MS:=15000}"
@@ -2100,6 +2103,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_SHADERGLASS_INSTALL_DIR:=/usr/lib/mios/shaderglass}"
 : "${MIOS_DESKTOP_SHADERGLASS_INSTALL_FILES:=ShaderGlass.exe,LICENSE,MANUAL.pdf,README.txt,CustomShader.slang}"
 : "${MIOS_DESKTOP_SHADERGLASS_LAUNCH_ARGS:=-f,-input,Choose...}"
+: "${MIOS_DESKTOP_SHADERGLASS_LAUNCH_CYCLE_SHORTCUT:=n}"
 : "${MIOS_DESKTOP_SHADERGLASS_LAUNCH_SETUP_SHORTCUT:=m}"
 : "${MIOS_DESKTOP_SHADERGLASS_LICENSE_MARKERS:=GNU GENERAL PUBLIC LICENSE,Version 3}"
 : "${MIOS_DESKTOP_SHADERGLASS_MAP_TIMEOUT_S:=60}"
@@ -2131,6 +2135,14 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_SHADERGLASS_PROFILE_SHADERNAME:=crt-geom}"
 : "${MIOS_DESKTOP_SHADERGLASS_PROFILE_TRANSPARENT:=0}"
 : "${MIOS_DESKTOP_SHADERGLASS_SOURCE_REPOSITORY:=https://github.com/mausimus/ShaderGlass}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_DIRECTORY:=mios/shaderglass}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_PERSIST:=true}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_RESTART_LIMIT:=2}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_RESUME:=true}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_ROOM_REQUESTS:=mios/shaderglass/room-requests.txt}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_RUNTIME_STATE:=mios/shaderglass/active.state}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_SAVE_TIMEOUT_MS:=3000}"
+: "${MIOS_DESKTOP_SHADERGLASS_STATE_STRIP_KEYS:=CaptureWindow,CaptureDesktop,CaptureDevice,CaptureFormat,InputArea,CroppedArea}"
 [ -n "${MIOS_DESKTOP_SHADERGLASS_WINDOW_CLASS+x}" ] || MIOS_DESKTOP_SHADERGLASS_WINDOW_CLASS='^(shaderglass\.exe)$'
 : "${MIOS_DESKTOP_SHADERGLASS_WINDOW_EXCLUDE_FROM_CAPTURES:=false}"
 : "${MIOS_DESKTOP_SHADERGLASS_WINDOW_GLASS_PRESET:=mios}"

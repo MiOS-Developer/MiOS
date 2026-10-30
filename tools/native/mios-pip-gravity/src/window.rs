@@ -1,4 +1,4 @@
-// AI-hint: Native per-window PiP ownership and reversible state, stored on the window itself.
+// AI-hint: Native per-window PiP ownership and reversible state, stored on the window itself, and the native stay-on-top policy (pinned layer; re-pin a lost pin; raise only above overlapping pinned windows).
 // AI-related: mios-pip-gravity, Quickshell DockPopup.qml, desktop.pip_gravity
 use serde_json::{json,Value};
 pub const MANAGED:&str="mios-pip-managed";
@@ -57,11 +57,46 @@ pub fn plan(w:&Value,mode:&str,pip_width:f64)->Result<Option<String>,String> {
  lua+="error('MIOS_PIP_APPLIED',0)";Ok(Some(lua))
 }
 pub fn status(w:&Value)->Value {json!({"address":w["address"],"pid":w["pid"],"stableId":w["stableId"],"pip":has_tag(w,MANAGED)})}
+fn rect(w:&Value)->Option<[f64;4]> {let n=|k:&str,i:usize|w.get(k).and_then(|v|v.get(i)).and_then(Value::as_f64);Some([n("at",0)?,n("at",1)?,n("size",0)?,n("size",1)?])}
+fn overlaps(a:[f64;4],b:[f64;4])->bool {a[0]<b[0]+b[2]&&b[0]<a[0]+a[2]&&a[1]<b[1]+b[3]&&b[1]<a[1]+a[3]}
+/// Native stay-on-top. Hyprland draws pinned floating windows after, and hit-tests them before, every unpinned window
+/// (fullscreen and special workspaces included), so a managed PiP needs only (a) its pin and (b) to sit above the other
+/// PINNED windows that overlap it. The client list is the native z-order (bottom first). Returns the indices of
+/// floating, non-fullscreen managed PiPs that lost their pin, and of pinned PiPs covered by an overlapping pinned
+/// non-PiP window. Unpinned windows never cause a raise (that only churned the z-order and the pointer focus).
+pub fn stacking(clients:&Value)->(Vec<usize>,Vec<usize>) {
+ let empty=Vec::new();let list=clients.as_array().unwrap_or(&empty);
+ let shown=|w:&Value|w["mapped"]==true&&w["hidden"]==false;
+ let (mut repin,mut raise)=(Vec::new(),Vec::new());
+ for (i,w) in list.iter().enumerate() {
+  if !has_tag(w,MANAGED)||!shown(w)||w["floating"]!=true||w["fullscreen"].as_i64().unwrap_or(0)!=0 {continue;}
+  if w["pinned"]!=true {repin.push(i);continue;}
+  let Some(r)=rect(w) else {continue};
+  if list[i+1..].iter().any(|o|!has_tag(o,MANAGED)&&shown(o)&&o["pinned"]==true&&o["floating"]==true&&o["monitor"]==w["monitor"]&&rect(o).is_some_and(|q|overlaps(q,r))) {raise.push(i);}
+ }
+ (repin,raise)
+}
 #[cfg(test)]
 mod tests {
  use super::*;
  fn win()->Value {json!({"address":"0xabc","pid":42,"stableId":"18000001","at":[120,180],"size":[960,692],"floating":true,"pinned":false,"fullscreen":0,"tags":[]})}
  #[test] fn origin_is_native_and_exactly_reversible(){let o=Origin::from_window(&win()).unwrap();assert_eq!(Origin::parse(&o.tag()).unwrap(),o);for t in ["bad","mios-pip-origin:0:0:0:1:2:0:30"] {assert!(Origin::parse(t).is_err());}}
  #[test] fn recycled_addresses_cannot_inherit_the_operation(){let w=win();let id=Identity::read(&w).unwrap();let mut recycled=w.clone();recycled["stableId"]=json!("18000002");assert!(!id.matches(&recycled));assert!(id.guard().contains("w.stable_id"));}
+ fn c(addr:&str,pip:bool,pinned:bool,at:[i64;2],size:[i64;2])->Value {json!({"address":addr,"mapped":true,"hidden":false,"floating":true,"pinned":pinned,"fullscreen":0,"monitor":0,"at":at,"size":size,"tags":if pip {json!([MANAGED])} else {json!([])}})}
+ #[test] fn unpinned_windows_never_raise_a_pinned_pip(){
+  // A new floating dialog opens above the PiP in the list: the native pinned layer already keeps the PiP above it.
+  let l=json!([c("0x1",true,true,[0,0],[400,300]),c("0x2",false,false,[100,100],[400,300])]);assert_eq!(stacking(&l),(vec![],vec![]));
+ }
+ #[test] fn an_overlapping_pinned_window_above_the_pip_raises_it_and_a_distant_one_does_not(){
+  let l=json!([c("0x1",true,true,[0,0],[400,300]),c("0x2",false,true,[100,100],[400,300])]);assert_eq!(stacking(&l),(vec![],vec![0]));
+  let l=json!([c("0x1",true,true,[0,0],[400,300]),c("0x2",false,true,[900,100],[400,300])]);assert_eq!(stacking(&l),(vec![],vec![]));
+  let l=json!([c("0x2",false,true,[100,100],[400,300]),c("0x1",true,true,[0,0],[400,300])]);assert_eq!(stacking(&l),(vec![],vec![]),"already above");
+  let l=json!([c("0x1",true,true,[0,0],[400,300]),c("0x3",true,true,[100,100],[400,300])]);assert_eq!(stacking(&l),(vec![],vec![]),"PiPs never fight each other");
+ }
+ #[test] fn a_floating_pip_that_lost_its_pin_is_reported_but_fullscreen_or_tiled_ones_are_not(){
+  let mut fs=c("0x2",true,false,[0,0],[400,300]);fs["fullscreen"]=json!(2);
+  let mut tiled=c("0x3",true,false,[0,0],[400,300]);tiled["floating"]=json!(false);
+  let l=json!([c("0x1",true,false,[0,0],[400,300]),fs,tiled,c("0x4",false,false,[0,0],[400,300])]);assert_eq!(stacking(&l),(vec![0],vec![]));
+ }
  #[test] fn toggle_keeps_original_flags_and_geometry_on_the_window(){let mut w=win();let on=plan(&w,"on",460.0).unwrap().unwrap();assert!(on.contains("mios-pip-origin:1:0:0:120:180:960:692"));w["tags"]=json!([MANAGED,Origin::from_window(&w).unwrap().tag()]);let off=plan(&w,"off",460.0).unwrap().unwrap();assert!(off.contains("x=960,y=692"));assert!(off.contains("x=120,y=180"));assert!(plan(&w,"on",460.0).unwrap().is_none());}
 }
