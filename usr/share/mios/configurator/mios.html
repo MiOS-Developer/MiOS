@@ -2318,6 +2318,12 @@
 
             <label for="f-rdp-bdt">native.bitmap_damage_threshold (0 = exact pixels; 0–16 ignores tiny colour changes)</label>
             <input type="number" min="0" max="16" id="f-rdp-bdt" data-key="remote.rdp.native.bitmap_damage_threshold" data-type="int" value="3">
+            <label for="f-rdp-progressive">EGFX Progressive for clients without H.264</label>
+            <input type="text" id="f-rdp-progressive" data-key="remote.rdp.native.progressive" data-type="bool" placeholder="true">
+            <label for="f-rdp-progressive-hz">Progressive capture ceiling (Hz)</label>
+            <input type="number" min="1" max="240" id="f-rdp-progressive-hz" data-key="remote.rdp.native.progressive_hz" data-type="int" value="30">
+            <label for="f-rdp-progressive-quant">Progressive wavelet quantization (6 = most detail)</label>
+            <input type="number" min="6" max="15" id="f-rdp-progressive-quant" data-key="remote.rdp.native.progressive_quant" data-type="int" value="8">
 
             <label for="f-rdp-bmh">native.bitmap_min_hz (floor of the adaptive bitmap capture rate)</label>
             <input type="text" id="f-rdp-bmh" data-key="remote.rdp.native.bitmap_min_hz" data-type="int" placeholder="2">

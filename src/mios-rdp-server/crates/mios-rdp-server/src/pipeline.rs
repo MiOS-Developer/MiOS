@@ -1,7 +1,7 @@
-//! EGFX (MS-RDPEGFX) factory/handler and the encode pipeline thread: newest captured I420 frame ->
-//! damage against the last ENCODED frame (16x16 macroblock grid, <= 16 region rects) -> OpenH264
-//! -> AVC420 WireToSurface1 with region rects -> ServerEvent::Egfx. Frame acks bound the frames in
-//! flight (backpressure) and drive the AIMD bitrate controller; delivered frames/s = acks/s.
+//! EGFX factory/handler and newest-frame encoding: I420 -> OpenH264 AVC420,
+//! or BGRA -> independent damaged RemoteFX Progressive tiles for AVC-disabled
+//! clients. Both use the negotiated DVC and bounded frame-ack window. Damage
+//! always references the last submitted frame. Delivered EGFX frames/s = acks/s.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -27,6 +27,7 @@ pub struct Gfx {
     pub closed: AtomicBool,
     pub avc420: AtomicBool,
     pub avc444: AtomicBool,
+    pub progressive: AtomicBool,
     pub advertised: Mutex<Vec<String>>,
     pub negotiated: Mutex<String>,
     pub acks: Mutex<Acks>,
@@ -53,6 +54,7 @@ impl Gfx {
         self.closed.store(false, Ordering::SeqCst);
         self.avc420.store(false, Ordering::SeqCst);
         self.avc444.store(false, Ordering::SeqCst);
+        self.progressive.store(false, Ordering::SeqCst);
         self.advertised.lock().expect("gfx").clear();
         self.negotiated.lock().expect("gfx").clear();
         *self.acks.lock().expect("gfx") = Acks::default();
@@ -439,6 +441,92 @@ fn submit(gfx: &Gfx, surface: u16, data: &[u8], regions: &[Avc420Region], ts_ms:
     Ok(Some(frame_id))
 }
 
+/// Only the old V8/V8.1 THIN_CLIENT flag forbids Progressive. AVC_THIN_CLIENT
+/// on newer capability versions concerns AVC444, not the wavelet codec.
+fn supports_progressive(cap: &CapabilitySet) -> bool {
+    use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitiesV81Flags};
+    match cap {
+        CapabilitySet::V8 { flags } => !flags.contains(CapabilitiesV8Flags::THIN_CLIENT),
+        CapabilitySet::V8_1 { flags } => !flags.contains(CapabilitiesV81Flags::THIN_CLIENT),
+        _ => true,
+    }
+}
+
+/// Encode independent 64x64 TILE_SIMPLE blocks. Damage is compared with the
+/// last successfully submitted frame; dropped captures never become references.
+/// Edge pixels are replicated so partial tiles do not introduce dark borders.
+fn encode_progressive(frame: &Frame, previous: Option<&Frame>, index: u32, quant: u8) -> anyhow::Result<Option<Vec<u8>>> {
+    use ironrdp_graphics::progressive::{encode_first_pass, rgba_to_ycbcr};
+    use ironrdp_pdu::codecs::rfx::RfxRectangle;
+    use ironrdp_pdu::codecs::rfx::progressive::*;
+    let (w, h, stride) = (frame.width as usize, frame.height as usize, frame.stride as usize);
+    anyhow::ensure!(frame.layout == PixelLayout::Bgra && w > 0 && h > 0 && w <= u16::MAX as usize && h <= u16::MAX as usize
+        && stride >= w * 4 && frame.data.len() >= stride * h, "invalid Progressive BGRA frame");
+    anyhow::ensure!((6..=15).contains(&quant), "invalid Progressive quantization");
+    anyhow::ensure!(w.div_ceil(64) * h.div_ceil(64) <= u16::MAX as usize, "too many Progressive tiles");
+    let previous = previous.filter(|p| p.width == frame.width && p.height == frame.height && p.stride == frame.stride
+        && p.layout == PixelLayout::Bgra && p.data.len() >= stride * h);
+    let base = ComponentCodecQuant { ll3: quant, hl3: quant, lh3: quant, hh3: quant,
+        hl2: quant, lh2: quant, hh2: quant, hl1: quant, lh1: quant, hh1: quant };
+    let mut payloads = Vec::new();
+    let mut rgba = vec![0u8; 64 * 64 * 4];
+    let mut components = [[0i16; 4096]; 3];
+    // Reuse the entropy scratch buffer. Retaining its capacity per tile would
+    // consume over 100 MB for a 1100x2080 desktop even when it encodes to 58 KB.
+    let mut entropy = vec![0u8; 65536];
+    for y in (0..h).step_by(64) {
+        for x in (0..w).step_by(64) {
+            let (tw, th) = ((w - x).min(64), (h - y).min(64));
+            if previous.is_some_and(|p| (y..y + th).all(|row| {
+                let off = row * stride + x * 4;
+                frame.data[off..off + tw * 4] == p.data[off..off + tw * 4]
+            })) { continue; }
+            for ty in 0..64 {
+                for tx in 0..64 {
+                    let src = (y + ty.min(th - 1)) * stride + (x + tx.min(tw - 1)) * 4;
+                    let dst = (ty * 64 + tx) * 4;
+                    rgba[dst..dst + 4].copy_from_slice(&[frame.data[src + 2], frame.data[src + 1], frame.data[src], 255]);
+                }
+            }
+            let [yc, cb, cr] = &mut components;
+            rgba_to_ycbcr(&rgba, yc, cb, cr);
+            let mut planes: [Vec<u8>; 3] = std::array::from_fn(|_| Vec::new());
+            for (component, output) in components.iter_mut().zip(&mut planes) {
+                let len = encode_first_pass(component, &mut entropy, &base, &ComponentCodecQuant::LOSSLESS, false)
+                    .map_err(|e| anyhow::anyhow!("Progressive tile encoding: {e:?}"))?;
+                *output = entropy[..len].to_vec();
+            }
+            payloads.push((x as u16 / 64, y as u16 / 64, planes));
+        }
+    }
+    if payloads.is_empty() { return Ok(None); }
+    let tiles = payloads.iter().map(|(x, y, p)| ProgressiveTile::Simple(TileSimple {
+        quant_idx_y: 0, quant_idx_cb: 0, quant_idx_cr: 0, x_idx: *x, y_idx: *y,
+        flags: 0, y_data: &p[0], cb_data: &p[1], cr_data: &p[2], tail_data: &[],
+    })).collect();
+    let region = ProgressiveRegion { tile_size: 64, rects: vec![RfxRectangle { x: 0, y: 0, width: w as u16, height: h as u16 }],
+        quant_vals: vec![base], quant_prog_vals: vec![], flags: 0, tiles };
+    let mut blocks = Vec::new();
+    if index == 0 {
+        blocks.push(ProgressiveBlock::Sync(ProgressiveSyncPdu));
+        blocks.push(ProgressiveBlock::Context(ProgressiveContextPdu { context_id: 0, tile_size: 64, flags: 0 }));
+    }
+    blocks.extend([ProgressiveBlock::FrameBegin(ProgressiveFrameBeginPdu { frame_index: index, region_count: 1 }),
+        ProgressiveBlock::Region(region), ProgressiveBlock::FrameEnd(ProgressiveFrameEndPdu)]);
+    Ok(Some(encode_progressive_stream(&blocks).map_err(|e| anyhow::anyhow!("Progressive bitmap stream: {e}"))?))
+}
+
+fn submit_progressive(gfx: &Gfx, surface: u16, data: Vec<u8>, ts_ms: u32) -> Result<Option<u32>, String> {
+    let handle = gfx.handle.lock().expect("gfx").clone().ok_or("no EGFX server")?;
+    let (frame_id, msgs, channel) = {
+        let mut s = handle.lock().map_err(|_| "EGFX lock poisoned")?;
+        let Some(frame_id) = s.send_remotefx_progressive_frame(surface, 0, data, ts_ms) else { return Ok(None); };
+        (frame_id, s.drain_output(), s.channel_id())
+    };
+    flush(gfx, msgs, channel)?;
+    Ok(Some(frame_id))
+}
+
 fn flush(gfx: &Gfx, msgs: Vec<ironrdp_dvc::DvcMessage>, channel: Option<u32>) -> Result<(), String> {
     if msgs.is_empty() {
         return Ok(());
@@ -492,6 +580,7 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
     stats.bitrate_bps.store(u64::from(aimd.bps), Ordering::Relaxed);
     let mut want_idr = false;
     let mut codec_checked = false;
+    let mut progressive_index = 0u32;
 
     while !p.stop.load(Ordering::SeqCst) {
         if !p.authenticated.load(Ordering::SeqCst) {
@@ -503,18 +592,20 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
         if gfx.ready.load(Ordering::SeqCst) && !codec_checked {
             codec_checked = true;
             let h = gfx.handle.lock().expect("gfx").clone();
-            let (a420, a444) = h.and_then(|h| h.lock().ok().map(|s| (s.supports_avc420(), s.supports_avc444()))).unwrap_or((false, false));
+            let (a420, a444, progressive) = h.and_then(|h| h.lock().ok().map(|s| (s.supports_avc420(), s.supports_avc444(),
+                n.progressive && s.negotiated_capabilities().is_some_and(supports_progressive)))).unwrap_or((false, false, false));
             gfx.avc420.store(a420, Ordering::SeqCst);
             gfx.avc444.store(a444, Ordering::SeqCst);
-            info!(avc420 = a420, avc444 = a444, "EGFX codecs negotiated");
+            gfx.progressive.store(!a420 && progressive, Ordering::SeqCst);
+            info!(avc420 = a420, avc444 = a444, progressive = !a420 && progressive, "EGFX codecs negotiated");
             if !a420 {
-                warn!("client negotiated EGFX without AVC420: no H.264 is emitted");
+                info!(progressive, "client disabled AVC420: H.264 will not be emitted");
             }
         }
         if !gfx.ready.load(Ordering::SeqCst) {
             codec_checked = false;
         }
-        let ready = check_avc420_ready(gfx);
+        let ready = check_egfx_ready(gfx);
         if !ready {
             // no EGFX (or no AVC420) after egfx_wait: the classic bitmap path at a reduced rate
             let no_egfx = gfx.closed.load(Ordering::SeqCst) || authed.elapsed() > p.egfx_wait;
@@ -552,12 +643,16 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
         if bitmap_mode {
             info!("EGFX became ready: leaving the bitmap path");
             bitmap_mode = false;
-            stats.bitmap_mode.store(false, Ordering::Relaxed);
         }
-        if p.layout.load(Ordering::Relaxed) != 0 {
-            p.layout.store(0, Ordering::SeqCst);
-            p.capture_hz.store(p.target_hz, Ordering::SeqCst);
+        // PipeStats outlives an individual connection. A prior bitmap-only
+        // client must not leave the next EGFX client in bitmap pacing/reporting.
+        stats.bitmap_mode.store(false, Ordering::Relaxed);
+        let progressive = gfx.progressive.load(Ordering::SeqCst);
+        let layout = u32::from(progressive);
+        if p.layout.load(Ordering::Relaxed) != layout {
+            p.layout.store(layout, Ordering::SeqCst);
         }
+        p.capture_hz.store(if progressive { n.progressive_hz.min(p.target_hz).max(1) } else { p.target_hz }, Ordering::SeqCst);
         if p.suppressed.load(Ordering::Relaxed) {
             // client minimised / screen off: no capture, no encode
             gfx.wait(Duration::from_millis(50));
@@ -584,8 +679,8 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
             Ok(f) => f,
             Err(why) => anyhow::bail!("capture ended: {why}"),
         };
-        let (frame, refine) = match frame {
-            Some(f) if f.layout == PixelLayout::I420 => {
+        let (mut frame, refine) = match frame {
+            Some(f) if f.layout == if progressive { PixelLayout::Bgra } else { PixelLayout::I420 } => {
                 stats.captured.fetch_add(1, Ordering::Relaxed);
                 (f, false)
             }
@@ -625,6 +720,7 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
                     *stats.surface.lock().expect("stats") = (w as u16, h as u16);
                     surface = Some(Surface { id, w, h, generation: cur_gen });
                     last = None;
+                    progressive_index = 0;
                     want_idr = true;
                 }
                 Err(e) => {
@@ -636,6 +732,57 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
             }
         }
         let sid = surface.as_ref().expect("surface").id;
+
+        if progressive {
+            if let Some(l) = last.as_ref().filter(|l| l.width == w && l.height == h && l.stride == frame.stride) {
+                stabilize_bitmap(&mut frame.data, &l.data, w as usize, h as usize, frame.stride as usize, n.bitmap_damage_threshold);
+            }
+            let start = Instant::now();
+            let data = match encode_progressive(&frame, if want_idr || refine { None } else { last.as_ref() }, progressive_index, n.progressive_quant) {
+                Ok(data) => data,
+                Err(err) => {
+                    warn!("Progressive encoding refused: {err}; reverting this connection to bitmap updates");
+                    gfx.progressive.store(false, Ordering::SeqCst);
+                    mailbox.recycle(frame.data);
+                    continue;
+                }
+            };
+            let Some(data) = data else {
+                stats.skipped_static.fetch_add(1, Ordering::Relaxed);
+                mailbox.recycle(frame.data);
+                continue;
+            };
+            let bytes = data.len();
+            match submit_progressive(gfx, sid, data, t0.elapsed().as_millis() as u32) {
+                Ok(Some(id)) => {
+                    let sent = Instant::now();
+                    gfx.acks.lock().expect("gfx").sent.insert(id, (frame.ready_at, sent, bytes));
+                    stats.encoded.fetch_add(1, Ordering::Relaxed);
+                    stats.bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+                    let mut samples = stats.samples.lock().expect("stats");
+                    samples.encode_us.push(start.elapsed().as_micros() as u64);
+                    samples.convert_us.push(frame.convert_us);
+                    samples.capture_to_send_us.push(sent.saturating_duration_since(frame.ready_at).as_micros() as u64);
+                    drop(samples);
+                    progressive_index = progressive_index.wrapping_add(1);
+                    want_idr = progressive_index == 0;
+                    if let Some(old) = last.replace(frame) { mailbox.recycle(old.data); }
+                    // TILE_SIMPLE already carries the complete quantized tile; no
+                    // additional identical static refinement needs to be sent.
+                    refined = true;
+                }
+                Ok(None) => {
+                    stats.backpressured.fetch_add(1, Ordering::Relaxed);
+                    mailbox.recycle(frame.data);
+                }
+                Err(err) => {
+                    warn!("Progressive submission failed: {err}");
+                    mailbox.recycle(frame.data);
+                    gfx.wait(Duration::from_millis(50));
+                }
+            }
+            continue;
+        }
 
         let regions = if want_idr || refine {
             full_rect(w, h)
@@ -788,6 +935,156 @@ fn clone_meta(f: &Frame) -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn progressive_picture(w: u32, h: u32) -> Frame {
+        let mut data = vec![0; (w * h * 4) as usize];
+        for p in data.chunks_exact_mut(4) { p.copy_from_slice(&[192, 128, 64, 255]); }
+        Frame { seq: 1, width: w, height: h, stride: w * 4, layout: PixelLayout::Bgra,
+            data, ready_at: Instant::now(), capture_us: 0, convert_us: 0 }
+    }
+
+    #[test]
+    fn progressive_selection_keeps_avc_disabled_clients_on_egfx_but_respects_old_thin_clients() {
+        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitiesV104Flags};
+        assert!(supports_progressive(&CapabilitySet::V10_6 { flags: CapabilitiesV104Flags::AVC_DISABLED }));
+        assert!(supports_progressive(&CapabilitySet::V10_6 { flags: CapabilitiesV104Flags::AVC_DISABLED | CapabilitiesV104Flags::AVC_THIN_CLIENT }));
+        assert!(!supports_progressive(&CapabilitySet::V8 { flags: CapabilitiesV8Flags::THIN_CLIENT }));
+        assert!(!supports_progressive(&CapabilitySet::V8_1 { flags: CapabilitiesV81Flags::THIN_CLIENT }));
+        assert!(supports_progressive(&CapabilitySet::V8 { flags: CapabilitiesV8Flags::SMALL_CACHE }));
+        let gfx = Gfx::default();
+        gfx.progressive.store(true, Ordering::SeqCst);
+        assert!(!check_egfx_ready(&gfx));
+        gfx.ready.store(true, Ordering::SeqCst);
+        assert!(check_egfx_ready(&gfx));
+        assert!(!check_avc420_ready(&gfx), "AVC disabled still must never emit H.264");
+        gfx.reset();
+        assert!(!check_egfx_ready(&gfx));
+    }
+
+    #[test]
+    fn progressive_roundtrip_partial_tiles_and_rgb_channels() {
+        let f = progressive_picture(70, 66);
+        let data = encode_progressive(&f, None, 0, 8).unwrap().unwrap();
+        assert!(data.len() < f.data.len() / 8, "a flat desktop must compress");
+        let mut decoder = ironrdp_graphics::progressive::ProgressiveDecoder::new();
+        let decoded = decoder.decode_bitmap(1, 0, 70, 66, &data).expect("decode actual encoded blocks");
+        assert_eq!(decoded.len(), 4);
+        assert!(decoded.iter().any(|t| t.x_idx == 1 && t.y_idx == 1));
+        for tile in decoded {
+            for pixel in tile.pixels.chunks_exact(4) {
+                for (got, expected) in pixel[..3].iter().zip([64i16, 128, 192]) {
+                    assert!((i16::from(*got) - expected).abs() <= 4, "BGRA/RGBA or wavelet mismatch: {pixel:?}");
+                }
+            }
+            assert!(tile.update_rectangles.iter().all(|r| r.right <= 70 && r.bottom <= 66));
+        }
+        assert!(decoder.decode_bitmap(1, 0, 70, 66, &data[..data.len() / 2]).is_err(), "truncated REGION payload must fail");
+    }
+
+    #[test]
+    fn progressive_damage_uses_submitted_reference_and_retains_context() {
+        let f = progressive_picture(128, 64);
+        let mut decoder = ironrdp_graphics::progressive::ProgressiveDecoder::new();
+        let first = encode_progressive(&f, None, 0, 6).unwrap().unwrap();
+        assert_eq!(decoder.decode_bitmap(2, 0, 128, 64, &first).unwrap().len(), 2);
+        assert!(encode_progressive(&f, Some(&f), 1, 6).unwrap().is_none());
+        let mut moved = progressive_picture(128, 64);
+        moved.data[(20 * 128 + 100) * 4 + 2] = 255;
+        // A capture can be dropped; the reference is still f until submit succeeds.
+        let pending = encode_progressive(&moved, Some(&f), 1, 6).unwrap().unwrap();
+        assert_eq!(pending, encode_progressive(&moved, Some(&f), 1, 6).unwrap().unwrap());
+        let changed = decoder.decode_bitmap(2, 0, 128, 64, &pending).unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!((changed[0].x_idx, changed[0].y_idx), (1, 0));
+        let rgba = &changed[0].pixels[(20 * 64 + 36) * 4..][..4];
+        assert!(rgba[0] > 220, "one-pixel red change must survive: {rgba:?}");
+        let resized = progressive_picture(64, 64);
+        let refresh = encode_progressive(&resized, Some(&f), 0, 6).unwrap().unwrap();
+        assert_eq!(decoder.decode_bitmap(3, 0, 64, 64, &refresh).unwrap().len(), 1);
+        let mut bad = progressive_picture(64, 64);
+        bad.stride = 4;
+        assert!(encode_progressive(&bad, None, 0, 8).is_err());
+        assert!(encode_progressive(&f, None, 0, 16).is_err());
+    }
+
+    #[test]
+    fn progressive_real_dvc_negotiation_enforces_frame_ack_backpressure() {
+        use ironrdp_dvc::DvcProcessor;
+        use ironrdp_egfx::pdu::{CapabilitiesV104Flags, FrameAcknowledgePdu, GfxPdu, QueueDepth};
+        let gfx = Arc::new(Gfx::default());
+        let mut server = GraphicsPipelineServer::new(Box::new(Handler { gfx: Arc::clone(&gfx), max_in_flight: 1 }));
+        server.start(7).unwrap();
+        let cap = CapabilitySet::V10_6 { flags: CapabilitiesV104Flags::AVC_DISABLED };
+        let caps = GfxPdu::CapabilitiesAdvertise(CapabilitiesAdvertisePdu(vec![(&cap).into()]));
+        server.process(7, &ironrdp_core::encode_vec(&caps).unwrap()).unwrap();
+        assert!(server.is_ready());
+        assert!(!server.supports_avc420());
+        assert!(supports_progressive(server.negotiated_capabilities().unwrap()));
+        *gfx.handle.lock().unwrap() = Some(Arc::new(Mutex::new(server)));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        *gfx.sender.lock().unwrap() = Some(tx);
+        let sid = setup_surface(&gfx, 64, 64, None).unwrap();
+        assert!(rx.try_recv().is_ok(), "surface PDUs must reach event loop");
+        let data = encode_progressive(&progressive_picture(64, 64), None, 0, 8).unwrap().unwrap();
+        let first = submit_progressive(&gfx, sid, data.clone(), 0).unwrap().unwrap();
+        assert!(rx.try_recv().is_ok(), "encoded frame must reach DVC writer");
+        assert_eq!(submit_progressive(&gfx, sid, data.clone(), 1).unwrap(), None, "full ACK window must refuse another frame");
+        assert!(rx.try_recv().is_err(), "backpressure must emit no queued frame");
+        let handle = gfx.handle.lock().unwrap().clone().unwrap();
+        let ack = GfxPdu::FrameAcknowledge(FrameAcknowledgePdu { frame_id: first, queue_depth: QueueDepth::Unavailable, total_frames_decoded: 1 });
+        handle.lock().unwrap().process(7, &ironrdp_core::encode_vec(&ack).unwrap()).unwrap();
+        assert!(submit_progressive(&gfx, sid, data, 2).unwrap().is_some(), "ACK must reopen window");
+    }
+
+    #[test]
+    fn progressive_pipeline_clears_previous_connection_bitmap_state() {
+        use ironrdp_dvc::DvcProcessor;
+        use ironrdp_egfx::pdu::{CapabilitiesV104Flags, GfxPdu};
+        let gfx = Arc::new(Gfx::default());
+        let mut server = GraphicsPipelineServer::new(Box::new(Handler { gfx: Arc::clone(&gfx), max_in_flight: 1 }));
+        server.start(8).unwrap();
+        let cap=CapabilitySet::V10_6 { flags: CapabilitiesV104Flags::AVC_DISABLED };
+        let caps=GfxPdu::CapabilitiesAdvertise(CapabilitiesAdvertisePdu(vec![(&cap).into()]));
+        server.process(8,&ironrdp_core::encode_vec(&caps).unwrap()).unwrap();
+        *gfx.handle.lock().unwrap()=Some(Arc::new(Mutex::new(server)));
+        let (tx,mut rx)=tokio::sync::mpsc::unbounded_channel();
+        *gfx.sender.lock().unwrap()=Some(tx);
+        let stats=Arc::new(PipeStats::default());
+        stats.bitmap_mode.store(true,Ordering::SeqCst);
+        let mailbox=Arc::new(Mailbox::default());
+        mailbox.put(progressive_picture(64,64));
+        let stop=Arc::new(AtomicBool::new(false));
+        let thread=spawn(PipeParams {
+            native:Native::default(),target_hz:30,bitmap:Arc::new(BitmapSlot::default()),
+            layout:Arc::new(AtomicU32::new(1)),capture_hz:Arc::new(AtomicU32::new(30)),
+            authenticated:Arc::new(AtomicBool::new(true)),suppressed:Arc::new(AtomicBool::new(false)),
+            stop:Arc::clone(&stop),refresh_request:Arc::new(AtomicBool::new(false)),egfx_wait:Duration::ZERO,
+        },Arc::clone(&gfx),Arc::clone(&mailbox),Arc::clone(&stats));
+        let deadline=Instant::now()+Duration::from_secs(2);
+        while stats.encoded.load(Ordering::SeqCst)==0 && Instant::now()<deadline { std::thread::sleep(Duration::from_millis(2)); }
+        stop.store(true,Ordering::SeqCst);thread.join().unwrap();
+        assert_eq!(stats.encoded.load(Ordering::SeqCst),1,"actual encode thread must submit the new client's frame");
+        assert!(stats.bytes.load(Ordering::SeqCst)>0);
+        assert!(gfx.progressive.load(Ordering::SeqCst));
+        assert!(!stats.bitmap_mode.load(Ordering::SeqCst),"previous connection must not impose bitmap pacing or codec reporting");
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    #[ignore = "requires the recorded mobile BGRA fixture; reports compression/encode cost, not phone FPS"]
+    fn progressive_recorded_mobile_frame_compression() {
+        let path = std::env::var("MIOS_BITMAP_AFTER").expect("fixture path");
+        let data = std::fs::read(path).unwrap();
+        assert_eq!(data.len(), 1100 * 2080 * 4);
+        let f = Frame { data, ..progressive_picture(1100, 2080) };
+        let start = Instant::now();
+        let encoded = encode_progressive(&f, None, 0, 8).unwrap().unwrap();
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        let mut decoder = ironrdp_graphics::progressive::ProgressiveDecoder::new();
+        let tiles = decoder.decode_bitmap(0, 0, 1100, 2080, &encoded).unwrap();
+        assert_eq!(tiles.len(), 1100usize.div_ceil(64) * 2080usize.div_ceil(64));
+        println!("Progressive mobile full frame: {} bytes, {:.1} ms encode, {} decoded tiles; no phone throughput claim", encoded.len(), ms, tiles.len());
+    }
 
     fn pic(w: u32, h: u32) -> (Vec<u8>, u32) {
         let s = w.div_ceil(16) * 16;
@@ -980,9 +1277,9 @@ mod tests {
 }
 
 pub fn check_avc420_ready(gfx: &Gfx) -> bool {
-    if true {
-        let ready = gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst);
-        return ready;
-    }
-    false
+    gfx.ready.load(Ordering::SeqCst) && gfx.avc420.load(Ordering::SeqCst)
+}
+
+pub fn check_egfx_ready(gfx: &Gfx) -> bool {
+    check_avc420_ready(gfx) || (gfx.ready.load(Ordering::SeqCst) && gfx.progressive.load(Ordering::SeqCst))
 }
