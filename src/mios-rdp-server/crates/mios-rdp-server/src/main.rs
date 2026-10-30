@@ -411,11 +411,10 @@ async fn serve(cfg: Config) -> Result<()> {
         .with_connection_handler(Some(Box::new(session::Hooks { s: Arc::clone(&s) })))
         .with_connection_policy(ConnectionPolicy::Reject)
         .with_honor_client_desktop_size(Some(DesktopSize { width: cfg.native.max_width, height: cfg.native.max_height }));
-    // Legacy bitmap codecs for clients that negotiate EGFX without AVC420. Microsoft's Windows App on
-    // iOS/macOS sets AVC_DISABLED in every EGFX capability set and lists only NSCodec in its bitmap-codec
-    // capability, so with IronRDP's default list (RemoteFX, QOI, QOIZ) it got raw/RLE bitmap updates:
-    // several MB per 1100x2080 frame and TCP back-pressure on the phone link (mios, 2026-10-23).
-    // IronRDP ranks NSCodec below RemoteFX/QOI, so clients that offer those keep them.
+    // Legacy fallback when EGFX is unavailable or Progressive is disabled.
+    // AVC_DISABLED clients use acknowledged EGFX Progressive by default; their
+    // legacy bitmap-codec list is independent of EGFX capability negotiation.
+    // Offer NSCodec too so a deliberate fallback still compresses mobile frames.
     {
         use ironrdp_pdu::rdp::capability_sets::{Codec, CodecProperty, NsCodec, server_codecs_capabilities};
         let mut codecs = server_codecs_capabilities(&[]).map_err(|e| anyhow!("server bitmap codecs: {e}"))?;
@@ -729,6 +728,7 @@ async fn stats_loop(s: Arc<Session>) {
             "pacing": s.cfg.refresh_pacing,
             "gpu_guard": s.cfg.native.gpu_guard,
             "fps": (doc_core.2 * 10.0).round() / 10.0,
+            "fps_basis": if st.bitmap_mode.load(Ordering::Relaxed) { "socket_write_complete" } else { "egfx_frame_ack" },
             "captured_fps": (doc_core.0 * 10.0).round() / 10.0,
             "encoded_fps": (doc_core.1 * 10.0).round() / 10.0,
             "static_skipped_fps": (doc_core.4 * 10.0).round() / 10.0,
@@ -743,13 +743,15 @@ async fn stats_loop(s: Arc<Session>) {
             "bitmap_stale_dropped": st.bitmap_stale_dropped.load(Ordering::Relaxed),
             "bitmap_hz": s.cfg.native.bitmap_hz,
             "bitmap_capture_hz": s.capture_hz.load(Ordering::Relaxed),
+            "progressive_quant": s.cfg.native.progressive_quant,
+            "progressive_capture_hz": s.cfg.native.progressive_hz.min(s.cfg.target_hz),
             "bitrate_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,
             "frames_in_flight": st.frames_in_flight.load(Ordering::Relaxed),
             "backpressured": st.backpressured.load(Ordering::Relaxed),
             "idr": st.idr.load(Ordering::Relaxed),
             "refined": st.refined.load(Ordering::Relaxed),
-            "codec": active_codec(s.gfx.avc420.load(Ordering::Relaxed), cur.1, cur.5, st.bitmap_mode.load(Ordering::Relaxed)),
+            "codec": active_codec(s.gfx.avc420.load(Ordering::Relaxed), s.gfx.progressive.load(Ordering::Relaxed), cur.1, cur.5, st.bitmap_mode.load(Ordering::Relaxed)),
             "h264_profile_level": level.map(|(p, l)| json!({"profile_idc": p, "level_idc": l})),
             "slices": st.last_slices.load(Ordering::Relaxed),
             "surface": [surface.0, surface.1],
@@ -886,11 +888,13 @@ pub(crate) fn should_enable_microphone(cfg: &Config) -> bool {
     false
 }
 
-pub(crate) fn active_codec(avc420: bool, encoded: u64, bitmap_frames: u64, bitmap_mode: bool) -> &'static str {
+pub(crate) fn active_codec(avc420: bool, progressive: bool, encoded: u64, bitmap_frames: u64, bitmap_mode: bool) -> &'static str {
     if bitmap_mode || (bitmap_frames > 0 && encoded == 0) {
         "bitmap"
     } else if avc420 && encoded > 0 {
         "avc420"
+    } else if progressive && encoded > 0 {
+        "progressive"
     } else if bitmap_frames > 0 {
         "bitmap"
     } else {
@@ -915,11 +919,13 @@ mod tests {
     fn active_codec_reports_bitmap_when_forced_to_bitmap_mode() {
         // When EGFX negotiates AVC420 (avc420=true) but the pipeline is in bitmap_mode (encoded=0, bitmap_frames>0),
         // stats.json must report "bitmap", never "avc420".
-        assert_eq!(active_codec(true, 0, 25, true), "bitmap");
-        assert_eq!(active_codec(true, 0, 25, false), "bitmap");
-        assert_eq!(active_codec(true, 100, 0, false), "avc420");
-        assert_eq!(active_codec(false, 0, 10, false), "bitmap");
-        assert_eq!(active_codec(true, 0, 0, false), "none");
+        assert_eq!(active_codec(true, false, 0, 25, true), "bitmap");
+        assert_eq!(active_codec(true, false, 0, 25, false), "bitmap");
+        assert_eq!(active_codec(true, false, 100, 0, false), "avc420");
+        assert_eq!(active_codec(false, false, 0, 10, false), "bitmap");
+        assert_eq!(active_codec(true, false, 0, 0, false), "none");
+        assert_eq!(active_codec(false, true, 10, 0, false), "progressive");
+        assert_eq!(active_codec(false, true, 10, 2, true), "bitmap");
     }
 }
 

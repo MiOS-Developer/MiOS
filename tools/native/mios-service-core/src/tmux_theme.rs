@@ -346,16 +346,18 @@ impl TmuxThemeEngine {
             .and_then(|v| v.as_bool())
             == Some(true)
         {
-            let python = doc
+            // The native relay hook (single-flight, idempotent); never an interpreter per tmux event.
+            let relay = doc
                 .get("mcp")
-                .and_then(|v| v.get("python"))
+                .and_then(|v| v.get("agents"))
+                .and_then(|v| v.get("binary"))
                 .and_then(|v| v.as_str())
-                .ok_or("Missing [mcp].python for native workspace startup")?;
-            if !python.starts_with('/') || python.contains(['\n', '\r', '\0']) {
-                return Err("Unsafe [mcp].python for workspace startup".into());
+                .ok_or("Missing [mcp.agents].binary for the native workspace hook")?;
+            if !relay.starts_with('/') || relay.contains(['\n', '\r', '\0']) {
+                return Err("Unsafe [mcp.agents].binary for the workspace hook".into());
             }
-            let quoted_python = format!("'{}'", python.replace('\'', "'\\''"));
-            Some(format!("env TMUX='#{{socket_path}},#{{pid}},#{{session_id}}' TMUX_PANE='#{{pane_id}}' {quoted_python} /usr/libexec/mios/mios-mcp-server --workspace-ensure"))
+            let quoted_relay = format!("'{}'", relay.replace('\'', "'\\''"));
+            Some(format!("env TMUX='#{{socket_path}},#{{pid}},#{{session_id}}' TMUX_PANE='#{{pane_id}}' {quoted_relay} --workspace-hook ensure"))
         } else {
             None
         };
