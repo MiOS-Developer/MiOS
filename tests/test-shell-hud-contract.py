@@ -138,6 +138,8 @@ class TestSsot(unittest.TestCase):
 QML_TOOL = os.environ.get("MIOS_QML_TOOL", "/usr/lib64/qt6/bin/qml")
 # The commit before the wheel-up clamp fix: its volumeWheel lowers a sink that sits above volume_max_pct.
 PRE_CLAMP_FIX = "5b24d4716"
+# Negative controls: main as it was before this lane merged (main now contains the fix itself).
+PRE_SHELL_MAIN = "c2c7d0f90"
 WHEEL_CASES = [  # (label, volume, muted, max, deltas) -> expected (volume, muted, last return)
     ("step up", 0.30, False, 1.0, [120], (0.35, False, 35)),
     ("step down", 0.30, False, 1.0, [-120], (0.25, False, 25)),
@@ -259,7 +261,7 @@ class TestQml(unittest.TestCase):
         """main's drawer/search/keymap (theme radius, bg fill, outline) fail the same rule."""
         failing = 0
         for name in SURFACES:
-            r = subprocess.run(["git", "-C", ROOT, "show", f"main:usr/share/mios/quickshell/{name}"],
+            r = subprocess.run(["git", "-C", ROOT, "show", f"{PRE_SHELL_MAIN}:usr/share/mios/quickshell/{name}"],
                                capture_output=True, text=True)
             if r.returncode != 0:
                 self.skipTest("main not reachable from this checkout")
@@ -279,7 +281,7 @@ class TestQml(unittest.TestCase):
         a = read(os.path.join(QS, "AppMenu.qml"))
         self.assertIn('shellState.topbarShown("app_menu")', a)  # hidden unless the item is listed
         self.assertIn("radius: Glass.cornerFor(height)", a)      # the pills are the island's glass blobs
-        r = subprocess.run(["git", "-C", ROOT, "show", "main:usr/share/mios/quickshell/Nested.qml"],
+        r = subprocess.run(["git", "-C", ROOT, "show", f"{PRE_SHELL_MAIN}:usr/share/mios/quickshell/Nested.qml"],
                            capture_output=True, text=True)
         if r.returncode == 0:  # negative control: main's nested shell has no app menus
             self.assertNotIn("MiOS.AppMenu", r.stdout)
@@ -290,7 +292,7 @@ class TestQml(unittest.TestCase):
         self.assertIn('Quickshell.env("MIOS_SECRET_PROMPT_TITLE")', t)
         self.assertIn('Quickshell.env("MIOS_SECRET_PROMPT_MSG")', t)
         self.assertNotIn("Process.env", t)
-        r = subprocess.run(["git", "-C", ROOT, "show", "main:usr/share/mios/quickshell/SecretPrompt.qml"],
+        r = subprocess.run(["git", "-C", ROOT, "show", f"{PRE_SHELL_MAIN}:usr/share/mios/quickshell/SecretPrompt.qml"],
                            capture_output=True, text=True)
         if r.returncode == 0:  # negative control: main reads a non-existent Process.env and shows no title
             self.assertIn("Process.env", r.stdout)

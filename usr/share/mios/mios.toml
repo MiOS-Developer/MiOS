@@ -17525,6 +17525,7 @@ unit = [
     "tests/test-profile-gateway-model.py",
     "tests/test-tmux-oom-policy.py",
     "tests/test-tmux-os.py",
+    "tests/test-document-portal-isolation.py",
     "tests/test-hyprland-shader-contract.py",
     "tests/test-template-conform-sparse-bound.py",
     "tests/test-portal-product.py",
