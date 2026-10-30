@@ -1,11 +1,12 @@
-// AI-hint: mios-controls validation: renders the draft's compositor Lua through mios-gen (stdout only, the draft as a private user tier), runs the gate's keybind-collision analysis over the merged draft, adds controller system-layer checks, and reports only findings the draft introduces.
-// AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-controls/src/model.rs
-// AI-functions: Validator::run, render_lua, controller_findings, Outcome::new_findings
+// AI-hint: mios-controls validation: renders the draft's compositor Lua through mios-gen (stdout only, the draft as a private user tier), runs the gate's keybind-collision analysis over the merged draft, adds controller system-layer checks, loads the merged draft through mios-inputd's own config validator (room table, Guide layer, ownership contract), renders tmux-os keys for a tmux change (private 0700 dir, removed after), and reports only findings the draft introduces.
+// AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-inputd/src/config.rs (GlobalConfig::from_value), tools/native/mios-gen/src/terminal.rs (render-tmux-theme --runtime), tools/native/mios-controls/src/model.rs
+// AI-functions: Validator::run, render_lua, render_tmux, inputd_findings, controller_findings, Outcome::new_findings
 use crate::model::{at, str_list, Layers};
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Command, Stdio};
 use toml::Value;
 
@@ -14,6 +15,8 @@ pub struct Outcome {
     pub findings: Vec<String>,
     pub baseline: BTreeSet<String>,
     pub summary: String,
+    /// the compositor session rendered for the draft (the editor shows its binds)
+    pub lua: Option<String>,
 }
 
 impl Outcome {
@@ -43,55 +46,118 @@ impl Validator {
 
     /// The Lua session the compositor would load for `user_text` as the user tier. mios-gen prints it with
     /// --runtime and writes nothing; the draft lives in a private 0600 file only for the call.
-    pub fn render_lua(&self, layers: &Layers, user_text: &str) -> Result<String, String> {
-        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(std::env::temp_dir);
-        let path = dir.join(format!(".mios-controls-draft-{}.toml", std::process::id()));
+    /// The draft as a private 0600 user tier for the duration of `f` (removed afterwards).
+    fn with_draft<T>(user_text: &str, f: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
+        let dir = runtime_dir();
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!(".mios-controls-draft-{}-{n}.toml", std::process::id()));
         let _cleanup = Remove(path.clone());
-        let mut f = std::fs::OpenOptions::new()
+        let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        f.write_all(user_text.as_bytes()).map_err(|e| e.to_string())?;
-        drop(f);
+        file.write_all(user_text.as_bytes()).map_err(|e| e.to_string())?;
+        drop(file);
+        f(&path)
+    }
+
+    fn mios_gen(&self, layers: &Layers, draft: &Path, args: &[&str]) -> Result<std::process::Output, String> {
         let root = layers.root.display().to_string();
-        let out = Command::new(&self.mios_gen)
-            .args(["render-hyprland", "--root", &root, "--runtime"])
-            .env("MIOS_USER_TOML", &path)
+        Command::new(&self.mios_gen)
+            .args(args)
+            .args(["--root", &root])
+            .env("MIOS_USER_TOML", draft)
             .env("MIOS_TOML_ROOT", &root)
             .env("MIOS_HOST_TOML", layers.root.join("etc/mios/mios.toml"))
             .stdin(Stdio::null())
             .output()
-            .map_err(|e| format!("{}: {e}", self.mios_gen.display()))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            return Err(format!("render-hyprland rejected the draft: {}", err.lines().last().unwrap_or("").trim()));
-        }
-        String::from_utf8(out.stdout).map_err(|_| "render-hyprland printed non-UTF-8 Lua".into())
+            .map_err(|e| format!("{}: {e}", self.mios_gen.display()))
     }
 
-    fn analyze(&self, layers: &Layers, user_text: &str) -> Result<(Vec<String>, String), String> {
+    /// The Lua session the compositor would load for `user_text` as the user tier. mios-gen prints it with
+    /// --runtime and writes nothing.
+    pub fn render_lua(&self, layers: &Layers, user_text: &str) -> Result<String, String> {
+        Self::with_draft(user_text, |path| {
+            let out = self.mios_gen(layers, path, &["render-hyprland", "--runtime"])?;
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                return Err(format!("render-hyprland rejected the draft: {}", err.lines().last().unwrap_or("").trim()));
+            }
+            String::from_utf8(out.stdout).map_err(|_| "render-hyprland printed non-UTF-8 Lua".into())
+        })
+    }
+
+    /// The tmux-os configuration for `user_text` as the user tier, projected by the same engine the terminal uses
+    /// (mios-unit-gen's key grammar and duplicate checks) into a private 0700 directory that is removed afterwards.
+    pub fn render_tmux(&self, layers: &Layers, user_text: &str) -> Result<String, String> {
+        Self::with_draft(user_text, |path| {
+            let n = SEQ.fetch_add(1, Ordering::Relaxed);
+            let dir = runtime_dir().join(format!(".mios-controls-tmux-{}-{n}", std::process::id()));
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            let _cleanup = RemoveDir(dir.clone());
+            let d = dir.display().to_string();
+            let out = self.mios_gen(layers, path, &["render-tmux-theme", "--runtime", &d])?;
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                return Err(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("failed").trim().to_owned());
+            }
+            std::fs::read_to_string(dir.join("tmux.conf")).map_err(|e| format!("tmux.conf: {e}"))
+        })
+    }
+
+    fn analyze(&self, layers: &Layers, user_text: &str, check_tmux: bool) -> Result<(Vec<String>, String, String), String> {
         let user = crate::model::parse_value(user_text)?;
         let merged = layers.merged_with(user);
         let lua = self.render_lua(layers, user_text)?;
         let a = crate::keybinds::analyze(&merged, Some(&lua))?;
         let mut findings = a.findings;
         findings.extend(controller_findings(&merged));
+        findings.extend(inputd_findings(&merged));
+        if check_tmux {
+            if let Err(e) = self.render_tmux(layers, user_text) {
+                findings.push(format!("tmux-os: the tmux-os keys do not project: {e}"));
+            }
+        }
         let summary = format!("{} binding(s), {} compositor bind line(s), {} finding(s)", a.bindings, a.lua_literal, findings.len());
-        Ok((findings, summary))
+        Ok((findings, summary, lua))
     }
 
     /// Validate `draft_text` (the projected user tier) against the current user tier as the baseline.
     pub fn run(&self, layers: &Layers, draft_text: &str) -> Result<Outcome, String> {
-        let (baseline, _) = self.analyze(layers, &layers.user_text)?;
-        let (findings, summary) = if draft_text == layers.user_text {
+        let (baseline, _, base_lua) = self.analyze(layers, &layers.user_text, false)?;
+        let (findings, summary, lua) = if draft_text == layers.user_text {
             let s = format!("{} finding(s) (no changes)", baseline.len());
-            (baseline.clone(), s)
+            (baseline.clone(), s, base_lua)
         } else {
-            self.analyze(layers, draft_text)?
+            let tmux_changed = crate::model::parse_value(draft_text).ok().and_then(|v| at(&v, "keybindings.tmux").cloned()) != at(&layers.user_value, "keybindings.tmux").cloned();
+            self.analyze(layers, draft_text, tmux_changed)?
         };
-        Ok(Outcome { findings, baseline: baseline.into_iter().collect(), summary })
+        Ok(Outcome { findings, baseline: baseline.into_iter().collect(), summary, lua: Some(lua) })
+    }
+}
+
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(std::env::temp_dir)
+}
+
+struct RemoveDir(PathBuf);
+impl Drop for RemoveDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// mios-inputd's own loader over the merged draft: the room table grammar, Guide layer, ownership contract (the
+/// North capture button and the toggle chord cannot be room bindings) and action argv. The router refuses to start on
+/// a map it rejects, so the editor refuses to write one.
+pub fn inputd_findings(merged: &Value) -> Vec<String> {
+    match mios_inputd::GlobalConfig::from_value(merged) {
+        Ok(_) => Vec::new(),
+        Err(e) => vec![format!("mios-inputd: {e}")],
     }
 }
 
@@ -178,6 +244,7 @@ mod tests {
             findings: vec!["old".into(), "new".into()],
             baseline: ["old".to_string()].into_iter().collect(),
             summary: String::new(),
+            lua: None,
         };
         assert_eq!(o.new_findings(), vec![&"new".to_string()]);
     }

@@ -8760,12 +8760,87 @@ bindings = [
   { key = "CTRL + Print", args = "all", label = "Screenshot: all outputs" },
 ]
 
-# mios-controls: the terminal binding editor for [keybindings.global] (usr/share/doc/mios/controls.md). It edits
-# only the user tier's [keybindings.global] bindings and controller.system_layer; these keys tune the editor itself.
+# mios-controls: the terminal binding editor (usr/share/doc/mios/controls.md). It draws keyboards, mice and
+# controllers, shows every action bound to an input (global map, compositor tables, tmux-os, Guide layer, Hypr3D room)
+# and edits ONLY the user-tier paths listed in `editable`; these keys tune the editor itself.
 [desktop.controls]
-input_cpu = -1                     # CPU the editor's input thread is pinned to; -1 = the last CPU it may use (others are kept off it)
+input_cpu = -1                     # CPU the editor's input threads are pinned to; -1 = the last CPU it may use (others are kept off it)
 backup_suffix = "controls-backup"  # apply keeps the previous user tier as mios.toml.<suffix> (0600)
-mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written)
+mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session and tmux-os keys for validation (private, never installed)
+glyphs = "auto"                    # auto | unicode | ascii. auto = box drawing, but plain lines and ASCII labels on TERM=linux
+capture_timeout_ms = 10000         # capture-to-bind waits this long for the input you press, then gives up
+stick_threshold = 0.5              # stick deflection (0..1) that counts as a direction (editor navigation and capture)
+trigger_threshold = 0.3            # analog trigger travel (0..1) that counts as a press when capturing
+nav_repeat_delay_ms = 400          # a held d-pad or stick direction repeats after this long...
+nav_repeat_ms = 120                # ...every this many ms (the pad thread wakes only while a direction is held)
+undo_depth = 64                    # draft edits kept for undo (u) and redo (U)
+# The user-tier paths the editor may write. Arrays are written whole (tiers replace arrays), maps per key. apply
+# refuses a draft that changes anything else in the user tier.
+editable = [
+  "keybindings.global.bindings",
+  "keybindings.global.controller.system_layer",
+  "keybindings.global.controller.room",
+  "keybindings.tmux.bindings",
+  "desktop.hyprland.bindings",
+  "desktop.screenshot.bindings",
+  "desktop.shaderglass.bindings",
+]
+
+# Controller navigation of the editor itself: the pad is read from mios-inputd's virtual pad (inputd keeps Guide,
+# Start, the bumpers and North in uncaptured contexts) or from a pad nobody grabs. Only while the editor's terminal
+# has focus. Verbs: enter back menu capture focus help layer-prev layer-next view-prev view-next page-up page-down none.
+# D-pad and left stick move; the right stick pages. Everything is also in the action menu (menu).
+[desktop.controls.pad_nav]
+BTN_SOUTH = "enter"
+BTN_EAST = "back"
+BTN_WEST = "menu"
+BTN_NORTH = "capture"
+BTN_SELECT = "focus"
+BTN_START = "help"
+BTN_TL = "layer-prev"
+BTN_TR = "layer-next"
+BTN_TL2 = "view-prev"
+BTN_TR2 = "view-next"
+
+# Controller families for the drawing. Labels follow the button POSITION (BTN_NORTH is the top face button, as in
+# the kernel's gamepad spec). layout: offset = left stick above the d-pad (Xbox, Switch Pro); symmetric = d-pad above
+# both sticks (PlayStation). vt_labels replace labels on TERM=linux or glyphs = "ascii" (the VT font has no PlayStation
+# shapes). A pad matches by USB vendor id, then by a name hint; anything else is "generic".
+[[desktop.controls.pad_families]]
+id = "xbox"
+title = "Xbox"
+vendors = ["045e"]
+name_hints = ["xbox", "x-box"]
+layout = "offset"
+labels = { BTN_SOUTH = "A", BTN_EAST = "B", BTN_WEST = "X", BTN_NORTH = "Y", BTN_TL = "LB", BTN_TR = "RB", BTN_TL2 = "LT", BTN_TR2 = "RT", BTN_SELECT = "View", BTN_START = "Menu", BTN_MODE = "Xbox", BTN_THUMBL = "LS", BTN_THUMBR = "RS" }
+vt_labels = {}
+
+[[desktop.controls.pad_families]]
+id = "playstation"
+title = "PlayStation"
+vendors = ["054c"]
+name_hints = ["dualsense", "dualshock", "playstation"]
+layout = "symmetric"
+labels = { BTN_SOUTH = "\u2715", BTN_EAST = "\u25cb", BTN_WEST = "\u25a1", BTN_NORTH = "\u25b3", BTN_TL = "L1", BTN_TR = "R1", BTN_TL2 = "L2", BTN_TR2 = "R2", BTN_SELECT = "Create", BTN_START = "Options", BTN_MODE = "PS", BTN_THUMBL = "L3", BTN_THUMBR = "R3" }
+vt_labels = { BTN_SOUTH = "X", BTN_EAST = "O", BTN_WEST = "Sq", BTN_NORTH = "Tri" }
+
+[[desktop.controls.pad_families]]
+id = "nintendo"
+title = "Nintendo"
+vendors = ["057e"]
+name_hints = ["nintendo", "pro controller", "joy-con"]
+layout = "offset"
+labels = { BTN_SOUTH = "B", BTN_EAST = "A", BTN_WEST = "Y", BTN_NORTH = "X", BTN_TL = "L", BTN_TR = "R", BTN_TL2 = "ZL", BTN_TR2 = "ZR", BTN_SELECT = "-", BTN_START = "+", BTN_MODE = "Home", BTN_THUMBL = "LS", BTN_THUMBR = "RS" }
+vt_labels = {}
+
+[[desktop.controls.pad_families]]
+id = "generic"
+title = "Generic"
+vendors = []
+name_hints = []
+layout = "offset"
+labels = { BTN_SOUTH = "S", BTN_EAST = "E", BTN_WEST = "W", BTN_NORTH = "N", BTN_TL = "L1", BTN_TR = "R1", BTN_TL2 = "L2", BTN_TR2 = "R2", BTN_SELECT = "Select", BTN_START = "Start", BTN_MODE = "Guide", BTN_THUMBL = "L3", BTN_THUMBR = "R3" }
+vt_labels = {}
 
 # ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
 # shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.

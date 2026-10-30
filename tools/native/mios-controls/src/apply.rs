@@ -1,7 +1,7 @@
-// AI-hint: mios-controls apply: writes a validated draft into the user tier atomically under an exclusive lock -- refuses when the file changed since it was read, when anything outside [keybindings] would change, or when the result would be empty; keeps a private backup of the previous tier.
+// AI-hint: mios-controls apply: writes a validated draft into the user tier atomically under an exclusive lock -- refuses when the file changed since it was read, when anything outside the [desktop.controls].editable paths would change (foreign tables), or when the result would empty a tier that holds other settings; keeps a private backup of the previous tier.
 // AI-related: tools/native/mios-controls/src/model.rs, tools/native/mios-resolver/src/layers.rs (user_toml_path)
 // AI-functions: apply
-use crate::model::{parse_value, without_keybindings, Layers};
+use crate::model::{parse_value, without_paths, Layers};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -26,12 +26,13 @@ pub fn apply(layers: &Layers, new_text: &str, backup_suffix: &str) -> Result<Opt
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     // Invariants on the rendered text before anything is written.
     let new_value = parse_value(new_text).map_err(|e| format!("the draft does not parse: {e}"))?;
-    if without_keybindings(&new_value) != without_keybindings(&layers.user_value) {
-        return Err("refusing: the draft would change tables outside [keybindings]".into());
+    let editable = layers.editable();
+    if without_paths(&new_value, &editable) != without_paths(&layers.user_value, &editable) {
+        return Err(format!("refusing: the draft would change the user tier outside the editable binding paths ({})", editable.join(", ")));
     }
-    // Emptying is legitimate when the tier held only [keybindings] (restore defaults); never when it held anything
+    // Emptying is legitimate when the tier held only editable paths (restore defaults); never when it held anything
     // else (defence in depth: the invariant above already proves those tables are unchanged).
-    let others_empty = without_keybindings(&layers.user_value).as_table().is_none_or(|t| t.is_empty());
+    let others_empty = without_paths(&layers.user_value, &editable).as_table().is_none_or(|t| t.is_empty());
     if new_text.trim().is_empty() && !others_empty {
         return Err("refusing: the draft would empty a user tier that holds other settings".into());
     }
@@ -114,10 +115,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let user = "[identity]\nsecret = \"s\"\n";
         let l = layers(d.path(), user);
-        assert!(apply(&l, "[identity]\nsecret = \"other\"\n", "b").unwrap_err().contains("outside [keybindings]"));
+        assert!(apply(&l, "[identity]\nsecret = \"other\"\n", "b").unwrap_err().contains("outside the editable"));
         assert!(apply(&l, "", "b").is_err());
+        let sibling = format!("{user}[keybindings.global]\nenabled = false\n");
+        assert!(apply(&l, &sibling, "b").unwrap_err().contains("outside the editable"), "a [keybindings] key that is not an editable path is foreign");
         std::fs::write(&l.user_path, "[identity]\nsecret = \"s\"\n# edited elsewhere\n").unwrap();
-        let new = format!("{user}[keybindings.global]\nenabled = true\n");
+        let new = format!("{user}[keybindings.global.controller.system_layer]\nBTN_WEST = \"exec:foot\"\n");
         assert!(apply(&l, &new, "b").unwrap_err().contains("changed since"));
         assert!(std::fs::read_to_string(&l.user_path).unwrap().contains("edited elsewhere"), "nothing overwritten");
     }
