@@ -26,6 +26,7 @@ mod metal_vs_hosted;
 mod pod_quadlets;
 mod global_bindings;
 mod nested_session;
+mod mem_admit;
 mod nested_devices;
 mod device_forwarding;
 mod session_scale;
@@ -374,6 +375,16 @@ enum Commands {
         #[arg(long,conflicts_with_all=["desktop","flatpak","all"])] portal_only: bool,
     },
 
+    /// Memory admission: exit 0 when MemAvailable is at least [system.memory_admission].min_available_mb, 3 when not (JSON verdict on stdout).
+    #[command(name = "mem-admit")]
+    MemAdmit {
+        #[arg(long)] root: Option<PathBuf>,
+        /// Poll until admitted or [system.memory_admission].wait_timeout_s passes.
+        #[arg(long)] wait: bool,
+        /// Read this meminfo file instead of /proc/meminfo (tests).
+        #[arg(long)] meminfo: Option<PathBuf>,
+    },
+
     /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
     #[command(name = "nested-session")]
     NestedSession {
@@ -414,6 +425,14 @@ enum Commands {
         #[arg(long)] sys: Option<PathBuf>,
         /// Skip the libvirt domain inventory.
         #[arg(long)] no_libvirt: bool,
+    },
+
+    /// Print the Super+Escape overlay rows (JSON [{keys,label}]) generated from the binding tables; writes nothing.
+    #[command(name = "keymap-overlay")]
+    KeymapOverlay {
+        #[arg(long)] root: Option<PathBuf>,
+        /// Read the merged SSOT as JSON from this file ("-" = stdin) instead of resolving --root's layers.
+        #[arg(long)] from_json: Option<PathBuf>,
     },
 
     /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
@@ -1579,6 +1598,10 @@ fn main() -> ExitCode {
             "app-preflight", "desktop",
             app_preflight::run(&root.unwrap_or_else(||PathBuf::from("/")),desktop.as_deref(),flatpak.as_deref(),all,portal_only).map_err(|e|(e,1)),
         ),
+        Commands::MemAdmit {root,wait,meminfo} => (
+            "mem-admit", "desktop",
+            mem_admit::run(&root.unwrap_or_else(||PathBuf::from("/")),wait,meminfo.as_deref()),
+        ),
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
@@ -1586,6 +1609,25 @@ fn main() -> ExitCode {
         Commands::DeviceForwarding {root,action,session,target,runtime_dir,sys,no_libvirt} => (
             "device-forwarding", "remote",
             device_forwarding::run(&root.unwrap_or_else(||PathBuf::from("/")),&action,session.as_deref(),target.as_deref(),runtime_dir,sys,no_libvirt).map_err(|e|(e,1)),
+        ),
+        Commands::KeymapOverlay {root,from_json} => (
+            "keymap-overlay", "desktop",
+            (|| -> Result<(), String> {
+                let data: toml::Value = match from_json {
+                    Some(p) => {
+                        let mut raw = String::new();
+                        if p.as_os_str() == "-" {
+                            std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 16 << 20), &mut raw).map_err(|e| e.to_string())?;
+                        } else {
+                            raw = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                        }
+                        serde_json::from_str(&raw).map_err(|e| format!("merged SSOT JSON: {e}"))?
+                    }
+                    None => mios_resolver::resolve_merged(Some(&root.unwrap_or_else(||PathBuf::from("/"))), false).map_err(|e| e.to_string())?,
+                };
+                println!("{}", global_bindings::keymap_overlay_json(&data)?);
+                Ok(())
+            })().map_err(|e|(e,1)),
         ),
         Commands::SessionScale {root,direction} => (
             "session-scale", "desktop",
