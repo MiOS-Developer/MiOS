@@ -26,8 +26,8 @@ def main():
     report=Path(args.report);assert not report.exists(),'preserve an existing report'
     work=Path(tempfile.mkdtemp(prefix='mios-camera-native-',dir='/var/tmp'))
     results=[]
-    for case_name,format_name,cleanup in (('i420','i420','0'),('h264','h264','0'),('mjpg','mjpg','1'),('enumeration-close','i420','enum')):
-        env=dict(os.environ,MIOS_RDP_CAMERA_TEST_FORMAT=format_name,MIOS_RDP_CAMERA_TEST_REMOVE=cleanup)
+    for case_name,format_name,cleanup,portrait,transposed in (('i420','i420','0','0','0'),('h264','h264','0','0','0'),('mjpg','mjpg','1','0','0'),('enumeration-close','i420','enum','0','0'),('h264-portrait','h264','0','1','0'),('h264-transposed','h264','0','1','1'),('h264-scaled','h264','0','1','0')):
+        env=dict(os.environ,MIOS_RDP_CAMERA_TEST_FORMAT=format_name,MIOS_RDP_CAMERA_TEST_REMOVE=cleanup,MIOS_RDP_CAMERA_TEST_PORTRAIT=portrait,MIOS_RDP_CAMERA_TEST_TRANSPOSED=transposed,MIOS_RDP_CAMERA_TEST_LARGE_CODED='1' if case_name=='h264-scaled' else '0')
         run=subprocess.run([str(binary),'--ignored','--exact',test,'--nocapture','--test-threads=1'],env=env,capture_output=True,text=True,timeout=45)
         (work/(case_name+'.log')).write_text(run.stdout+run.stderr)
         assert run.returncode==0,run.stdout+run.stderr
@@ -36,6 +36,8 @@ def main():
         assert len(proof)==1
         entry=json.loads(proof[0]);entry.update(format=format_name,case=case_name)
         assert entry['frames']==12 and entry['bytes']==1382400
+        assert entry['advertised_video_format'] and not entry['consumer_dimensions_forced']
+        assert entry['native_format']=='NV12'
         assert entry['permission_controls'] and entry['consumer_idle_deactivates'] and entry['consumer_reopen_resumes'] and entry['disconnect_cleanup']
         results.append(entry)
         print(json.dumps({'case':case_name,'format':format_name,'passed':True,'native_frames':entry['frames']}),flush=True)
