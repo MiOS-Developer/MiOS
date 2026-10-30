@@ -2,8 +2,9 @@
 //          Watches the power profile (net.hadess.PowerProfiles / tuned), UPower OnBattery and GameMode's client count
 //          on D-Bus plus Hyprland's event socket; debounces; picks the tier (unlocked > gaming > battery > profile,
 //          mios_resolver::framerate) and applies it in ONE `hyprctl eval`: the mios-pacing cap (VRR outputs), the
-//          Hyprglass glass rate, Hypr3D's room/glass/dome rates; on an output without VRR it switches to the nearest
-//          advertised mode (verified, reverted and blocklisted on failure; hysteresis; pinned modes untouched; a new
+//          Hyprglass glass rate, Hypr3D's room/glass/dome rates; on an output without VRR (or in mode_outputs) it
+//          switches to the nearest advertised mode or, with modes = "extended-vblank", a modeline derived from the
+//          panel's sysfs EDID (`miosd framerate modeline` prints it) (verified, reverted and blocklisted on failure; hysteresis; pinned modes untouched; a new
 //          mode is restored after mode_confirm_s unless `miosd framerate confirm-mode` keeps it; stopping restores every
 //          mode the daemon changed). Writes
 //          $XDG_RUNTIME_DIR/<state_file> for the login projection, Host.qml (wallpaper rate) and the Hypr3D room toggle.
@@ -56,6 +57,22 @@ pub enum FramerateCommand {
         #[arg(long)]
         reset: bool,
     },
+    /// Read-only: the extended-vblank modeline for OUTPUT (the panel's fastest EDID timing at its current size slowed
+    /// to --hz, default the current tier's desktop rate, by a longer vertical front porch), with the `hl.monitor` that
+    /// applies it and the one that restores the current mode. `--edid FILE --hz N [--size WxH]` needs no compositor.
+    Modeline {
+        output: Option<String>,
+        #[arg(long)]
+        hz: Option<f64>,
+        /// an EDID blob (binary, or hex text with # comments) instead of the output's sysfs EDID
+        #[arg(long)]
+        edid: Option<PathBuf>,
+        /// WxH for --edid (default: the size of its first detailed timing)
+        #[arg(long)]
+        size: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub async fn run(cmd: &FramerateCommand) -> Result<(), String> {
@@ -65,6 +82,7 @@ pub async fn run(cmd: &FramerateCommand) -> Result<(), String> {
         FramerateCommand::Apply { dry_run } => apply_once(*dry_run).await,
         FramerateCommand::SetUnlocked { state, no_reload } => set_unlocked(state, *no_reload),
         FramerateCommand::ConfirmMode { reset } => confirm_mode(*reset),
+        FramerateCommand::Modeline { output, hz, edid, size, json } => modeline(output.as_deref(), *hz, edid.as_deref(), size.as_deref(), *json).await,
     }
 }
 
@@ -80,6 +98,11 @@ pub struct Config {
     pub policy: Policy,
     pub require_vrr: bool,
     pub pinned: BTreeSet<String>,
+    /// each output's configured monitor-rule mode ([desktop.hyprland.monitors.<name>].mode), and the catch-all's
+    /// ([desktop.hyprland.monitor].mode, "preferred" by default): the way back from a mode an output shows but does
+    /// not advertise (plan::restorable_mode)
+    pub rules: BTreeMap<String, String>,
+    pub default_rule: String,
 }
 
 fn mios_root() -> PathBuf {
@@ -106,7 +129,21 @@ impl Config {
             .filter(|(_, m)| m.get("mode").and_then(Value::as_str).and_then(plan::parse_mode).is_some())
             .map(|(name, _)| name.clone())
             .collect();
-        Ok(Some(Config { policy, require_vrr, pinned }))
+        let hypr = doc.get("desktop").and_then(|d| d.get("hyprland"));
+        let rules = hypr
+            .and_then(|h| h.get("monitors"))
+            .and_then(Value::as_table)
+            .into_iter()
+            .flatten()
+            .filter_map(|(name, m)| m.get("mode").and_then(Value::as_str).map(|v| (name.clone(), v.trim().to_owned())))
+            .collect();
+        let default_rule = hypr.and_then(|h| h.get("monitor")).and_then(|m| m.get("mode")).and_then(Value::as_str).unwrap_or("preferred").trim().to_owned();
+        Ok(Some(Config { policy, require_vrr, pinned, rules, default_rule }))
+    }
+
+    /// The configured monitor-rule mode of `output` (its own rule, else the catch-all's).
+    pub fn rule(&self, output: &str) -> String {
+        self.rules.get(output).cloned().unwrap_or_else(|| self.default_rule.clone())
     }
 
     pub fn load() -> Result<Option<Config>, String> {
@@ -235,7 +272,44 @@ fn monitors(h: &Hypr) -> Result<Vec<Monitor>, String> {
     if let Some(spec) = std::env::var_os("MIOS_FRAMERATE_TEST_MODES") {
         plan::inject_test_modes(&mut m, &spec.to_string_lossy());
     }
+    for x in &mut m {
+        x.edid = output_edid(&x.name);
+    }
     Ok(m)
+}
+
+const DRM_SYSFS: &str = "/sys/class/drm";
+
+/// The connector's EDID: /sys/class/drm/card<N>-<output>/edid. Test hook MIOS_FRAMERATE_TEST_EDID =
+/// "NAME=FILE;NAME2=FILE2" supplies one for an output WITHOUT a DRM connector only (a nested or virtual output); a real
+/// panel always reports its own.
+fn output_edid(name: &str) -> Option<plan::Edid> {
+    let suffix = format!("-{name}");
+    let real = std::fs::read_dir(DRM_SYSFS).ok().and_then(|d| {
+        d.flatten()
+            .find(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("card") && n.ends_with(&suffix)))
+            .map(|e| e.path().join("edid"))
+    });
+    if let Some(path) = real {
+        return plan::Edid::parse(&std::fs::read(path).ok()?);
+    }
+    let spec = std::env::var("MIOS_FRAMERATE_TEST_EDID").ok()?;
+    let file = spec.split(';').filter_map(|e| e.split_once('=')).find(|(n, _)| n.trim() == name).map(|(_, f)| f.trim().to_owned())?;
+    plan::Edid::parse(&read_edid_file(Path::new(&file)).ok()?)
+}
+
+/// An EDID file: the binary blob (sysfs), or hex bytes with `#` comment lines (tests/fixtures/framerate).
+fn read_edid_file(path: &Path) -> Result<Vec<u8>, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if raw.starts_with(&[0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0]) {
+        return Ok(raw);
+    }
+    let text = String::from_utf8(raw).map_err(|_| format!("{}: neither an EDID blob nor hex text", path.display()))?;
+    text.lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .map(|b| u8::from_str_radix(b, 16).map_err(|_| format!("{}: bad hex byte {b:?}", path.display())))
+        .collect()
 }
 
 /// An option exists (its plugin is loaded) and its int value.
@@ -576,6 +650,18 @@ fn relevant(line: &str, fullscreen_game: bool) -> Option<bool> {
     }
 }
 
+/// Log suffix for a way back that is not the shown mode (plan::restorable_mode case 4).
+fn not_shown(m: &Monitor, r: &plan::Restore) -> String {
+    if r.exact {
+        String::new()
+    } else {
+        format!(
+            " (the configured rule's mode: it shows {}, a mode it does not advertise and the frame-rate daemon did not set)",
+            plan::mode_string(m.width, m.height, m.refresh)
+        )
+    }
+}
+
 struct Server {
     cfg: Config,
     sys: Option<Connection>,
@@ -583,8 +669,12 @@ struct Server {
     hypr: Option<Hypr>,
     gaming: GamingHold,
     gate: ModesetGate,
-    /// the mode an output showed before the daemon first switched it (restored when no mode is wanted any more)
-    baseline: BTreeMap<String, String>,
+    /// the mode an output showed before the daemon first switched it (restored when no mode is wanted any more), as
+    /// plan::restorable_mode names it: never a "WxH@Hz" of a mode the output does not advertise
+    baseline: BTreeMap<String, plan::Restore>,
+    /// the exact mode string (advertised or the daemon's own modeline) the daemon last put on each output: the way back
+    /// to it is that string, not the WxH@Hz hyprctl reports for it
+    set: BTreeMap<String, String>,
     bad: BTreeMap<String, BTreeSet<String>>,
     confirm: ModeConfirm,
     /// a verified modeset waiting for the operator (restored at its deadline)
@@ -704,15 +794,20 @@ impl Server {
             if self.pending.as_ref().is_some_and(|p| p.output == m.name) {
                 continue;
             }
-            let current = plan::mode_string(m.width, m.height, m.refresh);
+            let here = plan::restorable_mode(m, self.set.get(&m.name).map(String::as_str), &self.cfg.rule(&m.name));
             let want = match p.outputs.get(&m.name).map(|o| &o.mech) {
                 Some(Mech::Mode(mode)) => {
-                    self.baseline.entry(m.name.clone()).or_insert(current.clone());
+                    if !self.baseline.contains_key(&m.name) {
+                        log(&format!("{}: baseline {}{}", m.name, here.mode, not_shown(m, &here)));
+                        self.baseline.insert(m.name.clone(), here.clone());
+                    }
                     mode.clone()
                 }
                 // no mode wanted any more: back to what it showed before the first switch
                 _ => match self.baseline.get(&m.name) {
-                    Some(b) => b.clone(),
+                    Some(b) if plan::mode_dims(&b.mode).is_some() => b.mode.clone(),
+                    // a named rule mode (no advertised mode at that size): left as found until the daemon stops
+                    Some(_) => continue,
                     None => continue,
                 },
             };
@@ -727,16 +822,17 @@ impl Server {
             if !now_go {
                 continue;
             }
-            self.switch(m, &current, &want, pol.revert_timeout_ms, pol.mode_confirm_s).await;
+            self.switch(m, &here, &want, pol.revert_timeout_ms, pol.mode_confirm_s).await;
         }
     }
 
-    async fn switch(&mut self, m: &Monitor, current: &str, want: &str, timeout_ms: u64, confirm_s: u64) {
+    async fn switch(&mut self, m: &Monitor, here: &plan::Restore, want: &str, timeout_ms: u64, confirm_s: u64) {
         let Some(h) = self.hypr.as_ref() else { return };
+        let current = here.mode.as_str();
         let snapshot = plan::monitor_lua(m, current);
         let revert = pending_path();
         let _ = write_atomic(&revert, serde_json::json!({"output": m.name, "mode": want, "previous": current, "lua": snapshot}).to_string().as_bytes(), 0o644);
-        log(&format!("{}: mode {current} -> {want} (no active VRR cap; a modeset)", m.name));
+        log(&format!("{}: mode {current}{} -> {want} (a modeset: no active VRR cap, or a mode output)", m.name, not_shown(m, here)));
         let started = Instant::now();
         let mut ok = h.eval(&plan::monitor_lua(m, want)).is_ok();
         if ok {
@@ -752,7 +848,9 @@ impl Server {
         }
         if ok {
             log(&format!("{}: {want} verified after {} ms", m.name, started.elapsed().as_millis()));
-            let baseline = self.baseline.get(&m.name).cloned();
+            self.set.insert(m.name.clone(), want.to_owned());
+            // going back to the baseline needs no answer only when the baseline is what the output really showed
+            let baseline = self.baseline.get(&m.name).filter(|b| b.exact).map(|b| b.mode.clone());
             if plan::needs_confirm(confirm_s, &m.identity, want, baseline.as_deref(), &self.confirm.confirmed) {
                 // A display-mode change the operator has not seen on this panel: keep the way back armed. Unless
                 // `miosd framerate confirm-mode` answers within confirm_s, the previous mode comes back.
@@ -777,6 +875,7 @@ impl Server {
         } else {
             log(&format!("{}: {want} not verified within {timeout_ms} ms: reverting to {current}, blocklisting {want}", m.name));
             let _ = h.eval(&snapshot);
+            self.set.insert(m.name.clone(), current.to_owned());
             self.bad.entry(m.identity.clone()).or_default().insert(want.to_owned());
             write_bad(&self.bad);
             self.gate.forget(&m.name);
@@ -810,6 +909,7 @@ impl Server {
             }
             let _ = h.notify(0, 6000, &format!("Display {} is back to {} (not confirmed).", p.output, p.previous));
         }
+        self.set.insert(p.output.clone(), p.previous.clone());
         self.confirm.declined.insert(p.identity.clone());
         write_confirm(&self.confirm);
         self.gate.forget(&p.output);
@@ -828,7 +928,9 @@ impl Server {
             std::thread::sleep(Duration::from_millis(300));
         }
         let mons = monitors(h).unwrap_or_default();
+        self.set.clear();
         for (name, base) in std::mem::take(&mut self.baseline) {
+            let base = base.mode;
             let Some(m) = mons.iter().find(|m| m.name == name) else { continue };
             if plan::verified(Some(m), &base) {
                 continue;
@@ -897,6 +999,7 @@ async fn serve() -> Result<(), String> {
         gaming: GamingHold::default(),
         gate: ModesetGate::default(),
         baseline: BTreeMap::new(),
+        set: BTreeMap::new(),
         applied: None,
         seq: 0,
         wake: None,
@@ -1084,6 +1187,68 @@ async fn apply_once(dry_run: bool) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- CLI: modeline (read-only)
+
+async fn modeline(output: Option<&str>, hz: Option<f64>, edid: Option<&Path>, size: Option<&str>, json: bool) -> Result<(), String> {
+    let cfg = Config::load()?;
+    let tolerance = cfg.as_ref().map(|c| c.policy.mode_tolerance_hz).unwrap_or(0.5);
+    let (m, target) = if let Some(path) = edid {
+        let e = plan::Edid::parse(&read_edid_file(path)?).ok_or_else(|| format!("{}: no detailed timing (not an EDID?)", path.display()))?;
+        let (w, h) = match size {
+            Some(s) => {
+                let (w, h) = s.split_once('x').ok_or("--size must be WxH")?;
+                (w.parse().map_err(|_| "--size must be WxH")?, h.parse().map_err(|_| "--size must be WxH")?)
+            }
+            None => (e.timings[0].hdisplay, e.timings[0].vdisplay),
+        };
+        let base = mios_resolver::edid_timing::fastest_at(&e.timings, w, h).ok_or_else(|| format!("no EDID timing at {w}x{h}"))?;
+        let m = Monitor { name: output.unwrap_or("EDID").to_owned(), width: w, height: h, refresh: base.refresh_hz(), scale: 1.0, dpms: true, edid: Some(e), ..Default::default() };
+        (m, hz.ok_or("--edid needs --hz (no compositor, no tier)")?)
+    } else {
+        let cfg = cfg.as_ref().ok_or("[desktop.framerate] is absent or disabled (or pass --edid FILE --hz N)")?;
+        let (_, _, p, hypr, _, mons) = current_plan(&cfg).await;
+        hypr.ok_or("no live Hyprland instance (or pass --edid FILE --hz N)")?;
+        let m = match output {
+            Some(o) => mons.into_iter().find(|m| m.name == o).ok_or_else(|| format!("no output {o}"))?,
+            None => mons.into_iter().find(|m| m.local(&cfg.policy) && m.edid.is_some()).ok_or("no local output with an EDID")?,
+        };
+        let target = hz.unwrap_or(f64::from(p.rates.desktop_hz));
+        if target <= 0.0 {
+            return Err("the tier has no desktop rate (unlocked runs the output maximum): pass --hz".into());
+        }
+        (m, target)
+    };
+    let line = plan::extended_mode(&m, target, tolerance).map_err(|e| format!("{}: no extended-vblank mode for {target} Hz: {e}", m.name))?;
+    let t = mios_resolver::edid_timing::Timing::parse_modeline(&line).ok_or("internal: the modeline does not parse")?;
+    let e = m.edid.as_ref().expect("extended_mode needs the EDID");
+    let base = mios_resolver::edid_timing::fastest_at(&e.timings, m.width, m.height).expect("extended_mode found a base");
+    let shows = plan::mode_string(m.width, m.height, m.refresh);
+    let rule = cfg.as_ref().map(|c| c.rule(&m.name)).unwrap_or_else(|| "preferred".into());
+    let back = plan::restorable_mode(&m, None, &rule);
+    let current = back.mode.clone();
+    let apply = plan::monitor_lua(&m, &line);
+    let restore = plan::monitor_lua(&m, &current);
+    if json {
+        let v = serde_json::json!({
+            "output": m.name, "identity": m.identity, "width": m.width, "height": m.height, "target_hz": target,
+            "modeline": line, "refresh_hz": t.refresh_hz(), "line_khz": t.line_khz(), "vtotal": t.vtotal,
+            "base_modeline": base.modeline(), "base_hz": base.refresh_hz(), "base_vtotal": base.vtotal,
+            "range": e.range.map(|r| serde_json::json!({"min_v_hz": r.min_v_hz, "max_v_hz": r.max_v_hz, "min_h_khz": r.min_h_khz, "max_h_khz": r.max_h_khz, "max_clock_mhz": r.max_clock_mhz})),
+            "vrr": m.vrr, "current": current, "shows": shows, "restore_exact": back.exact, "apply_lua": apply, "restore_lua": restore,
+        });
+        println!("{v}");
+    } else {
+        println!("{}: base {} ({:.3} Hz, line {:.3} kHz)", m.name, base.modeline(), base.refresh_hz(), base.line_khz());
+        println!("{}: {target} Hz extended vblank {line} ({:.4} Hz, {} more blank lines)", m.name, t.refresh_hz(), t.vtotal - base.vtotal);
+        println!("apply:   {apply}");
+        println!("restore: {restore}");
+        if !back.exact {
+            println!("note: {} shows {shows}, a mode it does not advertise: the restore is the configured rule's mode, not that one", m.name);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1098,6 +1263,11 @@ mod tests {
         doc["desktop"]["hyprland"].as_table_mut().unwrap().insert("monitors".into(), mons);
         let c = Config::from_ssot(&doc).unwrap().unwrap();
         assert_eq!(c.pinned, ["DP-3".to_string()].into(), "only an explicit WxH@Hz is a pin");
+        // the monitor rules the way back falls to (plan::restorable_mode): an output's own, else the catch-all's
+        assert_eq!((c.rule("HDMI-A-1").as_str(), c.rule("eDP-1").as_str()), ("preferred", "preferred"));
+        doc["desktop"]["hyprland"]["monitor"]["mode"] = Value::String("highrr".into());
+        let c = Config::from_ssot(&doc).unwrap().unwrap();
+        assert_eq!((c.rule("HDMI-A-1").as_str(), c.rule("eDP-1").as_str()), ("preferred", "highrr"));
         doc["desktop"]["framerate"]["enabled"] = Value::Boolean(false);
         assert!(Config::from_ssot(&doc).unwrap().is_none(), "disabled: no daemon work");
         doc["desktop"]["framerate"]["enabled"] = Value::Boolean(true);
@@ -1137,6 +1307,25 @@ mod tests {
             assert_eq!(std::fs::metadata(&d).unwrap().permissions().mode() & 0o777, 0o755, "{}", d.display());
         }
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o644);
+    }
+
+    #[test]
+    fn edid_files_read_as_blob_or_commented_hex_and_garbage_is_refused() {
+        let fixture = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/framerate/dp3-lg-24gl600f.edid.hex"));
+        let bytes = read_edid_file(fixture).unwrap();
+        assert_eq!(bytes.len(), 256);
+        let dir = std::env::temp_dir().join(format!("mios-fr-edid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("edid");
+        std::fs::write(&bin, &bytes).unwrap();
+        assert_eq!(read_edid_file(&bin).unwrap(), bytes, "the sysfs binary form");
+        let e = plan::Edid::parse(&bytes).unwrap();
+        assert_eq!(e.range.map(|r| (r.min_v_hz, r.max_v_hz)), Some((48, 144)));
+        let junk = dir.join("junk");
+        std::fs::write(&junk, "00 ff zz\n").unwrap();
+        assert!(read_edid_file(&junk).unwrap_err().contains("bad hex byte"));
+        assert!(read_edid_file(&dir.join("absent")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

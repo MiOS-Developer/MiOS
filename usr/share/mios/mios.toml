@@ -8581,8 +8581,17 @@ live_resample = true
 # keep their own refresh and pacing ([remote.rdp]) and are never capped or re-moded; G and W still apply there.
 # Mechanism: "auto" holds D with the mios-pacing compositor plugin on an output that runs VRR (60/90/120 are real
 # panel refresh rates inside the VRR range: no modeset, instant) and, on an output without active VRR, switches to
-# the advertised (EDID) mode nearest D (a modeset: the screen blanks; 90 has no EDID mode on most panels -> 99.93/100);
-# "cap" never changes a mode; "mode" always uses modes. A mode switch is verified within revert_timeout_ms (mode
+# a display mode for D (a modeset: the screen blanks); "cap" never changes a mode; "mode" always uses modes;
+# mode_outputs lists outputs that use modes even with VRR (a real fixed-rate scanout, e.g. DP-3 at 90 Hz).
+# Mode selection: the advertised (EDID) mode nearest D when one is within mode_tolerance_hz; otherwise, with
+# modes = "extended-vblank", the panel's fastest EDID timing at the output's size with a longer vertical front porch
+# (its horizontal timing, the clock truncated to whole MHz as a Hyprland 0.56 modeline carries it, only more blank
+# lines per frame -- what VRR does on every frame): DP-3 (LG 24GL600F, 144 Hz, VRR 48-144) has no 90 Hz mode, so 90
+# is `modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync` = 90.010 Hz as Hyprland programs it
+# (`miosd framerate modeline DP-3 --hz 90` prints it; only inside the EDID range limits);
+# modes = "advertised" never applies a timing the panel did not list (90 -> 99.93/100). The vendor value stays
+# "advertised" (a miosd / mios-gen / mios-wallpaperd built before extended-vblank refuses the other value); a host or
+# user tier opts in (`modes = "extended-vblank"`, mode_outputs = ["DP-3"]) once those binaries carry it. A mode switch is verified within revert_timeout_ms (mode
 # shown, output present, DPMS on) or reverted and the mode blocklisted ($XDG_STATE_HOME/mios/framerate/bad-modes.json).
 # Every automatic display-mode change to a mode the operator has not kept on that panel before is restored after
 # mode_confirm_s unless `miosd framerate confirm-mode` keeps it (an on-screen notification says so); without an answer
@@ -8596,7 +8605,9 @@ debounce_ms = 750                  # inputs settle this long before an apply (on
 self_check_s = 60                  # re-read every input and re-apply what drifted (a plugin reload, a config reload)
 gaming_exit_hold_ms = 3000         # gaming holds this long after the last GameMode client left (launchers re-register)
 mechanism = "auto"                 # auto | cap | mode (see above)
-modes = "advertised"               # mode selection: only modes the output advertises (EDID) are applied automatically
+modes = "advertised"               # advertised | extended-vblank (see above): a non-EDID rate only by a longer vertical blank
+mode_outputs = []                  # outputs held by a display mode even with VRR + the cap (e.g. ["DP-3"]: real 90 Hz)
+mode_tolerance_hz = 0.5            # an advertised mode this close to D is used; an extended-vblank timing must land this close
 revert_timeout_ms = 5000           # an unverified mode switch is reverted after this long
 mode_confirm_s = 15                # a new mode is restored after this long unless confirmed (0 = no confirmation)
 modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
@@ -8924,7 +8935,7 @@ enabled = true
 source_repository = "https://github.com/samine825/Hypr3D.git"
 build_system = "cmake"
 path = "/usr/lib64/mios/hypr3d.so"
-patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch"]
+patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch"]
 toggle_key = "SUPER + F12"
 
 [desktop.hyprland.hypr3d.config]
