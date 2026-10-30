@@ -5,8 +5,20 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use toml::Value;
 
-/// The closed set of contexts a binding can be active in (the gate's schema).
-pub const CONTEXTS: &[&str] = &["desktop-2d", "desktop-3d", "terminal", "vm-passthrough", "game", "app-capture"];
+/// The closed set of contexts a binding can be active in (the gate's schema). `console` (the Linux VT) is never in
+/// a row's default set: a row without `contexts` is active in every context except the console.
+pub const CONTEXTS: &[&str] = &["desktop-2d", "desktop-3d", "terminal", "vm-passthrough", "game", "app-capture", "console"];
+pub const CONSOLE: &str = "console";
+
+/// The default context set of a row without `contexts`.
+pub fn default_contexts() -> impl Iterator<Item = &'static str> {
+    CONTEXTS.iter().copied().filter(|c| *c != CONSOLE)
+}
+
+/// The L3+R3-style toggle chord, from its one source ([desktop.hyprland.hypr3d.controller].toggle_chord).
+pub fn toggle_chord(merged: &Value) -> Vec<String> {
+    str_list(at(merged, "desktop.hyprland.hypr3d.controller.toggle_chord"))
+}
 
 /// Controller buttons the diagrams show, in diagram order, with their short labels.
 pub const PAD_BUTTONS: &[(&str, &str)] = &[
@@ -28,6 +40,11 @@ pub const PAD_BUTTONS: &[(&str, &str)] = &[
     ("BTN_THUMBL", "L3"),
     ("BTN_THUMBR", "R3"),
 ];
+
+/// An explicit, non-default root: its own tiers win over the process's tier pointers.
+pub fn rooted(root: &Path) -> bool {
+    root != Path::new("/")
+}
 
 pub fn at<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(v, |v, k| v.get(k))
@@ -79,8 +96,15 @@ pub struct Layers {
 }
 
 impl Layers {
+    /// `--root R` other than `/` reads R's vendor and host tiers, whatever MIOS_TOML / MIOS_VENDOR_TOML point at
+    /// (a session that exports them must not redirect an explicit root). `/` keeps the layered environment.
     pub fn load(root: &Path) -> Result<Self, String> {
-        let base = mios_resolver::resolve_below_user(Some(root)).map_err(|e| format!("SSOT below the user tier: {e}"))?;
+        let base = if rooted(root) {
+            mios_resolver::resolve_projection(root)
+        } else {
+            mios_resolver::resolve_below_user(Some(root))
+        }
+        .map_err(|e| format!("SSOT below the user tier: {e}"))?;
         if at(&base, "keybindings.global").and_then(Value::as_table).is_none() {
             return Err("the SSOT declares no [keybindings.global] table".into());
         }
