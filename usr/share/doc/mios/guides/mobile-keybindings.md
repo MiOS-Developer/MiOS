@@ -30,6 +30,15 @@ an AI workspace; F toggles compact/automatic layout. Tab sends Shift+Tab to the
 agent. B (or Ctrl+B again) sends the prefix to the application. This uses plain
 letters, Ctrl and Tab without relying on function keys or Super on an SSH client.
 
+Ctrl+B, then Space opens the MiOS menu: Apps and TUIs, the float shell, a new
+floating pane, and Pane, Window and Session submenus. Up/Down, PgUp/PgDn,
+Home/End, Enter and Esc drive every menu, so a phone, the Linux console and a
+controller reach every action without a mouse. Ctrl+B, then E opens the Apps
+and TUIs launcher ([[terminal.tuis]]: installed programs only, and only those
+that work on the console when you are on one). Ctrl+B, then Enter accepts an
+agent prompt without extended keys. Ctrl+B, then ? lists every key. The full
+table is in [keybinds.md](../keybinds.md#mios-tmux-tier-3-terminal-context).
+
 Ctrl+B, then G selects the existing **MiOS Agents** monitor pane in an AI
 workspace, without creating another tab. Its compact view uses short agent
 labels and pane roles; full identities remain available in JSON. Run

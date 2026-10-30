@@ -1,14 +1,17 @@
 // AI-hint: mios-pacing, pure part (no compositor headers): the per-output frame gate (phase-locked deadlines 1/cap
 //          apart; a frame due within `slack` passes, a deferred frame keeps the deadline, an idle gap resyncs), the
-//          rendered-frame meter and the output exclusion list. Host-tested by tests/pacing_test.cpp (`make test`).
+//          rendered-frame meter, the focused window's committed-frame rate and the output exclusion list. Host-tested by
+//          tests/pacing_test.cpp (`make test`).
 // AI-related: usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, usr/share/mios/hyprland/plugins/mios-pacing/tests/pacing_test.cpp
 #pragma once
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace MiosPacing {
     using Clock = std::chrono::steady_clock;
@@ -60,6 +63,43 @@ namespace MiosPacing {
                 return static_cast<double>(t.size());
             const double SPAN = std::chrono::duration<double>(t.back() - t.front()).count();
             return SPAN > 0 ? (t.size() - 1) / SPAN : 0.0;
+        }
+    };
+
+    // A client commit is a frame when it attaches a buffer that carries damage (new content). A commit that only
+    // moves state (input region, scale, an ack), detaches the buffer (unmap) or re-attaches a buffer with no damage
+    // is not one.
+    inline bool isFrame(bool bufferUpdated, bool hasBuffer, bool hasDamage) {
+        return bufferUpdated && hasBuffer && hasDamage;
+    }
+
+    // The focused window's committed frame rate. One meter per surface of its tree (the toplevel and every
+    // subsurface: a video player or a game may present on a subsurface while the toplevel stays idle); the window
+    // rate is its fastest surface -- the rate at which the window's picture changes. Surfaces idle for more than a
+    // second drop out.
+    struct SWindowRate {
+        std::unordered_map<std::uintptr_t, SMeter> surfaces;
+        std::uint64_t                              frames = 0;
+        void                                       tick(std::uintptr_t surface, Clock::time_point now) {
+            surfaces[surface].tick(now);
+            ++frames;
+        }
+        double fps(Clock::time_point now) {
+            double best = 0.0;
+            for (auto it = surfaces.begin(); it != surfaces.end();) {
+                const double F = it->second.fps(now);
+                if (it->second.t.empty()) {
+                    it = surfaces.erase(it);
+                    continue;
+                }
+                best = F > best ? F : best;
+                ++it;
+            }
+            return best;
+        }
+        void clear() {
+            surfaces.clear();
+            frames = 0;
         }
     };
 

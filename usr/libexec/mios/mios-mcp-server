@@ -39,6 +39,10 @@ if len(_sys.argv) > 1 and _sys.argv[1] in ("--workspace-ensure", "--workspace-re
     _relay = "/usr/libexec/mios/mios-agent-relay"  # [mcp.agents].binary; FHS canonical for the legacy shim
     _event = "ensure" if _sys.argv[1] == "--workspace-ensure" else "resize"
     _os.execv(_relay, [_relay, "--workspace-hook", _event, *_sys.argv[2:4]])
+# Legacy prefix o / prefix f bindings (and mios-terminal) likewise: the workspace keys are native layout passes.
+if len(_sys.argv) == 3 and _sys.argv[1] in ("--workspace-focus", "--workspace-view"):
+    _relay = "/usr/libexec/mios/mios-agent-relay"
+    _os.execv(_relay, [_relay, _sys.argv[1], _sys.argv[2]])
 
 import asyncio
 import json
@@ -891,7 +895,8 @@ class _TmuxBridge:
                         tmux("set-option", "-p", "-t", created, "@mios-workspace-slot", str(physical))
                         tmux("set-option", "-p", "-t", created, "@mios-workspace-dynamic", "1")
                     _workspace_call("resize", {**ui, "pane": workspace_head}, observer_command=_WORKSPACE_OBSERVER_COMMAND)
-                else:
+                elif "1" not in tmux("list-panes", "-t", ui["window"], "-F", "#{pane_floating_flag}").split():
+                    # tmux 3.7 floating panes are not part of a tiled layout; a preset would merge them.
                     tmux("select-layout", "-t", ui["window"], "tiled")
             except BaseException:
                 tmux("kill-pane", "-t", created)
@@ -1601,7 +1606,33 @@ def _agent_observation_request():
         "colors": mios_toml.colors(data)}}
 
 
-def _sdk_server(terminal_only=False):
+def _federation(http=False):
+    """The caller's [mcp.federation] members, or None (also for an HTTP front
+    door unless serve_http). A broken policy or declaration is reported on
+    stderr and never stops the native catalog."""
+    try:
+        import mios_mcp_federation
+        federation = mios_mcp_federation.Federation.from_ssot(mios_toml.load_merged())
+    except (ImportError, ValueError, OSError) as error:
+        sys.stderr.write(f"[mios-mcp] federation disabled: {error}\n")
+        return None
+    return federation if federation is not None and federation.serves(http) else None
+
+
+async def _federation_status() -> dict:
+    """Start every caller-owned member once (cache or not), list its tools,
+    stop it: a receipt of the live state, which also refreshes the catalog cache."""
+    federation = _federation()
+    if federation is None:
+        return {"enabled": False, "servers": [], "tools": []}
+    try:
+        rows = await federation.tool_rows(set(), live=True)
+        return {"enabled": True, **federation.status(), "tools": sorted(row["name"] for row in rows)}
+    finally:
+        await federation.close()
+
+
+def _sdk_server(terminal_only=False, http=False):
     """Use the upstream dual-era protocol engine; keep MiOS catalog and dispatch."""
     from mcp import types
     from mcp.server import Server
@@ -1611,9 +1642,16 @@ def _sdk_server(terminal_only=False):
     async def lifespan(_server):
         config = (mios_toml.load_merged().get("mcp") or {}).get("tmux") or {}
         bridge = _TerminalSessions(config)
+        # Caller-owned [mcp.servers] (user tier only) run as this caller and are
+        # re-exported here; never from the agent-pipe's terminal-only child.
+        bridge.federation = None if terminal_only else _federation(http)
+        if bridge.federation is not None:
+            bridge.federation.start_background()
         try:
             yield bridge
         finally:
+            if bridge.federation is not None:
+                await bridge.federation.close()
             await bridge.close()
 
     def result_or_raise(reply: dict) -> dict:
@@ -1667,13 +1705,26 @@ def _sdk_server(terminal_only=False):
              }, "required": ["agent", "slot", "status", "exitCode", "timedOut", "duration_s", "receiptVerified", "output", "communication"]}},
             ])
         extra_tools = [] if terminal_only else _translation_tools()
-        rows = sorted([*(payload.get("tools") or []), *terminal, *_agent_relay_tools(), *extra_tools], key=lambda row: row.get("name", ""))
+        rows = [*(payload.get("tools") or []), *terminal, *_agent_relay_tools(), *extra_tools]
+        federation = getattr(bridge, "federation", None)
+        if federation is not None and federation.serves(_ctx.request is not None):
+            rows.extend(await federation.tool_rows({row.get("name") for row in rows}))
+        rows.sort(key=lambda row: row.get("name", ""))
         return types.ListToolsResult(
             tools=[types.Tool.model_validate(row) for row in rows],
             ttlMs=0, cacheScope="private",
         )
 
     async def call_tool(_ctx, params):
+        federation = getattr(_ctx.lifespan_context, "federation", None)
+        if (federation is not None and federation.serves(_ctx.request is not None)
+                and federation.may_own(params.name)):
+            if not federation.owns(params.name):
+                # A client may call before listing: build routes with the same
+                # native names reserved, so a native tool always wins.
+                await list_tools(_ctx, None)
+            if federation.owns(params.name):
+                return await federation.call(params.name, params.arguments or {})
         if params.name == "translate_frames":
             try:
                 import mios_translate
@@ -2566,16 +2617,22 @@ def main() -> int:
     if sdk_major < 2:
         raise SystemExit("mios-mcp-server requires the FOSS MCP Python SDK 2.x in the agent venv")
 
+    if sys.argv[1:] == ["--federation-status"]:
+        status = asyncio.run(_federation_status())
+        print(json.dumps(status, indent=2))
+        return 0 if all(row.get("status") in {"stopped", "ready", "disabled", "system-owned"}
+                        for row in status["servers"]) else 1
+
     terminal_only = "--tmux-only" in sys.argv[1:]
     if not terminal_only:
         _ensure_warm()
         threading.Thread(
             target=_refresh_loop, name="mcp-tools-refresh", daemon=True,
         ).start()
-    server = _sdk_server(terminal_only=terminal_only)
-    if ("--http" in sys.argv[1:]
-            or os.environ.get("MIOS_MCP_HTTP", "").strip().lower()
-            in {"1", "true", "yes"}):
+    http = ("--http" in sys.argv[1:]
+            or os.environ.get("MIOS_MCP_HTTP", "").strip().lower() in {"1", "true", "yes"})
+    server = _sdk_server(terminal_only=terminal_only, http=http)
+    if http:
         port = int(os.environ.get("MIOS_PORTS_MCP")
                    or os.environ.get("MIOS_PORTS_MCP")
                    or os.environ.get("MIOS_PORTS_MCP")

@@ -299,6 +299,25 @@ Modern browsers distributed as Flatpaks (such as Zen Browser, `app.zen_browser.z
 - Binds host copies of `libdbusmenu-glib` and `libdbusmenu-gtk3` into `~/.var/app/app.zen_browser.zen/mios-dbusmenu/` via Flatpak filesystem overrides.
 - Injects a per-user `LD_LIBRARY_PATH` wrapper, enabling sandboxed Gecko/Zen instances to export menubars to `miosd` and render top-bar pills identically to native host software.
 
+#### Frame-Rate Readout: Host FPS / Window FPS
+The status island's `fps` item (`[desktop.topbar.visibility].fps`) reads `<host> FPS/<window> FPS`, for example
+`144 FPS/92 FPS`. The first number is the output's rendered rate. The second is the focused window's own frame rate:
+the window that has the controls, whatever its kind (native, Flatpak, game, VM, remote, nested session, PiP, Theatre;
+in Hypr3D the room focuses the window it aims at or has captured).
+- The compositor plugin `mios-pacing` (`usr/share/mios/hyprland/plugins/mios-pacing`) follows the focused window and
+  counts the client commits of its surface tree that attach a buffer with damage. The tree is the toplevel plus every
+  subsurface, because a video player or a game may present on a subsurface. The window's rate is its fastest surface
+  over the last second. Only the focused tree is listened to, so other windows cost nothing per commit.
+- `hyprctl mios-pacing status` carries it as `"window": {address, class, output, fps, frames, surfaces, follows}`, or
+  `null` with nothing focused. `hyprctl mios-pacing window` prints that object alone.
+- The shell samples the status once per `[desktop.topbar].sample_interval_ms`. The window part shows on the island of
+  the output the window is on, reads `0 FPS` for a window that presents nothing, and is hidden when it is unknown:
+  nothing focused, a plugin without the meter, or `[desktop.topbar].window_fps = false`.
+- It works in 2D and in the Hypr3D room, where windows are drawn as textures but their own commits are still counted,
+  and in nested sessions. A nested session's island (`Nested.qml`) reads its own compositor.
+- Known Hypr3D limit: a GStreamer `waylandsink` video subsurface stops presenting when the room opens, and the
+  meter then reports it truthfully as 0.
+
 ---
 
 ### <a name="89_float_first_window_placement"></a>89.4 Float-First Window Placement & Automated Tiling
@@ -538,7 +557,7 @@ With `OOMPolicy=continue`, if a runaway compiler, language model, or build scrip
 
 ### <a name="89_desktop_hardware_profiles"></a>89.8 Desktop Hardware Profiles
 
-The login choices `MiOS-Desktop (default iGPU)` and `MiOS-Desktop dGPU (NVIDIA)`
+The login choices `MiOS iGPU (default)` and `MiOS dGPU` (each profile's `name`)
 use the same Hyprland configuration, Quickshell and `mios-desktop.target`.
 Only the selected hardware profile and DRM device order differ. Their generated
 desktop entries live in `/usr/share/wayland-sessions/`; the launcher is
@@ -554,11 +573,19 @@ select another GPU.
 An explicit login choice (`--hardware-profile`) takes precedence over the
 `mios.desktop.gpu=` kernel argument. Without either, the launcher uses
 `desktop.hyprland.hardware_profile`, whose vendor default is `igpu`.
-A remembered iGPU login choice therefore still starts the iGPU desktop after a
-dGPU boot. Select the dGPU login choice to render that desktop on the dGPU.
+With `desktop.hyprland.boot_sync.enabled` (the vendor default), a login choice
+that differs from the booted profile does not start a desktop: the launcher runs
+`sudo -n mios-gen hyprland-boot-profile --hardware-profile <id>`, which selects the
+matching managed GRUB entry and reboots, and the desktop then starts on the
+matching boot. Without administrator authorization it stops with an error.
+With `boot_sync` disabled, the chosen profile starts on the current boot and
+fails if its GPU has no native DRM device.
 
-For existing hosts using BLS type-1 entries, generate the two hardware boot
-choices from the installed kernel entry:
+`mios-gen render-grub` keeps the managed GPU entries
+(`/boot/loader/entries/mios-desktop-<profile>.conf`, menu text from `boot_title`,
+order from `[boot.grub].menu_profiles`) as the BLS menu and re-renders them from
+the newest kernel on kernel-install events. To generate the two hardware boot
+choices by hand from an installed BLS type-1 kernel entry:
 
 ```sh
 mios-gen render-hyprland --boot-entry /boot/loader/entries/<existing-kernel-entry>.conf
@@ -576,10 +603,12 @@ Signed UKI entries are rejected: their hardware command lines must be built and
 signed through the image pipeline. The BLS generator does not modify signed UKIs.
 
 A whole GPU assigned to a VM cannot also render the host desktop. The iGPU boot
-profile retains VFIO reservation for the guest. On the development host, the dGPU
-boot profile instead loads the available Nouveau driver; it does not install a
-proprietary driver. Changing the login choice does not detach a running VM's GPU
-or change driver ownership. Boot the appropriate hardware profile before login.
+profile retains VFIO reservation for the guest. The dGPU boot profile clears the
+VFIO reservation (`vfio-pci.ids=`, also overriding one embedded in an older
+initramfs), blacklists Nouveau and enables the NVIDIA DRM driver
+(`nvidia-drm.modeset=1 nvidia-drm.fbdev=1`); the profile's `boot_append` holds
+these arguments. Changing the login choice never detaches a running VM's GPU or
+rebinds a live GPU; driver ownership changes only at boot.
 
 VRR is configured through `[desktop.hyprland.config.misc] vrr` and requires an
 enabled adaptive-sync output. Confirm the live output with `hyprctl monitors -j`.

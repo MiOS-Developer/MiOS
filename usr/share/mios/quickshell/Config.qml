@@ -19,6 +19,7 @@ QS.ShellRoot {
         property var topbarWrites: []
         property string topbarError: ""
         property var frameOutputs: []
+        property var frameWindow: null   // mios-pacing's focused-window meter ({address, class, output, fps, ...})
         property var rdpStats: ({})
         property real frameSampleTime: Date.now() / 1000
         property string rdpOutput: "HEADLESS-MIOS-RDP"
@@ -54,6 +55,13 @@ QS.ShellRoot {
             }
             for (const output of frameOutputs) if (output.name === name && isFinite(output.rendered_fps)) return Math.round(output.rendered_fps)
             return -1
+        }
+        // The focused window's committed frames per second on the island of the output it is on; -1 = unknown (no
+        // focused window, a plugin without the meter, or [desktop.topbar] window_fps = false).
+        function windowFpsFor(name) {
+            const w = frameWindow
+            if (topbarConfig.window_fps === false || !w || w.output !== name || !isFinite(w.fps)) return -1
+            return Math.round(Number(w.fps))
         }
         function shaderPane(address) {
             const supervisor = shaderStatus.supervisor || ({})
@@ -123,11 +131,14 @@ QS.ShellRoot {
         command: ["hyprctl", "mios-pacing", "status"]
         stdout: StdioCollector {
             onStreamFinished: {
-                try { workspaceState.frameOutputs = JSON.parse(text).outputs || [] }
-                catch (e) { workspaceState.frameOutputs = [] }
+                try {
+                    const status = JSON.parse(text)
+                    workspaceState.frameOutputs = status.outputs || []
+                    workspaceState.frameWindow = status.window || null
+                } catch (e) { workspaceState.frameOutputs = []; workspaceState.frameWindow = null }
             }
         }
-        onExited: (code, status) => { if (code !== 0) workspaceState.frameOutputs = [] }
+        onExited: (code, status) => { if (code !== 0) { workspaceState.frameOutputs = []; workspaceState.frameWindow = null } }
     }
     Process {
         command: ["/usr/bin/mios-toml-get", "remote.rdp", "virtual_output", "HEADLESS-MIOS-RDP"]
