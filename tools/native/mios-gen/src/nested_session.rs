@@ -342,8 +342,14 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
  let config=project_for(&data,Some(&plan.scale_mode))?;
  if dry_run {print!("{config}");return Ok(());}
  let assigned:Vec<Device>=devices::resolve(&devices::host(),&plan.specs,&plan.seat,&policy)?;
+ // Render node: [desktop.nested].render_node ("auto" = the running hardware profile's nested_render). The parent's
+ // MIOS_DESKTOP_HARDWARE_PROFILE export names the running profile; the boot entry is the fallback.
+ let gpus=crate::gpu_topology::inventory(&crate::gpu_topology::host());
+ let profile=crate::gpu_topology::running_profile(&data,env::var("MIOS_DESKTOP_HARDWARE_PROFILE").ok().as_deref(),&fs::read_to_string("/proc/cmdline").unwrap_or_default())?;
+ let render=crate::gpu_topology::nested_render(&data,root,&profile,&gpus)?;
+ let (render_env,render_unset)=render.env();
  if o.plan {
-  println!("{}",json!({"target":plan.target,"output":plan.output,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"tmux_socket_name":plan.tmux_socket,"terminal_session":plan.terminal_session,"devices":assigned.iter().map(Device::to_json).collect::<Vec<_>>()}));
+  println!("{}",json!({"target":plan.target,"output":plan.output,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"tmux_socket_name":plan.tmux_socket,"terminal_session":plan.terminal_session,"devices":assigned.iter().map(Device::to_json).collect::<Vec<_>>(),"render":render.to_json()}));
   return Ok(());
  }
  let signature=env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_|"parent compositor signature missing")?;
@@ -402,11 +408,24 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   sandbox.extend(["--bind".into(),copy.to_string_lossy().into_owned(),p.to_string_lossy().into_owned()]);
  }
  sandbox.extend(devices::bind_args(&input,&assigned)?);
+ // Aquamarine's Wayland backend opens the linux-dmabuf main device the parent announces. For a chosen node the
+ // compositor reaches the parent through a proxy that announces that node (and LINEAR-only formats, the layout both
+ // GPUs share); its shell and clients then follow the nested compositor's own main device.
+ let parent_display=match render.rdev() {
+  Some(rdev)=>{
+   let sock=owned.0.join("parent-wayland");
+   let listener=std::os::unix::net::UnixListener::bind(&sock).map_err(|e|format!("render proxy {}: {e}",sock.display()))?;
+   let rw=std::sync::Arc::new(crate::wl_device_proxy::Rewrite{rdev,linear_only:true,devices_rewritten:Default::default(),tables_filtered:Default::default()});
+   crate::wl_device_proxy::serve(listener,display.clone(),rw);
+   sock
+  }
+  None=>display.clone(),
+ };
  let device_list=assigned.iter().flat_map(|d|d.nodes()).map(|p|p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
  let identity=[("MIOS_NESTED_SEAT",plan.seat.as_str()),("MIOS_NESTED_USER",plan.user.as_str()),("MIOS_NESTED_TARGET",plan.target.as_str()),("MIOS_NESTED_DEVICES",device_list.as_str())];
  let path=owned.0.join("hyprland.lua");fs::write(&path,config).map_err(|e|e.to_string())?;
  let mut child=spawn_sandboxed(&owned.0.join("desktop.log"),||{let mut c=Command::new("bwrap");c.args(&sandbox).args(["--","/usr/bin/Hyprland","--config"]).arg(&path)
- .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("WAYLAND_DISPLAY",&display).env("AQ_DRM_DEVICES","/dev/null").env("WLR_DRM_DEVICES","/dev/null").env_remove("HYPRLAND_INSTANCE_SIGNATURE").env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE");c})?;
+ .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("WAYLAND_DISPLAY",&parent_display).env("AQ_DRM_DEVICES","/dev/null").env("WLR_DRM_DEVICES","/dev/null").env_remove("HYPRLAND_INSTANCE_SIGNATURE").env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE");for k in &render_unset{c.env_remove(k);}c.envs(render_env.iter().map(|(k,v)|(k,v)));c})?;
  let mut shell_child=None;
  let result=(||{
   let mut selected=None;
@@ -417,15 +436,17 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
    thread::sleep(Duration::from_millis(100));
   }
   let inst=selected.ok_or("nested compositor did not become ready")?;let pid=inst["pid"].as_u64().ok_or("nested PID missing")?;
+  // Through the render proxy the parent sees this process as the window's client (SO_PEERCRED of the proxy socket).
+  let wpid=if parent_display!=display {u64::from(me)} else {pid};
   let shell_path=n["shell_entry"].as_str().ok_or("nested shell entry missing")?;
   let (isig,iwl)=(inst["instance"].as_str().ok_or("nested signature missing")?,inst["wl_socket"].as_str().ok_or("nested display missing")?);
   shell_child=Some(spawn_sandboxed(&owned.0.join("shell.log"),||{let mut c=Command::new("bwrap");c.args(&sandbox).args(["--","quickshell","--no-duplicate","--path",shell_path])
-   .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("HYPRLAND_INSTANCE_SIGNATURE",isig).env("WAYLAND_DISPLAY",iwl).env("QT_QPA_PLATFORM","wayland").env("MIOS_NESTED_RESIZE_POLL_MS",n["resize_poll_ms"].as_integer().unwrap_or(100).to_string()).env("PIPEWIRE_RUNTIME_DIR",&parent).env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE");c})?);
+   .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("HYPRLAND_INSTANCE_SIGNATURE",isig).env("WAYLAND_DISPLAY",iwl).env("QT_QPA_PLATFORM","wayland").env("MIOS_NESTED_RESIZE_POLL_MS",n["resize_poll_ms"].as_integer().unwrap_or(100).to_string()).env("PIPEWIRE_RUNTIME_DIR",&parent).env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE");for k in &render_unset{c.env_remove(k);}c.envs(render_env.iter().map(|(k,v)|(k,v)));c})?);
 
   let mut target=None;
   for _ in 0..100 {
    let v:Json=serde_json::from_str(&ipc(&parent,&signature,"j/clients")?).map_err(|e|e.to_string())?;
-   if let Some(w)=v.as_array().and_then(|v|v.iter().find(|w|w["pid"].as_u64()==Some(pid))){target=Some(w.clone());break;}
+   if let Some(w)=v.as_array().and_then(|v|v.iter().find(|w|w["pid"].as_u64()==Some(wpid))){target=Some(w.clone());break;}
    thread::sleep(Duration::from_millis(100));
   }
   let w=target.ok_or("parent could not identify the owned nested output")?;
@@ -434,9 +455,9 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   let edge=data["theme"]["shell"]["edge_margin_px"].as_float().or_else(||data["theme"]["shell"]["edge_margin_px"].as_integer().map(|n|n as f64)).ok_or("global edge margin missing")?;
   let mut room_window=false;
   if layout=="pip" {
-   let pip=Command::new("/usr/bin/mios-pip-gravity").args(["on","--window",address,"--pid",&pid.to_string(),"--stable-id",stable]).status().map_err(|e|e.to_string())?;if !pip.success(){return Err("nested PiP adoption failed".into());}
+   let pip=Command::new("/usr/bin/mios-pip-gravity").args(["on","--window",address,"--pid",&wpid.to_string(),"--stable-id",stable]).status().map_err(|e|e.to_string())?;if !pip.success(){return Err("nested PiP adoption failed".into());}
   }else{
-   let mut code=format!("local w=nil;for _,v in ipairs(hl.get_windows()) do if v.address=={} then w=v end end;if not w or w.pid~={pid} or w.stable_id~=tonumber({},16) then error('nested identity changed',0) end;local target={};{}hl.dispatch(hl.dsp.window.tag({{window=target,tag='+mios-pip-disabled'}}));",lua_str(address),lua_str(stable),lua_str(&format!("address:{address}")),
+   let mut code=format!("local w=nil;for _,v in ipairs(hl.get_windows()) do if v.address=={} then w=v end end;if not w or w.pid~={wpid} or w.stable_id~=tonumber({},16) then error('nested identity changed',0) end;local target={};{}hl.dispatch(hl.dsp.window.tag({{window=target,tag='+mios-pip-disabled'}}));",lua_str(address),lua_str(stable),lua_str(&format!("address:{address}")),
     // Unpin only a pinned window: Hyprland answers a pin change on a window that cannot be pinned with a warning.
     if w["pinned"].as_bool().unwrap_or(false){"hl.dispatch(hl.dsp.window.pin({window=target,action='disable'}));"}else{""});
    let monitors:Json=serde_json::from_str(&ipc(&parent,&signature,"j/monitors")?).map_err(|e|e.to_string())?;
@@ -483,17 +504,21 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   // Only return focus if this launch itself took it. A later operator focus change wins.
   if !["output","remote","hypr3d"].contains(&layout) {
   if let (Some(a),Some(p),Some(stable))=(focused["address"].as_str(),focused["pid"].as_u64(),focused["stableId"].as_str()) {
-   let restore=format!("local current=hl.get_active_window();if current and current.pid=={pid} then for _,v in ipairs(hl.get_windows()) do if v.address=={} and v.pid=={p} and v.stable_id==tonumber({},16) then hl.dispatch(hl.dsp.focus({{window={}}}));break end end end",lua_str(a),lua_str(stable),lua_str(&format!("address:{a}")));
+   let restore=format!("local current=hl.get_active_window();if current and current.pid=={wpid} then for _,v in ipairs(hl.get_windows()) do if v.address=={} and v.pid=={p} and v.stable_id==tonumber({},16) then hl.dispatch(hl.dsp.focus({{window={}}}));break end end end",lua_str(a),lua_str(stable),lua_str(&format!("address:{a}")));
    let _=ipc(&parent,&signature,&format!("/eval {restore}"))?;
   }
   }
   let device_json:Vec<Json>=assigned.iter().map(Device::to_json).collect();
   let controllers=assigned.iter().any(|d|d.kind=="controller");
   let tmux_socket=tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name));
-  let mut descriptor=json!({"runtime":owned.0,"instance":inst,"parent_window":address,"layout":layout,"target":layout,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"isolated_input":true,"devices":device_json,"physical_controllers_assigned":controllers,"registry":claim.path,"tmux_socket":tmux_socket,"terminal_session":terminal_session,
+  let mut render_json=render.to_json();render_json["parent_proxy"]=json!((parent_display!=display).then_some(&parent_display));
+  let mut descriptor=json!({"runtime":owned.0,"instance":inst,"parent_window":address,"parent_window_pid":wpid,"layout":layout,"target":layout,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"isolated_input":true,"devices":device_json,"physical_controllers_assigned":controllers,"registry":claim.path,"tmux_socket":tmux_socket,"terminal_session":terminal_session,
    // /tmp: "shared" or the session's private /tmp on the host; pad_state is where an input bridge writes this session's
    // own Hypr3D controller packet (the room inside the session reads /tmp/mios-hypr3d-pad.bin there).
-   "tmp":tmp.as_ref().map(|t|json!(t)).unwrap_or(json!("shared")),"pad_state":tmp.as_ref().map(|t|json!(t.join("mios-hypr3d-pad.bin"))).unwrap_or(Json::Null)});
+   "tmp":tmp.as_ref().map(|t|json!(t)).unwrap_or(json!("shared")),"pad_state":tmp.as_ref().map(|t|json!(t.join("mios-hypr3d-pad.bin"))).unwrap_or(Json::Null),
+   // The render node this session uses ([desktop.nested].render_node; node = the device it opens, aliased_nodes = the
+   // paths bound to it inside the session).
+   "render":render_json});
   if let Some(m)=&target_output {descriptor["output"]=m["name"].clone();}
   // What a remote server needs to share this session itself (mirror its only output), with no parent output at all:
   // the native RDP server's nested mode reads runtime + instance from this descriptor.
@@ -502,7 +527,7 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   if layout=="remote" {descriptor["remote"]=json!({"output":target_output.as_ref().map(|m|m["name"].clone()),"server":data["remote"]["rdp"]["server"].clone()});}
   if layout=="hypr3d" {descriptor["room_window"]=json!(room_window);}
   fs::write(owned.0.join("session.json"),format!("{descriptor}\n")).map_err(|e|e.to_string())?;
-  claim.update(json!({"state":"running","runtime":owned.0,"instance":inst["instance"],"wayland_display":inst["wl_socket"],"compositor_pid":pid,"parent_window":address,"output":descriptor.get("output").cloned().unwrap_or(Json::Null),"tmp":descriptor["tmp"].clone(),"pad_state":descriptor["pad_state"].clone(),"descriptor":owned.0.join("session.json")}))?;
+  claim.update(json!({"state":"running","runtime":owned.0,"instance":inst["instance"],"wayland_display":inst["wl_socket"],"compositor_pid":pid,"parent_window_pid":wpid,"parent_window":address,"output":descriptor.get("output").cloned().unwrap_or(Json::Null),"tmp":descriptor["tmp"].clone(),"pad_state":descriptor["pad_state"].clone(),"descriptor":owned.0.join("session.json")}))?;
   println!("{descriptor}");
   let mut parent_events=ParentEvents::connect(&parent,&signature);
   loop {

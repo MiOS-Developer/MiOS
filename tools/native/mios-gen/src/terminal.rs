@@ -766,7 +766,7 @@ pub mod tmux_theme {
 pub mod console {
     use std::{fs, path::Path};
     use toml::Value;
-    fn palette(data: &Value) -> Result<Vec<String>, String> {
+    pub fn palette(data: &Value) -> Result<Vec<String>, String> {
         let colors = data
             .get("colors")
             .and_then(Value::as_table)
