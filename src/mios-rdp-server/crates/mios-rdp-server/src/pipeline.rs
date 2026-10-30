@@ -226,6 +226,15 @@ pub struct PipeStats {
     pub backpressured: AtomicU64,
     pub refined: AtomicU64,
     pub bytes: AtomicU64,
+    /// Bytes accepted by the TCP writer, including TLS/RDP framing for every codec.
+    pub wire_bytes: AtomicU64,
+    pub microphone_generation: AtomicU64,
+    pub microphone_workers: AtomicU64,
+    pub microphone_ready: AtomicBool,
+    pub microphone_bytes: AtomicU64,
+    pub microphone_dropped: AtomicU64,
+    pub microphone_source: Mutex<Option<String>>,
+    pub microphone_error: Mutex<Option<String>>,
     pub bitrate_bps: AtomicU64,
     pub frames_in_flight: AtomicU32,
     pub samples: Mutex<Samples>,
@@ -652,7 +661,7 @@ fn run(p: &PipeParams, gfx: &Gfx, mailbox: &Mailbox, stats: &PipeStats) -> anyho
         if p.layout.load(Ordering::Relaxed) != layout {
             p.layout.store(layout, Ordering::SeqCst);
         }
-        p.capture_hz.store(if progressive { n.progressive_hz.min(p.target_hz).max(1) } else { p.target_hz }, Ordering::SeqCst);
+        p.capture_hz.store(if progressive { n.progressive_ceiling(p.target_hz) } else { p.target_hz }, Ordering::SeqCst);
         if p.suppressed.load(Ordering::Relaxed) {
             // client minimised / screen off: no capture, no encode
             gfx.wait(Duration::from_millis(50));
