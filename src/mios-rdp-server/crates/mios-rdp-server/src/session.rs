@@ -380,6 +380,46 @@ impl ConnectionHandler for Hooks {
     }
 }
 
+/// Count successful writes below the TLS/RDP layers. This covers legacy bitmap
+/// compression too; the encoder payload counter covers only the EGFX paths.
+/// Pending writes, errors, flushes and incoming bytes must never add traffic.
+pub struct WireStream<T> {
+    inner: T,
+    stats: Arc<PipeStats>,
+}
+
+impl<T> WireStream<T> {
+    pub fn new(inner: T, stats: Arc<PipeStats>) -> Self { Self { inner, stats } }
+}
+
+impl<T: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for WireStream<T> {
+    fn poll_read(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut tokio::io::ReadBuf<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WireStream<T> {
+    fn poll_write(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, data: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        let this=self.get_mut();
+        let result=std::pin::Pin::new(&mut this.inner).poll_write(cx,data);
+        if let std::task::Poll::Ready(Ok(n))=&result { this.stats.wire_bytes.fetch_add(*n as u64,Ordering::Relaxed); }
+        result
+    }
+    fn poll_write_vectored(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, data: &[std::io::IoSlice<'_>]) -> std::task::Poll<std::io::Result<usize>> {
+        let this=self.get_mut();
+        let result=std::pin::Pin::new(&mut this.inner).poll_write_vectored(cx,data);
+        if let std::task::Poll::Ready(Ok(n))=&result { this.stats.wire_bytes.fetch_add(*n as u64,Ordering::Relaxed); }
+        result
+    }
+    fn is_write_vectored(&self) -> bool { self.inner.is_write_vectored() }
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
 /// RDP-only bounded TCP queue, keepalive and dead-peer timeout. Zero buffer
 /// settings preserve kernel defaults; no host-wide networking values change.
 pub fn tune_socket(s: &tokio::net::TcpStream, cfg: &crate::config::Native) {
@@ -409,6 +449,51 @@ pub fn tune_socket(s: &tokio::net::TcpStream, cfg: &crate::config::Native) {
 mod socket_tests {
     use super::*;
     use std::os::fd::AsRawFd;
+
+    #[tokio::test(flavor="current_thread")]
+    async fn wire_bytes_match_actual_short_and_vectored_writes_not_reads() {
+        use tokio::io::{AsyncReadExt,AsyncWriteExt};
+        let (a,mut b)=tokio::io::duplex(8);
+        let stats=Arc::new(PipeStats::default());
+        let mut counted=WireStream::new(a,Arc::clone(&stats));
+        let peer=tokio::spawn(async move {
+            let mut received=Vec::new(); b.read_to_end(&mut received).await.unwrap();
+            b.write_all(b"reply").await.unwrap(); b.shutdown().await.unwrap(); received
+        });
+        let payload=vec![91u8;4096];
+        counted.write_all(&payload).await.unwrap();
+        let n=counted.write_vectored(&[std::io::IoSlice::new(b"abc"),std::io::IoSlice::new(b"defgh")]).await.unwrap();
+        assert!(n>0 && n<=8);
+        counted.flush().await.unwrap();counted.shutdown().await.unwrap();
+        let mut reply=Vec::new(); counted.read_to_end(&mut reply).await.unwrap();
+        assert_eq!(reply,b"reply");
+        let received=peer.await.unwrap();
+        assert_eq!(&received[..4096],&payload);
+        assert_eq!(&received[4096..],&b"abcdefgh"[..n]);
+        assert_eq!(stats.wire_bytes.load(Ordering::SeqCst),received.len() as u64);
+        assert_eq!(stats.bytes.load(Ordering::SeqCst),0,"transport bytes must not fabricate encoded payload");
+    }
+
+    #[tokio::test(flavor="current_thread")]
+    async fn wire_bytes_exclude_pending_and_failed_write_attempts() {
+        use std::{pin::Pin,task::{Context,Poll}};
+        use tokio::io::{AsyncWrite,AsyncWriteExt};
+        struct ShortThenFail { pending:bool,left:usize }
+        impl AsyncWrite for ShortThenFail {
+            fn poll_write(mut self:Pin<&mut Self>,cx:&mut Context<'_>,data:&[u8])->Poll<std::io::Result<usize>> {
+                if self.pending {self.pending=false;cx.waker().wake_by_ref();return Poll::Pending;}
+                if self.left==0 {return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));}
+                let n=self.left.min(data.len());self.left-=n;Poll::Ready(Ok(n))
+            }
+            fn poll_flush(self:Pin<&mut Self>,_:&mut Context<'_>)->Poll<std::io::Result<()>> {Poll::Ready(Ok(()))}
+            fn poll_shutdown(self:Pin<&mut Self>,_:&mut Context<'_>)->Poll<std::io::Result<()>> {Poll::Ready(Ok(()))}
+        }
+        let stats=Arc::new(PipeStats::default());
+        let mut stream=WireStream::new(ShortThenFail {pending:true,left:3},Arc::clone(&stats));
+        assert_eq!(stream.write_all(&[7;32]).await.unwrap_err().kind(),std::io::ErrorKind::BrokenPipe);
+        stream.flush().await.unwrap();stream.shutdown().await.unwrap();
+        assert_eq!(stats.wire_bytes.load(Ordering::SeqCst),3,"count accepted bytes once, even when write_all later fails");
+    }
 
     fn option(s: &tokio::net::TcpStream, level: i32, opt: i32) -> i32 {
         let mut value: i32 = 0;
