@@ -23,8 +23,21 @@ QS.ShellRoot {
         property string topbarError: ""
         // MIOS_NESTED_TOPBAR_ITEMS (comma list) lets a development session show more island items (live tests).
         readonly property var topbarItems: (QS.Quickshell.env("MIOS_NESTED_TOPBAR_ITEMS") || "clock,fps,workspaces").split(",").map(s => s.trim())
+        property var frameOutputs: []
+        property var frameWindow: null
+        property bool windowFpsShown: true   // [desktop.topbar] window_fps
+        property int sampleMs: 1000          // [desktop.topbar] sample_interval_ms
         function topbarShown(key) { return topbarItems.indexOf(key) >= 0 }
-        function fpsFor(name) { return -1 }
+        // This session's own compositor (mios-pacing in the nested Hyprland): its output rate and its focused window's.
+        function fpsFor(name) {
+            for (const output of frameOutputs) if (output.name === name && isFinite(output.rendered_fps)) return Math.round(output.rendered_fps)
+            return -1
+        }
+        function windowFpsFor(name) {
+            const w = frameWindow
+            if (!windowFpsShown || !w || w.output !== name || !isFinite(w.fps)) return -1
+            return Math.round(Number(w.fps))
+        }
         function isRemoteOutput(name) { return false }
         function shaderPane(address) { return null }
         function shaderAction(action, address) { shaderError = "ShaderGlass is managed in the owning session" }
@@ -38,6 +51,35 @@ QS.ShellRoot {
             drawerOpen = false
             searchOpen = !searchOpen
         }
+    }
+    Process {
+        command: ["/usr/bin/mios-toml-get", "desktop.topbar", "window_fps", "true"]
+        running: true
+        stdout: StdioCollector { onStreamFinished: state.windowFpsShown = text.trim() !== "false" }
+    }
+    Process {
+        id: frameSample
+        command: ["hyprctl", "mios-pacing", "status"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const status = JSON.parse(text)
+                    state.frameOutputs = status.outputs || []
+                    state.frameWindow = status.window || null
+                } catch (e) { state.frameOutputs = []; state.frameWindow = null }
+            }
+        }
+        onExited: (code, status) => { if (code !== 0) { state.frameOutputs = []; state.frameWindow = null } }
+    }
+    Process {
+        command: ["/usr/bin/mios-toml-get", "desktop.topbar", "sample_interval_ms", "1000"]
+        running: true
+        stdout: StdioCollector { onStreamFinished: state.sampleMs = Math.max(500, Number(text.trim()) || 1000) }
+    }
+    // One sample per interval, never overlapping.
+    Timer {
+        interval: state.sampleMs; running: true; repeat: true; triggeredOnStart: true
+        onTriggered: if (!frameSample.running) frameSample.running = true
     }
     IpcHandler { target: "drawer"; function toggle(): void { state.toggleDrawer() } }
     IpcHandler { target: "search"; function toggle(): void { state.toggleSearch() } }
