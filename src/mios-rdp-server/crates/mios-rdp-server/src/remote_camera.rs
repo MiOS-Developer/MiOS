@@ -620,7 +620,8 @@ impl Worker {
         let result = loop {
             let started = Instant::now();
             let result = self.run_video(&rx, &name);
-            let restartable = matches!(&result, Err(e) if e.to_string().starts_with(PROVIDER_EXITED));
+            let restartable =
+                matches!(&result, Err(e) if e.to_string().starts_with(PROVIDER_EXITED));
             if !restartable
                 || !self.session_alive.load(Ordering::Acquire)
                 || self.stop.load(Ordering::Acquire)
@@ -630,11 +631,16 @@ impl Worker {
             if started.elapsed() > Duration::from_secs(30) {
                 restarts = 0;
             }
-            if restarts >= 3 {
+            if restarts >= self.cfg.native.camera_provider_restarts {
                 break result;
             }
             restarts += 1;
-            self.stats.camera_restarts.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .camera_sources
+                .lock()
+                .unwrap()
+                .retain(|v| v["name"] != name);
+            self.stats.camera_restarts.fetch_add(1, Ordering::AcqRel);
             tracing::warn!(device=%self.display_name, error=%result.unwrap_err(), restarts, "restarting native camera provider");
             // Stop, then want again: the client restarts its stream (a fresh
             // key frame) and the new provider is primed exactly like the first.
@@ -717,7 +723,7 @@ impl Worker {
         if self.cfg.native.log_negotiation && std::env::var_os("GST_DEBUG").is_none() {
             cmd.env("GST_DEBUG", "2");
         }
-        cmd.args(pipeline_args(&self.cfg, self.media, name, &self.display_name))
+        cmd.args(pipeline_args(self.media, name, &self.display_name))
             .env("PIPEWIRE_RUNTIME_DIR", pipewire_runtime(&self.cfg))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -747,7 +753,16 @@ impl Worker {
                     let Some(output) = self.read_graph(name)? else {
                         break;
                     };
-                    if let Some((id, active)) = video_node(&output, name) {
+                    if let Some((id, active, formats_ready)) = video_node(&output, name) {
+                        // A provider node exists before its first decoded caps.
+                        // Stopping capture here leaves camera consumers with an
+                        // empty format list and no way to request a stream.
+                        if !formats_ready {
+                            if started.elapsed() > Duration::from_millis(self.cfg.native.camera_timeout_ms) {
+                                anyhow::bail!("native camera did not publish usable video formats");
+                            }
+                        }
+                        if formats_ready {
                         node_seen = true;
                         let mut nodes = self.stats.camera_sources.lock().unwrap();
                         let capture = if self.waiting.load(Ordering::Acquire) {
@@ -757,7 +772,7 @@ impl Worker {
                         } else {
                             "idle"
                         };
-                        let entry = json!({"name":name,"node_id":id,"active":active,"capture":capture,"device":self.display_name,"description":camera_description(&self.display_name),"width":self.media.width,"height":self.media.height,"format":format!("{:?}",self.media.format),"native_format":native_format(&self.cfg),"consumers":consumers(&self.cfg)});
+                        let entry = json!({"name":name,"node_id":id,"active":active,"capture":capture,"device":self.display_name,"description":camera_description(&self.display_name),"width":self.media.width,"height":self.media.height,"format":format!("{:?}",self.media.format),"native_format":NATIVE_FORMAT,"consumers":consumers(&self.cfg)});
                         if let Some(old) = nodes.iter_mut().find(|v| v["name"] == name) {
                             *old = entry;
                         } else {
@@ -769,6 +784,7 @@ impl Worker {
                             if active {
                                 last_sample = Instant::now();
                             }
+                        }
                         }
                     }
                     poll_at =
@@ -834,7 +850,82 @@ impl Worker {
         result
     }
 }
+fn pipeline_args(media: MediaType, name: &str, display_name: &str) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-q",
+        "fdsrc",
+        "fd=0",
+        "blocksize=65536",
+        "do-timestamp=true",
+        "!",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let decode = match media.format {
+        MediaFormat::H264 => vec![
+            "h264parse".into(),
+            "!".into(),
+            "capssetter".into(),
+            format!(
+                "caps=video/x-h264,framerate=(fraction){}/{}",
+                media.frame_rate_numerator, media.frame_rate_denominator
+            ),
+            "!".into(),
+            "openh264dec".into(),
+        ],
+        MediaFormat::Mjpg => vec!["jpegparse".into(), "!".into(), "jpegdec".into()],
+        format => vec![
+            "rawvideoparse".into(),
+            format!("width={}", media.width),
+            format!("height={}", media.height),
+            format!(
+                "framerate={}/{}",
+                media.frame_rate_numerator, media.frame_rate_denominator
+            ),
+            format!(
+                "format={}",
+                match format {
+                    MediaFormat::Nv12 => "nv12",
+                    MediaFormat::I420 => "i420",
+                    _ => "yuy2",
+                }
+            ),
+        ],
+    };
+    args.extend(decode);
+    args.extend([
+        "!".into(),
+        "capssetter".into(),
+        format!("caps=video/x-raw,framerate=(fraction){}/{}",media.frame_rate_numerator,media.frame_rate_denominator),
+        "!".into(),
+        "videoconvert".into(),
+        "!".into(),
+        "videoscale".into(),
+        "add-borders=true".into(),
+        "!".into(),
+        output_caps(media),
+        "!".into(),
+    ]);
+    if media.flags & MediaType::BOTTOM_UP_IMAGE != 0 && !media.is_compressed() {
+        args.extend(
+            ["videoflip", "method=vertical-flip", "!"]
+                .into_iter()
+                .map(String::from),
+        );
+    }
+    // The internal node name carries connection ownership; the label is what
+    // pickers show. media.role=Camera is what camera pickers filter on
+    // (xdg-desktop-portal Camera, WirePlumber portal access, libwebrtc).
+    let label = camera_description(display_name);
+    args.extend(["pipewiresink".into(),"mode=provide".into(),"sync=false".into(),"async=false".into(),format!("stream-properties=\"props,node.name=(string){name},node.description=(string)\\\"{label}\\\",node.nick=(string)MiOS-Remote-Camera,media.class=(string)Video/Source,media.type=(string)Video,media.role=(string)Camera,media.category=(string)Capture,device.icon-name=(string)camera-web,node.virtual=(boolean)true\"")]);
+    args
+}
 const PROVIDER_EXITED: &str = "native video process exited";
+/// The decoded native format. Packed single-plane BGRA is what both OBS's
+/// PipeWire camera copy path and PipeWire's V4L2 compatibility library
+/// negotiate; planar NV12/I420 fail in each (see remote-camera.md).
+const NATIVE_FORMAT: &str = "BGRA";
 /// PipeWire runtime that owns the camera nodes: the operator's by default.
 fn pipewire_runtime(cfg: &Config) -> std::path::PathBuf {
     if cfg.native.camera_pipewire_runtime.is_empty() {
@@ -843,15 +934,10 @@ fn pipewire_runtime(cfg: &Config) -> std::path::PathBuf {
         cfg.native.camera_pipewire_runtime.clone().into()
     }
 }
-/// PipeWire's V4L2 compatibility library negotiates only single-plane buffers:
-/// planar I420 fails with "error alloc buffers", packed YUY2 links.
-fn native_format(cfg: &Config) -> &'static str {
-    if cfg.native.camera_v4l2 { "YUY2" } else { "I420" }
-}
 /// Which consumer families can see a published camera node. `pipewire` and
 /// `camera_portal` (media.role=Camera: xdg-desktop-portal Camera, Flatpak
-/// apps and WebRTC browsers) are always true; `v4l2` needs the packed native
-/// format and the compatibility library, used through the per-app launcher.
+/// apps and WebRTC browsers) are always true; `v4l2` needs the compatibility
+/// library, used per application through the `mios-camera-v4l2` launcher.
 pub(crate) fn consumers(cfg: &Config) -> serde_json::Value {
     let library = cfg.native.camera_v4l2
         && std::path::Path::new(&cfg.native.camera_v4l2_library).is_file();
@@ -869,138 +955,33 @@ pub(crate) fn consumers(cfg: &Config) -> serde_json::Value {
         },
     })
 }
-/// Human-readable picker label. Client device names are untrusted, so only a
-/// conservative character set reaches the GStreamer structure string.
+/// Human-readable picker label. Client device names are untrusted, so only
+/// alphanumerics and spaces reach the GStreamer structure string.
 fn camera_description(display_name: &str) -> String {
-    let clean: String = display_name
+    let label: String = display_name
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '(' | ')') {
-                c
-            } else {
-                ' '
-            }
-        })
+        .take(64)
+        .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { '-' })
         .collect();
-    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
-    let clean: String = clean.chars().take(48).collect();
-    let clean = clean.trim();
-    if clean.is_empty() {
-        "Remote camera (MiOS RDP)".into()
-    } else {
-        format!("{clean} (MiOS RDP)")
-    }
+    let label = label.trim();
+    format!("{} (MiOS RDP)", if label.is_empty() { "Camera" } else { label })
 }
-fn pipeline_args(cfg: &Config, media: MediaType, name: &str, display_name: &str) -> Vec<String> {
-    let mut args: Vec<String> = [
-        "-q",
-        "fdsrc",
-        "fd=0",
-        "blocksize=65536",
-        "do-timestamp=true",
-        "!",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
-    // Parsers report 0/1 when the bitstream carries no timing; the negotiated
-    // RDPECAM rate is merged into the parsed (fixed) caps. A capsfilter before
-    // the parser cannot do this: fdsrc has no caps, so the filter stays unfixed.
-    let rate = format!(
-        "framerate={}/{}",
-        media.frame_rate_numerator, media.frame_rate_denominator
-    );
-    let decode = match media.format {
-        MediaFormat::H264 => vec![
-            "h264parse".into(),
-            "!".into(),
-            "capssetter".into(),
-            "join=true".into(),
-            "replace=false".into(),
-            format!("caps=video/x-h264,{rate}"),
-            "!".into(),
-            "openh264dec".into(),
-        ],
-        MediaFormat::Mjpg => vec![
-            "jpegparse".into(),
-            "!".into(),
-            "capssetter".into(),
-            "join=true".into(),
-            "replace=false".into(),
-            format!("caps=image/jpeg,{rate}"),
-            "!".into(),
-            "jpegdec".into(),
-        ],
-        format => vec![
-            "rawvideoparse".into(),
-            format!("width={}", media.width),
-            format!("height={}", media.height),
-            rate.clone(),
-            format!(
-                "format={}",
-                match format {
-                    MediaFormat::Nv12 => "nv12",
-                    MediaFormat::I420 => "i420",
-                    _ => "yuy2",
-                }
-            ),
-        ],
-    };
-    args.extend(decode);
-    args.extend([
-        "!".into(),
-        "videoconvert".into(),
-        "!".into(),
-        // No videoscale: its fixation takes the first caps alternative and
-        // would squash a transposed stream; the decoded rectangle must match.
-        output_caps(media, native_format(cfg)),
-        "!".into(),
-    ]);
-    if media.flags & MediaType::BOTTOM_UP_IMAGE != 0 && !media.is_compressed() {
-        args.extend(
-            ["videoflip", "method=vertical-flip", "!"]
-                .into_iter()
-                .map(String::from),
-        );
-    }
-    // media.role=Camera is what camera pickers filter on (xdg-desktop-portal
-    // Camera, WirePlumber portal access, libwebrtc PipeWire capture).
-    args.extend([
-        "pipewiresink".into(),
-        "mode=provide".into(),
-        "sync=false".into(),
-        "async=false".into(),
-        format!(
-            "stream-properties=\"props,node.name=(string){name},node.description=(string)\\\"{}\\\",node.nick=(string)MiOS-Remote-Camera,media.class=(string)Video/Source,media.role=(string)Camera,media.category=(string)Capture,device.icon-name=(string)camera-web,node.virtual=(boolean)true\"",
-            camera_description(display_name)
-        ),
-    ]);
-    args
-}
-// Compressed camera samples may carry the device's native orientation in
-// their SPS while the advertised media type describes the display orientation.
-// Accept exactly the negotiated rectangle or its transpose, with no resizing.
-fn output_caps(media: MediaType, format: &str) -> String {
-    let original = format!(
-        "video/x-raw,format={format},width={},height={}",
+// Normalize the decoded frame to the selected native source dimensions. A
+// client may encode a larger camera frame than the negotiated media type.
+fn output_caps(media: MediaType) -> String {
+    format!(
+        "video/x-raw,format={NATIVE_FORMAT},width={},height={}",
         media.width, media.height
-    );
-    if media.is_compressed() && media.width != media.height {
-        format!(
-            "{original};video/x-raw,format={format},width={},height={}",
-            media.height, media.width
-        )
-    } else {
-        original
-    }
+    )
 }
-fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool)> {
+fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool, bool)> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     value.as_array()?.iter().find_map(|v| {
         if v["type"] != "PipeWire:Interface:Node" || v["info"]["props"]["node.name"] != name {
             return None;
         }
-        Some((v["id"].as_u64()?, v["info"]["state"] == "running"))
+        let ready = v["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["mediaSubtype"] == "raw" && f["size"]["width"].as_u64().unwrap_or(0) > 0 && f["size"]["height"].as_u64().unwrap_or(0) > 0 && f["framerate"]["num"].as_u64().unwrap_or(0) > 0 && f["framerate"]["denom"].as_u64().unwrap_or(0) > 0));
+        Some((v["id"].as_u64()?, v["info"]["state"] == "running", ready))
     })
 }
 #[allow(unsafe_code)]
@@ -1036,6 +1017,9 @@ mod tests {
     }
     fn encoded_dimensions() -> (u32, u32) {
         let (w, h) = dimensions();
+        if std::env::var("MIOS_RDP_CAMERA_TEST_LARGE_CODED").as_deref() == Ok("1") {
+            return (w * 2, h * 2);
+        }
         if std::env::var("MIOS_RDP_CAMERA_TEST_TRANSPOSED").as_deref() == Ok("1") {
             (h, w)
         } else {
@@ -1058,85 +1042,14 @@ mod tests {
         assert!(select_media(&cfg, &[too_large]).is_none());
     }
     #[test]
-    fn compressed_output_caps_allow_only_the_selected_or_transposed_rectangle() {
+    fn decoded_output_caps_match_the_negotiated_native_source() {
         let media = MediaType::new(MediaFormat::H264, 720, 1280, 30, 1, 1, 1, 1).unwrap();
         assert_eq!(
-            output_caps(media, "I420"),
-            "video/x-raw,format=I420,width=720,height=1280;video/x-raw,format=I420,width=1280,height=720"
+            output_caps(media),
+            "video/x-raw,format=BGRA,width=720,height=1280"
         );
         let raw = MediaType::new(MediaFormat::I420, 720, 1280, 30, 1, 1, 1, 0).unwrap();
-        assert!(!output_caps(raw, "YUY2").contains(';'));
-    }
-    #[test]
-    fn v4l2_compatibility_selects_a_single_plane_native_format() {
-        let media = MediaType::new(MediaFormat::H264, 640, 480, 30, 1, 1, 1, 1).unwrap();
-        let mut cfg = Config::default();
-        let args = pipeline_args(&cfg, media, "n", "Front");
-        assert!(args.iter().any(|a| a.starts_with("video/x-raw,format=YUY2,width=640")));
-        assert!(!args.iter().any(|a| a.contains("format=I420")));
-        assert!(!args.iter().any(|a| a == "videoscale"), "the decoded rectangle is never rescaled");
-        cfg.native.camera_v4l2 = false;
-        let args = pipeline_args(&cfg, media, "n", "Front");
-        assert!(args.iter().any(|a| a.starts_with("video/x-raw,format=I420,width=640")));
-        assert_eq!(consumers(&cfg)["v4l2"], false);
-        assert_eq!(consumers(&cfg)["v4l2_reason"], "remote.rdp.native.camera_v4l2 is false");
-        cfg.native.camera_v4l2 = true;
-        cfg.native.camera_v4l2_library = "/nonexistent/libpw-v4l2.so".into();
-        assert_eq!(consumers(&cfg)["v4l2"], false);
-        assert_eq!(consumers(&cfg)["camera_portal"], true);
-        let library = std::env::temp_dir().join(format!("mios-pw-v4l2-{}.so", std::process::id()));
-        std::fs::write(&library, b"").unwrap();
-        cfg.native.camera_v4l2_library = library.display().to_string();
-        let seen = consumers(&cfg);
-        std::fs::remove_file(&library).unwrap();
-        assert_eq!(seen["v4l2"], true);
-        assert_eq!(seen["v4l2_launcher"], "mios-camera-v4l2");
-    }
-    #[test]
-    fn camera_node_carries_the_picker_role_and_a_sanitized_label() {
-        let media = MediaType::new(MediaFormat::Mjpg, 640, 480, 30, 1, 1, 1, 1).unwrap();
-        let args = pipeline_args(&Config::default(), media, "mios-remote-camera-1-0", "Back \"Camera\",x=(int)1\\");
-        let props = args.iter().find(|a| a.starts_with("stream-properties=")).unwrap();
-        assert!(props.contains(",media.role=(string)Camera,"));
-        assert!(props.contains(",media.class=(string)Video/Source,"));
-        assert!(props.contains("node.description=(string)\\\"Back Camera x (int)1 (MiOS RDP)\\\""));
-        assert_eq!(props.matches('"').count(), 4, "only the wrapper and label quotes: {props}");
-        assert_eq!(camera_description("  "), "Remote camera (MiOS RDP)");
-        assert_eq!(camera_description(&"x".repeat(80)).len(), 48 + " (MiOS RDP)".len());
-    }
-    #[test]
-    fn parsers_merge_the_negotiated_rate_after_parsing() {
-        for format in [MediaFormat::H264, MediaFormat::Mjpg] {
-            let media = MediaType::new(format, 320, 240, 30000, 1001, 1, 1, 1).unwrap();
-            let args = pipeline_args(&Config::default(), media, "n", "d");
-            let parse = args.iter().position(|a| a.ends_with("parse")).unwrap();
-            let setter = args.iter().position(|a| a == "capssetter").unwrap();
-            assert!(setter > parse, "rate must be merged into the parser's fixed caps");
-            assert!(args.iter().any(|a| a.starts_with("caps=") && a.ends_with(",framerate=30000/1001")));
-            assert!(!args[..parse].iter().any(|a| a.contains("framerate")));
-        }
-    }
-    #[test]
-    fn camera_nodes_follow_the_configured_pipewire_runtime() {
-        let mut cfg = Config::default();
-        assert_eq!(pipewire_runtime(&cfg), std::path::PathBuf::from("/run/user/1000"));
-        cfg.native.camera_pipewire_runtime = "/run/user/1000/mios-nested-desktop-7".into();
-        assert_eq!(pipewire_runtime(&cfg), std::path::PathBuf::from("/run/user/1000/mios-nested-desktop-7"));
-    }
-    #[test]
-    fn a_device_waiting_for_exclusive_capture_reports_waiting() {
-        let mut first = camera();
-        let mut second = camera();
-        let owner = Arc::new(Mutex::new(None));
-        first.capture_owner = owner.clone();
-        second.capture_owner = owner.clone();
-        assert!(!first.start(1).unwrap().is_empty());
-        assert!(!first.waiting.load(Ordering::Acquire));
-        assert!(second.start(2).unwrap().is_empty());
-        assert!(second.waiting.load(Ordering::Acquire));
-        *owner.lock().unwrap() = None;
-        assert!(!second.activate().is_empty());
-        assert!(!second.waiting.load(Ordering::Acquire));
+        assert!(!output_caps(raw).contains(';'));
     }
     #[test]
     fn camera_capture_is_exclusive_and_released_for_the_next_device() {
@@ -1272,9 +1185,76 @@ mod tests {
     #[test]
     fn camera_node_inspection_requires_its_exact_name_and_type() {
         let bytes=br#"[{"id":8,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"node.name":"mios-test"}}}]"#;
-        assert_eq!(video_node(bytes, "mios-test"), Some((8, true)));
+        assert_eq!(video_node(bytes, "mios-test"), Some((8, true, false)));
         assert_eq!(video_node(bytes, "other"), None);
         assert_eq!(video_node(b"invalid", "mios-test"), None);
+    }
+    #[test]
+    fn camera_publication_requires_usable_advertised_video_formats() {
+        let mut graph = json!([{"id":8,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"node.name":"mios-test"},"params":{"EnumFormat":[{"mediaType":"video","mediaSubtype":"raw","format":"I420","size":{"width":720,"height":1280},"framerate":{"num":30,"denom":1}}]}}}]);
+        assert_eq!(video_node(&serde_json::to_vec(&graph).unwrap(), "mios-test"), Some((8,false,true)));
+        graph[0]["info"]["params"]["EnumFormat"][0]["framerate"]["num"] = json!(0);
+        assert_eq!(video_node(&serde_json::to_vec(&graph).unwrap(), "mios-test"), Some((8,false,false)));
+        let args=pipeline_args(media(MediaFormat::H264),"mios-test-9","Front Camera,evil=(string)bad!");
+        let props=args.last().unwrap();
+        assert!(props.contains("node.description=(string)\\\"Front Camera-evil--string-bad- (MiOS RDP)\\\""));
+        assert!(!props.contains("evil=(string)"));
+    }
+    #[test]
+    fn camera_node_carries_the_picker_role_and_a_bounded_label() {
+        let args = pipeline_args(media(MediaFormat::Mjpg), "mios-remote-camera-1-0", "Back \"Camera\",x=(int)1\\");
+        let props = args.last().unwrap();
+        assert!(props.contains(",media.role=(string)Camera,"));
+        assert!(props.contains(",media.class=(string)Video/Source,"));
+        assert!(props.contains("node.description=(string)\\\"Back -Camera--x--int-1- (MiOS RDP)\\\""));
+        assert_eq!(props.matches('"').count(), 4, "only the wrapper and label quotes: {props}");
+        assert_eq!(camera_description("  "), "Camera (MiOS RDP)");
+        assert_eq!(camera_description(&"x".repeat(80)).len(), 64 + " (MiOS RDP)".len());
+    }
+    #[test]
+    fn one_single_plane_native_format_serves_pipewire_obs_and_v4l2() {
+        let media = MediaType::new(MediaFormat::H264, 640, 480, 30, 1, 1, 1, 1).unwrap();
+        let args = pipeline_args(media, "n", "Front");
+        assert!(args.iter().any(|a| a == "video/x-raw,format=BGRA,width=640,height=480"));
+        assert!(!args.iter().any(|a| a.contains("format=NV12") || a.contains("format=I420")));
+        let mut cfg = Config::default();
+        cfg.native.camera_v4l2 = false;
+        assert_eq!(consumers(&cfg)["v4l2"], false);
+        assert_eq!(consumers(&cfg)["pipewire"], true);
+        assert_eq!(consumers(&cfg)["v4l2_reason"], "remote.rdp.native.camera_v4l2 is false");
+        cfg.native.camera_v4l2 = true;
+        cfg.native.camera_v4l2_library = "/nonexistent/libpw-v4l2.so".into();
+        assert_eq!(consumers(&cfg)["v4l2"], false);
+        assert_eq!(consumers(&cfg)["camera_portal"], true);
+        let library = std::env::temp_dir().join(format!("mios-pw-v4l2-{}.so", std::process::id()));
+        std::fs::write(&library, b"").unwrap();
+        cfg.native.camera_v4l2_library = library.display().to_string();
+        let seen = consumers(&cfg);
+        std::fs::remove_file(&library).unwrap();
+        assert_eq!(seen["v4l2"], true);
+        assert_eq!(seen["v4l2_launcher"], "mios-camera-v4l2");
+    }
+    #[test]
+    fn camera_nodes_follow_the_configured_pipewire_runtime() {
+        let mut cfg = Config::default();
+        assert_eq!(pipewire_runtime(&cfg), std::path::PathBuf::from("/run/user/1000"));
+        cfg.native.camera_pipewire_runtime = "/run/user/1000/mios-nested-desktop-7".into();
+        assert_eq!(pipewire_runtime(&cfg), std::path::PathBuf::from("/run/user/1000/mios-nested-desktop-7"));
+    }
+    #[test]
+    fn a_device_waiting_for_exclusive_capture_reports_waiting() {
+        let mut first = camera();
+        let mut second = camera();
+        let owner = Arc::new(Mutex::new(None));
+        first.capture_owner = owner.clone();
+        second.capture_owner = owner.clone();
+        assert!(!first.start(1).unwrap().is_empty());
+        assert!(!first.waiting.load(Ordering::Acquire));
+        assert!(second.start(2).unwrap().is_empty());
+        assert!(second.waiting.load(Ordering::Acquire));
+        *owner.lock().unwrap() = None;
+        assert!(!second.activate().is_empty());
+        assert!(!second.waiting.load(Ordering::Acquire));
     }
     #[test]
     fn camera_permission_disables_dynamic_factory() {
@@ -1392,9 +1372,10 @@ mod tests {
         }
         fn sample_requested(&mut self, index: u8) {
             self.count = self.count.wrapping_add(1);
-            let mut frame = vec![0; 320 * 240 * 3 / 2];
-            frame[..320 * 240].fill(32 + self.count % 160);
-            frame[320 * 240..].fill(128);
+            let pixels = (encoded_dimensions().0 * encoded_dimensions().1) as usize;
+            let mut frame = vec![0; pixels * 3 / 2];
+            frame[..pixels].fill(32 + self.count % 160);
+            frame[pixels..].fill(128);
             let packet = if let Some(encoder) = self.encoder.as_mut() {
                 use crate::encode::H264Encoder;
                 encoder.force_idr();
@@ -1545,6 +1526,9 @@ mod tests {
         if let Ok(library) = std::env::var("MIOS_RDP_CAMERA_TEST_V4L2_LIBRARY") {
             cfg.native.camera_v4l2_library = library;
         }
+        if let Ok(restarts) = std::env::var("MIOS_RDP_CAMERA_TEST_PROVIDER_RESTARTS") {
+            cfg.native.camera_provider_restarts = restarts.parse().unwrap();
+        }
         cfg
     }
     fn lab_runtime() -> String {
@@ -1556,6 +1540,7 @@ mod tests {
             "camera-role test nodes stay out of the operator's PipeWire graph"
         );
         assert!(std::path::Path::new(&runtime).join("pipewire-0").exists());
+        assert_eq!(std::env::var("PIPEWIRE_RUNTIME_DIR").as_deref(), Ok(runtime.as_str()), "consumers inherit the lab PipeWire");
         runtime
     }
     /// argv prefix from a JSON array environment variable (lab wrappers).
@@ -1567,13 +1552,11 @@ mod tests {
         Some(cmd)
     }
     /// Run a consumer to completion while pumping the protocol loop.
-    fn run_pumped(wire: &mut Option<&mut Wire>, cmd: &mut Command, seconds: u64) -> Option<bool> {
+    fn run_pumped(wire: &mut Wire, cmd: &mut Command, seconds: u64) -> Option<bool> {
         let mut child = cmd.stdout(Stdio::null()).spawn().unwrap();
         let deadline = Instant::now() + Duration::from_secs(seconds);
         loop {
-            if let Some(wire) = wire.as_mut() {
-                wire.pump();
-            }
+            wire.pump();
             if let Some(status) = child.try_wait().unwrap() {
                 return Some(status.success());
             }
@@ -1585,15 +1568,23 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    /// Camera-role nodes as the portal/libwebrtc pickers filter them.
-    fn picker_nodes(runtime: &str) -> Vec<serde_json::Value> {
+    fn wait_for(wire: &mut Wire, seconds: u64, what: &str, mut done: impl FnMut(&mut Wire) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(seconds);
+        while !done(wire) {
+            wire.pump();
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    fn graph(runtime: &str) -> Vec<serde_json::Value> {
         let out = Command::new("pw-dump").env("PIPEWIRE_RUNTIME_DIR", runtime).output().unwrap();
         assert!(out.status.success());
-        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        value
-            .as_array()
-            .unwrap()
-            .iter()
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap().as_array().unwrap().clone()
+    }
+    /// Camera-role nodes as the portal/libwebrtc pickers filter them.
+    fn picker_nodes(runtime: &str) -> Vec<serde_json::Value> {
+        graph(runtime)
+            .into_iter()
             .filter(|v| {
                 v["type"] == "PipeWire:Interface:Node"
                     && v["info"]["props"]["media.class"] == "Video/Source"
@@ -1602,25 +1593,55 @@ mod tests {
             .map(|v| v["info"]["props"].clone())
             .collect()
     }
-    fn picker_probe(wire: &mut Option<&mut Wire>) -> Option<bool> {
+    /// The camera portal's IsCameraPresent, read through the lab's private bus.
+    fn picker_probe(wire: &mut Wire) -> Option<bool> {
         let mut cmd = lab_command("MIOS_RDP_CAMERA_TEST_PICKER_CMD")?;
         let out = cmd.stderr(Stdio::inherit()).output().unwrap();
-        if let Some(wire) = wire.as_mut() {
-            wire.pump();
-        }
+        wire.pump();
         let text = String::from_utf8_lossy(&out.stdout);
         Some(out.status.success() && text.split_whitespace().last() == Some("true"))
     }
+    /// A V4L2-API consumer (ffmpeg -f v4l2) started through the lab's
+    /// mios-camera-v4l2 launcher inside a private /dev without real devices.
     fn v4l2_consumer(output: &std::path::Path, frames: u32) -> Option<Command> {
         let mut cmd = lab_command("MIOS_RDP_CAMERA_TEST_V4L2_CMD")?;
-        let (w, h) = encoded_dimensions();
+        let (w, h) = dimensions();
         cmd.args([
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "v4l2",
-            "-input_format", "yuyv422", "-video_size", &format!("{w}x{h}"), "-i", "/dev/video0",
-            "-frames:v", &frames.to_string(), "-f", "rawvideo", "-pix_fmt", "yuyv422", "-y",
+            "-video_size", &format!("{w}x{h}"), "-i", "/dev/video0",
+            "-frames:v", &frames.to_string(), "-f", "rawvideo", "-pix_fmt", "bgra", "-y",
         ])
         .arg(output);
         Some(cmd)
+    }
+    fn native_reader(name: &str, frames: u32) -> Command {
+        let mut cmd = Command::new("gst-launch-1.0");
+        cmd.args(["-q", "pipewiresrc", &format!("target-object={name}"), &format!("num-buffers={frames}"), "!", "fakesink"]);
+        cmd
+    }
+    #[allow(unsafe_code)]
+    fn kill_own_child(pid: i32) {
+        // kill(2) on this test's own provider child; no memory crosses FFI.
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+    }
+    /// The PID of the gst-launch provider this test process spawned for `name`.
+    fn provider_pid(runtime: &str, name: &str) -> i32 {
+        let objects = graph(runtime);
+        let node = objects
+            .iter()
+            .find(|v| v["type"] == "PipeWire:Interface:Node" && v["info"]["props"]["node.name"] == name)
+            .expect("provider node");
+        let client = &node["info"]["props"]["client.id"];
+        let pid = objects
+            .iter()
+            .find(|v| v["type"] == "PipeWire:Interface:Client" && &v["id"] == client)
+            .and_then(|c| c["info"]["props"]["application.process.id"].as_i64())
+            .expect("provider client pid") as i32;
+        assert_eq!(std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap().trim(), "gst-launch-1.0");
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let ppid: u32 = stat.rsplit(')').next().unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
+        assert_eq!(ppid, std::process::id(), "only this test's own provider is signalled");
+        pid
     }
     #[test]
     #[ignore = "operator opt-in: creates only synthetic per-test PipeWire nodes and a native consumer"]
@@ -1644,18 +1665,22 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         };
+        let output =
+            std::env::temp_dir().join(format!("mios-camera-native-{}.i420", std::process::id()));
+        let graph = Command::new("pw-dump").args(["-N",node["name"].as_str().unwrap()]).output().unwrap();
+        assert!(graph.status.success());
+        let graph: serde_json::Value = serde_json::from_slice(&graph.stdout).unwrap();
+        assert!(graph.as_array().unwrap().iter().any(|n| n["info"]["props"]["node.name"] == node["name"] && n["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["format"] == "BGRA"))), "Camera must advertise the packed BGRA format used by OBS's safe single-plane path");
         let pickers = picker_nodes(&runtime);
         assert_eq!(pickers.len(), 1, "exactly the published camera is picker-visible");
         assert_eq!(pickers[0]["node.name"], node["name"]);
         assert_eq!(pickers[0]["node.description"], "Synthetic camera (MiOS RDP)");
-        assert_eq!(node["native_format"], if v4l2_enabled { "YUY2" } else { "I420" });
-        let portal_sees_camera = picker_probe(&mut Some(&mut wire));
+        assert_eq!(node["native_format"], "BGRA");
+        assert_eq!(node["consumers"]["v4l2"], v4l2_enabled && std::path::Path::new(&lab_config().native.camera_v4l2_library).is_file());
+        let portal_sees_camera = picker_probe(&mut wire);
         assert_ne!(portal_sees_camera, Some(false), "camera portal must report a camera");
-        let output =
-            std::env::temp_dir().join(format!("mios-camera-native-{}.i420", std::process::id()));
         assert!(!output.exists());
         let mut consumer = Command::new("gst-launch-1.0")
-            .env("PIPEWIRE_RUNTIME_DIR", &runtime)
             .args([
                 "-q",
                 "pipewiresrc",
@@ -1664,11 +1689,7 @@ mod tests {
                 "!",
                 "videoconvert",
                 "!",
-                &format!(
-                    "video/x-raw,format=I420,width={},height={}",
-                    encoded_dimensions().0,
-                    encoded_dimensions().1
-                ),
+                "video/x-raw,format=I420",
                 "!",
                 "filesink",
                 &format!("location={}", output.display()),
@@ -1725,7 +1746,6 @@ mod tests {
             json!({"initial":node,"current":stats.camera_sources.lock().unwrap().clone(),"workers":stats.camera_workers.load(Ordering::Acquire)})
         );
         let mut resumed = Command::new("gst-launch-1.0")
-            .env("PIPEWIRE_RUNTIME_DIR", &runtime)
             .args([
                 "-q",
                 "pipewiresrc",
@@ -1736,8 +1756,8 @@ mod tests {
                 "!",
                 &format!(
                     "video/x-raw,format=I420,width={},height={}",
-                    encoded_dimensions().0,
-                    encoded_dimensions().1
+                    dimensions().0,
+                    dimensions().1
                 ),
                 "!",
                 "fakesink",
@@ -1762,72 +1782,80 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        let mut v4l2 = json!(null);
-        let v4l2_output =
-            std::env::temp_dir().join(format!("mios-camera-v4l2-{}.yuyv", std::process::id()));
-        if let Some(mut cmd) = v4l2_consumer(&v4l2_output, 12) {
-            assert!(!v4l2_output.exists());
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while wire.camera_state() != Some(State::Dormant) {
+        let mut obs_verified = false;
+        if let Some(script) = std::env::var_os("MIOS_RDP_CAMERA_OBS_FIXTURE") {
+            let (w,h) = dimensions();
+            let mut obs = Command::new("python3").arg(script).args(["--consume",node["name"].as_str().unwrap(),"--format","BGRA","--width",&w.to_string(),"--height",&h.to_string()]).spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
                 wire.pump();
-                assert!(Instant::now() < deadline, "camera must idle before the V4L2 consumer");
+                if let Some(status) = obs.try_wait().unwrap() {
+                    assert!(status.success(),"Installed OBS camera consumer failed: {status}");
+                    obs_verified = true;
+                    break;
+                }
+                if Instant::now() > deadline {
+                    let _ = obs.kill();let _ = obs.wait();
+                    panic!("Installed OBS camera consumer timed out");
+                }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            let ok = run_pumped(&mut Some(&mut wire), &mut cmd, 20);
-            let (w, h) = encoded_dimensions();
-            let frame = (w * h * 2) as usize;
+        }
+        let name = node["name"].as_str().unwrap().to_string();
+        let mut v4l2 = json!(null);
+        let v4l2_output =
+            std::env::temp_dir().join(format!("mios-camera-v4l2-{}.bgra", std::process::id()));
+        if let Some(mut cmd) = v4l2_consumer(&v4l2_output, 12) {
+            assert!(!v4l2_output.exists());
+            wait_for(&mut wire, 5, "camera must idle before the V4L2 consumer", |w| w.camera_state() == Some(State::Dormant));
+            let ok = run_pumped(&mut wire, &mut cmd, 20);
+            let (w, h) = dimensions();
+            let frame = (w * h * 4) as usize;
             let data = std::fs::read(&v4l2_output).unwrap_or_default();
             let _ = std::fs::remove_file(&v4l2_output);
             if v4l2_enabled {
                 assert_eq!(ok, Some(true), "V4L2-API consumer must read the camera");
                 assert_eq!(data.len(), frame * 12);
-                let lumas: Vec<_> = data
-                    .chunks(frame)
-                    .map(|f| f.iter().step_by(2).map(|b| *b as u64).sum::<u64>() / (w * h) as u64)
-                    .collect();
                 assert!(
                     data.chunks(frame).zip(data.chunks(frame).skip(1)).any(|(a, b)| a != b),
                     "V4L2 consumer must see moving synthetic frames"
                 );
-                v4l2 = json!({"frames":12,"bytes":data.len(),"format":"YUYV","luma_means":lumas});
+                let means: Vec<_> = data.chunks(frame).map(|f| f.iter().step_by(4).map(|b| *b as u64).sum::<u64>() / (w * h) as u64).collect();
+                v4l2 = json!({"frames":12,"bytes":data.len(),"format":"BGRA","blue_means":means});
             } else {
-                assert_ne!(ok, Some(true), "planar I420 must not negotiate with the V4L2 library");
-                assert!(data.len() < frame, "a refused V4L2 consumer must not receive frames");
-                // The failed link must not destroy the camera: the provider
-                // restarts, republishes the node and a native consumer reads it.
-                let deadline = Instant::now() + Duration::from_secs(20);
-                loop {
-                    wire.pump();
-                    if stats.camera_restarts.load(Ordering::Acquire) > 0
-                        && picker_nodes(&runtime).len() == 1
-                        && wire.camera_state() == Some(State::Dormant)
-                    {
-                        break;
-                    }
-                    assert!(
-                        Instant::now() < deadline,
-                        "provider did not republish after the refused consumer: {:?} {:?}",
-                        wire.camera_state(),
-                        stats.camera_error.lock().unwrap()
-                    );
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                let mut again = Command::new("gst-launch-1.0");
-                again.env("PIPEWIRE_RUNTIME_DIR", &runtime).args([
-                    "-q",
-                    "pipewiresrc",
-                    &format!("target-object={}", node["name"].as_str().unwrap()),
-                    "num-buffers=6",
-                    "!",
-                    "fakesink",
-                ]);
-                let survived = run_pumped(&mut Some(&mut wire), &mut again, 20);
-                assert_eq!(survived, Some(true), "camera must survive a refused consumer: {:?}", stats.camera_error.lock().unwrap());
-                v4l2 = json!({"frames":0,"refused":true,"native_format":"I420","provider_restarts":stats.camera_restarts.load(Ordering::Acquire),"native_after_refusal":true});
+                assert_ne!(ok, Some(true), "with camera_v4l2 off the launcher must not expose a V4L2 camera");
+                assert!(data.is_empty(), "a V4L2 consumer without compatibility must receive no frames");
+                v4l2 = json!({"frames":0,"refused":true,"reason":node["consumers"]["v4l2_reason"]});
             }
+            // Either way the PipeWire camera keeps serving native consumers.
+            assert_eq!(run_pumped(&mut wire, &mut native_reader(&name, 6), 15), Some(true), "{:?}", stats.camera_error.lock().unwrap());
         }
-        if v4l2_enabled {
-            assert_eq!(stats.camera_restarts.load(Ordering::Acquire), 0, "no provider restart on the compatible path");
+        let mut restart = json!(null);
+        if std::env::var("MIOS_RDP_CAMERA_TEST_KILL_PROVIDER").as_deref() == Ok("1") {
+            let allowed = lab_config().native.camera_provider_restarts;
+            wait_for(&mut wire, 5, "camera must idle before the provider is killed", |w| w.camera_state() == Some(State::Dormant));
+            let pid = provider_pid(&runtime, &name);
+            kill_own_child(pid);
+            if allowed > 0 {
+                wait_for(&mut wire, 20, "the provider must restart and republish", |_| {
+                    stats.camera_restarts.load(Ordering::Acquire) == 1
+                        && stats.camera_sources.lock().unwrap().iter().any(|n| n["name"] == name.as_str())
+                });
+                wait_for(&mut wire, 10, "the restarted camera must idle", |w| w.camera_state() == Some(State::Dormant));
+                assert_ne!(provider_pid(&runtime, &name), pid);
+                assert_eq!(run_pumped(&mut wire, &mut native_reader(&name, 6), 15), Some(true), "camera must survive its provider exiting: {:?}", stats.camera_error.lock().unwrap());
+                assert!(stats.camera_error.lock().unwrap().is_none());
+                restart = json!({"provider_killed":true,"restarts":1,"native_after_restart":true});
+            } else {
+                wait_for(&mut wire, 10, "without restarts the camera closes", |_| stats.camera_workers.load(Ordering::Acquire) == 0);
+                let error = stats.camera_error.lock().unwrap().take();
+                assert!(error.as_deref().is_some_and(|e| e.contains(PROVIDER_EXITED)), "{error:?}");
+                assert_eq!(stats.camera_restarts.load(Ordering::Acquire), 0);
+                assert_ne!(run_pumped(&mut wire, &mut native_reader(&name, 1), 5), Some(true));
+                restart = json!({"provider_killed":true,"restarts":0,"camera_closed":true,"error":error});
+            }
+        } else {
+            assert_eq!(stats.camera_restarts.load(Ordering::Acquire), 0, "no provider restart on the healthy path");
         }
         let hot_remove = std::env::var("MIOS_RDP_CAMERA_TEST_REMOVE").as_deref() == Ok("1");
         if hot_remove {
@@ -1886,22 +1914,26 @@ mod tests {
             assert!(negative.camera_sources.lock().unwrap().is_empty());
             assert_eq!(negative.camera_workers.load(Ordering::Acquire), 0);
             assert!(picker_nodes(&runtime).is_empty(), "no picker-visible camera");
-            let portal = picker_probe(&mut Some(&mut wire));
+            let portal = picker_probe(&mut wire);
             assert_ne!(portal, Some(true), "camera portal must report no camera");
+            let mut native = Command::new("gst-launch-1.0");
+            native.args(["-q", "pipewiresrc", "autoconnect=true", "num-buffers=1", "!", "fakesink"]);
+            let native_reads = run_pumped(&mut wire, &mut native, 4) == Some(true);
+            assert!(!native_reads, "a native consumer must find no camera");
             let blank = std::env::temp_dir()
-                .join(format!("mios-camera-v4l2-negative-{}.yuyv", std::process::id()));
+                .join(format!("mios-camera-v4l2-negative-{}.bgra", std::process::id()));
             let v4l2_reads = v4l2_consumer(&blank, 1).map(|mut cmd| {
-                let ok = run_pumped(&mut Some(&mut wire), &mut cmd, 15);
+                let ok = run_pumped(&mut wire, &mut cmd, 15);
                 let bytes = std::fs::metadata(&blank).map(|m| m.len()).unwrap_or(0);
                 let _ = std::fs::remove_file(&blank);
                 ok == Some(true) && bytes > 0
             });
             assert_ne!(v4l2_reads, Some(true), "V4L2 consumer must see no camera");
-            negatives.push(json!({"enabled":enabled,"client_denies":deny,"picker_nodes":0,"portal_camera":portal,"v4l2_frames":v4l2_reads.map(|_| 0)}));
+            negatives.push(json!({"enabled":enabled,"client_denies":deny,"picker_nodes":0,"portal_camera":portal,"native_frames":0,"v4l2_frames":v4l2_reads.map(|_| 0)}));
         }
         println!(
             "MIOS_CAMERA_NATIVE_PROOF {}",
-            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"picker_node":pickers[0],"portal_camera":portal_sees_camera,"v4l2":v4l2,"negatives":negatives,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
+            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"advertised_video_format":true,"native_format":"BGRA","installed_obs_consumer":obs_verified,"picker_node":pickers[0],"portal_camera":portal_sees_camera,"v4l2":v4l2,"provider_restart":restart,"negatives":negatives,"consumer_dimensions_forced":false,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
         );
     }
     fn jpeg_frames() -> Vec<Vec<u8>> {
