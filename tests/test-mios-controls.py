@@ -19,7 +19,6 @@ def binary():
     explicit = os.environ.get('MIOS_CONTROLS')
     here = Path(__file__).resolve().parents[1]
     candidates = [Path(explicit)] if explicit else [
-        Path('/var/lib/mios-build/tmp/mios-controls-app/target/x86_64-unknown-linux-musl/release/mios-controls'),
         here / 'tools/native/target/x86_64-unknown-linux-musl/release/mios-controls',
         Path('/usr/bin/mios-controls'),
     ]
