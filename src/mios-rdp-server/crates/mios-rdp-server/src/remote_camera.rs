@@ -43,6 +43,7 @@ impl StaticChannelFactory for Factory {
             sender,
             alive: Arc::new(AtomicBool::new(true)),
             version: None,
+            capture_owner: Arc::new(Mutex::new(None)),
             devices: Arc::new(Mutex::new(BTreeMap::new())),
             total: 0,
         };
@@ -58,6 +59,7 @@ struct Enumerator {
     version: Option<ProtocolVersion>,
     devices: Arc<Mutex<BTreeMap<String, u32>>>,
     total: usize,
+    capture_owner: Arc<Mutex<Option<u32>>>,
 }
 impl_as_any!(Enumerator);
 impl DvcServerProcessor for Enumerator {}
@@ -129,6 +131,7 @@ impl DvcProcessor for Enumerator {
                     .lock()
                     .unwrap()
                     .insert(device.channel_name.clone(), u32::MAX);
+                let capture_owner = self.capture_owner.clone();
                 let cfg = self.cfg.clone();
                 let stats = self.stats.clone();
                 let sender = self.sender.clone();
@@ -153,6 +156,8 @@ impl DvcProcessor for Enumerator {
                                 device.display_name,
                             );
                             camera.id = id;
+                            camera.capture_owner = capture_owner;
+                            camera.siblings = devices.clone();
                             devices.lock().unwrap().insert(name, id);
                             Ok::<_, ironrdp_pdu::PduError>(camera)
                         })?;
@@ -196,6 +201,7 @@ impl Enumerator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
+    Waiting,
     Activating,
     Streams,
     Formats,
@@ -222,12 +228,15 @@ struct Camera {
     frames: Option<mpsc::SyncSender<Vec<u8>>>,
     outstanding: bool,
     wanted: bool,
+    capture_owner: Arc<Mutex<Option<u32>>>,
+    siblings: Arc<Mutex<BTreeMap<String, u32>>>,
 }
 impl_as_any!(Camera);
 impl DvcServerProcessor for Camera {}
 impl Drop for Camera {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.release_capture();
     }
 }
 impl Camera {
@@ -256,12 +265,61 @@ impl Camera {
             frames: None,
             outstanding: false,
             wanted: true,
+            capture_owner: Arc::new(Mutex::new(None)),
+            siblings: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+    fn activate(&mut self) -> Vec<DvcMessage> {
+        if !self.wanted || self.stop.load(Ordering::Acquire) {
+            return vec![];
+        }
+        let mut owner = self.capture_owner.lock().unwrap();
+        if owner.is_some() && *owner != Some(self.id) {
+            self.state = State::Waiting;
+            return vec![];
+        }
+        *owner = Some(self.id);
+        drop(owner);
+        self.state = State::Activating;
+        self.message(DevicePdu::ActivateDeviceRequest)
+    }
+    fn release_capture(&self) {
+        let mut owner = self.capture_owner.lock().unwrap();
+        if *owner != Some(self.id) {
+            return;
+        }
+        *owner = None;
+        drop(owner);
+        let alive = self.session_alive.clone();
+        let siblings = self.siblings.clone();
+        let _ = self
+            .sender
+            .send(ServerEvent::DvcAction(Box::new(move |dvc| {
+                if !alive.load(Ordering::Acquire) {
+                    return Ok(vec![]);
+                }
+                let ids: Vec<_> = siblings.lock().unwrap().values().copied().collect();
+                for id in ids {
+                    let Some(mut camera) = dvc.dvc_by_id_mut::<Camera>(id) else {
+                        continue;
+                    };
+                    let camera = camera.processor_mut();
+                    if camera.state == State::Waiting && camera.wanted {
+                        let messages = camera.activate();
+                        if !messages.is_empty() {
+                            return encode_dvc_messages(id, messages, ChannelFlags::SHOW_PROTOCOL)
+                                .map_err(|e| ironrdp_pdu::encode_err!(e));
+                        }
+                    }
+                }
+                Ok(vec![])
+            })));
     }
     fn message(&self, pdu: DevicePdu) -> Vec<DvcMessage> {
         vec![Box::new(DeviceMessage::new(self.version, pdu))]
     }
     fn fail(&mut self, error: &str) -> Vec<DvcMessage> {
+        tracing::warn!(device=%self.display_name, state=?self.state, error, "remote camera channel failed");
         *self.stats.camera_error.lock().unwrap() = Some(format!("{}: {error}", self.display_name));
         self.state = State::Failed;
         self.wanted = false;
@@ -297,10 +355,7 @@ impl Camera {
                 self.outstanding = false;
                 self.message(DevicePdu::StopStreamsRequest)
             }
-            (true, State::Dormant) => {
-                self.state = State::Activating;
-                self.message(DevicePdu::ActivateDeviceRequest)
-            }
+            (true, State::Dormant | State::Waiting) => self.activate(),
             _ => vec![],
         }
     }
@@ -311,7 +366,7 @@ impl DvcProcessor for Camera {
     }
     fn start(&mut self, id: u32) -> PduResult<Vec<DvcMessage>> {
         self.id = id;
-        Ok(self.message(DevicePdu::ActivateDeviceRequest))
+        Ok(self.activate())
     }
     fn close(&mut self, _: u32) {
         self.stop.store(true, Ordering::Release);
@@ -328,6 +383,7 @@ impl DvcProcessor for Camera {
             return Ok(self.fail("camera protocol version changed"));
         }
         let out = match msg.pdu {
+            DevicePdu::SampleErrorResponse { .. } if self.state != State::Streaming => vec![],
             DevicePdu::ErrorResponse(_) | DevicePdu::SampleErrorResponse { .. } => {
                 self.fail("client camera permission or capture failed")
             }
@@ -357,6 +413,7 @@ impl DvcProcessor for Camera {
                 }
                 State::Deactivating => {
                     self.state = State::Dormant;
+                    self.release_capture();
                     if self.wanted {
                         self.demand(true)
                     } else {
@@ -380,7 +437,9 @@ impl DvcProcessor for Camera {
                 }
             }
             DevicePdu::MediaTypeListResponse(types) if self.state == State::Formats => {
+                tracing::info!(device=%self.display_name, count=types.len(), offered=?types.iter().take(24).collect::<Vec<_>>(), "remote camera formats offered");
                 if let Some(media) = select_media(&self.cfg, &types) {
+                    tracing::info!(device=%self.display_name, ?media, "remote camera format selected");
                     self.media = Some(media);
                     let (tx, rx) = mpsc::sync_channel(2);
                     self.frames = Some(tx);
@@ -437,7 +496,7 @@ impl DvcProcessor for Camera {
             DevicePdu::SampleResponse { .. }
                 if matches!(
                     self.state,
-                    State::Stopping | State::Deactivating | State::Dormant
+                    State::Stopping | State::Deactivating | State::Dormant | State::Waiting
                 ) =>
             {
                 vec![]
@@ -454,8 +513,10 @@ fn select_media(cfg: &Config, types: &[MediaType]) -> Option<MediaType> {
         .filter(|m| {
             m.width >= 16
                 && m.height >= 16
-                && m.width <= cfg.native.camera_max_width
-                && m.height <= cfg.native.camera_max_height
+                && ((m.width <= cfg.native.camera_max_width
+                    && m.height <= cfg.native.camera_max_height)
+                    || (m.height <= cfg.native.camera_max_width
+                        && m.width <= cfg.native.camera_max_height))
                 && m.width % 4 == 0
                 && m.height % 4 == 0
                 && m.frame_rate_denominator > 0
@@ -545,6 +606,7 @@ impl Worker {
         );
         let result = self.run_video(&rx, &name);
         if let Err(error) = result {
+            tracing::warn!(device=%self.display_name, error=%error, "native camera provider failed");
             *self.stats.camera_error.lock().unwrap() =
                 Some(format!("{}: {error}", self.display_name));
             self.action(2, false);
@@ -618,7 +680,10 @@ impl Worker {
     }
     fn run_video(&self, rx: &mpsc::Receiver<Vec<u8>>, name: &str) -> anyhow::Result<()> {
         let mut cmd = Command::new(&self.cfg.native.camera_video_program);
-        cmd.args(pipeline_args(self.media, name))
+        if self.cfg.native.log_negotiation && std::env::var_os("GST_DEBUG").is_none() {
+            cmd.env("GST_DEBUG", "2");
+        }
+        cmd.args(pipeline_args(self.media, name, &self.display_name))
             .env(
                 "PIPEWIRE_RUNTIME_DIR",
                 format!("/run/user/{}", self.cfg.operator_uid),
@@ -651,7 +716,16 @@ impl Worker {
                     let Some(output) = self.read_graph(name)? else {
                         break;
                     };
-                    if let Some((id, active)) = video_node(&output, name) {
+                    if let Some((id, active, formats_ready)) = video_node(&output, name) {
+                        // A provider node exists before its first decoded caps.
+                        // Stopping capture here leaves camera consumers with an
+                        // empty format list and no way to request a stream.
+                        if !formats_ready {
+                            if started.elapsed() > Duration::from_millis(self.cfg.native.camera_timeout_ms) {
+                                anyhow::bail!("native camera did not publish usable video formats");
+                            }
+                        }
+                        if formats_ready {
                         node_seen = true;
                         let mut nodes = self.stats.camera_sources.lock().unwrap();
                         let entry = json!({"name":name,"node_id":id,"active":active,"device":self.display_name,"width":self.media.width,"height":self.media.height,"format":format!("{:?}",self.media.format)});
@@ -666,6 +740,7 @@ impl Worker {
                             if active {
                                 last_sample = Instant::now();
                             }
+                        }
                         }
                     }
                     poll_at =
@@ -726,13 +801,30 @@ impl Worker {
         result
     }
 }
-fn pipeline_args(media: MediaType, name: &str) -> Vec<String> {
-    let mut args: Vec<String> = ["-q", "fdsrc", "fd=0", "blocksize=65536", "!"]
-        .into_iter()
-        .map(String::from)
-        .collect();
+fn pipeline_args(media: MediaType, name: &str, display_name: &str) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-q",
+        "fdsrc",
+        "fd=0",
+        "blocksize=65536",
+        "do-timestamp=true",
+        "!",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
     let decode = match media.format {
-        MediaFormat::H264 => vec!["h264parse".into(), "!".into(), "openh264dec".into()],
+        MediaFormat::H264 => vec![
+            "h264parse".into(),
+            "!".into(),
+            "capssetter".into(),
+            format!(
+                "caps=video/x-h264,framerate=(fraction){}/{}",
+                media.frame_rate_numerator, media.frame_rate_denominator
+            ),
+            "!".into(),
+            "openh264dec".into(),
+        ],
         MediaFormat::Mjpg => vec!["jpegparse".into(), "!".into(), "jpegdec".into()],
         format => vec![
             "rawvideoparse".into(),
@@ -755,12 +847,15 @@ fn pipeline_args(media: MediaType, name: &str) -> Vec<String> {
     args.extend(decode);
     args.extend([
         "!".into(),
+        "capssetter".into(),
+        format!("caps=video/x-raw,framerate=(fraction){}/{}",media.frame_rate_numerator,media.frame_rate_denominator),
+        "!".into(),
         "videoconvert".into(),
         "!".into(),
-        format!(
-            "video/x-raw,format=I420,width={},height={}",
-            media.width, media.height
-        ),
+        "videoscale".into(),
+        "add-borders=true".into(),
+        "!".into(),
+        output_caps(media),
         "!".into(),
     ]);
     if media.flags & MediaType::BOTTOM_UP_IMAGE != 0 && !media.is_compressed() {
@@ -770,16 +865,29 @@ fn pipeline_args(media: MediaType, name: &str) -> Vec<String> {
                 .map(String::from),
         );
     }
-    args.extend(["pipewiresink".into(),"mode=provide".into(),"sync=false".into(),"async=false".into(),format!("stream-properties=props,node.name=(string){name},node.description=(string)MiOS-Remote-Camera,media.class=(string)Video/Source,node.virtual=(boolean)true")]);
+    // Keep the native device label readable; the internal node name carries
+    // connection ownership. Client labels cannot inject structure syntax.
+    let label: String = display_name.chars().take(64).map(|c| if c.is_alphanumeric() || c == ' ' {c} else {'-'}).collect();
+    let label = if label.trim().is_empty() {"Camera"} else {label.trim()};
+    args.extend(["pipewiresink".into(),"mode=provide".into(),"sync=false".into(),"async=false".into(),format!("stream-properties=\"props,node.name=(string){name},node.description=(string)\\\"{label}\\\",media.class=(string)Video/Source,media.type=(string)Video,media.role=(string)Camera,node.virtual=(boolean)true\"")]);
     args
 }
-fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool)> {
+// Normalize the decoded frame to the selected native source dimensions. A
+// client may encode a larger camera frame than the negotiated media type.
+fn output_caps(media: MediaType) -> String {
+    format!(
+        "video/x-raw,format=NV12,width={},height={}",
+        media.width, media.height
+    )
+}
+fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool, bool)> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     value.as_array()?.iter().find_map(|v| {
         if v["type"] != "PipeWire:Interface:Node" || v["info"]["props"]["node.name"] != name {
             return None;
         }
-        Some((v["id"].as_u64()?, v["info"]["state"] == "running"))
+        let ready = v["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["mediaSubtype"] == "raw" && f["size"]["width"].as_u64().unwrap_or(0) > 0 && f["size"]["height"].as_u64().unwrap_or(0) > 0 && f["framerate"]["num"].as_u64().unwrap_or(0) > 0 && f["framerate"]["denom"].as_u64().unwrap_or(0) > 0));
+        Some((v["id"].as_u64()?, v["info"]["state"] == "running", ready))
     })
 }
 #[allow(unsafe_code)]
@@ -806,8 +914,86 @@ mod tests {
     use ironrdp_svc::{SvcMessage, SvcProcessor};
     use std::collections::VecDeque;
 
+    fn dimensions() -> (u32, u32) {
+        if std::env::var("MIOS_RDP_CAMERA_TEST_PORTRAIT").as_deref() == Ok("1") {
+            (240, 320)
+        } else {
+            (320, 240)
+        }
+    }
+    fn encoded_dimensions() -> (u32, u32) {
+        let (w, h) = dimensions();
+        if std::env::var("MIOS_RDP_CAMERA_TEST_LARGE_CODED").as_deref() == Ok("1") {
+            return (w * 2, h * 2);
+        }
+        if std::env::var("MIOS_RDP_CAMERA_TEST_TRANSPOSED").as_deref() == Ok("1") {
+            (h, w)
+        } else {
+            (w, h)
+        }
+    }
     fn media(format: MediaFormat) -> MediaType {
-        MediaType::new(format, 320, 240, 30, 1, 1, 1, 0).unwrap()
+        let (w, h) = dimensions();
+        MediaType::new(format, w, h, 30, 1, 1, 1, 0).unwrap()
+    }
+    #[test]
+    fn portrait_camera_uses_the_same_pixel_bounds_as_landscape() {
+        let cfg = Config::default();
+        for (w, h) in [(1280, 720), (720, 1280)] {
+            let media = MediaType::new(MediaFormat::H264, w, h, 30000, 1000, 1, 1, 1).unwrap();
+            assert_eq!(select_media(&cfg, &[media]), Some(media));
+        }
+        let too_large =
+            MediaType::new(MediaFormat::H264, 1080, 1920, 30000, 1000, 1, 1, 1).unwrap();
+        assert!(select_media(&cfg, &[too_large]).is_none());
+    }
+    #[test]
+    fn decoded_output_caps_match_the_negotiated_native_source() {
+        let media = MediaType::new(MediaFormat::H264, 720, 1280, 30, 1, 1, 1, 1).unwrap();
+        assert_eq!(
+            output_caps(media),
+            "video/x-raw,format=NV12,width=720,height=1280"
+        );
+        let raw = MediaType::new(MediaFormat::I420, 720, 1280, 30, 1, 1, 1, 0).unwrap();
+        assert!(!output_caps(raw).contains(';'));
+    }
+    #[test]
+    fn camera_capture_is_exclusive_and_released_for_the_next_device() {
+        let mut first = camera();
+        let mut second = camera();
+        let owner = Arc::new(Mutex::new(None));
+        first.capture_owner = owner.clone();
+        second.capture_owner = owner.clone();
+        assert!(!first.start(1).unwrap().is_empty());
+        assert!(second.start(2).unwrap().is_empty());
+        assert_eq!(second.state, State::Waiting);
+        assert_eq!(*owner.lock().unwrap(), Some(1));
+        first.wanted = false;
+        first.state = State::Deactivating;
+        response(&mut first, DevicePdu::SuccessResponse);
+        assert!(!second.activate().is_empty());
+        assert_eq!(*owner.lock().unwrap(), Some(2));
+        drop(first);
+        assert_eq!(*owner.lock().unwrap(), Some(2));
+        drop(second);
+        assert_eq!(*owner.lock().unwrap(), None);
+    }
+    #[test]
+    fn late_sample_cancellation_does_not_destroy_an_idle_source() {
+        let mut c = camera();
+        c.state = State::Dormant;
+        assert!(
+            response(
+                &mut c,
+                DevicePdu::SampleErrorResponse {
+                    stream_index: 0,
+                    error: ErrorCode::InvalidRequest
+                }
+            )
+            .is_empty()
+        );
+        assert_eq!(c.state, State::Dormant);
+        assert!(!c.stop.load(Ordering::Acquire));
     }
     fn camera() -> Camera {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -905,9 +1091,20 @@ mod tests {
     #[test]
     fn camera_node_inspection_requires_its_exact_name_and_type() {
         let bytes=br#"[{"id":8,"type":"PipeWire:Interface:Node","info":{"state":"running","props":{"node.name":"mios-test"}}}]"#;
-        assert_eq!(video_node(bytes, "mios-test"), Some((8, true)));
+        assert_eq!(video_node(bytes, "mios-test"), Some((8, true, false)));
         assert_eq!(video_node(bytes, "other"), None);
         assert_eq!(video_node(b"invalid", "mios-test"), None);
+    }
+    #[test]
+    fn camera_publication_requires_usable_advertised_video_formats() {
+        let mut graph = json!([{"id":8,"type":"PipeWire:Interface:Node","info":{"state":"suspended","props":{"node.name":"mios-test"},"params":{"EnumFormat":[{"mediaType":"video","mediaSubtype":"raw","format":"I420","size":{"width":720,"height":1280},"framerate":{"num":30,"denom":1}}]}}}]);
+        assert_eq!(video_node(&serde_json::to_vec(&graph).unwrap(), "mios-test"), Some((8,false,true)));
+        graph[0]["info"]["params"]["EnumFormat"][0]["framerate"]["num"] = json!(0);
+        assert_eq!(video_node(&serde_json::to_vec(&graph).unwrap(), "mios-test"), Some((8,false,false)));
+        let args=pipeline_args(media(MediaFormat::H264),"mios-test-9","Front Camera,evil=(string)bad!");
+        let props=args.last().unwrap();
+        assert!(props.contains("node.description=(string)\\\"Front Camera-evil--string-bad-\\\""));
+        assert!(!props.contains("evil=(string)"));
     }
     #[test]
     fn camera_permission_disables_dynamic_factory() {
@@ -933,6 +1130,7 @@ mod tests {
             version: None,
             devices: Arc::new(Mutex::new(BTreeMap::new())),
             total: 0,
+            capture_owner: Arc::new(Mutex::new(None)),
         };
         assert!(enumerator.start(0).unwrap().is_empty());
         let responses = enumerator
@@ -1000,8 +1198,8 @@ mod tests {
                     crate::encode::OpenH264::new(
                         "auto",
                         crate::encode::EncoderSettings {
-                            width: 320,
-                            height: 240,
+                            width: encoded_dimensions().0,
+                            height: encoded_dimensions().1,
                             fps: 30.0,
                             bitrate_bps: 1000000,
                             max_bitrate_bps: 2000000,
@@ -1024,9 +1222,10 @@ mod tests {
         }
         fn sample_requested(&mut self, index: u8) {
             self.count = self.count.wrapping_add(1);
-            let mut frame = vec![0; 320 * 240 * 3 / 2];
-            frame[..320 * 240].fill(32 + self.count % 160);
-            frame[320 * 240..].fill(128);
+            let pixels = (encoded_dimensions().0 * encoded_dimensions().1) as usize;
+            let mut frame = vec![0; pixels * 3 / 2];
+            frame[..pixels].fill(32 + self.count % 160);
+            frame[pixels..].fill(128);
             let packet = if let Some(encoder) = self.encoder.as_mut() {
                 use crate::encode::H264Encoder;
                 encoder.force_idr();
@@ -1034,9 +1233,9 @@ mod tests {
                     .encode(
                         &crate::encode::I420 {
                             data: &frame,
-                            width: 320,
-                            height: 240,
-                            stride: 320,
+                            width: encoded_dimensions().0,
+                            height: encoded_dimensions().1,
+                            stride: encoded_dimensions().0,
                         },
                         self.count as i64 * 33,
                     )
@@ -1191,6 +1390,10 @@ mod tests {
         };
         let output =
             std::env::temp_dir().join(format!("mios-camera-native-{}.i420", std::process::id()));
+        let graph = Command::new("pw-dump").args(["-N",node["name"].as_str().unwrap()]).output().unwrap();
+        assert!(graph.status.success());
+        let graph: serde_json::Value = serde_json::from_slice(&graph.stdout).unwrap();
+        assert!(graph.as_array().unwrap().iter().any(|n| n["info"]["props"]["node.name"] == node["name"] && n["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["format"] == "NV12"))), "Camera must advertise an OBS-compatible native NV12 format");
         assert!(!output.exists());
         let mut consumer = Command::new("gst-launch-1.0")
             .args([
@@ -1198,6 +1401,8 @@ mod tests {
                 "pipewiresrc",
                 &format!("target-object={}", node["name"].as_str().unwrap()),
                 "num-buffers=12",
+                "!",
+                "videoconvert",
                 "!",
                 "video/x-raw,format=I420",
                 "!",
@@ -1262,7 +1467,13 @@ mod tests {
                 &format!("target-object={}", node["name"].as_str().unwrap()),
                 "num-buffers=6",
                 "!",
-                "video/x-raw,format=I420",
+                "videoconvert",
+                "!",
+                &format!(
+                    "video/x-raw,format=I420,width={},height={}",
+                    dimensions().0,
+                    dimensions().1
+                ),
                 "!",
                 "fakesink",
             ])
@@ -1343,7 +1554,7 @@ mod tests {
         }
         println!(
             "MIOS_CAMERA_NATIVE_PROOF {}",
-            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
+            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"advertised_video_format":true,"native_format":"NV12","consumer_dimensions_forced":false,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
         );
     }
     fn jpeg_frames() -> Vec<Vec<u8>> {

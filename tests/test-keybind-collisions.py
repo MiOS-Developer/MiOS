@@ -88,10 +88,15 @@ class Gate(unittest.TestCase):
     def test_literal_concatenation_is_evaluated(self):
         # A controlled concatenated chord exercises the real parser without
         # assuming the generator's spelling/case for the production launcher.
-        extra='[[keybindings.global.bindings]]\nid="concat-fixture"\ntier=1\nchord="SUPER+F7"\naction="exec:x"\nrealized_by="hyprland"\npassthrough=["vm-passthrough"]\n'
+        # The row's action is what the literal runs (window.close realizes hypr:killactive): a realized row on a
+        # literal that runs anything else is a dead row the gate reports (V1), shown by the exec:x variant.
+        fixture=lambda action: f'[[keybindings.global.bindings]]\nid="concat-fixture"\ntier=1\nchord="SUPER+F7"\naction="{action}"\nrealized_by="hyprland"\npassthrough=["vm-passthrough"]\n'
         text=LUA.read_text()+'\nhl.bind("SUPER" .. " + " .. "F7", hl.dsp.window.close())\n'
-        result = run_gate(self.binary, self.tmp_root(extra,lua=text))
+        result = run_gate(self.binary, self.tmp_root(fixture('hypr:killactive'),lua=text))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = run_gate(self.binary, self.tmp_root(fixture('exec:x'),lua=text))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('concat-fixture: realized_by hyprland on SUPER+f7 but hyprland.lua binds that chord to hl.dsp.window.close(), which does not run exec:x', result.stdout + result.stderr)
 
     def test_duplicate_of_compositor_chord_fails(self):
         self.bad('[[keybindings.global.bindings]]\nid="dup"\ntier=1\nchord="super+C"\naction="hypr:killactive"\npassthrough=["vm-passthrough"]\n', 'collision')

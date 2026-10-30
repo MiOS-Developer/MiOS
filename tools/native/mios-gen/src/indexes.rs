@@ -959,6 +959,41 @@ pub mod roadmap_index {
         result
     }
 
+    /// `git cat-file <mode>` over `input`: the requests are written from a thread while `read` drains the answers
+    /// here. Writing every request before reading (the old code) deadlocks as soon as git's answers fill the stdout
+    /// pipe: git blocks writing, stops reading stdin, and the writer blocks too (roadmap-index --check hung).
+    pub(crate) fn cat_file(
+        root: &Path,
+        mode: &str,
+        input: String,
+        read: impl FnOnce(&mut dyn std::io::BufRead) -> Result<(), String>,
+    ) -> Result<(), String> {
+        use std::io::Write;
+        let mut child = Command::new("git")
+            .args(["-C", &root.to_string_lossy(), "cat-file", mode])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("git cat-file {mode} spawn failed: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("git cat-file: no stdin")?;
+        // The thread owns stdin and drops it when done: git sees EOF after the last request.
+        let feeder = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let stdout = child.stdout.take().ok_or("git cat-file: no stdout")?;
+        let mut reader = std::io::BufReader::new(stdout);
+        let result = read(&mut reader);
+        // Drain whatever `read` left so git can exit, then reap it.
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+        let status = child.wait().map_err(|e| format!("git cat-file {mode} wait failed: {e}"))?;
+        let fed = feeder.join().map_err(|_| "git cat-file: the request writer panicked".to_string())?;
+        result?;
+        fed.map_err(|e| format!("git cat-file {mode}: writing requests: {e}"))?;
+        if !status.success() {
+            return Err(format!("git cat-file {mode} exited with {:?}", status.code()));
+        }
+        Ok(())
+    }
+
     pub fn generate_metrics_table(root: &Path) -> Result<String, String> {
         // 1. Tracked files list
         let ls_files = Command::new("git")
@@ -1012,31 +1047,18 @@ pub mod roadmap_index {
                 oids_input.push('\n');
             }
 
-            use std::io::Write;
-            let mut child = Command::new("git")
-                .args([
-                    "-C",
-                    &root.to_string_lossy(),
-                    "cat-file",
-                    "--batch-check=%(objectsize)",
-                ])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("git cat-file --batch-check spawn failed: {e}"))?;
-
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(oids_input.as_bytes());
-            }
-            let out = child
-                .wait_with_output()
-                .map_err(|e| format!("git cat-file wait failed: {e}"))?;
-            let out_str = String::from_utf8_lossy(&out.stdout);
-            for line in out_str.lines() {
-                if let Ok(bytes) = line.trim().parse::<u64>() {
-                    total_bytes += bytes;
+            cat_file(root, "--batch-check=%(objectsize)", oids_input, |out| {
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    if out.read_line(&mut line).map_err(|e| format!("git cat-file --batch-check read: {e}"))? == 0 {
+                        return Ok(());
+                    }
+                    if let Ok(bytes) = line.trim().parse::<u64>() {
+                        total_bytes += bytes;
+                    }
                 }
-            }
+            })?;
         }
 
         // 4. Batch read code files to count lines
@@ -1066,55 +1088,40 @@ pub mod roadmap_index {
                 oids_input.push('\n');
             }
 
-            use std::io::Write;
-            let mut child = Command::new("git")
-                .args(["-C", &root.to_string_lossy(), "cat-file", "--batch"])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("git cat-file --batch spawn failed: {e}"))?;
-
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(oids_input.as_bytes());
-            }
-            let out = child
-                .wait_with_output()
-                .map_err(|e| format!("git cat-file --batch wait failed: {e}"))?;
-            let blob = out.stdout;
-
-            let mut pos = 0;
-            for (ext, _) in &code {
-                if pos >= blob.len() {
-                    break;
+            // Streamed: one blob at a time is counted and dropped, never the whole tree in memory.
+            cat_file(root, "--batch", oids_input, |out| {
+                let mut header = Vec::new();
+                for (ext, _) in &code {
+                    header.clear();
+                    if out.read_until(b'\n', &mut header).map_err(|e| format!("git cat-file --batch read: {e}"))? == 0 {
+                        break;
+                    }
+                    let text = String::from_utf8_lossy(&header);
+                    let h_parts: Vec<&str> = text.split_whitespace().collect();
+                    let Some(size) = h_parts.get(2).and_then(|s| s.parse::<u64>().ok()) else {
+                        continue; // "<oid> missing": no body follows
+                    };
+                    let (mut lines, mut last, mut left) = (0usize, b'\n', size);
+                    while left > 0 {
+                        let buf = out.fill_buf().map_err(|e| format!("git cat-file --batch read: {e}"))?;
+                        if buf.is_empty() {
+                            return Err("git cat-file --batch: truncated body".into());
+                        }
+                        let n = buf.len().min(left as usize);
+                        lines += buf[..n].iter().filter(|&&b| b == b'\n').count();
+                        last = buf[n - 1];
+                        out.consume(n);
+                        left -= n as u64;
+                    }
+                    if size > 0 && last != b'\n' {
+                        lines += 1;
+                    }
+                    *counted.get_mut(ext).unwrap() += lines;
+                    let mut lf = [0u8; 1];
+                    out.read_exact(&mut lf).map_err(|e| format!("git cat-file --batch read: {e}"))?;
                 }
-                // Find newline terminating the header: <oid> SP <type> SP <size> LF
-                let nl = match blob[pos..].iter().position(|&b| b == b'\n') {
-                    Some(idx) => pos + idx,
-                    None => break,
-                };
-                let header = String::from_utf8_lossy(&blob[pos..nl]);
-                let h_parts: Vec<&str> = header.split_whitespace().collect();
-                if h_parts.len() < 3 {
-                    break;
-                }
-                let size: usize = match h_parts[2].parse() {
-                    Ok(s) => s,
-                    Err(_) => break,
-                };
-                let body_start = nl + 1;
-                let body_end = body_start + size;
-                if body_end > blob.len() {
-                    break;
-                }
-                let body = &blob[body_start..body_end];
-                let mut nl_count = body.iter().filter(|&&b| b == b'\n').count();
-                if !body.is_empty() && !body.ends_with(b"\n") {
-                    nl_count += 1;
-                }
-                *counted.get_mut(ext).unwrap() += nl_count;
-                // Advance past body and git's trailing newline delimiter
-                pos = body_end + 1;
-            }
+                Ok(())
+            })?;
         }
 
         let sh_l = counted[".sh"];
@@ -1599,5 +1606,82 @@ pub mod roadmap_index {
         }
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::Write;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        /// A repo whose code blobs together exceed any pipe buffer (64 KiB on Linux) many times over.
+        fn big_repo() -> tempfile::TempDir {
+            let dir = tempfile::tempdir().unwrap();
+            let git = |args: &[&str]| {
+                let ok = Command::new("git").arg("-C").arg(dir.path()).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success();
+                assert!(ok, "git {args:?}");
+            };
+            git(&["init", "-q"]);
+            for (i, ext) in ["sh", "py", "ps1", "rs"].iter().enumerate() {
+                let body: String = (0..20_000).map(|n| format!("line {n} of file {i}\n")).collect();
+                fs::write(dir.path().join(format!("f{i}.{ext}")), &body).unwrap();
+            }
+            fs::write(dir.path().join("tail.rs"), "no trailing newline").unwrap();
+            git(&["add", "-A"]);
+            dir
+        }
+
+        /// (d) roadmap-index --check hung: every cat-file request was written before any answer was read.
+        /// Positive: the metrics table (both cat-file passes) finishes and counts every line, the unterminated last
+        /// line included. Negative control: the pre-fix write-everything-then-wait pattern on the same repo never
+        /// finishes (killed after the timeout).
+        #[test]
+        fn cat_file_batches_never_deadlock() {
+            let repo = big_repo();
+            let root = repo.path().to_path_buf();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || tx.send(generate_metrics_table(&root)).unwrap());
+            let table = rx.recv_timeout(Duration::from_secs(60)).expect("metrics table must not hang").unwrap();
+            assert!(!table.is_empty());
+            // Both pipes must overflow for the deadlock: many small requests (input > 64 KiB) whose answers
+            // (> 64 KiB) git cannot write while nobody reads.
+            let oid = Command::new("git").arg("-C").arg(repo.path()).args(["rev-parse", ":tail.rs"]).output().unwrap();
+            let oid = String::from_utf8(oid.stdout).unwrap();
+            let requests: String = oid.repeat(5000);
+            assert!(requests.len() > 128 * 1024);
+            let mut answers = 0;
+            cat_file(repo.path(), "--batch", requests.clone(), |out| {
+                let mut line = String::new();
+                while out.read_line(&mut line).map_err(|e| e.to_string())? > 0 {
+                    answers += usize::from(line.ends_with(" blob 19\n"));
+                    line.clear();
+                }
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(answers, 5000, "every request answered");
+
+            // Negative control: the old pattern on the same requests.
+            let mut child = Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(["cat-file", "--batch"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            let (tx, rx) = mpsc::channel();
+            let mut stdin = child.stdin.take().unwrap();
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(requests.as_bytes());
+                drop(stdin);
+                let _ = tx.send(child.wait_with_output().map(|o| o.stdout.len()));
+            });
+            let old = rx.recv_timeout(Duration::from_secs(5));
+            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            assert!(old.is_err(), "control: write-all-then-read must deadlock on this repo, got {old:?}");
+        }
     }
 }

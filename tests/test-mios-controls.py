@@ -19,7 +19,6 @@ def binary():
     explicit = os.environ.get('MIOS_CONTROLS')
     here = Path(__file__).resolve().parents[1]
     candidates = [Path(explicit)] if explicit else [
-        Path('/var/lib/mios-build/tmp/mios-controls-app/target/x86_64-unknown-linux-musl/release/mios-controls'),
         here / 'tools/native/target/x86_64-unknown-linux-musl/release/mios-controls',
         Path('/usr/bin/mios-controls'),
     ]
@@ -65,6 +64,55 @@ class Validation(Base):
         self.assertIn('NEW FINDING: collision chord SUPER+c', r.stdout)
         self.assertIn('[hyprland.lua]', r.stdout, 'the re-rendered compositor session must see the moved bind')
         self.assertFalse(self.user.exists(), 'a rejected draft is never written, even with --apply')
+
+    def test_realized_row_on_a_foreign_compositor_chord_is_rejected(self):
+        # D1 (generators verify): a realized_by row moved onto SUPER+J (the compositor's togglesplit) used to pass
+        # with 0 findings and a dead row. Now render-hyprland refuses it, so the draft is rejected and never written.
+        # The pre-fix generator (MIOS_GEN_OLD) is the negative control: it accepts the same draft.
+        for row in ('session-scale-up', 'screenshot-region'):
+            r = self.run_cli('set', row, '--chord', 'SUPER+J', '--passthrough', 'vm-passthrough', '--apply')
+            self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f'{row}: chord SUPER+j is already bound by the compositor', r.stdout + r.stderr)
+            self.assertFalse(self.user.exists(), 'a rejected draft is never written, even with --apply')
+        old_gen, old_bin = os.environ.get('MIOS_GEN_OLD'), os.environ.get('MIOS_CONTROLS_OLD')
+        draft = ['set', 'session-scale-up', '--chord', 'SUPER+J', '--passthrough', 'vm-passthrough']
+        if old_gen:
+            # Second line alone: the gate analysis (compiled into this editor) flags the row even when the generator
+            # still drops it silently.
+            r = subprocess.run([str(self.bin), '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('session-scale-up: realized_by hyprland on SUPER+j but that chord is desktop.hyprland.bindings:Toggle split direction', r.stdout)
+        if old_gen and old_bin:
+            r = subprocess.run([old_bin, '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertEqual(r.returncode, 0, 'negative control: the pre-fix editor + generator accept the dead row\n' + r.stdout + r.stderr)
+            self.assertIn('0 finding(s)', r.stdout)
+
+    def test_exec_row_on_an_unrelated_literal_chord_is_rejected(self):
+        # V1 (generators verify, round 2): an exec:<prog> row on a chord whose literal merely MENTIONS the program
+        # (CTRL+ALT+SHIFT+m runs `alacritty -e ... mios-terminal --action system`) was taken as realized: no dispatch
+        # handle, 0 findings, and --apply wrote the dead row. The literals come from [keybindings.actions] and the
+        # terminal/launcher keys, not the compositor tables. Positive control: the same row on a free chord.
+        probes = [('exec:alacritty', 'CTRL+ALT+SHIFT+m'), ('exec:mios-terminal', 'CTRL+ALT+SHIFT+a'),
+                  ('exec:quickshell', 'SUPER+R'), ('exec:env', 'SUPER+Q')]
+        for action, chord in probes:
+            r = self.run_cli('set', 'session-scale-up', '--action', action, '--chord', chord, '--passthrough', 'vm-passthrough', '--apply')
+            self.assertNotEqual(r.returncode, 0, f'{action} on {chord}\n' + r.stdout + r.stderr)
+            self.assertIn('session-scale-up: chord', r.stdout + r.stderr)
+            self.assertIn(f'(not {action})', r.stdout + r.stderr)
+            self.assertFalse(self.user.exists(), 'a rejected draft is never written, even with --apply')
+        r = self.run_cli('set', 'session-scale-up', '--action', 'exec:alacritty', '--chord', 'CTRL+ALT+SHIFT+F9', '--passthrough', 'vm-passthrough')
+        self.assertEqual(r.returncode, 0, 'positive control: a free chord validates\n' + r.stdout + r.stderr)
+        old_gen, old_bin = os.environ.get('MIOS_GEN_OLD'), os.environ.get('MIOS_CONTROLS_OLD')
+        draft = ['set', 'session-scale-up', '--action', 'exec:alacritty', '--chord', 'CTRL+ALT+SHIFT+m', '--passthrough', 'vm-passthrough']
+        if old_gen:
+            # The gate (compiled into this editor) flags the row on its own when the generator still drops it.
+            r = subprocess.run([str(self.bin), '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('session-scale-up: realized_by hyprland on CTRL+ALT+SHIFT+m but hyprland.lua binds that chord to', r.stdout)
+        if old_gen and old_bin:
+            r = subprocess.run([old_bin, '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertEqual(r.returncode, 0, 'negative control: the pre-fix editor + generator accept the dead row\n' + r.stdout + r.stderr)
+            self.assertIn('0 finding(s)', r.stdout)
 
     def test_reserved_terminal_chord_is_rejected(self):
         r = self.run_cli('add', 'steal-ctrl-c', '--chord', 'CTRL+c', '--action', 'exec:true', '--contexts', 'terminal')
@@ -135,6 +183,66 @@ class ImportExport(Base):
         r = self.run_cli('import', str(good), '--apply')
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(tomllib.loads(self.user.read_text())['keybindings']['global']['controller']['system_layer'], {'BTN_WEST': 'exec:foot'})
+
+
+class ControllerAudit(Base):
+    """GT (C-34 / C-23 / C-16g): list shows the controller tables, check runs the gate's controller audit over the
+    resolved user projection, and an explicit --root reads that root's vendor tier."""
+
+    NAV = ('[keybindings.global.controller.nav]\nenabled = true\n[keybindings.global.controller.nav.contexts]\n'
+           'desktop-2d = "desktop"\n[keybindings.global.controller.nav.desktop]\n'
+           'BTN_SOUTH = "{south}"\nBTN_EAST = "none"\nBTN_WEST = "none"\nBTN_DPAD_UP = "none"\nBTN_DPAD_DOWN = "none"\n'
+           'BTN_DPAD_LEFT = "none"\nBTN_DPAD_RIGHT = "none"\nLS_UP = "none"\nLS_DOWN = "none"\nLS_LEFT = "none"\n'
+           'LS_RIGHT = "none"\nRS_UP = "none"\nRS_DOWN = "none"\nRS_LEFT = "none"\nRS_RIGHT = "none"\nBTN_TL2 = "none"\n'
+           'BTN_TR2 = "none"\nBTN_SELECT = "none"\nBTN_MODE = "none"\nBTN_THUMBL = "none"\nBTN_THUMBR = "none"\n')
+
+    def test_list_json_carries_the_controller_tables(self):
+        listed = json.loads(self.run_cli('list', '--json').stdout)
+        for k in ['nav', 'room', 'hypr3d', 'toggle_chord', 'mode_override_chord']:
+            self.assertIn(k, listed)
+        vendor = tomllib.loads((ROOT / 'usr/share/mios/mios.toml').read_text())
+        self.assertEqual(listed['toggle_chord'], vendor['desktop']['hyprland']['hypr3d']['controller']['toggle_chord'])
+        self.write_user(self.NAV.format(south='hypr:movefocus down'))
+        listed = json.loads(self.run_cli('list', '--json').stdout)
+        self.assertEqual(listed['nav']['desktop']['BTN_SOUTH'], 'hypr:movefocus down', 'list shows the resolved user projection')
+
+    def test_check_audits_the_user_nav_map(self):
+        # (key:/pointer: join action_namespaces with step I2; the vendor namespaces are used here)
+        self.write_user(self.NAV.format(south='hypr:movefocus down'))
+        r = self.run_cli('check')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.write_user(self.NAV.format(south='bogus'))
+        r = self.run_cli('check')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('BTN_SOUTH: action "bogus" must be <namespace>:<verb>', r.stdout)
+        self.write_user(self.NAV.format(south='hypr:movefocus down').replace('BTN_EAST = "none"\n', ''))
+        r = self.run_cli('check')
+        self.assertIn('desktop-2d (desktop): BTN_EAST unmapped', r.stdout, 'every nav input maps to an action or "none"')
+
+    def test_console_rows_take_console_namespaces_only(self):
+        row = '[[keybindings.global.bindings]]\nid = "vt-x"\ntier = 1\nchord = "SUPER+CTRL+F3"\naction = "{a}"\ncontexts = ["console"]\n'
+        r = self.run_cli('import', str(self._file(row.format(a='hypr:killactive'))))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('cannot run on the console', r.stdout)
+        r = self.run_cli('import', str(self._file(row.format(a='tmux:menu'))))
+        self.assertNotIn('cannot run on the console', r.stdout)
+
+    def test_explicit_root_reads_its_own_vendor_tier(self):
+        scratch = Path(self.tmp.name) / 'root'
+        (scratch / 'usr/share/mios').mkdir(parents=True)
+        text = (ROOT / 'usr/share/mios/mios.toml').read_text()
+        moved = text.replace('toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]', 'toggle_chord = ["BTN_TL", "BTN_TR"]', 1)
+        self.assertNotEqual(moved, text)
+        (scratch / 'usr/share/mios/mios.toml').write_text(moved)
+        env = dict(self.env, MIOS_TOML=str(ROOT / 'usr/share/mios/mios.toml'), MIOS_VENDOR_TOML=str(ROOT / 'usr/share/mios/mios.toml'))
+        r = subprocess.run([str(self.bin), '--root', str(scratch), 'list', '--json'], capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)['toggle_chord'], ['BTN_TL', 'BTN_TR'], 'the session MIOS_TOML must not redirect --root')
+
+    def _file(self, text):
+        p = Path(self.tmp.name) / f'import-{len(text)}-{abs(hash(text))}.toml'
+        p.write_text(text)
+        return p
 
 
 class Tui(Base):

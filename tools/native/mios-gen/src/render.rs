@@ -186,6 +186,10 @@ pub mod render_desktop {
         {
             lines.push(format!("MimeType={mt}"));
         }
+        // Preserve the sandbox identity on project-owned Flatpak wrappers.
+        if let Some(app) = cfg.and_then(|t| t.get("flatpak_app_id")).and_then(|v|v.as_str()) {
+            if !app.is_empty() && !app.chars().any(char::is_control) {lines.push(format!("X-Flatpak={app}"));}
+        }
         // [[actions]] = { id, name, exec }: desktop-entry-spec additional
         // application actions (dock/drawer right-click entries). Listed in the
         // main group as Actions=, each rendered as its own [Desktop Action id]
@@ -242,6 +246,7 @@ pub mod render_desktop {
                 r#"
                 title = "Browser"
                 exec_cmd = "browser %u"
+                flatpak_app_id = "org.example.Browser"
                 mime_type = "text/html;x-scheme-handler/https;"
                 actions = [
                   { id = "new-window", name = "New Window", exec = "browser --new-window" },
@@ -251,6 +256,7 @@ pub mod render_desktop {
             )
             .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
             let out = render_launcher("browser", &cfg, &BTreeMap::new());
+            assert!(out.contains("\nX-Flatpak=org.example.Browser\n"),"{out}");
             assert!(out.contains("\nMimeType=text/html;x-scheme-handler/https;\n"), "{out}");
             assert!(out.contains("\nActions=new-window;\n"), "{out}");
             assert!(
@@ -2655,6 +2661,31 @@ pub mod render_hyprland {
             .ok_or_else(|| format!("SSOT {path} must be a nonempty string"))
     }
 
+    /// `hl.device` rule for [keybindings.global.controller].virtual_keyboard: kb_layout = virtual_keyboard_layout.
+    /// Empty when the global map is disabled or the keyboard is not configured.
+    fn virtual_keyboard_lua(data: &Value) -> Result<String, String> {
+        let c = data.get("keybindings").and_then(|k| k.get("global"));
+        if c.and_then(|g| g.get("enabled")).and_then(Value::as_bool) != Some(true) {
+            return Ok(String::new());
+        }
+        let c = c.and_then(|g| g.get("controller"));
+        let name = c.and_then(|c| c.get("virtual_keyboard")).and_then(Value::as_str).unwrap_or("");
+        let layout = c.and_then(|c| c.get("virtual_keyboard_layout")).and_then(Value::as_str).unwrap_or("");
+        if name.is_empty() || layout.is_empty() {
+            return Ok(String::new());
+        }
+        if !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || !layout.bytes().all(|b| b.is_ascii_alphanumeric() || b == b',' || b == b'_')
+        {
+            return Err("virtual_keyboard must be a Hyprland device name ([a-z0-9-]) and virtual_keyboard_layout an XKB layout".into());
+        }
+        Ok(format!(
+            "mios_section(\"virtual-keyboard\", function()\n hl.device({{name = {}, kb_layout = {}}})\nend)\n",
+            lua(&Value::String(name.into()))?,
+            lua(&Value::String(layout.into()))?
+        ))
+    }
+
     /// [desktop.screenshot] (mios-shot) -> its keybinds (hl.bind exec "<binary> <args>"), the no-animation layer rules for
     /// its freeze / selector / flash surfaces and -- only while [desktop.hyprland.config.ecosystem].enforce_permissions is
     /// on -- screencopy permissions for the binary, grim and xdg-desktop-portal-hyprland (XDPH runs grim itself). Absent
@@ -3343,12 +3374,17 @@ end
                         && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
                 })
                 .ok_or("desktop.hyprland.placement.open_tag must be [A-Za-z0-9_-]")?;
-            if let Some(opening) = mios_resolver::window_opening::Policy::from_ssot(data)? {
-                out += &format!("hl.window_rule({{[\"name\"] = \"mios-placement\", [\"match\"] = {{[\"float\"] = false}}, [\"float\"] = true, [\"center\"] = true, [\"size\"] = {}, [\"tag\"] = \"+{tag}\"}})\n", lua(&Value::String(opening.rule_expression()))?);
-            } else {
-            out += &format!(
-                "hl.window_rule({{[\"name\"] = \"mios-placement\", [\"match\"] = {{[\"float\"] = false}}, [\"float\"] = true, [\"center\"] = true, [\"size\"] = \"(monitor_w>=monitor_h?min({land_w},monitor_w):min({port_w},monitor_w)) (monitor_w>=monitor_h?min({land_h},monitor_h):min({port_h},monitor_h))\", [\"tag\"] = \"+{tag}\"}})\n"
-            );
+            let size = match mios_resolver::window_opening::Policy::from_ssot(data)? {
+                Some(opening) => opening.rule_expression(),
+                None => format!("(monitor_w>=monitor_h?min({land_w},monitor_w):min({port_w},monitor_w)) (monitor_w>=monitor_h?min({land_h},monitor_h):min({port_h},monitor_h))"),
+            };
+            out += &format!("hl.window_rule({{[\"name\"] = \"mios-placement\", [\"match\"] = {{[\"float\"] = false}}, [\"float\"] = true, [\"center\"] = true, [\"size\"] = {}, [\"tag\"] = \"+{tag}\"}})\n", lua(&Value::String(size.clone()))?);
+            // [desktop.hyprland.placement.games]: game windows (resizable: opening size; fixed-size: their own size,
+            // never resized), self-placement refused; miosd placement centres them on the focused output.
+            if let Some(games) = mios_resolver::window_opening::Games::from_ssot(data)? {
+                for rule in games.window_rules(&size) {
+                    out += &format!("hl.window_rule({})\n", lua(&rule)?);
+                }
             }
         }
         for rule in at(h, "window_rules")?.as_array().ok_or("window_rules must be an array")? {
@@ -3371,6 +3407,9 @@ end
             );
         }
         out += &crate::global_bindings::prelude(data)?;
+        // The controller's virtual keyboard (key: projection) speaks US keycodes: pin its layout whatever the
+        // operator's kb_layout is, so controller L3 is Ctrl+T on a French keyboard too (C-31).
+        out += &virtual_keyboard_lua(data)?;
         let actions = at(data, "keybindings.actions")?
             .as_array()
             .ok_or("keybindings.actions must be an array")?;
@@ -3424,13 +3463,7 @@ end
                 .unwrap_or_default();
             out += &format!(
                 "hl.bind({}, hl.dsp.{dispatcher}({args}){flags})\n",
-                lua(&Value::String(crate::global_bindings::key(data, match (dispatcher, bind.get("args").and_then(Value::as_str)) {
-                    ("window.close", _) => "close-window",
-                    ("window.fullscreen", _) if bind.get("args").and_then(|a|a.get("mode")).and_then(Value::as_str)==Some("fullscreen") => "fullscreen",
-                    ("exec_cmd", Some("/usr/bin/miosd placement toggle")) => "toggle-placement",
-                    ("exec_cmd", Some(cmd)) if cmd.ends_with("call keymap toggle") => "keymap",
-                    _ => "",
-                }, at(bind,"key")?.as_str().ok_or("invalid bind key")?)))?
+                lua(&Value::String(crate::global_bindings::key(data, crate::global_bindings::bind_global_id(bind), at(bind,"key")?.as_str().ok_or("invalid bind key")?)))?
             );
         }
         // [desktop.screenshot] (mios-shot): keybinds, no-animation layer rules, screencopy permissions.
@@ -3441,7 +3474,14 @@ end
             .as_integer()
             .filter(|n| (1..=10).contains(n))
             .ok_or("workspace_count must be 1..10")?;
-        out += &format!("for i = 1, {count} do\n local key = i % 10\n hl.bind({} .. \" + \" .. key, hl.dsp.focus({{ workspace = i }}))\n hl.bind({} .. \" + SHIFT + \" .. key, hl.dsp.window.move({{ workspace = i }}))\nend\n",string(h,"main_modifier")?,string(h,"main_modifier")?);
+        // Literal binds, one line each, so the gate audits every workspace chord (C-21).
+        let main_mod = at(h, "main_modifier")?.as_str().ok_or("main_modifier must be a string")?;
+        for i in 1..=count {
+            out += &format!("hl.bind({}, hl.dsp.focus({{ workspace = {i} }}))\n", lua(&Value::String(format!("{main_mod} + {}", i % 10)))?);
+        }
+        for i in 1..=count {
+            out += &format!("hl.bind({}, hl.dsp.window.move({{ workspace = {i} }}))\n", lua(&Value::String(format!("{main_mod} + SHIFT + {}", i % 10)))?);
+        }
         out += "mios_state.binds = true\n";
         out += &hypr3d_profile(data)?;
         if let Some(glass) = h
@@ -3803,7 +3843,8 @@ end
         // Magic lamp ([desktop.hyprland.lamp], inside the mios-wobbly plugin); additive, see lamp_profile below.
         out += &lamp_profile(data)?;
         // Mobile layout profile ([desktop.mobile]); additive, see mobile_profile below.
-        out += &crate::global_bindings::finish(data)?;
+        let global_input = crate::global_bindings::finish(data, &out)?;
+        out += &global_input;
         out += &mobile_profile(data)?;
         Ok(out)
     }
@@ -5075,7 +5116,7 @@ report("again")
                 wb.as_bool().ok_or("desktop.hyprland.hypr3d.config.player.walk_bob must be boolean")?;
             }
         }
-        // [desktop.hyprland.hypr3d.spawn] is read at SUPER+G: check it here so render-hyprland --check catches it.
+        // [desktop.hyprland.hypr3d.spawn] is read by the room toggle (toggle_key): check it here so render-hyprland --check catches it.
         crate::hypr3d_spawn::Policy::from_ssot(data)?;
         if let Some(ctrl) = table.get("controller") {
             let ctrl_tbl = ctrl.as_table().ok_or("desktop.hyprland.hypr3d.controller must be a table")?;
@@ -5116,7 +5157,7 @@ report("again")
             for (group, key) in HYPR3D_RATE_KEYS {
                 if config.get(group).and_then(|g| g.get(key)).is_some() {
                     return Err(format!(
-                        "desktop.hyprland.hypr3d.config.{group}.{key} is superseded by [desktop.framerate] (SUPER+G and miosd send the running tier's rate); remove it"
+                        "desktop.hyprland.hypr3d.config.{group}.{key} is superseded by [desktop.framerate] (the Hypr3D room toggle, [desktop.hyprland.hypr3d].toggle_key, and miosd send the running tier's rate); remove it"
                     ));
                 }
             }
@@ -5129,7 +5170,7 @@ report("again")
 
     // ---- desktop frame rate ([desktop.framerate], miosd framerate) ------------------------------------------------
     // The policy table and precedence live in mios_resolver::framerate (one copy for miosd, this projection and the
-    // tests). Here: the login/reload projection and the Hypr3D keys SUPER+G sends.
+    // tests). Here: the login/reload projection and the Hypr3D keys the room toggle (toggle_key) sends.
     use mios_resolver::framerate::{Inputs as RateInputs, Policy as RatePolicy, State as RateState};
 
     /// Hypr3D's rate keys (hypr3d-mios-frame-rate.patch): render.max_fps = D, render.glass_fps = G, world.live_fps = W.
@@ -5218,7 +5259,7 @@ report("again")
         Ok(out)
     }
 
-    /// The running tier's Hypr3D keys into `config` (the table SUPER+G sends): miosd's live state, else the login plan.
+    /// The running tier's Hypr3D keys into `config` (the table the room toggle sends): miosd's live state, else the login plan.
     /// render.max_fps = D (0 = every output frame: unlocked), render.glass_fps = G, world.live_fps = W.
     fn hypr3d_rate_overlay(config: &mut Value, policy: &RatePolicy, live: Option<&RateState>, login: &RateInputs) -> Result<(), String> {
         let (desktop, cap, glass, wallpaper) = match live {
@@ -5242,7 +5283,7 @@ report("again")
     }
 
     /// `hyprland-session` exports the running hardware profile to the compositor, so every
-    /// binding the compositor runs (SUPER+G among them) inherits it.
+    /// binding the compositor runs (the room toggle among them) inherits it.
     const SESSION_PROFILE_ENV: &str = "MIOS_DESKTOP_HARDWARE_PROFILE";
 
     /// `[desktop.hyprland.hardware_profiles.<p>].hypr3d_render_scale`: a number in the plugin's 1..4 range.
@@ -5395,7 +5436,7 @@ report("again")
         if hypr3d_profile(&data)?.is_empty() { return Err("Hypr3DGlass is disabled".into()); }
         let mut config = hypr3d_session_config(&data, std::env::var(SESSION_PROFILE_ENV).ok().as_deref(),
             &fs::read_to_string("/proc/cmdline").unwrap_or_default())?;
-        // [desktop.framerate]: the running tier's rates, so SUPER+G never resets what miosd applied.
+        // [desktop.framerate]: the running tier's rates, so the room toggle never resets what miosd applied.
         if let Some(policy) = framerate_policy(&data)? {
             let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from);
             let live = runtime.as_deref().and_then(|r| RateState::read_live(&policy.state_path(r), Path::new("/")));
@@ -5510,7 +5551,7 @@ report("again")
             if name.is_empty() || name.chars().any(char::is_control) {
                 return Err("Invalid desktop session name".into());
             }
-            // Read at SUPER+G, not at login: check it here so render-hyprland --check catches it.
+            // Read at the room toggle, not at login: check it here so render-hyprland --check catches it.
             if let Some(scale) = cfg.get("hypr3d_render_scale") {
                 hypr3d_render_scale(scale, &format!("desktop.hyprland.hardware_profiles.{id}.hypr3d_render_scale"))?;
             }

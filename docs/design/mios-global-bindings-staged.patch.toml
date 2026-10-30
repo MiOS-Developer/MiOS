@@ -1,4 +1,4 @@
-# AI-hint: Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, I1, I2, I3, P1 and I4 (landed), "#@<STEP>" lines are uncommented by the step that ships the code reading them.
+# AI-hint: Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, I1, I2, I3, I4, P1, G1, U1 and GT (landed), "#@<STEP>" lines are uncommented by the step that ships the code reading them.
 # AI-related: usr/share/mios/mios.toml, docs/design/mios-global-bindings-final.md
 # MiOS global bindings: final SSOT tables (replacement text for the vendor SSOT)
 #
@@ -11,7 +11,8 @@
 #   and the tmux/unit outputs.
 #
 # STAGING PROTOCOL
-#   Active (uncommented) lines are the S0, I1, I2 and I3 steps and the landed P1 room table. Each one is implemented by the code that ships today, and it
+#   Active (uncommented) lines are the S0, I1, I2, I3 and I4 steps (branch mios-input-platform), the landed P1 room
+#   table and the landed G1/U1/GT lines (branch mios-input-generators). Each one is implemented by the code that ships today, and it
 #   passes today's validators (mios-inputd config.rs:226-365, mios-gate keybinds.rs, mios-controls validate.rs:107-145).
 #   A line that starts with "#@<STEP> " belongs to a later step. That owner's change uncomments it in the same commit
 #   that adds the code that reads it (sed 's/^#@<STEP> //'). Nothing below is declared before something implements it.
@@ -105,9 +106,17 @@ extended_features_index = 120
 extended_keys = "on"
 extended_keys_format = "csi-u"
 extended_key_terms = ["xterm*", "kitty*", "foot*", "alacritty*"]
-#@U1 menu_alias = "mios-menu"              # also emit the MiOS menu (MouseDown3) as a command alias, centred, so
-#@U1                                       # inputd can open it on a client (Guide tap on a VT)
-#@U1 mouse_terms = ["linux"]               # PLAUSIBLE: set -as terminal-features ',linux:mouse' (VT mouse via gpm)
+# MERGE NOTE: the shipped table also carries the tmux-os keys that landed after ebece0e20 (ca999d74d:
+# extended_feature_slots, command_alias_*, launcher_key, the menu notes and sizes, the messages and the full
+# bindings list). Keep them from the shipped SSOT when merging BLOCK A; this text lists only the keys the bindings
+# contract reads. menu_key is one: the controller's tmux:menu verb is client-exact through it
+# (send-keys -c <client> -K <tmux_prefix> <menu_key>), and the gate rejects tmux:menu without it.
+menu_key = "Space"                  # prefix + this key opens the MiOS menu (mirrors SUPER+Space, the desktop drawer)
+# U1 (landed): the bare `mios-menu` command alias is always generated (fixed name, no SSOT key); it opens the menu by
+# name but cannot be aimed at one client, so inputd uses menu_key instead.
+mouse_terms = ["linux"]             # set -as terminal-features ',linux:mouse' (VT mouse via gpm)
+mouse_features_index = 130          # terminal-features[index .. index+slots-1] is MiOS-owned (clear of 90-94 and 120-127)
+mouse_feature_slots = 4
 bindings = [
   { key = "h", command = "select-pane -L" },
   { key = "j", command = "select-pane -D" },
@@ -127,11 +136,10 @@ bindings = [
   { key = "f", command = "run-shell '/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --workspace-view toggle'", command_windows = "resize-pane -Z" },
 ]
 
-# Read by mios-sync-theme:98 (enabled) and the mios-controls TUI (tui.rs:809, hypr3d_toggle_chord). The router itself uses
-# [desktop.hyprland.hypr3d.controller].toggle_chord.
+# Read by mios-gen keymap-overlay (enabled: the controller rows of the Super+Escape overlay). The router, the overlay
+# and the mios-controls TUI read the chord itself from [desktop.hyprland.hypr3d.controller].toggle_chord.
 [keybindings.controller]
 enabled = true
-hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]   # mirror of toggle_chord # @drop:GT (tui.rs:809 reads toggle_chord)
 
 # --- Global input contract (/usr/share/doc/mios/keybinds.md) ---
 # One audited map of every host keyboard/controller binding across the four tiers: 1 desktop/window manager,
@@ -177,7 +185,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:volume down" = ["/usr/bin/wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
 "mios:media previous" = ["/usr/bin/playerctl", "previous"]
 "mios:media next" = ["/usr/bin/playerctl", "next"]
-#@G1 "mios:screenshot-region" = ["/usr/bin/mios-shot", "region"]
+"mios:screenshot-region" = ["/usr/bin/mios-shot", "region"]
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
 # app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
@@ -258,8 +266,8 @@ passthrough = ["vm-passthrough"]
 note = "The bypass shows the bindings over a captured app or a VM."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
-# On bypass_mod. They reach the host in captured apps and VMs only once mios-gen marks bypass_mod handles as
-# escapes (G1). Until then hyprland.lua:319 disables them there.
+# On bypass_mod, so mios-gen marks their handles as escapes: they reach the host over captured apps and VMs (in
+# app-capture and vm-passthrough exactly the bypass_mod chords reach the host).
 [[keybindings.global.bindings]]
 id = "session-scale-up"
 tier = 1
@@ -295,17 +303,17 @@ chord = "SUPER+CTRL+mouse_down"
 action = "mios:session-scale-down"
 realized_by = "hyprland"
 
-# G1: a screenshot that works over a fullscreen game. mios-gen must stop adding a second bind for a row whose chord
-# the compositor tables already bind (global_bindings.rs:53). Only then may this row land.
-#@G1 [[keybindings.global.bindings]]
-#@G1 id = "screenshot-region"
-#@G1 tier = 1
-#@G1 chord = "Print"
-#@G1 bypass = "SUPER+CTRL+Print"
-#@G1 action = "mios:screenshot-region"
-#@G1 realized_by = "hyprland"
-#@G1 passthrough = ["vm-passthrough"]
-#@G1 note = "Print stays a literal compositor bind; the bypass reaches the host over captured apps and VMs."
+# A screenshot that works over a fullscreen game. mios-gen adds no dispatch bind for a row whose chord the compositor
+# already binds literally, so Print keeps exactly one handle and the bypass becomes its escape.
+[[keybindings.global.bindings]]
+id = "screenshot-region"
+tier = 1
+chord = "Print"
+bypass = "SUPER+CTRL+Print"
+action = "mios:screenshot-region"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+note = "Print stays a literal compositor bind; the bypass reaches the host over captured apps and VMs."
 
 # Tier 2: VM / remote-client host keys. They live on bypass_mod so they work while the VM owns the keyboard (the
 # research proposed Super+Alt+P; the guest would swallow that chord). Realised by escape handles that mios-gen generates

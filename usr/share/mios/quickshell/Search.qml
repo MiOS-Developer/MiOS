@@ -47,7 +47,7 @@ QS.PanelWindow {
 
     function activate(row) {
         if (!row) return
-        if (row.entry) row.entry.execute()
+        if (row.entry) AppLaunch.launch(row.entry, searchWindow.outputName, [])
         else if (row.path) Qt.openUrlExternally("file://" + row.path.split("/").map(encodeURIComponent).join("/"))
         else if (row.command) QS.Quickshell.execDetached(["sh", "-lc", row.command])
         shellState.searchOpen = false

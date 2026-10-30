@@ -1,74 +1,91 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-30T15:52:07.134521+00:00",
-  "total_artifacts": 86,
+  "last_updated": "2026-10-30T21:17:44.738884+00:00",
+  "total_artifacts": 95,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "bec07dbcf2cd24e2c49d50db5401927a7ecb980c34e62d7701033c6cd40f3ec5",
-      "size_bytes": 29147,
+      "sha256": "85717dc5b26c354b240ffbf8ccb6a845904be0c075df31fef91c67ffaf4f74d0",
+      "size_bytes": 29350,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "physical_capture_enabled": true,
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false
       }
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "75cca488ca519eb57575775ae101fc410a201f61758cbbdf0a567c3c3db5856c",
-      "size_bytes": 654104,
+      "sha256": "fc4c163da60d565cfcb54e448668d930bac76214d2a33c6a8ac2075f4c0a12bd",
+      "size_bytes": 655548,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "physical_capture_enabled": true,
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T21:17:44.738884+00:00",
         "phosh_preview": "/var/tmp/mios-phosh-install/preview-receipt.json",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false,
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
       }
     },
     {
       "path": "tools/native/mios-gen/src/main.rs",
       "artifact_type": "code",
-      "sha256": "087f6305ea9004f88e01595bf1c518bf9233a75296da0b51d4e5c13f7a0bf340",
-      "size_bytes": 114393,
+      "sha256": "2f04a7d6408a1cef395a291d88eb1ed6238b9520b247ef4d1ff6c98faec700ca",
+      "size_bytes": 131877,
       "created_at": "2026-10-22T18:30:16.107909",
-      "metadata": {}
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
     },
     {
       "path": "tools/native/mios-gen/src/render.rs",
       "artifact_type": "code",
-      "sha256": "87f678948cef5713f49a8f33f72205f5fcff168df0859d1d57ffa0a8335860e5",
-      "size_bytes": 307206,
+      "sha256": "afa655fbf931998e01f3dcf527d8d82d02ce1566242ce75df8f2995d9b2a3bbf",
+      "size_bytes": 392614,
       "created_at": "2026-10-22T18:30:16.138833",
-      "metadata": {}
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
     },
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "7219a594afa025654f28829619a1c0c2d02bb4eb7f46181108852d61434c1fd2",
-      "size_bytes": 1036688,
+      "sha256": "ac7d4d4f05dce1436a88b0898c86d08589f60c8e359dfd964a97d67c4cf304b7",
+      "size_bytes": 1039243,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "physical_capture_enabled": true,
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false
       }
     },
     {
@@ -564,17 +581,19 @@
       "path": "usr/share/mios/configurator/mios.html",
       "artifact_type": "config",
       "created_at": "2026-10-29T13:23:44.121085+00:00",
-      "sha256": "da4d8dbf87fcf7118a202e08377638026c873f736bfa6be96b27186dc251ac95",
-      "size_bytes": 445706,
+      "sha256": "b305a42dcd88bdbd937aa7e78b1fbbaef66cc4a902d206d8242a7776189f6fdc",
+      "size_bytes": 450040,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "physical_capture_enabled": true,
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false
       }
     },
     {
@@ -614,11 +633,15 @@
       "path": "usr/share/mios/quickshell/Sidebar.qml",
       "artifact_type": "code",
       "created_at": "2026-10-29T13:23:44.121085+00:00",
-      "sha256": "a7ea360ecddca58e2f0477fbba920fe57a0df86aa9c2970e2359fbe956aa814f",
-      "size_bytes": 65223,
+      "sha256": "3c9da5951a47c0180305d3f5ed142d753d567a6d339924119e3dc21ddd66afc9",
+      "size_bytes": 65153,
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
-        "physical_capture_enabled": true
+        "physical_capture_enabled": true,
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
       }
     },
     {
@@ -816,65 +839,75 @@
       "path": "docs/design/mios-desktop-continuation-handoff.md",
       "artifact_type": "doc",
       "created_at": "2026-10-29T21:46:29.751732+00:00",
-      "sha256": "fc17f7827d249ee43e70004877631c169188a807dfb0937fe284a8e064d7a736",
-      "size_bytes": 37403,
+      "sha256": "ba25f259465222d8a67164026d077b7fc004773efc267b748a3938507d86ea8c",
+      "size_bytes": 44608,
       "metadata": {
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T21:17:44.738884+00:00",
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "phosh_preview": "/var/tmp/mios-phosh-install/preview-receipt.json",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false,
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
       }
     },
     {
       "path": "automation/lib/globals.sh",
       "artifact_type": "source",
       "created_at": "2026-10-30T01:54:34.636288+00:00",
-      "sha256": "b2cd975edff8dbf6b27c0e5f3aa5b2a1adaf66a5262a0f564460e66ba8640486",
-      "size_bytes": 648307,
+      "sha256": "0ebe3a87a132b637102f817b41a9c6db3f14fce269989038b2a6f246afda71a2",
+      "size_bytes": 649723,
       "metadata": {
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false
       }
     },
     {
       "path": "automation/lib/globals.ps1",
       "artifact_type": "source",
       "created_at": "2026-10-30T01:54:34.636288+00:00",
-      "sha256": "a6742451b9afc84401155d0da4e72d2f2d7d2251bf2b4deb441455c6e0605057",
-      "size_bytes": 1449699,
+      "sha256": "7bb47ec6b753c821933256cd9035847ee856dd332205fdf9f64f45a5ca28d563",
+      "size_bytes": 1453267,
       "metadata": {
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false
       }
     },
     {
       "path": "automation/manifest.json",
       "artifact_type": "source",
       "created_at": "2026-10-30T03:41:36.183059+00:00",
-      "sha256": "403a4bedbcc5e26090dd40ac677fb4f5aff0801ccc7c2739c8b84562c4b16e02",
-      "size_bytes": 2974453,
+      "sha256": "a0e322a458bba011ed34e5337879e52c4fb47c31fae77cce51cc810f1fc824c2",
+      "size_bytes": 2980505,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "microphone_verification": "/var/lib/mios-build/rdp-delivery/mios-microphone-shutdown-result.json",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
+        "checkpoint_at": "2026-10-30T21:17:44.738884+00:00",
         "candidate_status": "live_native_camera_physical_client_validation_pending",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false,
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
       }
     },
     {
@@ -977,39 +1010,165 @@
       "path": "src/mios-rdp-server/crates/mios-rdp-server/src/remote_camera.rs",
       "artifact_type": "source",
       "created_at": "2026-10-30T15:52:07.134521+00:00",
-      "sha256": "5888d2e26f1f1fae5749c4ab845c0f270003313fc1533decafb2edfeb2feb863",
-      "size_bytes": 53335,
+      "sha256": "2007584c88bd3b2d761a14012a84f5c6358bd559c11caa80e501e535f2a6a949",
+      "size_bytes": 63762,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
-        "candidate_status": "live_native_camera_physical_client_validation_pending"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
+        "checkpoint_at": "2026-10-30T21:17:44.738884+00:00",
+        "candidate_status": "live_native_camera_physical_client_validation_pending",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false,
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
       }
     },
     {
       "path": "tests/fixtures/mios-rdp/camera.py",
       "artifact_type": "test",
       "created_at": "2026-10-30T15:52:07.134521+00:00",
-      "sha256": "538f3975d25bbd368bac4cdcf9cde77ea93780bf07ef685dd6a6e7ab418b72a5",
-      "size_bytes": 3219,
+      "sha256": "580fa73f9eea13a3100a14ce0aff0e2885a792c7822c51004a52445f7eddc4ce",
+      "size_bytes": 3676,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
-        "candidate_status": "live_native_camera_physical_client_validation_pending"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
+        "checkpoint_at": "2026-10-30T21:17:44.738884+00:00",
+        "candidate_status": "live_native_camera_physical_client_validation_pending",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false,
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
       }
     },
     {
       "path": "usr/share/doc/mios/remote-camera.md",
       "artifact_type": "source",
       "created_at": "2026-10-30T15:52:07.134521+00:00",
-      "sha256": "4350ad532250592ec218e421b6620d9e9f494903e009a7d89e10525f8419d7cc",
-      "size_bytes": 5402,
+      "sha256": "859a2599507e68a5129f340c579468be93cb09776fd9a4a16558eec68cbe4858",
+      "size_bytes": 7382,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
-        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-final-native-result.json",
-        "checkpoint_at": "2026-10-30T15:52:07.134521+00:00",
-        "candidate_status": "live_native_camera_physical_client_validation_pending"
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
+        "checkpoint_at": "2026-10-30T21:17:44.738884+00:00",
+        "candidate_status": "live_native_camera_physical_client_validation_pending",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_physical_client_verified": false,
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
+      }
+    },
+    {
+      "path": "tools/native/mios-gen/src/app_preflight.rs",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "5d86e5d84b65b1deaaf8ddb6efc1c5e79f4a7c8a621345b6e335e4e10e4a354e",
+      "size_bytes": 20392,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/AppLaunch.qml",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "fcc3ce205f37e7576c84ca164eb5161b10b713742bc58687d7a6c32b1296d85c",
+      "size_bytes": 5399,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "tests/test-app-launch-health.py",
+      "artifact_type": "test",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "22f405204796080bc32a5561a30e03d02b1c98cceb4d0c5d66ddc74d974db16a",
+      "size_bytes": 6844,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "tests/test-app-launch-qml.py",
+      "artifact_type": "test",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "2b0899a556dab9af21a79caa919f87095b4b628cc069b8aedbb9ce29d8cdacfa",
+      "size_bytes": 4743,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "usr/share/doc/mios/application-launching.md",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "18c154aece32b4b761b0a0d7eafc113cc59ce257c321f7b7e5ba787a5a7568d1",
+      "size_bytes": 4311,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/AppDrawer.qml",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "760bb4d7101e7a0eab1102495219a9c340744abf649f0593f59a72d9bd6eb119",
+      "size_bytes": 12684,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "usr/share/mios/quickshell/Search.qml",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "3494c872337f170a928ffa4780e4f58a0ae93e81ee5bc9684657173f076da5e6",
+      "size_bytes": 9792,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "usr/share/applications/mios-zen.desktop",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "ae06b5277b3542fff43898b299372118fe839b227300f4735735dcc38d5f5463",
+      "size_bytes": 1359,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
+      }
+    },
+    {
+      "path": "usr/libexec/mios/mios-flatpak-preflight",
+      "artifact_type": "source",
+      "created_at": "2026-10-30T20:16:14.624464+00:00",
+      "sha256": "73a37c768d55fcf48bbb1ede3491988b207c79b0ced490909c1e638686f4ce8b",
+      "size_bytes": 3637,
+      "metadata": {
+        "checkpoint_at": "2026-10-30T20:16:14.624464+00:00",
+        "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
+        "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
+        "camera_physical_client_verified": false
       }
     }
   ]

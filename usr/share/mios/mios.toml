@@ -756,6 +756,23 @@ Requires = "sysinit.target"
 After = "sysinit.target"
 
 
+# Desktop memory protection (operator 2026-10-30, after agent lanes OOM-hung the host). memory.low is
+# hierarchical: a child's floor only holds if every ancestor has one, so the user slice, the login session
+# scope (the primary Hyprland) and the user manager (shell, portal, apps) each get a floor. Agent work has
+# none and is reclaimed first; mios-gen mem-admit ([system.memory_admission]) keeps it from starting at all
+# when MemAvailable is low.
+[units."user-.slice.d/10-mios-memory.conf".Slice]
+comment = "# AI-hint: Memory floor for every user slice, so the kernel reclaims system services and agent work before the operator's session.\n# AI-related: usr/share/mios/mios.toml [system.memory_admission], session-.scope.d/10-mios-memory.conf, user@.service.d/10-mios-memory.conf"
+MemoryLow = "10G"
+
+[units."session-.scope.d/10-mios-memory.conf".Scope]
+comment = "# AI-hint: Memory floor for the login session scope that holds the primary compositor (Hyprland via greetd).\n# AI-related: usr/share/mios/mios.toml, user-.slice.d/10-mios-memory.conf"
+MemoryLow = "4G"
+
+[units."user@.service.d/10-mios-memory.conf".Service]
+comment = "# AI-hint: Memory floor for the user manager (shell, portals, apps); its children share it through memory_recursiveprot.\n# AI-related: usr/share/mios/mios.toml, mios-shell.service.d/10-mios-memory.conf"
+MemoryLow = "6G"
+
 [units."mios-gpu-pv-detect.service".Unit]
 comment = "# AI-hint: Systemd unit that executes /usr/libexec/mios/gpu-pv-detect to detect Hyper-V GPU Partitioning (GPU-PV) capabilities during boot, enabling hardware acceleration for guests on Microsoft Hyper-V hosts.\n# AI-related: /usr/libexec/mios/gpu-pv-detect, systemd-modules-load.service, display-manager.service, multi-user.target"
 Description = "'MiOS' Hyper-V GPU-PV Guest Detection"
@@ -4216,7 +4233,9 @@ adapters = [
 # or digit, one of *`:?[]=,$!&(){}<>, or Space Enter Tab BTab BSpace Up Down Left Right PPage NPage) and rejects
 # duplicates across bindings, menu/launcher keys, float keys and [keybindings.agent].accept_key. The controller
 # does not add prefix keys: its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3)
-# and its tmux:menu verb runs the generated mios-menu command alias.
+# and its tmux:menu verb is client-exact: `tmux -L <socket> send-keys -c <client> -K <tmux_prefix> <menu_key>`, the
+# key words published by the server as @mios-menu-keys. The generated `mios-menu` command alias opens the same menu by
+# name (command prompt, one-client scripts) but cannot be aimed: tmux appends CLI arguments to an alias's expansion.
 [keybindings.tmux]
 # MiOS-Tmux (tmux-os), tier 3 of [keybindings.global] in the terminal context. Every binding below is in the
 # PREFIX table ([keybindings].tmux_prefix, then one key), so none can shadow a reserved_terminal chord; the
@@ -4227,6 +4246,14 @@ extended_feature_slots  = 8         # terminal-features[index .. index+slots-1] 
 extended_keys = "on"                # on | off | always (off also clears the MiOS terminal-features slots)
 extended_keys_format = "csi-u"
 extended_key_terms = ["xterm*", "kitty*", "foot*", "alacritty*"]
+# Client terminals that get the tmux "mouse" terminal feature, so tmux turns mouse reporting on there. "linux" is the
+# kernel VT: while reporting is on, gpm injects the pointer as mouse reports (TIOCL_SELMOUSEREPORT), so a VT click
+# selects a tmux pane. The linux terminfo already has kmous, so this entry pins that; a terminal type whose terminfo
+# lacks kmous (vt220, vt100) only gets reporting through an entry here. "[]" emits only the slot clears;
+# [keybindings].mouse = false wins.
+mouse_terms = ["linux"]
+mouse_features_index = 130          # terminal-features[index .. index+slots-1] is MiOS-owned (clear of 90-94 and 120-127)
+mouse_feature_slots = 4
 command_alias_index = 200           # command-alias[index .. index+slots-1] holds the generated menus
 command_alias_slots = 32
 menu_key = "Space"                  # prefix + this key opens the MiOS menu (mirrors SUPER+Space, the desktop drawer)
@@ -4410,11 +4437,10 @@ items = [
   { label = "No", key = "n", command = "" },
 ]
 
-# Read by mios-sync-theme:98 (enabled) and the mios-controls TUI (tui.rs:809, hypr3d_toggle_chord). The router itself uses
-# [desktop.hyprland.hypr3d.controller].toggle_chord.
+# Read by mios-gen keymap-overlay (enabled: the controller rows of the Super+Escape overlay). The router, the overlay
+# and the mios-controls TUI read the chord itself from [desktop.hyprland.hypr3d.controller].toggle_chord.
 [keybindings.controller]
 enabled = true
-hypr3d_toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]   # mirror of toggle_chord
 
 # --- Global input contract (/usr/share/doc/mios/keybinds.md) ---
 # One audited map of every host keyboard/controller binding across the four tiers: 1 desktop/window manager,
@@ -4461,6 +4487,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:volume down" = ["/usr/bin/wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
 "mios:media previous" = ["/usr/bin/playerctl", "previous"]
 "mios:media next" = ["/usr/bin/playerctl", "next"]
+"mios:screenshot-region" = ["/usr/bin/mios-shot", "region"]
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
 # app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
@@ -4541,8 +4568,8 @@ passthrough = ["vm-passthrough"]
 note = "The bypass shows the bindings over a captured app or a VM."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
-# On bypass_mod. They reach the host in captured apps and VMs only once mios-gen marks bypass_mod handles as
-# escapes (G1). Until then hyprland.lua:319 disables them there.
+# On bypass_mod, so mios-gen marks their handles as escapes: they reach the host over captured apps and VMs (in
+# app-capture and vm-passthrough exactly the bypass_mod chords reach the host).
 [[keybindings.global.bindings]]
 id = "session-scale-up"
 tier = 1
@@ -4578,8 +4605,17 @@ chord = "SUPER+CTRL+mouse_down"
 action = "mios:session-scale-down"
 realized_by = "hyprland"
 
-# G1: a screenshot that works over a fullscreen game. mios-gen must stop adding a second bind for a row whose chord
-# the compositor tables already bind (global_bindings.rs:53). Only then may this row land.
+# A screenshot that works over a fullscreen game. mios-gen adds no dispatch bind for a row whose chord the compositor
+# already binds literally, so Print keeps exactly one handle and the bypass becomes its escape.
+[[keybindings.global.bindings]]
+id = "screenshot-region"
+tier = 1
+chord = "Print"
+bypass = "SUPER+CTRL+Print"
+action = "mios:screenshot-region"
+realized_by = "hyprland"
+passthrough = ["vm-passthrough"]
+note = "Print stays a literal compositor bind; the bypass reaches the host over captured apps and VMs."
 
 # Tier 2: VM / remote-client host keys. They live on bypass_mod so they work while the VM owns the keyboard (the
 # research proposed Super+Alt+P; the guest would swallow that chord). Realised by escape handles that mios-gen generates
@@ -4654,6 +4690,8 @@ capture_fullscreen_tag = "mios-input-fullscreen"  # marks a fullscreen the bridg
 capture_osd = true                     # notify on every capture/release: "Controller -> <app>. Hold L3+R3 to release."
 # The notifier ({message} is replaced); it runs after the compositor confirmed the capture/release, off the input loop.
 capture_osd_argv = ["/usr/bin/notify-send", "-a", "MiOS Controller", "-e", "-t", "2500", "-h", "string:x-canonical-private-synchronous:mios-controller", "{message}"]
+virtual_keyboard = "mios-vctl-keyboard"   # the key: projection's uinput keyboard (Hyprland device name)
+virtual_keyboard_layout = "us"           # key: names are US keycodes; mios-gen pins this device to the layout
 context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
 context_stale_ms = 1000                # transport failure never invents terminal focus; an unconfirmed capture/release
                                        # reverts after this long (a failed ownership transaction reverts at once)
@@ -8422,6 +8460,24 @@ pkgs = [
 ]
 
 
+# Every shell app entry uses the same bounded preflight. Only a missing native
+# document-portal mount triggers recovery; running applications are not stopped.
+[desktop.launch]
+overall_timeout_ms = 15000
+probe_timeout_ms = 8000
+recover_document_portal = true
+document_portal_subdir = "doc"
+document_portal_unit = "xdg-document-portal.service"
+recovery_lock = "mios-app-launch-portal.lock"
+flatpak_program = "flatpak"
+systemctl_program = "systemctl"
+signal_program = "kill"
+notification_program = "notify-send"
+desktop_launcher_program = "gio"
+environment_program = "env"
+terminal_command = ["alacritty", "--title", "{name}", "-e"]
+application_dirs = ["$XDG_DATA_HOME/applications", "~/.local/share/flatpak/exports/share/applications", "/var/lib/flatpak/exports/share/applications", "/usr/local/share/applications", "/usr/share/applications"]
+
 # Native Lua configuration for Hyprland 0.55+; generated by mios-gen render-hyprland.
 [desktop.hyprland]
 hardware_profile = "igpu"          # same desktop; only GPU device ordering changes
@@ -8516,6 +8572,47 @@ poll_ms = 100
 size_tolerance_px = 4
 open_tag = "mios-place-new"
 managed_tag = "mios-placed"
+
+# Game windows (Steam/Proton/Wine/SDL/gamescope) open on the FOCUSED output, centred, resizable ones at the same
+# DPI-aware window_opening size as every window. Games defeated the general rule two ways: a game that declares a
+# fixed size (WM_NORMAL_HINTS min == max: Wine non-resizable windows, SDL without RESIZABLE) is floated by Hyprland
+# itself, so the `float = false` rule above never matched it and it stayed wherever it asked (0,0 of the XWayland
+# root, or off the output's edge); and a floating X11 window's later ConfigureRequests are honoured, so Wine/Proton
+# moved it back to 0,0 at the root size (recorded: Forza Horizon 6 / steam_app_2483190 remapped itself to 3840x1080,
+# both outputs). A floated window of a game class is a game only when its X11 hints say min == max and it is no
+# dialog (WM_TRANSIENT_FOR, modal, or a non-NORMAL window type): Wine dialogs (class <app>.exe) keep their place.
+# suppress_client_geometry refuses only a game's remap to the XWayland root or to a size no single output can hold
+# (miosd puts it back and Hyprland's resize answers with the real geometry); a game's own windowed resolution change
+# stands, and so does any position: a window partly off-screen or straddling two outputs is where the operator (a
+# released drag, a keyboard move) or the game put it, and is never moved back. Fixed-size
+# games are never resized: Hyprland ignores size hints when resizing X11 windows, and a game that never recreates
+# its swapchain shows black wherever the window grew. A fixed game larger than the HUD-free area is centred on the
+# whole output; one larger than the output takes `oversize` ("fit" = opening size; Wine/DXVK re-render at any size,
+# "keep" = centred and cropped). Fixed games are not tiled on move, Super+V re-centres them instead of tiling them,
+# and pin_fixed_size sets their min_size == max_size == the placed size (clamps drags; re-pinned when the game
+# declares a new size) and has miosd restore an XWayland one that a dispatch grew anyway (Hyprland's resize
+# dispatch ignores both) to its declared size, after the pointer is released and settle_ms, at most a few times per
+# window. class names an SSOT key holding the shared game-class
+# list (or an inline array); extra_class adds placement-only patterns (plain Wine names WM_CLASS after the .exe).
+# Limitation of '.+\.exe': X11 cannot tell a fixed-size game from a non-resizable Wine application window (winecfg,
+# an installer's main wizard page: min == max, NORMAL, not transient), so those are treated as fixed-size games too:
+# centred at open at their own size, never grown or tiled, freely movable. That matches what the window declares
+# (Hyprland ignores the hints, so a grown non-resizable window would show garbage); drop '.+\.exe' to place only
+# Steam/Proton and listed classes.
+# content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland). Tags: `tag` = a
+# resizable game (rule), `candidate_tag` = a floated window of a game class (rule; maybe a dialog), `fixed_tag` = a
+# confirmed fixed-size game (set by miosd).
+[desktop.hyprland.placement.games]
+enabled = true
+class = "keybindings.global.contexts.game"
+extra_class = ['.+\.exe']
+content_game = true
+suppress_client_geometry = true
+pin_fixed_size = true
+oversize = "fit"
+tag = "mios-place-game"
+fixed_tag = "mios-place-game-fixed"
+candidate_tag = "mios-place-game-candidate"
 
 
 # Window controls on every window: hyprbars (hyprland-plugins, latest upstream) with the
@@ -8805,7 +8902,7 @@ mode_confirm_s = 15                # a new mode is restored after this long unle
 modeset_hold_ms = 5000             # a tier must hold this long before it costs a modeset
 modeset_min_interval_s = 30        # at least this long between two modesets of one output
 pacing_plugin = "mios-pacing"      # the [desktop.hyprland.<name>] compositor plugin that holds the cap
-state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, SUPER+G
+state_file = "mios/framerate/state.json"   # under $XDG_RUNTIME_DIR: the live tier for the login projection, Host.qml, the Hypr3D room toggle
 user_fragment = "50-framerate.toml"        # `miosd framerate set-unlocked` writes `unlocked` here (user-tier mios.d)
 [desktop.framerate.profiles]       # power profile -> tier; "unknown" = any other profile or no profile daemon
 power-saver = "power-saver"
@@ -8965,7 +9062,7 @@ bindings = [
 [desktop.controls]
 input_cpu = -1                     # CPU the editor's input thread is pinned to; -1 = the last CPU it may use (others are kept off it)
 backup_suffix = "controls-backup"  # apply keeps the previous user tier as mios.toml.<suffix> (0600)
-mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written)
+mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written); mios-sync-theme runs its keymap-overlay
 
 # ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
 # shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.
@@ -9204,7 +9301,7 @@ recenter_seconds = 0.3
 
 # Frame rate (hypr3d-mios-frame-rate.patch): render.max_fps (the room's pump; 0 = every output frame),
 # render.glass_fps (refraction backdrop + reflection refresh; 0 = every frame) and world.live_fps (live dome
-# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by SUPER+G and
+# re-capture; 0 = every frame) are the running tier's D, G and W from [desktop.framerate], sent by the room toggle (toggle_key) and
 # miosd framerate; mios-gen rejects them here while the policy is enabled.
 
 # Retina window opening (hypr3d-mios-retina-spawn.patch; tools/native/mios-gen/src/hypr3d_spawn.rs). A window opens in
@@ -9454,6 +9551,12 @@ enabled = true
 [desktop.hyprland.config.cursor]
 hide_on_touch = false
 no_hardware_cursors = 0
+# X11 (XWayland: Steam, Proton/Wine, SDL-X11 games) coordinates and configure sizes stay logical px, the units the
+# placement geometry and the window_opening size are computed in, on every output scale; a scaled output upscales
+# the X11 buffer. true would report device px to X11 clients and their positions per output, which the placement
+# daemon and the X11 root layout (the union of the outputs) do not share.
+[desktop.hyprland.config.xwayland]
+force_zero_scaling = false
 
 
 [packages.hyprland]
@@ -16929,6 +17032,7 @@ ai_hint = "App-drawer entry for the ShaderGlass overlay: mios-shaderglass toggle
 ai_related = "/usr/bin/mios-shaderglass, src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass]"
 
 [desktop.launchers.mios-zen]
+flatpak_app_id = "app.zen_browser.zen"
 exec_cmd = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding app.zen_browser.zen @@u %u @@"
 title = "Zen Browser"
 generic_name = "Web Browser"
@@ -17764,6 +17868,24 @@ unit = [
     "tests/test-hypr3d-room-input-live.py",
     "tests/test-window-fps.py",
     "tests/test-window-fps-live.py",
+    # Opt-in live suites (MIOS_LIVE_NESTED=1 inside a MiOS desktop session; each prints "skip:" and exits 0
+    # otherwise) and real-binary suites (candidate binaries via MIOS_GEN / MIOS_CONTROLS / MIOS_MIOSD / ...).
+    "tests/test-generators-g1-live.py",
+    "tests/test-global-bindings-s0-live.py",
+    "tests/test-mios-controls-live.py",
+    "tests/test-nested-multiuse-live.py",
+    "tests/test-nested-session-scaling.py",
+    "tests/test-pip-gravity-drawer-live.py",
+    "tests/test-blender-mcp-live.py",
+    "tests/test-blender-mcp-real.py",
+    "tests/test-keymap-overlay.py",
+    "tests/test-mios-controls.py",
+    "tests/test-session-selector-controller.py",
+    "tests/test-tmux-menu-alias.py",
+    "tests/test-tmux-workspace-hook-storm.py",
+    "tests/test-mcp-federation.py",
+    "tests/test-nested-multiuse.py",
+    "tests/test-mios-lamp-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",
@@ -18604,6 +18726,10 @@ WantedBy = "mios-desktop.target"
 # Application menu exporter (src/mios-rs/miosd/src/appmenu.rs): writes the focused window's
 # GTK org.gtk.Menus / dbusmenu menus to $XDG_RUNTIME_DIR/mios/appmenu.json for the top bar and owns
 # com.canonical.AppMenu.Registrar.
+[user_units."mios-shell.service.d/10-mios-memory.conf".Service]
+comment = "# AI-hint: Memory floor for the desktop shell so agent processes in app.slice cannot claim its share of the user manager's protection.\n# AI-related: usr/share/mios/mios.toml, user@.service.d/10-mios-memory.conf"
+MemoryLow = "2G"
+
 [user_units."mios-appmenu.service".Unit]
 Description = "MiOS application menu exporter (GTK org.gtk.Menus + dbusmenu AppMenu registrar)"
 Documentation = "file:///usr/share/doc/mios/manual/root.md"
@@ -18844,6 +18970,14 @@ match = [
 # namespace, launched as a parent PiP/window, a whole attached output (second local user), the parent's remote display
 # output (served by the existing RDP/VNC path) or a Hypr3D room window; seat/user identity and assigned input devices.
 # AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/nested_devices.rs, usr/share/mios/quickshell/Nested.qml, usr/share/doc/mios/desktop-pip.md
+# Memory admission (operator 2026-10-30): `mios-gen mem-admit [--wait]` and every nested-session launch
+# refuse to start while MemAvailable is below min_available_mb; --wait polls every poll_ms for up to
+# wait_timeout_s. Agent lanes run it before each build and nested session.
+[system.memory_admission]
+min_available_mb = 12288
+poll_ms          = 2000
+wait_timeout_s   = 1800
+
 [desktop.nested]
 resize_poll_ms = 100                  # nested Wayland configure does not emit monitor.layout_changed on this compositor
 width = 1280

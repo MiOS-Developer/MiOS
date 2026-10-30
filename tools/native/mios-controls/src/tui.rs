@@ -129,6 +129,12 @@ fn key_token(name: &str) -> String {
     mios_resolver::keybindings::normalize_chord(name, "\0").unwrap_or_else(|_| name.to_ascii_lowercase())
 }
 
+/// Inputs the diagram shows as notes, not buttons: MiOS binds none of them (FINAL.md section 3, Touchpad and Motion rows).
+const PAD_NOTES: &[&str] = &[
+    "[Touchpad] host touchpad (libinput): pointer, click, 2-finger scroll",
+    "[Motion] gyro/accelerometer: not forwarded, no MiOS use",
+    "[D-pad] HAT (ABS_HAT0X/Y) or BTN_DPAD_* keys: one meaning",
+];
 /// Contract annotations the input-ownership work defines; shown, never edited here.
 const OWNERSHIP: &[(&str, &str)] = &[
     ("BTN_NORTH", "tap: the aimed window gets every control (you stay in the room); hold: fullscreen"),
@@ -261,7 +267,7 @@ impl App {
         };
         let contexts: BTreeSet<String> = match b.get("contexts") {
             Some(v) => str_list(Some(v)).into_iter().collect(),
-            None => CONTEXTS.iter().map(|c| c.to_string()).collect(),
+            None => crate::model::default_contexts().map(str::to_owned).collect(),
         };
         let pass: BTreeSet<String> = str_list(b.get("passthrough")).into_iter().collect();
         if !contexts.contains(ctx) {
@@ -806,8 +812,9 @@ impl App {
         if str_list(g("mode_override_chord")).iter().any(|b| b == button) {
             out.push(format!("mode override chord {}", str_list(g("mode_override_chord")).join("+")));
         }
-        if str_list(at(m, "keybindings.controller.hypr3d_toggle_chord")).iter().any(|b| b == button) {
-            out.push(format!("Hypr3D toggle chord {}", str_list(at(m, "keybindings.controller.hypr3d_toggle_chord")).join("+")));
+        let chord = crate::model::toggle_chord(m);
+        if chord.iter().any(|b| b == button) {
+            out.push(format!("toggle chord {}: tap = Hypr3D room, hold = release capture", chord.join("+")));
         }
         for (b, note) in OWNERSHIP {
             if *b == button {
@@ -858,6 +865,9 @@ impl App {
             lines.push(Line::from(vec![s(10), Span::styled("left stick", Style::new().fg(t.muted)), s(6), Span::styled("right stick", Style::new().fg(t.muted))]));
             lines.push(Line::from(""));
             lines.push(Line::styled("highlighted: has a Guide action; underlined: takes or returns control", Style::new().fg(t.muted)));
+            for note in PAD_NOTES {
+                lines.push(Line::styled((*note).to_string(), Style::new().fg(t.muted)));
+            }
         }
         fr.render_widget(Paragraph::new(lines).block(self.block(" Controller ", Focus::Diagram)), area);
     }
@@ -868,9 +878,11 @@ impl App {
         if self.device().kind == Kind::Controller {
             let (button, label) = PAD_BUTTONS[self.button];
             lines.push(Line::styled(format!("{label} ({button})"), Style::new().fg(t.accent).add_modifier(Modifier::BOLD)));
-            if matches!(button, "BTN_NORTH" | "BTN_THUMBL" | "BTN_THUMBR") {
+            let chord = crate::model::toggle_chord(&self.merged);
+            if button == "BTN_NORTH" || chord.iter().any(|b| b == button) {
                 let hold = self.hold_ms();
-                lines.push(Line::styled(format!("Tap N: aimed window takes control. Hold N {hold} ms: fullscreen. Hold L3+R3 {hold} ms: release."), Style::new().fg(t.warn)));
+                let release = chord.iter().map(|b| PAD_BUTTONS.iter().find(|(n, _)| n == b).map(|(_, l)| *l).unwrap_or(b.as_str())).collect::<Vec<_>>().join("+");
+                lines.push(Line::styled(format!("Tap N: aimed window takes control. Hold N {hold} ms: fullscreen. Hold {release} {hold} ms: release."), Style::new().fg(t.warn)));
             }
             lines.push(Line::from(format!("Guide + {label}: {}", self.draft.system_layer.get(button).map(String::as_str).unwrap_or("-"))));
             for r in self.pad_role(button) {

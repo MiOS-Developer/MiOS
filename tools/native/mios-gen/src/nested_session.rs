@@ -165,6 +165,11 @@ impl ParentEvents {
   }
  }
 }
+/// The nested XWayland's listening socket as a DISPLAY value usable outside the sandbox ("unix:<dir>/X<n>").
+fn x11_socket(dir:&Path)->Option<String>{
+ let mut n:Vec<(u32,PathBuf)>=fs::read_dir(dir).ok()?.flatten().filter_map(|e|{let name=e.file_name().into_string().ok()?;let d=name.strip_prefix('X')?;d.parse::<u32>().ok().map(|v|(v,e.path()))}).collect();
+ n.sort();n.first().map(|(_,p)|format!("unix:{}",p.display()))
+}
 /// The session runtime and, when that had to move (see session_runtime), the link left at the usual place in the parent.
 struct OwnedDir(PathBuf,Option<PathBuf>);
 impl Drop for OwnedDir {fn drop(&mut self){
@@ -346,6 +351,9 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   println!("{}",json!({"target":plan.target,"output":plan.output,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"tmux_socket_name":plan.tmux_socket,"terminal_session":plan.terminal_session,"devices":assigned.iter().map(Device::to_json).collect::<Vec<_>>()}));
   return Ok(());
  }
+ // Memory admission before anything starts: a nested session must not push the host into the OOM killer.
+ let admission=crate::mem_admit::Policy::from_ssot(&data)?;
+ crate::mem_admit::admit(&admission,Path::new("/proc/meminfo"),true,"nested-session")?;
  let signature=env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_|"parent compositor signature missing")?;
  let display=env::var("WAYLAND_DISPLAY").map_err(|_|"parent Wayland display missing")?;
  let display=if Path::new(&display).is_absolute(){PathBuf::from(display)}else{parent.join(display)};
@@ -386,14 +394,21 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
  // default) isolates every plugin state file and the legacy room packet as a whole; with the shared /tmp, those get a
  // per-file mask instead (a mask over a file the host replaces by rename is detached by that rename, see private_tmp).
  let mut sandbox:Vec<String>=["--die-with-parent","--bind","/","/","--dev-bind","/dev","/dev"].map(String::from).to_vec();
- let tmp=if private_tmp(n,&plan.seat)? {
+ // XWayland: inside bwrap's user namespace the host's root-owned /tmp/.X11-unix reads as uid 65534 and Hyprland refuses
+ // it ("Failed to find a suitable socket for XWayland"), so a nested session had no X11 at all (no Steam/Proton/Wine/
+ // SDL-X11 game). With the shared /tmp an owned 0700 directory takes its place in this process tree only (display numbers
+ // stay unique through the shared /tmp/.X<n>-lock files); a private /tmp carries its own owned .X11-unix. Clients outside
+ // the tree use session.json "x11_display" (DISPLAY=unix:<socket>).
+ let (tmp,x11)=if private_tmp(n,&plan.seat)? {
   let t=owned.0.join("tmp");fs::create_dir(&t).map_err(|e|e.to_string())?;fs::set_permissions(&t,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
   let x=t.join(".X11-unix");fs::create_dir(&x).map_err(|e|e.to_string())?;fs::set_permissions(&x,fs::Permissions::from_mode(0o1777)).map_err(|e|e.to_string())?;
   sandbox.extend(["--bind".into(),t.to_string_lossy().into_owned(),"/tmp".into()]);
-  Some(t)
+  (Some(t),x)
  }else{
+  let x=owned.0.join("x11");fs::create_dir(&x).map_err(|e|e.to_string())?;fs::set_permissions(&x,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
   sandbox.extend(["--ro-bind","/dev/null",LEGACY_PAD].map(String::from));
-  None
+  sandbox.extend(["--bind".into(),x.to_string_lossy().into_owned(),"/tmp/.X11-unix".into()]);
+  (None,x)
  };
  let private=owned.0.join("private");fs::create_dir(&private).map_err(|e|e.to_string())?;
  for (i,p) in private_files(n)?.iter().enumerate() {
@@ -490,7 +505,9 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
   let device_json:Vec<Json>=assigned.iter().map(Device::to_json).collect();
   let controllers=assigned.iter().any(|d|d.kind=="controller");
   let tmux_socket=tmux_root.join(format!("tmux-{}/{}",fs::metadata(&owned.0).map_err(|e|e.to_string())?.uid(),socket_name));
-  let mut descriptor=json!({"runtime":owned.0,"instance":inst,"parent_window":address,"layout":layout,"target":layout,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"isolated_input":true,"devices":device_json,"physical_controllers_assigned":controllers,"registry":claim.path,"tmux_socket":tmux_socket,"terminal_session":terminal_session,
+  let mut x11_display=None;
+  for _ in 0..40 {x11_display=x11_socket(&x11);if x11_display.is_some(){break;}thread::sleep(Duration::from_millis(50));}
+  let mut descriptor=json!({"runtime":owned.0,"instance":inst,"x11_display":x11_display,"parent_window":address,"layout":layout,"target":layout,"seat":plan.seat,"user":plan.user,"scale_mode":plan.scale_mode,"isolated_input":true,"devices":device_json,"physical_controllers_assigned":controllers,"registry":claim.path,"tmux_socket":tmux_socket,"terminal_session":terminal_session,
    // /tmp: "shared" or the session's private /tmp on the host; pad_state is where an input bridge writes this session's
    // own Hypr3D controller packet (the room inside the session reads /tmp/mios-hypr3d-pad.bin there).
    "tmp":tmp.as_ref().map(|t|json!(t)).unwrap_or(json!("shared")),"pad_state":tmp.as_ref().map(|t|json!(t.join("mios-hypr3d-pad.bin"))).unwrap_or(Json::Null)});
@@ -578,6 +595,13 @@ mod tests {
   assert!(!events.closed("0xabc")); // unavailable snapshot/event is not a close
   server.write_all(b"closewindow>>0xother\n").unwrap();assert!(!events.closed("0xabc"));
   drop(server);assert!(!events.closed("0xabc"));
+ }
+ #[test] fn nested_x11_display_is_the_numbered_socket_not_the_fallback(){
+  let d=std::env::temp_dir().join(format!("mios-nested-x11-{}",std::process::id()));let _=fs::remove_dir_all(&d);fs::create_dir(&d).unwrap();
+  assert_eq!(x11_socket(&d),None,"no XWayland yet");
+  for f in ["X12_","X12","notes","X3x"] {fs::write(d.join(f),"").unwrap();}
+  assert_eq!(x11_socket(&d),Some(format!("unix:{}",d.join("X12").display())));
+  let _=fs::remove_dir_all(&d);
  }
  #[test] fn argv_is_data_not_shell_source(){let v:Value=toml::from_str("terminal_argv=['alacritty', 'a; touch /bad', \"x'y\"]").unwrap();assert_eq!(command(&v,"terminal_argv").unwrap(),"'alacritty' 'a; touch /bad' 'x'\\''y'");}
 
