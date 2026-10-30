@@ -8777,7 +8777,7 @@ map_timeout_s = 60                 # a pane window that does not map within this
 # Keybinds, projected by mios-gen render-hyprland as hl.bind(key, exec "<binary> <args>"); labels feed the Super+Escape map.
 bindings = [
   { key = "SUPER + G", args = "toggle", label = "ShaderGlass: overlay on the active window on/off" },
-  { key = "SUPER + SHIFT + G", args = "cycle", label = "ShaderGlass: cycle shader preset" },
+  { key = "SUPER + SHIFT + G", args = "cycle", label = "ShaderGlass: next shader (kept for the app)" },
   { key = "SUPER + ALT + G", args = "setup", label = "ShaderGlass: pane setup (shader menu) / back to overlay" },
 ]
 [desktop.shaderglass.wine]
@@ -8794,6 +8794,7 @@ dll_overrides = "mscoree,mshtml="  # no Mono/Gecko installer prompt when the pre
 # through WineCap's single Linux input entry (no menu clicks).
 args = ["-f", "-input", "Choose..."]
 setup_shortcut = "m"               # ShaderGlass' menu toggle, sent to the pane when setup mode starts and ends
+cycle_shortcut = "n"               # ShaderGlass' next-shader key: `cycle` sends it only to a pane whose WineCap has no MiOS command channel (unsaved)
 # Seeded once as %LOCALAPPDATA%\ShaderGlassDefault.sgp (ShaderGlass' default profile, loaded at start) when the prefix
 # has none; Processing > Set as default replaces it and is never overwritten. Keys are ShaderGlass' profile
 # mnemonics (ShaderGlass/Options.h); a shader the release no longer ships falls back to ShaderGlass' own default.
@@ -8847,6 +8848,19 @@ settle_ms = 300                    # how long after the last change the fast rat
 on_move = "follow"                 # follow | hide (pane transparent until the target settles)
 close_with_target = true           # the pane closes when its target does
 hide_in_hypr3d = true              # transparent while Hypr3DGlass is active (it would become its own slab)
+# What survives a pane: ShaderGlass keeps its live state only in memory, so miosd saves it per target window class
+# through the patched WineCap (ShaderGlass' own "Set as default", swapped so the operator's default is never touched)
+# when a pane closes, leaves setup mode or cycles, and starts the next pane of that class with it -- after a detach,
+# a crash, a supervisor restart, in a nested session and through 2D/Hypr3D room/Theatre/PiP/fullscreen alike.
+[desktop.shaderglass.state]
+persist = true                     # false = every pane starts from the default profile; nothing is saved
+directory = "mios/shaderglass"     # under $XDG_STATE_HOME: state.json + profiles/<class>.sgp (0700/0600; the restore tokens live here too)
+save_timeout_ms = 3000             # how long ShaderGlass may take to write a profile (WineCap command channel)
+restart_limit = 2                  # a pane whose ShaderGlass dies on its own (crash, OOM, killed Wine) is relaunched on the same window this often (0 = never)
+resume = true                      # a supervisor that died or was stopped by a signal re-attaches its panes on its next start (same native window only)
+strip_keys = ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat", "InputArea", "CroppedArea"]   # never kept in a class profile: miosd chooses the capture source
+runtime_state = "mios/shaderglass/active.state"        # under $XDG_RUNTIME_DIR (per session; a nested session has its own): "active=<0|1>" + "targets=<addresses>" of this session's panes
+room_requests = "mios/shaderglass/room-requests.txt"   # under $XDG_RUNTIME_DIR: the session's queue of Hypr3D room requests ("attach|detach|toggle <address>", "off"), consumed by its supervisor
 # Screencast policy. The pane only ever captures a window: WineCap offers window sources only, and the MiOS picker
 # ([desktop.hyprland.xdph].custom_picker_binary) answers the supervisor's one-shot request with the target window
 # (no click); every other screencast request gets the stock picker.
