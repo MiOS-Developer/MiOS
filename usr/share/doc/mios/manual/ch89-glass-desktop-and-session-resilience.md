@@ -308,8 +308,13 @@ in Hypr3D the room focuses the window it aims at or has captured).
   counts the client commits of its surface tree that attach a buffer with damage. The tree is the toplevel plus every
   subsurface, because a video player or a game may present on a subsurface. The window's rate is its fastest surface
   over the last second. Only the focused tree is listened to, so other windows cost nothing per commit.
-- `hyprctl mios-pacing status` carries it as `"window": {address, class, output, fps, frames, surfaces, follows}`, or
-  `null` with nothing focused. `hyprctl mios-pacing window` prints that object alone.
+- Each surface of the tree has its own watch. When a surface is destroyed, its watch, its listeners and its meter are
+  dropped before the next watch is added and before every status. A client that keeps replacing its subsurfaces under
+  one focus therefore holds only the watches of the surfaces it still has.
+- `hyprctl mios-pacing status` carries it as
+  `"window": {address, class, output, fps, frames, surfaces, watched, follows}`, or `null` with nothing focused.
+  `watched` is the number of live surface watches, and `follows` counts focus changes the meter has followed.
+  `hyprctl mios-pacing window` prints that object alone.
 - The shell samples the status once per `[desktop.topbar].sample_interval_ms`. The window part shows on the island of
   the output the window is on, reads `0 FPS` for a window that presents nothing, and is hidden when it is unknown:
   nothing focused, a plugin without the meter, or `[desktop.topbar].window_fps = false`.
