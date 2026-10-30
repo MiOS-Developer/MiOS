@@ -548,7 +548,7 @@ With `OOMPolicy=continue`, if a runaway compiler, language model, or build scrip
 
 ### <a name="89_desktop_hardware_profiles"></a>89.8 Desktop Hardware Profiles
 
-The login choices `MiOS-Desktop (default iGPU)` and `MiOS-Desktop dGPU (NVIDIA)`
+The login choices `MiOS iGPU (default)` and `MiOS dGPU` (each profile's `name`)
 use the same Hyprland configuration, Quickshell and `mios-desktop.target`.
 Only the selected hardware profile and DRM device order differ. Their generated
 desktop entries live in `/usr/share/wayland-sessions/`; the launcher is
@@ -564,11 +564,19 @@ select another GPU.
 An explicit login choice (`--hardware-profile`) takes precedence over the
 `mios.desktop.gpu=` kernel argument. Without either, the launcher uses
 `desktop.hyprland.hardware_profile`, whose vendor default is `igpu`.
-A remembered iGPU login choice therefore still starts the iGPU desktop after a
-dGPU boot. Select the dGPU login choice to render that desktop on the dGPU.
+With `desktop.hyprland.boot_sync.enabled` (the vendor default), a login choice
+that differs from the booted profile does not start a desktop: the launcher runs
+`sudo -n mios-gen hyprland-boot-profile --hardware-profile <id>`, which selects the
+matching managed GRUB entry and reboots, and the desktop then starts on the
+matching boot. Without administrator authorization it stops with an error.
+With `boot_sync` disabled, the chosen profile starts on the current boot and
+fails if its GPU has no native DRM device.
 
-For existing hosts using BLS type-1 entries, generate the two hardware boot
-choices from the installed kernel entry:
+`mios-gen render-grub` keeps the managed GPU entries
+(`/boot/loader/entries/mios-desktop-<profile>.conf`, menu text from `boot_title`,
+order from `[boot.grub].menu_profiles`) as the BLS menu and re-renders them from
+the newest kernel on kernel-install events. To generate the two hardware boot
+choices by hand from an installed BLS type-1 kernel entry:
 
 ```sh
 mios-gen render-hyprland --boot-entry /boot/loader/entries/<existing-kernel-entry>.conf
@@ -586,10 +594,12 @@ Signed UKI entries are rejected: their hardware command lines must be built and
 signed through the image pipeline. The BLS generator does not modify signed UKIs.
 
 A whole GPU assigned to a VM cannot also render the host desktop. The iGPU boot
-profile retains VFIO reservation for the guest. On the development host, the dGPU
-boot profile instead loads the available Nouveau driver; it does not install a
-proprietary driver. Changing the login choice does not detach a running VM's GPU
-or change driver ownership. Boot the appropriate hardware profile before login.
+profile retains VFIO reservation for the guest. The dGPU boot profile clears the
+VFIO reservation (`vfio-pci.ids=`, also overriding one embedded in an older
+initramfs), blacklists Nouveau and enables the NVIDIA DRM driver
+(`nvidia-drm.modeset=1 nvidia-drm.fbdev=1`); the profile's `boot_append` holds
+these arguments. Changing the login choice never detaches a running VM's GPU or
+rebinds a live GPU; driver ownership changes only at boot.
 
 VRR is configured through `[desktop.hyprland.config.misc] vrr` and requires an
 enabled adaptive-sync output. Confirm the live output with `hyprctl monitors -j`.
