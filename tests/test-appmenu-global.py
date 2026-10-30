@@ -124,6 +124,34 @@ def primary_signature():
     return live[0] if live else None
 
 
+APP_ENV_KEEP = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'XDG_DATA_DIRS', 'XDG_CONFIG_DIRS',
+                'XDG_CURRENT_DESKTOP', 'XDG_SESSION_TYPE', 'XDG_SESSION_DESKTOP', 'XCURSOR_THEME', 'XCURSOR_SIZE')
+
+
+def app_env(env, extra, case):
+    """A desktop-session-sized environment for the apps (the resolver's thousands of MIOS_* values overflow
+    bwrap's argument limit in `flatpak run`). MIOS_APPMENU_CASE tags every process the case spawns -- sandboxed
+    ones too -- so the case can be swept completely afterwards."""
+    out = {k: env[k] for k in APP_ENV_KEEP if k in env}
+    for k in ('XDG_RUNTIME_DIR', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', 'HYPRLAND_INSTANCE_SIGNATURE', 'DISPLAY'):
+        if env.get(k):
+            out[k] = env[k]
+    out.update(extra, MIOS_APPMENU_CASE=case)
+    return out
+
+
+def tagged(case):
+    out = []
+    for p in Path('/proc').iterdir():
+        if p.name.isdigit():
+            try:
+                if f'MIOS_APPMENU_CASE={case}'.encode() in p.joinpath('environ').read_bytes().split(b'\0'):
+                    out.append(int(p.name))
+            except OSError:
+                pass
+    return out
+
+
 def cases(fixtures, tmp):
     """(name, kind, argv, class regex, extra env, activation (label path, expect)) -- expect: 'marker:<text>',
     'new-client' or 'pressed'. kind is the matrix row."""
@@ -264,6 +292,26 @@ def live_tier():
             return out
         bus_pid = int(lines[-1])
         env['DBUS_SESSION_BUS_ADDRESS'] = lines[0]
+        # The accessibility bus of the private session (the AT-SPI menus source). Started here, not by bus
+        # activation: a bare dbus-daemon may not exec the launcher (SELinux denies the activation transition).
+        launcher_a11y = shutil.which('at-spi-bus-launcher') or '/usr/libexec/at-spi-bus-launcher'
+        if Path(launcher_a11y).is_file():
+            helpers.append(subprocess.Popen([launcher_a11y, '--launch-immediately'], env=env, stdout=open(out / 'a11y-bus.log', 'w'),
+                                            stderr=subprocess.STDOUT))
+            for _ in range(50):
+                if sh(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus',
+                       '--method', 'org.freedesktop.DBus.NameHasOwner', 'org.a11y.Bus'], env=env).stdout.strip() == '(true,)':
+                    break
+                time.sleep(0.1)
+        a11y = sh(['gdbus', 'call', '--session', '--dest', 'org.a11y.Bus', '--object-path', '/org/a11y/bus',
+                   '--method', 'org.a11y.Bus.GetAddress'], env=env)
+        # ... and its registry daemon (activated through systemd on a login session, so started here as well).
+        m = re.search(r"'([^']+)'", a11y.stdout)
+        if m and Path('/usr/libexec/at-spi2-registryd').is_file():
+            helpers.append(subprocess.Popen(['/usr/libexec/at-spi2-registryd'], env=dict(env, AT_SPI_BUS_ADDRESS=m.group(1)),
+                                            stdout=open(out / 'a11y-registry.log', 'w'), stderr=subprocess.STDOUT))
+            time.sleep(1.0)
+        check('private accessibility bus (AT-SPI) for the private session', a11y.returncode == 0, (a11y.stdout + a11y.stderr).strip()[:200])
 
         def hc(*a):
             return sh(['hyprctl', *a], env=env).stdout
@@ -299,6 +347,39 @@ def live_tier():
                                     stderr=subprocess.STDOUT)
         helpers.append(exporter)
         time.sleep(1.5)
+        # The shell under test (this tree's Nested.qml): pills + dropdown driven by a REAL virtual keyboard.
+        qml = os.environ.get('MIOS_APPMENU_SHELL_QML', '')
+        qs = os.environ.get('MIOS_QUICKSHELL', '/usr/bin/quickshell')
+        vkbd = f'{fixtures}/vkbd' if fixtures and Path(f'{fixtures}/vkbd').is_file() else None
+
+        def ipc(*call):
+            r = sh([qs, 'ipc', '--path', qml, '--any-display', 'call', *call], env=env)
+            try:
+                return json.loads(r.stdout)
+            except ValueError:
+                return None if r.returncode else r.stdout.strip()
+        if qml:
+            for _ in range(100):
+                if any(x.get('class') == 'mios-nested-terminal' for x in clients()):
+                    break
+                time.sleep(0.2)
+            desk = out / 'desktop-outputs.json'
+            try:
+                j = json.loads((d / 'mios-mobile-outputs.json').read_text())
+            except (OSError, ValueError):
+                j = {'version': 1, 'outputs': {}, 'config': {}}
+            for o in j.get('outputs', {}).values():
+                o['mobile'] = False
+            desk.write_text(json.dumps(j))
+            senv = dict(env, MIOS_NESTED_TOPBAR_ITEMS='clock,workspaces,app_menu', MIOS_MOBILE_OUTPUTS_JSON=str(desk), MIOS_MIOSD=miosd)
+            shell = subprocess.Popen([qs, '--no-duplicate', '--path', qml], env=senv, stdout=open(out / 'shell.log', 'w'),
+                                     stderr=subprocess.STDOUT)
+            helpers.append(shell)
+            for _ in range(150):
+                if ipc('appmenu', 'state') is not None:
+                    break
+                time.sleep(0.2)
+            check('shell under test answers appmenu IPC', isinstance(ipc('appmenu', 'state'), dict), qml)
 
         def snapshot():
             try:
@@ -342,9 +423,7 @@ def live_tier():
             marker = Path(tmp) / f'marker-{name}.txt'
             marker.unlink(missing_ok=True)
             argv = [a.replace('{marker}', str(marker)) for a in argv]
-            aenv = dict(env, **extra)
-            if xdisp:
-                aenv['DISPLAY'] = xdisp
+            aenv = app_env(dict(env, DISPLAY=xdisp or ''), extra, name)
             before = {c['address'] for c in clients()}
             p = subprocess.Popen(argv, env=aenv, stdout=open(out / f'app-{name}.log', 'w'), stderr=subprocess.STDOUT,
                                  start_new_session=True)
@@ -363,6 +442,11 @@ def live_tier():
                 matrix.append(row | {'error': 'no window mapped', 'exit': p.poll()})
                 check(f'[{name}] window mapped in the nested session', False, f'{kind}: no window (exit {p.poll()})')
                 kill_tree(p)
+                for pid in tagged(name):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 continue
             row.update(cls=c['class'], xwayland=c['xwayland'], address=c['address'])
             focus(c)
@@ -429,9 +513,49 @@ def live_tier():
                         break
                     time.sleep(0.25)
                 row['tool_window_menus'] = [m.get('label') for m in ts.get('menus') or []] if ts.get('address') == tool['address'] else 'no snapshot'
+            if qml and menus and name in ('fixture-qt6', 'fixture-gtk3', 'fixture-electron-like', 'fixture-gtk4'):
+                focus(c)
+                st = None
+                for _ in range(40):
+                    st = ipc('appmenu', 'state')
+                    if isinstance(st, dict) and st.get('menus') == row['menus'] and st.get('visible'):
+                        break
+                    time.sleep(0.25)
+                view = (row['menus'] or []).index('View') if 'View' in (row['menus'] or []) else -1
+                ipc('appmenu', 'openMenu', str(view))
+                time.sleep(0.8)
+                try:
+                    rows_ = json.loads(ipc('appmenu', 'rows') or '[]')
+                except (TypeError, ValueError):
+                    rows_ = []
+                lines0 = marker.read_text().count('\n') if marker.is_file() else 0
+                keyed = vkbd and sh([vkbd, 'down', 'enter'], env=env).returncode == 0
+                for _ in range(30):
+                    if marker.is_file() and marker.read_text().count('\n') > lines0:
+                        break
+                    time.sleep(0.2)
+                lines1 = marker.read_text().count('\n') if marker.is_file() else 0
+                after_keys = ipc('appmenu', 'state')
+                row['shell'] = {'pills': st.get('menus') if isinstance(st, dict) else st,
+                                'rows': [(r['label'], r['toggle'], r['checked'], r['shortcut']) for r in rows_],
+                                'keys_activated': bool(keyed) and lines1 > lines0,
+                                'closed_after_enter': isinstance(after_keys, dict) and after_keys.get('open_menu') == -1}
+                ipc('appmenu', 'close')
             matrix.append(row)
             print(json.dumps(row), flush=True)
             kill_tree(p)
+            for _ in range(2):
+                for pid in tagged(name):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                time.sleep(1.0)
+            for pid in tagged(name):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             for _ in range(25):
                 if not [x for x in clients() if x['address'] not in before and re.search(cls, x.get('class', ''))]:
                     break
@@ -441,6 +565,7 @@ def live_tier():
     except Exception as e:  # noqa: BLE001 - report, then always clean up
         check('driver', False, repr(e))
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)   # an interrupt never cuts the cleanup short
         for p in reversed(helpers):
             if p.poll() is None:
                 p.terminate()
@@ -487,6 +612,14 @@ def judge(matrix, expect):
     def row(n):
         return rows.get(n) or {}
     if expect == 'after':
+        for n in ('fixture-qt6', 'fixture-gtk3', 'fixture-electron-like'):
+            sh_ = row(n).get('shell')
+            if sh_ is None:
+                continue
+            check(f'[{n}] shell: pills match the export, the dropdown shows the app\'s toggle states and shortcuts',
+                  sh_.get('pills') == ['File', 'View'] and any(r[1] for r in sh_.get('rows', [])) and any(r[3] for r in sh_.get('rows', [])), sh_)
+            check(f'[{n}] shell: REAL keys (virtual keyboard Down, Enter) activate the first View item and close the menu',
+                  sh_.get('keys_activated') and sh_.get('closed_after_enter'), sh_)
         q = row('fixture-qt6')
         check('Qt 6 Wayland: menus bound to the exact window through the compositor (kde-appmenu), toggles + shortcuts',
               q.get('binding') == 'kde-appmenu' and q.get('menus') == ['File', 'View'] and q.get('toggles', 0) >= 3

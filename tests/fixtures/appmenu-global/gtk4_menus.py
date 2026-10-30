@@ -27,7 +27,9 @@ def main():
     def menu_model():
         bar = Gio.Menu()
         f = Gio.Menu()
-        f.append('_Open…', 'app.open')
+        open_item = Gio.MenuItem.new('_Open…', 'app.open')
+        open_item.set_attribute_value('accel', GLib.Variant.new_string('<Control>o'))  # GTK 4 renders and exports it
+        f.append_item(open_item)
         recent = Gio.Menu()
         recent.append('one.txt', 'app.recent::one.txt')
         f.append_submenu('_Recent', recent)

@@ -8,6 +8,11 @@
 // the bar row: the focused window's under reveal_on "focus*", every visible window's otherwise.
 // Geometry comes from the theme bridge (hyprbars), Hyprland's client list and the live reveal_on.
 // Reserves no space; the status island owns the top exclusive zone. IPC target "appmenu".
+// Items carry the app's own state: toggle ("check"/"radio") + checked, enabled and shortcut (display form); nothing is
+// drawn the app did not export. While a dropdown is open the bar takes the keyboard: Up/Down move, Right/Enter/Space
+// open a submenu, Left closes it (or moves to the previous pill), Left/Right at the top level switch pills,
+// Enter/Space activate, Home/End jump, Escape closes. A controller's navigation profile (mios-inputd, key: namespace)
+// drives the same keys; the pointer works as before.
 // AI-related: usr/share/mios/quickshell/MeltPopup.qml, usr/share/mios/quickshell/PanelWindow.qml,
 // usr/share/mios/quickshell/ShellGeometry.qml, mios.toml [desktop.topbar]
 import QtQuick
@@ -31,6 +36,8 @@ QS.PanelWindow {
     readonly property var entry: appId ? QS.DesktopEntries.heuristicLookup(appId) : null
     readonly property string appName: !appId ? "" : (entry ? entry.name : appId)
     property int openMenu: -1
+    // The exporter's activation verb (MIOS_MIOSD: a nested test session's candidate build).
+    readonly property string miosd: QS.Quickshell.env("MIOS_MIOSD") || "/usr/bin/miosd"
 
     // ---- exported menus (appmenu-exporter contract) ----------------------------------------------
     property var snap: ({})
@@ -122,10 +129,16 @@ QS.PanelWindow {
     // layer above it with the status island while the pointer is at the top edge.
     property QtObject reveal: null
     readonly property bool overFullscreen: !!reveal && reveal.topActive
-    onOpenMenuChanged: { updateRowPosition(); if (reveal) reveal.menuPopup = openMenu >= 0 }
+    onOpenMenuChanged: {
+        updateRowPosition()
+        if (reveal) reveal.menuPopup = openMenu >= 0
+        cursor = -1
+        if (openMenu >= 0) Qt.callLater(() => keyNav.forceActiveFocus())
+    }
     onVisibleChanged: if (!visible && reveal && reveal.menuHovered) Qt.callLater(() => { if (!menus.visible && menus.reveal) menus.reveal.menuHovered = false })
     WlrLayershell.namespace: "mios-appmenu"
     WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: openMenu >= 0 ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     anchors.top: true
     anchors.left: true
     margins.top: theme.edgeMargin
@@ -218,13 +231,81 @@ QS.PanelWindow {
                     onActivated: {
                         if (modelData.action) {
                             menus.openMenu = -1
-                            QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", menus.snap.app_id, String(modelData.action), "--window", menus.snap.address])
+                            QS.Quickshell.execDetached([menus.miosd, "appmenu", "activate", menus.snap.app_id, String(modelData.action), "--window", menus.snap.address])
                         } else menus.openMenu = (menus.openMenu === index ? -1 : index)
                     }
                     // Sliding across the row while a menu is open switches menus, like a menubar.
                     onHovered: if (!modelData.action && menus.openMenu >= 0 && menus.openMenu !== index) menus.openMenu = index
                 }
             }
+        }
+    }
+
+    // ---- keyboard / controller navigation -------------------------------------------------------------
+    property int cursor: -1                  // highlighted row of the open dropdown (index into rows)
+    readonly property var openable: {        // pills with a dropdown (menu-button pills only press)
+        const out = []
+        for (let i = 0; i < menuItems.length; i++) if (!menuItems[i].action && menuItems[i].enabled !== false) out.push(i)
+        return out
+    }
+    function selectable(i) { const r = rows[i]; return !!r && r.item.enabled !== false }
+    function step(from, dir) {
+        for (let i = from + dir; i >= 0 && i < rows.length; i += dir) if (selectable(i)) return i
+        return from
+    }
+    function switchPill(dir) {
+        if (!openable.length) return
+        const at = openable.indexOf(openMenu)
+        openMenu = openable[(at < 0 ? 0 : at + dir + openable.length) % openable.length]
+        cursor = step(-1, 1)
+    }
+    function setExpanded(id, on) { const next = Object.assign({}, expanded); next[id] = on; expanded = next }
+    function activateItem(it) {
+        if (!it || it.enabled === false) return
+        if (it.submenu && it.submenu.length) { setExpanded(it.id, !expanded[it.id]); return }
+        QS.Quickshell.execDetached([menus.miosd, "appmenu", "activate", snap.app_id, String(it.id), "--window", snap.address])
+        openMenu = -1
+    }
+    // One entry for keys and IPC (tests, controller bindings): returns whether the key was handled.
+    function navigate(key: string): bool {
+        if (openMenu < 0) return false
+        const row = cursor >= 0 ? rows[cursor] : null
+        const it = row ? row.item : null
+        const hasSub = !!(it && it.submenu && it.submenu.length)
+        switch (key) {
+        case "down": cursor = cursor < 0 ? step(-1, 1) : step(cursor, 1); return true
+        case "up": cursor = cursor < 0 ? step(rows.length, -1) : step(cursor, -1); return true
+        case "home": cursor = step(-1, 1); return true
+        case "end": cursor = step(rows.length, -1); return true
+        case "right":
+            if (hasSub) {
+                if (!expanded[it.id]) setExpanded(it.id, true)
+                Qt.callLater(() => { cursor = step(cursor, 1) })
+            } else switchPill(1)
+            return true
+        case "left":
+            if (row && row.depth > 0) {
+                for (let i = cursor - 1; i >= 0; i--) if (rows[i].depth === row.depth - 1) { setExpanded(rows[i].item.id, false); cursor = i; break }
+            } else if (hasSub && expanded[it.id]) setExpanded(it.id, false)
+            else switchPill(-1)
+            return true
+        case "enter":
+            if (hasSub) { navigate("right"); return true }
+            activateItem(it)
+            return true
+        case "escape": openMenu = -1; return true
+        }
+        return false
+    }
+    Item {
+        id: keyNav
+        focus: menus.openMenu >= 0
+        Keys.onPressed: event => {
+            const k = { [Qt.Key_Down]: "down", [Qt.Key_Up]: "up", [Qt.Key_Left]: "left", [Qt.Key_Right]: "right",
+                        [Qt.Key_Return]: "enter", [Qt.Key_Enter]: "enter", [Qt.Key_Space]: "enter",
+                        [Qt.Key_Escape]: "escape", [Qt.Key_Home]: "home", [Qt.Key_End]: "end",
+                        [Qt.Key_Tab]: "right", [Qt.Key_Backtab]: "left" }[event.key]
+            if (k && menus.navigate(k)) event.accepted = true
         }
     }
 
@@ -275,7 +356,11 @@ QS.PanelWindow {
                     required property var modelData
                     readonly property var it: modelData.item
                     readonly property bool hasSub: !!(it.submenu && it.submenu.length)
+                    readonly property bool cursorOn: menus.cursor === index
+                    required property int index
                     readonly property real labelWidth: itemLabel.implicitWidth + modelData.depth * 14 + 2 * menus.theme.edgeMargin + (hasSub ? 24 : 0)
+                                                       + (rowBox.it.toggle ? toggleMark.implicitWidth + 6 : 0)
+                                                       + (rowBox.it.shortcut ? shortcutLabel.implicitWidth + 2 * menus.theme.edgeMargin : 0)
                     width: menuColumn.width
                     Item {
                         visible: !!rowBox.it.separator_before
@@ -287,15 +372,41 @@ QS.PanelWindow {
                         width: parent.width
                         height: menus.theme.searchRowHeight - 12
                         radius: height / 2
-                        color: itemHit.containsMouse && rowBox.it.enabled !== false
+                        color: (itemHit.containsMouse || rowBox.cursorOn) && rowBox.it.enabled !== false
                                ? menus.theme.withAlpha(menus.theme.accent, menus.theme.hoverOpacity) : "transparent"
+                        // The app's toggle state (check / radio), only for items the app marks as toggles.
+                        Text {
+                            id: toggleMark
+                            visible: !!rowBox.it.toggle
+                            x: menus.theme.edgeMargin + rowBox.modelData.depth * 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: rowBox.it.toggle === "radio" ? (rowBox.it.checked ? "\u{f043e}" : "\u{f043d}")
+                                                               : (rowBox.it.checked ? "\u{f0132}" : "\u{f0131}")
+                            textFormat: Text.PlainText
+                            color: rowBox.it.enabled === false ? menus.theme.muted : menus.theme.fg
+                            font.family: menus.theme.fontFamily
+                            font.pixelSize: menus.theme.fontSize
+                        }
                         Text {
                             id: itemLabel
-                            x: menus.theme.edgeMargin + rowBox.modelData.depth * 14
+                            x: menus.theme.edgeMargin + rowBox.modelData.depth * 14 + (rowBox.it.toggle ? toggleMark.implicitWidth + 6 : 0)
                             anchors.verticalCenter: parent.verticalCenter
                             text: rowBox.it.label
                             textFormat: Text.PlainText // app-supplied label: no rich-text injection
                             color: rowBox.it.enabled === false ? menus.theme.muted : menus.theme.fg
+                            font.family: menus.theme.fontFamily
+                            font.pixelSize: menus.theme.fontSize
+                        }
+                        // The app's own shortcut for the item, as it exported it.
+                        Text {
+                            id: shortcutLabel
+                            visible: !!rowBox.it.shortcut && !rowBox.hasSub
+                            anchors.right: parent.right
+                            anchors.rightMargin: menus.theme.edgeMargin
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: rowBox.it.shortcut || ""
+                            textFormat: Text.PlainText
+                            color: menus.theme.subtle
                             font.family: menus.theme.fontFamily
                             font.pixelSize: menus.theme.fontSize
                         }
@@ -316,16 +427,8 @@ QS.PanelWindow {
                             hoverEnabled: true
                             enabled: rowBox.it.enabled !== false
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (rowBox.hasSub) {
-                                    const next = Object.assign({}, menus.expanded)
-                                    next[rowBox.it.id] = !next[rowBox.it.id]
-                                    menus.expanded = next
-                                    return
-                                }
-                                QS.Quickshell.execDetached(["/usr/bin/miosd", "appmenu", "activate", menus.snap.app_id, String(rowBox.it.id), "--window", menus.snap.address])
-                                menus.openMenu = -1
-                            }
+                            onClicked: menus.activateItem(rowBox.it)
+                            onContainsMouseChanged: if (containsMouse) menus.cursor = rowBox.index
                         }
                     }
                 }
@@ -343,9 +446,14 @@ QS.PanelWindow {
         enabled: !Hyprland.focusedMonitor || !menus.screen || Hyprland.focusedMonitor.name === menus.screen.name
         function openMenu(index: int): void { menus.openMenu = index }
         function close(): void { menus.openMenu = -1 }
+        function key(name: string): bool { return menus.navigate(name) }
+        function rows(): string {
+            return JSON.stringify(menus.rows.map((r, i) => ({ label: r.item.label, depth: r.depth, enabled: r.item.enabled !== false,
+                toggle: r.item.toggle || "", checked: !!r.item.checked, shortcut: r.item.shortcut || "", cursor: i === menus.cursor })))
+        }
         function state(): string {
             return JSON.stringify({ app_id: menus.appId, app_name: menus.appName, visible: menus.visible,
-                                    menus: menus.menuItems.map(m => m.label), open_menu: menus.openMenu,
+                                    menus: menus.menuItems.map(m => m.label), open_menu: menus.openMenu, cursor: menus.cursor,
                                     dropdown: dropdown.progress, width: menus.width, row_left: menus.rowLeft,
                                     tabs: menus.tabRects, shown_left: menus.shownLeft, menu_hovered: menus.menuHovered })
         }

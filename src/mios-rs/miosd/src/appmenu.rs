@@ -927,7 +927,10 @@ async fn dbm_layout(
                 )
                 .await
                 {
-                    refetch |= m.body().deserialize::<bool>().unwrap_or(false);
+                    // Qt answers false and fills the menu synchronously in its aboutToShow handler; Gecko answers
+                    // true. Either way a delivered AboutToShow means the layout must be read again.
+                    let _ = m;
+                    refetch = true;
                 }
             }
         }
@@ -946,9 +949,8 @@ async fn dbm_layout(
         let mut changed = false;
         for id in fresh {
             asked.insert(id);
-            if let Ok(m) = call(conn, bus, path, "com.canonical.dbusmenu", "AboutToShow", &(id,)).await {
-                changed |= m.body().deserialize::<bool>().unwrap_or(false);
-            }
+            // A delivered AboutToShow counts as a change (Qt fills synchronously but always answers false).
+            changed |= call(conn, bus, path, "com.canonical.dbusmenu", "AboutToShow", &(id,)).await.is_ok();
         }
         if !changed {
             break;

@@ -15,6 +15,7 @@ mod app_preflight;
 mod ai;
 mod btop_theme;
 mod display_scale;
+mod flatpak_overrides;
 mod hypr3d_spawn;
 mod docs;
 mod greeter;
@@ -523,6 +524,18 @@ enum Commands {
         /// Project separate hardware boot choices from this existing BLS type-1 entry.
         #[arg(long)]
         boot_entry: Option<PathBuf>,
+    },
+
+    /// Renders var/lib/flatpak/overrides/global from mios.toml [flatpak.overrides.global]
+    #[command(name = "render-flatpak-overrides")]
+    RenderFlatpakOverrides {
+        /// Repository root directory
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Check mode: report drift without writing
+        #[arg(long)]
+        check: bool,
     },
 
     /// Renders usr/lib/tuned/profiles/<name>/tuned.conf from mios.toml [host.tuning.profiles]
@@ -1663,6 +1676,22 @@ fn main() -> ExitCode {
                     Ok((msg, _)) => {
                         if cli.format != "json" {
                             print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err((msg, code)) => Err((msg, code)),
+                },
+            )
+        }
+        Commands::RenderFlatpakOverrides { root, check } => {
+            let r = resolve_root(root);
+            (
+                "render-flatpak-overrides",
+                flatpak_overrides::OUTPUT,
+                match flatpak_overrides::run(&r, check) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            println!("{msg}");
                         }
                         Ok(())
                     }

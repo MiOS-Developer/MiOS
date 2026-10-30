@@ -2630,6 +2630,7 @@ surfaces = [
   { generator = "tools/native/mios-gen/src/image.rs", check = "check_cargo_manifest_generated", output = "tools/native/Cargo.toml" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_cockpit_projection", output = "etc/cockpit/cockpit.conf" },
   { generator = "tools/native/mios-gen/src/main.rs", check = "check_egress_firewall", output = "usr/share/mios/security/egress.nft" },
+  { generator = "tools/native/mios-gen/src/flatpak_overrides.rs", check = "check_flatpak_overrides", output = "var/lib/flatpak/overrides/global" },
   { generator = "tools/native/mios-gen/src/indexes.rs", check = "check_gate_index", output = "usr/share/mios/reference/drift-gate-index.tsv" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_pipe_boundaries", output = "usr/share/mios/pipe-boundaries.manifest.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_ipa_enroll_projection", output = "etc/mios/ipa-enroll.env" },
@@ -15970,6 +15971,8 @@ exempt = [
   "check_drift_projection",
   # Egress firewall: requires nftables egress rule generator context.
   "check_egress_firewall",
+  # Flatpak overrides: requires the native mios-gen render-flatpak-overrides projection.
+  "check_flatpak_overrides",
   # ETC duplicates: requires system configuration file deduplication scanner.
   "check_etc_duplicates",
   # Fluff tokens: requires token hygiene scanner.
@@ -18273,6 +18276,9 @@ calls = [{ tool = "mios-gen", args = ["render-agent-interaction", "--root", "{ro
 [[generation.sync.steps]]
 id = "host-tuning.projection"
 calls = [{ tool = "mios-gen", args = ["render-tuned", "--root", "{root}"] }]
+[[generation.sync.steps]]
+id = "flatpak-overrides.projection"
+calls = [{ tool = "mios-gen", args = ["render-flatpak-overrides", "--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "hyprland.projection"
 calls = [{ tool = "mios-gen", args = ["render-hyprland", "--root", "{root}"] }]
