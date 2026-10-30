@@ -3497,6 +3497,18 @@
         <label>Placement size match tolerance (pixels) <input data-key="desktop.hyprland.placement.size_tolerance_px" data-type="int" type="number" min="0"></label>
         <label>Placement rule tag <input data-key="desktop.hyprland.placement.open_tag" type="text"></label>
         <label>Placement managed-window tag <input data-key="desktop.hyprland.placement.managed_tag" type="text"></label>
+        <p>Game windows (Steam, Proton/Wine, SDL, gamescope) open centred on the focused output; resizable ones at the same opening size. Games that declare a fixed size keep it (they are never resized, so they cannot turn black) and are never tiled on move.</p>
+        <label>Place game windows on the focused output <input type="text" data-key="desktop.hyprland.placement.games.enabled" data-type="bool"></label>
+        <label>Game class list (SSOT key of the shared list) <input data-key="desktop.hyprland.placement.games.class" type="text"></label>
+        <label>Extra game class patterns (placement only; .+\.exe also covers non-resizable Wine app windows) <input type="text" data-key="desktop.hyprland.placement.games.extra_class" data-array="csv" placeholder=".+\.exe"></label>
+        <label>Also match Wayland content type "game" <input type="text" data-key="desktop.hyprland.placement.games.content_game" data-type="bool"></label>
+        <label>Refuse a game's X11 remap to the root or larger than every output (own resolution changes and any position stand) <input type="text" data-key="desktop.hyprland.placement.games.suppress_client_geometry" data-type="bool"></label>
+        <label>Pin fixed-size games to their declared size (no outside resize can turn them black) <input type="text" data-key="desktop.hyprland.placement.games.pin_fixed_size" data-type="bool"></label>
+        <label>Fixed-size game larger than the output <select data-key="desktop.hyprland.placement.games.oversize"><option value="fit">Resize to the opening size</option><option value="keep">Keep its size (cropped)</option></select></label>
+        <label>Resizable game rule tag <input data-key="desktop.hyprland.placement.games.tag" type="text"></label>
+        <label>Confirmed fixed-size game tag (set by the placement daemon) <input data-key="desktop.hyprland.placement.games.fixed_tag" type="text"></label>
+        <label>Floated game-class window candidate tag (rule; may be a dialog) <input data-key="desktop.hyprland.placement.games.candidate_tag" type="text"></label>
+        <label>XWayland reports device pixels (force_zero_scaling) <input type="text" data-key="desktop.hyprland.config.xwayland.force_zero_scaling" data-type="bool"></label>
         <label>Top pill height (pixels) <input data-key="theme.shell.top_height_px" data-type="int" type="number" min="1"></label>
         <label>Top pill width (pixels) <input data-key="theme.shell.top_width_px" data-type="int" type="number" min="1"></label>
         <label>Shared surface radius (pixels) <input data-key="desktop.hyprland.config.decoration.rounding" data-type="int" type="number" min="0"></label>

@@ -529,6 +529,231 @@ pub mod window_opening {
         }
     }
 
+    /// What a game window that does not fit the usable area at its own fixed size gets.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub enum Oversize {
+        /// Resized to the opening size (the client must re-render; Wine/DXVK do).
+        Fit,
+        /// Centred on the whole output at its own size (cropped when larger than the output).
+        Keep,
+    }
+
+    /// [desktop.hyprland.placement.games]: game windows (Steam/Proton/Wine/SDL/gamescope) open on the
+    /// focused output, centred; resizable ones at the opening size. Two compositor rules carry it: one for
+    /// windows Hyprland did not float on its own (resizable: sized like every window) and one that only tags
+    /// the non-modal windows it floated. miosd placement decides what those are from what the client declares
+    /// (X11 WM_NORMAL_HINTS min == max is a fixed-size game that keeps its size, since a game that never
+    /// recreates its swapchain shows black wherever the compositor grows it; WM_TRANSIENT_FOR, modal or a
+    /// dialog window type is a dialog and is left alone) and refuses a game's root/oversize remaps.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Games {
+        pub classes: Vec<String>,
+        pub content_game: bool,
+        /// miosd refuses an X11 game's own remap to the XWayland root or to a size no single output can hold (puts
+        /// it back at the accepted geometry); every other size and every position (partly off-screen, straddling
+        /// two outputs: the operator's moves look the same) stands.
+        pub suppress_client_geometry: bool,
+        /// Pin a fixed-size game's min_size/max_size to the size it was placed at, so no interactive or
+        /// scripted resize can grow it past the swapchain it renders.
+        pub pin_fixed_size: bool,
+        pub tag: String,
+        /// Tagged by miosd (static) on a window it confirmed as a fixed-size game.
+        pub fixed_tag: String,
+        /// Tagged by the floated-window rule on every non-modal window of a game class Hyprland floated: a
+        /// candidate only (a Wine dialog is one too). A rule tag cannot be removed, so it never claims "game".
+        pub candidate_tag: String,
+        pub oversize: Oversize,
+    }
+
+    fn tag(t: &Value, key: &str) -> Result<String, String> {
+        t.get(key).and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+            .map(str::to_owned)
+            .ok_or_else(|| format!("desktop.hyprland.placement.games.{key} must be a [A-Za-z0-9_-] string"))
+    }
+
+    impl Games {
+        /// None when placement or the games table is disabled or absent.
+        pub fn from_ssot(doc: &Value) -> Result<Option<Self>, String> {
+            let Some(placement) = at(doc, "desktop.hyprland.placement") else { return Ok(None) };
+            if placement.get("enabled").and_then(Value::as_bool) != Some(true) { return Ok(None); }
+            let Some(g) = placement.get("games") else { return Ok(None) };
+            if g.get("enabled").and_then(Value::as_bool) != Some(true) { return Ok(None); }
+            let list = |v: &Value, what: &str| -> Result<Vec<String>, String> {
+                v.as_array().ok_or_else(|| format!("{what} must be an array of regex strings"))?.iter()
+                    .map(|s| s.as_str().filter(|s| !s.is_empty() && !s.contains('\n')).map(str::to_owned)
+                        .ok_or_else(|| format!("{what} entries must be nonempty single-line strings")))
+                    .collect()
+            };
+            // `class` is the SSOT key of one shared class list (the keybinding game context), or an inline array.
+            let mut classes = match g.get("class") {
+                Some(Value::String(path)) => list(at(doc, path).ok_or_else(|| format!("desktop.hyprland.placement.games.class: {path} missing"))?, path)?,
+                Some(v) => list(v, "desktop.hyprland.placement.games.class")?,
+                None => return Err("desktop.hyprland.placement.games.class missing".into()),
+            };
+            if let Some(extra) = g.get("extra_class") { classes.extend(list(extra, "desktop.hyprland.placement.games.extra_class")?); }
+            let flag = |k: &str| g.get(k).and_then(Value::as_bool).ok_or_else(|| format!("desktop.hyprland.placement.games.{k} must be a boolean"));
+            let content_game = flag("content_game")?;
+            if classes.is_empty() && !content_game { return Err("desktop.hyprland.placement.games matches nothing (no class, content_game false)".into()); }
+            let oversize = match g.get("oversize").and_then(Value::as_str) {
+                Some("fit") => Oversize::Fit,
+                Some("keep") => Oversize::Keep,
+                _ => return Err("desktop.hyprland.placement.games.oversize must be fit|keep".into()),
+            };
+            let games = Self {
+                classes, content_game, suppress_client_geometry: flag("suppress_client_geometry")?,
+                pin_fixed_size: flag("pin_fixed_size")?,
+                tag: tag(g, "tag")?, fixed_tag: tag(g, "fixed_tag")?, candidate_tag: tag(g, "candidate_tag")?, oversize,
+            };
+            if games.tag == games.fixed_tag || games.tag == games.candidate_tag || games.fixed_tag == games.candidate_tag {
+                return Err("desktop.hyprland.placement.games tag, fixed_tag and candidate_tag must differ".into());
+            }
+            Ok(Some(games))
+        }
+
+        /// One anchored alternation over every class pattern (Hyprland matches it against the window class).
+        pub fn class_regex(&self) -> Option<String> {
+            (!self.classes.is_empty()).then(|| format!("^(?:{})$", self.classes.join("|")))
+        }
+
+        /// The compositor rules, as tables for `hl.window_rule`. `size` is the opening size expression
+        /// (the same one the general placement rule carries). Emitted after the general rule and before the
+        /// SSOT window_rules, so PiP/dialog rules still override them. No rule suppresses ConfigureRequests
+        /// (that froze a game's own resolution changes) and the floated-window rule neither centres nor sizes:
+        /// it only tags candidates for miosd, which tells a fixed-size game from a dialog.
+        pub fn window_rules(&self, size: &str) -> Vec<Value> {
+            let mut out = Vec::new();
+            let mut matchers = Vec::new();
+            if let Some(re) = self.class_regex() { matchers.push(("", "class", re)); }
+            if self.content_game { matchers.push(("-content", "content", "game".to_owned())); }
+            for (suffix, key, pattern) in matchers {
+                for fixed in [false, true] {
+                    let mut m = toml::map::Map::new();
+                    m.insert(key.into(), Value::String(pattern.clone()));
+                    m.insert("float".into(), Value::Boolean(fixed));
+                    if fixed {
+                        // Modal dialogs are never candidates; transient ones are told apart by miosd (X11).
+                        m.insert("modal".into(), Value::Boolean(false));
+                    }
+                    let mut r = toml::map::Map::new();
+                    r.insert("name".into(), Value::String(format!("mios-placement-games{suffix}{}", if fixed { "-fixed" } else { "" })));
+                    r.insert("match".into(), Value::Table(m));
+                    if !fixed {
+                        r.insert("center".into(), Value::Boolean(true));
+                        r.insert("float".into(), Value::Boolean(true));
+                        r.insert("size".into(), Value::String(size.to_owned()));
+                    }
+                    r.insert("tag".into(), Value::String(format!("+{}", if fixed { &self.candidate_tag } else { &self.tag })));
+                    out.push(Value::Table(r));
+                }
+            }
+            out
+        }
+    }
+
+    /// Where a game window goes inside its output. `usable` is the box left after reserved bars and safe
+    /// insets, `output` the whole logical output (both x, y, w, h). A resizable game takes `policy` (the
+    /// opening geometry); a fixed-size one keeps (w, h): centred in the usable area when it fits, else centred
+    /// on the whole output when it fits there, else `oversize` decides. Returns (x, y, w, h, resized).
+    pub fn game_geometry(
+        fixed: Option<(f64, f64)>, usable: (f64, f64, f64, f64), output: (f64, f64, f64, f64),
+        policy: (f64, f64, f64, f64), oversize: Oversize,
+    ) -> (f64, f64, f64, f64, bool) {
+        let Some((w, h)) = fixed else { return (policy.0, policy.1, policy.2, policy.3, true) };
+        let centre = |b: (f64, f64, f64, f64)| ((b.0 + (b.2 - w) / 2.0).round(), (b.1 + (b.3 - h) / 2.0).round(), w, h, false);
+        if w <= usable.2 && h <= usable.3 { return centre(usable); }
+        if w <= output.2 && h <= output.3 { return centre(output); }
+        match oversize {
+            Oversize::Fit => (policy.0, policy.1, policy.2, policy.3, true),
+            Oversize::Keep => centre(output),
+        }
+    }
+
+    #[cfg(test)]
+    mod game_tests {
+        use super::*;
+        fn doc(extra: &str) -> Value {
+            toml::from_str(&format!(r#"
+[keybindings.global.contexts]
+game = ["steam_app_.*", "gamescope"]
+[desktop.hyprland.placement]
+enabled = true
+[desktop.hyprland.placement.games]
+enabled = true
+class = "keybindings.global.contexts.game"
+extra_class = ['.+\.exe']
+content_game = true
+suppress_client_geometry = true
+pin_fixed_size = true
+tag = "mios-place-game"
+fixed_tag = "mios-place-game-fixed"
+candidate_tag = "mios-place-game-candidate"
+oversize = "fit"
+{extra}
+"#)).unwrap()
+        }
+        #[test]
+        fn one_shared_class_list_feeds_two_rules_per_matcher() {
+            let g = Games::from_ssot(&doc("")).unwrap().unwrap();
+            assert_eq!(g.class_regex().unwrap(), r"^(?:steam_app_.*|gamescope|.+\.exe)$");
+            let rules = g.window_rules("960 692");
+            let names: Vec<_> = rules.iter().map(|r| r["name"].as_str().unwrap()).collect();
+            assert_eq!(names, ["mios-placement-games", "mios-placement-games-fixed", "mios-placement-games-content", "mios-placement-games-content-fixed"]);
+            let (resizable, fixed) = (&rules[0], &rules[1]);
+            assert_eq!(resizable["match"]["float"].as_bool(), Some(false));
+            assert_eq!(resizable["size"].as_str(), Some("960 692"));
+            assert_eq!(resizable["center"].as_bool(), Some(true));
+            assert_eq!(resizable["tag"].as_str(), Some("+mios-place-game"));
+            // A fixed-size (min == max) game is never sized by the compositor: that is what turned it black. The
+            // floated-window rule only tags: a Wine dialog (class *.exe, floated by Hyprland) must keep its place.
+            assert!(fixed.get("size").is_none() && fixed.get("float").is_none() && fixed.get("center").is_none());
+            assert_eq!(fixed["match"]["float"].as_bool(), Some(true));
+            assert_eq!(fixed["match"]["modal"].as_bool(), Some(false), "modal dialogs are never candidates");
+            assert_eq!(fixed["tag"].as_str(), Some("+mios-place-game-candidate"), "a candidate, not a claim");
+            assert_eq!(rules[2]["match"]["content"].as_str(), Some("game"));
+            // No rule suppresses ConfigureRequests: a game may change its own windowed resolution.
+            assert!(rules.iter().all(|r| r.get("suppress_event").is_none()), "{rules:?}");
+        }
+        #[test]
+        fn disabled_or_invalid_tables_are_reported() {
+            let mut d = doc("");
+            d["desktop"]["hyprland"]["placement"]["games"]["enabled"] = Value::Boolean(false);
+            assert_eq!(Games::from_ssot(&d).unwrap(), None);
+            let mut d = doc("");
+            d["desktop"]["hyprland"]["placement"]["enabled"] = Value::Boolean(false);
+            assert_eq!(Games::from_ssot(&d).unwrap(), None, "placement off turns game placement off");
+            for (k, v) in [("oversize", Value::String("stretch".into())), ("tag", Value::String("a b".into())),
+                           ("fixed_tag", Value::String("mios-place-game".into())), ("candidate_tag", Value::String("mios-place-game-fixed".into())),
+                           ("class", Value::String("no.such.key".into())),
+                           ("suppress_client_geometry", Value::String("yes".into())),
+                           ("pin_fixed_size", Value::Integer(1))] {
+                let mut d = doc("");
+                d["desktop"]["hyprland"]["placement"]["games"][k] = v;
+                assert!(Games::from_ssot(&d).is_err(), "{k}");
+            }
+            let mut d = doc("");
+            d["desktop"]["hyprland"]["placement"]["games"]["suppress_client_geometry"] = Value::Boolean(false);
+            assert!(!Games::from_ssot(&d).unwrap().unwrap().suppress_client_geometry);
+        }
+        #[test]
+        fn fixed_games_keep_their_size_and_never_leave_the_output() {
+            let usable = (0.0, 60.0, 1920.0, 948.0);
+            let output = (0.0, 0.0, 1920.0, 1080.0);
+            let policy = (480.0, 188.0, 960.0, 692.0);
+            assert_eq!(game_geometry(None, usable, output, policy, Oversize::Fit), (480.0, 188.0, 960.0, 692.0, true));
+            // The recorded spawn: 640x480 requested at 700,500 of a smaller output -> centred, same size.
+            assert_eq!(game_geometry(Some((640.0, 480.0)), usable, output, policy, Oversize::Fit), (640.0, 294.0, 640.0, 480.0, false));
+            // 1920x1080 fits the output but not the HUD-free area: centred on the output, not resized.
+            assert_eq!(game_geometry(Some((1920.0, 1080.0)), usable, output, policy, Oversize::Fit), (0.0, 0.0, 1920.0, 1080.0, false));
+            // 3840x1080 (Forza's XWayland-root remap) cannot be shown: fit resizes, keep centres and crops.
+            assert_eq!(game_geometry(Some((3840.0, 1080.0)), usable, output, policy, Oversize::Fit), (480.0, 188.0, 960.0, 692.0, true));
+            assert_eq!(game_geometry(Some((3840.0, 1080.0)), usable, output, policy, Oversize::Keep), (-960.0, 0.0, 3840.0, 1080.0, false));
+            // Second output to the right: every coordinate stays inside it.
+            let (x, ..) = game_geometry(Some((640.0, 480.0)), (1920.0, 60.0, 1920.0, 948.0), (1920.0, 0.0, 1920.0, 1080.0), policy, Oversize::Fit);
+            assert_eq!(x, 2560.0);
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
