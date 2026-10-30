@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <vector>
 
 using namespace MiosPacing;
 using std::chrono::microseconds;
@@ -144,6 +146,31 @@ int main() {
         for (int i = 0; i <= 184; ++i)
             r.tick(0x1000, t + i * G);
         CHECK(std::abs(r.fps(t + 184 * G) - 92.0) < 0.5, "game: 92 (%.2f)", r.fps(t + 184 * G));
+    }
+    // Subsurface churn under a focused window: the watches of destroyed surfaces (and their meters) are dropped, so
+    // they never accumulate while the window stays focused; a live surface keeps its watch.
+    {
+        struct SWatch {
+            std::weak_ptr<int> surface;
+            std::uintptr_t     key = 0;
+            std::vector<int>   listeners; // stands in for the surface's signal listeners
+        };
+        SWindowRate         r;
+        std::vector<SWatch> w;
+        auto                root = std::make_shared<int>(0);
+        w.push_back({root, 0x1000, {1, 2}});
+        std::size_t most = 0;
+        for (int i = 0; i < 1000; ++i) {
+            auto sub = std::make_shared<int>(i);
+            pruneGone(w, r); // what watchSurface does before it adds a watch
+            w.push_back({sub, 0x2000u + static_cast<std::uintptr_t>(i), {1, 2}});
+            r.tick(0x2000u + static_cast<std::uintptr_t>(i), t);
+            most = w.size() > most ? w.size() : most;
+        } // each `sub` is destroyed here, as a client destroying its subsurface
+        CHECK(most <= 2, "churn: at most the root and one live subsurface are watched (%zu)", most);
+        CHECK(pruneGone(w, r) == 1 && w.size() == 1 && w[0].key == 0x1000, "churn: only the live root is left");
+        CHECK(r.surfaces.empty(), "churn: the dead subsurfaces' meters are gone (%zu)", r.surfaces.size());
+        CHECK(pruneGone(w, r) == 0, "a live surface is never dropped");
     }
     // What a frame is (negative controls: state-only commits, an unmap, a damage-less re-attach).
     CHECK(isFrame(true, true, true), "new buffer with damage: a frame");

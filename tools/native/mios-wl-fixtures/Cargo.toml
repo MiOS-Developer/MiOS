@@ -1,0 +1,20 @@
+# AI-hint: Cargo manifest for mios-wl-fixtures -- Wayland test clients for MiOS live tests: mios-subsurface-churn, a
+#          frame-paced toplevel that keeps destroying and recreating a subsurface (the mios-pacing window meter must
+#          read its rate and must not keep watches of the destroyed subsurfaces). Test-only; never installed.
+# AI-related: tools/native/Cargo.toml, usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, tests/test-window-fps-live.py
+
+[package]
+name = "mios-wl-fixtures"
+version.workspace = true
+edition.workspace = true
+description = "Wayland test clients for MiOS live tests (subsurface-churning, frame-paced toplevel)"
+license = "MIT"
+
+[[bin]]
+name = "mios-subsurface-churn"
+path = "src/main.rs"
+
+[dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }

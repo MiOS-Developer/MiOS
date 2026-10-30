@@ -117,10 +117,16 @@ namespace {
     std::unordered_map<std::string, SOutput> g_outputs; // by connector name
 
     // The focused window whose committed frames are counted (see the header).
+    // One surface of the focused tree: its listeners live while the surface does (MiosPacing::pruneGone drops them).
+    struct SSurfaceWatch {
+        WP<CWLSurfaceResource>           surface;
+        std::uintptr_t                   key = 0;
+        std::vector<CHyprSignalListener> listeners;
+    };
     struct SFocusedWindow {
         PHLWINDOWREF                     window;
         WP<CWLSurfaceResource>           root;
-        std::vector<CHyprSignalListener> listeners;
+        std::vector<SSurfaceWatch>       watches;
         MiosPacing::SWindowRate          rate;
         uint64_t                         follows = 0;
     } g_focused;
@@ -309,21 +315,26 @@ namespace {
 
     // ---- focused window frame rate ----
 
-    // Count the frames `s` commits and follow the subsurfaces it gains (and has) the same way.
+    // Count the frames `s` commits and follow the subsurfaces it gains (and has) the same way. The watches of
+    // surfaces destroyed meanwhile are dropped first, so subsurface churn under one focus never accumulates listeners
+    // (only expired surfaces are dropped: none of them can be the one emitting newSubsurface).
     void watchSurface(const SP<CWLSurfaceResource>& s) {
         if (!s)
             return;
-        const auto KEY = reinterpret_cast<std::uintptr_t>(s.get());
-        g_focused.listeners.push_back(s->m_events.stateCommit.listen([KEY](auto state) {
+        MiosPacing::pruneGone(g_focused.watches, g_focused.rate);
+        const auto    KEY = reinterpret_cast<std::uintptr_t>(s.get());
+        SSurfaceWatch watch{.surface = s, .key = KEY, .listeners = {}};
+        watch.listeners.push_back(s->m_events.stateCommit.listen([KEY](auto state) {
             if (g_exiting || !state)
                 return;
             if (MiosPacing::isFrame(state->updated.bits.buffer, !!state->buffer, !state->damage.empty() || !state->bufferDamage.empty()))
                 g_focused.rate.tick(KEY, MiosPacing::Clock::now());
         }));
-        g_focused.listeners.push_back(s->m_events.newSubsurface.listen([](auto sub) {
+        watch.listeners.push_back(s->m_events.newSubsurface.listen([](auto sub) {
             if (!g_exiting && sub)
                 watchSurface(sub->m_surface.lock());
         }));
+        g_focused.watches.push_back(std::move(watch));
         for (const auto& sub : s->m_subsurfaces)
             if (const auto SUB = sub.lock())
                 watchSurface(SUB->m_surface.lock());
@@ -339,7 +350,7 @@ namespace {
         const auto ROOT = rootOf(w);
         if (w == g_focused.window.lock() && ROOT.get() == g_focused.root.get() && (ROOT || !w))
             return;
-        g_focused.listeners.clear();
+        g_focused.watches.clear();
         g_focused.rate.clear();
         g_focused.window = w;
         g_focused.root   = ROOT;
@@ -359,13 +370,14 @@ namespace {
 
     std::string windowJson() {
         followFocused(); // a focus change that sent no event (a raw focus reset) is caught here
+        MiosPacing::pruneGone(g_focused.watches, g_focused.rate);
         const auto W = g_focused.window.lock();
         if (!W || !W->m_isMapped || !g_focused.root.lock())
             return "null";
         const auto MON = W->m_monitor.lock();
-        return std::format("{{\"address\":\"0x{:x}\",\"class\":\"{}\",\"output\":\"{}\",\"fps\":{:.2f},\"frames\":{},\"surfaces\":{},\"follows\":{}}}",
+        return std::format("{{\"address\":\"0x{:x}\",\"class\":\"{}\",\"output\":\"{}\",\"fps\":{:.2f},\"frames\":{},\"surfaces\":{},\"watched\":{},\"follows\":{}}}",
                            reinterpret_cast<std::uintptr_t>(W.get()), jsonEscape(W->m_class), jsonEscape(MON ? MON->m_name : ""),
-                           g_focused.rate.fps(MiosPacing::Clock::now()), g_focused.rate.frames, g_focused.rate.surfaces.size(), g_focused.follows);
+                           g_focused.rate.fps(MiosPacing::Clock::now()), g_focused.rate.frames, g_focused.rate.surfaces.size(), g_focused.watches.size(), g_focused.follows);
     }
 
     // ---- global Hyprland notification forwarding to MiOS Global Notifications (top-center glass island) ----
@@ -661,14 +673,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     followFocused();
     g_cmd = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "mios-pacing", .exact = false, .fn = hyprctl});
 
-    return {"mios-pacing", "Per-output frame cap for the MiOS frame-rate policy (VRR outputs); focused-window frame meter", "MiOS", "1.1"};
+    return {"mios-pacing", "Per-output frame cap for the MiOS frame-rate policy (VRR outputs); focused-window frame meter", "MiOS", "1.2"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_exiting = true;
     releaseWallpapers(); // the hooks are still installed here; with g_exiting they pass straight through
     g_listeners.clear();
-    g_focused.listeners.clear();
+    g_focused.watches.clear();
     if (g_cmd)
         HyprlandAPI::unregisterHyprCtlCommand(PHANDLE, g_cmd);
     for (auto& [name, o] : g_outputs)

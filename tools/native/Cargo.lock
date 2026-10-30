@@ -2313,6 +2313,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mios-wl-fixtures"
+version = "0.3.0"
+dependencies = [
+ "rustix 1.1.4",
+ "wayland-client",
+ "wayland-protocols",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

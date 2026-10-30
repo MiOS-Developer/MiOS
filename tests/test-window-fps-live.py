@@ -3,8 +3,12 @@
 #          session -- mios-pacing's focused-window meter measured against clients of known rate: GStreamer waylandsink
 #          at 24 and 15 FPS (a video subsurface), a terminal redrawn at 20 FPS by a deadline-paced printer, vkcube (FIFO:
 #          the output's rate), an idle terminal (0), nothing focused (hidden) -- in 2D and in the Hypr3D room; the island
-#          text comes from the nested shell's topbar IPC and grim screenshots are kept. Negative controls: the installed
-#          plugin (no meter: the window part is hidden) and [desktop.topbar] window_fps = false.
+#          text comes from the nested shell's topbar IPC and grim screenshots are kept. Subsurface churn
+#          (tools/native/mios-wl-fixtures mios-subsurface-churn): the meter reads the toplevel's rate and keeps watches
+#          only for live surfaces ("watched" stays bounded). Every reading is taken while the meter has followed the
+#          target without a refocus (the Hypr3D room's aim can drop focus for a moment). Negative controls:
+#          [desktop.topbar] window_fps = false, and each MIOS_PACING_OLD plugin, classified by what it reports: a
+#          pre-meter plugin (no "window": the window part is hidden) or a 1.1 meter (no "watched").
 # AI-related: usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp,
 # AI-related: usr/share/mios/quickshell/PanelWindow.qml, usr/share/mios/quickshell/Nested.qml, usr/share/mios/quickshell/Config.qml,
 # AI-related: usr/share/mios/mios.toml [desktop.topbar], tests/test-window-fps.py
@@ -12,7 +16,9 @@
 # Environment:
 #   MIOS_LIVE_NESTED=1   run at all (an owned nested MiOS session: /usr/bin/mios-gen nested-session --layout pip)
 #   MIOS_PACING_SO       candidate mios-pacing.so (default: the installed one, which then fails the positive pass)
-#   MIOS_PACING_OLD      plugin for the negative pass (default /usr/lib64/mios/mios-pacing.so; "" skips it)
+#   MIOS_PACING_OLD      plugin(s) for the negative passes, comma-separated (default /usr/lib64/mios/mios-pacing.so;
+#                        "" skips them; one with the candidate's bytes is skipped and said so)
+#   MIOS_WL_CHURN        the mios-subsurface-churn fixture (default: the shared musl target dir build)
 #   MIOS_VENDOR_TOML     SSOT the test copies (default: this tree's); MIOS_TOML is ignored
 #   MIOS_WINDOW_FPS_OUT  directory for the screenshots (default: a temp dir)
 # Known Hypr3D limit (not the meter's): a waylandsink video subsurface stops presenting when the room opens (with the
@@ -25,12 +31,19 @@ ROOT = Path(__file__).resolve().parents[1]
 SSOT = os.environ.get('MIOS_VENDOR_TOML', str(ROOT / 'usr/share/mios/mios.toml'))
 SHELL = str(ROOT / 'usr/share/mios/quickshell/Nested.qml')
 CAND = os.environ.get('MIOS_PACING_SO', '/usr/lib64/mios/mios-pacing.so')
-OLD = os.environ.get('MIOS_PACING_OLD', '/usr/lib64/mios/mios-pacing.so')
+OLD = [p for p in os.environ.get('MIOS_PACING_OLD', '/usr/lib64/mios/mios-pacing.so').split(',') if p]
+CHURN = os.environ.get('MIOS_WL_CHURN', '/var/lib/mios-build/tmp/mios-controls-app/target/x86_64-unknown-linux-musl/release/mios-subsurface-churn')
 OUT = Path(os.environ.get('MIOS_WINDOW_FPS_OUT') or tempfile.mkdtemp(prefix='mios-window-fps-'))
 # Redraws one terminal line at absolute deadlines 1/rate apart (no drift); bounded to two minutes.
 PRINTER = ('import sys,time\nr=float(sys.argv[1]);t=time.monotonic()\nfor i in range(int(r*120)):\n'
            ' sys.stdout.write("\\r%06d"%i);sys.stdout.flush();t+=1/r;time.sleep(max(0,t-time.monotonic()))\n')
 res = []
+
+
+def plugin_kind(path):
+    """What a mios-pacing build reports: 'pre-meter' (no "window"), 'meter-1.1' (window meter, no "watched") or 'current'."""
+    b = Path(path).read_bytes()
+    return 'current' if b'"watched":' in b else 'meter-1.1' if b'"surfaces":' in b else 'pre-meter'
 
 
 def check(n, ok, d=''):
@@ -67,6 +80,9 @@ def spawn(kind, rate, env, log=None):
         argv = ['alacritty', '-o', 'cursor.style.blinking="Never"', '--class', 'mios-window-fps-paced', '-e', 'python3', '-I', '-c', PRINTER, str(rate)]
     elif kind == 'vkcube':  # FIFO presentation: every output frame
         argv = ['vkcube', '--wsi', 'wayland', '--c', '12000']
+    elif kind == 'churn':  # a `rate` FPS toplevel replacing its subsurface every 3 frames, for 20 s (bounded)
+        argv = [CHURN, str(rate), '3', '20']
+        out = open(log, 'w')
     else:  # idle: a terminal that draws nothing
         argv = ['alacritty', '-o', 'cursor.style.blinking="Never"', '--class', 'mios-window-fps-idle', '-e', 'sleep', '120']
     return subprocess.Popen(argv, env=env, stdout=out, stderr=subprocess.STDOUT if log else subprocess.DEVNULL)
@@ -81,7 +97,7 @@ def client_fps(log):
     return float(m[-1][2]) if m else None
 
 
-def run_pass(label, plugin, meter, window_fps=True, full=False):
+def run_pass(label, plugin, meter, window_fps=True, full=False, watched=True):
     vendor = ssot_copy(label, plugin, window_fps)
     env0 = dict(os.environ, MIOS_VENDOR_TOML=vendor)
     env0.pop('MIOS_TOML', None)
@@ -156,11 +172,33 @@ def run_pass(label, plugin, meter, window_fps=True, full=False):
                     time.sleep(0.2)
             return False
 
+        def is_c(w, c):
+            return bool(w) and int(w.get('address', '0x0'), 16) == int(c['address'], 16)
+
+        def held(c, hold=1.6, seconds=15.0):
+            """A status taken after the meter has followed `c` for `hold` seconds without a refocus (same `follows`:
+            no reset in between, so its one-second window is all `c`), refocusing `c` while the room's aim drops it.
+            Without a meter (an old plugin): after Hyprland has kept `c` focused at both ends of `hold`."""
+            end = time.monotonic() + seconds
+            stj = status()
+            while time.monotonic() < end:
+                a = status()
+                if meter and not is_c(a.get('window'), c) or not meter and not is_c(json.loads(ctl('-j', 'activewindow').stdout or '{}'), c):
+                    focus(c); time.sleep(0.3); continue
+                time.sleep(hold)
+                stj = status()
+                if meter and is_c(stj.get('window'), c) and stj['window'].get('follows') == a['window'].get('follows'):
+                    return stj, True
+                if not meter and is_c(json.loads(ctl('-j', 'activewindow').stdout or '{}'), c):
+                    return stj, True
+            return stj, False
+
         def measure(c, rate, tag):
             """Focus `c`; the meter follows it and reads `rate` (None: the output's own rate, a FIFO client)."""
-            focus(c)
-            time.sleep(2.5)
-            stj = status()
+            check(f'[{label}] {tag}: focused', focus(c), c['address'])
+            time.sleep(1.0)
+            stj, ok = held(c)
+            check(f'[{label}] {tag}: held focus while measured', ok, json.dumps(stj.get('window')))
             w = stj.get('window')
             got = w.get('fps') if w else None
             want = rate
@@ -178,7 +216,7 @@ def run_pass(label, plugin, meter, window_fps=True, full=False):
                         if abs(got - want) <= max(1.5, want * 0.1):
                             break
                     time.sleep(0.5)
-                    stj = status()
+                    stj, _ = held(c, hold=0.6)
                 check(f'[{label}] {tag}: never above the output rate', above and not any(above), above)
             elif want is None:
                 want = (stj.get('outputs') or [{}])[0].get('rendered_fps')
@@ -188,6 +226,8 @@ def run_pass(label, plugin, meter, window_fps=True, full=False):
                 tol = max(1.5, (want or 0) * (0.1 if rate is None or rate == 20 else 0.08))
                 check(f'[{label}] {tag}: window FPS {got} = {want if rate else f"output {want}"}', got is not None and want is not None and abs(got - want) <= tol,
                       json.dumps(w))
+                if not watched:
+                    check(f'[{label}] {tag}: this 1.1 meter reports no "watched" (it never prunes dead surfaces)', w and 'watched' not in w, json.dumps(w))
             else:
                 check(f'[{label}] {tag}: no window meter in this plugin', 'window' not in stj, json.dumps(w))
             st = wait_island(lambda st: (st.get('window_fps', -1) >= 0) == (meter and window_fps) and st.get('fps_text'))
@@ -199,6 +239,36 @@ def run_pass(label, plugin, meter, window_fps=True, full=False):
             else:
                 check(f'[{label}] {tag}: island shows the host rate alone "{text}"', text and '/' not in text and wf == -1, json.dumps(st)[:240])
             return st
+
+        def churn(rate):
+            """A focused toplevel at `rate` FPS that replaces its subsurface every 3 frames: the meter reads `rate` and
+            its watches stay bounded (root + the live subsurface; a destroyed one is dropped), over 100+ churned."""
+            if not os.access(CHURN, os.X_OK):
+                check(f'[{label}] churn fixture present ({CHURN}; build mios-wl-fixtures)', False)
+                return
+            log = str(OUT / f'{label}-churn.log')
+            p, c = start('churn', rate, log)
+            check(f'[{label}] subsurface churn client mapped', c)
+            if not c:
+                return
+            measure(c, rate, f'2D subsurface churn {rate} FPS')
+            seen = []
+            for _ in range(12):
+                w = status().get('window')
+                if is_c(w, c) and 'watched' in w:
+                    seen.append(w['watched'])
+                time.sleep(0.5)
+            if meter and watched:
+                check(f'[{label}] churn: the meter keeps watches of live surfaces only (watched {seen})', seen and max(seen) <= 3, seen)
+            elif meter:
+                check(f'[{label}] churn: this 1.1 meter does not report its watches', not seen, seen)
+            try:
+                p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                p.kill()
+            m = re.search(r'frames=(\d+) created=(\d+) destroyed=(\d+)', Path(log).read_text())
+            check(f'[{label}] churn: the client replaced its subsurface 100+ times ({m.group(0) if m else "no summary"})',
+                  m and int(m.group(3)) >= 100, Path(log).read_text()[-200:])
 
         st = wait_island(lambda st: st.get('fps', -1) >= 0)
         check(f'[{label}] nested island shows the session\'s own output FPS', st.get('fps', -1) >= 0, json.dumps(st)[:160])
@@ -218,6 +288,8 @@ def run_pass(label, plugin, meter, window_fps=True, full=False):
                     sh(['grim', str(OUT / f'{label}-2d-video-24.png')], env=env)
             p.terminate(); p.wait(timeout=10)
         if not full:
+            if meter and not watched:
+                churn(30)  # a 1.1 meter: churn shows it never reports (or bounds) its watches
             return
         p, term = start('terminal', 20)
         check(f'[{label}] paced terminal mapped', term)
@@ -228,6 +300,7 @@ def run_pass(label, plugin, meter, window_fps=True, full=False):
         if cube:
             measure(cube, None, '2D vkcube (FIFO)')
         p.terminate(); p.wait(timeout=10)
+        churn(30)
         # Hypr3D: the room renders the windows as textures; their own commits are still what is counted. The room
         # focuses the window it aims at, so each client is measured while it is the room's focused window: vkcube
         # (aimed when the room opens), then a paced terminal opened inside the room (it spawns in front, focused).
@@ -288,8 +361,19 @@ def main():
     before = json.loads(sh(['hyprctl', '-j', 'instances']).stdout or '[]')
     run_pass('candidate', CAND, meter=True, full=True)
     run_pass('ssot-off', CAND, meter=True, window_fps=False)
-    if OLD:
-        run_pass('installed', OLD, meter=False)
+    cand = Path(CAND).read_bytes()
+    for i, old in enumerate(OLD):
+        kind = plugin_kind(old)
+        if Path(old).read_bytes() == cand:
+            print(f'NOTE: negative plugin {old} is the candidate itself ({kind}); its pass is skipped (set MIOS_PACING_OLD)')
+            continue
+        tag = f'old{i}-{kind}'
+        if kind == 'pre-meter':
+            run_pass(tag, old, meter=False)
+        elif kind == 'meter-1.1':
+            run_pass(tag, old, meter=True, watched=False)
+        else:
+            print(f'NOTE: negative plugin {old} already reports "watched"; skipped')
     after = json.loads(sh(['hyprctl', '-j', 'instances']).stdout or '[]')
     primary = [i.get('pid') for i in before if i.get('instance') == os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')]
     check('primary compositor untouched (same pid)', primary and primary == [i.get('pid') for i in after if i.get('instance') == os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')], primary)

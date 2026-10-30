@@ -34,6 +34,7 @@ members = [
     "mios-unit-gen",
     "mios-version-check",
     "mios-wallpaperd",
+    "mios-wl-fixtures",
     "xtask",
 ]
 resolver = "2"

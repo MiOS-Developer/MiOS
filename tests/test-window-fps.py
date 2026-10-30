@@ -2,7 +2,9 @@
 # AI-hint: Focused-window frame rate beside the host rate on the status island ("144 FPS/92 FPS"): the SSOT switch and
 #          configurator input, the mios-pacing meter (source contract + its host test, which the pre-change header
 #          cannot build: negative control), and the shell formulas evaluated with node from the QML sources themselves
-#          (Config.qml / Nested.qml windowFpsFor, PanelWindow.qml fpsText; the pre-change shells have none).
+#          (Config.qml / Nested.qml windowFpsFor, PanelWindow.qml fpsText; the pre-change shells have none). Subsurface
+#          churn: watches of destroyed surfaces are dropped (pruneGone; "watched"), and the 1.1 meter's header cannot
+#          build the churn host test (negative control).
 #          The live counterpart is tests/test-window-fps-live.py (MIOS_LIVE_NESTED=1).
 # AI-related: usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp,
 # AI-related: usr/share/mios/hyprland/plugins/mios-pacing/tests/pacing_test.cpp, usr/share/mios/quickshell/PanelWindow.qml,
@@ -26,15 +28,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACING = ROOT / "usr/share/mios/hyprland/plugins/mios-pacing"
 QS = ROOT / "usr/share/mios/quickshell"
-BASE = os.environ.get("MIOS_WINDOW_FPS_BASE", "main")  # the pre-change revision for the negative controls
+
+
+def _added_rev(rel: str) -> str:
+    """The commit that added `rel` ("" outside a git checkout)."""
+    r = subprocess.run(["git", "-C", str(ROOT), "log", "--format=%H", "--diff-filter=A", "--", rel], capture_output=True, text=True)
+    return r.stdout.split()[-1] if r.returncode == 0 and r.stdout.split() else ""
+
+
+# The negative controls compare against the tree just before this suite was added. Not "main": once the feature is
+# integrated, main already carries it and every negative control would turn into a false failure.
+_FEATURE = _added_rev("tests/test-window-fps.py")
+BASE = os.environ.get("MIOS_WINDOW_FPS_BASE") or (f"{_FEATURE}^" if _FEATURE else "main")
+# The 1.1 meter (the feature commit itself) kept the listeners of destroyed subsurfaces: the churn negative control.
+METER_1_1 = os.environ.get("MIOS_WINDOW_FPS_METER_1_1") or _FEATURE
 BASE_TREE = os.environ.get("MIOS_WINDOW_FPS_BASE_TREE", "")  # or an exported copy of it (a build container has no git)
 
 
-def git_show(rel: str) -> str | None:
-    if BASE_TREE:
+def git_show(rel: str, rev: str | None = None) -> str | None:
+    if BASE_TREE and rev is None:
         p = Path(BASE_TREE) / rel
         return p.read_text() if p.is_file() else None
-    r = subprocess.run(["git", "-C", str(ROOT), "show", f"{BASE}:{rel}"], capture_output=True, text=True)
+    if not (rev or BASE):
+        return None
+    r = subprocess.run(["git", "-C", str(ROOT), "show", f"{rev or BASE}:{rel}"], capture_output=True, text=True)
     return r.stdout if r.returncode == 0 else None
 
 
@@ -93,6 +110,29 @@ class SsotAndSource(unittest.TestCase):
             self.assertNotIn("stateCommit", old)
             self.assertNotIn('\\"window\\":', old)
 
+    def test_watches_of_destroyed_surfaces_are_dropped(self) -> None:
+        """Subsurface churn under one focus: each watch is tied to its surface and dropped (with its listeners and its
+        meter) once the surface is gone, before a new watch is added and before a status; "watched" reports the count."""
+        main = (PACING / "main.cpp").read_text()
+        ws = main[main.index("void watchSurface("):main.index("SP<CWLSurfaceResource> rootOf(")]
+        self.assertIn("MiosPacing::pruneGone(g_focused.watches, g_focused.rate);", ws)
+        self.assertLess(ws.index("pruneGone("), ws.index("g_focused.watches.push_back("), "pruned before a watch is added")
+        wj = main[main.index("std::string windowJson()"):]
+        self.assertIn("MiosPacing::pruneGone(g_focused.watches, g_focused.rate);", wj[:wj.index("return std::format")])
+        self.assertIn('\\"watched\\":{}', main)
+        self.assertIn("g_focused.watches.size()", main)
+        self.assertNotIn("g_focused.listeners", main)
+        hdr = (PACING / "pacing.hpp").read_text()
+        self.assertIn("std::size_t pruneGone(std::vector<TWatch>& watches, SWindowRate& rate)", hdr)
+        self.assertIn("void forget(std::uintptr_t surface)", hdr)
+        # Negative control: the 1.1 meter kept every listener in one flat vector until the next focus change.
+        old = git_show("usr/share/mios/hyprland/plugins/mios-pacing/main.cpp", METER_1_1)
+        if old is None:
+            self.skipTest(f"{METER_1_1} not available")
+        self.assertIn("g_focused.listeners.push_back(s->m_events.stateCommit.listen(", old)
+        self.assertNotIn("pruneGone", old)
+        self.assertNotIn('\\"watched\\":', old)
+
     def test_shells_read_the_meter(self) -> None:
         for f in ("Config.qml", "Nested.qml"):
             t = (QS / f).read_text()
@@ -138,6 +178,22 @@ class HostTest(unittest.TestCase):
             r = subprocess.run(["g++", "-std=c++2b", "-fsyntax-only", str(tp / "tests/pacing_test.cpp")], capture_output=True, text=True, timeout=300)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("SWindowRate", r.stderr)
+
+    def test_meter_1_1_header_cannot_build_the_churn_test(self) -> None:
+        """Negative control: the 1.1 meter's header has no pruneGone/forget, so the churn host test cannot build."""
+        old = git_show("usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp", METER_1_1)
+        if old is None:
+            self.skipTest(f"{METER_1_1} not available")
+        self.assertIn("struct SWindowRate", old)
+        with tempfile.TemporaryDirectory() as t:
+            tp = Path(t)
+            (tp / "tests").mkdir()
+            (tp / "pacing.hpp").write_text(old)
+            shutil.copy(PACING / "tests/pacing_test.cpp", tp / "tests/pacing_test.cpp")
+            r = subprocess.run(["g++", "-std=c++2b", "-fsyntax-only", str(tp / "tests/pacing_test.cpp")], capture_output=True, text=True, timeout=300)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("pruneGone", r.stderr)
+            self.assertNotIn("SWindowRate' was not declared", r.stderr)
 
 
 @unittest.skipUnless(shutil.which("node"), "no node")

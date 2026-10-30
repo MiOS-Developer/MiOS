@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace MiosPacing {
     using Clock = std::chrono::steady_clock;
@@ -101,7 +102,29 @@ namespace MiosPacing {
             surfaces.clear();
             frames = 0;
         }
+        // A surface of the tree is gone: its meter goes with it (an address the allocator reuses starts fresh).
+        void forget(std::uintptr_t surface) {
+            surfaces.erase(surface);
+        }
     };
+
+    // The per-surface watches of the focused tree: `surface` is a weak handle (expired() once the surface is
+    // destroyed) and `key` its meter key. Drops every watch whose surface is gone -- its listeners with it, and its
+    // meter from `rate` -- so a focused client that keeps creating and destroying subsurfaces holds only the watches
+    // of the surfaces it still has. Returns how many were dropped.
+    template <class TWatch>
+    std::size_t pruneGone(std::vector<TWatch>& watches, SWindowRate& rate) {
+        std::size_t dropped = 0;
+        for (auto it = watches.begin(); it != watches.end();) {
+            if (it->surface.expired()) {
+                rate.forget(it->key);
+                it = watches.erase(it);
+                ++dropped;
+            } else
+                ++it;
+        }
+        return dropped;
+    }
 
     // `csv` = "HEADLESS-,VIRT-": an output whose name starts with any entry is excluded.
     inline bool excluded(std::string_view name, std::string_view csv) {
