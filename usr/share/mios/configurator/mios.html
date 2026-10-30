@@ -3276,6 +3276,14 @@
         <label>Terminals: nav profile (terminal = terminal_tmux / terminal_plain) <input data-key="keybindings.global.controller.nav.contexts.terminal" type="text"></label>
         <label>Game-class windows: nav profile <input data-key="keybindings.global.controller.nav.contexts.game" type="text"></label>
         <label>VM/remote-class windows: nav profile <input data-key="keybindings.global.controller.nav.contexts.vm-passthrough" type="text"></label>
+        <label>Linux console (VT): nav profile (console = console_tmux / console_plain) <input data-key="keybindings.global.controller.nav.contexts.console" type="text"></label>
+        <label>VT West tap, hold (O-6; Shift+Tab is BTab on the console) <input data-key="keybindings.global.controller.nav.console_plain.BTN_WEST" data-array="csv" type="text"></label>
+        <label>VT tmux mouse bridge (gpm and the controller pointer reach tmux while its mouse mode is on) <input data-key="keybindings.global.controller.console.bridge" type="checkbox"></label>
+        <label>VT pointer source <select data-key="keybindings.global.controller.console.mouse"><option value="auto">auto (gpm when its socket exists, else evdev)</option><option value="gpm">gpm</option><option value="evdev">evdev pointer devices</option><option value="off">off</option></select></label>
+        <label>gpm client socket <input data-key="keybindings.global.controller.console.gpm_socket" type="text" pattern="/.*"></label>
+        <label>evdev pointer devices read by name (never grabbed) <textarea data-key="keybindings.global.controller.console.pointer_names" data-type="json-array"></textarea></label>
+        <label>evdev pointer pixels per character cell [x, y] <textarea data-key="keybindings.global.controller.console.cell_px" data-type="json-array"></textarea></label>
+        <label>tmux bindings popup command (argv; {file} = the rendered controller map) <textarea data-key="keybindings.global.controller.console.keymap_argv" data-type="json-array"></textarea></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
         <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>
         <label>Guide + BTN_TL action <input data-key="keybindings.global.controller.system_layer.BTN_TL" type="text"></label>

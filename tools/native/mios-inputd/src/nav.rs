@@ -1,6 +1,6 @@
-// AI-hint: Controller navigation grammar (step I2): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation.
+// AI-hint: Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules and the Linux console byte translation of a key: stroke.
 // AI-related: usr/share/mios/mios.toml [keybindings.global.controller.nav], tools/native/mios-inputd/src/router.rs, docs/design/mios-global-bindings-final.md (section 3)
-// AI-functions: NavConfig::from_value, NavConfig::profile_name, parse_key_chord, stroke, keysym, validate_tmux
+// AI-functions: NavConfig::from_value, NavConfig::profile_name, NavConfig::text, parse_key_chord, stroke, keysym, vt_bytes, validate_tmux
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -200,8 +200,11 @@ impl NavConfig {
                 if matches!(i, Input::Stick { .. }) && matches!(v, Value::TapHold(..)) {
                     return Err(format!("{what}: a stick direction takes one action (a flick has no hold)"));
                 }
-                if matches!(v, Value::TapHold(..)) && v.actions().iter().any(|a| a.starts_with("pointer:")) {
+                if matches!(v, Value::TapHold(..)) && v.actions().iter().any(|a| a.starts_with("pointer:") && *a != CURSOR) {
                     return Err(format!("{what}: pointer: is analog and cannot be a tap or hold"));
+                }
+                if i == Input::ToggleChord && matches!(v, Value::TapHold(..)) {
+                    return Err(format!("{what}: the toggle chord takes one action (its hold is the capture release)"));
                 }
                 map.insert(i, v);
             }
@@ -230,6 +233,9 @@ impl NavConfig {
         }
         for (context, p) in &cfg.contexts {
             if p == "vpad" {
+                if context == "console" {
+                    return Err("nav.contexts.console: a VT has no virtual-pad consumer; name a profile".into());
+                }
                 continue;
             }
             let names = cfg.candidates(p);
@@ -239,7 +245,14 @@ impl NavConfig {
             for n in names {
                 for (input, value) in &cfg.profiles[&n] {
                     let name = input.name();
-                    if CONTRACT.contains(&name.as_str()) && value != &Value::Press("none".into()) {
+                    if context == "console" {
+                        // I3 (C-23): no compositor, shell or room on a VT: only projections that reach a VT.
+                        for a in value.actions() {
+                            if !console_capable(a) {
+                                return Err(format!("nav.{n}.{name}: {a} cannot reach a VT (console rows use key:, tmux:, mios:graphical-vt, pointer:cursor or none)"));
+                            }
+                        }
+                    } else if CONTRACT.contains(&name.as_str()) && value != &Value::Press("none".into()) {
                         return Err(format!("nav.{n}.{name}: owned by the capture contract or the room wherever a compositor runs ({context})"));
                     }
                 }
@@ -278,6 +291,32 @@ impl NavConfig {
     pub fn actions(&self) -> BTreeSet<String> {
         self.profiles.values().flat_map(|p| p.values().flat_map(|v| v.actions().into_iter().map(str::to_owned))).collect()
     }
+    /// The resolved controller map as text (`mios-inputd map --text`, the tmux:keymap popup): context -> profile, then
+    /// each profile's inputs with their tap/hold actions.
+    pub fn text(&self, hold_ms: u64) -> String {
+        let mut out = format!("MiOS controller map (uncaptured). A hold is {hold_ms} ms; North captures the focused window, a held L3+R3 releases it.\n\n");
+        for (context, p) in &self.contexts {
+            out += &format!("  {context:<16} {}\n", if self.profiles.contains_key(p) || p == "vpad" { p.clone() } else { format!("{p}_tmux (tmux client) / {p}_plain") });
+        }
+        for (name, profile) in &self.profiles {
+            out += &format!("\n[{name}]\n");
+            for (input, value) in profile {
+                let v = match value {
+                    Value::Press(a) => a.clone(),
+                    Value::TapHold(t, h) => format!("tap {t}  hold {h}"),
+                };
+                out += &format!("  {:<15} {v}\n", input.name());
+            }
+        }
+        out
+    }
+}
+/// I3: the nav value that toggles cursor mode (the sticks drive the virtual pointer, RT/LT click). A button value only.
+pub const CURSOR: &str = "pointer:cursor";
+/// The projections a VT can receive: the uinput keyboard (the kernel console reads it), tmux verbs for the client on
+/// the active VT, the graphical-VT switch, cursor mode (the virtual pointer moves the gpm pointer) and "none".
+pub fn console_capable(action: &str) -> bool {
+    action == "none" || action == "mios:graphical-vt" || action == CURSOR || action.starts_with("key:") || action.starts_with("tmux:")
 }
 
 fn validate_value(action: &str, input: Input, ctx: &Ctx) -> Result<(), String> {
@@ -293,9 +332,14 @@ fn validate_value(action: &str, input: Input, ctx: &Ctx) -> Result<(), String> {
         "key" => {
             parse_key_chord(verb)?;
         }
+        "pointer" if action == CURSOR => {
+            if !matches!(input, Input::Button(_)) {
+                return Err("pointer:cursor toggles cursor mode; only a button can fire it".into());
+            }
+        }
         "pointer" => {
             if !["wheel-up", "wheel-down", "hwheel-left", "hwheel-right"].contains(&verb) {
-                return Err(format!("unknown pointer verb {verb} (wheel-up, wheel-down, hwheel-left, hwheel-right)"));
+                return Err(format!("unknown pointer verb {verb} (wheel-up, wheel-down, hwheel-left, hwheel-right, cursor)"));
             }
             if !matches!(input, Input::Stick { .. }) {
                 return Err("pointer: is the analog wheel; only LS_*/RS_* can drive it".into());
@@ -398,6 +442,49 @@ pub fn keysym(chord: &KeyChord) -> (String, String) {
         .unwrap_or_default();
     (sym, mods)
 }
+/// What the Linux console's default `us` keymap delivers to the tty for one stroke (VC_META escape prefix, normal
+/// cursor-key mode): the fixture tier projects these bytes into a pty that stands in for a VT. Returns None for a
+/// stroke the console turns into no bytes (Ctrl+Alt+F<n> switches the VT; bare modifiers).
+pub fn vt_bytes(chord: &KeyChord) -> Option<Vec<u8>> {
+    let has = |c: u16| chord.mods.contains(&c);
+    let (ctrl, shift, alt) = (has(29), has(42), has(56));
+    let named: Option<&[u8]> = match chord.key {
+        28 => Some(b"\r"), 1 => Some(b"\x1b"), 15 => Some(b"\t"), 14 => Some(b"\x7f"), 57 => Some(b" "),
+        103 => Some(b"\x1b[A"), 108 => Some(b"\x1b[B"), 106 => Some(b"\x1b[C"), 105 => Some(b"\x1b[D"),
+        102 => Some(b"\x1b[1~"), 110 => Some(b"\x1b[2~"), 111 => Some(b"\x1b[3~"), 107 => Some(b"\x1b[4~"),
+        104 => Some(b"\x1b[5~"), 109 => Some(b"\x1b[6~"),
+        _ => None,
+    };
+    let fkey = (59..=68).chain([87, 88]).position(|k| k == chord.key);
+    if let Some(n) = fkey {
+        if ctrl && alt {
+            return None; // Console_<n>: a VT switch, no bytes
+        }
+        const F: [&[u8]; 12] = [b"\x1b[[A", b"\x1b[[B", b"\x1b[[C", b"\x1b[[D", b"\x1b[[E", b"\x1b[17~", b"\x1b[18~", b"\x1b[19~", b"\x1b[20~", b"\x1b[21~", b"\x1b[23~", b"\x1b[24~"];
+        return Some(F[n].to_vec());
+    }
+    let mut out = match named {
+        Some(b) => b.to_vec(),
+        None => {
+            let (sym, _) = keysym(chord);
+            let c = sym.chars().next().filter(|_| sym.chars().count() == 1)?;
+            let c = if shift { c.to_ascii_uppercase() } else { c };
+            if ctrl && c.is_ascii_alphabetic() { vec![(c.to_ascii_lowercase() as u8) & 0x1f] } else { vec![c as u8] }
+        }
+    };
+    if ctrl && chord.key == 1 {
+        out = b"\x1b".to_vec();
+    }
+    // keycode 15: shift and alt both map to Meta_Tab (ESC TAB) in the installed `us` keymaps (kbd xkb and legacy
+    // i386/qwerty), which is kcbt (back-tab) in the linux terminfo; ctrl leaves plain Tab.
+    if chord.key == 15 && (shift || alt) {
+        return Some(b"\x1b\t".to_vec());
+    }
+    if alt {
+        out.insert(0, 0x1b);
+    }
+    Some(out)
+}
 /// One atomic stroke (modifiers down, key down, SYN, key up, modifiers up, SYN). A stroke never leaves a key held, so
 /// no context change can strand a pressed virtual key (INV-6).
 pub fn stroke(chord: &KeyChord) -> Vec<crate::router::Event> {
@@ -431,6 +518,55 @@ mod tests {
         for c in [1u16, 11, 15, 20, 28, 29, 42, 56, 103, 104, 109, 125, 127] {
             assert!(codes.contains(&c), "{c}");
         }
+    }
+    fn console_edit(table: &str, input: &str, value: toml::Value) -> Result<(), String> {
+        crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"][table].as_table_mut().unwrap().insert(input.into(), value);
+        }).map(|_| ())
+    }
+    #[test]
+    fn console_rows_use_vt_capable_projections_only() {
+        let (cfg, _) = crate::config::tests::fixture_nav();
+        assert_eq!(cfg.controller.nav.profile_name("console", true).as_deref(), Some("console_tmux"));
+        assert!(cfg.controller.nav.profiles["console_tmux"].values().flat_map(|v| v.actions()).all(console_capable), "inherited rows too");
+        let e = console_edit("console_plain", "BTN_SOUTH", "hypr:movefocus left".into()).unwrap_err();
+        assert!(e.contains("cannot reach a VT"), "{e}");
+        let e = console_edit("console_tmux", "BTN_MODE", "quickshell:drawer-toggle".into()).unwrap_err();
+        assert!(e.contains("cannot reach a VT"), "{e}");
+        assert!(console_edit("console_plain", "BTN_NORTH", "key:ENTER".into()).is_ok(), "a VT may claim the contract inputs");
+        let e = console_edit("desktop", "TOGGLE_CHORD", "mios:graphical-vt".into()).unwrap_err();
+        assert!(e.contains("capture contract"), "the desktop toggle chord stays the room's: {e}");
+        let e = console_edit("console_plain", "TOGGLE_CHORD", toml::Value::Array(vec!["none".into(), "mios:graphical-vt".into()])).unwrap_err();
+        assert!(e.contains("toggle chord takes one action"), "{e}");
+        let e = console_edit("console_plain", "RS_UP", "pointer:cursor".into()).unwrap_err();
+        assert!(e.contains("only a button"), "{e}");
+        let e = console_edit("contexts", "console", "vpad".into()).unwrap_err();
+        assert!(e.contains("no virtual-pad consumer"), "{e}");
+    }
+    #[test]
+    fn map_text_lists_contexts_and_both_halves() {
+        let (cfg, _) = crate::config::tests::fixture_nav();
+        let t = cfg.controller.nav.text(500);
+        assert!(t.contains("console          console_tmux (tmux client) / console_plain"), "{t}");
+        assert!(t.contains("[console_tmux]") && t.contains("BTN_WEST        tap key:TAB  hold key:SHIFT+TAB"), "{t}");
+    }
+    #[test]
+    fn vt_bytes_follow_the_linux_console_keymap() {
+        let b = |s: &str| vt_bytes(&parse_key_chord(s).unwrap());
+        assert_eq!(b("ENTER").unwrap(), b"\r");
+        assert_eq!(b("TAB").unwrap(), b"\t");
+        assert_eq!(b("SHIFT+TAB").unwrap(), b"\x1b\t", "T-I3-4: shift keycode 15 = Meta_Tab = ESC TAB, the linux terminfo kcbt (O-6)");
+        assert_eq!(b("ALT+TAB").unwrap(), b"\x1b\t", "alt keycode 15 = Meta_Tab too");
+        assert_eq!(b("CTRL+TAB").unwrap(), b"\t");
+        assert_eq!(b("PAGEDOWN").unwrap(), b"\x1b[6~");
+        assert_eq!(b("ESC").unwrap(), b"\x1b");
+        assert_eq!(b("CTRL+c").unwrap(), b"\x03");
+        assert_eq!(b("UP").unwrap(), b"\x1b[A");
+        assert_eq!(b("PAGEUP").unwrap(), b"\x1b[5~");
+        assert_eq!(b("F1").unwrap(), b"\x1b[[A");
+        assert_eq!(b("CTRL+ALT+F2"), None, "Console_2 switches the VT and sends nothing");
+        assert_eq!(b("t").unwrap(), b"t");
+        assert_eq!(b("SHIFT+t").unwrap(), b"T");
     }
     #[test]
     fn a_stroke_releases_everything_it_presses() {

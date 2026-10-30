@@ -699,6 +699,9 @@ impl Router {
             let guide = button_code(&self.global.controller.guide_button).unwrap();
             let guide_held = self.pressed.contains(&guide);
             let owned = self.app_owned();
+            // I3: on a VT no compositor runs: no system layer behind Guide (R-08), no capture, no room, no ShaderGlass;
+            // every button is a nav input and the toggle chord fires the console profile's TOGGLE_CHORD.
+            let console = self.console();
             let half = self.half_capture();
             // The captured app owns Guide and every button (full and half capture alike). Only the
             // mode_override_chord (half-capture toggle), Start in half-capture and the held toggle_chord are host input.
@@ -729,7 +732,11 @@ impl Router {
                 }
             }
             if !app_guide && e.code == guide {
-                if e.value == 1 {
+                if e.value == 1 && console {
+                    // R-08: Guide hold is no modifier on a VT; a press still cancels nav timers, alone it may be a tap.
+                    o.extend(self.nav_flush());
+                    self.guide_tap = (self.pressed.len() == 1).then_some((now, 0.0));
+                } else if e.value == 1 {
                     o.extend(self.release_outputs());
                     self.suppressed
                         .extend(self.pressed.iter().filter(|c| **c != guide));
@@ -747,7 +754,7 @@ impl Router {
                     let hold = self.global.controller.capture_hold_ms;
                     if self.guide_tap.take().is_some_and(|(at, _)| now.saturating_sub(at) < hold) {
                         if self.nav_active() {
-                            if let Some(Value::Press(a)) = self.nav_value(Input::Button(guide)) { Self::fire(&a, &mut o); }
+                            if let Some(Value::Press(a)) = self.nav_value(Input::Button(guide)) { self.fire(&a, &mut o); }
                         } else if self.room() {
                             if let Some(value) = self.room_entry(guide) {
                                 let tap = value.parts().0.to_owned();
@@ -758,7 +765,10 @@ impl Router {
                 }
                 return o;
             }
-            if !app_guide && guide_held {
+            if console && guide_held && e.value == 1 && !already {
+                self.guide_tap = None;
+            }
+            if !app_guide && guide_held && !console {
                 if e.value == 1 && !already {
                     self.guide_tap = None;
                 }
@@ -841,7 +851,12 @@ impl Router {
                         self.last_toggle = Some(now);
                         o.extend(self.release_outputs());
                         self.suppressed.extend(&toggle);
-                        o.actions.push("mios:hyprland-3d-toggle".into());
+                        if console {
+                            // C-17: the console profile's chord action (mios:graphical-vt); a VT has no room.
+                            if let Some(Value::Press(a)) = self.nav_value(Input::ToggleChord) { self.fire(&a, &mut o); }
+                        } else {
+                            o.actions.push("mios:hyprland-3d-toggle".into());
+                        }
                         return o;
                     }
                 }
@@ -870,11 +885,11 @@ impl Router {
                 // The room table (spec P1) and the host (legacy) actions -- ShaderGlass, cursor mode, North capture,
                 // room buttons -- belong to an uncaptured controller only. A captured app keeps every one of these
                 // buttons, half-capture and a room capture included.
-                if !owned && self.room() && self.room_press(e.code, &mut o) {
+                if !owned && !console && self.room() && self.room_press(e.code, &mut o) {
                     self.suppressed.insert(e.code);
                     return o;
                 }
-                if !owned && self.legacy_action(e.code, now, &mut o) {
+                if !owned && !console && self.legacy_action(e.code, now, &mut o) {
                     self.suppressed.insert(e.code);
                     return o;
                 }
@@ -930,7 +945,7 @@ impl Router {
             self.nav_axis(e.code, sink == Sink::Nav, &mut o);
         } else if e.kind == EV_SYN && e.code == SYN_REPORT {
             self.update_pad();
-            if self.nav_active() && !self.button(&self.global.controller.guide_button) {
+            if self.nav_active() && !self.guide_layer() {
                 self.nav_flicks(&mut o);
             }
             if self.forwards_frames() {
@@ -1081,7 +1096,7 @@ impl Router {
         self.nav_timers(dt, &mut o);
         self.update_pad();
         if !self.pointer_mode() {
-            if self.nav_active() && !self.button(&self.global.controller.guide_button) { self.nav_wheel(dt, &mut o); }
+            if self.nav_active() && !self.guide_layer() { self.nav_wheel(dt, &mut o); }
             return o;
         }
         let ControllerConfig {
@@ -1152,10 +1167,27 @@ impl Router {
         let p = self.nav.profile.as_ref()?;
         self.global.controller.nav.profiles.get(p)?.get(&input).cloned()
     }
-    fn fire(action: &str, o: &mut Output) {
-        if action != "none" {
-            o.actions.push(action.to_owned());
+    /// The Linux console (I3): no compositor runs, so nothing behind it can capture, toggle the room or hold Guide.
+    pub fn console(&self) -> bool {
+        self.context == "console"
+    }
+    /// Guide held as the system-layer modifier (never on a VT, R-08).
+    fn guide_layer(&self) -> bool {
+        !self.console() && self.button(&self.global.controller.guide_button)
+    }
+    fn fire(&mut self, action: &str, o: &mut Output) {
+        if action == "none" {
+            return;
         }
+        if action == crate::nav::CURSOR {
+            // I3: cursor mode from a nav value (the VT has no compositor-side Start toggle): the sticks drive the
+            // virtual pointer (the gpm pointer on a VT), RT/LT click, every other button keeps its nav meaning.
+            o.extend(self.release_outputs());
+            self.cursor = !self.cursor;
+            o.actions.push(format!("input:cursor {}", if self.cursor { "on" } else { "off" }));
+            return;
+        }
+        o.actions.push(action.to_owned());
     }
     /// INV-6: cancel every tap/hold timer and auto-repeat, and forget held nav inputs (their release fires nothing).
     /// Key output is atomic strokes, so no virtual key is ever left down.
@@ -1201,7 +1233,8 @@ impl Router {
         let Some(value) = self.nav_value(input) else { return };
         let repeat = match &value {
             Value::Press(a) if !thumb => {
-                Self::fire(a, o);
+                let a = a.clone();
+                self.fire(&a, o);
                 self.global.controller.nav.repeat.get(&input).copied()
             }
             _ => None,
@@ -1215,8 +1248,8 @@ impl Router {
             return;
         }
         match &h.value {
-            Value::TapHold(t, _) if !h.fired => Self::fire(t, o),
-            Value::Press(a) if h.deferred => Self::fire(a, o),
+            Value::TapHold(t, _) if !h.fired => self.fire(t, o),
+            Value::Press(a) if h.deferred => self.fire(a, o),
             _ => {}
         }
     }
@@ -1235,7 +1268,7 @@ impl Router {
     }
     /// The HAT d-pad folds into BTN_DPAD_* and analog-only triggers get digital edges, for nav only.
     fn nav_axis(&mut self, code: u16, nav: bool, o: &mut Output) {
-        let guide = self.button(&self.global.controller.guide_button);
+        let guide = self.guide_layer();
         if code == 16 || code == 17 {
             let v = self.axes.get(&code).map_or(0, |a| a.value.signum());
             let old = if code == 16 { self.nav.hat.0 } else { self.nav.hat.1 };
@@ -1368,7 +1401,7 @@ impl Router {
             }
         }
         for a in fire {
-            Self::fire(&a, o);
+            self.fire(&a, o);
         }
     }
 }
@@ -2395,5 +2428,140 @@ mod nav_contract {
                 assert!(!(pad_live && (host || app)) && !(host && app), "context {} owned {} cursor {}", r.context, r.app_owned(), r.cursor);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod console_contract {
+    //! I3: the Linux console (tests.md C-16, C-17, R-08, R-09, console_plain, O-6).
+    use super::*;
+    const SOUTH: u16 = 0x130; const WEST: u16 = 0x134; const NORTH: u16 = 0x133; const LB: u16 = 0x136;
+    const TR2: u16 = 0x139; const START: u16 = 0x13b; const GUIDE: u16 = 0x13c; const L3: u16 = 0x13d; const R3: u16 = 0x13e;
+    fn axes() -> BTreeMap<u16, Axis> {
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] { axes.insert(c, Axis { min: -32768, max: 32767, value: 0 }); }
+        for c in [2, 5] { axes.insert(c, Axis { min: 0, max: 255, value: 0 }); }
+        for c in [16, 17] { axes.insert(c, Axis { min: -1, max: 1, value: 0 }); }
+        axes
+    }
+    fn vt(tmux: bool) -> Router {
+        let (c, l) = crate::config::tests::fixture_nav();
+        let mut r = Router::new(c, l, axes());
+        r.tmux = tmux;
+        r.set_context("console");
+        r
+    }
+    fn key(r: &mut Router, c: u16, v: i32) -> Output { r.event(Event::new(EV_KEY, c, v), 0) }
+    fn abs(r: &mut Router, c: u16, v: i32) -> Output { let mut o = r.event(Event::new(EV_ABS, c, v), 0); o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0)); o }
+    fn wait(r: &mut Router, ms: u64) -> Output { let mut o = Output::default(); for _ in 0..ms / 10 { o.extend(r.tick(0.01)); } o }
+    fn tap(r: &mut Router, c: u16, ms: u64) -> Output { let mut o = key(r, c, 1); o.extend(wait(r, ms)); o.extend(key(r, c, 0)); o }
+
+    #[test]
+    fn console_profiles_follow_the_vt_tmux_client() {
+        assert_eq!(vt(true).nav_profile().as_deref(), Some("console_tmux"));
+        assert_eq!(vt(false).nav_profile().as_deref(), Some("console_plain"));
+        let mut r = vt(true);
+        assert_eq!(tap(&mut r, SOUTH, 600).actions, vec!["key:ENTER"], "VT South: Enter on press, no Shift+Enter hold");
+        assert_eq!(tap(&mut r, WEST, 50).actions, vec!["key:TAB"]);
+        assert_eq!(tap(&mut r, WEST, 600).actions, vec!["key:SHIFT+TAB"], "O-6: the desktop stroke; the VT keymap makes it ESC TAB (kcbt)");
+        assert_eq!(tap(&mut r, NORTH, 50).actions, vec!["tmux:key z"], "no compositor: North zooms the pane, never captures");
+        assert_eq!(tap(&mut r, LB, 50).actions, vec!["tmux:session-prev"]);
+        assert_eq!(tap(&mut r, TR2, 50).actions, vec!["tmux:key n"]);
+        let mut o = abs(&mut r, 1, -30000);
+        o.extend(wait(&mut r, 800));
+        assert_eq!(o.actions, vec!["tmux:page-up"; 3], "left stick up pages (500/250)");
+        abs(&mut r, 1, 0);
+        assert!(r.axis_sink(1) == Sink::Nav && r.pad.lx == 0.0, "no room packet on a VT");
+    }
+    #[test]
+    fn console_plain_projects_only_safe_keys() {
+        let mut r = vt(false);
+        let mut o = abs(&mut r, 1, -30000);
+        o.extend(wait(&mut r, 800));
+        assert_eq!(o.actions, vec!["key:UP"; 3], "C-18: the left stick is arrows on a bare VT (500/250), never PageUp");
+        assert!(o.pointer.is_empty());
+        abs(&mut r, 1, 0);
+        assert_eq!(tap(&mut r, LB, 50).actions, vec!["key:SHIFT+TAB"], "bumpers = BTab / Tab");
+        assert_eq!(tap(&mut r, 0x137, 50).actions, vec!["key:TAB"]);
+        assert_eq!(tap(&mut r, TR2, 50).actions, vec!["key:PAGEDOWN"], "triggers = PageUp / PageDown");
+        assert_eq!(tap(&mut r, 0x138, 50).actions, vec!["key:PAGEUP"]);
+        for b in [NORTH, GUIDE, L3] {
+            assert!(tap(&mut r, b, 50).actions.is_empty(), "{b:#x} is none on a bare VT");
+        }
+        let (c, _) = crate::config::tests::fixture_nav();
+        for (input, v) in &c.controller.nav.profiles["console_plain"] {
+            for a in v.actions() {
+                assert!(a == "none" || a == "mios:graphical-vt" || a == "pointer:cursor"
+                    || ["key:ENTER", "key:ESC", "key:CTRL+c", "key:TAB", "key:SHIFT+TAB", "key:UP", "key:DOWN", "key:LEFT", "key:RIGHT", "key:PAGEUP", "key:PAGEDOWN"].contains(&a),
+                    "{}: {a}", input.name());
+            }
+        }
+    }
+    #[test]
+    fn toggle_chord_switches_to_the_graphical_vt_never_the_room() {
+        for tmux in [true, false] {
+            let mut r = vt(tmux);
+            key(&mut r, L3, 1);
+            let o = key(&mut r, R3, 1);
+            assert_eq!(o.actions, vec!["mios:graphical-vt"], "tmux={tmux}");
+            let mut o = wait(&mut r, 800);
+            o.extend(key(&mut r, L3, 0));
+            o.extend(key(&mut r, R3, 0));
+            assert!(o.actions.is_empty(), "the hold adds nothing and no single click fires");
+        }
+        // Negative: on the desktop the same chord still toggles the room.
+        let (c, l) = crate::config::tests::fixture_nav();
+        let mut r = Router::with_context(c, l, axes(), "desktop-2d");
+        key(&mut r, L3, 1);
+        assert_eq!(key(&mut r, R3, 1).actions, vec!["mios:hyprland-3d-toggle"]);
+    }
+    #[test]
+    fn guide_is_no_modifier_on_a_vt() {
+        let mut r = vt(true);
+        assert_eq!(tap(&mut r, GUIDE, 50).actions, vec!["tmux:menu"], "Guide tap = the MiOS tmux menu");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(tap(&mut r, LB, 50));
+        o.extend(key(&mut r, GUIDE, 0));
+        assert_eq!(o.actions, vec!["tmux:session-prev"], "R-08: Guide+LB is plain LB on a VT, and no Guide tap");
+        // Negative: with a compositor, Guide+LB is the system layer.
+        let (c, l) = crate::config::tests::fixture_nav();
+        let mut r = Router::with_context(c, l, axes(), "terminal");
+        let mut o = key(&mut r, GUIDE, 1);
+        o.extend(key(&mut r, LB, 1));
+        assert_eq!(o.actions, vec!["hypr:workspace e-1"]);
+    }
+    #[test]
+    fn start_hold_drives_the_pointer_and_back() {
+        let mut r = vt(true);
+        assert_eq!(tap(&mut r, START, 50).actions, vec!["tmux:key y"], "VT tmux: Start tap = copy mode");
+        assert_eq!(tap(&mut r, START, 600).actions, vec!["input:cursor on"], "Start hold = cursor mode");
+        assert_eq!(tap(&mut r, START, 600).actions, vec!["input:cursor off"]);
+        let mut r = vt(false);
+        assert_eq!(tap(&mut r, START, 50).actions, vec!["input:cursor on"], "a bare VT: Start = cursor mode, as on the desktop");
+        abs(&mut r, 3, 30000);
+        let o = wait(&mut r, 100);
+        assert!(o.pointer.iter().any(|e| e.kind == EV_REL && e.code == 0 && e.value > 0), "the right stick moves the pointer");
+        abs(&mut r, 3, 0);
+        let mut o = key(&mut r, TR2, 1);
+        assert!(o.actions.is_empty());
+        o.extend(wait(&mut r, 20));
+        assert!(o.pointer.contains(&Event::new(EV_KEY, 0x110, 1)), "RT = left click (gpm select)");
+        key(&mut r, TR2, 0);
+        wait(&mut r, 20);
+        assert_eq!(tap(&mut r, SOUTH, 50).actions, vec!["key:ENTER"], "buttons keep their nav meaning in cursor mode");
+        assert_eq!(tap(&mut r, START, 50).actions, vec!["input:cursor off"]);
+        assert!(!r.cursor);
+    }
+    #[test]
+    fn host_controller_bindings_without_contexts_skip_the_console() {
+        let (mut c, l) = crate::config::tests::fixture_nav();
+        c.bindings = vec![crate::config::Binding { id: "pad-term".into(), tier: 4, chord: "BTN_SELECT+BTN_START".into(), action: "mios:launch-browser".into(),
+            bypass: None, contexts: vec![], passthrough: vec![], scope: "host".into(), note: String::new() }];
+        assert!(c.bindings[0].active_in("desktop-2d") && !c.bindings[0].active_in("console"), "R-09 scoped default");
+        let mut r = Router::new(c, l, axes());
+        r.set_context("console");
+        key(&mut r, 0x13a, 1);
+        let o = key(&mut r, START, 1);
+        assert!(!o.actions.contains(&"mios:launch-browser".to_owned()));
     }
 }

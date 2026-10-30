@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const CONTEXTS: [&str; 7] = [
+pub const CONTEXTS: [&str; 8] = [
     "desktop-2d",
     "desktop-3d",
     "terminal",
@@ -13,6 +13,8 @@ pub const CONTEXTS: [&str; 7] = [
     "game",
     "controller",
     "app-capture",
+    // I3 (C-16): no compositor, or this user's active seat session is a tty. Not a window class.
+    "console",
 ];
 pub const VIRTUAL_PREFIX: &str = "mios-vctl";
 
@@ -39,9 +41,10 @@ fn host_scope() -> String {
     "host".into()
 }
 impl Binding {
+    /// R-09: a row without `contexts` is active in every context except `console` (no compositor runs there).
     pub fn active_in(&self, context: &str) -> bool {
         self.scope == "host"
-            && (self.contexts.is_empty() || self.contexts.iter().any(|c| c == context))
+            && ((self.contexts.is_empty() && context != "console") || self.contexts.iter().any(|c| c == context))
             && !self.passthrough.iter().any(|c| c == context)
     }
 }
@@ -95,6 +98,57 @@ pub struct ControllerConfig {
     /// (tap on release before capture_hold_ms, hold once at it). `"none"` unbinds.
     #[serde(default)]
     pub room: BTreeMap<String, RoomAction>,
+    /// I3: the Linux console (VT) side: the pty bridge's pointer source (gpm or evdev) for tmux-os mouse reports.
+    #[serde(default)]
+    pub console: ConsoleConfig,
+}
+/// [keybindings.global.controller.console] (I3, C-18). The console bridge wraps a VT tmux client in a pty and turns
+/// pointer events into mouse reports (SGR 1006, or the legacy encoding) only while the client has mouse mode on.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ConsoleConfig {
+    /// mios-terminal wraps a local VT tmux client in `mios-inputd console-bridge`.
+    pub bridge: bool,
+    /// Pointer source: "auto" (gpm when its socket exists, else evdev), "gpm", "evdev" or "off".
+    pub mouse: String,
+    /// The gpm client socket (the daemon draws the console pointer; MiOS reads its events while mouse mode is on).
+    pub gpm_socket: std::path::PathBuf,
+    /// evdev source: pointer devices by name, read without a grab (the controller's cursor-mode virtual pointer).
+    pub pointer_names: Vec<String>,
+    /// evdev source: pointer pixels per character cell (x, y).
+    pub cell_px: [u32; 2],
+    /// tmux:keymap: the popup argv; `{file}` is the rendered controller map (`mios-inputd map --text`).
+    pub keymap_argv: Vec<String>,
+}
+impl Default for ConsoleConfig {
+    fn default() -> Self {
+        Self {
+            bridge: true,
+            mouse: "auto".into(),
+            gpm_socket: "/dev/gpmctl".into(),
+            pointer_names: vec!["mios-vctl-pointer".into()],
+            cell_px: [8, 16],
+            keymap_argv: vec!["/usr/bin/less".into(), "-R".into(), "{file}".into()],
+        }
+    }
+}
+impl ConsoleConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !["auto", "gpm", "evdev", "off"].contains(&self.mouse.as_str()) {
+            return Err("controller.console.mouse: auto, gpm, evdev or off".into());
+        }
+        if !self.gpm_socket.is_absolute() || self.cell_px.iter().any(|v| !(1..=256).contains(v)) {
+            return Err("controller.console: gpm_socket is absolute and cell_px is 1..=256".into());
+        }
+        if self.pointer_names.iter().any(|n| n.is_empty() || n.len() >= 80) {
+            return Err("controller.console.pointer_names: evdev names (1..79 bytes)".into());
+        }
+        if self.keymap_argv.first().is_none_or(|p| !p.starts_with('/')) || !self.keymap_argv.iter().any(|a| a.contains("{file}"))
+            || self.keymap_argv.iter().any(|a| a.contains('\0')) {
+            return Err("controller.console.keymap_argv: an absolute program and one argument carrying {file}".into());
+        }
+        Ok(())
+    }
 }
 fn capture_hold_ms() -> u64 { 500 }
 fn default_namespaces() -> Vec<String> {
@@ -374,6 +428,7 @@ impl GlobalConfig {
             || c.capture_osd_argv.iter().any(|a| a.contains('\0')) || !c.capture_osd_argv.iter().any(|a| a.contains("{message}"))) {
             return Err("capture_osd_argv: an absolute program and one argument carrying {message}".into());
         }
+        c.console.validate()?;
         if c.recovery_argv.is_some() {
             return Err("controller recovery_argv is retired: serve exits or idles instead of starting a second pad owner".into());
         }

@@ -22,7 +22,11 @@ enum Operation {
     Serve,
     Dispatch { action: String },
     VmAction { action: String },
-    Map,
+    Map {
+        /// The readable controller map (the tmux:keymap popup's text) instead of JSON.
+        #[arg(long)]
+        text: bool,
+    },
     ResolveAction {
         action: String,
         /// tmux: verbs resolve against this client tty (on --tmux-socket); discovery finds both on the desktop.
@@ -32,6 +36,26 @@ enum Operation {
         tmux_socket: PathBuf,
     },
     Replay,
+    /// I3 (C-18): run a VT tmux client on a pty; while it has mouse mode on, gpm (or evdev pointer) events reach it as
+    /// SGR 1006 reports. The VT itself never enters mouse reporting.
+    ConsoleBridge {
+        /// The VT number gpm routes by (default: fd 0's /dev/tty<N>).
+        #[arg(long)]
+        vt: Option<u32>,
+        /// Pointer source override: gpm, evdev or off (default: the SSOT's controller.console.mouse).
+        #[arg(long)]
+        mouse: Option<String>,
+        #[arg(long)]
+        gpm_socket: Option<PathBuf>,
+        /// evdev source: this node (default: the first device named in controller.console.pointer_names).
+        #[arg(long)]
+        pointer_device: Option<PathBuf>,
+        /// JSON-lines log for tests (never the terminal).
+        #[arg(long)]
+        log: Option<PathBuf>,
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
     Normalize {
         chord: String,
         #[arg(long, default_value = " ")]
@@ -58,6 +82,20 @@ enum Operation {
         /// Fixture tier: write the room packet to this private path (never the live one).
         #[arg(long, requires = "fixture_only")]
         pad_path: Option<PathBuf>,
+        /// Fixture tier: read the seat view from this private copy of logind's runtime state (the physical bridge
+        /// reads /run/systemd): console context, the graphical VT, and INV-8 release when another session is active.
+        #[arg(long, requires = "fixture_only")]
+        logind_state: Option<PathBuf>,
+        /// Fixture tier: the tty that stands in for the active VT (e.g. a test pty).
+        #[arg(long, requires = "fixture_only")]
+        console_tty: Option<PathBuf>,
+        /// Fixture tier: an inherited fd (a pty master standing in for the VT) that receives console key: strokes as
+        /// the bytes the Linux console keymap delivers.
+        #[arg(long, requires = "fixture_only")]
+        console_sink_fd: Option<i32>,
+        /// Fixture tier: re-select the compositor when the followed socket dies (use a private XDG_RUNTIME_DIR).
+        #[arg(long, requires = "fixture_only")]
+        rediscover: bool,
     },
     /// Capture (on, fullscreen) or release (off) the focused window: the same transaction North and a held
     /// toggle_chord run, for every window kind.
@@ -104,9 +142,29 @@ fn run() -> Result<(), String> {
         return mios_inputd::linux::fixture_pad(layout);
     }
     let (global, legacy) = GlobalConfig::load(args.root.as_deref())?;
+    #[cfg(target_os = "linux")]
+    if let Operation::ConsoleBridge { vt, mouse, gpm_socket, pointer_device, log, argv } = &args.command {
+        let c = &global.controller.console;
+        let gpm_socket = gpm_socket.clone().unwrap_or_else(|| c.gpm_socket.clone());
+        let mouse = match mouse.as_deref().unwrap_or(&c.mouse) {
+            "auto" if gpm_socket.exists() => "gpm".to_owned(),
+            "auto" => "evdev".to_owned(),
+            m @ ("gpm" | "evdev" | "off") => m.to_owned(),
+            m => return Err(format!("--mouse {m}: gpm, evdev or off")),
+        };
+        let code = mios_inputd::console::run(mios_inputd::console::Options {
+            argv: argv.clone(), vt: *vt, mouse, gpm_socket, pointer_device: pointer_device.clone(),
+            pointer_names: c.pointer_names.clone(), cell_px: c.cell_px, log: log.clone(),
+        })?;
+        std::process::exit(code);
+    }
     let (bridge, fixture_only, live_context, pad_override) = match &args.command {
         Operation::Bridge { fixture_only, live_context, pad_path, .. } => (true, *fixture_only, *live_context, pad_path.clone()),
         _ => (false, false, false, None),
+    };
+    let (logind_state, console_tty, console_sink_fd, rediscover) = match &args.command {
+        Operation::Bridge { logind_state, console_tty, console_sink_fd, rediscover, .. } => (logind_state.clone(), console_tty.clone(), *console_sink_fd, *rediscover),
+        _ => (None, None, None, false),
     };
     match args.command {
         Operation::Context { lua: true } => println!("{}",serde_json::json!({"lua":mios_inputd::runtime::context_lua(&global),"executed":false})),
@@ -131,7 +189,8 @@ fn run() -> Result<(), String> {
             let argv=resolve(&global,&action,tmux_client.map(|tty| mios_inputd::runtime::TmuxClient{pid:0,tty,socket:tmux_socket}).as_ref())?;
             println!("{}",serde_json::json!({"action":action,"argv":argv,"executed":false}));
         }
-        Operation::Map => println!("{}", serde_json::json!({"global":global,"hypr3d":legacy})),
+        Operation::Map { text: true } => print!("{}", global.controller.nav.text(global.controller.capture_hold_ms)),
+        Operation::Map { text: false } => println!("{}", serde_json::json!({"global":global,"hypr3d":legacy})),
         Operation::Replay => {
             use std::io::Read;
             #[derive(serde::Deserialize)]
@@ -237,6 +296,10 @@ fn run() -> Result<(), String> {
                     pad_path,
                     live_context,
                     write_pad,
+                    logind_state,
+                    console_tty,
+                    console_sink_fd,
+                    rediscover,
                 },
             )?;
         }
@@ -269,6 +332,13 @@ fn resolve(global: &GlobalConfig, action: &str, client: Option<&mios_inputd::run
             argv = serde_json::json!({"probe": argv, "at_edge": format!("hypr:movefocus {d}"), "inside": ["send-keys","-c",c.tty,"-K",global.tmux_prefix,k]});
         }
         return Ok(argv);
+    }
+    if action == "mios:graphical-vt" {
+        // C-17: resolved at fire time from logind (this user's graphical session's VTNr); none -> nothing is sent.
+        return Ok(serde_json::json!({"keyboard":"mios-vctl-keyboard","vt_switch":"CTRL+ALT+F<VTNr of this user's graphical session>"}));
+    }
+    if action == mios_inputd::nav::CURSOR {
+        return Ok(serde_json::json!({"cursor_mode":"toggle","pointer":"mios-vctl-pointer"}));
     }
     if action.starts_with("pointer:") {
         return Ok(serde_json::json!({"pointer":"mios-vctl-pointer","analog":true}));

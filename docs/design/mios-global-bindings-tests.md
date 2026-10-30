@@ -73,14 +73,18 @@ active pane is per window, shared by every client of that window).
 | C-13 | L3 tap → `key:CTRL+t` on release. L3 then R3 within `debounce_ms` → room toggle only. | Slow overlap (L3 down, R3 down 400 ms later) → no singles. L3 pressed while the left stick is deflected → nothing. Guide+L3+R3 → no lock + latch double fire. |
 | C-32 | Capture and release each send one notification that names the window class. | No notification on a focus change without a capture change. |
 
-## I3: console
+## I3: console (landed)
+
+Automated in tests/test-inputd-console.py (real binary; `MIOS_INPUTD_UINPUT_TEST=1` for the fixture pad, pre-I3 pair in `MIOS_INPUTD_OLD_BIN` + `MIOS_INPUTD_OLD_SSOT`) and tests/test-inputd-console-live.py (`MIOS_LIVE_NESTED=1`). A pty stands in for the VT, logind is a private copy of its state files, gpm is a private socket, tmux runs with a private `TMUX_TMPDIR`.
 
 | ID | Positive control | Negative control |
 |---|---|---|
-| C-16 | With the compositor stopped and the user on tty3 → context `console`, and the D-pad sends arrows into the miosd selector (sessions.rs:477-484). After a compositor restart → the new socket is found without a service restart. | With the greeter or another user active on seat0 → the grab is released, and no key is projected. On an SSH-only login → serve idles (no `/dev/input` access) and does not crash-loop. gate: a compositor literal bind is not active in `console` (R-09). A console row using `hypr:` → C-23 finding. |
-| C-17 | VT·tmux and VT·plain: L3+R3 → `Ctrl+Alt+F<VTNr>` of this user's graphical session. | With no graphical session → no key is sent. On the desktop, L3+R3 still toggles the room. |
-| T-I3-4 | `showkey -a` on a VT: Shift+Tab prints `^[[Z` → enable O-6. | If it prints `^I`, keep VT West hold = none. |
-| console_plain | Every non-none row produces only Enter, Esc, Ctrl+C, Tab or arrows. | `LS_UP` on a bare VT shell → no output (it must not be PageUp, which /etc/inputrc:21 binds to history search). |
+| C-16 | This user's tty session active (private logind state) → context `console`: South = `\r`, West hold = ESC TAB, RT = ESC[6~, LS up = ESC[A in the VT pty. A VT tmux client behind the console bridge is found → `console_tmux`: LB/RB switch the client's session, North zooms. A killed compositor and a new one in the same runtime dir → `--rediscover` follows the new socket without a restart. | The greeter active → `seat: released`, another reader can EVIOCGRAB the pad, South writes nothing; this user active again → owned, South = `\r`. Without rediscovery (the pre-I3 binary) the new compositor never gets a key. The right stick at the left pane edge on a VT → `edge`, no compositor focus. SSH-only login → serve idles (unit test). A compositor literal bind is not active in `console` (R-09, unit test). A console row using `hypr:` or `quickshell:` → validation error (C-23). The pre-I3 binary rejects the I3 SSOT and the `console` replay context. |
+| C-17 | VT·tmux and VT·plain: L3+R3 → `vt_switch: CTRL+ALT+F2` (this user's graphical VTNr 2), no bytes on the VT, no room toggle. | No graphical session → `vt_switch: null`, nothing sent. On the desktop, L3+R3 still toggles the room. |
+| T-I3-4 / O-6 | Decided from the installed keymaps (no VT may be used): Shift+Tab = `Meta_Tab` in both `us` keymaps, and linux `kcbt=\E^I` → West hold = `key:SHIFT+TAB` (ESC TAB). | Ctrl+Tab stays plain Tab. |
+| console_plain | Operator decision C-18: every non-none row produces only Enter, Esc, Ctrl+C, Tab, BTab, arrows, PageUp/PageDown, cursor mode or the VT switch. | `LS_UP` on a bare VT shell → Up (ESC[A), never PageUp (history search, /etc/inputrc:21). North, Guide, L3, Select → nothing. |
+| C-18 bridge | tmux `mouse on` → the bridge connects to gpm (vc = its VT, every event, gpm keeps the pointer); a gpm click selects the left pane, a wheel-up enters copy mode in the pane under the pointer; an evdev pointer (FIFO of input_event) click selects too; reports are SGR 1006. The client's size and exit status pass through. | tmux `mouse off` → the gpm connection is closed and nothing is reported. `--mouse off` holds no source. The VT never receives `\e[?1000h/1002h/1003h/1006h` through the bridge, while a client attached directly does. The pre-I3 binary has no `console-bridge`. |
+| R-21 | `map --text` lists every context and both halves; `tmux:keymap` → `display-popup -c <client> -E … /usr/bin/less -R <file>` (argv form). | The pre-I3 binary has no `map --text` and refuses `tmux:keymap`. |
 
 ## I4 / P1 / M1 / GT
 

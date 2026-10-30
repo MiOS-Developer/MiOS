@@ -1,4 +1,4 @@
-# AI-hint: Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, I1, I2 and P1 (landed), "#@<STEP>" lines are uncommented by the step that ships the code reading them.
+# AI-hint: Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, I1, I2, I3 and P1 (landed), "#@<STEP>" lines are uncommented by the step that ships the code reading them.
 # AI-related: usr/share/mios/mios.toml, docs/design/mios-global-bindings-final.md
 # MiOS global bindings: final SSOT tables (replacement text for the vendor SSOT)
 #
@@ -11,7 +11,7 @@
 #   and the tmux/unit outputs.
 #
 # STAGING PROTOCOL
-#   Active (uncommented) lines are the S0, I1 and I2 steps and the landed P1 room table. Each one is implemented by the code that ships today, and it
+#   Active (uncommented) lines are the S0, I1, I2 and I3 steps and the landed P1 room table. Each one is implemented by the code that ships today, and it
 #   passes today's validators (mios-inputd config.rs:226-365, mios-gate keybinds.rs, mios-controls validate.rs:107-145).
 #   A line that starts with "#@<STEP> " belongs to a later step. That owner's change uncomments it in the same commit
 #   that adds the code that reads it (sed 's/^#@<STEP> //'). Nothing below is declared before something implements it.
@@ -184,7 +184,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 # app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
 # A class never captures the controller: capture and release are the same for every window kind (native, Flatpak,
 # game, VM, remote, nested, PiP, Theatre). These classes only scope keyboard bindings (contexts/passthrough).
-# console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
+# console (I3, landed) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
 terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]
@@ -424,7 +424,7 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #@I4 RS_UP = "hypr:movewindow up"
 #@I4 RS_DOWN = "hypr:movewindow down"
 
-# --- Navigation projection: what an uncaptured controller does outside the room (I2; console I3) ---
+# --- Navigation projection: what an uncaptured controller does outside the room (I2; the console I3) ---
 # Value grammar, the same for every profile:
 #   "ns:action"        fires on press. It auto-repeats only if the input has a [nav.repeat] entry.
 #   ["tap", "hold"]    tap fires on release before capture_hold_ms. Hold fires once at capture_hold_ms and never repeats.
@@ -436,10 +436,12 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #   flick per deflection), TOGGLE_CHORD (the configured toggle_chord).
 # Not in nav (contract or room owned): BTN_NORTH capture, BTN_TL/TR ShaderGlass, BTN_START cursor mode, the
 #   toggle_chord room toggle and hold-release. A console profile may claim them, because no compositor runs there.
-# Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout. pointer: = analog wheel.
-#   tmux: = commands for the tmux client in the focused terminal or VT on socket_name: key <k> (prefix-table key k),
-#   focus <dir> (falls through to hypr:movefocus at the window edge), page-up, page-down, session-prev, session-next,
-#   menu, keymap.
+# Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout (the kernel console reads the
+#   same device on a VT). pointer: = analog wheel; pointer:cursor (a button) toggles cursor mode. tmux: = commands for
+#   the tmux client in the focused terminal or on the active VT: key <k> (prefix-table key k), focus <dir> (falls
+#   through to hypr:movefocus at the window edge; stops there on a VT), page-up, page-down, session-prev, session-next,
+#   menu, keymap (a popup of `mios-inputd map --text`). mios:graphical-vt = Ctrl+Alt+F<VTNr> of this user's graphical
+#   session (I3). Console profiles may use only key:, tmux:, mios:graphical-vt, pointer:cursor and "none".
 [keybindings.global.controller.nav]
 enabled = true
 flick_on = 0.6                      # right-stick radial deflection (after stick_deadzone) that fires one flick
@@ -453,7 +455,7 @@ desktop-2d = "desktop"
 terminal = "terminal"               # terminal_tmux when a tmux client runs under the focused terminal, else terminal_plain
 game = "desktop"                    # I2 (operator decision): a class never decides the controller; uncaptured = nav
 vm-passthrough = "desktop"
-#@I3 console = "console"                 # console_tmux when a tmux client is attached to the active VT, else console_plain
+console = "console"                 # I3: console_tmux when a tmux client is attached to the active VT, else console_plain
 
 # input -> [delay_ms, rate_ms]. Inputs not listed never repeat. Hold actions never repeat.
 [keybindings.global.controller.nav.repeat]
@@ -463,8 +465,10 @@ BTN_DPAD_LEFT = [400, 60]
 BTN_DPAD_RIGHT = [400, 60]
 BTN_TL2 = [500, 250]
 BTN_TR2 = [500, 250]
-LS_UP = [500, 250]                  # discrete actions only (VT paging); pointer: wheel is analog and ignores it
+LS_UP = [500, 250]                  # discrete actions only (VT paging and arrows); pointer: wheel is analog and ignores it
 LS_DOWN = [500, 250]
+LS_LEFT = [500, 250]
+LS_RIGHT = [500, 250]
 
 [keybindings.global.controller.nav.desktop]
 BTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]
@@ -509,50 +513,70 @@ BTN_TL2 = "key:SHIFT+PAGEUP"
 BTN_TR2 = "key:SHIFT+PAGEDOWN"
 BTN_SELECT = ["none", "quickshell:keymap-toggle"]
 BTN_THUMBL = "exec:mios-terminal"
-#@I3
-#@I3 [keybindings.global.controller.nav.console_tmux]
-#@I3 inherits = "terminal_tmux"
-#@I3 BTN_SOUTH = "key:ENTER"              # the VT sends the same byte for Shift+Enter
-#@I3 BTN_WEST = "key:TAB"                 # BTab on the VT keymap is unverified (showkey -a)
-#@I3 LS_UP = "tmux:page-up"
-#@I3 LS_DOWN = "tmux:page-down"
-#@I3 LS_LEFT = "none"
-#@I3 LS_RIGHT = "none"
-#@I3 BTN_NORTH = "tmux:key z"
-#@I3 BTN_TL = "tmux:session-prev"
-#@I3 BTN_TR = "tmux:session-next"
-#@I3 BTN_SELECT = ["tmux:key w", "tmux:keymap"]
-#@I3 BTN_START = "tmux:key y"
-#@I3 BTN_MODE = "tmux:menu"
-#@I3 TOGGLE_CHORD = "mios:graphical-vt"
-#@I3
-#@I3 [keybindings.global.controller.nav.console_plain]   # a bare VT shell: only keys that are safe in any program
-#@I3 BTN_SOUTH = "key:ENTER"
-#@I3 BTN_EAST = ["key:ESC", "key:CTRL+c"]
-#@I3 BTN_WEST = "key:TAB"
-#@I3 BTN_DPAD_UP = "key:UP"
-#@I3 BTN_DPAD_DOWN = "key:DOWN"
-#@I3 BTN_DPAD_LEFT = "key:LEFT"
-#@I3 BTN_DPAD_RIGHT = "key:RIGHT"
-#@I3 LS_UP = "none"                       # Linux >= 5.9 has no console scrollback
-#@I3 LS_DOWN = "none"
-#@I3 LS_LEFT = "none"
-#@I3 LS_RIGHT = "none"
-#@I3 RS_LEFT = "none"
-#@I3 RS_RIGHT = "none"
-#@I3 RS_UP = "none"
-#@I3 RS_DOWN = "none"
-#@I3 BTN_TL2 = "none"
-#@I3 BTN_TR2 = "none"
-#@I3 BTN_TL = "none"
-#@I3 BTN_TR = "none"
-#@I3 BTN_NORTH = "none"
-#@I3 BTN_SELECT = "none"
-#@I3 BTN_START = "none"
-#@I3 BTN_MODE = "none"
-#@I3 BTN_THUMBL = "none"
-#@I3 BTN_THUMBR = "none"
-#@I3 TOGGLE_CHORD = "mios:graphical-vt"
+
+# I3: the Linux console (a VT; no compositor, shell or room). The uinput keyboard reaches the kernel console, so the
+# key: rows are the desktop's own strokes. West hold = Shift+Tab, as on the desktop (O-6): the installed `us` console
+# keymaps map Shift+Tab to Meta_Tab = ESC TAB, which is BTab (kcbt) in the linux terminfo, so tmux and ncurses programs
+# read it as back-tab. Start toggles cursor mode: the sticks move the virtual pointer, which gpm draws on the VT and the
+# console bridge reports to tmux while its mouse mode is on.
+[keybindings.global.controller.nav.console_tmux]
+inherits = "terminal_tmux"
+BTN_SOUTH = "key:ENTER"              # the VT sends the same byte for Shift+Enter
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+LS_UP = "tmux:page-up"
+LS_DOWN = "tmux:page-down"
+LS_LEFT = "none"
+LS_RIGHT = "none"
+BTN_NORTH = "tmux:key z"
+BTN_TL = "tmux:session-prev"
+BTN_TR = "tmux:session-next"
+BTN_SELECT = ["tmux:key w", "tmux:keymap"]
+BTN_START = ["tmux:key y", "pointer:cursor"]
+BTN_MODE = "tmux:menu"
+TOGGLE_CHORD = "mios:graphical-vt"
+
+# A bare VT (a shell, the session selector or any TUI): operator decision C-18. Sticks and d-pad = arrows, South =
+# Enter, East = Esc (hold Ctrl+C), West and the bumpers = Tab / BTab, triggers = PageUp / PageDown, Start = cursor
+# mode. Linux >= 5.9 has no console scrollback, so nothing pages the console itself.
+[keybindings.global.controller.nav.console_plain]
+BTN_SOUTH = "key:ENTER"
+BTN_EAST = ["key:ESC", "key:CTRL+c"]
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+BTN_DPAD_UP = "key:UP"
+BTN_DPAD_DOWN = "key:DOWN"
+BTN_DPAD_LEFT = "key:LEFT"
+BTN_DPAD_RIGHT = "key:RIGHT"
+LS_UP = "key:UP"
+LS_DOWN = "key:DOWN"
+LS_LEFT = "key:LEFT"
+LS_RIGHT = "key:RIGHT"
+RS_LEFT = "none"                     # the right stick is the pointer in cursor mode
+RS_RIGHT = "none"
+RS_UP = "none"
+RS_DOWN = "none"
+BTN_TL = "key:SHIFT+TAB"
+BTN_TR = "key:TAB"
+BTN_TL2 = "key:PAGEUP"
+BTN_TR2 = "key:PAGEDOWN"
+BTN_NORTH = "none"
+BTN_SELECT = "none"
+BTN_START = "pointer:cursor"         # gpm: RT selects, LT extends; nothing pastes
+BTN_MODE = "none"
+BTN_THUMBL = "none"
+BTN_THUMBR = "none"
+TOGGLE_CHORD = "mios:graphical-vt"
+
+# I3 (C-18): mios-terminal runs a local VT tmux client under `mios-inputd console-bridge`, a pty wrapper that owns the
+# mouse modes the client asks for: while tmux has mouse mode on, pointer events reach it as SGR 1006 reports (the VT
+# itself never enters mouse reporting). With mouse mode off the bridge holds no pointer source, so gpm's own
+# selection works on that VT.
+[keybindings.global.controller.console]
+bridge = true                        # false: a VT tmux client attaches directly (no console mouse)
+mouse = "auto"                       # auto (gpm when gpm_socket exists, else evdev) | gpm | evdev | off
+gpm_socket = "/dev/gpmctl"           # gpm draws the console pointer; MiOS reads its events while mouse mode is on
+pointer_names = ["mios-vctl-pointer"]  # evdev source: pointers read by name, never grabbed (the controller's cursor)
+cell_px = [8, 16]                    # evdev source: pointer pixels per character cell (x, y)
+keymap_argv = ["/usr/bin/less", "-R", "{file}"]   # tmux:keymap popup; {file} = the rendered `map --text`
 
 # --- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
 [keybindings.global.controller.room]

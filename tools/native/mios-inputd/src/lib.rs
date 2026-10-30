@@ -2,6 +2,8 @@
 // AI-related: usr/share/mios/mios.toml [keybindings.global], src/mios-rs/mios-gate
 pub mod config;
 #[cfg(target_os = "linux")]
+pub mod console;
+#[cfg(target_os = "linux")]
 pub mod linux;
 pub mod nav;
 pub mod router;

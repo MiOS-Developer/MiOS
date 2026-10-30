@@ -1,6 +1,5 @@
 [Unit]
 Description=MiOS native global input controller bridge
-PartOf=mios-desktop.target
 After=graphical-session.target mios-gamepad-hypr3d.service
 Conflicts=mios-gamepad-hypr3d.service
 ConditionFileIsExecutable=/usr/libexec/mios/mios-inputd
@@ -19,4 +18,4 @@ LockPersonality=yes
 UMask=0077
 
 [Install]
-WantedBy=mios-desktop.target
+WantedBy=default.target

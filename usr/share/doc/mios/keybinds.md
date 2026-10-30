@@ -79,8 +79,10 @@ app owns the input, or uncaptured, so MiOS owns it.**
   (`capture_osd`, `capture_osd_argv`; the chord name follows `toggle_chord`). A focus
   change or a refused capture shows nothing.
 - A VM client's own keyboard/mouse capture state stays owned by the client.
-- Before login, at a greeter, or while another user's session is active on the seat,
-  MiOS synthesizes no input [step I3].
+- Before login, at a greeter, at a lock screen, or while another user's session is active
+  on the seat, MiOS synthesizes no input and releases the controller, so that session gets
+  it. MiOS reads logind's state files for this, and follows a restarted compositor without
+  a restart of its own.
 
 ## 2. Contexts
 
@@ -91,7 +93,7 @@ app owns the input, or uncaptured, so MiOS owns it.**
 | `desktop-3d` | the Hypr3D room is active and no window owns input |
 | `app-capture` | fullscreen, `capture_tag` or room input owner |
 | `game`, `vm-passthrough` | class lists in `[keybindings.global.contexts]`; keyboard passthrough only, the controller follows capture like any window |
-| `console` | no compositor, or this user's active seat session is a tty [step I3] |
+| `console` | no compositor, or this user's active seat session is a tty |
 
 Cursor mode (Start) and the Guide layer are **modes** on top of a context, not contexts.
 SSH is not an input context. A remote user drives tmux with `Ctrl-b` and one key.
@@ -171,19 +173,19 @@ sensors are not forwarded.
 
 ### 3.2 Captured, Guide layer and VT
 
-| Input | Captured app | Half-capture | Guide held (desktop) | VT with tmux [step I3] | VT without tmux [step I3] |
+| Input | Captured app | Half-capture | Guide held (desktop) | VT with tmux | VT without tmux |
 |---|---|---|---|---|---|
 | South | app | app | toggle floating | Enter | Enter |
 | East | app | app | close window | Esc · Ctrl+C | Esc · Ctrl+C |
-| West | app | app | terminal | Tab | Tab |
+| West | app | app | terminal | Tab · BTab | Tab · BTab |
 | North | app | app | browser | zoom pane | none |
 | D-pad | app | app | focus window (HAT d-pads [step I4]) | arrows | arrows |
-| Left stick | app | scroll | volume (Y), previous/next track (X) [step I4] | page up/down | none |
-| Right stick | app | pointer | move window [step I4] | focus pane | none |
-| LT / RT | app | right / left click | move window to previous/next workspace | previous/next tmux window | none |
-| LB / RB | app | app | previous/next workspace | previous/next tmux session | none |
+| Left stick | app | scroll | volume (Y), previous/next track (X) [step I4] | page up/down | arrows |
+| Right stick | app | pointer | move window [step I4] | focus pane | none (the pointer in cursor mode) |
+| LT / RT | app | right / left click | move window to previous/next workspace | previous/next tmux window | PageUp / PageDown |
+| LB / RB | app | app | previous/next workspace | previous/next tmux session | BTab / Tab |
 | Select | app | app | Guide+Select = cursor / half-capture | session tree · bindings popup | none |
-| Start | app | back to full capture | system monitor | copy mode | none |
+| Start | app | back to full capture | system monitor | copy mode · cursor mode | cursor mode |
 | Guide tap | replayed to app | replayed to app | (modifier) | MiOS menu | none |
 | L3 / R3 | app | app | lock / VM passthrough latch | new tmux window / compact view | none |
 | L3+R3 tap | app | app | suppressed | back to the graphical VT | back to the graphical VT |
@@ -191,10 +193,24 @@ sensors are not forwarded.
 
 On a VT:
 - **Shift+Enter cannot be sent.** The console encodes it like Enter, so South has no hold there.
-- **The Guide layer does nothing**, because there is no compositor.
-- **The keys are pressed by a virtual keyboard**, pinned to the US layout.
+- **BTab is Shift+Tab, as on the desktop.** The `us` console keymaps send it as ESC Tab, which
+  is back-tab for TERM=linux, so tmux and TUIs read it as BTab.
+- **The Guide layer does nothing**, because there is no compositor. A Guide tap still opens
+  the MiOS menu in tmux.
+- **The keys are pressed by a virtual keyboard.** The console's own keymap reads them. Every key
+  a VT row sends (Enter, Esc, Ctrl+C, Tab, arrows, paging) sits in the same place on the common
+  layouts.
 - **tmux actions are tmux commands, not keystrokes.** They run against the tmux client on
-  that VT, so a bare shell never receives a stray `Ctrl-b`.
+  that VT, so a bare shell never receives a stray `Ctrl-b`. The right stick stops at the pane edge.
+- **Back to the desktop.** L3+R3 presses Ctrl+Alt+F<n> for the VT of your graphical session.
+  Without one, it does nothing.
+- **Cursor mode drives the console pointer.** The sticks move the virtual pointer, which gpm
+  draws. RT selects and LT extends a gpm selection.
+- **The mouse reaches tmux.** mios-terminal runs a VT tmux client under
+  `mios-inputd console-bridge` (`[keybindings.global.controller.console]`). While tmux has mouse
+  mode on, gpm (or the controller pointer) clicks, drags and wheel turns reach tmux as SGR 1006
+  reports, and the VT itself never enters mouse reporting. With mouse mode off, gpm selection
+  works as usual. `bridge = false` attaches tmux directly.
 
 ### 3.3 Where the controller map lives
 
@@ -202,8 +218,9 @@ On a VT:
 |---|---|
 | `[keybindings.global.controller]` | Guide button, half-capture chord, cursor mode, capture keys, timing, pointer |
 | `[keybindings.global.controller.system_layer]` | Guide-held actions |
-| `[keybindings.global.controller.nav]` and `.nav.contexts`, `.nav.repeat`, `.nav.<profile>` | uncaptured 2D and terminal behavior (VT profiles [step I3]) |
+| `[keybindings.global.controller.nav]` and `.nav.contexts`, `.nav.repeat`, `.nav.<profile>` | uncaptured 2D, terminal and VT behavior (`console_tmux`, `console_plain`) |
 | `[keybindings.global.controller.room]` | room additions: East, L3, R3, Select, Guide tap |
+| `[keybindings.global.controller.console]` | the VT tmux mouse bridge: `bridge`, pointer source (`mouse`, `gpm_socket`, `pointer_names`, `cell_px`), `keymap_argv` |
 | `[desktop.hyprland.hypr3d.controller]` | room camera, movement, grab/resize, CRT, face buttons, toggle chord |
 
 How a nav value is written:
