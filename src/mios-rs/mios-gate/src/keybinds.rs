@@ -199,7 +199,9 @@ fn lua_bind_dispatchers(lua: &str) -> Vec<(String, String)> {
         }
         let Some(end) = end else { continue };
         let Some(chord) = lua_literal(&rest[..end]) else { continue };
-        let d = rest[end + 1..].trim().replace("mios_native_hl.dsp.", "hl.dsp.");
+        // the dispatcher expression, without hl.bind's own closing parenthesis
+        let d = rest[end + 1..].trim();
+        let d = d.strip_suffix(')').unwrap_or(d).trim().replace("mios_native_hl.dsp.", "hl.dsp.");
         let is_d = d == "d" || d.starts_with("d,") || d.starts_with("d)");
         out.push((chord, if is_d { last_d.clone() } else { d }));
     }
@@ -1101,7 +1103,7 @@ passthrough = ["vm-passthrough"]
         let lua = format!("hl.bind(\"SUPER + Return\", hl.dsp.exec_cmd(\"{term}\"))\nhl.bind(\"CTRL + ALT + SHIFT + m\", hl.dsp.exec_cmd(\"{term} --action system\"))\n do local d=mios_native_hl.dsp.exec_cmd(\"/usr/libexec/mios/mios-inputd dispatch 'exec:alacritty'\")\n local b=mios_native_hl.bind(\"CTRL+ALT+SHIFT+f9\",d)\n if b then end end\n");
         let f = |chord: &str, action: &str| analyze(&ssot(chord, action).parse().unwrap(), Some(&lua)).unwrap().findings;
         let bad = f("CTRL+ALT+SHIFT+m", "exec:alacritty");
-        assert!(bad.iter().any(|x| x.contains("probe: realized_by hyprland on CTRL+ALT+SHIFT+m but hyprland.lua binds that chord to") && x.contains("--action system") && x.contains("does not run exec:alacritty")), "{bad:?}");
+        assert!(bad.iter().any(|x| x.contains(&format!("probe: realized_by hyprland on CTRL+ALT+SHIFT+m but hyprland.lua binds that chord to hl.dsp.exec_cmd(\"{term} --action system\"), which does not run exec:alacritty"))), "{bad:?}");
         let bad = f("CTRL+ALT+SHIFT+m", "exec:mios-terminal");
         assert!(bad.iter().any(|x| x.contains("does not run exec:mios-terminal")), "{bad:?}");
         let bad = f("SUPER+Return", "exec:env");
