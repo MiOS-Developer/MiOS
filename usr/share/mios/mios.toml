@@ -8249,6 +8249,7 @@ anchor_k = 40.0
 friction = 11.0
 max_stretch = 0.3
 grid = 24
+pane_fade = 1.0                             # layout alpha the rigid glass pane fades to while the shape bends (1: glass stays at full strength and its rigid pane shows beside the bent content; 0.4: pane hidden, content compensated without 8-bit banding)
 
 # Magic lamp (Compiz-style genie, MiOS-original): minimize, restore and launch-from-dock flow the window through a
 # curved funnel into / out of its dock icon (sides bend to a smoothstep tube from the window's width to the icon's,
@@ -8260,7 +8261,11 @@ grid = 24
 # coordinates, auto-hidden state, minimized entries) and mios-lamp-launch.json (pending dock launches). Every minimize
 # entry point calls hl.plugin.mios_lamp.minimize / .restore / .toggle({window = "address:0x.."}) -- feature-detected:
 # `(hl.plugin.mios_lamp and hl.plugin.mios_lamp.minimize({...}) or hl.dsp.window.move({workspace = "special:minimized",
-# ..., follow = false}))` -- and `hyprctl mios-lamp status` lists what it minimized. Precedence: the lamp owns
+# ..., follow = false}))` -- and `hyprctl mios-lamp status` lists what it minimized. The plugin also publishes each
+# minimized window's own origin output to $XDG_RUNTIME_DIR/mios-lamp-minimized.json (rewritten atomically only when the
+# list changes, re-homed to a surviving output the moment its origin output is unplugged, removed on unload): Hyprland
+# keeps one monitor for special:minimized, and the dock reads this file through inotify instead of spawning hyprctl
+# (no process per compositor event). Precedence: the lamp owns
 # minimize/restore (workspace moves; HyprWindowShade never plays for them) and dock launches (the window carries
 # anim_tag while the lamp runs: windowshade_open replaces the open shader, hide_hyprbars drops the tab that hyprbars
 # draws rigidly at the real box); HyprWindowShade keeps every other open and every close; the wobble never touches a

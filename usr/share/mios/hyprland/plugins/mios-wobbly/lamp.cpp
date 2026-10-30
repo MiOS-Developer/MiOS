@@ -55,6 +55,7 @@ extern "C" {
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <format>
@@ -63,6 +64,7 @@ extern "C" {
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -76,7 +78,7 @@ namespace {
     struct SCfg {
         SP<Config::Values::CBoolValue>   enabled, restoreTree;
         SP<Config::Values::CIntValue>    durOpen, durMinimize, durRestore, cols, rows, launchTimeout;
-        SP<Config::Values::CStringValue> curve, events, hiddenDock, fallbackEdge, minimizedWs, tag, dockFile, launchFile;
+        SP<Config::Values::CStringValue> curve, events, hiddenDock, fallbackEdge, minimizedWs, tag, dockFile, launchFile, minimizedFile;
         SP<Config::Values::CFloatValue>  paneAlpha;
     } g_cfg;
 
@@ -145,6 +147,7 @@ namespace {
     std::unordered_map<std::string, std::deque<STileTree>>                 g_wsTiles; // workspace -> split trees, newest first
     constexpr size_t                                                       kTileSnapshots = 16;
     std::deque<std::string>                                                g_consumed; // launch ids already animated (bounded)
+    std::string                                                            g_publishedMinimized; // last body written to minimized_file
     std::vector<CHyprSignalListener>        g_listeners;
     SP<CEventLoopTimer>                     g_timer;
     Clock::time_point                       g_dockChecked;
@@ -665,6 +668,45 @@ namespace {
         }
     }
 
+    // Each minimized window's own origin for the shell, WITHOUT a process: Hyprland keeps one monitor per workspace,
+    // so special:minimized reports one output for all of them; the dock reads this small file (FileView, inotify)
+    // instead of spawning `hyprctl mios-lamp status`. Rewritten atomically (temp + rename) only when it changes, so
+    // window moves, resizes and focus changes never touch it; removed when the plugin unloads.
+    std::string minimizedJson() {
+        std::string out = "{\"version\":1,\"minimized\":[";
+        bool        first = true;
+        for (const auto& m : g_minimized) {
+            out += std::format("{}{{\"address\":\"{}\",\"workspace\":\"{}\",\"monitor\":\"{}\"}}", first ? "" : ",", m.address, jsonEscape(m.workspace), jsonEscape(m.monitor));
+            first = false;
+        }
+        return out + "]}";
+    }
+    std::string minimizedFilePath() {
+        return runtimePath(g_cfg.minimizedFile, "mios-lamp-minimized.json");
+    }
+    void publishMinimized() {
+        if (g_exiting)
+            return;
+        const auto body = minimizedJson();
+        if (body == g_publishedMinimized)
+            return;
+        const auto path = minimizedFilePath();
+        const auto tmp  = std::format("{}.tmp.{}", path, (long)getpid());
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f)
+                return;
+            f << body << '\n';
+            if (!f.flush())
+                return;
+        }
+        if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+            std::remove(tmp.c_str());
+            return;
+        }
+        g_publishedMinimized = body;
+    }
+
     void rehomeDeadMonitors(const PHLMONITOR& dying = nullptr) {
         for (auto& m : g_minimized) {
             const auto w   = m.window.lock();
@@ -689,6 +731,7 @@ namespace {
             if (w && w->m_isMapped && onMinimizedWs(w))
                 syncWorkspaceMonitor(w, nullptr, dying, false);
         }
+        publishMinimized();
     }
 
     void pruneMinimized() {
@@ -942,6 +985,7 @@ namespace {
         }
         recordFullLayout(rec);
         g_minimized.push_back(rec);
+        publishMinimized();
 
         auto       s   = makeUnique<SLamp>();
         const auto tgt = targetFor(w, false);
@@ -1041,6 +1085,7 @@ namespace {
                 dispatch(std::format("hl.dsp.focus({{window = \"address:{}\"}})", sel));
             });
             std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.lock() == w; });
+            publishMinimized();
             return {};
         }
         const auto tgt = targetFor(w, true, sourceHint, preMonName);
@@ -1281,6 +1326,7 @@ namespace {
             s.targetSource = tgt.source;
         }
         std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.lock() == w; });
+        publishMinimized();
     }
 
     SDispatchResult toggle(PHLWINDOW w) {
@@ -1627,10 +1673,11 @@ namespace MiosLampFx {
         g_cfg.dockFile      = makeShared<CStringValue>("plugin:mios_lamp:dock_file", "Dock icon rects (empty: $XDG_RUNTIME_DIR/mios-dock-icons.json)", "");
         g_cfg.launchFile    = makeShared<CStringValue>("plugin:mios_lamp:launch_file", "Pending dock launches (empty: $XDG_RUNTIME_DIR/mios-lamp-launch.json)", "");
         g_cfg.paneAlpha     = makeShared<CFloatValue>("plugin:mios_lamp:pane_alpha", "Layout alpha the rigid glass pane fades to while the lamp runs (content compensated)", 0.4F);
+        g_cfg.minimizedFile = makeShared<CStringValue>("plugin:mios_lamp:minimized_file", "Minimized windows' origins for the shell (empty: $XDG_RUNTIME_DIR/mios-lamp-minimized.json)", "");
         g_cfg.restoreTree   = makeShared<CBoolValue>("plugin:mios_lamp:restore_tree", "Restore a tiled window into its exact recorded dwindle split tree (structure and ratios)", true);
         for (const SP<IValue>& v : std::initializer_list<SP<IValue>>{g_cfg.enabled, g_cfg.durOpen, g_cfg.durMinimize, g_cfg.durRestore, g_cfg.curve, g_cfg.cols, g_cfg.rows, g_cfg.events,
                                                                      g_cfg.launchTimeout, g_cfg.hiddenDock, g_cfg.fallbackEdge, g_cfg.minimizedWs, g_cfg.tag, g_cfg.dockFile,
-                                                                     g_cfg.launchFile, g_cfg.paneAlpha, g_cfg.restoreTree})
+                                                                     g_cfg.launchFile, g_cfg.paneAlpha, g_cfg.restoreTree, g_cfg.minimizedFile})
             HyprlandAPI::addConfigValueV2(PH, v);
 
         HyprlandAPI::addLuaFunction(PH, "mios_lamp", "minimize", &luaMinimize);
@@ -1679,6 +1726,7 @@ namespace MiosLampFx {
             recordFullLayout(rec);
             g_minimized.push_back(rec);
             syncWorkspaceMonitor(w, mon, nullptr, true);
+            publishMinimized();
         }));
 
         g_listeners.push_back(Event::bus()->m_events.window.open.listen([](PHLWINDOW w) {
@@ -1693,8 +1741,12 @@ namespace MiosLampFx {
                 applyAlphas(*it->second, w);
         }));
         g_listeners.push_back(Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) {
-            if (w)
-                g_lamps.erase(w.get());
+            if (!w)
+                return;
+            g_lamps.erase(w.get());
+            // a window closed while minimized leaves the published list now (its address may be reused)
+            if (std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.get() == w.get(); }) > 0)
+                publishMinimized();
         }));
         g_listeners.push_back(Event::bus()->m_events.monitor.added.listen([](PHLMONITOR) {
             rehomeDeadMonitors();
@@ -1709,6 +1761,8 @@ namespace MiosLampFx {
     }
 
     void exit() {
+        if (!g_publishedMinimized.empty())
+            std::remove(minimizedFilePath().c_str()); // a stale list would outlive the windows it names
         g_exiting = true;
         g_listeners.clear();
         if (g_timer) {

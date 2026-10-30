@@ -1,7 +1,9 @@
 // AI-hint: Magic-lamp dock bridge (lamp-contract.md): publishes per-output dock geometry, icon rects and minimized
-// window rects to $XDG_RUNTIME_DIR/mios-dock-icons.json (atomic temp+rename, throttled <= 30 writes/s), records pending
-// dock launches to $XDG_RUNTIME_DIR/mios-lamp-launch.json (10 s prune, atomic temp+rename) before spawning so the
-// mios-wobbly lamp plugin animates new windows out of their dock icon, tracks windows on special:minimized, and routes
+// window rects to $XDG_RUNTIME_DIR/mios-dock-icons.json (in-process atomic temp+rename, throttled <= 30 writes/s, no
+// process per write), records pending dock launches to $XDG_RUNTIME_DIR/mios-lamp-launch.json (10 s prune, atomic,
+// synchronous) before spawning so the mios-wobbly lamp plugin animates new windows out of their dock icon, reads each
+// minimized window's origin output from the plugin's $XDG_RUNTIME_DIR/mios-lamp-minimized.json (inotify), tracks
+// windows on special:minimized, and routes
 // dock minimize/restore actions through the feature-detected hl.plugin.mios_lamp dispatchers with plain workspace-move
 // fallback when the plugin is not loaded.
 // AI-related: usr/share/mios/quickshell/Sidebar.qml, usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp,
@@ -19,6 +21,7 @@ Singleton {
     readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000"
     readonly property string dockFile: Quickshell.env("MIOS_DOCK_ICONS_JSON") || (runtimeDir + "/mios-dock-icons.json")
     readonly property string launchFile: Quickshell.env("MIOS_LAMP_LAUNCH_JSON") || (runtimeDir + "/mios-lamp-launch.json")
+    readonly property string minimizedFile: Quickshell.env("MIOS_LAMP_MINIMIZED_JSON") || (runtimeDir + "/mios-lamp-minimized.json")
     readonly property string minimizedWorkspace: Quickshell.env("MIOS_MINIMIZED_WORKSPACE") || "special:minimized"
     readonly property string prefsFile: Quickshell.env("MIOS_DOCK_PREFS_JSON")
         || ((Quickshell.env("XDG_CONFIG_HOME") || ((Quickshell.env("HOME") || "/home/mios") + "/.config")) + "/mios/dock-prefs.json")
@@ -377,8 +380,9 @@ Singleton {
     // ---- minimized windows (special:minimized) ---------------------------------------------------------------------
     // Origin output of a minimized window, authoritative: Hyprland keeps ONE monitor per workspace, so every window on
     // special:minimized reports the monitor of whichever window was minimized last (or re-homed after an unplug); the
-    // lamp plugin records each window's own origin (`hyprctl mios-lamp status` -> minimized[].monitor). The QML
-    // caches below only cover a plugin that is not loaded, and they are lost when the shell restarts.
+    // lamp plugin records each window's own origin and publishes it to minimizedFile (plugin:mios_lamp:minimized_file,
+    // rewritten only when the list changes). Read through inotify: no process per Hyprland event. The QML caches
+    // below only cover a plugin that is not loaded, and they are lost when the shell restarts.
     property var pluginOrigin: ({})
     function parseLampStatus(t) {
         try {
@@ -392,16 +396,17 @@ Singleton {
             }
             lamp.pluginOrigin = m
         } catch (e) {
-            // no plugin / not JSON (plain hyprctl error text): keep the caches as the only source
+            // no plugin / not JSON: keep the caches as the only source
             lamp.pluginOrigin = ({})
         }
     }
-    property Process lampStatus: Process {
-        command: ["hyprctl", "mios-lamp", "status"]
-        stdout: StdioCollector { onStreamFinished: lamp.parseLampStatus(text) }
-    }
-    function refreshLampStatus() {
-        if (!lampStatus.running) lampStatus.running = true
+    property FileView minimizedView: FileView {
+        path: lamp.minimizedFile
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: lamp.parseLampStatus(text())
+        onLoadFailed: lamp.pluginOrigin = ({})
     }
     property var originOutput: ({})
     property var originMonitorId: ({})
@@ -845,7 +850,7 @@ Singleton {
     function scheduleDockWrite() {
         dockDirty = true
         const elapsed = Date.now() - lastDockWriteMs
-        if (elapsed >= 34 && !dockWriter.running) {
+        if (elapsed >= 34) {
             flushDockWrite()
         } else if (!throttleTimer.running) {
             throttleTimer.interval = Math.max(1, Math.min(34, Math.round(34 - elapsed)))
@@ -856,14 +861,10 @@ Singleton {
     function flushDockWrite() {
         throttleTimer.stop()
         if (!dockDirty && !queuedDockJson) return
-        queuedDockJson = buildDockPayload()
         dockDirty = false
-        if (!dockWriter.running) {
-            lastDockWriteMs = Date.now()
-            dockWriter.payload = queuedDockJson
-            queuedDockJson = ""
-            dockWriter.running = true
-        }
+        queuedDockJson = ""
+        lastDockWriteMs = Date.now()
+        dockWriter.setText(buildDockPayload() + "\n")
     }
 
     property Timer throttleTimer: Timer {
@@ -872,16 +873,13 @@ Singleton {
         onTriggered: lamp.flushDockWrite()
     }
 
-    property Process dockWriter: Process {
-        property string payload: ""
-        command: ["sh", "-c",
-            "f=$1; j=$2; d=${f%/*}; [ -n \"$d\" ] || d=.; mkdir -p \"$d\" 2>/dev/null || true; " +
-            "t=\"$d/.${f##*/}.tmp.$$\"; printf '%s\\n' \"$j\" > \"$t\" && mv -f \"$t\" \"$f\"",
-            "sh", lamp.dockFile, dockWriter.payload]
-        onExited: (code, status) => {
-            if (code === 0) lamp.writeCount++
-            if (lamp.dockDirty || lamp.queuedDockJson) lamp.scheduleDockWrite()
-        }
+    // In-process atomic writes (QSaveFile temp + rename): no `sh` per dock change. Never read back (preload off).
+    property FileView dockWriter: FileView {
+        path: lamp.dockFile
+        preload: false
+        atomicWrites: true
+        printErrors: false
+        onSaved: lamp.writeCount++
     }
 
     // ---- launch recording (contract (b): 10 s prune, atomic write before spawning) ---------------------------------
@@ -910,30 +908,18 @@ Singleton {
         }
         kept.push(item)
         pendingLaunches = kept
-        const json = JSON.stringify({ version: 1, pending: kept })
-        if (!launchWriter.running) {
-            launchWriter.payload = json
-            launchWriter.running = true
-        } else {
-            queuedLaunchJson = json
-        }
+        launchWriter.setText(JSON.stringify({ version: 1, pending: kept }) + "\n")
         return item
     }
 
-    property Process launchWriter: Process {
-        property string payload: ""
-        command: ["sh", "-c",
-            "f=$1; j=$2; d=${f%/*}; [ -n \"$d\" ] || d=.; mkdir -p \"$d\" 2>/dev/null || true; " +
-            "t=\"$d/.${f##*/}.tmp.$$\"; printf '%s\\n' \"$j\" > \"$t\" && mv -f \"$t\" \"$f\"",
-            "sh", lamp.launchFile, launchWriter.payload]
-        onExited: (code, status) => {
-            if (code === 0) lamp.launchWriteCount++
-            if (lamp.queuedLaunchJson) {
-                launchWriter.payload = lamp.queuedLaunchJson
-                lamp.queuedLaunchJson = ""
-                launchWriter.running = true
-            }
-        }
+    // blockWrites: the pending launch is on disk before the caller spawns the app (contract (b)); one small file.
+    property FileView launchWriter: FileView {
+        path: lamp.launchFile
+        preload: false
+        atomicWrites: true
+        blockWrites: true
+        printErrors: false
+        onSaved: lamp.launchWriteCount++
     }
 
     // ---- Hyprland event listeners to keep minimizedWindows & monitor positions fresh -------------------------------
@@ -952,12 +938,12 @@ Singleton {
     }
     property Timer refreshSettled: Timer {
         interval: 250
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs(); lamp.refreshLampStatus() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
     }
     // A lamp minimize moves the window to special:minimized after duration_minimize_ms (~520 ms).
     property Timer refreshAfterLamp: Timer {
         interval: 600
-        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs(); lamp.refreshLampStatus() }
+        onTriggered: { Hyprland.refreshToplevels(); Hyprland.refreshMonitors(); lamp.pruneStaleOutputs() }
     }
     property Connections hyprWatch: Connections {
         target: Hyprland
