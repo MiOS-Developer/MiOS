@@ -514,7 +514,10 @@ def theatre(nest, label, cand):
         check(f'[{label}] after Theatre the neighbours kept their slots', not others, others)
         check(f'[{label}] Theatre PiP restores to its slot and the layout is unchanged', g1 == g0 and nest.client(th)['pinned'], f'{g0} -> {g1}')
     else:
-        check(f'[{label}] NEGATIVE CONTROL: on squeezed rails the old daemon moves the neighbours of a Theatre PiP', others, f'{others} restored={g1 == g0}')
+        # Recorded, not asserted: the old daemon dropped every track in the room and waited settle_ms afterwards, so it
+        # usually restored exactly (verifier 2/2, this lane 1/1). The room-exit negative control is the pre-fix
+        # candidate (MIOS_PIP_GRAVITY_PREFIX, trace-based) and track_tests.
+        print(f'OBSERVED [{label}] Theatre on squeezed rails: neighbours moved={others} layout restored={g1 == g0}', flush=True)
 
 
 def rules(nest):
