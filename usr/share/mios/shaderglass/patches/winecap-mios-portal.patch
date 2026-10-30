@@ -164,10 +164,10 @@ index 9009415..ede3d59 100644
  					  g_variant_new("(oa{sv})", sc.session_handle, &builder), G_DBUS_CALL_FLAGS_NONE, -1,
  					  sc.cancellable, on_source_selected_cb, NULL);
 diff --git a/WineCap/WineCap.c b/WineCap/WineCap.c
-index 713470a..f5ad87b 100644
+index 713470a..ecc5a42 100644
 --- a/WineCap/WineCap.c
 +++ b/WineCap/WineCap.c
-@@ -17,11 +17,201 @@ static int sActive = 0;
+@@ -17,11 +17,209 @@ static int sActive = 0;
  static void *sContext = NULL;
  static int sType = 0;
  
@@ -258,10 +258,13 @@ index 713470a..f5ad87b 100644
 + * "<seq> <verb>" to MIOS_WINECAP_COMMAND_FILE; this thread claims it, sends the
 + * matching menu command to this process' ShaderGlass main window (handled on
 + * ShaderGlass' own UI thread before SendMessageTimeout returns) and answers
-+ * "<seq> ok" or "<seq> error <reason>" in <file>.ack. <file>.ready announces
-+ * the channel. Verbs: save = Processing > Set as default (the supervisor
-+ * swaps the default profile around it), next = next shader, menu = menu
-+ * toggle. Nothing runs unless the MiOS launcher set the variable. */
++ * "<seq> ok menu=<0|1>" or "<seq> error <reason>" in <file>.ack (menu = the
++ * menu bar is shown afterwards). <file>.ready announces the channel. Verbs:
++ * save = Processing > Set as default (the supervisor swaps the default
++ * profile around it), next = next shader, menu-on / menu-off = show / hide
++ * the menu (IDM_TOGGLEMENU only when the state differs, so setup mode and the
++ * menu never drift apart). Nothing runs unless the MiOS launcher set the
++ * variable. */
 +#define MIOS_ID_PROCESSING_SETASDEFAULT 32919
 +#define MIOS_IDM_SHADER_NEXT 32841
 +#define MIOS_IDM_TOGGLEMENU 32848
@@ -311,6 +314,7 @@ index 713470a..f5ad87b 100644
 +    for (;;) {
 +        FILE *f;
 +        UINT id = 0;
++        int want_menu = -1;
 +        HWND window = NULL;
 +        DWORD_PTR result = 0;
 +
@@ -331,18 +335,22 @@ index 713470a..f5ad87b 100644
 +            id = MIOS_ID_PROCESSING_SETASDEFAULT;
 +        else if (!strcmp(verb, "next"))
 +            id = MIOS_IDM_SHADER_NEXT;
-+        else if (!strcmp(verb, "menu"))
++        else if (!strcmp(verb, "menu-on") || !strcmp(verb, "menu-off")) {
 +            id = MIOS_IDM_TOGGLEMENU;
++            want_menu = !strcmp(verb, "menu-on");
++        }
 +        if (id)
 +            EnumWindows(mios_find_main_window, (LPARAM)&window);
 +        if (!id)
 +            snprintf(reply, sizeof(reply), "%llu error unknown verb\n", seq);
 +        else if (!window)
 +            snprintf(reply, sizeof(reply), "%llu error no ShaderGlass main window\n", seq);
++        else if (want_menu >= 0 && (GetMenu(window) != NULL) == want_menu)
++            snprintf(reply, sizeof(reply), "%llu ok menu=%d\n", seq, want_menu);
 +        else if (!SendMessageTimeoutW(window, WM_COMMAND, id, 0, SMTO_ABORTIFHUNG, 5000, &result))
 +            snprintf(reply, sizeof(reply), "%llu error ShaderGlass did not answer\n", seq);
 +        else
-+            snprintf(reply, sizeof(reply), "%llu ok\n", seq);
++            snprintf(reply, sizeof(reply), "%llu ok menu=%d\n", seq, GetMenu(window) != NULL);
 +        info("MiOS command %s: %s", verb, reply);
 +        mios_write_file(ack, reply);
 +    }
@@ -369,7 +377,7 @@ index 713470a..f5ad87b 100644
      sCallbackFunc(data, width, height, pitch, sContext);
  }
  
-@@ -45,6 +235,7 @@ CAPTURELIB_API HRESULT WINECAP_CaptureLibInit()
+@@ -45,6 +243,7 @@ CAPTURELIB_API HRESULT WINECAP_CaptureLibInit()
          return E_FAIL;
      }
      info("ScreenCast initialized!");

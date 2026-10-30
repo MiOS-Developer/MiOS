@@ -553,7 +553,9 @@ class Miosd(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "no ShaderGlass pane is running"))
         st = json.loads(self.sg("status").stdout)
         self.assertIsNone(st["supervisor"])
-        self.assertEqual(st["unit"], "app-mios-org.mios.ShaderGlass@overlay.service")
+        # This test runs with a private XDG_RUNTIME_DIR, i.e. as a non-primary session: its own supervisor unit
+        # instance, so it never stops or replaces the operator's app-mios-org.mios.ShaderGlass@overlay.service.
+        self.assertRegex(st["unit"], r"^app-mios-org\.mios\.ShaderGlass@overlay-[0-9a-f]{8}\.service$")
 
 
 # ---------------------------------------------------------------- 4. upstream

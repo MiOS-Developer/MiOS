@@ -12,8 +12,17 @@ use serde_json::Value as Json;
 
 use crate::placement::{lua_str, pair};
 
-/// Geometry tolerance in logical px (fractional output scales round by up to half a pixel).
+/// Loose geometry tolerance in logical px, for checks that only ask "roughly there" (tests).
+#[cfg(test)]
 const TOLERANCE: f64 = 1.0;
+/// hyprctl reports integer logical geometry, so the pane matches its target only when every edge is equal:
+/// half a pixel separates "equal" from "one pixel off". (A 1.0 tolerance here left a pane one pixel wider
+/// than its target for good: a 1 px target resize never counted as a move, a 1 px drift never as drift.)
+const EXACT: f64 = 0.5;
+/// How often one target rectangle is re-sent to a pane that does not land on it (a fractional output scale
+/// that cannot represent it, a client that snaps its size) before the follower accepts where it is. A new
+/// target rectangle gets a new budget, so a bounded number of dispatches per target change, never a loop.
+pub const PLACE_RETRIES: u32 = 3;
 /// Shortest poll interval, whatever the refresh rate claims.
 const MIN_FRAME: Duration = Duration::from_millis(2);
 
@@ -26,11 +35,21 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// Roughly equal (the old 1 px tolerance): kept for tests that show why it is not used to follow.
+    #[cfg(test)]
     pub fn close_to(&self, o: &Rect) -> bool {
         (self.x - o.x).abs() <= TOLERANCE
             && (self.y - o.y).abs() <= TOLERANCE
             && (self.w - o.w).abs() <= TOLERANCE
             && (self.h - o.h).abs() <= TOLERANCE
+    }
+
+    /// Equal on integer logical geometry: no edge more than half a pixel off.
+    pub fn same(&self, o: &Rect) -> bool {
+        (self.x - o.x).abs() <= EXACT
+            && (self.y - o.y).abs() <= EXACT
+            && (self.w - o.w).abs() <= EXACT
+            && (self.h - o.h).abs() <= EXACT
     }
 }
 
@@ -170,6 +189,8 @@ pub struct Follower {
     poked_at: Option<Instant>,
     dragging: bool,
     workspace: Option<(i64, i64)>,
+    /// Drift re-placements of the current target rectangle that did not land ([`PLACE_RETRIES`]).
+    misses: u32,
 }
 
 impl Follower {
@@ -191,6 +212,12 @@ impl Follower {
         self.shown = None;
         self.last_pane = None;
         self.workspace = None;
+        self.misses = 0;
+    }
+
+    /// Whether the follower gave up re-sending the current target rectangle (the pane cannot land on it).
+    pub fn gave_up(&self) -> bool {
+        self.misses >= PLACE_RETRIES
     }
 
     /// Only an explicit setup-mode pointer drag may drive the application
@@ -235,20 +262,24 @@ impl Follower {
             return Step { actions: Vec::new(), next: frame, outcome: Outcome::Continue };
         }
         let r = t.rect;
-        let target_moved = self.last_target.is_some_and(|l| !l.close_to(&r))
-            && self.placed.is_none_or(|pl| !pl.close_to(&r));
-        let pane_moved = self.last_pane.is_some_and(|l| !l.close_to(&pane.rect));
-        let pane_was_synced = self.last_pane.is_some_and(|l| self.placed.is_some_and(|pl| pl.close_to(&l)));
-        if self.last_target.is_none_or(|l| !l.close_to(&r)) {
+        let target_moved = self.last_target.is_some_and(|l| !l.same(&r))
+            && self.placed.is_none_or(|pl| !pl.same(&r));
+        let pane_moved = self.last_pane.is_some_and(|l| !l.same(&pane.rect));
+        let pane_was_synced = self.last_pane.is_some_and(|l| self.placed.is_some_and(|pl| pl.same(&l)));
+        if self.last_target.is_none_or(|l| !l.same(&r)) {
             if target_moved {
                 self.changed_at = Some(now);
             }
             self.last_target = Some(r);
+            self.misses = 0;
+        }
+        if pane.rect.same(&r) {
+            self.misses = 0;
         }
         let within = |at: Option<Instant>| at.is_some_and(|a| now.saturating_duration_since(a) < p.settle);
         let user_dragged_pane = self.dragging && self.shown == Some(true)
             && !suppressed && on_screen(t, mons)
-            && pane_moved && pane_was_synced && !target_moved && !pane.rect.close_to(&r);
+            && pane_moved && pane_was_synced && !target_moved && !pane.rect.same(&r);
         if user_dragged_pane {
             self.changed_at = Some(now);
         }
@@ -277,12 +308,16 @@ impl Follower {
                 self.placed_at = Some(now);
             } else {
                 // Re-place when the target moved, or when the pane drifted from where it was put (Wine or the
-                // operator moved it) and the last placement had time to land.
-                let drifted = !pane.rect.close_to(&r) && !within(self.placed_at);
+                // operator moved it) and the last placement had time to land -- at most PLACE_RETRIES times
+                // for one target rectangle the pane keeps missing.
+                let drifted = !pane.rect.same(&r) && !within(self.placed_at) && self.misses < PLACE_RETRIES;
                 let needs_place = self.placed.is_none()
                     || target_moved
-                    || (self.placed.is_some_and(|pl| !pl.close_to(&r)) && (self.shown != Some(true) || !within(self.placed_at)));
+                    || (self.placed.is_some_and(|pl| !pl.same(&r)) && (self.shown != Some(true) || !within(self.placed_at)));
                 if needs_place || drifted {
+                    if drifted && !needs_place {
+                        self.misses += 1;
+                    }
                     actions.push(Action::Place(r));
                     self.placed = Some(r);
                     self.placed_at = Some(now);
@@ -352,20 +387,34 @@ pub fn passthrough_lua(address: &str, tag: &str, on: bool) -> String {
     )
 }
 
-/// Setup mode on: drop the passthrough tag, focus the pane and send ShaderGlass' menu toggle. Off: send the
-/// toggle again (menu hidden) and restore the tag. Focus and shortcut are best effort (pcall).
-pub fn setup_lua(address: &str, tag: &str, entering: bool, shortcut: &str) -> String {
+/// One key pressed and released on the window at `address` (best effort). A press and a release through
+/// send_key_state: hl.send_shortcut never reached a Wine window (live: ShaderGlass' own keys did nothing under
+/// winewayland), so the key fallbacks of an older WineCap did nothing either.
+pub fn key_press_lua(address: &str, key: &str) -> String {
     let w = window_ref(address);
-    let key = lua_str(shortcut);
-    let send = format!("pcall(function() hl.send_shortcut({{mods='', key={key}, window={w}}}) end)");
+    let k = lua_str(key);
+    format!(
+        "pcall(function() hl.dispatch(hl.dsp.send_key_state({{mods='', key={k}, state='down', window={w}}})); hl.dispatch(hl.dsp.send_key_state({{mods='', key={k}, state='up', window={w}}})) end)"
+    )
+}
+
+/// Setup mode on: drop the passthrough tag, focus the pane and send ShaderGlass' menu toggle. Off: send the
+/// toggle again (menu hidden) and restore the tag. Focus and shortcut are best effort (pcall). `shortcut`
+/// None: the menu is toggled inside ShaderGlass through the WineCap command channel instead (the same
+/// IDM_TOGGLEMENU the key triggers, without depending on the key reaching Wine), so no key is sent.
+pub fn setup_lua(address: &str, tag: &str, entering: bool, shortcut: Option<&str>) -> String {
+    let w = window_ref(address);
+    let send = shortcut.map(|k| key_press_lua(address, k));
+    let mut parts = Vec::new();
     if entering {
-        format!(
-            "{}; pcall(function() hl.dispatch(hl.dsp.focus({{window={w}}})) end); {send}",
-            passthrough_lua(address, tag, false)
-        )
+        parts.push(passthrough_lua(address, tag, false));
+        parts.push(format!("pcall(function() hl.dispatch(hl.dsp.focus({{window={w}}})) end)"));
+        parts.extend(send);
     } else {
-        format!("{send}; {}", passthrough_lua(address, tag, true))
+        parts.extend(send);
+        parts.push(passthrough_lua(address, tag, true));
     }
+    parts.join("; ")
 }
 
 #[cfg(test)]
@@ -548,6 +597,62 @@ mod tests {
     }
 
     #[test]
+    fn a_pane_one_pixel_off_its_target_is_corrected() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let t = win("0xt", 97.0, 141.0, 1);
+        let mut pane = t.clone();
+        pane.address = "0xp".into();
+        assert_eq!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0).actions, vec![Action::Place(t.rect), Action::Show]);
+        // The pane lands one pixel wider (the reported bug): drift, re-placed once the placement had time to land.
+        pane.rect.w += 1.0;
+        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400));
+        assert_eq!(s.actions, vec![Action::Place(t.rect)], "a 1 px wider pane is drift");
+        // Negative control: the old 1.0 px tolerance calls these two rectangles equal (the bug).
+        assert!(pane.rect.close_to(&t.rect) && !pane.rect.same(&t.rect));
+    }
+
+    #[test]
+    fn a_one_pixel_target_resize_is_followed() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let mut t = win("0xt", 100.0, 100.0, 1);
+        let mut pane = t.clone();
+        pane.address = "0xp".into();
+        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
+        // The target shrinks by one pixel (a drag ending one pixel short, a layout reflow): the pane follows at once.
+        t.rect.w -= 1.0;
+        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(500));
+        assert_eq!(s.actions, vec![Action::Place(t.rect)]);
+        pane.rect = t.rect;
+        assert!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(900)).actions.is_empty());
+    }
+
+    #[test]
+    fn a_pane_that_cannot_land_is_re_sent_a_bounded_number_of_times() {
+        let t0 = Instant::now();
+        let mut f = Follower::new();
+        let mut t = win("0xt", 100.0, 100.0, 1);
+        let mut pane = t.clone();
+        pane.address = "0xp".into();
+        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
+        // A fractional scale: the pane always lands one pixel short.
+        pane.rect.w -= 1.0;
+        let mut sent = 0;
+        for i in 1..=40u64 {
+            let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400 * i));
+            sent += s.actions.iter().filter(|a| matches!(a, Action::Place(_))).count() as u32;
+        }
+        assert_eq!(sent, PLACE_RETRIES, "re-sent PLACE_RETRIES times, then left alone (no loop)");
+        assert!(f.gave_up());
+        // A new target rectangle gets a new budget.
+        t.rect.x += 10.0;
+        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_secs(20));
+        assert_eq!(s.actions, vec![Action::Place(t.rect)]);
+        assert!(!f.gave_up());
+    }
+
+    #[test]
     fn a_dragged_pane_moves_its_target_in_lockstep() {
         let t0 = Instant::now();
         let mut f = Follower::new();
@@ -642,11 +747,18 @@ mod tests {
         assert!(lt.contains("local t='address:0xcd'") && lt.contains("window=t"), "{lt}");
         assert_eq!(passthrough_lua("0xab", "pt", true), "hl.dispatch(hl.dsp.window.tag({tag='+pt', window='address:0xab'}))");
         assert!(passthrough_lua("0xab", "pt", false).contains("tag='-pt'"));
-        let on = setup_lua("0xab", "pt", true, "m");
+        let on = setup_lua("0xab", "pt", true, Some("m"));
         assert!(on.starts_with("hl.dispatch(hl.dsp.window.tag({tag='-pt'") && on.contains("key='m'"), "{on}");
-        let off = setup_lua("0xab", "pt", false, "m");
-        assert!(off.ends_with("tag='+pt', window='address:0xab'}))") && off.contains("hl.send_shortcut"), "{off}");
+        let off = setup_lua("0xab", "pt", false, Some("m"));
+        assert!(off.ends_with("tag='+pt', window='address:0xab'}))") && off.contains("send_key_state"), "{off}");
+        // A press and a release, never hl.send_shortcut (it does not reach Wine).
+        let k = key_press_lua("0xab", "n");
+        assert!(k.contains("state='down'") && k.contains("state='up'") && k.find("state='down'") < k.find("state='up'") && !k.contains("send_shortcut"), "{k}");
         // Quotes in a shortcut cannot break out of the Lua string.
-        assert!(setup_lua("0xab", "pt", true, "a'b").contains("key='a\\'b'"));
+        assert!(setup_lua("0xab", "pt", true, Some("a'b")).contains("key='a\\'b'"));
+        // The WineCap channel toggles the menu: no key is sent, the tag and focus still change.
+        let on = setup_lua("0xab", "pt", true, None);
+        assert!(on.contains("tag='-pt'") && on.contains("hl.dsp.focus") && !on.contains("send_key_state"), "{on}");
+        assert_eq!(setup_lua("0xab", "pt", false, None), passthrough_lua("0xab", "pt", true));
     }
 }

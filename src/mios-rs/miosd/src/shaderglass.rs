@@ -802,6 +802,14 @@ pub fn supervisor_unit_args(cfg: &Config, exe: &Path, env: &[(String, String)]) 
         a.push("-p".into());
         a.push(p);
     }
+    // A supervisor that crashed (a panic, an abort) comes back and resumes its panes ([desktop.shaderglass.state]
+    // resume); systemd's start limit bounds it, and a stop, the idle exit or a clean exit is never restarted.
+    if cfg.state.resume {
+        for p in ["Restart=on-failure", "RestartSec=2", "StartLimitIntervalSec=120", "StartLimitBurst=3"] {
+            a.push("-p".into());
+            a.push(p.into());
+        }
+    }
     for (k, v) in env {
         a.push(format!("--setenv={k}={v}"));
     }
@@ -1357,6 +1365,8 @@ struct Pane {
     restarts: u32,
     /// The last profile save of this pane: Ok(shader) or Err(reason).
     saved: Option<Result<String, String>>,
+    /// Whether ShaderGlass' menu bar is shown, as its WineCap last reported (None: never asked / no channel).
+    menu: Option<bool>,
 }
 
 impl Pane {
@@ -1497,7 +1507,7 @@ impl Supervisor {
             return Err("this WineCap has no MiOS command channel (reinstall: mios-shaderglass install --force)".into());
         }
         let class = p.class.clone();
-        let r = state::save_profile(state, &cfg.state, &class, &default, || cmd.run("save", timeout))
+        let r = state::save_profile(state, &cfg.state, &class, &default, || cmd.run("save", timeout).map(|_| ()))
             .map(|prof| state::profile_shader(&prof).unwrap_or_default());
         p.saved = Some(r.clone());
         match &r {
@@ -1505,6 +1515,31 @@ impl Supervisor {
             Err(e) => eprintln!("[miosd shaderglass] {}: profile not saved: {e}", p.target),
         }
         r
+    }
+
+    /// Show (`on`) or hide ShaderGlass' menu in pane `i` through its WineCap command channel. Some(shown
+    /// afterwards, as ShaderGlass reports it) when the channel answered; None when it is not available or
+    /// failed (the caller sends ShaderGlass' key instead, a relative toggle).
+    fn set_menu_in_pane(&mut self, i: usize, on: bool) -> Option<bool> {
+        let timeout = self.cfg.state.save_timeout;
+        let c = self.panes[i].command.as_mut().filter(|c| c.ready())?;
+        match c.run(if on { "menu-on" } else { "menu-off" }, timeout) {
+            Ok(detail) => {
+                // An answer without the state (it cannot happen with this patch) counts as done.
+                let shown = state::menu_shown(&detail).unwrap_or(on);
+                self.panes[i].menu = Some(shown);
+                if shown != on {
+                    let target = self.panes[i].target.clone();
+                    self.log(&format!("{target}: ShaderGlass kept its menu {}", if shown { "shown" } else { "hidden" }));
+                }
+                Some(shown)
+            }
+            Err(e) => {
+                let target = self.panes[i].target.clone();
+                self.log(&format!("{target}: menu through WineCap: {e}; sending the key"));
+                None
+            }
+        }
     }
 
     fn sync_hypr3d(&self, target: &str, on: bool) {
@@ -1691,7 +1726,9 @@ impl Supervisor {
         let target = p.target.clone();
         self.log(&format!("{a}: pane for {target} mapped ({})", if setup { "setup" } else { "overlay" }));
         let lua = if setup {
-            follow::setup_lua(a, &tag, true, &self.cfg.setup_shortcut)
+            // A pane launched in setup: the menu through the WineCap channel when it is already up, else the key.
+            let menu = self.set_menu_in_pane(i, true);
+            follow::setup_lua(a, &tag, true, menu.is_none().then_some(self.cfg.setup_shortcut.as_str()))
         } else {
             follow::passthrough_lua(a, &tag, true)
         };
@@ -1770,9 +1807,11 @@ impl Supervisor {
                 "unit": unit_name(&self.cfg),
                 "panes": self.panes.iter().map(|p| json!({"id": p.id, "target": p.target, "class": p.class, "window": p.window,
                     "pid": p.child.id(), "state": p.state(), "profile": p.profile, "restarts": p.restarts,
-                    "command_channel": p.command.as_ref().is_some_and(state::Command::ready),
+                    "command_channel": p.command.as_ref().is_some_and(state::Command::ready), "menu": p.menu, "placement_gave_up": p.follower.gave_up(),
                     "saved": p.saved.as_ref().map(|r| match r { Ok(s) => json!({"ok": true, "shader": s}), Err(e) => json!({"ok": false, "error": e}) })})).collect::<Vec<_>>(),
                 "queued": self.queue.iter().map(|q| json!({"target": q.identity.address, "setup": q.setup, "restarts": q.restarts})).collect::<Vec<_>>(),
+                // Whether the supervisor sees the Hypr3D room (panes hidden, processes and profiles kept).
+                "hypr3d_room": self.hypr3d,
                 "state": self.state.to_status(),
             }),
             "attach" => {
@@ -1838,12 +1877,16 @@ impl Supervisor {
                 let entering = !self.panes[i].setup;
                 self.panes[i].setup = entering;
                 self.panes[i].follower.reset();
-                self.eval(&follow::setup_lua(&w, &self.cfg.window.passthrough_tag, entering, &self.cfg.setup_shortcut));
+                // The menu is shown / hidden inside ShaderGlass (WineCap channel) when it can; ShaderGlass' key
+                // (a relative toggle) otherwise.
+                let menu = self.set_menu_in_pane(i, entering);
+                let key = menu.is_none().then_some(self.cfg.setup_shortcut.as_str());
+                self.eval(&follow::setup_lua(&w, &self.cfg.window.passthrough_tag, entering, key));
                 self.urgent = true;
                 self.write_state();
                 // Leaving setup is when the operator is done choosing: keep it for the class.
                 let saved = if entering || !self.cfg.state.persist { None } else { Some(self.save_pane(i)) };
-                json!({"ok": true, "setup": entering, "saved": saved.map(|r| r.is_ok())})
+                json!({"ok": true, "setup": entering, "menu": menu, "saved": saved.map(|r| r.is_ok())})
             }
             "cycle" => {
                 let Some(i) = self.find(req) else { return err("no pane for that window".into()) };
@@ -1851,13 +1894,12 @@ impl Supervisor {
                 let timeout = self.cfg.state.save_timeout;
                 let via = match self.panes[i].command.as_mut().filter(|c| c.ready()) {
                     Some(c) => match c.run("next", timeout) {
-                        Ok(()) => "winecap",
+                        Ok(_) => "winecap",
                         Err(e) => return err(e),
                     },
                     None => {
                         // An older WineCap: ShaderGlass' own accelerator, sent to the pane (best effort, unsaved).
-                        let key = lua_str(&self.cfg.cycle_shortcut);
-                        self.eval(&format!("pcall(function() hl.send_shortcut({{mods='', key={key}, window={}}}) end)", lua_str(&format!("address:{w}"))));
+                        self.eval(&follow::key_press_lua(&w, &self.cfg.cycle_shortcut));
                         "shortcut"
                     }
                 };
@@ -1963,12 +2005,11 @@ impl Supervisor {
         // default): what the operator last chose for this class, in any session and presentation mode.
         let profile = if self.cfg.state.persist { self.state.saved_profile(&class) } else { None };
         let profile_arg = profile.as_deref().and_then(state::windows_path);
-        let command = if self.cfg.state.persist {
+        // The WineCap command channel: next shader and the setup menu always, the profile save when persisting.
+        let command = {
             let c = state::Command::new(panes_dir.join(format!("{id}.cmd")));
             c.cleanup();
             Some(c)
-        } else {
-            None
         };
         let (set, remove) = wine::env(&self.cfg, token_file.as_deref());
         let mut cmd = Command::new(&self.cfg.wine.binary);
@@ -2027,6 +2068,7 @@ impl Supervisor {
             profile,
             restarts,
             saved: None,
+            menu: None,
         });
         self.write_state();
         Ok(())
@@ -2574,7 +2616,7 @@ mod tests {
             if !suppressed {
                 let t = read(&target);
                 let p = read(&pane);
-                assert!(t.rect.close_to(&p.rect), "overlay follows native application geometry: {:?} {:?}", t.rect, p.rect);
+                assert!(t.rect.same(&p.rect), "overlay follows native application geometry exactly: {:?} {:?}", t.rect, p.rect);
                 assert_eq!(t.monitor, p.monitor, "overlay follows native output ownership");
             }
         };
@@ -2790,6 +2832,11 @@ mod tests {
         for p in ["-p MemoryMax=4G", "-p KillMode=mixed", "-p OOMPolicy=continue", "--setenv=DISPLAY=:0"] {
             assert!(joined.contains(p), "{p}: {joined}");
         }
+        assert!(joined.contains("-p Restart=on-failure"), "a crashed supervisor comes back to resume: {joined}");
+        assert!(joined.contains("-p StartLimitBurst=3"), "a supervisor that cannot start is not restarted forever: {joined}");
+        let mut no_resume = cfg.clone();
+        no_resume.state.resume = false;
+        assert!(!supervisor_unit_args(&no_resume, Path::new("/usr/bin/miosd"), &[]).join(" ").contains("Restart="), "resume = false: never restarted");
         assert!(joined.ends_with("-- /usr/bin/miosd shaderglass serve"), "{joined}");
     }
 

@@ -253,8 +253,8 @@ fn json_pointer_escape(s: &str) -> String {
 
 /// The command file WineCap polls inside one ShaderGlass process (MIOS_WINECAP_COMMAND_FILE): the supervisor
 /// writes "<seq> <verb>\n" atomically; WineCap claims it, sends the menu command to the ShaderGlass main
-/// window (SendMessageTimeout: done when ShaderGlass handled it) and writes "<seq> ok" (or "<seq> error ...")
-/// to `<file>.ack`. WineCap creates `<file>.ready` when its channel runs: an older WineCap without it is
+/// window (SendMessageTimeout: done when ShaderGlass handled it) and writes "<seq> ok menu=<0|1>" (whether
+/// ShaderGlass' menu bar is shown afterwards) or "<seq> error ..." to `<file>.ack`. WineCap creates `<file>.ready` when its channel runs: an older WineCap without it is
 /// detected at once, never waited for.
 #[derive(Debug)]
 pub struct Command {
@@ -262,8 +262,18 @@ pub struct Command {
     seq: u64,
 }
 
-/// The verbs WineCap knows: ShaderGlass' "Set as default", IDM_SHADER_NEXT, IDM_TOGGLEMENU.
-pub const VERBS: &[&str] = &["save", "next", "menu"];
+/// The verbs WineCap knows: ShaderGlass' "Set as default", IDM_SHADER_NEXT, and the menu shown / hidden
+/// (IDM_TOGGLEMENU only when its state differs: setup mode and the menu never drift apart, unlike a key).
+pub const VERBS: &[&str] = &["save", "next", "menu-on", "menu-off"];
+
+/// Whether ShaderGlass' menu bar is shown, from the detail of an answer ("menu=1"); None from an older answer.
+pub fn menu_shown(detail: &str) -> Option<bool> {
+    detail.split_whitespace().find_map(|w| match w {
+        "menu=1" => Some(true),
+        "menu=0" => Some(false),
+        _ => None,
+    })
+}
 
 fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
@@ -285,8 +295,8 @@ impl Command {
     pub fn ready(&self) -> bool {
         self.ready_file().is_file()
     }
-    /// Run `verb` in the pane; Ok once ShaderGlass handled it.
-    pub fn run(&mut self, verb: &str, timeout: Duration) -> Result<(), String> {
+    /// Run `verb` in the pane; Ok(the answer's detail, e.g. "menu=0") once ShaderGlass handled it.
+    pub fn run(&mut self, verb: &str, timeout: Duration) -> Result<String, String> {
         if !VERBS.contains(&verb) {
             return Err(format!("unknown WineCap command {verb:?}"));
         }
@@ -304,7 +314,10 @@ impl Command {
                 let line = text.trim();
                 if let Some(rest) = line.strip_prefix(&format!("{seq} ")) {
                     let _ = std::fs::remove_file(&ack);
-                    return if rest == "ok" { Ok(()) } else { Err(format!("WineCap {verb}: {rest}")) };
+                    return match rest.strip_prefix("ok") {
+                        Some(detail) if detail.is_empty() || detail.starts_with(' ') => Ok(detail.trim().to_owned()),
+                        _ => Err(format!("WineCap {verb}: {rest}")),
+                    };
                 }
             }
             if Instant::now() >= until {
@@ -556,14 +569,33 @@ mod tests {
                     // A stale answer first: must be ignored.
                     std::fs::write(&ack, "0 ok\n").unwrap();
                     std::thread::sleep(Duration::from_millis(30));
-                    std::fs::write(&ack, format!("{seq} ok\n")).unwrap();
+                    std::fs::write(&ack, format!("{seq} ok menu=1\n")).unwrap();
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(5));
             }
         });
-        c.run("next", Duration::from_secs(2)).unwrap();
+        assert_eq!(menu_shown(&c.run("menu-on", Duration::from_secs(2)).unwrap()), Some(true));
         t.join().unwrap();
+        assert_eq!(menu_shown("menu=0"), Some(false));
+        assert_eq!(menu_shown(""), None, "an older WineCap answers without the menu state");
+        // An error answer and an "okay"-looking prefix are failures.
+        let f3 = file.clone();
+        let ack3 = c.ack_file();
+        let t = std::thread::spawn(move || {
+            for _ in 0..200 {
+                if let Ok(s) = std::fs::read_to_string(&f3) {
+                    let seq = s.split_whitespace().next().unwrap().to_owned();
+                    std::fs::remove_file(&f3).unwrap();
+                    std::fs::write(&ack3, format!("{seq} okay\n")).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        assert!(c.run("next", Duration::from_secs(2)).is_err(), "\"okay\" is not \"ok\"");
+        t.join().unwrap();
+        assert!(c.run("menu", Duration::from_millis(50)).unwrap_err().contains("unknown"), "the relative toggle is gone");
         assert!(c.run("save", Duration::from_millis(100)).unwrap_err().contains("no answer"), "nobody answers");
         assert!(!file.exists(), "an unanswered request is withdrawn");
         c.cleanup();

@@ -37,6 +37,37 @@ def ssot() -> dict:
         return tomllib.load(f)
 
 
+def prefix_processes(prefix: Path) -> list[int]:
+    """This user's processes running in Wine prefix `prefix` (WINEPREFIX in their environment)."""
+    needle = f"WINEPREFIX={prefix}".encode()
+    pids = []
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            if d.stat().st_uid != os.getuid():
+                continue
+            env = (d / "environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if needle in env:
+            pids.append(int(d.name))
+    return pids
+
+
+def drain_prefix(prefix: Path, timeout: float = 30) -> None:
+    """Wait until no process of a private test prefix is left (two wineservers on one prefix -- one of them in
+    the negative control's private /tmp -- would corrupt it); SIGKILL what is still there after `timeout`."""
+    until = time.monotonic() + timeout
+    while prefix_processes(prefix) and time.monotonic() < until:
+        time.sleep(0.5)
+    for pid in prefix_processes(prefix):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def miosd(var: str, default: str | None) -> str | None:
     b = os.environ.get(var) or default
     if not b or not os.access(b, os.X_OK):
@@ -82,8 +113,15 @@ class Source(unittest.TestCase):
     def test_winecap_command_channel_uses_shaderglass_menu_ids(self) -> None:
         text = PATCH.read_text(encoding="utf-8")
         for needle in ("MIOS_WINECAP_COMMAND_FILE", "mios_command_thread", "SendMessageTimeoutW", '"%s.ready"', '"%s.ack"',
-                       "mios_start_command_channel();"):
+                       "mios_start_command_channel();", '"menu-on"', '"menu-off"', "(GetMenu(window) != NULL) == want_menu",
+                       "ok menu=%d"):
             self.assertIn(needle, text)
+        # The menu is set, never blindly toggled: a relative "menu" verb would let setup mode and the menu drift.
+        self.assertNotIn('!strcmp(verb, "menu"))', text)
+        verbs = re.search(r"pub const VERBS: &\[&str\] = &\[([^\]]*)\]", (ROOT / "src/mios-rs/miosd/src/shaderglass/state.rs").read_text())
+        self.assertEqual(re.findall(r'"([^"]+)"', verbs.group(1)), ["save", "next", "menu-on", "menu-off"])
+        for v in re.findall(r'"([^"]+)"', verbs.group(1)):
+            self.assertIn(f'"{v}"', text, f"miosd verb {v} unknown to the WineCap patch")
         ids = dict(re.findall(r"#define MIOS_(ID[A-Z_]*) (\d+)", text))
         self.assertEqual(set(ids), {"ID_PROCESSING_SETASDEFAULT", "IDM_SHADER_NEXT", "IDM_TOGGLEMENU"})
         res = SG_SRC / "ShaderGlass/resource.h"
@@ -302,6 +340,11 @@ class Nested:
             if (self.dir / "session.json").is_file():
                 break
             time.sleep(0.2)
+        else:
+            if self.launcher:
+                os.killpg(self.launcher.pid, signal.SIGTERM)
+                self.launcher.wait(timeout=20)
+            raise RuntimeError(f"no nested session descriptor in {self.dir}")
         s = json.loads((self.dir / "session.json").read_text())
         self.pid = s["instance"]["pid"]
         self.env = {"XDG_RUNTIME_DIR": str(self.dir), "HYPRLAND_INSTANCE_SIGNATURE": s["instance"]["instance"],
@@ -346,7 +389,9 @@ class LiveNested(unittest.TestCase):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(os.environ["MIOS_SHADERGLASS_PREFIX_FROM"], dst, symlinks=True)
         text = SSOT.read_text()
-        # This nested session has no XWayland: the Wine Wayland driver.
+        # Always the Wine Wayland driver here. The vendor x11 driver needs DISPLAY, and an X client resolves ":N"
+        # through the abstract socket @/tmp/.X11-unix/XN first -- a network-namespace name a private /tmp does not
+        # isolate -- so a nested pane on X11 could open on the operator's own XWayland.
         text = re.sub(r'(?m)^driver = "x11"', 'driver = "wayland"', text, count=1)
         cls.vendors = {}
         for label, inst in (("new", cls.install), ("old", cls.old_install)):
@@ -354,14 +399,25 @@ class LiveNested(unittest.TestCase):
             v.write_text(text.replace('install_dir = "/usr/lib/mios/shaderglass"', f'install_dir = "{inst}"', 1))
             cls.vendors[label] = v
         (cls.work / "user.toml").write_text("")
+        # Guard: nothing under test may reach the operator's user manager (the installed miosd imports the
+        # compositor environment and restarts portal units from its launch path).
+        guard = cls.work / "guard-bin"
+        guard.mkdir(exist_ok=True)
+        (guard / "systemctl").write_text(f'#!/bin/sh\necho "$(date +%T) blocked systemctl $*" >> {cls.work}/guard.log\nexit 1\n')
+        (guard / "systemctl").chmod(0o700)
         cls.nested = Nested(cls.work, cls.vendors["new"])
         cls.base_env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "MIOS_TOML", "MIOS_VENDOR_TOML")}
         cls.base_env.update(cls.nested.env)
+        cls.base_env["PATH"] = f"{guard}:{cls.base_env.get('PATH', '/usr/bin:/bin')}"
         cls.base_env.update(XDG_DATA_HOME=str(home / "data"), XDG_STATE_HOME=str(home / "state"),
                             XDG_CONFIG_HOME=str(home / "config"), XDG_CACHE_HOME=str(home / "cache"),
                             MIOS_USER_TOML=str(cls.work / "user.toml"), MIOS_USER_TOML_D=str(cls.work / "user.d"),
                             MIOS_HOST_TOML=str(cls.work / "no-host.toml"))
-        cls.portal = Portal(cls.work, dict(cls.base_env, MIOS_VENDOR_TOML=str(cls.vendors["new"])), cls.new)
+        try:
+            cls.portal = Portal(cls.work, dict(cls.base_env, MIOS_VENDOR_TOML=str(cls.vendors["new"])), cls.new)
+        except BaseException:
+            cls.nested.close()
+            raise
         cls.serve = None
         cls.target = None
         cls.target_proc = None
@@ -377,6 +433,7 @@ class LiveNested(unittest.TestCase):
                     cls.serve.kill()
             if cls.target:
                 cls.hypr_eval(f"pcall(function() hl.dispatch(hl.dsp.window.close({{window='address:{cls.target}'}})) end)")
+            cls.drain_wine()
         finally:
             cls.portal.close()
             cls.nested.close()
@@ -434,9 +491,16 @@ class LiveNested(unittest.TestCase):
             time.sleep(step)
         return None
 
-    def start_serve(self, binary, label):
+    def start_serve(self, binary, label, env_label=None):
+        env_label = env_label or label
         log = open(self.work / f"serve-{label}-{len(self.results)}.log", "w")
-        type(self).serve = subprocess.Popen([binary, "shaderglass", "serve"], env=self.env_for(label), stdout=log,
+        argv = [binary, "shaderglass", "serve"]
+        if label == "old":
+            # The installed miosd writes the primary session's hand-over files (/tmp/mios-shaderglass.state,
+            # /tmp/mios-shaderglass-3d-request.txt) whatever compositor it serves: give it a private /tmp so the
+            # negative control never rewrites or consumes the operator's.
+            argv = ["bwrap", "--die-with-parent", "--bind", "/", "/", "--dev-bind", "/dev", "/dev", "--tmpfs", "/tmp", *argv]
+        type(self).serve = subprocess.Popen(argv, env=self.env_for(env_label), stdout=log,
                                             stderr=subprocess.STDOUT, start_new_session=True)
         self.assertTrue(self.wait(lambda: self.ctl({"cmd": "ping"}).get("ok"), 20), f"{label} supervisor answers")
 
@@ -448,6 +512,11 @@ class LiveNested(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 self.serve.kill()
                 self.serve.wait()
+        self.drain_wine()
+
+    @classmethod
+    def drain_wine(cls, timeout=30):
+        drain_prefix(Path(cls.base_env["XDG_DATA_HOME"]) / "mios/shaderglass/prefix", timeout)
 
     def pane(self):
         st = self.ctl({"cmd": "status"})
@@ -467,6 +536,28 @@ class LiveNested(unittest.TestCase):
         c = self.client(pane_addr)
         m = re.match(r"^ShaderGlass \((.*)\)$", c["title"]) if c else None
         return [x.strip() for x in m.group(1).split(",")] if m else []
+
+    def shader_of(self, pane_addr):
+        """The shader a capturing pane shows (its title's first field), None before it captures."""
+        parts = self.shader_in_title(pane_addr)
+        return parts[0] if parts and parts[0] != "no input selected" else None
+
+    def pick_in_setup(self, pane_addr, before, timeout=15):
+        """Setup mode on (menu, focus), ShaderGlass' own next-shader key typed into the Wine window -- the
+        operator picking a shader inside ShaderGlass -- then setup off. Returns (setup replies, picked shader)."""
+        r1 = self.ctl({"cmd": "setup", "target": self.target})
+        time.sleep(1.5)
+        picked = None
+        for _ in range(3):
+            # A real key press and release on the focused pane (hl.send_shortcut never reaches winewayland).
+            for st in ("down", "up"):
+                self.hypr_eval(f"hl.dispatch(hl.dsp.send_key_state({{mods='',key='n',state='{st}',window='address:{pane_addr}'}}))")
+                time.sleep(0.05)
+            picked = self.wait(lambda: (lambda s: s if s and s != before else None)(self.shader_of(pane_addr)), timeout / 3)
+            if picked:
+                break
+        r2 = self.ctl({"cmd": "setup", "target": self.target})
+        return (r1, r2), picked
 
     def default_profile(self):
         p = Path(self.base_env["XDG_DATA_HOME"]) / "mios/shaderglass/prefix/drive_c/users"
@@ -517,17 +608,23 @@ class LiveNested(unittest.TestCase):
             got = self.mapped_pane()
             self.check("[old] pane mapped", got, got and got[1]["title"])
             if got:
-                first = self.shader_in_title(got[0]["window"])
-                self.hypr_eval(f"pcall(function() hl.send_shortcut({{mods='', key='n', window='address:{got[0]['window']}'}}) end)")
-                changed = self.wait(lambda: self.shader_in_title(got[0]["window"]) != first and self.shader_in_title(got[0]["window"]), 15)
-                self.check("[old] the next-shader key changes the shader", changed, f"{first} -> {changed}")
+                time.sleep(3.0)
+                st = self.pane() or {}
+                self.check("[old] NEGATIVE CONTROL: the installed WineCap/miosd has no command channel",
+                           not st.get("command_channel"), st)
+                same, geo = self.geometry_matches(got[0]["window"], 6)
+                self.results.append({"check": "[old] observation: pane vs target geometry (not asserted)", "ok": True, "detail": str((same, geo))})
+                print(f"OBSERVE [old] geometry {same} {geo}", flush=True)
+                first = self.wait(lambda: self.shader_of(got[0]["window"]), 30)
+                replies, changed = self.pick_in_setup(got[0]["window"], first)
+                self.check("[old] a shader picked inside ShaderGlass in setup mode", changed, f"{first} -> {changed} {replies}")
                 self.ctl({"cmd": "detach", "target": self.target})
                 self.wait(lambda: self.pane() is None, 30)
                 self.ctl({"cmd": "attach", "target": self.target, "setup": False})
                 again = self.mapped_pane()
-                after = again and self.shader_in_title(again[0]["window"])
-                self.check("[old] NEGATIVE CONTROL: after detach/attach the chosen shader is lost", again and changed and after != changed and after == first,
-                           f"chosen {changed}, relaunched with {after}")
+                after = again and self.wait(lambda: self.shader_of(again[0]["window"]), 30)
+                self.check("[old] NEGATIVE CONTROL: after detach/attach the picked shader is lost (back to the default)",
+                           again and changed and after == first and after != changed, f"picked {changed}, relaunched with {after}")
                 self.ctl({"cmd": "detach", "target": self.target})
                 self.wait(lambda: self.pane() is None, 30)
             self.stop_serve()
@@ -550,21 +647,21 @@ class LiveNested(unittest.TestCase):
         same, geo = self.geometry_matches(pane["window"])
         self.check("[new] pane exactly over the target (no 1 px drift)", same, geo)
         self.check("[new] WineCap command channel ready", self.wait(lambda: (self.pane() or {}).get("command_channel"), 20), self.pane())
-        start_shader = self.shader_in_title(pane["window"])
+        start_shader = self.wait(lambda: self.shader_of(pane["window"]), 30)
 
         r = run([self.new, "shaderglass", "cycle", "--window", self.target], env=self.env_for("new"), timeout=60)
         reply = json.loads(r.stdout or "{}") if r.returncode == 0 else {}
         self.check("[new] cycle runs inside ShaderGlass and saves", reply.get("via") == "winecap" and reply.get("shader"), r.stdout + r.stderr)
-        chosen = self.wait(lambda: self.shader_in_title(pane["window"]) != start_shader and self.shader_in_title(pane["window"]), 15)
+        chosen = self.wait(lambda: (lambda s: s if s and s != start_shader else None)(self.shader_of(pane["window"])), 15)
         self.check("[new] the shader changed", chosen, f"{start_shader} -> {chosen}")
         cls_entry = (self.state().get("classes") or {}).get(self.client(self.target)["class"], {})
         saved_name = (cls_entry.get("shader") or "").split("/")[-1]
-        self.check("[new] the class profile records the chosen shader", chosen and saved_name and saved_name in chosen, f"{cls_entry} vs {chosen}")
+        self.check("[new] the class profile records the chosen shader", chosen and saved_name and saved_name == chosen, f"{cls_entry} vs {chosen}")
         self.check("[new] the operator default profile is byte-identical after the save", self.default_profile() == default_before)
         shader_name = saved_name
 
         def same_shader(addr):
-            return shader_name in self.shader_in_title(addr)
+            return self.shader_of(addr) == shader_name
 
         # ---- presentation modes: same process, same shader, same geometry
         pid = pane["pid"]
@@ -592,15 +689,31 @@ class LiveNested(unittest.TestCase):
             self.check(f"[new] {label}: same pane process, shader kept, pane follows",
                        p_on.get("pid") == pid and p_off.get("pid") == pid and during and same_shader(pane["window"]) and geo_on and back,
                        f"pid {pid}->{p_on.get('pid')}/{p_off.get('pid')} geo {geo}")
-        # Hypr3D room (when the nested session loaded the plugin): the pane hides, keeps its process and profile.
-        room = run(["/usr/bin/mios-gen", "hyprland-3d-toggle"], env=self.env_for("new"), timeout=30)
-        time.sleep(4.0)
-        p_room = self.pane() or {}
-        run(["/usr/bin/mios-gen", "hyprland-3d-toggle"], env=self.env_for("new"), timeout=30)
-        time.sleep(4.0)
-        p_back = self.pane() or {}
-        self.check("[new] Hypr3D room round trip: same pane process and shader", p_room.get("pid") == pid and p_back.get("pid") == pid and same_shader(pane["window"]),
-                   f"toggle rc={room.returncode} {room.stderr.strip()[:200]}")
+        # Hypr3D room and Theatre. The plugin appends to the host-global /tmp/hypr3d-status.txt, which the
+        # operator's own session reads, so the room is entered only when this whole test runs with a private /tmp
+        # (the driver: bwrap --bind <dir> /tmp, MIOS_SHADERGLASS_PRIVATE_TMP=<dir>).
+        priv = os.environ.get("MIOS_SHADERGLASS_PRIVATE_TMP")
+        if priv and os.path.samefile(priv, "/tmp"):
+            room = run(["/usr/bin/mios-gen", "hyprland-3d-toggle"], env=self.env_for("new"), timeout=60)
+            in_room = self.wait(lambda: self.ctl({"cmd": "status"}).get("hypr3d_room") is True, 20)
+            p_room = self.pane() or {}
+            self.check("[new] Hypr3D room: the supervisor sees the room, same pane process",
+                       in_room and p_room.get("pid") == pid, f"toggle rc={room.returncode} {room.stdout.strip()[:120]} {room.stderr.strip()[:200]}")
+            # Theatre: the native maximize of the (pinned, PiP) target inside the room.
+            self.hypr_eval(f"hl.dispatch(hl.dsp.window.pin({{window={w},action='enable'}})); hl.dispatch(hl.dsp.window.fullscreen({{window={w},mode='maximized',action='set'}}))")
+            time.sleep(3.0)
+            p_th = self.pane() or {}
+            self.hypr_eval(f"hl.dispatch(hl.dsp.window.fullscreen({{window={w},mode='maximized',action='unset'}})); hl.dispatch(hl.dsp.window.pin({{window={w},action='disable'}})); hl.dispatch(hl.dsp.window.resize({{x=801,y=503,window={w}}})); hl.dispatch(hl.dsp.window.move({{x=97,y=141,window={w}}}))")
+            time.sleep(2.0)
+            self.check("[new] Theatre (maximized PiP in the room): same pane process", p_th.get("pid") == pid, p_th)
+            run(["/usr/bin/mios-gen", "hyprland-3d-toggle"], env=self.env_for("new"), timeout=60)
+            left = self.wait(lambda: self.ctl({"cmd": "status"}).get("hypr3d_room") is False, 20)
+            back, geo = self.geometry_matches(pane["window"])
+            self.check("[new] back from the room: same process, shader kept, pane exactly over the target",
+                       left and (self.pane() or {}).get("pid") == pid and same_shader(pane["window"]) and back, geo)
+        else:
+            self.results.append({"check": "[new] Hypr3D room / Theatre", "ok": True, "detail": "SKIPPED: no private /tmp (MIOS_SHADERGLASS_PRIVATE_TMP)"})
+            print("SKIP [new] Hypr3D room / Theatre: no private /tmp", flush=True)
 
         # ---- detach / re-attach: a new process starts with the class profile
         self.ctl({"cmd": "detach", "target": self.target})
@@ -633,19 +746,37 @@ class LiveNested(unittest.TestCase):
             pass
         self.wait(lambda: not self.client(pane["window"]), 20)
         self.check("[new] the attached record survived the dead supervisor", any(a.get("address") == self.target for a in self.state().get("attached", [])), self.state().get("attached"))
-        self.start_serve(self.new, "new-resumed")
+        self.start_serve(self.new, "new-resumed", "new")
         got = self.mapped_pane()
         self.check("[new] a restarted supervisor resumed the pane with the chosen shader",
                    got and self.wait(lambda: same_shader(got[0]["window"]), 30), got and got[1]["title"])
         pane = got[0] if got else pane
 
-        # ---- setup round trip (menu shown / hidden), saved on exit
-        r1 = self.ctl({"cmd": "setup", "target": self.target})
-        time.sleep(2)
-        r2 = self.ctl({"cmd": "setup", "target": self.target})
-        self.check("[new] setup on/off round trip saved on exit", r1.get("setup") is True and r2.get("setup") is False and r2.get("saved") is True, (r1, r2))
+        # ---- setup: ShaderGlass' own menu is shown, the operator picks a shader with ShaderGlass' own keyboard
+        # input (a key typed into the Wine window, not a miosd command), leaving setup hides the menu and keeps
+        # that pick for the class.
+        before_pick = self.shader_of(pane["window"])
+        (r1, r2), picked = self.pick_in_setup(pane["window"], before_pick)
+        self.check("[new] setup shows ShaderGlass' menu (WineCap reports it)", r1.get("setup") is True and r1.get("menu") is True, r1)
+        self.check("[new] a shader picked inside ShaderGlass (its own key, menu shown)", picked, f"{before_pick} -> {picked}")
+        self.check("[new] leaving setup hides the menu and saves", r2.get("setup") is False and r2.get("menu") is False and r2.get("saved") is True, r2)
+        cls_entry = (self.state().get("classes") or {}).get(self.client(self.target)["class"], {})
+        picked_name = (cls_entry.get("shader") or "").split("/")[-1]
+        self.check("[new] the Wine-selected shader is the class profile now", picked and picked_name and picked_name == picked, f"{cls_entry} vs {picked}")
+        if picked and picked_name:
+            shader_name = picked_name
+        self.check("[new] menu state idempotent: hiding a hidden menu changes nothing",
+                   (self.pane() or {}).get("menu") is False, self.pane())
         same, geo = self.geometry_matches(pane["window"])
         self.check("[new] after setup the pane is exactly over the target again", same, geo)
+        # ... and it survives a new pane
+        self.ctl({"cmd": "detach", "target": self.target})
+        self.wait(lambda: self.pane() is None, 30)
+        self.ctl({"cmd": "attach", "target": self.target, "setup": False})
+        got = self.mapped_pane()
+        self.check("[new] re-attach after the Wine pick starts with the Wine-selected shader",
+                   got and self.wait(lambda: same_shader(got[0]["window"]), 20), got and got[1]["title"])
+        pane = got[0] if got else pane
 
         # ---- explicit stop: nothing to resume, default untouched
         self.stop_serve()
