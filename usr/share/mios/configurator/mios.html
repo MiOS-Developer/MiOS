@@ -3281,6 +3281,12 @@
         <label>PiP Theatre workarea fraction <input data-key="desktop.hyprland.hypr3d.config.windows.theatre_fill" data-type="float" type="number" min="0.1" max="1" step="0.05"></label>
         <label>PiP Theatre transition (seconds) <input data-key="desktop.hyprland.hypr3d.config.windows.theatre_seconds" data-type="float" type="number" min="0.01" step="0.05"></label>
         <label>PiP rendered surface limit per axis <input data-key="desktop.hyprland.hypr3d.config.windows.pip_raster_max_px" data-type="int" type="number" min="64" max="16384"></label>
+        <label>Room windows that turn to face the viewer <select data-key="desktop.hyprland.hypr3d.config.windows.face_viewer"><option value="pip">PiP windows (default)</option><option value="all">Every room window</option><option value="off">Off</option></select></label>
+        <label>Face-the-viewer distance (metres) <input data-key="desktop.hyprland.hypr3d.config.windows.face_distance" data-type="float" type="number" min="0" max="100" step="0.1"></label>
+        <label>Face-the-viewer distance in PiP Theatre (metres) <input data-key="desktop.hyprland.hypr3d.config.windows.theatre_face_distance" data-type="float" type="number" min="0" max="100" step="0.1"></label>
+        <label>Face-the-viewer turn time constant (seconds) <input data-key="desktop.hyprland.hypr3d.config.windows.face_seconds" data-type="float" type="number" min="0.01" max="5" step="0.05"></label>
+        <label>Face-the-viewer boundary band (metres) <input data-key="desktop.hyprland.hypr3d.config.windows.face_hysteresis" data-type="float" type="number" min="0" max="10" step="0.05"></label>
+        <label>Room recenter time constant (seconds) <input data-key="desktop.hyprland.hypr3d.config.player.recenter_seconds" data-type="float" type="number" min="0.01" max="5" step="0.05"></label>
         <label>Hypr3DGlass toggle <input data-key="desktop.hyprland.hypr3d.toggle_key" type="text"></label>
         <label>Mirror authored panorama <input data-key="desktop.hyprland.hypr3d.config.world.panorama_mirror" data-type="bool" type="checkbox"></label>
         <p>Both GPU sessions run the same Hyprland and Quickshell desktop with Hyprglass and Hypr3DGlass. With GRUB synchronization enabled, choosing another GPU at login reboots into its matching driver profile after authentication.</p>

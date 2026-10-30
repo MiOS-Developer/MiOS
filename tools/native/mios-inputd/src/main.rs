@@ -130,7 +130,17 @@ fn run() -> Result<(), String> {
             for (i, event) in input.events.into_iter().enumerate() {
                 output.extend(router.event(event, 1000 + i as u64 * 10));
             }
-            output.extend(router.tick(input.tick_ms as f64 / 1000.0));
+            // The router clamps one tick to 100 ms (a stalled loop never jumps), so a longer replay clock advances in
+            // 100 ms steps: a [tap, hold] hold or North hold can be replayed (tick_ms <= 100 is one tick, as before).
+            let mut left = input.tick_ms;
+            loop {
+                let step = left.min(100);
+                output.extend(router.tick(step as f64 / 1000.0));
+                left -= step;
+                if left == 0 {
+                    break;
+                }
+            }
             println!(
                 "{}",
                 serde_json::json!({"output":output,"pad":router.pad,"cursor":router.cursor,"executed":false})

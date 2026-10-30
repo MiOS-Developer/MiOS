@@ -1,4 +1,4 @@
-# AI-hint: Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are step S0 (landed), "#@<STEP>" lines are uncommented by the step that ships the code reading them.
+# AI-hint: Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0 and P1 (landed), "#@<STEP>" lines are uncommented by the step that ships the code reading them.
 # AI-related: usr/share/mios/mios.toml, docs/design/mios-global-bindings-final.md
 # MiOS global bindings: final SSOT tables (replacement text for the vendor SSOT)
 #
@@ -11,7 +11,7 @@
 #   and the tmux/unit outputs.
 #
 # STAGING PROTOCOL
-#   Active (uncommented) lines are the S0 step. Each one is SSOT-only: the code that ships today implements it, and it
+#   Active (uncommented) lines are the S0 step and the landed P1 room table. Each S0 line is SSOT-only: the code that ships today implements it, and it
 #   passes today's validators (mios-inputd config.rs:226-365, mios-gate keybinds.rs, mios-controls validate.rs:107-145).
 #   A line that starts with "#@<STEP> " belongs to a later step. That owner's change uncomments it in the same commit
 #   that adds the code that reads it (sed 's/^#@<STEP> //'). Nothing below is declared before something implements it.
@@ -548,12 +548,12 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #@I3 TOGGLE_CHORD = "mios:graphical-vt"
 
 # --- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
-#@P1 [keybindings.global.controller.room]
-#@P1 BTN_EAST = "hypr:hypr3d:cancel"                       # drop a grab/resize, close a picker, leave the room cursor
-#@P1 BTN_THUMBL = "hypr:hypr3d:sprint"                     # toggle
-#@P1 BTN_THUMBR = "hypr:hypr3d:recenter"
-#@P1 BTN_SELECT = ["hypr:hypr3d:view", "quickshell:keymap-toggle"]   # tap = view cycle (packet slot 0), hold = keymap
-#@P1 BTN_MODE = "quickshell:drawer-toggle"
+[keybindings.global.controller.room]
+BTN_EAST = "hypr:hypr3d:cancel"                       # drop a grab/resize, close a picker, leave the room cursor
+BTN_THUMBL = "hypr:hypr3d:sprint"                     # toggle
+BTN_THUMBR = "hypr:hypr3d:recenter"
+BTN_SELECT = ["hypr:hypr3d:view", "quickshell:keymap-toggle"]   # tap = view cycle (packet slot 0), hold = keymap
+BTN_MODE = "quickshell:drawer-toggle"
 
 # ===== BLOCK B: replaces usr/share/mios/mios.toml:8731-8782 =====
 

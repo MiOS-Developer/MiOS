@@ -1,4 +1,4 @@
-<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 landed; G1 U1 I1-I4 P1 GT M1 pending). -->
+<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 and P1 landed; G1 U1 I1-I4 GT M1 pending). -->
 <!-- AI-related: usr/share/mios/mios.toml [keybindings.*], docs/design/mios-global-bindings-staged.patch.toml, docs/design/mios-global-bindings-tests.md, usr/share/doc/mios/keybinds.md, tools/native/mios-inputd -->
 # MiOS global bindings: FINAL spec (controller + keyboard)
 
