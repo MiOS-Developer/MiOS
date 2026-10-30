@@ -2655,6 +2655,31 @@ pub mod render_hyprland {
             .ok_or_else(|| format!("SSOT {path} must be a nonempty string"))
     }
 
+    /// `hl.device` rule for [keybindings.global.controller].virtual_keyboard: kb_layout = virtual_keyboard_layout.
+    /// Empty when the global map is disabled or the keyboard is not configured.
+    fn virtual_keyboard_lua(data: &Value) -> Result<String, String> {
+        let c = data.get("keybindings").and_then(|k| k.get("global"));
+        if c.and_then(|g| g.get("enabled")).and_then(Value::as_bool) != Some(true) {
+            return Ok(String::new());
+        }
+        let c = c.and_then(|g| g.get("controller"));
+        let name = c.and_then(|c| c.get("virtual_keyboard")).and_then(Value::as_str).unwrap_or("");
+        let layout = c.and_then(|c| c.get("virtual_keyboard_layout")).and_then(Value::as_str).unwrap_or("");
+        if name.is_empty() || layout.is_empty() {
+            return Ok(String::new());
+        }
+        if !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || !layout.bytes().all(|b| b.is_ascii_alphanumeric() || b == b',' || b == b'_')
+        {
+            return Err("virtual_keyboard must be a Hyprland device name ([a-z0-9-]) and virtual_keyboard_layout an XKB layout".into());
+        }
+        Ok(format!(
+            "mios_section(\"virtual-keyboard\", function()\n hl.device({{name = {}, kb_layout = {}}})\nend)\n",
+            lua(&Value::String(name.into()))?,
+            lua(&Value::String(layout.into()))?
+        ))
+    }
+
     /// [desktop.screenshot] (mios-shot) -> its keybinds (hl.bind exec "<binary> <args>"), the no-animation layer rules for
     /// its freeze / selector / flash surfaces and -- only while [desktop.hyprland.config.ecosystem].enforce_permissions is
     /// on -- screencopy permissions for the binary, grim and xdg-desktop-portal-hyprland (XDPH runs grim itself). Absent
@@ -3371,6 +3396,9 @@ end
             );
         }
         out += &crate::global_bindings::prelude(data)?;
+        // The controller's virtual keyboard (key: projection) speaks US keycodes: pin its layout whatever the
+        // operator's kb_layout is, so controller L3 is Ctrl+T on a French keyboard too (C-31).
+        out += &virtual_keyboard_lua(data)?;
         let actions = at(data, "keybindings.actions")?
             .as_array()
             .ok_or("keybindings.actions must be an array")?;
@@ -3424,13 +3452,7 @@ end
                 .unwrap_or_default();
             out += &format!(
                 "hl.bind({}, hl.dsp.{dispatcher}({args}){flags})\n",
-                lua(&Value::String(crate::global_bindings::key(data, match (dispatcher, bind.get("args").and_then(Value::as_str)) {
-                    ("window.close", _) => "close-window",
-                    ("window.fullscreen", _) if bind.get("args").and_then(|a|a.get("mode")).and_then(Value::as_str)==Some("fullscreen") => "fullscreen",
-                    ("exec_cmd", Some("/usr/bin/miosd placement toggle")) => "toggle-placement",
-                    ("exec_cmd", Some(cmd)) if cmd.ends_with("call keymap toggle") => "keymap",
-                    _ => "",
-                }, at(bind,"key")?.as_str().ok_or("invalid bind key")?)))?
+                lua(&Value::String(crate::global_bindings::key(data, crate::global_bindings::bind_global_id(bind), at(bind,"key")?.as_str().ok_or("invalid bind key")?)))?
             );
         }
         // [desktop.screenshot] (mios-shot): keybinds, no-animation layer rules, screencopy permissions.
@@ -3441,7 +3463,14 @@ end
             .as_integer()
             .filter(|n| (1..=10).contains(n))
             .ok_or("workspace_count must be 1..10")?;
-        out += &format!("for i = 1, {count} do\n local key = i % 10\n hl.bind({} .. \" + \" .. key, hl.dsp.focus({{ workspace = i }}))\n hl.bind({} .. \" + SHIFT + \" .. key, hl.dsp.window.move({{ workspace = i }}))\nend\n",string(h,"main_modifier")?,string(h,"main_modifier")?);
+        // Literal binds, one line each, so the gate audits every workspace chord (C-21).
+        let main_mod = at(h, "main_modifier")?.as_str().ok_or("main_modifier must be a string")?;
+        for i in 1..=count {
+            out += &format!("hl.bind({}, hl.dsp.focus({{ workspace = {i} }}))\n", lua(&Value::String(format!("{main_mod} + {}", i % 10)))?);
+        }
+        for i in 1..=count {
+            out += &format!("hl.bind({}, hl.dsp.window.move({{ workspace = {i} }}))\n", lua(&Value::String(format!("{main_mod} + SHIFT + {}", i % 10)))?);
+        }
         out += "mios_state.binds = true\n";
         out += &hypr3d_profile(data)?;
         if let Some(glass) = h
@@ -3803,7 +3832,8 @@ end
         // Magic lamp ([desktop.hyprland.lamp], inside the mios-wobbly plugin); additive, see lamp_profile below.
         out += &lamp_profile(data)?;
         // Mobile layout profile ([desktop.mobile]); additive, see mobile_profile below.
-        out += &crate::global_bindings::finish(data)?;
+        let global_input = crate::global_bindings::finish(data, &out)?;
+        out += &global_input;
         out += &mobile_profile(data)?;
         Ok(out)
     }

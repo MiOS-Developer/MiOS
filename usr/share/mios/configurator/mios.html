@@ -3237,6 +3237,8 @@
         <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
         <label>Capture hold time (ms) <input data-key="keybindings.global.controller.capture_hold_ms" data-type="int" type="number" min="100" max="3000" value="500"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
+        <label>Controller virtual keyboard device <input data-key="keybindings.global.controller.virtual_keyboard" type="text"></label>
+        <label>Controller virtual keyboard layout <input data-key="keybindings.global.controller.virtual_keyboard_layout" type="text"></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
         <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>
         <label>Guide + BTN_TL action <input data-key="keybindings.global.controller.system_layer.BTN_TL" type="text"></label>
@@ -3274,6 +3276,10 @@
         <label>Pending-action prefix key <input data-key="keybindings.agent.accept_key" type="text"></label>
         <label>Extended keys (on/off) <input data-key="keybindings.tmux.extended_keys" type="text"></label>
         <label>Extended key encoding (csi-u/xterm) <input data-key="keybindings.tmux.extended_keys_format" type="text"></label>
+        <label>tmux MiOS menu command name (empty = none) <input data-key="keybindings.tmux.menu_alias" type="text"></label>
+        <label>tmux MiOS menu alias slot <input data-key="keybindings.tmux.menu_alias_index" data-type="int" type="number" min="6" max="999"></label>
+        <label>Terminals that get tmux mouse reporting (comma separated; linux = text console) <input data-key="keybindings.tmux.mouse_terms" data-array="csv" type="text"></label>
+        <label>tmux mouse terminal-features first slot <input data-key="keybindings.tmux.mouse_features_index" data-type="int" type="number" min="0" max="999"></label>
         <label>Completed agent pane timeout (seconds; zero keeps panes) <input data-key="mcp.tmux.completed_pane_timeout_s" data-type="int" type="number" min="0"></label>
         <label>Default GPU profile <select data-key="desktop.hyprland.hardware_profile"><option value="igpu">iGPU (default)</option><option value="dgpu">dGPU</option></select></label>
         <label>Synchronize GRUB and GPU login sessions <input data-key="desktop.hyprland.boot_sync.enabled" data-type="bool" type="checkbox"></label>

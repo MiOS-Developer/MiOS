@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: Regenerates the /etc/mios/theme/ bridge (theme.json + mios-theme.css)
-# AI-related: usr/share/mios/mios.toml, usr/share/mios/quickshell/Theme.qml
+# AI-related: usr/share/mios/mios.toml, usr/share/mios/quickshell/Theme.qml, tools/native/mios-gen/src/global_bindings.rs (keymap-overlay: the Super+Escape rows)
 set -euo pipefail
 
 # Explicit layer overrides bypass the native resolver; defaults use it.
@@ -74,33 +74,26 @@ resolved["hyprbars"] = {
     "alignment": _hbc.get("bar_buttons_alignment", "left"),
     "buttons": [int(b.get("size", 0)) for b in _hb.get("buttons", [])],
 }
-# Keybind map (Super+Escape overlay): every desktop binding with its SSOT label, in render order.
-_h = merged["desktop"]["hyprland"]
-_mod = _h["main_modifier"]
-_acts = merged["keybindings"]["actions"]
-_term = next(a["label"] for a in _acts if a["id"] == "terminal")
-_desk = " + ".join(merged["keybindings"]["desktop_modifier"].split())
-_keymap = [{"keys": f"{_mod} + {k}", "label": _term} for k in ("Q", "Return")]
-_keymap += [{"keys": f"{_mod} + {k}", "label": "App drawer"} for k in _h["launcher_keys"]]
-_keymap += [{"keys": f"{_desk} + {a['key']}", "label": a["label"]} for a in _acts]
-_keymap += [{"keys": ("SUPER (tap)" if b["key"] in ("SUPER + Super_L", "SUPER + Super_R") else b["key"]), "label": b.get("label", b["dispatcher"])} for b in _h["bindings"]]
-# [desktop.screenshot] keybinds (mios-shot), projected into Hyprland by mios-gen render-hyprland.
-_shot = merged["desktop"].get("screenshot", {})
-_keymap += [{"keys": b["key"], "label": b.get("label", "Screenshot")} for b in (_shot.get("bindings", []) if _shot.get("enabled", True) else [])]
-# [desktop.shaderglass] keybinds (miosd shaderglass), projected by mios-gen render-hyprland only while enabled.
-_sg = merged["desktop"].get("shaderglass", {})
-_keymap += [{"keys": b["key"], "label": b.get("label", "ShaderGlass")} for b in (_sg.get("bindings", []) if _sg.get("enabled") is True else [])]
-# [desktop.hyprland.hypr3d] keybinds (SUPER+G keyboard and L3+R3 gamepad controller toggle)
-_h3d = _h.get("hypr3d", {})
-if _h3d.get("enabled", True):
-    _keymap += [{"keys": _h3d.get("toggle_key", "SUPER + G"), "label": "Hypr3D: 3D glass room toggle"}]
-    _ctrl = _h3d.get("controller", {})
-    if _ctrl.get("enabled", True) and merged.get("keybindings", {}).get("controller", {}).get("enabled", True):
-        _keymap += [{"keys": "L3 + R3", "label": "Hypr3D: Gamepad 3D mode toggle"}]
-_keymap += [{"keys": f"{_mod} + 1-{_h['workspace_count'] % 10}", "label": "Switch workspace"},
-            {"keys": f"{_mod} + SHIFT + 1-{_h['workspace_count'] % 10}", "label": "Move window to workspace"}]
-_seen = set()
-resolved["keymap"] = [k for k in _keymap if not ((k["keys"], k["label"]) in _seen or _seen.add((k["keys"], k["label"])))]
+# Keybind map (Super+Escape overlay): generated natively by `mios-gen keymap-overlay` from the same tables
+# render-hyprland binds (compositor bindings with their [keybindings.global] remaps, every global row and its bypass,
+# the controller map). This script only hands it the merged layers; it holds no binding logic of its own.
+def _keymap_overlay():
+    import subprocess
+    gen = os.environ.get("MIOS_GEN") or merged.get("desktop", {}).get("controls", {}).get("mios_gen") or "/usr/bin/mios-gen"
+    try:
+        r = subprocess.run([gen, "keymap-overlay", "--from-json", "-"], input=json.dumps(merged, default=str),
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            rows = json.loads(r.stdout)
+            if isinstance(rows, list) and all(isinstance(k, dict) and {"keys", "label"} <= k.keys() for k in rows):
+                return rows
+        print(f"[mios-sync-theme] WARNING: {gen} keymap-overlay failed (rc={r.returncode}): {r.stderr.strip()[-300:]}", file=sys.stderr)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        print(f"[mios-sync-theme] WARNING: {gen} keymap-overlay: {e}", file=sys.stderr)
+    return []
+
+
+resolved["keymap"] = _keymap_overlay()
 resolved["search_actions"] = [{k: a[k] for k in ("id", "label", "desktop_command")} for a in merged["keybindings"]["actions"]]
 resolved["workspace_count"] = merged["desktop"]["hyprland"]["workspace_count"]
 resolved["launcher"] = merged["desktop"]["hyprland"]["launcher"]

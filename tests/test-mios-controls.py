@@ -137,6 +137,66 @@ class ImportExport(Base):
         self.assertEqual(tomllib.loads(self.user.read_text())['keybindings']['global']['controller']['system_layer'], {'BTN_WEST': 'exec:foot'})
 
 
+class ControllerAudit(Base):
+    """GT (C-34 / C-23 / C-16g): list shows the controller tables, check runs the gate's controller audit over the
+    resolved user projection, and an explicit --root reads that root's vendor tier."""
+
+    NAV = ('[keybindings.global.controller.nav]\nenabled = true\n[keybindings.global.controller.nav.contexts]\n'
+           'desktop-2d = "desktop"\n[keybindings.global.controller.nav.desktop]\n'
+           'BTN_SOUTH = "{south}"\nBTN_EAST = "none"\nBTN_WEST = "none"\nBTN_DPAD_UP = "none"\nBTN_DPAD_DOWN = "none"\n'
+           'BTN_DPAD_LEFT = "none"\nBTN_DPAD_RIGHT = "none"\nLS_UP = "none"\nLS_DOWN = "none"\nLS_LEFT = "none"\n'
+           'LS_RIGHT = "none"\nRS_UP = "none"\nRS_DOWN = "none"\nRS_LEFT = "none"\nRS_RIGHT = "none"\nBTN_TL2 = "none"\n'
+           'BTN_TR2 = "none"\nBTN_SELECT = "none"\nBTN_MODE = "none"\nBTN_THUMBL = "none"\nBTN_THUMBR = "none"\n')
+
+    def test_list_json_carries_the_controller_tables(self):
+        listed = json.loads(self.run_cli('list', '--json').stdout)
+        for k in ['nav', 'room', 'hypr3d', 'toggle_chord', 'mode_override_chord']:
+            self.assertIn(k, listed)
+        vendor = tomllib.loads((ROOT / 'usr/share/mios/mios.toml').read_text())
+        self.assertEqual(listed['toggle_chord'], vendor['desktop']['hyprland']['hypr3d']['controller']['toggle_chord'])
+        self.write_user(self.NAV.format(south='hypr:movefocus down'))
+        listed = json.loads(self.run_cli('list', '--json').stdout)
+        self.assertEqual(listed['nav']['desktop']['BTN_SOUTH'], 'hypr:movefocus down', 'list shows the resolved user projection')
+
+    def test_check_audits_the_user_nav_map(self):
+        # (key:/pointer: join action_namespaces with step I2; the vendor namespaces are used here)
+        self.write_user(self.NAV.format(south='hypr:movefocus down'))
+        r = self.run_cli('check')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.write_user(self.NAV.format(south='bogus'))
+        r = self.run_cli('check')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('BTN_SOUTH: action "bogus" must be <namespace>:<verb>', r.stdout)
+        self.write_user(self.NAV.format(south='hypr:movefocus down').replace('BTN_EAST = "none"\n', ''))
+        r = self.run_cli('check')
+        self.assertIn('desktop-2d (desktop): BTN_EAST unmapped', r.stdout, 'every nav input maps to an action or "none"')
+
+    def test_console_rows_take_console_namespaces_only(self):
+        row = '[[keybindings.global.bindings]]\nid = "vt-x"\ntier = 1\nchord = "SUPER+CTRL+F3"\naction = "{a}"\ncontexts = ["console"]\n'
+        r = self.run_cli('import', str(self._file(row.format(a='hypr:killactive'))))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('cannot run on the console', r.stdout)
+        r = self.run_cli('import', str(self._file(row.format(a='tmux:menu'))))
+        self.assertNotIn('cannot run on the console', r.stdout)
+
+    def test_explicit_root_reads_its_own_vendor_tier(self):
+        scratch = Path(self.tmp.name) / 'root'
+        (scratch / 'usr/share/mios').mkdir(parents=True)
+        text = (ROOT / 'usr/share/mios/mios.toml').read_text()
+        moved = text.replace('toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]', 'toggle_chord = ["BTN_TL", "BTN_TR"]', 1)
+        self.assertNotEqual(moved, text)
+        (scratch / 'usr/share/mios/mios.toml').write_text(moved)
+        env = dict(self.env, MIOS_TOML=str(ROOT / 'usr/share/mios/mios.toml'), MIOS_VENDOR_TOML=str(ROOT / 'usr/share/mios/mios.toml'))
+        r = subprocess.run([str(self.bin), '--root', str(scratch), 'list', '--json'], capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)['toggle_chord'], ['BTN_TL', 'BTN_TR'], 'the session MIOS_TOML must not redirect --root')
+
+    def _file(self, text):
+        p = Path(self.tmp.name) / f'import-{len(text)}-{abs(hash(text))}.toml'
+        p.write_text(text)
+        return p
+
+
 class Tui(Base):
     """The TUI in a private tmux server (never the operator's): renders, navigates and quits."""
 

@@ -409,6 +409,30 @@ fn rows(nodes: &[Node], querying: bool) -> Vec<(Option<Choice>, Line<'static>, S
     out
 }
 
+/// What a key does in the session selector. The controller's nav grammar reaches every entry: D-pad = arrows,
+/// South = Enter, East = Esc, West = Tab (new session).
+#[derive(Debug, PartialEq, Eq)]
+enum SelectorKey {
+    Down,
+    Up,
+    Open,
+    New,
+    Refresh,
+    Shell,
+}
+
+fn selector_key(code: KeyCode) -> Option<SelectorKey> {
+    match code {
+        KeyCode::Down | KeyCode::Char('j') => Some(SelectorKey::Down),
+        KeyCode::Up | KeyCode::Char('k') => Some(SelectorKey::Up),
+        KeyCode::Enter => Some(SelectorKey::Open),
+        KeyCode::Char('n') | KeyCode::Tab => Some(SelectorKey::New),
+        KeyCode::Char('r') => Some(SelectorKey::Refresh),
+        KeyCode::Char('s') | KeyCode::Char('q') | KeyCode::Esc => Some(SelectorKey::Shell),
+        _ => None,
+    }
+}
+
 fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     let guard = TermGuard::arm();
     let mut terminal = ratatui::init();
@@ -458,7 +482,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                     .highlight_symbol("› ");
                 f.render_stateful_widget(list, body, &mut state);
                 f.render_widget(
-                    Paragraph::new("↑↓ select · Enter open · n new here · r refresh · s shell · q quit")
+                    Paragraph::new("↑↓ select · Enter open · n/Tab new here · r refresh · s shell · q quit")
                         .style(Style::default().fg(muted).bg(bg)),
                     help,
                 );
@@ -473,27 +497,27 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
         }
         let selectable: Vec<usize> = table.iter().enumerate().filter(|r| r.1 .0.is_some()).map(|r| r.0).collect();
         let cur = state.selected().unwrap_or(0);
-        match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
+        match selector_key(key.code) {
+            Some(SelectorKey::Down) => {
                 state.select(selectable.iter().copied().find(|&i| i > cur).or(Some(cur)))
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            Some(SelectorKey::Up) => {
                 state.select(selectable.iter().rev().copied().find(|&i| i < cur).or(Some(cur)))
             }
-            KeyCode::Enter => {
+            Some(SelectorKey::Open) => {
                 if let Some(Some(choice)) = table.get(cur).map(|r| r.0.clone()) {
                     break Ok(choice);
                 }
             }
-            KeyCode::Char('n') => break Ok(Choice::New { node: 0 }),
-            KeyCode::Char('r') => {
+            Some(SelectorKey::New) => break Ok(Choice::New { node: 0 }),
+            Some(SelectorKey::Refresh) => {
                 nodes[0] = local_node(c);
                 if pending.is_none() {
                     pending = Some(spawn_remote(c));
                 }
             }
-            KeyCode::Char('s') | KeyCode::Char('q') | KeyCode::Esc => break Ok(Choice::Shell),
-            _ => {}
+            Some(SelectorKey::Shell) => break Ok(Choice::Shell),
+            None => {}
         }
     };
     drop(guard);
@@ -535,6 +559,21 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use super::KeyCode;
+
+    #[test]
+    fn controller_west_tab_opens_a_new_session_and_the_rest_is_unchanged() {
+        assert_eq!(super::selector_key(KeyCode::Tab), Some(super::SelectorKey::New));
+        assert_eq!(super::selector_key(KeyCode::Char('n')), Some(super::SelectorKey::New));
+        // negative controls: Esc still drops to a shell, j/k and the arrows still move, BackTab does nothing
+        assert_eq!(super::selector_key(KeyCode::Esc), Some(super::SelectorKey::Shell));
+        assert_eq!(super::selector_key(KeyCode::Char('j')), Some(super::SelectorKey::Down));
+        assert_eq!(super::selector_key(KeyCode::Char('k')), Some(super::SelectorKey::Up));
+        assert_eq!(super::selector_key(KeyCode::Down), Some(super::SelectorKey::Down));
+        assert_eq!(super::selector_key(KeyCode::Enter), Some(super::SelectorKey::Open));
+        assert_eq!(super::selector_key(KeyCode::BackTab), None);
+    }
+
     #[test]
     fn peer_name_uses_unique_tailnet_name() {
         assert_eq!(super::peer_name("fedora-1.tail1234.ts.net.", "fedora"), "fedora-1");

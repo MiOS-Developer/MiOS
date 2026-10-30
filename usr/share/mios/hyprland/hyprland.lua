@@ -77,15 +77,41 @@ hl.env("XDG_SESSION_TYPE", "wayland")
 hl.env("XDG_SESSION_DESKTOP", "Hyprland")
 hl.env("GTK_MODULES", "unity-gtk-module")
 
--- MiOS global policy: native handles retain app shortcut inhibition by default.
+-- MiOS global policy: native handles retain app shortcut inhibition by default; bypass_mod handles are escapes.
 local mios_native_hl = hl
 local mios_input_handles = {}
+local mios_input_bypass = "SUPER+CTRL"
+local function mios_input_canonical(key)
+ key=key:gsub('%s','')
+ local mods,leaf={},nil
+ for token in key:gmatch('[^+]+') do
+  local u=token:upper()
+  if u=='SUPER' or u=='CTRL' or u=='ALT' or u=='SHIFT' then mods[u]=true else leaf=token:lower() end
+ end
+ local parts={}
+ for _,m in ipairs({'SUPER','CTRL','ALT','SHIFT'}) do if mods[m] then table.insert(parts,m) end end
+ table.insert(parts,leaf or '')
+ return table.concat(parts,'+')
+end
+local function mios_input_is_bypass(key)
+ local c=mios_input_canonical(key)
+ return c:sub(1,#mios_input_bypass+1)==mios_input_bypass..'+'
+end
 local hl = setmetatable({}, {__index=mios_native_hl})
 hl.bind = function(key, dispatcher, flags)
+ local escape = mios_input_is_bypass(key)
+ if escape then
+  local f={}
+  for k,v in pairs(flags or {}) do f[k]=v end
+  f.dont_inhibit=true; f.submap_universal=true; flags=f
+ end
  local handle = mios_native_hl.bind(key, dispatcher, flags)
- if handle then table.insert(mios_input_handles, {handle=handle,key=key,dispatcher=dispatcher,flags=flags}) end
+ if handle then table.insert(mios_input_handles, {handle=handle,key=key,dispatcher=dispatcher,flags=flags,escape=escape}) end
  return handle
 end
+mios_section("virtual-keyboard", function()
+ hl.device({name = "mios-vctl-keyboard", kb_layout = "us"})
+end)
 hl.bind("SUPER + Q", hl.dsp.exec_cmd("alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal"))
 hl.bind("SUPER + Return", hl.dsp.exec_cmd("alacritty -e env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR /usr/libexec/mios/mios-terminal"))
 hl.bind("SUPER + SPACE", hl.dsp.exec_cmd("quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call drawer toggle"))
@@ -130,11 +156,26 @@ mios_section("shaderglass", function()
  hl.bind("SUPER + SHIFT + G", hl.dsp.exec_cmd("/usr/bin/mios-shaderglass cycle"))
  hl.bind("SUPER + ALT + G", hl.dsp.exec_cmd("/usr/bin/mios-shaderglass setup"))
 end)
-for i = 1, 10 do
- local key = i % 10
- hl.bind("SUPER" .. " + " .. key, hl.dsp.focus({ workspace = i }))
- hl.bind("SUPER" .. " + SHIFT + " .. key, hl.dsp.window.move({ workspace = i }))
-end
+hl.bind("SUPER + 1", hl.dsp.focus({ workspace = 1 }))
+hl.bind("SUPER + 2", hl.dsp.focus({ workspace = 2 }))
+hl.bind("SUPER + 3", hl.dsp.focus({ workspace = 3 }))
+hl.bind("SUPER + 4", hl.dsp.focus({ workspace = 4 }))
+hl.bind("SUPER + 5", hl.dsp.focus({ workspace = 5 }))
+hl.bind("SUPER + 6", hl.dsp.focus({ workspace = 6 }))
+hl.bind("SUPER + 7", hl.dsp.focus({ workspace = 7 }))
+hl.bind("SUPER + 8", hl.dsp.focus({ workspace = 8 }))
+hl.bind("SUPER + 9", hl.dsp.focus({ workspace = 9 }))
+hl.bind("SUPER + 0", hl.dsp.focus({ workspace = 10 }))
+hl.bind("SUPER + SHIFT + 1", hl.dsp.window.move({ workspace = 1 }))
+hl.bind("SUPER + SHIFT + 2", hl.dsp.window.move({ workspace = 2 }))
+hl.bind("SUPER + SHIFT + 3", hl.dsp.window.move({ workspace = 3 }))
+hl.bind("SUPER + SHIFT + 4", hl.dsp.window.move({ workspace = 4 }))
+hl.bind("SUPER + SHIFT + 5", hl.dsp.window.move({ workspace = 5 }))
+hl.bind("SUPER + SHIFT + 6", hl.dsp.window.move({ workspace = 6 }))
+hl.bind("SUPER + SHIFT + 7", hl.dsp.window.move({ workspace = 7 }))
+hl.bind("SUPER + SHIFT + 8", hl.dsp.window.move({ workspace = 8 }))
+hl.bind("SUPER + SHIFT + 9", hl.dsp.window.move({ workspace = 9 }))
+hl.bind("SUPER + SHIFT + 0", hl.dsp.window.move({ workspace = 10 }))
 mios_state.binds = true
 mios_section("hypr3d", function()
  hl.unbind("SUPER + F12")
@@ -227,6 +268,7 @@ mios_section("global-input", function()
  local escapes={}
  local capture_fullscreen=true
  local capture_tag="mios-input-captured"
+ local release_tag=""
  policies["SUPER+space"]={contexts={},passthrough={"vm-passthrough"}}
  escapes["SUPER+space"]="SUPER+CTRL+space"
  policies["SUPER+return"]={contexts={},passthrough={"vm-passthrough"}}
@@ -239,20 +281,27 @@ mios_section("global-input", function()
  policies["SUPER+escape"]={contexts={},passthrough={"vm-passthrough"}}
  escapes["SUPER+escape"]="SUPER+CTRL+escape"
  policies["SUPER+CTRL+equal"]={contexts={},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+equal",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'"))
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+equal"}) end
+ local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
+ local b=mios_native_hl.bind("SUPER+CTRL+equal",d,{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+equal",dispatcher=d,escape=true}) end
  policies["SUPER+CTRL+minus"]={contexts={},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+minus",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'"))
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+minus"}) end
+ local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'")
+ local b=mios_native_hl.bind("SUPER+CTRL+minus",d,{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+minus",dispatcher=d,escape=true}) end
  policies["SUPER+CTRL+0"]={contexts={},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+0",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-reset'"))
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+0"}) end
+ local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-reset'")
+ local b=mios_native_hl.bind("SUPER+CTRL+0",d,{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+0",dispatcher=d,escape=true}) end
  policies["SUPER+CTRL+mouse_up"]={contexts={},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+mouse_up",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'"))
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_up"}) end
+ local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
+ local b=mios_native_hl.bind("SUPER+CTRL+mouse_up",d,{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_up",dispatcher=d,escape=true}) end
  policies["SUPER+CTRL+mouse_down"]={contexts={},passthrough={}}
- local b=mios_native_hl.bind("SUPER+CTRL+mouse_down",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'"))
- if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_down"}) end
+ local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-down'")
+ local b=mios_native_hl.bind("SUPER+CTRL+mouse_down",d,{dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+mouse_down",dispatcher=d,escape=true}) end
+ policies["print"]={contexts={},passthrough={"vm-passthrough"}}
+ escapes["print"]="SUPER+CTRL+print"
  policies["SUPER+CTRL+p"]={contexts={"desktop-2d","desktop-3d","vm-passthrough"},passthrough={}}
  local b=mios_native_hl.bind("SUPER+CTRL+p",mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd vm-action toggle_vm_passthrough"),{dont_inhibit=true,submap_universal=true})
  if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+p",escape=true}) end
@@ -288,23 +337,27 @@ mios_section("global-input", function()
  hl.window_rule({name="mios-input-vm-passthrough",match={class="^(looking-glass-client|xfreerdp|wlfreerdp|sdl-freerdp|winapps|virt-manager|remote-viewer|qemu-system-x86_64)$"},tag="+mios-input-vm-passthrough"})
  hl.window_rule({name="mios-input-game",match={class="^(steam_app_.*|gamescope|Waydroid)$"},tag="+mios-input-game"})
  hl.window_rule({name="mios-input-terminal",match={class="^(mios-terminal|Alacritty|kitty|foot)$"},tag="+mios-input-terminal"})
- local function canonical(key)
-  key=key:gsub('%s','')
-  local mods,leaf={},nil
-  for token in key:gmatch('[^+]+') do
-   local u=token:upper()
-   if u=='SUPER' or u=='CTRL' or u=='ALT' or u=='SHIFT' then mods[u]=true else leaf=token:lower() end
-  end
-  local parts={}
-  for _,m in ipairs({'SUPER','CTRL','ALT','SHIFT'}) do if mods[m] then table.insert(parts,m) end end
-  table.insert(parts,leaf or '')
-  return table.concat(parts,'+')
- end
+ local canonical=mios_input_canonical
  local function contains(list,value) for _,v in pairs(list or {}) do if type(v)=='string' and v:gsub('%*$','')==value then return true end end return false end
+ -- THE capture predicate (C-35): fullscreen==2, capture_tag or the room's input_owner capture a window; release_tag
+ -- cancels all three. Class contexts (vm-passthrough, game) are never demoted by it.
+ local function captured(w)
+  if not w then return false end
+  local tags=w.tags or {}
+  if release_tag~='' and contains(tags,release_tag) then return false end
+  if capture_fullscreen and tonumber(w.fullscreen)==2 then return true end
+  if capture_tag~='' and contains(tags,capture_tag) then return true end
+  local p=hl.plugin and hl.plugin.hypr3d
+  if p and p.input_owner then
+   local ok,id=pcall(p.input_owner)
+   if ok and id and id~=0 and tonumber(w.address)==id then return true end
+  end
+  return false
+ end
  local function context()
   local w=hl.get_active_window()
   local tags=w and w.tags or {}
-  if (w and capture_fullscreen and tonumber(w.fullscreen)==2) or contains(tags,capture_tag) then return 'app-capture' end
+  if captured(w) then return 'app-capture' end
   local ok,room=pcall(function() return hl.plugin.hypr3d.active() end)
   if ok and room then return 'desktop-3d' end
   if contains(tags,'mios-input-vm-passthrough') then return 'vm-passthrough' end
@@ -332,7 +385,7 @@ mios_section("global-input", function()
  end
  for _,v in ipairs(extra) do table.insert(mios_input_handles,v) end
  -- Expose read-only status for native integration tests and the global map UI.
- MIOS_INPUT_POLICY={handles=mios_input_handles,context=context,refresh=refresh}
+ MIOS_INPUT_POLICY={handles=mios_input_handles,context=context,captured=captured,refresh=refresh,bypass=mios_input_bypass}
  hl.on('window.active',refresh)
  hl.on('window.class',refresh)
  hl.on('window.fullscreen',refresh)

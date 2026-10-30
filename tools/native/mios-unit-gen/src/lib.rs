@@ -294,9 +294,57 @@ pub fn render_keybindings(ssot: &str) -> Result<BTreeMap<String, String>, UnitGe
         let quote = |c: String| format!("\"{}\"", c.replace('\\', "\\\\").replace('"', "\\\""));
         let next_cmd = quote(bound("o", "select-pane -t :.+"));
         let view_cmd = quote(bound("f", "resize-pane -Z"));
-        let menu = format!(
-            "display-menu -T 'MiOS' -t = -x M -y M 'Next pane' o {next_cmd} 'Zoom' z 'resize-pane -Z' 'Compact / auto view' f {view_cmd} 'Copy / scroll' y 'copy-mode -e' 'New window' t 'new-window' 'Detach' d 'detach-client'"
+        let items = format!(
+            "'Next pane' o {next_cmd} 'Zoom' z 'resize-pane -Z' 'Compact / auto view' f {view_cmd} 'Copy / scroll' y 'copy-mode -e' 'New window' t 'new-window' 'Detach' d 'detach-client'"
         );
+        let menu = format!("display-menu -T 'MiOS' -t = -x M -y M {items}");
+        let tmux_table = config_value(config, "keybindings", "tmux")?;
+        // The same menu as a server command alias, centred and without the mouse target, so a controller (Guide tap
+        // on a VT) or any client opens it by name without a prefix key: `tmux -L <socket> mios-menu`.
+        if let Some(alias) = tmux_table.get("menu_alias").and_then(toml::Value::as_str).filter(|a| !a.is_empty()) {
+            if !alias.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+                return Err(UnitGenError::GoldenMaster(format!(
+                    "[keybindings.tmux].menu_alias must be [a-z0-9-]: {alias}"
+                )));
+            }
+            let index = tmux_table
+                .get("menu_alias_index")
+                .and_then(toml::Value::as_integer)
+                .filter(|i| (6..=999).contains(i))
+                .ok_or_else(|| {
+                    UnitGenError::GoldenMaster(
+                        "[keybindings.tmux].menu_alias_index must be 6..=999 (tmux ships 0-5)".into(),
+                    )
+                })?;
+            tmux += &format!(
+                "set -s command-alias[{index}] {}\n",
+                quote(format!("{alias}=display-menu -T 'MiOS' -x C -y C {items}"))
+            );
+        }
+        // Mouse reporting on client terminals whose terminfo lacks it (the Linux VT with gpm): the "mouse" feature.
+        let mouse_terms = tmux_table
+            .get("mouse_terms")
+            .and_then(toml::Value::as_array)
+            .map(|a| a.iter().map(|t| t.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>())
+            .unwrap_or(Some(Vec::new()))
+            .ok_or_else(|| UnitGenError::GoldenMaster("[keybindings.tmux].mouse_terms must be strings".into()))?;
+        if !mouse_terms.is_empty() && config_bool(config, "keybindings", "mouse")? {
+            let base = tmux_table
+                .get("mouse_features_index")
+                .and_then(toml::Value::as_integer)
+                .filter(|i| (0..=999).contains(i))
+                .ok_or_else(|| {
+                    UnitGenError::GoldenMaster("[keybindings.tmux].mouse_features_index must be 0..=999".into())
+                })?;
+            for (i, term) in mouse_terms.iter().enumerate() {
+                if term.is_empty() || !term.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_*.+".contains(&b)) {
+                    return Err(UnitGenError::GoldenMaster(format!(
+                        "[keybindings.tmux].mouse_terms invalid terminal pattern: {term}"
+                    )));
+                }
+                tmux += &format!("set -s terminal-features[{}] \"{term}:mouse\"\n", base + i as i64);
+            }
+        }
         if config_bool(config, "keybindings", "mouse")? {
             // Resolve mouse_any_flag after selecting the clicked pane: using the previously
             // active pane would route another pane's right-click to the wrong owner.
@@ -1106,6 +1154,56 @@ mod tests {
         let disabled_tmux = &disabled["usr/share/mios/tmux/mios-keys.tmux.conf"];
         assert!(!disabled_tmux.contains("set -g mouse on"));
         assert!(!disabled_tmux.contains("bind-key -T root MouseDown3"));
+    }
+
+    fn tmux_conf(doc: &toml::Value) -> Result<String, String> {
+        super::render_keybindings(&toml::to_string(doc).unwrap())
+            .map(|p| p["usr/share/mios/tmux/mios-keys.tmux.conf"].clone())
+            .map_err(|e| e.to_string())
+    }
+
+    /// U1 C-10': the MiOS menu is a centred command alias with exactly the MouseDown3 items; a planted non-mobile
+    /// prefix key (PPage) is still rejected and the mouse menu bindings are unchanged.
+    #[test]
+    fn menu_alias_carries_the_mouse_menu_items() {
+        let doc: toml::Value = toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let tmux = tmux_conf(&doc).unwrap();
+        let alias = tmux.lines().find(|l| l.starts_with("set -s command-alias[100] \"mios-menu=display-menu -T 'MiOS' -x C -y C ")).expect("menu alias");
+        let mouse = tmux.lines().find(|l| l.starts_with("bind-key -T root MouseDown3Status ")).unwrap();
+        let mouse_items = mouse.split_once("-x M -y M ").unwrap().1;
+        let alias_items = alias.split_once("-x C -y C ").unwrap().1.strip_suffix('"').unwrap().replace("\\\"", "\"");
+        assert_eq!(alias_items, mouse_items, "alias and MouseDown3 menu share one item list");
+        assert!(!alias.contains("-t ="), "the alias has no mouse target");
+        assert!(tmux.contains("bind-key -T root MouseDown3Pane select-pane -t = \\; if-shell -F '#{mouse_any_flag}' { send-keys -M } { display-menu -T 'MiOS' -t = -x M -y M"));
+        let mut off = doc.clone();
+        off["keybindings"]["tmux"]["menu_alias"] = toml::Value::String(String::new());
+        assert!(!tmux_conf(&off).unwrap().contains("command-alias"), "an empty alias emits nothing");
+        let mut bad = doc.clone();
+        bad["keybindings"]["tmux"]["menu_alias"] = toml::Value::String("mios menu;kill-server".into());
+        assert!(tmux_conf(&bad).unwrap_err().contains("menu_alias must be"));
+        let mut slot = doc.clone();
+        slot["keybindings"]["tmux"]["menu_alias_index"] = toml::Value::Integer(3);
+        assert!(tmux_conf(&slot).unwrap_err().contains("menu_alias_index"), "never overwrite tmux's own aliases");
+        let mut ppage = doc.clone();
+        let row: toml::Value = toml::from_str("key = 'PPage'\ncommand = 'copy-mode -u'").unwrap();
+        ppage["keybindings"]["tmux"]["bindings"].as_array_mut().unwrap().push(row);
+        assert!(tmux_conf(&ppage).unwrap_err().contains("non-mobile key: PPage"));
+    }
+
+    /// U1 C-18: mouse_terms gives the Linux VT the tmux mouse feature; without it (or with mouse off) nothing changes.
+    #[test]
+    fn mouse_terms_add_the_mouse_terminal_feature() {
+        let doc: toml::Value = toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        assert!(tmux_conf(&doc).unwrap().contains("set -s terminal-features[130] \"linux:mouse\"\n"));
+        let mut none = doc.clone();
+        none["keybindings"]["tmux"].as_table_mut().unwrap().remove("mouse_terms");
+        assert!(!tmux_conf(&none).unwrap().contains(":mouse\""));
+        let mut off = doc.clone();
+        off["keybindings"]["mouse"] = toml::Value::Boolean(false);
+        assert!(!tmux_conf(&off).unwrap().contains(":mouse\""), "the mouse master toggle wins");
+        let mut bad = doc.clone();
+        bad["keybindings"]["tmux"]["mouse_terms"] = toml::Value::Array(vec![toml::Value::String("linux\" ; run-shell x".into())]);
+        assert!(tmux_conf(&bad).unwrap_err().contains("invalid terminal pattern"));
     }
 
     #[test]

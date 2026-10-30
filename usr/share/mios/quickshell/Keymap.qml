@@ -1,7 +1,8 @@
 // AI-hint: Super+Escape keybind map: a centered glass overlay listing every desktop binding with its
-// SSOT label (Theme.keymap, built by mios-sync-theme from [desktop.hyprland] bindings, launcher and
-// terminal keys and [keybindings] actions). Escape or Super+Escape closes it.
-// AI-related: usr/share/mios/mios.toml [desktop.hyprland].bindings, usr/libexec/mios/mios-sync-theme
+// SSOT label (Theme.keymap: `mios-gen keymap-overlay`, written into theme.json by mios-sync-theme, from
+// [desktop.hyprland] bindings, launcher and terminal keys, [keybindings] actions, the [keybindings.global] rows with
+// their bypass chords and the controller map). Escape or Super+Escape closes it.
+// AI-related: usr/share/mios/mios.toml [desktop.hyprland].bindings, tools/native/mios-gen/src/global_bindings.rs, usr/libexec/mios/mios-sync-theme
 import QtQuick
 import Quickshell as QS
 import Quickshell.Io
@@ -29,7 +30,8 @@ QS.PanelWindow {
 
     Rectangle {
         id: card
-        readonly property int columns: 2
+        // Two columns, plus one per 24 rows, so the generated map (keyboard + controller) fits the output height.
+        readonly property int columns: Math.max(2, Math.ceil((keymap.theme.keymap || []).length / 24))
         implicitWidth: grid.implicitWidth + 4 * keymap.theme.edgeMargin
         implicitHeight: title.implicitHeight + grid.implicitHeight + 6 * keymap.theme.edgeMargin
         radius: Math.min(keymap.theme.radius, 28)
