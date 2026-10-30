@@ -34,8 +34,12 @@ def sha(p):
 
 
 def primary():
+    """The primary compositor pid and the OPERATOR's document-portal mount count ($XDG_RUNTIME_DIR/doc). Other
+    sessions' portal mounts share this mount namespace and come and go, so only the operator's mount point counts."""
     pid = sh(['pgrep', '-x', 'Hyprland', '-o']).stdout.strip()
-    return pid, open('/proc/self/mountinfo').read().count('fuse.portal')
+    doc = os.path.join(os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'doc')
+    mounts = [l.split() for l in open('/proc/self/mountinfo')]
+    return pid, sum(1 for m in mounts if len(m) > 4 and m[4] == doc and 'fuse.portal' in m)
 
 
 class Nested:
