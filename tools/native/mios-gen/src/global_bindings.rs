@@ -134,16 +134,16 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
         let flags=if escape {",{dont_inhibit=true,submap_universal=true}"} else {""};
         // C-22: the literal bind on this chord realizes the row -> no second handle. A literal that runs a different
         // action would make the row dead (no handle of its own) and hide the collision, so it is an error (D1).
-        // Every literal on the chord must be the row's realization: one foreign literal is a second action on the key.
+        // A second, foreign literal beside the realizing one is a collision the gate reports (keybind-collisions);
+        // the row itself is live through its realization.
         let realized=match bound.get(&chord) {
             None => false,
-            Some(dispatchers) if dispatchers.iter().all(|d| realizes(data,binding,d)) => true,
+            Some(dispatchers) if dispatchers.iter().any(|d| realizes(data,binding,d)) => true,
             Some(dispatchers) => {
                 let id=binding.get("id").and_then(Value::as_str).unwrap_or("?");
                 let action=binding.get("action").and_then(Value::as_str).unwrap_or("?");
                 if binding.get("tier").and_then(Value::as_integer)!=Some(2) {
-                    let foreign=dispatchers.iter().filter(|d| !realizes(data,binding,d)).cloned().collect::<Vec<_>>();
-                    return Err(format!("[keybindings.global] {id}: chord {chord} is already bound by the compositor to {} (not {action}); choose a free chord", foreign.join(" and ")));
+                    return Err(format!("[keybindings.global] {id}: chord {chord} is already bound by the compositor to {} (not {action}); choose a free chord", dispatchers.join(" and ")));
                 }
                 false
             }

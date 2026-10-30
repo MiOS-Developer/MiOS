@@ -88,6 +88,33 @@ class Validation(Base):
             self.assertEqual(r.returncode, 0, 'negative control: the pre-fix editor + generator accept the dead row\n' + r.stdout + r.stderr)
             self.assertIn('0 finding(s)', r.stdout)
 
+    def test_exec_row_on_an_unrelated_literal_chord_is_rejected(self):
+        # V1 (generators verify, round 2): an exec:<prog> row on a chord whose literal merely MENTIONS the program
+        # (CTRL+ALT+SHIFT+m runs `alacritty -e ... mios-terminal --action system`) was taken as realized: no dispatch
+        # handle, 0 findings, and --apply wrote the dead row. The literals come from [keybindings.actions] and the
+        # terminal/launcher keys, not the compositor tables. Positive control: the same row on a free chord.
+        probes = [('exec:alacritty', 'CTRL+ALT+SHIFT+m'), ('exec:mios-terminal', 'CTRL+ALT+SHIFT+a'),
+                  ('exec:quickshell', 'SUPER+R'), ('exec:env', 'SUPER+Q')]
+        for action, chord in probes:
+            r = self.run_cli('set', 'session-scale-up', '--action', action, '--chord', chord, '--passthrough', 'vm-passthrough', '--apply')
+            self.assertNotEqual(r.returncode, 0, f'{action} on {chord}\n' + r.stdout + r.stderr)
+            self.assertIn('session-scale-up: chord', r.stdout + r.stderr)
+            self.assertIn(f'(not {action})', r.stdout + r.stderr)
+            self.assertFalse(self.user.exists(), 'a rejected draft is never written, even with --apply')
+        r = self.run_cli('set', 'session-scale-up', '--action', 'exec:alacritty', '--chord', 'CTRL+ALT+SHIFT+F9', '--passthrough', 'vm-passthrough')
+        self.assertEqual(r.returncode, 0, 'positive control: a free chord validates\n' + r.stdout + r.stderr)
+        old_gen, old_bin = os.environ.get('MIOS_GEN_OLD'), os.environ.get('MIOS_CONTROLS_OLD')
+        draft = ['set', 'session-scale-up', '--action', 'exec:alacritty', '--chord', 'CTRL+ALT+SHIFT+m', '--passthrough', 'vm-passthrough']
+        if old_gen:
+            # The gate (compiled into this editor) flags the row on its own when the generator still drops it.
+            r = subprocess.run([str(self.bin), '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn('session-scale-up: realized_by hyprland on CTRL+ALT+SHIFT+m but hyprland.lua binds that chord to', r.stdout)
+        if old_gen and old_bin:
+            r = subprocess.run([old_bin, '--root', str(ROOT), *draft], capture_output=True, text=True, timeout=120, env=dict(self.env, MIOS_GEN=old_gen))
+            self.assertEqual(r.returncode, 0, 'negative control: the pre-fix editor + generator accept the dead row\n' + r.stdout + r.stderr)
+            self.assertIn('0 finding(s)', r.stdout)
+
     def test_reserved_terminal_chord_is_rejected(self):
         r = self.run_cli('add', 'steal-ctrl-c', '--chord', 'CTRL+c', '--action', 'exec:true', '--contexts', 'terminal')
         self.assertEqual(r.returncode, 1, r.stdout)
