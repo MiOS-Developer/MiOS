@@ -505,8 +505,10 @@ def theatre(nest, label, cand):
     # MIOS_PIP_GRAVITY_TRACE=1 the daemon logs every natural-size update; none may come from the room's close.
     drift = [l for l in (log.read_bytes()[mark:].decode(errors='replace').splitlines() if TRACE and log.exists() else []) if 'natural size' in l]
     if label == 'prefix':
-        check(f'[{label}] NEGATIVE CONTROL: the pre-fix daemon takes the room close frames for operator resizes', drift, f'{len(drift)} natural-size updates')
-        print(f'OBSERVED [{label}] Theatre: neighbours moved={others} layout restored={g1 == g0}', flush=True)
+        # Recorded, not asserted: Hypr3D animates the windows back on close only in some runs (after the earlier
+        # phases; not in a fresh Theatre-only session), so the pre-fix drift is not reproducible on demand. The
+        # deterministic negative control is track_tests (the release on the first flat tick fails them).
+        print(f'OBSERVED [{label}] NEGATIVE CONTROL: pre-fix room-exit natural-size updates={len(drift)} neighbours moved={others} layout restored={g1 == g0}', flush=True)
         return
     if cand and TRACE:
         check(f'[{label}] leaving the room and the Theatre restore never change a natural size', not drift, drift[:3])
