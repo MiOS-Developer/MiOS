@@ -21,11 +21,13 @@ QS.ShellRoot {
         property var topbarConfig: ({})
         property var topbarOptions: []
         property string topbarError: ""
+        // MIOS_NESTED_TOPBAR_ITEMS (comma list) lets a development session show more island items (live tests).
+        readonly property var topbarItems: (QS.Quickshell.env("MIOS_NESTED_TOPBAR_ITEMS") || "clock,fps,workspaces").split(",").map(s => s.trim())
         property var frameOutputs: []
         property var frameWindow: null
         property bool windowFpsShown: true   // [desktop.topbar] window_fps
         property int sampleMs: 1000          // [desktop.topbar] sample_interval_ms
-        function topbarShown(key) { return ["clock", "fps", "workspaces"].indexOf(key) >= 0 }
+        function topbarShown(key) { return topbarItems.indexOf(key) >= 0 }
         // This session's own compositor (mios-pacing in the nested Hyprland): its output rate and its focused window's.
         function fpsFor(name) {
             for (const output of frameOutputs) if (output.name === name && isFinite(output.rendered_fps)) return Math.round(output.rendered_fps)
@@ -99,6 +101,9 @@ QS.ShellRoot {
                 onTriggered: Hyprland.refreshMonitors()
             }
             MiOS.EdgeReveal { id: reveal; screen: modelData }
+            // The focused app's exported menus as glass pills (AppMenu.qml, appmenu.json in this session's runtime);
+            // shown only when MIOS_NESTED_TOPBAR_ITEMS lists app_menu (topbarShown), like the desktop shell's Config.qml.
+            MiOS.AppMenu { screen: modelData; shellState: state; reveal: reveal }
             MiOS.PanelWindow { id: nestedBar; viewportWidth: outputScope.viewportWidth; screen: modelData; shellState: state; reveal: reveal }
             MiOS.Sidebar { id: nestedDock; viewportWidth: outputScope.viewportWidth; screen: modelData; shellState: state; reveal: reveal }
             MiOS.Search { screen: modelData; outputName: modelData.name; shellState: state }

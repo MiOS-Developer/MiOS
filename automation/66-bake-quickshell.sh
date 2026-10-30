@@ -68,6 +68,17 @@ for attempt in 1 2 3; do
         mios_log "Quickshell ${PIN_REF}: carried the HyprlandToplevel update-group fix"
     fi
 
+    # Hyprland closes the event socket of a client that falls behind during an event storm (PeerClosedError); upstream
+    # Quickshell then never reconnects and the shell stops seeing fullscreen/workspace/window events (the HUD no longer
+    # hides under fullscreen windows). Carry the reconnect-and-resync fix until upstream has its own.
+    reconnect_patch="${SCRIPT_DIR}/../src/quickshell/patches/hyprland-event-socket-reconnect.patch"
+    [[ -f "$reconnect_patch" ]] || reconnect_patch="/src/quickshell/patches/hyprland-event-socket-reconnect.patch"
+    if ! grep -q 'eventReconnecting\|scheduleEventReconnect' "$BUILD_DIR/src/wayland/hyprland/ipc/connection.cpp" 2>/dev/null; then
+        git -C "$BUILD_DIR" apply --verbose "$reconnect_patch" \
+            || { mios_err "Quickshell ${PIN_REF}: the carried Hyprland event-socket reconnect fix no longer applies"; exit 1; }
+        mios_log "Quickshell ${PIN_REF}: carried the Hyprland event-socket reconnect fix"
+    fi
+
     # Hermetic pkgconfig for GBM if gbm.pc is absent from host
     if ! pkg-config --exists gbm 2>/dev/null && [[ -e /usr/lib64/libgbm.so.1 ]]; then
         mkdir -p "$BUILD_DIR/pkgconfig"

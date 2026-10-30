@@ -479,11 +479,65 @@ QS.PanelWindow {
         case UPowerDeviceType.Pen: return "\u{f03eb}"
         case UPowerDeviceType.BluetoothGeneric: return "\u{f00af}"
         case UPowerDeviceType.Ups: return "\u{f06a5}"
-        default:
-            if (d.state === UPowerDeviceState.Charging) return "\u{f0084}"
-            const level = Math.max(0, Math.min(10, Math.round(d.percentage * 10)))
-            return level >= 10 ? "\u{f0079}" : level <= 0 ? "\u{f008e}" : String.fromCodePoint(0xf0079 + level)
+        default: return batteryLevelIcon(d)
         }
+    }
+    // The charge as a battery glyph (md battery-10 .. battery, battery-outline when empty, charging bolt battery while
+    // charging). A laptop/system battery is shown by this glyph alone; every other device (controller, mouse, headset,
+    // phone ...) by its device glyph followed by this one, so the kind and the level read at a glance.
+    function batteryLevelIcon(d) {
+        if (d.state === UPowerDeviceState.Charging) return "\u{f0084}"
+        const level = Math.max(0, Math.min(10, Math.round(d.percentage * 10)))
+        return level >= 10 ? "\u{f0079}" : level <= 0 ? "\u{f008e}" : String.fromCodePoint(0xf007a + level - 1)
+    }
+    function batteryIsSystem(d) { return d.type === UPowerDeviceType.Battery || d.type === UPowerDeviceType.Unknown }
+    function batteryGlyphs(d) { return batteryIsSystem(d) ? batteryLevelIcon(d) : batteryIcon(d) + " " + batteryLevelIcon(d) }
+
+    // ---- scroll volume ([desktop.topbar] volume_scroll*, volume_osd_ms) ------------------------------------------------
+    // The wheel anywhere on the island steps the default sink's volume (one step per wheel notch; high-resolution
+    // wheels and touchpads accumulate to a notch). Every volume or mute change -- the wheel, a media key, another app --
+    // shows the level as a percentage chip in the island for volume_osd_ms, also when the sound item is hidden
+    // ([desktop.topbar.visibility] sound = false); while the sound item is shown its own percentage carries it.
+    readonly property bool volumeScroll: bar.volume_scroll !== false
+    readonly property real volumeStepPct: bar.volume_scroll_step_pct > 0 ? bar.volume_scroll_step_pct : 5
+    readonly property real volumeMax: (bar.volume_max_pct > 0 ? bar.volume_max_pct : 100) / 100
+    readonly property int volumeOsdMs: bar.volume_osd_ms !== undefined ? bar.volume_osd_ms : 1500
+    readonly property int volumePct: sink && sink.audio ? Math.round(sink.audio.volume * 100) : -1
+    readonly property bool volumeMuted: !!(sink && sink.audio && sink.audio.muted)
+    property bool volumeOsd: false
+    property int volumeSeen: -1          // last level seen: the first reading (startup, a sink change) shows nothing
+    property string volumeSeenSink: ""
+    property real volumeWheelAcc: 0
+    Timer { id: volumeOsdHide; interval: Math.max(1, pill.volumeOsdMs); onTriggered: pill.volumeOsd = false }
+    function showVolumeOsd() { if (volumeOsdMs > 0) { volumeOsd = true; volumeOsdHide.restart() } }
+    function volumeChanged() {
+        const id = sink ? String(sink.id) : ""
+        if (volumePct >= 0 && volumeSeen >= 0 && id === volumeSeenSink) showVolumeOsd()
+        volumeSeen = volumePct
+        volumeSeenSink = id
+    }
+    onVolumePctChanged: volumeChanged()
+    onVolumeMutedChanged: volumeChanged()
+    function volumeIcon(pct, muted) {
+        return muted || pct <= 0 ? "\u{f075f}" : pct < 34 ? "\u{f057f}" : pct < 67 ? "\u{f0580}" : "\u{f057e}"
+    }
+    readonly property string volumeText: volumePct < 0 ? "" : volumeIcon(volumePct, volumeMuted) + " " + (volumeMuted ? "muted" : volumePct + "%")
+    // One wheel event (angleDelta.y, 120 per notch); returns the new level in percent, -1 when nothing changed.
+    function volumeWheel(deltaY) {
+        if (!volumeScroll || !sink || !sink.audio || !deltaY) return -1
+        volumeWheelAcc += deltaY
+        const notches = volumeWheelAcc > 0 ? Math.floor(volumeWheelAcc / 120) : Math.ceil(volumeWheelAcc / 120)
+        if (notches === 0) return -1
+        volumeWheelAcc -= notches * 120
+        // Wheel-up never lowers the level: a sink another app set above volume_max_pct stays where it is (up only
+        // unmutes it); wheel-down steps down from wherever it is.
+        const current = sink.audio.volume
+        const stepped = Math.round(current * 100 + notches * volumeStepPct) / 100
+        const next = notches > 0 ? Math.max(current, Math.min(volumeMax, stepped)) : Math.max(0, Math.min(current, stepped))
+        if (sink.audio.muted && notches > 0) sink.audio.muted = false
+        if (next !== current) sink.audio.volume = next
+        showVolumeOsd()
+        return Math.round(next * 100)
     }
     readonly property bool online: Networking.devices.values.some(d => d.connected)
 
@@ -552,6 +606,12 @@ QS.PanelWindow {
             radius: Glass.cornerFor(height)
             color: Glass.fill
             HoverHandler { onHoveredChanged: if (pill.reveal) pill.reveal.islandHovered = hovered }
+            // The wheel anywhere on the island steps the volume (items with their own wheel action keep it).
+            WheelHandler {
+                enabled: pill.volumeScroll
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: event => { event.accepted = pill.volumeWheel(event.angleDelta.y) >= 0 || !!pill.sink }
+            }
 
             Row {
                 id: row
@@ -573,19 +633,15 @@ QS.PanelWindow {
                 Glyph {
                     id: soundGlyph
                     visible: !pill.mobile && pill.shown("sound") && !!pill.sink && !!pill.sink.audio
-                    text: !pill.sink || !pill.sink.audio ? "" :
-                          (pill.sink.audio.muted ? "\u{f075f}" : "\u{f057e}") + " " + Math.round(pill.sink.audio.volume * 100) + "%"
+                    text: pill.volumeText
+                    font.bold: pill.volumeOsd
                     Accessible.name: !pill.sink || !pill.sink.audio ? "Sound" : "Volume " + Math.round(pill.sink.audio.volume * 100) + "%"
                     Hit {
                         onClicked: mouse => {
                             if (mouse.button === Qt.RightButton && pill.sink.audio) pill.sink.audio.muted = !pill.sink.audio.muted
                             else pill.run("sound")
                         }
-                        onWheel: wheel => {
-                            if (!pill.sink.audio) return
-                            const step = wheel.angleDelta.y > 0 ? 0.05 : -0.05
-                            pill.sink.audio.volume = Math.max(0, Math.min(1, pill.sink.audio.volume + step))
-                        }
+                        onWheel: wheel => pill.volumeWheel(wheel.angleDelta.y)
                     }
                 }
                 Row {
@@ -596,8 +652,7 @@ QS.PanelWindow {
                         model: pill.shown("batteries") ? pill.batteryDevices : []
                         delegate: Glyph {
                             required property var modelData
-                            text: pill.batteryIcon(modelData) + " " + Math.round(modelData.percentage * 100) + "%"
-                                + (modelData.type !== UPowerDeviceType.Battery && modelData.state === UPowerDeviceState.Charging ? " \u{f0e7}" : "")
+                            text: pill.batteryGlyphs(modelData) + " " + Math.round(modelData.percentage * 100) + "%"
                             textFormat: Text.PlainText
                             Accessible.name: pill.batteryName(modelData) + ", " + Math.round(modelData.percentage * 100) + "%"
                             color: modelData.state === UPowerDeviceState.Charging ? pill.theme.success : pill.theme.fg
@@ -664,6 +719,27 @@ QS.PanelWindow {
                     Hit { onClicked: pill.popup = pill.popup === "power" ? "" : "power" }
                 }
 
+            }
+            // The scroll-volume percentage: a chip of the island's own glass centred over the row, shown for
+            // volume_osd_ms after every volume or mute change while the sound item (which carries the level itself)
+            // is hidden or the island is too narrow for it (mobile). Above the row so a crowded row never hides it.
+            Rectangle {
+                id: volumeChip
+                visible: pill.volumeOsd && pill.volumePct >= 0 && (!soundGlyph.visible || pill.mobile)
+                anchors.centerIn: parent
+                height: parent.height - 4
+                width: Math.min(parent.width - 4, volumeChipText.implicitWidth + 2 * pill.theme.edgeMargin + 8)
+                radius: Glass.cornerFor(height)
+                color: pill.theme.withAlpha(Glass.fillHex, pill.theme.notificationOpacity)
+                Glyph {
+                    id: volumeChipText
+                    anchors.centerIn: parent
+                    text: pill.volumeText
+                    font.bold: true
+                    color: pill.theme.fg
+                    Accessible.name: "Volume " + (pill.volumeMuted ? "muted" : pill.volumePct + "%")
+                }
+                Hit { onClicked: pill.run("sound") }
             }
         }
         Tab {
@@ -868,6 +944,8 @@ QS.PanelWindow {
         function openSysmon(): void { pill.popup = "sysmon" }
         function openSettings(): void { pill.popup = "settings" }
         function openBatteries(): void { pill.popup = "batteries" }
+        // The island's wheel handler, headlessly (angleDelta.y; 120 = one notch up): returns the new level or -1.
+        function volumeWheel(deltaY: int): int { return pill.volumeWheel(deltaY) }
         function reloadSettings(): void { if (typeof pill.shellState.saveNextTopbar === "function") pill.shellState.saveNextTopbar() }
         function showItem(key: string, shown: bool): void { if (typeof pill.shellState.setTopbarShown === "function") pill.shellState.setTopbarShown(key, shown) }
         function close(): void { pill.popup = "" }
@@ -878,7 +956,12 @@ QS.PanelWindow {
                                     window_fps: pill.windowFps, fps_text: fpsGlyph.visible ? fpsGlyph.text : "",
                                     fps_source: pill.remoteFrames ? "rdp-delivered" : "compositor",
                                     visibility: pill.shellState.topbarConfig ? pill.shellState.topbarConfig.visibility : ({}),
-                                    batteries: pill.batteryDevices.map(d => ({name: pill.batteryName(d), kind: pill.batteryKind(d), icon: pill.batteryIcon(d), percentage: Math.round(d.percentage * 100)})),
+                                    batteries: pill.batteryDevices.map(d => ({name: pill.batteryName(d), kind: pill.batteryKind(d), icon: pill.batteryIcon(d),
+                                                                               level_icon: pill.batteryLevelIcon(d), glyphs: pill.batteryGlyphs(d),
+                                                                               percentage: Math.round(d.percentage * 100)})),
+                                    volume: { percent: pill.volumePct, muted: pill.volumeMuted, osd: pill.volumeOsd, text: pill.volumeText,
+                                              chip: volumeChip.visible, sound_item: soundGlyph.visible, scroll: pill.volumeScroll,
+                                              step_pct: pill.volumeStepPct, osd_ms: pill.volumeOsdMs, sink: pill.sink ? String(pill.sink.name) : "" },
                                     batteries_rect: batteriesPanel.toScreenRect,
                                     hud: { x: pill.hudScreenX, width: pill.width, alignment: pill.hudAlignment, shown: pill.visible,
                                            autohide: !!pill.reveal && pill.reveal.topActive, layer: pill.WlrLayershell.layer,
@@ -975,8 +1058,8 @@ QS.PanelWindow {
                         id: deviceIcon
                         x: pill.theme.edgeMargin
                         anchors.verticalCenter: parent.verticalCenter
-                        width: pill.theme.topHeight
-                        text: pill.batteryIcon(batteryRow.modelData)
+                        width: Math.max(pill.theme.topHeight, implicitWidth + pill.theme.edgeMargin)
+                        text: pill.batteryGlyphs(batteryRow.modelData)
                         color: batteryRow.modelData.state === UPowerDeviceState.Charging ? pill.theme.success : pill.theme.fg
                     }
                     Column {
