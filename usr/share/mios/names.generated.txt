@@ -5146,6 +5146,7 @@ desktop.topbar.week_starts_on  MIOS_DESKTOP_TOPBAR_WEEK_STARTS_ON
 desktop.topbar.app_menu  MIOS_DESKTOP_TOPBAR_APP_MENU
 desktop.topbar.popup_ms  MIOS_DESKTOP_TOPBAR_POPUP_MS
 desktop.topbar.sample_interval_ms  MIOS_DESKTOP_TOPBAR_SAMPLE_INTERVAL_MS
+desktop.topbar.window_fps  MIOS_DESKTOP_TOPBAR_WINDOW_FPS
 desktop.topbar.fullscreen_reveal  MIOS_DESKTOP_TOPBAR_FULLSCREEN_REVEAL
 desktop.topbar.fullscreen_reveal_px  MIOS_DESKTOP_TOPBAR_FULLSCREEN_REVEAL_PX
 desktop.topbar.fullscreen_hide_delay_ms  MIOS_DESKTOP_TOPBAR_FULLSCREEN_HIDE_DELAY_MS

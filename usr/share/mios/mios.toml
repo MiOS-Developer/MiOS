@@ -10636,6 +10636,10 @@ week_starts_on  = 1               # calendar first weekday: 0 = Sunday, 1 = Mond
 app_menu        = true            # focused app's exported menu (GTK org.gtk.Menus / dbusmenu) when one exists
 popup_ms        = 200             # shell popups (calendar, power, app-menu dropdowns) grow out of their trigger over this long
 sample_interval_ms = 1000         # one shared FPS / ShaderGlass sampler for all islands
+# The fps item reads "<output> FPS/<window> FPS": the output's rendered rate beside the focused window's own committed
+# frame rate (mios-pacing's focused-window meter: buffer commits with damage of the window's surface tree, in 2D and
+# Hypr3D, nested sessions included); the window part shows on the island of the window's output and hides when unknown.
+window_fps = true                 # false = the output rate alone
 # Under a fullscreen window the status island and app-menu pills hide and reserve nothing; touching the
 # top screen edge reveals them as overlays above the window until the pointer leaves (EdgeReveal.qml).
 fullscreen_reveal          = true   # false = they stay hidden under fullscreen windows
@@ -17062,6 +17066,8 @@ unit = [
     "tests/test-hypr3d-controller.py",
     "tests/test-hypr3d-room-input.py",
     "tests/test-hypr3d-room-input-live.py",
+    "tests/test-window-fps.py",
+    "tests/test-window-fps-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",
