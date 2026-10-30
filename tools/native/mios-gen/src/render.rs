@@ -4134,11 +4134,12 @@ end
         };
         let explicit = explicit_scales(data)?;
         // The tile rule is made when an output appears, after every static rule, so its `tile` would override
-        // the float + pin the ShaderGlass pane rule sets ([desktop.shaderglass.window].class): that class is
-        // never matched (Hyprland's "negative:" regex).
+        // the float + pin the ShaderGlass pane rule sets ([desktop.shaderglass.window].class): while the overlay
+        // is enabled (its rules are projected), that class is never matched (Hyprland's "negative:" regex).
         let tile_match = match data
             .get("desktop")
             .and_then(|d| d.get("shaderglass"))
+            .filter(|s| s.get("enabled").and_then(Value::as_bool) == Some(true))
             .and_then(|s| s.get("window"))
             .and_then(|w| w.get("class"))
             .and_then(Value::as_str)
@@ -4365,6 +4366,10 @@ end
             let mut no_sg = vendor();
             no_sg["desktop"].as_table_mut().unwrap().remove("shaderglass");
             assert!(mobile_profile(&no_sg).unwrap().contains("match = {workspace = sel, float = false}, tile = true"));
+            // A disabled overlay projects no ShaderGlass rule, and the tile rule names no ShaderGlass class either.
+            let mut off = vendor();
+            off["desktop"]["shaderglass"].as_table_mut().unwrap().insert("enabled".into(), Value::Boolean(false));
+            assert!(!mobile_profile(&off).unwrap().contains("shaderglass"));
             // Without [desktop.scaling] the legacy rule is projected (no policy function).
             let mut legacy = vendor();
             legacy["desktop"].as_table_mut().unwrap().remove("scaling");

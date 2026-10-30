@@ -616,7 +616,8 @@ class LiveNested(unittest.TestCase):
         guard.mkdir(exist_ok=True)
         (guard / "systemctl").write_text(f'#!/bin/sh\necho "$(date +%T) blocked systemctl $*" >> {cls.work}/guard.log\nexit 1\n')
         (guard / "systemctl").chmod(0o700)
-        cls.nested = Nested(cls.work, cls.vendors["new"])
+        # The session's projector: the candidate mios-gen when the installed one predates the SSOT under test.
+        cls.nested = Nested(cls.work, cls.vendors["new"], os.environ.get("MIOS_NESTED_LAUNCHER"))
         cls.base_env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "MIOS_TOML", "MIOS_VENDOR_TOML")}
         cls.base_env.update(cls.nested.env)
         cls.base_env["PATH"] = f"{guard}:{cls.base_env.get('PATH', '/usr/bin:/bin')}"
@@ -1018,12 +1019,14 @@ class LiveNested(unittest.TestCase):
                 self.stop_serve()
                 continue
             self.wait(lambda: (self.pane() or {}).get("command_channel"), 30)
+            # Names of this run only: the other run's injected entries may still be in the file.
+            other_cls, other_addr = f"org.other.session.{label}", f"0xdead{label.encode().hex()}"
             doc = json.loads(f.read_text()) if f.is_file() else {"version": 1}
-            doc.setdefault("classes", {})["org.other.session.app"] = {"profile": "org.other.session.app.sgp", "shader": "crt/crt-geom", "saved_ms": 1}
+            doc.setdefault("classes", {})[other_cls] = {"profile": f"{other_cls}.sgp", "shader": "crt/crt-geom", "saved_ms": 1}
             if label == "new":
-                doc.setdefault("sessions", {})["overlay-0ther5e5"] = {"runtime": str(other_rt), "attached": [pane_rec("0xdeadbeef", "org.other.session.app")]}
+                doc.setdefault("sessions", {})[f"overlay-0ther{label}"] = {"runtime": str(other_rt), "attached": [pane_rec(other_addr, other_cls)]}
             else:
-                doc["attached"] = list(doc.get("attached", [])) + [pane_rec("0xdeadbeef", "org.other.session.app")]
+                doc["attached"] = list(doc.get("attached", [])) + [pane_rec(other_addr, other_cls)]
             tmp = f.with_suffix(".inject")
             tmp.write_text(json.dumps(doc))
             os.replace(tmp, f)
@@ -1032,9 +1035,9 @@ class LiveNested(unittest.TestCase):
             self.wait(lambda: (lambda s: s if s and s != before else None)(self.shader_of(got[0]["window"])), 15)
             time.sleep(1.0)
             after = json.loads(f.read_text())
-            kept_class = "org.other.session.app" in (after.get("classes") or {})
+            kept_class = other_cls in (after.get("classes") or {})
             others = [a for s in (after.get("sessions") or {}).values() for a in s.get("attached", [])] + after.get("attached", [])
-            kept_att = any(a.get("address") == "0xdeadbeef" for a in others)
+            kept_att = any(a.get("address") == other_addr for a in others)
             mine = (after.get("classes") or {}).get(self.client(self.target)["class"], {})
             if label == "new":
                 self.check("[new] this session's save is recorded", r.get("ok") and r.get("shader") and mine, (r, mine))
@@ -1075,7 +1078,7 @@ class LiveMobile(unittest.TestCase):
                 mf = nested.dir / "mios-mobile-outputs.json"
                 if mf.is_file():
                     try:
-                        mobile = any(o.get("mobile") for o in json.loads(mf.read_text()).values())
+                        mobile = any(o.get("mobile") for o in (json.loads(mf.read_text()).get("outputs") or {}).values())
                         break
                     except ValueError:
                         pass
