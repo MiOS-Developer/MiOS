@@ -232,6 +232,22 @@ fn exclusions(doc: &Value) -> Result<Vec<Exclusion>, String> {
             out.push(ex);
         }
     }
+    // The ShaderGlass pane's own rule (rendered from [desktop.shaderglass.window] while enabled, not from
+    // window_rules): a Wine window whose class also matches the games rule, so it is excluded like any other ruled
+    // window and never placed or watched as a game, pinned or not (setup mode, or before its pin applies).
+    let sg = get(doc, "desktop.shaderglass");
+    if sg.and_then(|t| t.get("enabled")).and_then(Value::as_bool).unwrap_or(false) {
+        let w = get(doc, "desktop.shaderglass.window");
+        let field = |k: &str| w.and_then(|t| t.get(k)).and_then(Value::as_str);
+        if let (Some(class), Some(title)) = (field("class"), field("title")) {
+            let re = |p: &str| Regex::new(p).map_err(|e| format!("desktop.shaderglass.window regex: {e}"));
+            out.push(Exclusion {
+                name: "desktop.shaderglass.window".to_owned(),
+                regexes: vec![("class", re(class)?, false), ("title", re(title)?, false)],
+                bools: Vec::new(),
+            });
+        }
+    }
     Ok(out)
 }
 
@@ -708,9 +724,21 @@ pub fn pin_restore(c: &Json, target: (f64, f64)) -> Option<String> {
 /// tell who moved it (a keyboard move binding or a released drag leaves no trace), so it stands. Any other size a
 /// game asks for (a windowed resolution change) is its own business. Outputs reporting no size are ignored.
 pub fn is_remap(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> bool {
+    remap_kind(g, monitors).is_some()
+}
+
+/// Which kind of remap [`is_remap`] saw. A drag latch may excuse an oversize box (a drag-resize past every output)
+/// but never the exact root: no operator drag lands within 2 px of the XWayland root, a game's remap does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remap {
+    Root,
+    Oversize,
+}
+
+pub fn remap_kind(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> Option<Remap> {
     let live: Vec<&MonitorBox> = monitors.values().filter(|m| m.w > 0.0 && m.h > 0.0).collect();
     if live.is_empty() {
-        return false;
+        return None;
     }
     let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
     for m in &live {
@@ -722,7 +750,40 @@ pub fn is_remap(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) ->
     let near = |a: f64, b: f64| (a - b).abs() <= 2.0;
     let root = near(g.0, x0) && near(g.1, y0) && near(g.2, x1 - x0) && near(g.3, y1 - y0);
     let oversize = !live.iter().any(|m| g.2 <= m.w + 1.0 && g.3 <= m.h + 1.0);
-    root || oversize
+    if root {
+        Some(Remap::Root)
+    } else if oversize {
+        Some(Remap::Oversize)
+    } else {
+        None
+    }
+}
+
+/// The one gate for windows the daemon never places or watches, shared by a fresh map ([`Server::on_open`]), a
+/// daemon restart ([`Server::adopt`]) and every game poll: pinned windows (overlays such as the ShaderGlass pane,
+/// which follows its target over the whole output) and windows an SSOT window rule excludes. Returns why.
+pub fn left_alone(cfg: &Config, c: &Json) -> Option<String> {
+    if c.get("pinned").and_then(Json::as_bool) == Some(true) {
+        return Some("pinned".to_owned());
+    }
+    cfg.excludes.iter().find(|e| e.matches(c)).map(|e| format!("window rule {}", e.name))
+}
+
+/// A game found already mapped at a daemon restart ([`Server::adopt`]): watched again at its current geometry,
+/// fixed ones at their declared size (the daemon's per-window state is not persisted; X11 still has the hints).
+/// None for anything [`left_alone`] gates or that is not a game, exactly as a fresh map would decide.
+pub fn adopted_game(cfg: &Config, c: &Json, x11: Option<&X11Props>) -> Option<GameWatch> {
+    if left_alone(cfg, c).is_some() || c.get("xwayland").and_then(Json::as_bool) != Some(true) {
+        return None;
+    }
+    let kind = game_kind(cfg, c, x11)?;
+    let declared = x11.and_then(|p| p.fixed);
+    let pin = kind == GameKind::Fixed && cfg.games.as_ref().is_some_and(|x| x.pin_fixed_size);
+    // A fitted oversize game keeps the size it has; any other fixed game the size it declares.
+    let target = pin
+        .then(|| declared.filter(|d| d.0 * d.1 <= geom_of(c).map_or(0.0, |g| g.2 * g.3) + 4.0).or_else(|| pair(c, "size")))
+        .flatten();
+    Some(GameWatch { kind, ok: None, workspace: None, target, declared, refused: None, since: None, corrections: 0, dragged: false })
 }
 
 /// One placed game the daemon keeps honest.
@@ -741,7 +802,8 @@ pub struct GameWatch {
     pub since: Option<Instant>,
     pub corrections: u8,
     /// A pointer button was down at a poll since the accepted geometry: the change is the operator's drag (or a
-    /// drag-resize), never refused as a remap once released.
+    /// drag-resize), not refused as an oversize remap once released (the exact root is refused regardless).
+    /// Cleared whenever the accepted geometry is reset or taken anew.
     pub dragged: bool,
 }
 
@@ -774,12 +836,14 @@ pub fn game_step(
     if !floating || fullscreen || special || hidden {
         w.ok = None;
         w.since = None;
+        w.dragged = false;
         return GameStep::Nothing;
     }
     let ws = c.pointer("/workspace/id").and_then(Json::as_i64);
     let Some(ok) = w.ok else {
         w.ok = Some(g);
         w.workspace = ws;
+        w.dragged = false;
         return GameStep::Nothing;
     };
     let same = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| {
@@ -798,7 +862,8 @@ pub fn game_step(
         w.corrections = w.corrections.saturating_add(1);
         w.corrections <= GAME_CORRECTIONS
     };
-    if refuse && !w.dragged && c.get("xwayland").and_then(Json::as_bool) == Some(true) && is_remap(g, monitors) {
+    let remap = remap_kind(g, monitors).filter(|r| *r == Remap::Root || !w.dragged);
+    if refuse && remap.is_some() && c.get("xwayland").and_then(Json::as_bool) == Some(true) {
         if !budget(w) {
             return GameStep::GiveUp;
         }
@@ -1293,6 +1358,12 @@ impl Server {
             let Some(a) = c.get("address").and_then(Json::as_str) else {
                 continue;
             };
+            if let Some(why) = left_alone(&self.cfg, &c) {
+                if self.filtered(&c) && game_kind(&self.cfg, &c, None).is_some() {
+                    self.log(&format!("{a}: {why}; not adopted as a game"));
+                }
+                continue;
+            }
             if self.filtered(&c)
                 && c.get("floating").and_then(Json::as_bool) == Some(true)
                 && tags(&c).contains(&self.cfg.managed_tag)
@@ -1311,15 +1382,8 @@ impl Server {
             // size (the daemon's per-window state is not persisted; X11 still has the hints).
             if self.filtered(&c) && c.get("xwayland").and_then(Json::as_bool) == Some(true) {
                 let x11 = self.x11.props(&c);
-                if let Some(kind) = game_kind(&self.cfg, &c, x11.as_ref()) {
-                    let declared = x11.and_then(|p| p.fixed);
-                    let pin = kind == GameKind::Fixed && self.cfg.games.as_ref().is_some_and(|x| x.pin_fixed_size);
-                    // A fitted oversize game keeps the size it has; any other fixed game the size it declares.
-                    let target = pin.then(|| declared.filter(|d| d.0 * d.1 <= geom_of(&c).map_or(0.0, |g| g.2 * g.3) + 4.0)
-                        .or_else(|| pair(&c, "size"))).flatten();
-                    self.games.insert(a.to_owned(), GameWatch {
-                        kind, ok: None, workspace: None, target, declared, refused: None, since: None, corrections: 0, dragged: false,
-                    });
+                if let Some(w) = adopted_game(&self.cfg, &c, x11.as_ref()) {
+                    self.games.insert(a.to_owned(), w);
                 }
             }
         }
@@ -1365,21 +1429,19 @@ impl Server {
         }
         let floating = c.get("floating").and_then(Json::as_bool) == Some(true);
         let fullscreen = c.get("fullscreen").and_then(Json::as_i64).unwrap_or(0) != 0;
-        let pinned = c.get("pinned").and_then(Json::as_bool) == Some(true);
         let Some((_, _, w, h)) = geom_of(c) else {
             return Ok(false);
         };
         if w < 1.0 || h < 1.0 {
             return Ok(false);
         }
-        if !floating || fullscreen || pinned {
+        if !floating || fullscreen {
             return Ok(true);
         }
-        if let Some(ex) = self.cfg.excludes.iter().find(|e| e.matches(c)) {
-            self.log(&format!(
-                "{address}: matches window rule {}, left alone",
-                ex.name
-            ));
+        if let Some(why) = left_alone(&self.cfg, c) {
+            if why != "pinned" {
+                self.log(&format!("{address}: matches {why}, left alone"));
+            }
             return Ok(true);
         }
         if let Some(kind) = game {
@@ -1559,6 +1621,13 @@ impl Server {
                 self.x11.forget(&a);
                 continue;
             };
+            if let Some(why) = left_alone(&self.cfg, c) {
+                // Pinned (or excluded) after it was placed: no longer a game the daemon may move back.
+                self.games.remove(&a);
+                self.x11.forget(&a);
+                self.log(&format!("{a}: {why}; no longer watched as a game"));
+                continue;
+            }
             let mut w = self.games[&a].clone();
             let moved = match (w.ok, geom_of(c)) {
                 (Some(ok), Some(g)) => [ok.0 - g.0, ok.1 - g.1, ok.2 - g.2, ok.3 - g.3].iter().any(|d| d.abs() > 1.0),
@@ -2083,6 +2152,10 @@ managed_tag = "mios-placed"
     }
 
     fn cfg_games(oversize: &str) -> Config {
+        cfg_games_with(oversize, "")
+    }
+
+    fn cfg_games_with(oversize: &str, extra: &str) -> Config {
         let doc: Value = toml::from_str(&format!(
             r#"
 [keybindings.global.contexts]
@@ -2116,6 +2189,7 @@ oversize = "{oversize}"
 tag = "mios-place-game"
 fixed_tag = "mios-place-game-fixed"
 candidate_tag = "mios-place-game-candidate"
+{extra}
 "#
         ))
         .expect("toml");
@@ -2466,5 +2540,124 @@ candidate_tag = "mios-place-game-candidate"
             None,
         );
         assert!(!user.contains("tag") && user.contains("action='enable'"));
+    }
+
+    // ---- round 3: one gate for a fresh map, a restart and a poll; the drag latch never excuses the root
+
+    const SG: &str = r#"
+[desktop.shaderglass]
+enabled = true
+[desktop.shaderglass.window]
+class = '^(shaderglass\.exe)$'
+title = '^ShaderGlass( \(.*\))?$'
+"#;
+
+    fn shaderglass_pane(pinned: bool) -> Json {
+        let mut c = game("shaderglass.exe", (0, 0), (1392, 1002), &["mios-place-game*", "mios-shaderglass*"]);
+        c["title"] = serde_json::json!("ShaderGlass (vfy)");
+        c["pinned"] = serde_json::json!(pinned);
+        c
+    }
+
+    #[test]
+    fn a_restart_adopts_no_pinned_or_excluded_window_as_a_game() {
+        // Verifier round 2 defect A: adopt() had no pinned/excludes gate, so after `placement serve` restarted, the
+        // pinned ShaderGlass pane (class shaderglass.exe matches the games rule) was watched as a resizable game and
+        // thrown back whenever it followed a fullscreen target on a single output.
+        let cfg = cfg_games_with("fit", SG);
+        let pane = shaderglass_pane(true);
+        assert_eq!(left_alone(&cfg, &pane).as_deref(), Some("pinned"));
+        assert_eq!(adopted_game(&cfg, &pane, None), None, "pinned pane: never adopted");
+        // Setup mode (or before the pin applies): the pane's own rule excludes it all the same.
+        let unpinned = shaderglass_pane(false);
+        assert_eq!(left_alone(&cfg, &unpinned).as_deref(), Some("window rule desktop.shaderglass.window"));
+        assert_eq!(adopted_game(&cfg, &unpinned, None), None, "excluded pane: never adopted");
+        // A pinned ordinary game is left alone exactly as on_open leaves it.
+        let mut pinned_game = game("editor.exe", (100, 100), (960, 692), &["mios-place-game*"]);
+        pinned_game["pinned"] = serde_json::json!(true);
+        assert_eq!(adopted_game(&cfg, &pinned_game, None), None);
+        // Positive control: the same game unpinned is adopted (resizable, at its current geometry on the next poll).
+        let g = game("editor.exe", (100, 100), (960, 692), &["mios-place-game*"]);
+        assert_eq!(left_alone(&cfg, &g), None);
+        let w = adopted_game(&cfg, &g, None).expect("an unpinned game is adopted");
+        assert_eq!((w.kind, w.ok, w.dragged), (GameKind::Resizable, None, false));
+        // ShaderGlass disabled: no pane rule is rendered, so none is excluded (pinned still gates).
+        let off = cfg_games_with("fit", &SG.replace("enabled = true", "enabled = false"));
+        assert_eq!(left_alone(&off, &unpinned), None);
+        assert_eq!(left_alone(&off, &pane).as_deref(), Some("pinned"));
+        // Fixed-size: adopted at its declared size (the round-1 restart behaviour is kept).
+        let fx = game("steam_app_4201", (2640, 400), (480, 320), &["mios-place-game-fixed*"]);
+        let props = X11Props { fixed: Some((480.0, 320.0)), dialog: false };
+        let w = adopted_game(&cfg, &fx, Some(&props)).expect("fixed game adopted");
+        assert_eq!((w.kind, w.target, w.declared), (GameKind::Fixed, Some((480.0, 320.0)), Some((480.0, 320.0))));
+    }
+
+    #[test]
+    fn root_remap_during_a_click_is_still_refused() {
+        // Verifier round 2 defect B: a button held anywhere (a click into the game) set the drag latch, and the
+        // latch excused even the exact XWayland root. The root is refused regardless; only oversize is excused.
+        let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
+        let ok = (1680.0, 380.0, 480.0, 320.0);
+        let mut w = watch(GameKind::Fixed, ok, true);
+        let mut c = game("steam_app_2483190", (1680, 380), (480, 320), &["mios-place-game-fixed*"]);
+        at(&mut c, (0, 0, 3840, 1080));
+        let d = Some((480.0, 320.0));
+        assert_eq!(game_step(&mut w, &c, &m, d, true, true, s, t0), GameStep::Nothing, "held");
+        assert!(w.dragged);
+        let r = game_step(&mut w, &c, &m, d, true, false, s, t0);
+        assert!(matches!(r, GameStep::Refuse(_)), "root after a click: {r:?}");
+        // Single output (nested/PiP, RDP, laptop): the root is the output, refused after a click too.
+        let one = monitor_boxes(&serde_json::json!([{"id": 0, "x": 0, "y": 0, "width": 1392, "height": 1002, "scale": 1.0}]));
+        let mut w = watch(GameKind::Resizable, (100.0, 120.0, 800.0, 600.0), false);
+        let mut c = game("editor.exe", (100, 120), (800, 600), &["mios-place-game*"]);
+        at(&mut c, (0, 0, 1392, 1002));
+        assert_eq!(game_step(&mut w, &c, &one, None, true, true, s, t0), GameStep::Nothing);
+        assert!(matches!(game_step(&mut w, &c, &one, None, true, false, s, t0), GameStep::Refuse(_)));
+        // Control: a drag-resize past every output (oversize, not the root) still stands once released.
+        assert_eq!(remap_kind((100.0, 0.0, 2400.0, 1000.0), &m), Some(Remap::Oversize));
+        assert_eq!(remap_kind((0.0, 0.0, 3840.0, 1080.0), &m), Some(Remap::Root));
+        assert_eq!(remap_kind((2000.0, 100.0, 640.0, 400.0), &m), None);
+    }
+
+    #[test]
+    fn the_drag_latch_does_not_survive_leaving_float() {
+        // Verifier round 2 defect C: `dragged` survived a tile/fullscreen/special/hidden reset and the re-take of
+        // the accepted geometry, so the next oversize remap after a re-float was accepted once.
+        let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
+        for leave in ["floating", "fullscreen", "special", "hidden"] {
+            let ok = (2400.0, 200.0, 816.0, 588.0);
+            let mut w = watch(GameKind::Resizable, ok, false);
+            let mut c = game("editor.exe", (2400, 200), (816, 588), &["mios-place-game*"]);
+            at(&mut c, (2500, 220, 816, 588));
+            assert_eq!(game_step(&mut w, &c, &m, None, true, true, s, t0), GameStep::Nothing);
+            assert!(w.dragged, "{leave}: dragging");
+            let back = c.clone();
+            match leave {
+                "floating" => c["floating"] = serde_json::json!(false),
+                "fullscreen" => c["fullscreen"] = serde_json::json!(1),
+                "special" => c["workspace"] = serde_json::json!({"id": -98, "name": "special:magic"}),
+                _ => c["hidden"] = serde_json::json!(true),
+            }
+            assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing);
+            assert!(!w.dragged, "{leave}: the latch is cleared with the accepted geometry");
+            let mut c = back;
+            at(&mut c, (2400, 200, 816, 588));
+            assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing, "{leave}: re-adopted");
+            at(&mut c, (100, 0, 2400, 1000));
+            let r = game_step(&mut w, &c, &m, None, true, false, s, t0);
+            assert!(matches!(r, GameStep::Refuse(_)), "{leave}: stale latch let an oversize remap through: {r:?}");
+        }
+    }
+
+    #[test]
+    fn zero_size_outputs_are_ignored_and_no_live_output_never_refuses() {
+        let m = mons2();
+        assert!(!is_remap((0.0, 0.0, 1920.0, 1080.0), &m), "one output-sized box at an origin is not the root of two");
+        let mut z = mons2();
+        z.insert(9, MonitorBox { x: 0.0, y: 0.0, w: 0.0, h: 0.0, ..*z.values().next().unwrap() });
+        assert!(is_remap((0.0, 0.0, 3840.0, 1080.0), &z), "0x0 output ignored, root still the root");
+        let mut e: HashMap<i64, MonitorBox> = HashMap::new();
+        e.insert(0, MonitorBox { w: 0.0, h: 0.0, ..*m.values().next().unwrap() });
+        assert!(!is_remap((0.0, 0.0, 9999.0, 9999.0), &e), "no live output: never refuse");
     }
 }

@@ -474,6 +474,15 @@ class TestGamePlacementLive(unittest.TestCase):
     def refused_in_log(self, address):
         return [l for l in (self.out / 'placement.log').read_text().splitlines() if address in l and 'refused' in l]
 
+    def restart_daemon(self, log):
+        """`miosd placement serve` restarted (per-window state lost): what is mapped is adopted again."""
+        d = type(self).daemon
+        d.terminate()
+        d.wait(5)
+        type(self).daemon = subprocess.Popen([MIOSD, 'placement', 'serve'], env=self.env,
+                                             stdout=open(self.out / log, 'w'), stderr=subprocess.STDOUT)
+        time.sleep(2.0)
+
     def operator_move(self, name, cls_name, args, target):
         self.require_x11()
         p, _ = self.probe(cls_name, *args, seconds=20)
@@ -544,12 +553,7 @@ class TestGamePlacementLive(unittest.TestCase):
         self.require_x11()
         p, _ = self.probe('steam_app_4401', '--fixed', '--no-adapt', '--size', '480x320', seconds=25)
         c = self.settled(lambda c: c['class'] == 'steam_app_4401')
-        d = type(self).daemon
-        d.terminate()
-        d.wait(5)
-        type(self).daemon = subprocess.Popen([MIOSD, 'placement', 'serve'], env=self.env,
-                                             stdout=open(self.out / 'placement-restarted.log', 'w'), stderr=subprocess.STDOUT)
-        time.sleep(2.0)
+        self.restart_daemon('placement-restarted.log')
         self.ctl('eval', f"hl.dispatch(hl.dsp.window.resize({{x=840, y=600, window='address:{c['address']}'}}))")
         time.sleep(4.0)
         c2 = self.wait_for(lambda x: x['address'] == c['address'], 2)
@@ -574,6 +578,44 @@ class TestGamePlacementLive(unittest.TestCase):
         self.stop(p)
         self.assertEqual(t.returncode, 0, t.stderr)
         self.assertTrue(c2['floating'] and c2['size'] == [480, 320], f'toggle tiled/resized it: {c2["size"]} floating={c2["floating"]}')
+
+    def test_70_shaderglass_pane_over_fullscreen_target_after_daemon_restart(self):
+        # Verifier round-2 defect A: the ShaderGlass pane (Wine class shaderglass.exe, which the games rule tags;
+        # pinned by its own rule) follows its target exactly, and over a fullscreen target on one output that box is
+        # the output = the XWayland root. A fresh map never watched it (pinned), but adopt() after a daemon restart
+        # had no pinned/exclude gate and refused the follower's placement. One gate now decides both.
+        self.require_x11()
+        self.refresh()
+        ox, oy, ow, oh = (int(round(v)) for v in self.output)
+        sg = [l.strip() for l in LUA.read_text().splitlines()
+              if re.match(r'^\s*hl\.window_rule\(\{\["name"\] = "mios-shaderglass(-glass)?"', l)]
+        self.assertTrue(sg, f'no mios-shaderglass rule in {LUA}')
+        evals = [self.ctl('eval', l).strip() for l in sg]
+        p, _ = self.probe('shaderglass.exe', '--title', 'ShaderGlass (live)', '--size', '800x600', seconds=40)
+        c0 = self.settled(lambda c: c['class'] == 'shaderglass.exe', 1.6)
+        a = c0['address']
+        place = lambda x, y, w, h: self.ctl('eval', f"hl.dispatch(hl.dsp.window.resize({{x={w}, y={h}, window='address:{a}'}})); "
+                                                 f"hl.dispatch(hl.dsp.window.move({{x={x}, y={y}, window='address:{a}'}}))")
+        rec = {'evals': evals, 'output': [ox, oy, ow, oh], 'mapped': [c0['at'], c0['size'], c0['floating'], c0['pinned'], c0['tags']]}
+        place(ox, oy, ow, oh)  # in-run control: before a restart, the follower's full-output placement stands
+        rec['before_restart'] = self.sample(a, 2.0)
+        place(ox + 100, oy + 120, 800, 600)
+        time.sleep(1.0)
+        self.restart_daemon('placement-sg-restarted.log')
+        place(ox, oy, ow, oh)
+        rec['after_restart'] = self.sample(a, 3.0)
+        rec['log'] = [l for n in ('placement.log', 'placement-sg-restarted.log')
+                      for l in (self.out / n).read_text().splitlines() if a in l]
+        (self.out / 'shaderglass-restart.json').write_text(json.dumps(rec, indent=1))
+        self.stop(p)
+        self.assertTrue(rec['mapped'][3], f'pane not pinned by the shaderglass rule: {rec["mapped"]}')
+        self.assertTrue(any(t.startswith('mios-place-game') for t in rec['mapped'][4]),
+                        f'precondition: the games rule tags the pane: {rec["mapped"][4]}')
+        near = lambda s: all(abs(u - v) <= 2 for u, v in zip(s[1] + s[2], [ox, oy, ow, oh]))
+        self.assertTrue(all(near(s) for s in rec['before_restart'][2:]), f'before restart: {rec["before_restart"]}')
+        self.assertEqual([l for l in rec['log'] if 'refused' in l], [], f'pane fought after restart: {rec["log"]}')
+        self.assertTrue(all(near(s) for s in rec['after_restart'][2:]),
+                        f'after restart the pane was moved off its target box: {rec["after_restart"]}')
 
     def test_90_operator_move_straddling_two_outputs(self):
         # Runs last: adds a headless output to the OWN nested compositor, to the right of the first, then releases a
