@@ -335,11 +335,39 @@ impl GrabProbe {
             Err(e) => e.raw_os_error() == Some(libc::EBUSY),
         }
     }
-    pub fn require(&self) -> Result<(), String> {
+    fn ungrabbed(&self) -> String {
+        format!("refusing to emit on {}: no exclusive grab holds it (a host app such as Steam would read the event)", self.path.display())
+    }
+    /// Emit through `write` only while another descriptor holds the grab, then probe again. The kernel routes an event
+    /// at write() time and userspace cannot make "grab held" and "write" one atomic step (holding the grab itself
+    /// would starve the real reader), so a reader that lets go between the two probes is the one window left. The
+    /// second probe makes that window fail closed: the caller learns of it (GrabLost) and stops emitting, so at most
+    /// that one frame can have been ungrabbed and it is never silent.
+    pub fn emit(&self, write: impl FnOnce() -> io::Result<()>) -> Result<(), EmitError> {
+        if !self.held_elsewhere() {
+            return Err(EmitError::Ungrabbed(self.ungrabbed()));
+        }
+        write().map_err(|e| EmitError::Io(e.to_string()))?;
         if self.held_elsewhere() {
             Ok(())
         } else {
-            Err(format!("refusing to emit on {}: no exclusive grab holds it (a host app such as Steam would read the event)", self.path.display()))
+            Err(EmitError::GrabLost(format!("{}: the exclusive grab was released while a frame was written; emitting stopped (that frame may have reached other readers)", self.path.display())))
+        }
+    }
+}
+#[derive(Debug, PartialEq)]
+pub enum EmitError {
+    /// Nobody held the grab: nothing was written.
+    Ungrabbed(String),
+    /// The write itself failed.
+    Io(String),
+    /// Written, but the grab was gone right after: fail closed.
+    GrabLost(String),
+}
+impl std::fmt::Display for EmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EmitError::Ungrabbed(s) | EmitError::Io(s) | EmitError::GrabLost(s) => f.write_str(s),
         }
     }
 }
@@ -697,8 +725,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         Event::new(EV_KEY, 0x136, 1),
         Event::new(EV_SYN, SYN_REPORT, 0),
     ];
-    probe.require()?;
-    producer.write(&sample).map_err(|e| e.to_string())?;
+    probe.emit(|| producer.write(&sample)).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let got = input.read_events().map_err(|e| e.to_string())?;
     if !got.iter().any(|e| *e == sample[0]) {
@@ -708,6 +735,24 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
     if !matches!(other.read(&mut b),Err(ref e)if e.kind()==io::ErrorKind::WouldBlock) {
         return Err("grabbed event leaked to second reader".into());
     }
+    // The emit guard fails closed. The race is simulated without emitting anything: the "write" step only lets go of
+    // the grab, so emit must report GrabLost; with nobody holding the grab, emit must refuse without calling write.
+    let lost = probe.emit(|| {
+        input.release();
+        Ok(())
+    });
+    if !matches!(lost, Err(EmitError::GrabLost(_))) {
+        return Err(format!("a grab released during an emit was not reported: {lost:?}"));
+    }
+    let mut called = false;
+    let refused = probe.emit(|| {
+        called = true;
+        Ok(())
+    });
+    if called || !matches!(refused, Err(EmitError::Ungrabbed(_))) {
+        return Err(format!("an ungrabbed emit reached write: {refused:?}"));
+    }
+    input.grab().map_err(|e| e.to_string())?;
     let mut output = VirtualDevice::clone_gamepad(&input).map_err(|e| e.to_string())?;
     let mut output_path = None;
     for _ in 0..100 {
@@ -739,8 +784,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         Event::new(EV_KEY, 0x131, 1),
         Event::new(EV_SYN, SYN_REPORT, 0),
     ];
-    probe.require()?;
-    producer.write(&ordinary).map_err(|e| e.to_string())?;
+    probe.emit(|| producer.write(&ordinary)).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let incoming = input.read_events().map_err(|e| e.to_string())?;
     if !incoming.contains(&ordinary[0]) {
@@ -765,12 +809,8 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
     if ioctl_int(other.as_raw_fd(), grab, 1).is_err() {
         return Err("release did not restore other reader".into());
     }
-    probe.require()?;
-    producer
-        .write(&[
-            Event::new(EV_KEY, 0x136, 0),
-            Event::new(EV_SYN, SYN_REPORT, 0),
-        ])
+    probe
+        .emit(|| producer.write(&[Event::new(EV_KEY, 0x136, 0), Event::new(EV_SYN, SYN_REPORT, 0)]))
         .map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let restored = other.read(&mut b).is_ok();
@@ -834,8 +874,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
             // Leave nothing held: the device's last state is all released.
             batch.extend([Event::new(EV_KEY, 0x131, 0), Event::new(EV_SYN, SYN_REPORT, 0)]);
         }
-        probe.require()?;
-        producer.write(&batch).map_err(|e| e.to_string())?;
+        probe.emit(|| producer.write(&batch)).map_err(|e| e.to_string())?;
         std::thread::sleep(std::time::Duration::from_millis(20));
         let reached = other.read(&mut b).is_ok();
         let _ = ioctl_int(other.as_raw_fd(), grab, 0);
@@ -845,7 +884,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         signal_results.push(signal);
     }
     Ok(
-        serde_json::json!({"fixture":"private-uinput","isolated_from_live_bridge":true,"grab_owner_received":true,"other_reader_blocked":true,"release_restored_reader":true,"replay_loop_rejected":true,"duplicate_owner_rejected":true,"typing_keyboard_rejected":true,"keyboard_aux_joystick_rejected":true,"virtual_app_grab_preserves_host_input":true,"ordinary_input_replayed":true,"release_after_signals":signal_results}),
+        serde_json::json!({"fixture":"private-uinput","isolated_from_live_bridge":true,"grab_owner_received":true,"other_reader_blocked":true,"release_restored_reader":true,"replay_loop_rejected":true,"grab_lost_fails_closed":true,"duplicate_owner_rejected":true,"typing_keyboard_rejected":true,"keyboard_aux_joystick_rejected":true,"virtual_app_grab_preserves_host_input":true,"ordinary_input_replayed":true,"release_after_signals":signal_results}),
     )
 }
 
@@ -971,8 +1010,7 @@ pub fn fixture_pad(layout: &str) -> Result<(), String> {
             }
             batch.push(Event::new(EV_SYN, SYN_REPORT, 0));
             // Nothing is ever emitted while no exclusive reader (the bridge's or the test's grab) holds the pad.
-            probe.require()?;
-            pad.write(&batch).map_err(|e| e.to_string())?;
+            probe.emit(|| pad.write(&batch)).map_err(|e| e.to_string())?;
         }
         println!("{}", serde_json::json!({"ok": true}));
         std::io::stdout().flush().map_err(|e| e.to_string())?;

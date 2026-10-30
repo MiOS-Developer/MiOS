@@ -207,7 +207,7 @@ class InputPolicy(unittest.TestCase):
         if os.environ.get('MIOS_INPUTD_UINPUT_TEST') != '1':
             self.skipTest('explicit private virtual-device tier not requested')
         value = self.call('fixture')
-        for key in ('isolated_from_live_bridge', 'grab_owner_received', 'ordinary_input_replayed', 'virtual_app_grab_preserves_host_input', 'duplicate_owner_rejected', 'replay_loop_rejected', 'typing_keyboard_rejected', 'keyboard_aux_joystick_rejected'):
+        for key in ('isolated_from_live_bridge', 'grab_owner_received', 'ordinary_input_replayed', 'virtual_app_grab_preserves_host_input', 'duplicate_owner_rejected', 'replay_loop_rejected', 'typing_keyboard_rejected', 'keyboard_aux_joystick_rejected', 'grab_lost_fails_closed'):
             self.assertTrue(value[key], key)
         self.assertEqual(value['release_after_signals'], [15, 9])
 

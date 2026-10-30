@@ -382,6 +382,7 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
     // frames are withheld otherwise and the reader gets the whole state once a grab holds it again.
     let probe = if fixture { Some(crate::linux::GrabProbe::open(&path).map_err(|e| e.to_string())?) } else { None };
     let mut withheld = 0u64;
+    let mut grab_lost = 0u64;
     let mut last_probe = Instant::now();
     let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
     std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
@@ -468,7 +469,7 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                 let reply = match op {
                     "destroy" => { let _ = writeln!(s, "{}", json!({"ok": true, "destroyed": key})); return Ok(()); }
                     "wait" => { waiters.push((s, Instant::now() + Duration::from_millis(cfg.max_ms * 3 + 1000))); continue; }
-                    "info" => Ok(json!({"ok": true, "pad": state, "assigned": bridge.as_ref().map(SeatBridge::json), "withheld_frames": withheld})),
+                    "info" => Ok(json!({"ok": true, "pad": state, "assigned": bridge.as_ref().map(SeatBridge::json), "withheld_frames": withheld, "grab_lost_frames": grab_lost})),
                     "assign" => {
                         let seat = req.get("seat").and_then(Json::as_str).unwrap_or(key).to_owned();
                         assign(&global, root.as_deref(), &path, fixture, &seat, &d, key, &mut bridge, &mut orphans)
@@ -496,13 +497,18 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                 // Probe only when there is something to emit (withheld state is re-offered every 100 ms).
                 Some(p) if !frame.is_empty() || (withheld > 0 && last_probe.elapsed() >= Duration::from_millis(100)) => {
                     last_probe = Instant::now();
-                    if !p.held_elsewhere() {
-                        withheld += u64::from(!frame.is_empty());
-                    } else if withheld > 0 {
-                        withheld = 0;
-                        pad.write(&model.state_frame()).map_err(|e| e.to_string())?;
-                    } else {
-                        pad.write(&frame).map_err(|e| e.to_string())?;
+                    // After withholding, the reader gets the whole state, not the last delta.
+                    let out = if withheld > 0 { model.state_frame() } else { frame.clone() };
+                    match p.emit(|| pad.write(&out)) {
+                        Ok(()) => withheld = 0,
+                        Err(crate::linux::EmitError::Ungrabbed(_)) => withheld += u64::from(!frame.is_empty()),
+                        Err(crate::linux::EmitError::GrabLost(e)) => {
+                            // Fail closed: log it, withhold from now on and re-offer the whole state once grabbed.
+                            grab_lost += 1;
+                            withheld = withheld.max(1);
+                            eprintln!("{}", json!({"pad": key, "grab_lost": e}));
+                        }
+                        Err(e @ crate::linux::EmitError::Io(_)) => return Err(e.to_string()),
                     }
                 }
                 Some(_) => {}
@@ -542,8 +548,14 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
     rest.last_hat = model.last_hat;
     rest.last_buttons = model.last_buttons.clone();
     rest.digital = model.digital;
-    if probe.as_ref().is_none_or(crate::linux::GrabProbe::held_elsewhere) {
-        let _ = pad.write(&rest.tick(0.0));
+    let rest_frame = rest.tick(0.0);
+    match &probe {
+        None => {
+            let _ = pad.write(&rest_frame);
+        }
+        Some(p) => {
+            let _ = p.emit(|| pad.write(&rest_frame));
+        }
     }
     let _ = std::fs::remove_file(&state_file);
     if let Some(b) = bridge.take() {

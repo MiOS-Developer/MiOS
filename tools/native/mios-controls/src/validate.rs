@@ -1,6 +1,6 @@
 // AI-hint: mios-controls validation: renders the draft's compositor Lua through mios-gen (stdout only, the draft as a private user tier), runs the gate's keybind-collision analysis over the merged draft, adds controller system-layer checks, and reports only findings the draft introduces.
 // AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-controls/src/model.rs
-// AI-functions: Validator::run, render_lua, controller_findings, controller_role_findings, Outcome::new_findings
+// AI-functions: Validator::run, render_lua, controller_findings, controller_role_findings, quirk_findings, Outcome::new_findings
 use crate::model::{at, str_list, Layers};
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -148,6 +148,61 @@ pub fn controller_role_findings(merged: &Value) -> Vec<String> {
     for b in strs("keybindings.controller.hypr3d_toggle_chord") {
         check("keybindings.controller.hypr3d_toggle_chord".into(), &b);
     }
+    out.extend(quirk_findings(merged));
+    out
+}
+
+/// A quirk remap code: a button name (never a stick pseudo-key) or a hex evdev key code in 0x100..=0x2ff
+/// (mios-inputd config.rs quirk_code, the same rule).
+fn quirk_code(name: &str) -> Result<u16, String> {
+    if let Some(hex) = name.strip_prefix("0x") {
+        let c = u16::from_str_radix(hex, 16).map_err(|_| format!("quirk code {name}: hex evdev key code"))?;
+        return if (0x100..=0x2ff).contains(&c) { Ok(c) } else { Err(format!("quirk code {name}: outside the evdev button range 0x100..0x2ff")) };
+    }
+    mios_resolver::keybindings::button_code(name).map_err(|e| format!("quirk code {name}: {e}"))
+}
+
+/// `[keybindings.global.controller.quirks.<name>].remap`: the checks mios-inputd's loader refuses a quirk for
+/// (config.rs Quirk::codes): every code is a real button or an evdev hex code, the map is one-to-one, and a target in
+/// the face/shoulder/stick-click block (BTN_SOUTH..BTN_THUMBR) is itself remapped (a swap).
+pub fn quirk_findings(merged: &Value) -> Vec<String> {
+    const GAMEPAD_BLOCK: std::ops::RangeInclusive<u16> = 0x130..=0x13e;
+    let mut out = Vec::new();
+    let Some(quirks) = at(merged, "keybindings.global.controller.quirks").and_then(Value::as_table) else { return out };
+    for (name, q) in quirks {
+        let tag = format!("controller.quirks.{name}");
+        let Some(remap) = q.get("remap") else { continue };
+        let Some(remap) = remap.as_table() else {
+            out.push(format!("{tag}.remap: must be a table of reported = positional codes"));
+            continue;
+        };
+        let mut codes = std::collections::BTreeMap::new();
+        let mut targets = BTreeSet::new();
+        for (from, to) in remap {
+            let Some(to) = to.as_str() else {
+                out.push(format!("{tag}.remap.{from}: the target must be a button name"));
+                continue;
+            };
+            match (quirk_code(from), quirk_code(to)) {
+                (Ok(f), Ok(t)) => {
+                    if !targets.insert(t) {
+                        out.push(format!("{tag}.remap: {to} is the target of two codes (the map must be one-to-one)"));
+                    }
+                    codes.insert(f, (t, from.clone(), to.to_owned()));
+                }
+                (f, t) => {
+                    for e in [f.err(), t.err()].into_iter().flatten() {
+                        out.push(format!("{tag}.remap: {e}"));
+                    }
+                }
+            }
+        }
+        for (t, from, to) in codes.values() {
+            if GAMEPAD_BLOCK.contains(t) && !codes.contains_key(t) {
+                out.push(format!("{tag}.remap: {from} -> {to} leaves {to} itself unmapped, so two buttons would report {to} (remap it too: a swap)"));
+            }
+        }
+    }
     out
 }
 
@@ -232,6 +287,26 @@ mod tests {
             assert!(f.iter().any(|x| x.starts_with(&format!("{tag}:")) && x.contains("stick direction")), "{tag} not flagged: {f:#?}");
         }
         assert_eq!(f.len(), 6, "real buttons are not flagged: {f:#?}");
+    }
+
+    #[test]
+    fn quirk_codes_follow_the_inputd_loader() {
+        let q = |remap: &str| -> Value { format!("[keybindings.global.controller.quirks.xpad]\ndrivers=[\"xpad\"]\nremap={{ {remap} }}\n").parse().unwrap() };
+        // positive: the vendor xpad quirk (a face swap plus hex d-pad codes) is clean
+        let ok = controller_findings(&q("BTN_NORTH=\"BTN_WEST\", BTN_WEST=\"BTN_NORTH\", \"0x2c0\"=\"BTN_DPAD_LEFT\", \"0x2c3\"=\"BTN_DPAD_DOWN\""));
+        assert!(ok.is_empty(), "{ok:#?}");
+        // negatives, one per refusal mios-inputd makes
+        for (remap, want) in [
+            ("LS_UP=\"BTN_WEST\", BTN_WEST=\"BTN_NORTH\", BTN_NORTH=\"BTN_EAST\", BTN_EAST=\"LS_UP\"", "stick direction"),
+            ("BTN_NORTH=\"RS_DOWN\"", "stick direction"),
+            ("\"0x400\"=\"BTN_DPAD_UP\"", "outside the evdev button range"),
+            ("BTN_NORTH=\"BTN_WEST\", BTN_SOUTH=\"BTN_WEST\", BTN_WEST=\"BTN_NORTH\"", "one-to-one"),
+            ("BTN_WEST=\"BTN_NORTH\"", "a swap"),
+            ("BTN_BOGUS=\"BTN_NORTH\"", "unknown controller button"),
+        ] {
+            let f = controller_findings(&q(remap));
+            assert!(f.iter().any(|x| x.starts_with("controller.quirks.xpad.remap") && x.contains(want)), "{remap} -> want {want:?}: {f:#?}");
+        }
     }
 
     #[test]
