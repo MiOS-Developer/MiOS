@@ -21,7 +21,9 @@ QS.ShellRoot {
         property var topbarConfig: ({})
         property var topbarOptions: []
         property string topbarError: ""
-        function topbarShown(key) { return ["clock", "fps", "workspaces"].indexOf(key) >= 0 }
+        // MIOS_NESTED_TOPBAR_ITEMS (comma list) lets a development session show more island items (live tests).
+        readonly property var topbarItems: (QS.Quickshell.env("MIOS_NESTED_TOPBAR_ITEMS") || "clock,fps,workspaces").split(",").map(s => s.trim())
+        function topbarShown(key) { return topbarItems.indexOf(key) >= 0 }
         function fpsFor(name) { return -1 }
         function isRemoteOutput(name) { return false }
         function shaderPane(address) { return null }

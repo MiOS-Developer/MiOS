@@ -1,0 +1,81 @@
+diff --git a/src/wayland/hyprland/ipc/connection.cpp b/src/wayland/hyprland/ipc/connection.cpp
+index 45d25da..3fd86ee 100644
+--- a/src/wayland/hyprland/ipc/connection.cpp
++++ b/src/wayland/hyprland/ipc/connection.cpp
+@@ -17,6 +17,7 @@
+ #include <qproperty.h>
+ #include <qqml.h>
+ #include <qtenvironmentvariables.h>
++#include <qtimer.h>
+ #include <qtmetamacros.h>
+ #include <qtypes.h>
+ #include <qvariant.h>
+@@ -120,14 +121,43 @@ void HyprlandIpc::eventSocketStateChanged(QLocalSocket::LocalSocketState state)
+ 	if (state == QLocalSocket::ConnectedState) {
+ 		this->eventReader.setDevice(&this->eventSocket);
+ 		qCInfo(logHyprlandIpc) << "Hyprland event socket connected.";
++		if (this->eventReconnecting) {
++			// events were lost while disconnected: resync the whole model
++			qCWarning(logHyprlandIpc) << "Hyprland event socket reconnected; resyncing monitors, workspaces and toplevels.";
++			this->eventReconnecting = false;
++			this->eventReconnectAttempts = 0;
++			this->refreshMonitors(true);
++			this->refreshWorkspaces(true);
++			this->refreshToplevels();
++		}
+ 		emit this->connected();
+-	} else if (state == QLocalSocket::UnconnectedState && this->valid) {
+-		qCWarning(logHyprlandIpc) << "Hyprland event socket disconnected.";
++	} else if (state == QLocalSocket::ClosingState || state == QLocalSocket::UnconnectedState) {
++		// A peer close passes ClosingState first: remember the drop there, reconnect once fully unconnected.
++		if (this->valid) {
++			qCWarning(logHyprlandIpc) << "Hyprland event socket disconnected; reconnecting.";
++			this->eventReconnecting = true;
++		}
++		if (state == QLocalSocket::UnconnectedState && this->eventReconnecting) this->scheduleEventReconnect();
+ 	}
+ 
+ 	this->valid = state == QLocalSocket::ConnectedState;
+ }
+ 
++void HyprlandIpc::scheduleEventReconnect() {
++	// 50 ms, doubling to 2 s; keeps trying while the compositor's socket exists (gone = the compositor exited)
++	auto delay = std::min(50 << std::min(this->eventReconnectAttempts, 6), 2000);
++	this->eventReconnectAttempts++;
++	QTimer::singleShot(delay, this, [this]() {
++		if (this->eventSocket.state() != QLocalSocket::UnconnectedState) return;
++		if (!QFileInfo::exists(this->mEventSocketPath)) {
++			qCWarning(logHyprlandIpc) << "Hyprland event socket" << this->mEventSocketPath << "is gone; not reconnecting.";
++			this->eventReconnecting = false;
++			return;
++		}
++		this->eventSocket.connectToServer(this->mEventSocketPath, QLocalSocket::ReadOnly);
++	});
++}
++
+ void HyprlandIpc::eventSocketReady() {
+ 	while (true) {
+ 		this->eventReader.startTransaction();
+diff --git a/src/wayland/hyprland/ipc/connection.hpp b/src/wayland/hyprland/ipc/connection.hpp
+index c4264e9..be0b48b 100644
+--- a/src/wayland/hyprland/ipc/connection.hpp
++++ b/src/wayland/hyprland/ipc/connection.hpp
+@@ -132,6 +132,7 @@ private:
+ 	explicit HyprlandIpc();
+ 
+ 	void onEvent(HyprlandIpcEvent* event);
++	void scheduleEventReconnect();
+ 
+ 	static bool compareWorkspaces(HyprlandWorkspace* a, HyprlandWorkspace* b);
+ 
+@@ -140,6 +141,10 @@ private:
+ 	QString mRequestSocketPath;
+ 	QString mEventSocketPath;
+ 	bool valid = false;
++	// Hyprland closes the event socket of a client that falls behind (a full send buffer during an event storm);
++	// the shell reconnects and resyncs instead of silently going deaf to every later event.
++	bool eventReconnecting = false;
++	int eventReconnectAttempts = 0;
+ 	bool requestingMonitors = false;
+ 	bool requestingWorkspaces = false;
+ 	bool requestingToplevels = false;
