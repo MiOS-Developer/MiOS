@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: LIVE opt-in (MIOS_LIVE_NESTED=1): Hypr3D room verbs (cancel/sprint/recenter, via mios-inputd dispatch) and PiP face-the-viewer (2 m room / 4 m Theatre, eased follow, eased return) in an owned nested PiP session; the installed plugin (MIOS_HYPR3D_OLD) is the negative control.
+# AI-hint: LIVE opt-in (MIOS_LIVE_NESTED=1): Hypr3D room verbs (cancel/sprint/recenter, via mios-inputd dispatch) and PiP face-the-viewer (2 m room / 4 m Theatre, eased follow, eased return, SSOT face_distance honoured) in an owned nested PiP session; the installed plugin (MIOS_HYPR3D_OLD) is the negative control.
 # AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d.config.windows] [keybindings.global.controller.room], tools/native/mios-inputd
 # AI-functions: run_pass, main
 # Runs in an owned nested MiOS PiP session (mios-gen nested-session --layout pip). The camera is moved by real key
@@ -39,10 +39,14 @@ def off_axis(w, cam):
     return math.degrees(math.acos(max(-1.0, min(1.0, dot)))), L
 
 
-def run_pass(label, plugin, candidate):
+def run_pass(label, plugin, candidate, face_distance=None):
     text = Path(SSOT).read_text()
     text, k = re.subn(r'(?m)^(path = )"[^"]*hypr3d[^"]*\.so"', lambda m: f'{m.group(1)}"{plugin}"', text)
     assert k == 1, 'hypr3d path line not found'
+    if face_distance is not None:
+        # The SSOT tunable drives the plugin: [desktop.hyprland.hypr3d.config.windows].face_distance via the toggle.
+        text, k = re.subn(r'(?m)^face_distance = [0-9.]+', f'face_distance = {face_distance}', text)
+        assert k == 1, 'face_distance line not found'
     tmp = tempfile.NamedTemporaryFile('w', suffix='.toml', prefix=f'mios-room-{label}-', delete=False)
     tmp.write(text); tmp.close()
     env0 = dict(os.environ, MIOS_VENDOR_TOML=tmp.name)
@@ -156,6 +160,12 @@ def run_pass(label, plugin, candidate):
         lay = layout()
         a, dist = off_axis(pip(lay), lay['camera'])
         inside = dict(off=round(a, 2), dist=round(dist, 2), yaw=round(pip(lay)['yaw'], 3), facing=pip(lay).get('facing'))
+        if face_distance is not None:
+            got = lay['room_input']['face_distance']
+            check(f'[{label}] the SSOT face_distance reaches the plugin', abs(got - face_distance) < 1e-3, got)
+            check(f'[{label}] NEGATIVE: with face_distance {face_distance} m the PiP at {dist:.2f} m keeps its placed pose',
+                  a > 10.0 and dist > face_distance + 0.2 and not pip(lay).get('facing'), inside)
+            return
         if candidate:
             check(f'[{label}] inside 2 m the PiP normal faces the camera position', a < 3.0 and dist < 2.0, inside)
             # Eased, not snapped: right after the strafe the PiP lags the moved camera, then the gap closes gradually
@@ -290,6 +300,7 @@ def main():
     import tomllib
     plugin = tomllib.loads(Path(SSOT).read_text())['desktop']['hyprland']['hypr3d']['path']
     run_pass('candidate', plugin, True)
+    run_pass('ssot-tuned', plugin, True, face_distance=1.0)
     if OLD:
         run_pass('installed', OLD, False)
     portal1 = open('/proc/self/mountinfo').read().count('fuse.portal')

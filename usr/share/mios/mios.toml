@@ -17060,6 +17060,8 @@ unit = [
     "tests/test-hypr3d-spawn.py",
     "tests/test-hypr3d-crt.py",
     "tests/test-hypr3d-controller.py",
+    "tests/test-hypr3d-room-input.py",
+    "tests/test-hypr3d-room-input-live.py",
     "tests/test-shaderglass.py",
     "tests/test-hyprbars-overlay.py",
     "tests/test-hypr3d-enter-morph-scale.py",
