@@ -1,6 +1,6 @@
 #!/bin/bash
-# AI-hint: Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation.
-# AI-related: /usr/share/mios/mios.toml [keybindings] [theme.tmux], /etc/tmux.conf, mios-ai-terminal
+# AI-hint: Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation; inside tmux it hands MiOS-Tmux helpers (menus, apps, floats, session cycling) to the native executor.
+# AI-related: /usr/share/mios/mios.toml [keybindings] [theme.tmux] [terminal.tui_launcher] [[terminal.tuis]], /etc/tmux.conf, mios-ai-terminal, tools/native/mios-gen/src/tmux_os.rs
 
 set -euo pipefail
 
@@ -10,13 +10,51 @@ _mios_workspace=()
 _mios_session=""
 _mios_new=0
 _mios_bare_opt=0
+_mios_app=""
+_mios_console=0
+_gen=/usr/bin/mios-gen
+_libgen=/usr/libexec/mios/mios-gen
+_test_dir="${MIOS_TERMINAL_TEST_SOCKET_DIR:-}"
+if [[ -n "$_test_dir" ]]; then
+    # Test hook: a private 0700 directory the caller owns and a mios-tmuxos-test-* socket. It can never
+    # name the shared socket root, a tmux-UID directory or the operator's socket (checked again below).
+    _test_sock="${MIOS_TERMINAL_TEST_SOCKET:-}"
+    _test_real="$(realpath -e -- "$_test_dir" 2>/dev/null)" || exit 64
+    [[ -d "$_test_real" && -O "$_test_real" && "$(stat -c %a -- "$_test_real")" == 700 ]] || { printf 'mios-terminal: test socket dir must be owned and 0700\n' >&2; exit 64; }
+    case "$_test_real" in /|/tmp|/run/user/*/tmux-*|/tmp/tmux-*) printf 'mios-terminal: refusing a shared socket root\n' >&2; exit 64 ;; esac
+    [[ "$_test_sock" =~ ^mios-tmuxos-test-[A-Za-z0-9-]+$ ]] || { printf 'mios-terminal: test socket must be mios-tmuxos-test-*\n' >&2; exit 64; }
+    [[ -z "${MIOS_TERMINAL_TEST_GEN:-}" ]] || { _gen="$MIOS_TERMINAL_TEST_GEN"; _libgen="$MIOS_TERMINAL_TEST_GEN"; }
+fi
 case "${1:-}" in
-    -h|--help) printf 'Usage: mios-terminal [--action terminal|ai|agents|system] [--agent NAME ARGS...] [--workspace [NAME ARGS...]] [--session NAME] [--new] [--bare]\nWith no option outside tmux, opens the global session selector ([terminal.sessions]). --session attaches NAME; --new starts a Tmux-OS session; --bare starts a bare Tmux-OS session.\nAttach or create the MiOS human tmux session. AI workspaces resize between desktop and portrait layouts.\n'; exit 0 ;;
+    -h|--help) printf 'Usage: mios-terminal [--action terminal|ai|agents|system] [--agent NAME ARGS...] [--workspace [NAME ARGS...]] [--session NAME] [--new] [--bare] [--app ID [--console 0|1]]\nInside MiOS-Tmux: --menu apps | --app ID | --float shell|lift|reap | --session-cycle next|prev | --new (each with --client NAME) | --reload\nWith no option outside tmux, opens the global session selector ([terminal.sessions]). --session attaches NAME; --new starts a Tmux-OS session; --bare starts a bare Tmux-OS session; --app opens a TUI from [[terminal.tuis]].\nAttach or create the MiOS human tmux session. AI workspaces resize between desktop and portrait layouts.\n'; exit 0 ;;
+    --menu|--float|--session-cycle)
+        # Bindings run these as `run-shell -b` jobs with an explicit TMUX_PANE; the executor names every target.
+        [[ -n "${TMUX:-}" ]] || { printf 'mios-terminal: %s works inside MiOS-Tmux only\n' "$1" >&2; exit 64; }
+        _verb="${1#--}"; shift
+        exec "$_gen" tmux-os --root / "$_verb" "$@" ;;
+    --reload)
+        [[ -n "${TMUX:-}" ]] || { printf 'mios-terminal: --reload works inside MiOS-Tmux only\n' >&2; exit 64; }
+        _mios_runtime="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/mios-terminal"
+        [[ -z "$_test_dir" ]] || _mios_runtime="$_test_dir/runtime"
+        umask 077
+        "$_libgen" render-tmux-theme --runtime "$_mios_runtime"
+        tmux source-file "$_mios_runtime/tmux.conf"
+        exec tmux display-message -l "$(/usr/bin/mios-toml-get keybindings.tmux reload_message)" ;;
+    --app)
+        [[ $# -ge 2 && "$2" =~ ^[a-z0-9-]+$ ]] || exit 64
+        if [[ -n "${TMUX:-}" ]]; then shift; exec "$_gen" tmux-os --root / app "$@"; fi
+        _mios_app="$2"; shift 2
+        while [[ $# -gt 0 ]]; do
+            case "$1" in --console) [[ "${2:-}" =~ ^[01]$ ]] || exit 64; _mios_console="$2"; shift 2 ;; *) exit 64 ;; esac
+        done
+        _mios_action=terminal ;;
     --action) [[ $# -ge 2 ]] || exit 64; _mios_action="$2"; shift 2; _mios_workspace=("$@") ;;
     --agent) shift; [[ $# -ge 1 ]] || exit 64; printf -v _mios_head '%q ' /usr/bin/mios agent "$@" ;;
     --workspace) shift; _mios_action=ai; _mios_workspace=("$@") ;;
     --session) [[ $# -ge 2 && -n "$2" ]] || exit 64; _mios_session="$2"; _mios_action=terminal ;;
-    --new) _mios_new=1; _mios_action=terminal ;;
+    --new)
+        if [[ -n "${TMUX:-}" && "${2:-}" == --client ]]; then shift; exec "$_gen" tmux-os --root / new "$@"; fi
+        _mios_new=1; _mios_action=terminal ;;
     --bare) _mios_new=1; _mios_bare_opt=1; _mios_action=terminal ;;
     '')
         if [[ -z "${TMUX:-}" && "$(/usr/bin/mios-toml-get terminal.sessions selector 2>/dev/null)" == true ]]; then
@@ -24,13 +62,30 @@ case "${1:-}" in
         fi ;;
     *) printf 'mios-terminal: unsupported option: %s\n' "$1" >&2; exit 64 ;;
 esac
+_mios_python="$(/usr/bin/mios-toml-get mcp python)" || { printf 'mios-terminal: [mcp].python unresolved\n' >&2; exit 1; }
+_mios_relay="$(/usr/bin/mios-toml-get mcp.agents binary)" || { printf 'mios-terminal: [mcp.agents].binary unresolved\n' >&2; exit 1; }
 # The same compiled policy validates both Linux and Windows terminal entry.
 _policy_args=(terminal-config --root / --action "$_mios_action")
 [[ -z "$_mios_head" ]] || _policy_args+=(--no-default)
-_policy="$(/usr/bin/mios-gen "${_policy_args[@]}")" || { printf 'mios-terminal: native SSOT resolution failed\n' >&2; exit 1; }
+_policy="$("$_gen" "${_policy_args[@]}")" || { printf 'mios-terminal: native SSOT resolution failed\n' >&2; exit 1; }
 mapfile -t _mios_terminal_config <<< "$_policy"
 [[ ${#_mios_terminal_config[@]} == 9 ]] || { printf 'mios-terminal: keybinding configuration unresolved\n' >&2; exit 1; }
 _mios_action="${_mios_terminal_config[6]}"
+if [[ -n "$_test_dir" ]]; then
+    # Never the operator's socket or socket root, whatever the test SSOT says.
+    [[ "$_test_sock" != "${_mios_terminal_config[0]}" && "$_test_real" != "$(realpath -m -- "${_mios_terminal_config[8]}")" ]] || exit 64
+    _mios_terminal_config[0]="$_test_sock"
+    _mios_terminal_config[8]="$_test_real"
+fi
+if [[ -n "$_mios_app" ]]; then
+    # A TUI from the selector or an outside terminal: a window in the bare Tmux-OS session
+    # ([terminal.tui_launcher].app_target = session, created if missing) or in a new bare session (new).
+    mapfile -d '' _mios_spec < <("$_gen" tui-spec "$_mios_app" --root / --console "$_mios_console") || true
+    [[ ${#_mios_spec[@]} -ge 6 ]] || { printf 'mios-terminal: %s is not an installed TUI for this terminal\n' "$_mios_app" >&2; exit 3; }
+    _mios_bare_opt=1
+    _mios_session="$(/usr/bin/mios-toml-get terminal.sessions new_session_name)"
+    [[ "$(/usr/bin/mios-toml-get terminal.tui_launcher app_target)" == new ]] && _mios_new=1
+fi
 if (( _mios_new )); then
     # Bare Tmux-OS session: [terminal.sessions].new_session_name, then -2, -3, ...
     _mios_base="$(/usr/bin/mios-toml-get terminal.sessions new_session_name)"
@@ -57,7 +112,7 @@ _mios_observer_window() (
     while IFS=$'\t' read -r _id _name _head _observer; do
         if [[ "$_head" =~ ^%[0-9]+$ && "$_observer" =~ ^%[0-9]+$ ]]; then
             _witness=$("${_tmux[@]}" display-message -p -t "$_head" '#{socket_path},#{pid},#{session_id}')
-            TMUX="$_witness" TMUX_PANE="$_head" python3 /usr/libexec/mios/mios-mcp-server --workspace-view compact
+            TMUX="$_witness" TMUX_PANE="$_head" "$_mios_relay" --workspace-view compact   # native layout pass
             "${_tmux[@]}" select-pane -t "$_observer"
             printf '%s\n' "$_id"
             exit 0
@@ -71,7 +126,7 @@ _mios_observer_window() (
     printf '%s\n' "$_window"
 )
 if [[ -n "${TMUX:-}" ]]; then
-    if [[ "$_mios_action" == ai ]]; then exec python3 /usr/libexec/mios/mios-mcp-server --workspace "${_mios_workspace[@]}"; fi
+    if [[ "$_mios_action" == ai ]]; then exec "$_mios_python" /usr/libexec/mios/mios-mcp-server --workspace "${_mios_workspace[@]}"; fi
     if [[ "$_mios_action" == agents ]]; then
         _session=$(tmux display-message -p '#{session_id}')
         _head=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{@mios-workspace-head}')
@@ -98,16 +153,21 @@ fi
 # ([theme.tmux].remote_truecolor_terms). A local console is never changed; any failure keeps the client's own TERM.
 while IFS='=' read -r _k _v; do
     case "$_k" in TERM|COLORTERM) if [[ "$_v" =~ ^[A-Za-z0-9._+-]+$ ]]; then export "$_k=$_v"; fi ;; esac
-done < <(/usr/libexec/mios/mios-gen tmux-client-env --root / 2>/dev/null || true)
-/usr/bin/miosd terminal-runtime-check --root / >/dev/null  # guards the SSOT namespace below; $TMUX clients keep theirs
+done < <("$_libgen" tmux-client-env --root / 2>/dev/null || true)
 _mios_runtime="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/mios-terminal"
+if [[ -z "$_test_dir" ]]; then
+    /usr/bin/miosd terminal-runtime-check --root / >/dev/null  # guards the SSOT namespace below; $TMUX clients keep theirs
+else
+    _mios_runtime="$_test_real/runtime"
+fi
 # A new desktop/SSH session uses the deployed root. Existing tmux invocations
 # keep their pane's project directory; Windows entry passes its explicit cwd.
 cd -- "${MIOS_TERMINAL_DIRECTORY:-${_mios_terminal_config[7]}}"
 umask 077
-/usr/libexec/mios/mios-gen render-tmux-theme --runtime "$_mios_runtime"
+"$_libgen" render-tmux-theme --runtime "$_mios_runtime"
 export MIOS_OMP_THEME="$_mios_runtime/mios.omp.json"
 _mios_bootstrap=""
+_mios_created=0
 if ! tmux -L "${_mios_terminal_config[0]}" has-session -t "=${_mios_terminal_config[1]}" 2>/dev/null; then
     if [[ "$_mios_action" == ai ]]; then
         if ! _mios_bootstrap=$(tmux -L "${_mios_terminal_config[0]}" -f "$_mios_runtime/tmux.conf" new-session -d -s "${_mios_terminal_config[1]}" \
@@ -122,6 +182,9 @@ if ! tmux -L "${_mios_terminal_config[0]}" has-session -t "=${_mios_terminal_con
         (( _mios_bare_opt )) && _mios_bare=(-e MIOS_SESSION_BARE=1)  # bare Tmux-OS: no workspace/observer panes
         tmux -L "${_mios_terminal_config[0]}" -f "$_mios_runtime/tmux.conf" new-session -d -s "${_mios_terminal_config[1]}" \
             "${_mios_bare[@]}" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc
+        # Bare sessions also carry @mios-bare, so tmux hooks skip them without spawning anything.
+        (( ! _mios_bare_opt )) || tmux -L "${_mios_terminal_config[0]}" set-option -t "=${_mios_terminal_config[1]}:" @mios-bare 1
+        _mios_created=1
     fi
 fi
 tmux -L "${_mios_terminal_config[0]}" source-file "$_mios_runtime/tmux.conf"
@@ -132,7 +195,7 @@ if [[ "$_mios_action" == agents ]]; then
     tmux -L "${_mios_terminal_config[0]}" select-window -t "$_mios_view"
 elif [[ "$_mios_action" == ai ]]; then
     MIOS_TMUX_UI_SOCKET=$(tmux -L "${_mios_terminal_config[0]}" display-message -p '#{socket_path}') \
-        python3 /usr/libexec/mios/mios-mcp-server --workspace "${_mios_workspace[@]}"
+        "$_mios_python" /usr/libexec/mios/mios-mcp-server --workspace "${_mios_workspace[@]}"
     if [[ -n "$_mios_bootstrap" ]]; then
         _mios_witness=$(tmux -L "${_mios_terminal_config[0]}" display-message -p -t "${_mios_bootstrap%%:*}" '#{pane_id}:#{pane_pid}:#{pane_current_command}')
         if [[ "$_mios_witness" == "$_mios_bootstrap:sleep" ]]; then
@@ -141,9 +204,14 @@ elif [[ "$_mios_action" == ai ]]; then
     fi
 elif [[ -n "$_mios_action" && "$_mios_action" != terminal ]]; then
     tmux -L "${_mios_terminal_config[0]}" new-window -n "${_mios_terminal_config[5]}" "${_mios_terminal_config[4]}"
-else
-    tmux -L "${_mios_terminal_config[0]}" select-window -t "${_mios_terminal_config[1]}:^" 2>/dev/null || \
-    tmux -L "${_mios_terminal_config[0]}" select-window -t "${_mios_terminal_config[1]}:0" 2>/dev/null || true
+elif (( _mios_created )); then
+    # Only a session created here starts at its first window: the current window is per session, so
+    # selecting it on an existing session would move every other attached client too.
+    tmux -L "${_mios_terminal_config[0]}" select-window -t "${_mios_terminal_config[1]}:^" 2>/dev/null || true
+fi
+if [[ -n "$_mios_app" ]]; then
+    # Popup and float modes need an attached client, so outside tmux every TUI opens as a window.
+    tmux -L "${_mios_terminal_config[0]}" new-window -t "=${_mios_terminal_config[1]}:" -n "${_mios_spec[1]}" -- "${_mios_spec[@]:5}"
 fi
 if [[ -n "$_mios_head" ]]; then
     tmux -L "${_mios_terminal_config[0]}" new-window -n 'MiOS Agent' "$_mios_head"

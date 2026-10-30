@@ -2097,6 +2097,7 @@ dependencies = [
  "flate2",
  "mios-resolver",
  "mios-service-core",
+ "mios-unit-gen",
  "regex",
  "serde",
  "serde_json",

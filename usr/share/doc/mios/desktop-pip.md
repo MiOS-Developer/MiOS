@@ -149,19 +149,117 @@ already loaded compositor plugin.
 ## Independent desktop sessions
 
 Launch **MiOS Desktop Session** from the application drawer or run
-`mios-gen nested-session`. Its desktop actions also offer a regular window and
-side-by-side layout. The default parent window is PiP and does not request
-initial focus or an automatic controller-capture tag.
+`mios-gen nested-session`. Each session has a private runtime, compositor,
+Quickshell entry and Tmux-OS server. Closing its parent window (or the session's
+compositor exiting) stops the session, its private Tmux-OS server and its
+registry entry. The session's `/dev/input` is empty unless devices are assigned
+(below); the parent's legacy controller packet is isolated as described under
+"Private /tmp and the room packet".
 
-The child has a private runtime, compositor, Quickshell entry and Tmux-OS socket.
-Ordinary child applications tile inside the current viewport. A native Hyprland
-timer reconciles Wayland output configure sizes with the monitor rule so the
-workarea reflows instead of keeping the initial large rectangle. The interval
-is configurable through `desktop.nested.resize_poll_ms` and the configurator.
-The timer changes rules only after the actual output dimensions change.
+### Launch targets
 
-Closing the parent window stops the owned child desktop and its private Tmux-OS
-server. Physical input nodes and the parent's legacy controller packet are masked
-inside the child namespace. Per-session controller assignment, remote multiplayer
-and VR endpoint attachment remain separate unfinished capabilities; the session
-descriptor reports that physical controllers are not assigned.
+`--target` (alias `--layout`; default `desktop.nested.launch_layout`):
+
+| Target | Parent placement | Session scaling |
+| --- | --- | --- |
+| `pip` (default) | pinned PiP, no initial focus | fit: the `width` x `height` desktop scaled to the PiP; SUPER+CTRL +/-/0/wheel zoom |
+| `window`, `side-by-side` | ordinary window, or the right half of the work area | fit |
+| `output` | fullscreen on `--output NAME` (a second local user's display) | native: output pixels 1:1 |
+| `remote` | fullscreen on the remote display output | native |
+| `hypr3d` | a window of the parent's Hypr3D room | fit, at `width` x `height` logical px |
+
+* **output** needs an output name (`--output`, the seat preset's `output`, or
+  `desktop.nested.targets.output.output`). An output that is not attached is
+  refused before anything starts.
+* **remote** uses the output the existing remote path serves: `--output`, else
+  `remote.rdp.virtual_output` (the RDP bridge's `HEADLESS-MIOS-RDP`), then
+  `desktop.nested.targets.remote.outputs`, then the first attached output with an
+  `output_prefixes` prefix. The native RDP server and wayvnc already stream that
+  output, so a remote client sees the session; its input arrives on the parent's
+  seat and reaches the focused session window like any other window. An output
+  reporting 0x0 is never used. With no remote client attached the launch is
+  refused, or waits up to `wait_ms`. The RDP server itself is unchanged.
+* Every session descriptor (`session.json`) also carries `serve`: `mode =
+  "mirror"`, the session's `runtime`, `hypr_instance`, `wayland_display` and its
+  only `output`. That is what a remote server needs to share the session itself
+  with no parent output at all (the native RDP server's nested lab mode reads the
+  same runtime and instance), for example a remote user who should not appear on
+  any local display.
+* Inside a nested *parent* (a test lab), a headless output cannot allocate
+  buffers on this Wayland backend (`GBM: Failed to allocate a GBM buffer`, 0x0),
+  so the remote target is verified there on the parent's second Wayland output;
+  on the desktop the RDP bridge's headless output is a real DRM-backed output.
+* **hypr3d** sizes the window to the session's logical size, clamped into the work
+  area minus the shell edge margin, so the session renders at fit scale 1 (one
+  texel per parent pixel) and the room's Retina opening shows it at its flat size.
+  A closed room is opened through the same path as SUPER+G
+  (`hyprland-3d-toggle`) when `desktop.nested.targets.hypr3d.open_room` is true;
+  otherwise the launch is refused. The launch succeeds only after the room's
+  `export_layout()` lists the window.
+
+Every target's `scale_mode` can be overridden in
+`[desktop.nested.targets.<target>]`.
+
+### Seats, users and the registry
+
+`--seat LABEL` (a-z, 0-9, `-`) names a session: its Tmux-OS socket becomes
+`<tmux_socket_name>-<seat>`, the session receives `MIOS_NESTED_SEAT`,
+`MIOS_NESTED_USER`, `MIOS_NESTED_TARGET` and `MIOS_NESTED_DEVICES`, and a seat label
+is unique among live sessions. `--user NAME` is the user's display name (default:
+the seat label). `[desktop.nested.seats.<seat>]` presets hold `user`, `target`,
+`output` and `devices`; command-line flags win. Unlabelled sessions may run side by
+side, as before.
+
+Each live session writes `$XDG_RUNTIME_DIR/mios/nested-sessions/<seat>.json`
+(`pid-<launcher>.json` when unlabelled): seat, user, target, output, compositor
+PID, Wayland socket and the assigned devices. Entries from a launcher that no
+longer runs are ignored and pruned. `mios-gen nested-session --list-sessions`
+prints them.
+
+### Device assignment
+
+`--device SPEC` (repeatable), a seat preset's `devices`, or
+`desktop.nested.devices.default` assign input devices; `--no-devices` assigns none.
+A spec is `/dev/input/eventN` (or a `by-id`/`by-path` link), `name:<exact evdev
+name>` or `virtual-pad` (the evdev node `mios-inputd` names
+`virtual_pad_name` for this seat). Each node, and with `include_joystick` its
+`/dev/input/jsN`, is bind-mounted at its own path into the session's otherwise
+empty `/dev/input`; nothing else is visible there. The policy in
+`[desktop.nested.devices]` limits kinds (from evdev capabilities: controller,
+keyboard, pointer, other), virtual (uinput) nodes and, with `exclusive`, refuses a
+node that another live session holds. `--list-devices` shows each host node's
+kind and owner; `--plan` prints the resolved launch without starting it.
+
+Assigned nodes are for applications inside the session (games, emulators, an
+in-session bridge) and for `mios-inputd`, which reads the registry. The session's
+compositor itself only receives its parent window's Wayland input, so a second
+local user's keyboard and mouse need the input bridge to stop routing those nodes
+to the parent and forward them into the session. That bridge work belongs to the
+input daemon; the launcher binds the nodes and publishes the assignment.
+
+### Private /tmp and the room packet
+
+`desktop.nested.private_tmp` (`seat` by default) gives every labelled seat a private
+`/tmp` (`<runtime>/tmp`, removed with the session): a second local user, a remote
+user or a room seat never shares the operator's `/tmp`, compositor plugin state
+files inside the session are its own, and the parent's legacy Hypr3D controller
+packet (`/tmp/mios-hypr3d-pad.bin`) is not visible. The descriptor and registry
+entry name that directory (`tmp`) and `pad_state`, the file an input bridge writes
+this session's own room packet to. `always` applies it to every session, `never`
+to none.
+
+The unlabelled development session keeps the shared `/tmp`. Its plugin state files
+(`desktop.nested.private_files`) each get a private copy bound over them, and the
+legacy packet is masked with `/dev/null`. mios-inputd replaces that packet by
+rename several times a second, and a rename detaches a bind over the old file, so
+that mask is best effort; a launch that races such a rename inside bwrap is retried
+(bounded). Use a seat or `private_tmp = "always"` where isolation from the
+operator's controller matters.
+
+### Sessions inside sessions
+
+A session launched inside another nested session lives under the outermost
+runtime directory (with a link at the usual place in its parent) because UNIX
+socket paths are limited to 107 bytes: `<runtime>/hypr/<signature>/.socket2.sock`
+of a runtime nested twice would not fit. Tools that look a session up in its
+parent's runtime (session zoom) follow the link.

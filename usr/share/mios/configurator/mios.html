@@ -1869,6 +1869,23 @@
             <label for="f-mcp-proto">mcp.protocol_version (MCP revision token declared on the initialize handshake)</label>
             <input type="text" id="f-mcp-proto" data-key="mcp.protocol_version" placeholder="2025-11-25">
             <fieldset>
+              <legend>Your own MCP servers (federation)</legend>
+              <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
+                An <code>[mcp.servers.&lt;id&gt;]</code> you declare only in your own settings runs as you and its
+                tools appear in your MiOS MCP tools as <code>&lt;namespace&gt;&lt;tool&gt;</code> (Blender, for example).
+              </p>
+              <label>Run my own MCP servers <input type="text" data-key="mcp.federation.enabled" data-type="bool" placeholder="true"></label>
+              <label>Also offer them over the HTTP front door <input type="text" data-key="mcp.federation.serve_http" data-type="bool" placeholder="false"></label>
+              <label>Startup timeout (seconds) <input type="text" data-key="mcp.federation.startup_timeout_s" data-type="int" placeholder="30"></label>
+              <label>Tool call timeout (seconds) <input type="text" data-key="mcp.federation.call_timeout_s" data-type="int" placeholder="300"></label>
+              <label>Restart backoff (seconds, doubles per failure) <input type="text" data-key="mcp.federation.restart_backoff_s" data-type="int" placeholder="10"></label>
+              <label>Give up after this many failures in a row <input type="text" data-key="mcp.federation.max_restarts" data-type="int" placeholder="5"></label>
+              <label>List cached tools without starting the server <input type="text" data-key="mcp.federation.catalog_cache" data-type="bool" placeholder="true"></label>
+              <label>Stop an unused server after (seconds, 0 = never) <input type="text" data-key="mcp.federation.idle_stop_s" data-type="int" placeholder="600"></label>
+              <label>Maximum tools per server <input type="text" data-key="mcp.federation.max_tools_per_server" data-type="int" placeholder="256"></label>
+              <label>Log directory (under XDG_STATE_HOME) <input type="text" data-key="mcp.federation.log_directory" placeholder="mios/mcp-federation"></label>
+            </fieldset>
+            <fieldset>
               <legend>Responsive terminal workspace</legend>
               <label>Apply to human tmux sessions <input type="text" data-key="mcp.tmux.workspace.global_sessions" data-type="bool"></label>
               <label>Enter tmux from local and interactive SSH shells <input type="text" data-key="terminal.startup.auto_attach" data-type="bool"></label>
@@ -2306,10 +2323,18 @@
             <input type="number" min="0" max="16" id="f-rdp-bdt" data-key="remote.rdp.native.bitmap_damage_threshold" data-type="int" value="3">
             <label for="f-rdp-progressive">EGFX Progressive for clients without H.264</label>
             <input type="text" id="f-rdp-progressive" data-key="remote.rdp.native.progressive" data-type="bool" placeholder="true">
-            <label for="f-rdp-progressive-hz">Progressive capture ceiling (Hz)</label>
-            <input type="number" min="1" max="240" id="f-rdp-progressive-hz" data-key="remote.rdp.native.progressive_hz" data-type="int" value="30">
+            <label for="f-rdp-progressive-hz">Progressive capture ceiling (Hz; 0 inherits target_hz)</label>
+            <input type="number" min="0" max="240" id="f-rdp-progressive-hz" data-key="remote.rdp.native.progressive_hz" data-type="int" value="0">
             <label for="f-rdp-progressive-quant">Progressive wavelet quantization (6 = most detail)</label>
             <input type="number" min="6" max="15" id="f-rdp-progressive-quant" data-key="remote.rdp.native.progressive_quant" data-type="int" value="8">
+            <label for="f-rdp-mic-enabled">Allow microphone forwarding when the client enables it</label>
+            <input type="text" id="f-rdp-mic-enabled" data-key="remote.rdp.redirect.microphone" data-type="bool" placeholder="true">
+            <label for="f-rdp-audio-control">Native audio control executable</label>
+            <input type="text" id="f-rdp-audio-control" data-key="remote.rdp.native.audio_control_program" value="pactl">
+            <label for="f-rdp-mic-queue">Microphone queue (10 ms packets)</label>
+            <input type="number" min="1" max="128" id="f-rdp-mic-queue" data-key="remote.rdp.native.microphone_queue_packets" data-type="int" value="8">
+            <label for="f-rdp-mic-source">Microphone source prefix</label>
+            <input type="text" id="f-rdp-mic-source" data-key="remote.rdp.naming.microphone_source_prefix" value="mios-remote-microphone">
 
             <label for="f-rdp-bmh">native.bitmap_min_hz (floor of the adaptive bitmap capture rate)</label>
             <input type="text" id="f-rdp-bmh" data-key="remote.rdp.native.bitmap_min_hz" data-type="int" placeholder="2">
@@ -3265,7 +3290,27 @@
         <label>Smallest PiP width (fraction of the screen) <input data-key="desktop.pip_gravity.min_width_frac" data-type="float" type="number" min="0" max="1" step="0.01"></label>
         <label>Largest PiP width (fraction of the screen) <input data-key="desktop.pip_gravity.max_width_frac" data-type="float" type="number" min="0" max="1" step="0.01"></label>
         <label>Keep PiPs still after fullscreen ends (ms) <input data-key="desktop.pip_gravity.fullscreen_release_ms" data-type="int" type="number" min="0" max="10000"></label>
-        <label>Desktop session launch layout <select data-key="desktop.nested.launch_layout"><option value="pip">Picture-in-Picture</option><option value="window">Window</option><option value="side-by-side">Side by side</option></select></label>
+        <label>Desktop session launch target <select data-key="desktop.nested.launch_layout"><option value="pip">Picture-in-Picture</option><option value="window">Window</option><option value="side-by-side">Side by side</option><option value="output">Whole output (second local user)</option><option value="remote">Remote display output</option><option value="hypr3d">Hypr3D room window</option></select></label>
+        <label>Default session seat label (empty = unlabelled) <input data-key="desktop.nested.seat" type="text" pattern="[a-z0-9][a-z0-9-]{0,31}"></label>
+        <label>Session user display name (empty = the seat label) <input data-key="desktop.nested.user_label" type="text" maxlength="64"></label>
+        <label>Session registry directory (under the runtime directory) <input data-key="desktop.nested.registry_dir" type="text"></label>
+        <label>Private /tmp per session <select data-key="desktop.nested.private_tmp"><option value="seat">Labelled seats (second, remote and room users)</option><option value="always">Every session</option><option value="never">Never (shared /tmp, per-file masks)</option></select></label>
+        <label>Per-session private plugin state files (comma separated) <input data-key="desktop.nested.private_files" data-array="csv" type="text"></label>
+        <label>Whole-output target: default output (empty = --output required) <input data-key="desktop.nested.targets.output.output" type="text"></label>
+        <label>Whole-output target scaling <select data-key="desktop.nested.targets.output.scale_mode"><option value="native">Output pixels 1:1</option><option value="fit">Scale the desktop to the output</option></select></label>
+        <label>Remote target: output names (comma separated, after the RDP virtual output) <input data-key="desktop.nested.targets.remote.outputs" data-array="csv" type="text"></label>
+        <label>Remote target: output name prefixes (comma separated) <input data-key="desktop.nested.targets.remote.output_prefixes" data-array="csv" type="text"></label>
+        <label>Remote target: wait for a client to attach (ms, 0 = refuse at once) <input data-key="desktop.nested.targets.remote.wait_ms" data-type="int" type="number" min="0" max="600000"></label>
+        <label>Remote target scaling <select data-key="desktop.nested.targets.remote.scale_mode"><option value="native">Output pixels 1:1</option><option value="fit">Scale the desktop to the output</option></select></label>
+        <label>Hypr3D target: open the room when closed <input data-key="desktop.nested.targets.hypr3d.open_room" type="checkbox"></label>
+        <label>Hypr3D target scaling <select data-key="desktop.nested.targets.hypr3d.scale_mode"><option value="fit">Scale the desktop to the window</option><option value="native">Window pixels 1:1</option></select></label>
+        <label>Session devices assigned by default (comma separated specs) <input data-key="desktop.nested.devices.default" data-array="csv" type="text"></label>
+        <label>Assignable device kinds (controller, keyboard, pointer, other) <input data-key="desktop.nested.devices.allow_kinds" data-array="csv" type="text"></label>
+        <label>Allow virtual (uinput) devices <input data-key="desktop.nested.devices.allow_virtual" type="checkbox"></label>
+        <label>One session per device <input data-key="desktop.nested.devices.exclusive" type="checkbox"></label>
+        <label>Also assign the legacy joystick node <input data-key="desktop.nested.devices.include_joystick" type="checkbox"></label>
+        <label>Seat virtual pad name ({seat} = the seat label) <input data-key="desktop.nested.devices.virtual_pad_name" type="text"></label>
+        <label>Virtual pad wait (ms) <input data-key="desktop.nested.devices.virtual_pad_wait_ms" data-type="int" type="number" min="0" max="60000"></label>
         <label>Viewport resize check (ms) <input data-key="desktop.nested.resize_poll_ms" data-type="int" type="number" min="20" max="5000"></label>
         <label>Session display width <input data-key="desktop.nested.width" data-type="int" type="number" min="320" max="8192"></label>
         <label>Session display height <input data-key="desktop.nested.height" data-type="int" type="number" min="320" max="8192"></label>

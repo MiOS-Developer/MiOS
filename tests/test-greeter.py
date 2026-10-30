@@ -241,7 +241,8 @@ class Glass(unittest.TestCase):
         self.assertEqual(r.wait_exit(20), 0, r.output())
         start = [m for m in r.transcript_msgs() if m.get("type") == "start_session"]
         self.assertEqual(len(start), 1)
-        self.assertEqual(start[0]["cmd"], ["/usr/bin/mios-gen", "hyprland-session"])
+        # hyprland.desktop is projected from [desktop.hyprland.hardware_profiles.igpu]: it names its profile.
+        self.assertEqual(start[0]["cmd"], ["/usr/bin/mios-gen", "hyprland-session", "--hardware-profile", "igpu"])
         self.assertIn("XDG_SESSION_TYPE=wayland", start[0]["env"])
         self.assertIn("XDG_CURRENT_DESKTOP=Hyprland", start[0]["env"])
         self.assertIsNone(r.stub_result(), "fallback must NOT run after a successful login")

@@ -211,7 +211,7 @@ mod host_tmux {
             "#FEDCBA",
             "set -g status-position top",
             "set -g history-limit 4567",
-            "bind-key h select-pane -L",
+            "bind-key -N \"Pane left\" h select-pane -L\n",
         ] {
             assert!(text.contains(expected), "{expected}");
         }

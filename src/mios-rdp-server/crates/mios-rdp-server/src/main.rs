@@ -448,7 +448,7 @@ async fn serve(cfg: Config) -> Result<()> {
         builder = builder.with_sound_factory(Some(Box::new(redirect::SoundFactory::new())));
     }
     if should_enable_microphone(&cfg) {
-        builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new())));
+        builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new(cfg.clone(), Arc::clone(&s.stats)))));
     }
     if cfg.redirect.drives {
         builder = builder.with_rdpdr_factory(Some(Box::new(redirect::RdpdrFactory::new(&cfg.runtime_dir))));
@@ -481,6 +481,7 @@ async fn serve(cfg: Config) -> Result<()> {
     let stats_task = tokio::task::spawn_local(stats_loop(Arc::clone(&s)));
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut last_drop: Option<Instant> = None;
+    let mut shutdown_requested = false;
     let res: Result<()> = async {
         loop {
             let (stream, peer_addr) = tokio::select! {
@@ -505,11 +506,13 @@ async fn serve(cfg: Config) -> Result<()> {
             server.set_connection_local_addr(stream.local_addr().ok());
             info!(peer = %peer_addr, "connection");
             let r = {
-                let fut = server.run_connection(stream);
+                let fut = server.run_connection(session::WireStream::new(stream, Arc::clone(&s.stats)));
                 tokio::pin!(fut);
                 loop {
                     tokio::select! {
                         r = &mut fut => break r,
+                        _ = term.recv() => { shutdown_requested = true; break Ok(()); },
+                        _ = tokio::signal::ctrl_c() => { shutdown_requested = true; break Ok(()); },
                         a = listener.accept() => {
                             if let Ok((s2, p2)) = a {
                                 info!(peer = %p2, "refused: a session is live (ConnectionPolicy::Reject)");
@@ -522,6 +525,7 @@ async fn serve(cfg: Config) -> Result<()> {
             let s2 = Arc::clone(&s);
             let rr = r.as_ref().map(|_| ()).map_err(|e| ironrdp_server::ServerError::reason("connection", format!("{e:#}")));
             tokio::task::spawn_blocking(move || s2.end_connection(&rr)).await?;
+            if shutdown_requested { break Ok(()); }
             if cfg.native.auto_reconnect {
                 if r.is_ok() || s.arc_rejected.load(Ordering::SeqCst) {
                     server.set_auto_reconnect_cookie(Some(random_cookie())); // clean logoff or rejected ARC: cookie invalidated
@@ -539,6 +543,11 @@ async fn serve(cfg: Config) -> Result<()> {
     .await;
     stats_task.abort();
     info!("stopping");
+    drop(server);
+    let microphone_deadline = Instant::now() + Duration::from_secs(12);
+    while s.stats.microphone_workers.load(Ordering::Acquire) > 0 && Instant::now() < microphone_deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let d = Arc::clone(&display);
     let _ = tokio::task::spawn_blocking(move || d.shutdown()).await;
     let _ = input_tx.send(input::Cmd::Stop);
@@ -608,7 +617,7 @@ fn now_epoch() -> f64 {
 
 async fn stats_loop(s: Arc<Session>) {
     let mut iv = tokio::time::interval(Duration::from_secs_f64(stats::WINDOW_SECS));
-    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     let mut prev_cpu = stats::process_cpu_seconds();
     let mut prev_t = Instant::now();
     let mut busy_windows = 0u32;
@@ -629,12 +638,14 @@ async fn stats_loop(s: Arc<Session>) {
             st.bitmap_frames.load(Ordering::Relaxed),
             st.skipped_rc.load(Ordering::Relaxed),
             st.bitmap_delivered.load(Ordering::Relaxed),
+            st.wire_bytes.load(Ordering::Relaxed),
         );
         let rate = |a: u64, b: u64| (a.saturating_sub(b)) as f64 / dt;
         // EGFX client acks/s + completed bitmap encoder/socket-write operations/s.
         // Bitmap has no display acknowledgement; these are not measured phone scanouts.
         // Bitmap frames queued but not drained are reported separately (bitmap_queued_fps).
         let fps = rate(cur.2, prev.2) + rate(cur.7, prev.7);
+        let wire_kbps = rate(cur.8, prev.8) * 8.0 / 1000.0;
         let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6), rate(cur.5, prev.5), rate(cur.7, prev.7));
         prev = cur;
         let cpu = stats::process_cpu_seconds();
@@ -744,8 +755,25 @@ async fn stats_loop(s: Arc<Session>) {
             "bitmap_hz": s.cfg.native.bitmap_hz,
             "bitmap_capture_hz": s.capture_hz.load(Ordering::Relaxed),
             "progressive_quant": s.cfg.native.progressive_quant,
-            "progressive_capture_hz": s.cfg.native.progressive_hz.min(s.cfg.target_hz),
-            "bitrate_kbps": doc_core.3.round(),
+            "progressive_capture_hz": s.cfg.native.progressive_ceiling(s.cfg.target_hz),
+            "bitrate_kbps": wire_kbps.round(),
+            "bitrate_basis": "socket_write_including_tls_and_rdp",
+            "microphone": {
+                "enabled": s.cfg.redirect.microphone,
+                "native_ready": s.stats.microphone_ready.load(Ordering::Relaxed),
+                "source": s.stats.microphone_source.lock().unwrap().clone(),
+                "bytes_forwarded": s.stats.microphone_bytes.load(Ordering::Relaxed),
+                "packets_dropped": s.stats.microphone_dropped.load(Ordering::Relaxed),
+                "error": s.stats.microphone_error.lock().unwrap().clone(),
+            },
+            "device_forwarding": {
+                "microphone": {"implemented": true, "permitted": s.cfg.redirect.microphone, "protocol": "MS-RDPEAI"},
+                "audio_output": {"implemented": false, "permitted": s.cfg.redirect.audio_output, "reason": "native_sink_backend_pending"},
+                "camera": {"implemented": false, "permitted": s.cfg.redirect.camera, "reason": "server_channel_and_native_video_source_pending"},
+                "drives": {"implemented": false, "permitted": s.cfg.redirect.drives, "reason": "native_filesystem_backend_pending"},
+                "usb": {"implemented": false, "reason": "native_usb_bridge_pending", "protocol": "MS-RDPEUSB"},
+            },
+            "encoded_payload_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,
             "frames_in_flight": st.frames_in_flight.load(Ordering::Relaxed),
             "backpressured": st.backpressured.load(Ordering::Relaxed),

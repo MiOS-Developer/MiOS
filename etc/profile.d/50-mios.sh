@@ -560,20 +560,28 @@ case "$-" in
     *) return 0 ;;
 esac
 
-_mios_cursor_env=$(python3 - <<'PY'
-import os, shlex, sys
-sys.path.insert(0, "/usr/lib/mios")
-import mios_toml
-data = mios_toml.load_merged()
-cursor = data["theme"]["cursor_linux"]
-values = {"XCURSOR_THEME": cursor["theme"], "XCURSOR_SIZE": cursor["size"],
-          "XCURSOR_PATH": ":".join(os.path.expanduser(p) for p in data["graphics"]["xcursor_path"].split(":"))}
-for key, value in values.items():
-    print(f"export {key}={shlex.quote(str(value))}")
-PY
-) || return 1
-eval "$_mios_cursor_env"
-unset _mios_cursor_env
+# Native layered SSOT reads (mios-toml-get), no interpreter: every interactive shell, including each new tmux pane,
+# runs this block.
+_mios_cursor_env=$(/usr/bin/mios-toml-get --dump theme.cursor_linux theme size) || return 1
+while IFS='=' read -r _mios_k _mios_v; do
+    case "$_mios_k" in
+        theme) export XCURSOR_THEME="$_mios_v" ;;
+        size) export XCURSOR_SIZE="$_mios_v" ;;
+    esac
+done <<EOF_MIOS_CURSOR
+$_mios_cursor_env
+EOF_MIOS_CURSOR
+_mios_cursor_env=$(/usr/bin/mios-toml-get graphics xcursor_path) || return 1
+_mios_xcursor_path=""
+_mios_rest="$_mios_cursor_env:"
+while [ -n "$_mios_rest" ]; do
+    _mios_v="${_mios_rest%%:*}"
+    _mios_rest="${_mios_rest#*:}"
+    case "$_mios_v" in "~") _mios_v="$HOME" ;; "~/"*) _mios_v="$HOME/${_mios_v#\~/}" ;; esac
+    _mios_xcursor_path="${_mios_xcursor_path:+$_mios_xcursor_path:}$_mios_v"
+done
+export XCURSOR_PATH="$_mios_xcursor_path"
+unset _mios_cursor_env _mios_k _mios_v _mios_rest _mios_xcursor_path
 
 if command -v mios-cursor-ensure >/dev/null 2>&1 \
    && [ ! -d "$HOME/.local/share/icons/${XCURSOR_THEME}/cursors" ]; then
@@ -799,7 +807,18 @@ if [ "${MIOS_THEME_PROJECTED:-}" != 1 ] && [ -x /usr/libexec/mios/mios-unit-gen 
     [ -z "${MIOS_OMP_THEME:-}" ] || _mios_projection="${MIOS_OMP_THEME%/*}"
     if /usr/libexec/mios/mios-gen render-tmux-theme --runtime "$_mios_projection"; then
         export MIOS_OMP_THEME="$_mios_projection/mios.omp.json"
-        [ -z "${TMUX:-}" ] || tmux source-file "$_mios_projection/tmux.conf"
+        # Refresh only the MiOS human server ([terminal].socket_root/tmux-UID/[keybindings].socket_name), and
+        # only when its loaded conf digest differs from this render: foreign tmux servers never get MiOS keys,
+        # and an unchanged conf is never re-sourced on every new pane.
+        if [ -n "${TMUX:-}" ]; then
+            _mios_human="$(/usr/bin/mios-toml-get terminal socket_root 2>/dev/null)/tmux-$(id -u)/$(/usr/bin/mios-toml-get keybindings socket_name 2>/dev/null)"
+            _mios_digest="$(sed -n 's/^set -g @mios-conf-digest //p' "$_mios_projection/tmux.conf" 2>/dev/null)"
+            if [ "${TMUX%%,*}" = "$_mios_human" ] && [ -n "$_mios_digest" ] \
+                && [ "$(tmux show-options -gqv @mios-conf-digest 2>/dev/null)" != "$_mios_digest" ]; then
+                tmux source-file "$_mios_projection/tmux.conf"
+            fi
+            unset _mios_human _mios_digest
+        fi
     else
         printf 'MiOS: SSOT terminal projection failed\n' >&2
         return 1
@@ -1346,14 +1365,16 @@ case $- in *i*) ;; *) return 0 ;; esac
 [ -z "${MIOS_SKIP_MOTD:-}" ] || return 0
 [ "${MIOS_SESSION_BARE:-}" != 1 ] || return 0  # bare Tmux-OS session (mios-terminal --new): no workspace panes
 if [ -n "${TMUX:-}" ]; then
-    local _mios_terminal_python
-    _mios_terminal_python="$(/usr/bin/mios-toml-get mcp python)" || return 1
-    "$_mios_terminal_python" /usr/libexec/mios/mios-mcp-server --workspace-ensure
+    # The native single-flight workspace hook ([mcp.agents].binary), never an interpreter per pane: it exits after
+    # one tmux query when the window is already laid out for its size.
+    local _mios_relay
+    _mios_relay="$(/usr/bin/mios-toml-get mcp.agents binary)" || return 1
+    "$_mios_relay" --workspace-hook ensure
 else
     # Re-entry guard: auto-exec once per login. The exported flag reaches every
     # nested interactive shell, which must stay a plain shell. It is checked
     # here, not above, so tmux panes (which inherit it from the server) still
-    # run --workspace-ensure.
+    # run the native workspace hook (--workspace-hook ensure).
     [ -z "${MIOS_MOTD_SHOWN:-}" ] || return 0
     MIOS_MOTD_SHOWN=1
     export MIOS_MOTD_SHOWN

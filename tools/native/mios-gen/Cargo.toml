@@ -20,3 +20,4 @@ walkdir = { workspace = true }
 tempfile = { workspace = true }
 mios-resolver = { path = "../mios-resolver" }
 mios-service-core = { path = "../mios-service-core" }
+mios-unit-gen = { path = "../mios-unit-gen" }
