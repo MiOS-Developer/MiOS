@@ -204,7 +204,7 @@ hl.window_rule({["name"] = "mios-fx-portals-close", ["match"] = {["class"] = "^(
 end)
 mios_section("mios-wobbly", function()
 hl.plugin.load("/usr/lib64/mios/mios-wobbly.so")
-pcall(hl.config, {["plugin"] = {["mios_wobbly"] = {["spring_k"] = 520, ["anchor_k"] = 40, ["friction"] = 11, ["max_stretch"] = 0.3, ["grid"] = 24, ["tag"] = "mios-wobbly", ["exclude_tag"] = "mios-nowobbly"}}})
+pcall(hl.config, {["plugin"] = {["mios_wobbly"] = {["spring_k"] = 520, ["anchor_k"] = 40, ["friction"] = 11, ["max_stretch"] = 0.3, ["grid"] = 24, ["pane_fade"] = 1, ["tag"] = "mios-wobbly", ["exclude_tag"] = "mios-nowobbly"}}})
 hl.window_rule({["name"] = "mios-wobbly", ["match"] = {["class"] = ".*"}, ["tag"] = "+mios-wobbly"})
 hl.window_rule({["name"] = "mios-wobbly-skip-0", ["match"] = {["title"] = "^(Picture-in-Picture|Picture in picture)$"}, ["tag"] = "+mios-nowobbly"})
 hl.window_rule({["name"] = "mios-wobbly-skip-1", ["match"] = {["initial_title"] = "^Discord Popout$"}, ["tag"] = "+mios-nowobbly"})
@@ -212,7 +212,7 @@ hl.window_rule({["name"] = "mios-wobbly-skip-2", ["match"] = {["modal"] = true},
 end)
 mios_section("mios-lamp", function()
 if hl.plugin.mios_lamp then
- hl.config({["plugin"] = {["mios_lamp"] = {["enabled"] = true, ["events"] = "launch,minimize,restore", ["duration_open_ms"] = 420, ["duration_minimize_ms"] = 520, ["duration_restore_ms"] = 440, ["mesh_columns"] = 8, ["mesh_rows"] = 32, ["launch_timeout_ms"] = 8000, ["curve"] = "0.42 0 0.25 1", ["hidden_dock"] = "edge", ["fallback_edge"] = "bottom", ["pane_alpha"] = 0.4, ["minimized_workspace"] = "special:minimized", ["anim_tag"] = "mios-lamp-anim"}}})
+ hl.config({["plugin"] = {["mios_lamp"] = {["enabled"] = true, ["events"] = "launch,minimize,restore", ["duration_open_ms"] = 420, ["duration_minimize_ms"] = 520, ["duration_restore_ms"] = 440, ["mesh_columns"] = 8, ["mesh_rows"] = 32, ["launch_timeout_ms"] = 8000, ["curve"] = "0.42 0 0.25 1", ["hidden_dock"] = "edge", ["fallback_edge"] = "bottom", ["pane_alpha"] = 0.4, ["restore_tree"] = true, ["minimized_workspace"] = "special:minimized", ["anim_tag"] = "mios-lamp-anim"}}})
  local fx = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/mios-shader-none-open.glsl"
  do
   local i = io.open(fx, "r")
