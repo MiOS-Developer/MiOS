@@ -680,8 +680,13 @@ pub fn neighbour(els: &[El], from: &str, dx: i32, dy: i32) -> Option<String> {
             if along <= 0 {
                 return None;
             }
-            let across = (ddx * dy).abs() + (ddy * dx).abs();
-            Some((along + across * 3, e.input.clone()))
+            // an element that shares the current one's span across the move is straight ahead: rows of staggered
+            // keys (q -> a, not q -> Super below it) and columns of pad buttons
+            let overlaps = if dy != 0 { e.x0 < cur.x1 && cur.x0 < e.x1 } else { e.y0 < cur.y1 && cur.y0 < e.y1 };
+            let off = (ddx * dy).abs() + (ddy * dx).abs();
+            let across = if overlaps { 0 } else { off };
+            // ties (two keys straight ahead) go to the one whose centre is closest across the move
+            Some(((along + across * 3, off), e.input.clone()))
         })
         .min_by_key(|(score, _)| *score)
         .map(|(_, id)| id)
@@ -794,6 +799,9 @@ mod tests {
         assert_eq!(neighbour(&els, "key:q", 1, 0).as_deref(), Some("key:w"));
         assert_eq!(neighbour(&els, "key:q", 0, 1).as_deref(), Some("key:a"));
         assert_eq!(neighbour(&els, "key:q", 0, -1).as_deref(), Some("key:2"));
+        assert_eq!(neighbour(&els, "key:a", 0, 1).as_deref(), Some("key:z"), "staggered rows: straight down, not diagonal");
+        assert_eq!(neighbour(&els, "key:a", -1, 0).as_deref(), Some("key:caps_lock"));
+        assert_eq!(neighbour(&els, "key:w", 0, 1).as_deref(), Some("key:s"));
         assert_eq!(neighbour(&els, "key:escape", -1, 0), None);
     }
 }
