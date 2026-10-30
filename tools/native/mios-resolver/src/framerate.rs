@@ -17,6 +17,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
+/// `[desktop.framerate].modes`: only the modes the output advertises (EDID).
+pub const MODES_ADVERTISED: &str = "advertised";
+/// `[desktop.framerate].modes`: the advertised modes plus extended-vblank timings derived from the EDID.
+pub const MODES_EXTENDED_VBLANK: &str = "extended-vblank";
+
 /// Every tier the policy table must define, in precedence order (the power-profile tiers last).
 pub const TIERS: [&str; 6] = ["unlocked", "gaming", "battery", "performance", "balanced", "power-saver"];
 /// The tiers a power profile may map to: never one of the opt-in or signal tiers.
@@ -69,6 +74,12 @@ pub struct Policy {
     pub gaming_exit_hold_ms: u64,
     pub mechanism: Mechanism,
     pub modes: String,
+    /// Outputs that hold D with a display mode even while VRR and the cap are available (`mechanism = "mode"` for
+    /// these outputs only; e.g. DP-3 for a real 90 Hz scanout). Absent = none.
+    pub mode_outputs: Vec<String>,
+    /// An advertised mode within this many Hz of D is used as it is; further away, `modes = "extended-vblank"` derives
+    /// a timing for D, whose rounding must land within it too. Absent = 0.5 (the modeset verification tolerance).
+    pub mode_tolerance_hz: f64,
     pub revert_timeout_ms: u64,
     /// A verified modeset to a mode the operator has not confirmed on that panel is restored after this many seconds
     /// unless `miosd framerate confirm-mode` confirms it (0 = no confirmation; the baseline mode never needs one).
@@ -154,8 +165,8 @@ impl Policy {
             _ => return Err("[desktop.framerate] mechanism must be auto | cap | mode".into()),
         };
         let modes = match t.get("modes").and_then(Value::as_str) {
-            Some("advertised") => "advertised".to_owned(),
-            _ => return Err("[desktop.framerate] modes must be \"advertised\" (only EDID-advertised modes are applied automatically)".into()),
+            Some(m @ (MODES_ADVERTISED | MODES_EXTENDED_VBLANK)) => m.to_owned(),
+            _ => return Err("[desktop.framerate] modes must be \"advertised\" (only EDID-advertised modes) or \"extended-vblank\" (also the fastest EDID timing slowed to D by a longer vertical front porch)".into()),
         };
         let none = Value::Array(Vec::new());
         let prefixes = match t.get("exclude_prefixes") {
@@ -173,6 +184,28 @@ impl Policy {
                     .ok_or_else(|| "[desktop.framerate] exclude_prefixes entries must be [A-Za-z0-9._-] strings".to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mode_outputs = match t.get("mode_outputs") {
+            None => Vec::new(),
+            Some(v) => v
+                .as_array()
+                .ok_or("[desktop.framerate] mode_outputs must be an array of output names")?
+                .iter()
+                .map(|o| {
+                    o.as_str()
+                        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)))
+                        .map(str::to_owned)
+                        .ok_or_else(|| "[desktop.framerate] mode_outputs entries must be [A-Za-z0-9._-] output names".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        let mode_tolerance_hz = match t.get("mode_tolerance_hz") {
+            None => 0.5,
+            Some(v) => v
+                .as_float()
+                .or_else(|| v.as_integer().map(|i| i as f64))
+                .filter(|f| f.is_finite() && (0.001..=5.0).contains(f))
+                .ok_or("[desktop.framerate] mode_tolerance_hz must be a number in 0.001..=5")?,
+        };
         let pacing_plugin = t
             .get("pacing_plugin")
             .and_then(Value::as_str)
@@ -257,6 +290,8 @@ impl Policy {
             gaming_exit_hold_ms: int(t, "gaming_exit_hold_ms", 0, 60_000)?,
             mechanism,
             modes,
+            mode_outputs,
+            mode_tolerance_hz,
             revert_timeout_ms: int(t, "revert_timeout_ms", 1000, 60_000)?,
             mode_confirm_s: int(t, "mode_confirm_s", 0, 600)?,
             modeset_hold_ms: int(t, "modeset_hold_ms", 0, 600_000)?,
@@ -315,6 +350,18 @@ impl Policy {
 
     pub fn plan(&self, inputs: &Inputs, max_hz: Option<u32>) -> Rates {
         self.rates(&self.tier_for(inputs), max_hz)
+    }
+
+    /// `modes = "extended-vblank"`: on the mode path a rate with no advertised mode within the verification
+    /// tolerance gets the fastest EDID timing at the output's size with a longer vertical front porch
+    /// (crate::edid_timing::extended_vblank), the timing VRR itself produces.
+    pub fn extended_vblank(&self) -> bool {
+        self.modes == MODES_EXTENDED_VBLANK
+    }
+
+    /// `output` holds D with a display mode whatever its VRR state (`mode_outputs`).
+    pub fn mode_output(&self, output: &str) -> bool {
+        self.mode_outputs.iter().any(|o| o == output)
     }
 
     /// True when `output` is left alone (a virtual/remote output: no cap, no modeset).
@@ -582,6 +629,32 @@ wallpaper_divisor = 2
     }
 
     #[test]
+    fn mode_sources_advertised_and_extended_vblank() {
+        assert!(!policy().extended_vblank(), "the vendor default applies only advertised (EDID) modes");
+        let doc: Value = VENDOR.replace(r#"modes = "advertised""#, r#"modes = "extended-vblank""#).parse().unwrap();
+        assert!(Policy::from_ssot(&doc).unwrap().unwrap().extended_vblank());
+    }
+
+    #[test]
+    fn mode_outputs_and_tolerance_default_and_parse() {
+        let p = policy();
+        assert!(p.mode_outputs.is_empty() && !p.mode_output("DP-3"), "absent: no output is forced onto modes");
+        assert_eq!(p.mode_tolerance_hz, 0.5);
+        let doc: Value = VENDOR
+            .replace(r#"modes = "advertised""#, "modes = \"extended-vblank\"\nmode_outputs = [\"DP-3\"]\nmode_tolerance_hz = 0.25")
+            .parse()
+            .unwrap();
+        let q = Policy::from_ssot(&doc).unwrap().unwrap();
+        assert!(q.mode_output("DP-3") && !q.mode_output("HDMI-A-1") && !q.mode_output("DP-"));
+        assert_eq!(q.mode_tolerance_hz, 0.25);
+        for bad in ["mode_outputs = \"DP-3\"", "mode_outputs = [\"\"]", "mode_outputs = [\"DP 3\"]", "mode_tolerance_hz = 0", "mode_tolerance_hz = 9.5", "mode_tolerance_hz = \"1\""] {
+            let doc: Value = VENDOR.replace(r#"modes = "advertised""#, &format!("modes = \"advertised\"\n{bad}")).parse().unwrap();
+            let e = Policy::from_ssot(&doc).unwrap_err();
+            assert!(e.contains(bad.split(' ').next().unwrap()), "{bad}: {e}");
+        }
+    }
+
+    #[test]
     fn operator_table_on_a_144_hz_output() {
         let p = policy();
         let max = Some(144);
@@ -664,6 +737,7 @@ wallpaper_divisor = 2
             ("tiers.battery.wallpaper_divisor", Value::Float(2.0), "wallpaper_divisor"),
             ("mechanism", Value::String("magic".into()), "mechanism"),
             ("modes", Value::String("any".into()), "modes"),
+            ("modes", Value::String("custom".into()), "modes"),
             ("profiles.balanced", Value::String("unlocked".into()), "balanced"),
             ("profiles.turbo", Value::String("balanced".into()), "turbo"),
             ("state_file", Value::String("../x".into()), "state_file"),

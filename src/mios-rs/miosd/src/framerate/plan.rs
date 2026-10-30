@@ -1,16 +1,18 @@
 // AI-hint: miosd framerate, pure part: Hyprland monitors -> per-output mechanism (VRR cap, advertised-mode fallback,
-//          uncapped, excluded), nearest advertised mode, the one `hyprctl eval` chunk that sets the cap / glass / Hypr3D
+//          uncapped, excluded), nearest advertised mode or (modes = "extended-vblank") the panel's fastest EDID timing
+//          slowed to D by a longer vertical front porch (a modeline: DP-3 90 Hz), the one `hyprctl eval` chunk that sets the cap / glass / Hypr3D
 //          rates, the state file, the gaming exit hold and the modeset hysteresis. No I/O: unit-tested on fixtures.
 // AI-related: src/mios-rs/miosd/src/framerate.rs, tools/native/mios-resolver/src/framerate.rs, usr/share/mios/mios.toml [desktop.framerate]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+use mios_resolver::edid_timing::{self, Porch, RangeLimits, Timing};
 use mios_resolver::framerate::{whole_hz, Inputs, Mechanism, OutputState, Policy, Rates, State, STATE_VERSION};
 use serde_json::Value as Json;
 
 /// One output as `hyprctl monitors all -j` reports it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Monitor {
     pub name: String,
     pub width: u32,
@@ -29,6 +31,28 @@ pub struct Monitor {
     pub transform: i64,
     /// make|model|serial: the panel identity bad modes are keyed by
     pub identity: String,
+    /// the panel's EDID timings (sysfs; None for a virtual output or an unreadable EDID)
+    pub edid: Option<Edid>,
+}
+
+/// What the plan needs from an EDID: every detailed timing and the range limits descriptor.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Edid {
+    pub timings: Vec<Timing>,
+    pub range: Option<RangeLimits>,
+}
+
+impl Edid {
+    /// None when the blob carries no detailed timing (not an EDID, or a truncated read).
+    pub fn parse(bytes: &[u8]) -> Option<Edid> {
+        let timings = edid_timing::detailed_timings(bytes);
+        (!timings.is_empty()).then(|| Edid { timings, range: edid_timing::range_limits(bytes) })
+    }
+}
+
+/// Size and refresh of a mode string: an advertised "WxH@Hz" or a modeline (its timing's own refresh).
+pub fn mode_dims(s: &str) -> Option<(u32, u32, f64)> {
+    parse_mode(s).or_else(|| Timing::parse_modeline(s).map(|t| (t.hdisplay, t.vdisplay, t.refresh_hz())))
 }
 
 /// "1920x1080@143.998Hz" / "1920x1080@60.00" -> (1920, 1080, 143.998)
@@ -77,6 +101,7 @@ pub fn parse_monitors(v: &Json) -> Vec<Monitor> {
                 scale: m.get("scale").and_then(Json::as_f64).unwrap_or(1.0),
                 transform: f(m, "transform") as i64,
                 identity: format!("{}|{}|{}", s(m, "make"), s(m, "model"), s(m, "serial")),
+                edid: None,
                 name,
             })
         })
@@ -104,7 +129,7 @@ impl Monitor {
 pub enum Mech {
     /// the pacing plugin caps commits at `cap` Hz (0 = no cap) on an output running VRR
     VrrCap,
-    /// switch to this advertised mode (WxH@Hz)
+    /// switch to this mode: advertised ("WxH@Hz") or an extended-vblank modeline ("modeline <MHz> hd hss hse ht ...")
     Mode(String),
     /// nothing holds D here (no VRR, mechanism = "cap", no plugin, or a pinned mode)
     Uncapped(&'static str),
@@ -169,9 +194,39 @@ pub fn nearest_mode(m: &Monitor, target: f64, bad: Option<&BTreeSet<String>>) ->
         .map(|(s, _)| s)
 }
 
+/// `modes = "extended-vblank"`: the fastest EDID timing at the output's size slowed to `target` Hz by a longer
+/// vertical front porch, as a modeline. None without an EDID timing at that size, when the target is the base timing's
+/// own rate (an advertised mode then), or when the panel's range or the line granularity cannot carry it.
+pub fn extended_mode(m: &Monitor, target: f64, tolerance_hz: f64) -> Result<String, String> {
+    let e = m.edid.as_ref().ok_or("no EDID")?;
+    let base = edid_timing::fastest_at(&e.timings, m.width, m.height).ok_or_else(|| format!("no EDID timing at {}x{}", m.width, m.height))?;
+    if (base.refresh_hz() - target).abs() <= tolerance_hz {
+        return Err(format!("{target} Hz is the base timing's own rate"));
+    }
+    edid_timing::extended_vblank(&base, target, tolerance_hz, e.range.as_ref(), Porch::Front)
+        .map(|t| t.modeline())
+        .map_err(|why| format!("{why:?}"))
+}
+
+/// The mode that holds `target` Hz on `m`: the nearest advertised mode when it is within the policy's tolerance;
+/// else, with `modes = "extended-vblank"`, the derived modeline (unless it failed verification before); else the nearest
+/// advertised mode anyway (90 -> 99.93 on DP-3).
+pub fn choose_mode(m: &Monitor, target: f64, policy: &Policy, bad: Option<&BTreeSet<String>>) -> Option<String> {
+    let near = nearest_mode(m, target, bad);
+    let close = near.as_deref().and_then(parse_mode).is_some_and(|x| (x.2 - target).abs() <= policy.mode_tolerance_hz);
+    if close || !policy.extended_vblank() {
+        return near;
+    }
+    match extended_mode(m, target, policy.mode_tolerance_hz) {
+        Ok(line) if !bad.is_some_and(|b| b.contains(&line)) => Some(line),
+        _ => near,
+    }
+}
+
 /// The plan for these inputs on these outputs. D and the cap come from the policy (D capped at the largest local
 /// refresh); per output: excluded -> left alone; VRR active (or require_vrr off) with the plugin loaded -> the cap;
-/// else, unless mechanism = "cap" or the operator pinned the mode, the advertised mode nearest D.
+/// else, unless mechanism = "cap" or the operator pinned the mode, the mode for D (`choose_mode`). An output in
+/// `mode_outputs` takes the mode path even with VRR and the plugin available.
 pub fn plan(policy: &Policy, inputs: &Inputs, monitors: &[Monitor], env: &Env) -> Plan {
     let locals: Vec<&Monitor> = monitors.iter().filter(|m| m.local(policy)).collect();
     let max_hz = locals.iter().map(|m| whole_hz(m.max_hz())).max().filter(|m| *m > 0);
@@ -186,13 +241,14 @@ pub fn plan(policy: &Policy, inputs: &Inputs, monitors: &[Monitor], env: &Env) -
         }
         let cappable = env.pacing && (m.vrr || !env.require_vrr);
         let target = if rates.cap_hz == 0 { m.max_hz() } else { f64::from(rates.cap_hz) };
-        let mech = match policy.mechanism {
+        let mechanism = if policy.mode_output(&m.name) { Mechanism::Mode } else { policy.mechanism };
+        let mech = match mechanism {
             Mechanism::Cap if cappable => Mech::VrrCap,
             Mechanism::Cap => Mech::Uncapped(if env.pacing { "no active VRR" } else { "pacing plugin not loaded" }),
             Mechanism::Auto if cappable => Mech::VrrCap,
             _ if env.pinned.contains(&m.name) => Mech::Uncapped("mode pinned by the operator"),
             _ if env.declined.contains(&m.identity) => Mech::Uncapped("mode switch not confirmed"),
-            _ => match nearest_mode(m, target, env.bad.get(&m.identity)) {
+            _ => match choose_mode(m, target, policy, env.bad.get(&m.identity)) {
                 Some(mode) => Mech::Mode(mode),
                 None => Mech::Uncapped("no advertised mode"),
             },
@@ -269,7 +325,7 @@ pub fn rates_lua(plan: &Plan, policy: &Policy, c: Consumers) -> String {
     format!("(function()\n{body}end)()")
 }
 
-/// `hl.monitor` for an advertised-mode switch, keeping the output's position, scale and transform.
+/// `hl.monitor` for a mode switch (advertised or modeline), keeping the output's position, scale and transform.
 pub fn monitor_lua(m: &Monitor, mode: &str) -> String {
     let scale = format!("{:.6}", m.scale);
     format!(
@@ -282,9 +338,10 @@ pub fn monitor_lua(m: &Monitor, mode: &str) -> String {
     )
 }
 
-/// Two "WxH@Hz" strings name the same mode (same size, refresh within 0.5 Hz: 143.998 and 144.00 are one mode).
+/// Two mode strings ("WxH@Hz" or modelines) name the same mode (same size, refresh within 0.5 Hz: 143.998 and 144.00
+/// are one mode; an extended-vblank 90.009 Hz modeline and "1920x1080@90.00" too).
 pub fn same_mode(a: &str, b: &str) -> bool {
-    match (parse_mode(a), parse_mode(b)) {
+    match (mode_dims(a), mode_dims(b)) {
         (Some((aw, ah, az)), Some((bw, bh, bz))) => aw == bw && ah == bh && (az - bz).abs() < 0.5,
         _ => false,
     }
@@ -350,7 +407,7 @@ pub fn inject_test_modes(monitors: &mut [Monitor], spec: &str) {
 
 /// True when output `m` shows `mode` and is usable (present, enabled, DPMS on, same size, refresh within 0.5 Hz).
 pub fn verified(m: Option<&Monitor>, mode: &str) -> bool {
-    let (Some(m), Some((w, h, hz))) = (m, parse_mode(mode)) else { return false };
+    let (Some(m), Some((w, h, hz))) = (m, mode_dims(mode)) else { return false };
     !m.disabled && m.dpms && m.width == w && m.height == h && (m.refresh - hz).abs() < 0.5
 }
 
@@ -538,6 +595,92 @@ mod tests {
         let mut m = p.clone();
         m.mechanism = Mechanism::Mode;
         assert_eq!(plan(&m, &inputs("performance", false, false), &monitors(true), &env(true)).outputs["DP-3"].mech, Mech::Mode("1920x1080@99.93".into()));
+    }
+
+    /// The DP-3 EDID fixture (tests/fixtures/framerate, the real panel's blob with its serial zeroed).
+    fn dp3_edid() -> Edid {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/framerate/dp3-lg-24gl600f.edid.hex")).unwrap();
+        let bytes: Vec<u8> = text
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .flat_map(|l| l.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect::<Vec<_>>())
+            .collect();
+        assert_eq!(bytes.len(), 256);
+        Edid::parse(&bytes).expect("the fixture parses")
+    }
+
+    const DP3_90: &str = "modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync";
+
+    fn extended(p: &Policy, outputs: &[&str]) -> Policy {
+        let mut q = p.clone();
+        q.modes = mios_resolver::framerate::MODES_EXTENDED_VBLANK.into();
+        q.mode_outputs = outputs.iter().map(|s| s.to_string()).collect();
+        q
+    }
+
+    #[test]
+    fn extended_vblank_gives_dp3_a_real_90_hz_mode_only_where_no_advertised_mode_fits() {
+        let p = extended(&policy(), &[]);
+        let mut mons = monitors(false);
+        mons[0].edid = Some(dp3_edid());
+        let mode = |profile: &str, gaming: bool, pol: &Policy, ms: &[Monitor], e: &Env| plan(pol, &inputs(profile, false, gaming), ms, e).outputs["DP-3"].mech.clone();
+        assert_eq!(mode("performance", false, &p, &mons, &env(true)), Mech::Mode(DP3_90.into()), "90: the 144 Hz timing with 673 more blank lines");
+        assert_eq!(mode("balanced", false, &p, &mons, &env(true)), Mech::Mode("1920x1080@60.00".into()), "60 is advertised: no custom timing");
+        assert_eq!(mode("balanced", true, &p, &mons, &env(true)), Mech::Mode("1920x1080@119.98".into()), "120: 119.98 is within 0.5 Hz");
+        let mut u = p.clone();
+        u.unlocked = true;
+        assert_eq!(plan(&u, &Inputs::default(), &mons, &env(true)).outputs["DP-3"].mech, Mech::Mode("1920x1080@144.00".into()));
+        // the modeline is what Hyprland is told, and what verification and the confirm set compare against
+        let m = &mons[0];
+        assert!(monitor_lua(m, DP3_90).contains("mode = 'modeline 332.18 1920 1944 1976 2056 1080 1756 1761 1795 +hsync +vsync'"));
+        assert_eq!(mode_dims(DP3_90).map(|d| (d.0, d.1, (d.2 * 1000.0).round() / 1000.0)), Some((1920, 1080, 90.009)));
+        let mut shown = m.clone();
+        shown.refresh = 90.00862;
+        assert!(verified(Some(&shown), DP3_90), "the panel showing 90.009 Hz verifies the modeline");
+        assert!(!verified(Some(m), DP3_90), "still at 144: not verified");
+        assert!(same_mode(DP3_90, "1920x1080@90.01") && !same_mode(DP3_90, "1920x1080@99.93"));
+        assert!(!needs_confirm(15, &m.identity, DP3_90, None, &[(m.identity.clone(), [DP3_90.to_string()].into())].into()));
+        assert!(needs_confirm(15, &m.identity, DP3_90, Some("1920x1080@144.00"), &ModeSets::new()));
+        // VRR active: still the cap unless the output is a mode output
+        let mut vrr = monitors(true);
+        vrr[0].edid = Some(dp3_edid());
+        assert_eq!(mode("performance", false, &p, &vrr, &env(true)), Mech::VrrCap);
+        let forced = extended(&policy(), &["DP-3"]);
+        assert_eq!(mode("performance", false, &forced, &vrr, &env(true)), Mech::Mode(DP3_90.into()), "mode_outputs: a real 90 Hz scanout");
+        assert_eq!(plan(&forced, &inputs("performance", false, false), &vrr, &env(true)).outputs["DP-3"].cap_hz, 0, "no cap on a moded output");
+        assert_eq!(plan(&forced, &inputs("performance", false, false), &vrr, &env(true)).outputs["HEADLESS-MIOS-RDP"].mech, Mech::Excluded);
+    }
+
+    #[test]
+    fn extended_vblank_negative_controls() {
+        let mut base = policy();
+        base.modes = mios_resolver::framerate::MODES_ADVERTISED.into();
+        let mut mons = monitors(false);
+        mons[0].edid = Some(dp3_edid());
+        let mech = |pol: &Policy, ms: &[Monitor], e: &Env| plan(pol, &inputs("performance", false, false), ms, e).outputs["DP-3"].mech.clone();
+        assert_eq!(mech(&base, &mons, &env(true)), Mech::Mode("1920x1080@99.93".into()), "modes = advertised: never a custom timing");
+        assert_eq!(mech(&extended(&base, &[]), &mons, &env(true)), Mech::Mode(DP3_90.into()), "the same output with extended-vblank");
+        let p = extended(&base, &[]);
+        let no_edid = monitors(false);
+        assert_eq!(mech(&p, &no_edid, &env(true)), Mech::Mode("1920x1080@99.93".into()), "no EDID: the nearest advertised mode");
+        let mut other_size = mons.clone();
+        other_size[0].width = 2560;
+        other_size[0].height = 1440;
+        assert!(extended_mode(&other_size[0], 90.0, 0.5).unwrap_err().contains("no EDID timing at 2560x1440"));
+        let mut e = env(true);
+        e.bad.insert(mons[0].identity.clone(), [DP3_90.to_string()].into());
+        assert_eq!(mech(&p, &mons, &e), Mech::Mode("1920x1080@99.93".into()), "a modeline that failed verification is never retried");
+        let mut e = env(true);
+        e.pinned.insert("DP-3".into());
+        assert!(matches!(mech(&extended(&base, &["DP-3"]), &mons, &e), Mech::Uncapped(_)), "a pinned mode wins over mode_outputs");
+        let mut e = env(true);
+        e.declined.insert(mons[0].identity.clone());
+        assert!(matches!(mech(&p, &mons, &e), Mech::Uncapped(_)), "a declined panel gets no more modesets");
+        assert!(extended_mode(&mons[0], 144.0, 0.5).is_err(), "the base rate itself is the advertised mode");
+        assert!(extended_mode(&mons[0], 40.0, 0.5).unwrap_err().contains("OutOfRange"), "below the panel's 48 Hz floor");
+        assert!(extended_mode(&mons[0], 165.0, 0.5).unwrap_err().contains("AboveBase"));
+        assert_eq!(Edid::parse(&[0u8; 128]), None, "not an EDID");
+        assert_eq!(mode_dims("modeline 1 2 3"), None);
     }
 
     #[test]

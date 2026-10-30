@@ -57,7 +57,9 @@ NEST_WL = os.environ.get("MIOS_H3R_NEST_WL", "")
 NEST_STATUS = os.environ.get("MIOS_H3R_NEST_STATUS", "")
 NEW_SO = os.environ.get("MIOS_H3R_NEW_SO", "")
 OLD_SO = os.environ.get("MIOS_H3R_OLD_SO", "")
-QML = os.environ.get("MIOS_H3R_QML", "")
+QML = os.environ.get("MIOS_H3R_QML") or os.path.join(ROOT, "tests", "fixtures", "hypr3d-retina")  # holds win.qml
+# the nest's output: the private headless nest's HEADLESS-DESK, or an owned nested PiP session's WAYLAND-1
+NEST_OUTPUT = os.environ.get("MIOS_H3R_NEST_OUTPUT", "HEADLESS-DESK")
 EVIDENCE = os.environ.get("MIOS_H3R_EVIDENCE", "")
 CASE = os.environ.get("MIOS_H3R_CASE", "nest")
 
@@ -468,7 +470,10 @@ class Nest:
         inst = json.loads(subprocess.run(["hyprctl", "instances", "-j"], env=self.env, capture_output=True,
                                          text=True).stdout or "[]")
         assert [i["instance"] for i in inst] == [NEST_SIG], f"the private runtime must hold only the nest: {inst}"
-        self.mon = [m for m in json.loads(self.hc("-j", "monitors")) if m["name"] == "HEADLESS-DESK"][0]
+        self.mon = [m for m in json.loads(self.hc("-j", "monitors")) if m["name"] == NEST_OUTPUT][0]
+        # the test windows open as the desktop's placement opens them: floating at their own size, centred in the work
+        # area (a nested MiOS session disables placement and would tile them; the headless nest floats them anyway)
+        self.ev('hl.window_rule({name = "mios-h3r-test", match = {title = "^h3r-win"}, float = true, center = true})')
 
     def hc(self, *a, check=True):
         p = subprocess.run(["hyprctl", "-i", NEST_SIG, *a], env=self.env, capture_output=True, text=True, timeout=20)
@@ -534,8 +539,9 @@ class Nest:
     def open3d(self, windows, render_scale=2.0, sharp=True):
         render = ("{scale=%g, msaa=4, fxaa=false, sharpen=0.25, texture_supersample=true, anisotropy=16, stills=true, "
                   "texel_sharp=%s}" % (render_scale, "true" if sharp else "false"))
-        self.ev('local p=assert(hl.plugin.hypr3d); p.config({world={monitor="HEADLESS-DESK", grid=false}, '
-                'render=%s, windows=%s}); p.open()' % (render, windows))
+        # player.flying: a bare `plugin load` (no SSOT scene) has no floor, so the camera would fall out of the room
+        self.ev('local p=assert(hl.plugin.hypr3d); p.config({world={monitor="%s", grid=false}, player={flying=true}, '
+                'render=%s, windows=%s}); p.open()' % (NEST_OUTPUT, render, windows))
         time.sleep(4.0)
 
     def close3d(self):
@@ -545,15 +551,20 @@ class Nest:
     def shot(self, name):
         from PIL import Image
         path = evidence(f"{CASE}-{name}.png")
-        subprocess.run(["grim", "-o", "HEADLESS-DESK", path], env=self.env, check=True, timeout=20)
+        subprocess.run(["grim", "-o", NEST_OUTPUT, path], env=self.env, check=True, timeout=20)
         os.chmod(path, 0o644)
         return Image.open(path).convert("RGB")
 
     def look(self, name, colours, size, s, timeout=10.0):
-        """measure() on fresh shots until both markers show (or the timeout); size() = the client's box now."""
+        """measure() on fresh shots until both markers show (or the timeout); size() = the client's box now. `s` is
+        the output scale; the shot's own px per logical px is used (grim captures an output scaled below 1 -- a nested
+        PiP session -- at its logical size, at and above 1 at the output's pixels)."""
         end = time.monotonic() + timeout
         while True:
-            r = measure(self.shot(name), colours, *size(), s)
+            im = self.shot(name)
+            m = self.mon
+            lw = (m["width"] if int(m["transform"]) % 2 == 0 else m["height"]) / float(m["scale"])
+            r = measure(im, colours, *size(), im.size[0] / lw)
             if "error" not in r or time.monotonic() > end:
                 return r
             time.sleep(0.7)
@@ -623,7 +634,8 @@ def ink_heights(im, a, kx, ky):
     return out
 
 
-RETINA = ('{pixel_exact=true, spawn_distance=5.0, spawn_size={x=%d, y=%d}, fit="resize", fit_margin=8, '
+# spawn_distance: the SSOT reading_distance_m (what mios-gen sends; the oracle's S = d / d1 uses the same d)
+RETINA = ('{pixel_exact=true, spawn_distance=%.4f, spawn_size={x=%d, y=%d}, fit="resize", fit_margin=8, '
           'pixel_snap=true, cascade=32, min_magnification=%.4f}')
 STOCK = '{pixel_exact=false, window_scale=0.5, spawn_distance=5.0, fit="off", pixel_snap=false, cascade=0}'
 # per case: a typical window, an oversized one (logical px)
@@ -646,7 +658,7 @@ class Nested(unittest.TestCase):
         wl, hl = cls.o["logical"]
         # the work-area centre in output px (the 2D `center` rule's spot)
         cls.centre = ((l + (wl - l - r) / 2) * cls.s, (t + (hl - t - b) / 2) * cls.s)
-        cls.retina = RETINA % (cls.o["spawn"][0], cls.o["spawn"][1], cls.o["m_min"])
+        cls.retina = RETINA % (cls.o["dist"], cls.o["spawn"][0], cls.o["spawn"][1], cls.o["m_min"])
         cls.small, cls.big = WINDOWS.get(CASE.split("-")[0], WINDOWS["landscape"])
         cls.results = {"case": CASE, "monitor": {k: m[k] for k in ("width", "height", "scale", "transform", "reserved")},
                        "oracle": {k: v for k, v in cls.o.items()}}
@@ -685,9 +697,9 @@ class Nested(unittest.TestCase):
         """Negative control: the plugin's own defaults (0.5 / 5 m) on this output."""
         w, h = stock_size(self.o, *self.small)
         self.n.client("stock", w, h)
-        flat = self.n.look("stock-2d", ("red", "blue"), lambda: (w, h), self.s)
+        flat = self.n.look("stock-2d", ("red", "blue"), lambda: tuple(self.size_of("red")[0]), self.s)
         self.n.open3d(STOCK)
-        r = self.n.look("stock-3d", ("red", "blue"), lambda: (w, h), self.s)
+        r = self.n.look("stock-3d", ("red", "blue"), lambda: tuple(self.size_of("red")[0]), self.s)
         want = magnification(0.5, 5.0, self.o["logical"][1])
         self.results["stock"] = {"2d": flat, "3d": r}
         self.assertNotIn("error", r)
@@ -699,9 +711,9 @@ class Nested(unittest.TestCase):
     def test_enter_opens_at_one_to_one_on_the_work_area_centre(self):
         w, h = self.small
         self.n.client("enter", w, h)
-        flat = self.n.look("enter-2d", ("red", "blue"), lambda: (w, h), self.s)
+        flat = self.n.look("enter-2d", ("red", "blue"), lambda: tuple(self.size_of("red")[0]), self.s)
         self.n.open3d(self.retina)
-        r = self.n.look("enter-3d", ("red", "blue"), lambda: (w, h), self.s)
+        r = self.n.look("enter-3d", ("red", "blue"), lambda: tuple(self.size_of("red")[0]), self.s)
         self.results["enter"] = {"2d": flat, "3d": r, "status": self.n.status("spawn:")}
         self.assertOne(r, what="enter")
         self.assertCentred(r, self.centre, what="enter")
@@ -747,7 +759,8 @@ class Nested(unittest.TestCase):
         time.sleep(1.5)
         rc = self.n.look("nudge-c", ("green", "magenta"), lambda: self.size_of("green")[0], self.s)
         self.results["nudge"] = {"b": rb, "c": rc}
-        self.assertAlmostEqual(rc["M"][0], 5.0 / 4.85, delta=0.004)
+        d = self.o["dist"]
+        self.assertAlmostEqual(rc["M"][0], d / (d - 0.15), delta=0.004 * d / (d - 0.15))
         self.assertCentred(rc, rb["centre"], tol=2.0, what="c0")
 
     def test_oversized_window_is_resized_into_the_work_area(self):
@@ -818,7 +831,7 @@ class NestedStatus(unittest.TestCase):
         o = oracle(ssot(), m["width"], m["height"], float(m["scale"]), int(m["transform"]), tuple(m["reserved"]))
         n.plugin(NEW_SO)
         try:
-            n.open3d(RETINA % (o["spawn"][0], o["spawn"][1], o["m_min"]))
+            n.open3d(RETINA % (o["dist"], o["spawn"][0], o["spawn"][1], o["m_min"]))
             st = n.status("spawn:")
         finally:
             n.close3d()
