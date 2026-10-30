@@ -8832,7 +8832,7 @@ shaderglass_toggle_button = "BTN_TR"
 shaderglass_cycle_button = "BTN_TL"
 
 [desktop.hyprland.boot_sync]
-enabled = true
+enabled = true  # GRUB (mios.desktop.gpu=) picks the login default; a login choice for another GPU selects its managed boot entry and reboots (sudo -n mios-gen hyprland-boot-profile)
 
 # Hardware profiles share the compositor, shell, theme, bindings and services.
 # pci is optional host/user identity; pci_file preserves the existing host selector.
