@@ -8310,8 +8310,10 @@ managed_tag = "mios-placed"
 # moved it back to 0,0 at the root size (recorded: Forza Horizon 6 / steam_app_2483190 remapped itself to 3840x1080,
 # both outputs). A floated window of a game class is a game only when its X11 hints say min == max and it is no
 # dialog (WM_TRANSIENT_FOR, modal, or a non-NORMAL window type): Wine dialogs (class <app>.exe) keep their place.
-# suppress_client_geometry refuses only a game's remap to the XWayland root or off its output (miosd puts it back
-# and Hyprland's resize answers with the real geometry); a game's own windowed resolution change stands. Fixed-size
+# suppress_client_geometry refuses only a game's remap to the XWayland root or to a size no single output can hold
+# (miosd puts it back and Hyprland's resize answers with the real geometry); a game's own windowed resolution change
+# stands, and so does any position: a window partly off-screen or straddling two outputs is where the operator (a
+# released drag, a keyboard move) or the game put it, and is never moved back. Fixed-size
 # games are never resized: Hyprland ignores size hints when resizing X11 windows, and a game that never recreates
 # its swapchain shows black wherever the window grew. A fixed game larger than the HUD-free area is centred on the
 # whole output; one larger than the output takes `oversize` ("fit" = opening size; Wine/DXVK re-render at any size,
@@ -8321,6 +8323,11 @@ managed_tag = "mios-placed"
 # dispatch ignores both) to its declared size, after the pointer is released and settle_ms, at most a few times per
 # window. class names an SSOT key holding the shared game-class
 # list (or an inline array); extra_class adds placement-only patterns (plain Wine names WM_CLASS after the .exe).
+# Limitation of '.+\.exe': X11 cannot tell a fixed-size game from a non-resizable Wine application window (winecfg,
+# an installer's main wizard page: min == max, NORMAL, not transient), so those are treated as fixed-size games too:
+# centred at open at their own size, never grown or tiled, freely movable. That matches what the window declares
+# (Hyprland ignores the hints, so a grown non-resizable window would show garbage); drop '.+\.exe' to place only
+# Steam/Proton and listed classes.
 # content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland). Tags: `tag` = a
 # resizable game (rule), `candidate_tag` = a floated window of a game class (rule; maybe a dialog), `fixed_tag` = a
 # confirmed fixed-size game (set by miosd).

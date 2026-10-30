@@ -3380,9 +3380,9 @@
         <p>Game windows (Steam, Proton/Wine, SDL, gamescope) open centred on the focused output; resizable ones at the same opening size. Games that declare a fixed size keep it (they are never resized, so they cannot turn black) and are never tiled on move.</p>
         <label>Place game windows on the focused output <input type="text" data-key="desktop.hyprland.placement.games.enabled" data-type="bool"></label>
         <label>Game class list (SSOT key of the shared list) <input data-key="desktop.hyprland.placement.games.class" type="text"></label>
-        <label>Extra game class patterns (placement only) <input type="text" data-key="desktop.hyprland.placement.games.extra_class" data-array="csv" placeholder=".+\.exe"></label>
+        <label>Extra game class patterns (placement only; .+\.exe also covers non-resizable Wine app windows) <input type="text" data-key="desktop.hyprland.placement.games.extra_class" data-array="csv" placeholder=".+\.exe"></label>
         <label>Also match Wayland content type "game" <input type="text" data-key="desktop.hyprland.placement.games.content_game" data-type="bool"></label>
-        <label>Refuse a game's X11 remap to the root or off its output (own resolution changes stand) <input type="text" data-key="desktop.hyprland.placement.games.suppress_client_geometry" data-type="bool"></label>
+        <label>Refuse a game's X11 remap to the root or larger than every output (own resolution changes and any position stand) <input type="text" data-key="desktop.hyprland.placement.games.suppress_client_geometry" data-type="bool"></label>
         <label>Pin fixed-size games to their declared size (no outside resize can turn them black) <input type="text" data-key="desktop.hyprland.placement.games.pin_fixed_size" data-type="bool"></label>
         <label>Fixed-size game larger than the output <select data-key="desktop.hyprland.placement.games.oversize"><option value="fit">Resize to the opening size</option><option value="keep">Keep its size (cropped)</option></select></label>
         <label>Resizable game rule tag <input data-key="desktop.hyprland.placement.games.tag" type="text"></label>

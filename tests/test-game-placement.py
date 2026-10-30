@@ -460,6 +460,150 @@ class TestGamePlacementLive(unittest.TestCase):
         self.assertLess(frac, 0.05, f'black area after resize: {frac}')
         self.stop(p)
 
+    # Operator moves (verifier round-2 regression): the daemon cannot tell who moved a window, so position alone is
+    # never a remap. A keyboard move binding or a released drag is a dispatch with no button held at the next poll.
+
+    def sample(self, address, secs=3.0):
+        samples, t0 = [], time.monotonic()
+        while time.monotonic() - t0 < secs:
+            c = self.wait_for(lambda c: c['address'] == address, 1)
+            samples.append([round(time.monotonic() - t0, 2), c['at'], c['size'], c['floating'], c['tags']])
+            time.sleep(0.2)
+        return samples
+
+    def refused_in_log(self, address):
+        return [l for l in (self.out / 'placement.log').read_text().splitlines() if address in l and 'refused' in l]
+
+    def operator_move(self, name, cls_name, args, target):
+        self.require_x11()
+        p, _ = self.probe(cls_name, *args, seconds=20)
+        c0 = self.settled(lambda c: c['class'] == cls_name, 2.0)
+        self.ctl('eval', f"hl.dispatch(hl.dsp.window.move({{x={target[0]}, y={target[1]}, window='address:{c0['address']}'}}))")
+        samples = self.sample(c0['address'])
+        (self.out / f'move-{name}.json').write_text(json.dumps({'placed': [c0['at'], c0['size'], c0['tags']], 'target': target,
+                                                               'output': self.output, 'samples': samples}, indent=1))
+        self.stop(p)
+        return c0, samples
+
+    def test_22_operator_move_of_resizable_exe_window_partly_offscreen(self):
+        # A resizable Wine application window (<app>.exe is a resizable game) moved past the right edge: the move
+        # stands, and tile-on-move treats it like every placed window. Round-2 code: jumped back to its placement.
+        self.refresh()
+        ox, oy, ow, oh = self.output
+        target = (int(ox + ow - 300), int(oy + 60))
+        c0, samples = self.operator_move('resizable-exe', 'editor.exe', ['--size', '900x600'], target)
+        last = samples[-1]
+        self.assertFalse(last[3] and (last[1], last[2]) == (c0['at'], c0['size']), f'operator move undone: {samples}')
+        self.assertTrue(not last[3] or last[1] == list(target), f'neither at the drop point nor tiled: {samples}')
+        self.assertEqual(self.refused_in_log(c0['address']), [])
+
+    def test_23_operator_move_of_fixed_game_partly_offscreen(self):
+        self.refresh()
+        ox, oy, ow, oh = self.output
+        target = (int(ox + ow - 200), int(oy + 60))
+        c0, samples = self.operator_move('fixed-game', 'steam_app_4301', ['--fixed', '--size', '480x320'], target)
+        self.assertTrue(all(s[1] == list(target) and s[2] == [480, 320] and s[3] for s in samples[2:]),
+                        f'fixed game not left where the operator put it: {samples}')
+        self.assertEqual(self.refused_in_log(c0['address']), [])
+
+    def test_24_game_moving_itself_partly_offscreen_stands(self):
+        # Position alone is never refused, whoever moved it (the round-2 code refused this and the operator's moves).
+        self.require_x11()
+        self.refresh()
+        ox, oy, ow, oh = self.output
+        to = (int(ox + ow - 160), int(oy + 40))
+        p, log = self.probe('steam_app_4302', '--fixed', '--size', '480x320', '--remap-root', '2500',
+                            '--remap-to', f'{to[0]},{to[1]},480x320', seconds=12)
+        c0 = self.settled(lambda c: c['class'] == 'steam_app_4302', 1.5)
+        time.sleep(2.0)
+        samples = self.sample(c0['address'], 2.0)
+        events = [json.loads(l) for l in open(log)]
+        (self.out / 'self-move.json').write_text(json.dumps({'placed': [c0['at'], c0['size']], 'to': to, 'samples': samples}, indent=1))
+        self.stop(p)
+        self.assertTrue(any(e['event'] == 'request' for e in events), 'probe issued its move')
+        self.assertTrue(all(s[1] == list(to) and s[2] == [480, 320] for s in samples), f'self-move undone: {samples}')
+
+    def test_25_oversize_remap_that_is_not_the_root_is_refused(self):
+        # Negative control for 22-24: a size no output can hold is still a remap, refused back to the placement.
+        self.require_x11()
+        self.refresh()
+        ox, oy, ow, oh = self.output
+        p, log = self.probe('steam_app_4303', '--size', '1600x1000', '--pos', '0,0', '--remap-root', '2500',
+                            '--remap-to', f'40,0,{int(ow) + 300}x{int(oh) - 100}', seconds=12)
+        c0 = self.settled(lambda c: c['class'] == 'steam_app_4303')
+        time.sleep(2.0)
+        c = self.settled(lambda c: c['class'] == 'steam_app_4303', 1.0)
+        events = [json.loads(l) for l in open(log)]
+        self.stop(p)
+        self.assertTrue(any(e['event'] == 'request' and e['w'] == int(ow) + 300 for e in events), 'probe issued its remap')
+        self.assertEqual(tuple(c['at'] + c['size']), tuple(c0['at'] + c0['size']), f'oversize remap honoured: {c["at"]} {c["size"]}')
+        self.assertTrue(self.refused_in_log(c0['address']), 'no refusal logged')
+
+    def test_26_fixed_game_readopted_after_daemon_restart(self):
+        # A placed fixed game is watched again after `miosd placement serve` restarts (a grow is restored).
+        self.require_x11()
+        p, _ = self.probe('steam_app_4401', '--fixed', '--no-adapt', '--size', '480x320', seconds=25)
+        c = self.settled(lambda c: c['class'] == 'steam_app_4401')
+        d = type(self).daemon
+        d.terminate()
+        d.wait(5)
+        type(self).daemon = subprocess.Popen([MIOSD, 'placement', 'serve'], env=self.env,
+                                             stdout=open(self.out / 'placement-restarted.log', 'w'), stderr=subprocess.STDOUT)
+        time.sleep(2.0)
+        self.ctl('eval', f"hl.dispatch(hl.dsp.window.resize({{x=840, y=600, window='address:{c['address']}'}}))")
+        time.sleep(4.0)
+        c2 = self.wait_for(lambda x: x['address'] == c['address'], 2)
+        (self.out / 'readopt.json').write_text(json.dumps({'before': [c['at'], c['size']], 'after': [c2['at'], c2['size']]}))
+        self.stop(p)
+        self.assertEqual(c2['size'], [480, 320], 'not re-adopted after restart')
+
+    def test_27_toggle_after_tile_and_refloat_keeps_fixed_size(self):
+        self.require_x11()
+        p, _ = self.probe('steam_app_4402', '--fixed', '--no-adapt', '--size', '480x320', seconds=25)
+        c = self.settled(lambda c: c['class'] == 'steam_app_4402')
+        w = f"'address:{c['address']}'"
+        self.ctl('eval', f"hl.dispatch(hl.dsp.window.float({{action='disable', window={w}}}))")
+        time.sleep(1.0)
+        self.ctl('eval', f"hl.dispatch(hl.dsp.window.float({{action='enable', window={w}}}))")
+        time.sleep(1.5)
+        t = subprocess.run([MIOSD, 'placement', 'toggle', '--window', c['address']], env=self.env, capture_output=True,
+                           text=True, timeout=30)
+        time.sleep(1.5)
+        c2 = self.wait_for(lambda x: x['address'] == c['address'], 2)
+        (self.out / 'retoggle.json').write_text(json.dumps({'after': [c2['at'], c2['size'], c2['floating'], c2['tags']], 'rc': t.returncode}))
+        self.stop(p)
+        self.assertEqual(t.returncode, 0, t.stderr)
+        self.assertTrue(c2['floating'] and c2['size'] == [480, 320], f'toggle tiled/resized it: {c2["size"]} floating={c2["floating"]}')
+
+    def test_90_operator_move_straddling_two_outputs(self):
+        # Runs last: adds a headless output to the OWN nested compositor, to the right of the first, then releases a
+        # fixed game and a resizable Wine window straddling both (a drag from one output to the next).
+        self.require_x11()
+        self.refresh()
+        ox, oy, ow, oh = self.output
+        self.ctl('output', 'create', 'headless', 'MIOS-TEST-2')
+        mons = []
+        for mode in ('1280x720', '1280x720@60', 'preferred'):
+            self.ctl('eval', f"hl.monitor({{output='MIOS-TEST-2', mode='{mode}', position='{int(ox + ow)}x0', scale=1}})")
+            for _ in range(12):
+                time.sleep(0.25)
+                mons = json.loads(self.ctl('-j', 'monitors'))
+                if len(mons) >= 2 and all(m['width'] > 0 for m in mons):
+                    break
+            if len(mons) >= 2 and all(m['width'] > 0 for m in mons):
+                break
+        (self.out / 'second-output.json').write_text(json.dumps(mons, indent=1))
+        if not (len(mons) >= 2 and all(m['width'] > 0 for m in mons)):
+            self.skipTest(f'no second sized output in the nested compositor: {[(m["name"], m["width"]) for m in mons]}')
+        right = max(mons, key=lambda m: m['x'])
+        for name, cls_name, args in (('straddle-fixed', 'steam_app_4501', ['--fixed', '--size', '480x320']),
+                                     ('straddle-exe', 'mover.exe', ['--size', '900x600'])):
+            target = (int(right['x'] - 200), 80)
+            c0, samples = self.operator_move(name, cls_name, args, target)
+            last = samples[-1]
+            self.assertFalse(last[3] and last[1] == c0['at'], f'{name}: drag across outputs undone: {samples}')
+            self.assertEqual(self.refused_in_log(c0['address']), [], name)
+
     def wine(self, exe, cls_name):
         prefix = os.environ.get('MIOS_LIVE_WINEPREFIX')
         if not (prefix and shutil.which('wine') and self.x11):

@@ -703,14 +703,17 @@ pub fn pin_restore(c: &Json, target: (f64, f64)) -> Option<String> {
 
 /// A game's own geometry change that is refused: the XWayland root (the bounding box of every output, where
 /// Wine/Proton put a borderless "fullscreen" window: recorded Forza Horizon 6 at 3840x1080+0+0 over two outputs)
-/// or a box no single output contains (larger than an output, straddling two, or partly off-screen). Any other
-/// size or position a game asks for (a windowed resolution change) is its own business.
+/// or a size no single output can hold (wider or taller than every output). Position alone never makes a remap: a
+/// box partly off-screen or straddling two outputs is where the operator (or the game) put it, and miosd cannot
+/// tell who moved it (a keyboard move binding or a released drag leaves no trace), so it stands. Any other size a
+/// game asks for (a windowed resolution change) is its own business. Outputs reporting no size are ignored.
 pub fn is_remap(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> bool {
-    if monitors.is_empty() {
+    let live: Vec<&MonitorBox> = monitors.values().filter(|m| m.w > 0.0 && m.h > 0.0).collect();
+    if live.is_empty() {
         return false;
     }
     let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for m in monitors.values() {
+    for m in &live {
         x0 = x0.min(m.x);
         y0 = y0.min(m.y);
         x1 = x1.max(m.x + m.w);
@@ -718,10 +721,8 @@ pub fn is_remap(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) ->
     }
     let near = |a: f64, b: f64| (a - b).abs() <= 2.0;
     let root = near(g.0, x0) && near(g.1, y0) && near(g.2, x1 - x0) && near(g.3, y1 - y0);
-    let contained = monitors.values().any(|m| {
-        g.0 >= m.x - 1.0 && g.1 >= m.y - 1.0 && g.0 + g.2 <= m.x + m.w + 1.0 && g.1 + g.3 <= m.y + m.h + 1.0
-    });
-    root || !contained
+    let oversize = !live.iter().any(|m| g.2 <= m.w + 1.0 && g.3 <= m.h + 1.0);
+    root || oversize
 }
 
 /// One placed game the daemon keeps honest.
@@ -739,6 +740,9 @@ pub struct GameWatch {
     pub refused: Option<(f64, f64)>,
     pub since: Option<Instant>,
     pub corrections: u8,
+    /// A pointer button was down at a poll since the accepted geometry: the change is the operator's drag (or a
+    /// drag-resize), never refused as a remap once released.
+    pub dragged: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -783,16 +787,18 @@ pub fn game_step(
     };
     if same(g, ok) {
         w.since = None;
+        w.dragged = false;
         return GameStep::Nothing;
     }
     if held {
+        w.dragged = true;
         return GameStep::Nothing;
     }
     let budget = |w: &mut GameWatch| {
         w.corrections = w.corrections.saturating_add(1);
         w.corrections <= GAME_CORRECTIONS
     };
-    if refuse && c.get("xwayland").and_then(Json::as_bool) == Some(true) && is_remap(g, monitors) {
+    if refuse && !w.dragged && c.get("xwayland").and_then(Json::as_bool) == Some(true) && is_remap(g, monitors) {
         if !budget(w) {
             return GameStep::GiveUp;
         }
@@ -809,9 +815,10 @@ pub fn game_step(
         return GameStep::Refuse(lua);
     }
     let Some(target) = w.target else {
-        // Resizable (or unpinned): whatever the game or the operator chose inside an output stands.
+        // Resizable (or unpinned): whatever the game or the operator chose stands (unless it was a remap above).
         w.ok = Some(g);
         w.workspace = ws;
+        w.dragged = false;
         return GameStep::Nothing;
     };
     // The game declared a new fixed size (a windowed resolution change): that is the size it renders now.
@@ -825,6 +832,7 @@ pub fn game_step(
         w.ok = Some(g);
         w.workspace = ws;
         w.since = None;
+        w.dragged = false;
         if let Some(d) = new_target {
             w.declared = Some(d);
             w.refused = None;
@@ -1310,7 +1318,7 @@ impl Server {
                     let target = pin.then(|| declared.filter(|d| d.0 * d.1 <= geom_of(&c).map_or(0.0, |g| g.2 * g.3) + 4.0)
                         .or_else(|| pair(&c, "size"))).flatten();
                     self.games.insert(a.to_owned(), GameWatch {
-                        kind, ok: None, workspace: None, target, declared, refused: None, since: None, corrections: 0,
+                        kind, ok: None, workspace: None, target, declared, refused: None, since: None, corrections: 0, dragged: false,
                     });
                 }
             }
@@ -1403,6 +1411,7 @@ impl Server {
                     refused: None,
                     since: None,
                     corrections: 0,
+                    dragged: false,
                 });
             }
             if kind == GameKind::Resizable {
@@ -2252,11 +2261,15 @@ candidate_tag = "mios-place-game-candidate"
     }
 
     #[test]
-    fn only_root_and_off_output_geometry_is_a_remap() {
+    fn only_root_and_oversize_geometry_is_a_remap() {
         let m = mons2();
         assert!(is_remap((0.0, 0.0, 3840.0, 1080.0), &m), "the XWayland root (Forza)");
-        assert!(is_remap((1800.0, 100.0, 480.0, 320.0), &m), "straddles two outputs");
-        assert!(is_remap((3600.0, 900.0, 480.0, 320.0), &m), "partly off-screen");
+        assert!(!is_remap((1800.0, 100.0, 480.0, 320.0), &m), "straddling two outputs is a position, not a remap");
+        assert!(!is_remap((3600.0, 900.0, 480.0, 320.0), &m), "partly off-screen is a position, not a remap");
+        assert!(!is_remap((-200.0, -50.0, 816.0, 588.0), &m), "partly off the left/top edge");
+        assert!(is_remap((100.0, 0.0, 2400.0, 900.0), &m), "wider than every output");
+        assert!(is_remap((0.0, 0.0, 1800.0, 1300.0), &m), "taller than every output");
+        assert!(is_remap((500.0, 300.0, 3840.0, 1080.0), &m), "root-sized anywhere is wider than every output");
         assert!(!is_remap((2000.0, 100.0, 640.0, 400.0), &m), "a resolution change inside the output");
         assert!(!is_remap((1920.0, 0.0, 1920.0, 1080.0), &m), "one whole output is not the root of two");
         let one = monitor_boxes(&serde_json::json!([{"id": 0, "x": 0, "y": 0, "width": 1392, "height": 1002, "scale": 1.0}]));
@@ -2268,7 +2281,7 @@ candidate_tag = "mios-place-game-candidate"
         GameWatch {
             kind, ok: Some(ok), workspace: Some(2),
             target: pin.then_some((ok.2, ok.3)), declared: pin.then_some((ok.2, ok.3)),
-            refused: None, since: None, corrections: 0,
+            refused: None, since: None, corrections: 0, dragged: false,
         }
     }
 
@@ -2339,6 +2352,49 @@ candidate_tag = "mios-place-game-candidate"
         assert_eq!(r.ok, Some((2400.0, 200.0, 1280.0, 720.0)));
         at(&mut c, (0, 0, 3840, 1080));
         assert!(matches!(game_step(&mut r, &c, &m, None, true, false, s, t0), GameStep::Refuse(_)));
+    }
+
+    #[test]
+    fn an_operator_move_partly_off_screen_or_across_outputs_stands() {
+        // Verifier defect: a keyboard move (a dispatch, no button held at any poll) or a released drag that left a
+        // game-class window partly off-screen or straddling two outputs was "refused" and jumped back.
+        let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
+        for (kind, ok, to) in [
+            (GameKind::Resizable, (2400.0, 200.0, 816.0, 588.0), (3500, 60, 816, 588)),   // past the right edge
+            (GameKind::Resizable, (2400.0, 200.0, 816.0, 588.0), (1500, 200, 816, 588)),  // straddles both outputs
+            (GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), (3640, 60, 480, 320)),       // fixed, past the edge
+            (GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), (1700, 400, 480, 320)),      // fixed, straddling
+            (GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), (-200, -40, 480, 320)),      // past the left/top edge
+        ] {
+            let pin = kind == GameKind::Fixed;
+            let mut w = watch(kind, ok, pin);
+            let mut c = game("editor.exe", (ok.0 as i64, ok.1 as i64), (ok.2 as i64, ok.3 as i64), &["mios-place-game*"]);
+            at(&mut c, to);
+            let d = pin.then_some((ok.2, ok.3));
+            assert_eq!(game_step(&mut w, &c, &m, d, true, false, s, t0), GameStep::Nothing, "{kind:?} to {to:?}");
+            assert_eq!(w.ok, Some((to.0 as f64, to.1 as f64, to.2 as f64, to.3 as f64)), "{kind:?} to {to:?} accepted");
+            assert_eq!(w.corrections, 0);
+        }
+        // A drag-resize past every output's size: a button was down at an earlier poll, so the release is the
+        // operator's, not a remap.
+        let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
+        let mut c = game("editor.exe", (2400, 200), (960, 692), &["mios-place-game*"]);
+        at(&mut c, (100, 0, 2400, 1000));
+        assert_eq!(game_step(&mut w, &c, &m, None, true, true, s, t0), GameStep::Nothing, "held: never fought");
+        assert!(w.dragged);
+        assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing, "released after a drag");
+        assert_eq!(w.ok, Some((100.0, 0.0, 2400.0, 1000.0)));
+        assert!(!w.dragged, "the latch clears once the geometry is accepted");
+        // Negative control: the same oversize box with no button held at any poll is a game's remap, refused.
+        let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
+        assert!(matches!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Refuse(_)));
+        // The latch does not survive an accepted geometry: a later remap is refused again.
+        let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
+        at(&mut c, (2500, 220, 960, 692));
+        assert_eq!(game_step(&mut w, &c, &m, None, true, true, s, t0), GameStep::Nothing);
+        assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing);
+        at(&mut c, (0, 0, 3840, 1080));
+        assert!(matches!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Refuse(_)));
     }
 
     #[test]

@@ -543,13 +543,14 @@ pub mod window_opening {
     /// the non-modal windows it floated. miosd placement decides what those are from what the client declares
     /// (X11 WM_NORMAL_HINTS min == max is a fixed-size game that keeps its size, since a game that never
     /// recreates its swapchain shows black wherever the compositor grows it; WM_TRANSIENT_FOR, modal or a
-    /// dialog window type is a dialog and is left alone) and refuses a game's root/off-output remaps.
+    /// dialog window type is a dialog and is left alone) and refuses a game's root/oversize remaps.
     #[derive(Clone, Debug, PartialEq)]
     pub struct Games {
         pub classes: Vec<String>,
         pub content_game: bool,
-        /// miosd refuses an X11 game's own remap to the XWayland root or off its output (puts it back at the
-        /// accepted geometry); every other size/position the game asks for (a windowed resolution change) stands.
+        /// miosd refuses an X11 game's own remap to the XWayland root or to a size no single output can hold (puts
+        /// it back at the accepted geometry); every other size and every position (partly off-screen, straddling
+        /// two outputs: the operator's moves look the same) stands.
         pub suppress_client_geometry: bool,
         /// Pin a fixed-size game's min_size/max_size to the size it was placed at, so no interactive or
         /// scripted resize can grow it past the swapchain it renders.

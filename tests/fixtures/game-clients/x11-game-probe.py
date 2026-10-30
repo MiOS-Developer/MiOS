@@ -15,6 +15,8 @@ ConfigureRequests in X root coordinates. This probe reproduces those requests on
   --pos X,Y          USPosition request at map time (SDL/Wine CW_USEDEFAULT-less windows)
   --root-size        map at the root size at 0,0 (borderless "fullscreen" over every output)
   --remap-root MS    MS ms after mapping, ConfigureRequest to 0,0 at the root size (the Forza remap)
+  --remap-to X,Y,WxH with --remap-root: request this box instead of the root (an oversize remap that is not the
+                     root, or a game moving itself partly off-screen)
   --change-size WxH  --change-at MS after mapping: re-pin the hints to WxH (when fixed) and send a size-only
                      ConfigureRequest (a windowed game applying a new resolution from its settings menu)
   --transient        map a resizable parent window of the same class first and make this window
@@ -137,11 +139,14 @@ class Probe:
         while time.monotonic() < end:
             if remap_at is not None and time.monotonic() >= remap_at:
                 remap_at = None
-                rw, rh = self.root
+                rx, ry, (rw, rh) = 0, 0, self.root
+                if self.a.remap_to:
+                    xs, ys, size = self.a.remap_to.split(',')
+                    rx, ry, (rw, rh) = int(xs), int(ys), parse_pair(size, 'x')
                 if self.a.wine_hints or self.a.fixed:
                     self.hints(rw, rh)
-                self.win.configure(x=0, y=0, width=rw, height=rh)
-                self.emit(event='request', x=0, y=0, w=rw, h=rh)
+                self.win.configure(x=rx, y=ry, width=rw, height=rh)
+                self.emit(event='request', x=rx, y=ry, w=rw, h=rh)
                 self.d.flush()
             if change_at is not None and time.monotonic() >= change_at:
                 change_at = None
@@ -180,6 +185,7 @@ def main():
     p.add_argument('--wine-hints', action='store_true')
     p.add_argument('--root-size', action='store_true')
     p.add_argument('--remap-root', type=int, default=-1, metavar='MS')
+    p.add_argument('--remap-to', metavar='X,Y,WxH')
     p.add_argument('--change-size', metavar='WxH')
     p.add_argument('--change-at', type=int, default=3000, metavar='MS')
     p.add_argument('--transient', action='store_true')
