@@ -3244,6 +3244,10 @@
         <label>Enable MiOS Guide combinations while an app captures controls <input data-key="keybindings.global.controller.captured_system_layer" type="checkbox"></label>
         <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
         <label>Capture hold time (ms) <input data-key="keybindings.global.controller.capture_hold_ms" data-type="int" type="number" min="100" max="3000" value="500"></label>
+        <label>Captured-window tag (North capture) <input data-key="keybindings.global.controller.capture_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Released-window tag (held L3+R3 release) <input data-key="keybindings.global.controller.release_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Bridge-fullscreen tag (North hold; a release unsets only this fullscreen) <input data-key="keybindings.global.controller.capture_fullscreen_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Unconfirmed capture/release timeout (ms) <input data-key="keybindings.global.controller.context_stale_ms" data-type="int" type="number" min="1" max="10000"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
         <label>X11 RDP escape keysym <input data-key="keybindings.global.vm.x11_rdp_escape_key" type="text"></label>

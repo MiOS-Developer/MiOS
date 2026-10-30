@@ -22,6 +22,11 @@ pub struct Options {
     pub context: Option<String>,
     pub duration: Option<Duration>,
     pub pad_path: PathBuf,
+    /// Fixture tier only: follow the selected compositor (HYPRLAND_INSTANCE_SIGNATURE, e.g. an owned nested session)
+    /// and run its ownership transactions there. Every other action stays printed and is never executed.
+    pub live_context: bool,
+    /// Write the room packet. The physical bridge always does; a fixture only to an explicit private path.
+    pub write_pad: bool,
 }
 struct RunningDevice {
     device: Device,
@@ -62,7 +67,7 @@ pub(crate) fn ipc(request: &str) -> Result<String, String> {
 #[derive(Clone, Debug)]
 pub struct ContextSnapshot {
     pub name: String, pub address: Option<String>, pub pid: Option<u64>,
-    pub room_capture: bool, sampled: Instant,
+    pub room_capture: bool, pub released: bool, sampled: Instant,
 }
 fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
     let class=v.get("class").and_then(|v|v.as_str()).filter(|s|!s.is_empty());
@@ -71,25 +76,89 @@ fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
     ContextSnapshot {name:cfg.classify_window(class,room,captured),
         address:v.get("address").and_then(|v|v.as_str()).filter(|s|!s.is_empty()).map(str::to_owned),
         pid:v.get("pid").and_then(|v|v.as_u64()).filter(|p|*p>0),
-        room_capture:captured && (room || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),sampled:Instant::now()}
+        room_capture:captured && (room || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),
+        released:v.get("released").and_then(|v|v.as_bool()).unwrap_or(false),sampled:Instant::now()}
 }
-pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot,String> {
+/// The capture predicate (INV-4), identical for every window kind: fullscreen==2 (when capture_fullscreen),
+/// capture_tag or the room's input_owner capture a window, and release_tag cancels all three. When the generated
+/// session exposes MIOS_INPUT_POLICY.captured (G1) that one predicate is used, so Lua and inputd cannot disagree.
+pub fn context_lua(cfg: &GlobalConfig) -> String {
     let template=r#"local function q(s) return '"'..tostring(s or ''):gsub('[%z\1-\31\\"]',function(c) return string.format('\\u%04x',c:byte()) end)..'"' end
 local w=hl.get_active_window(); local room=false; local p=hl.plugin and hl.plugin.hypr3d
 if p and p.active then local ok,v=pcall(p.active); room=ok and v and true or false end
-local captured=false
+local function has(t) for _,tag in pairs(w and w.tags or {}) do if tostring(tag):gsub('%*$','')==t then return true end end return false end
+local captured,released=false,false
 if w then
- if CAPTURE_FULLSCREEN and tonumber(w.fullscreen)==2 then captured=true end
- for _,tag in pairs(w.tags or {}) do if tag:gsub('%*$','')==CAPTURE_TAG then captured=true end end
- if p and p.input_owner then local ok,id=pcall(p.input_owner); if ok and id~=0 and tonumber(w.address)==id then captured=true end end
+ released=has(RELEASE_TAG)
+ local okp,policy=pcall(function() return MIOS_INPUT_POLICY end)
+ if okp and type(policy)=='table' and type(policy.captured)=='function' then local ok,v=pcall(policy.captured,w); captured=ok and v==true
+ else
+  if CAPTURE_FULLSCREEN and tonumber(w.fullscreen)==2 then captured=true end
+  if has(CAPTURE_TAG) then captured=true end
+  if p and p.input_owner then local ok,id=pcall(p.input_owner); if ok and id~=0 and tonumber(w.address)==id then captured=true end end
+  if released then captured=false end
+ end
 end
-error('MIOS_INPUT_CONTEXT:'..'{"class":'..q(w and w.class)..',"address":'..q(w and w.address)..',"pid":'..tostring(w and w.pid or 0)..',"fullscreen":'..tostring(w and w.fullscreen or 0)..',"handler":'..q(w and w.fullscreen_handler)..',"room":'..tostring(room)..',"captured":'..tostring(captured)..'}',0)"#;
-    let lua=template.replace("CAPTURE_FULLSCREEN",if cfg.controller.capture_fullscreen {"true"}else{"false"})
-        .replace("CAPTURE_TAG",&serde_json::to_string(&cfg.controller.capture_tag).unwrap());
-    let reply=ipc(&format!("/eval {lua}"))?;
+error('MIOS_INPUT_CONTEXT:'..'{"class":'..q(w and w.class)..',"address":'..q(w and w.address)..',"pid":'..tostring(w and w.pid or 0)..',"fullscreen":'..tostring(w and w.fullscreen or 0)..',"handler":'..q(w and w.fullscreen_handler)..',"room":'..tostring(room)..',"captured":'..tostring(captured)..',"released":'..tostring(released)..'}',0)"#;
+    template.replace("CAPTURE_FULLSCREEN",if cfg.controller.capture_fullscreen {"true"}else{"false"})
+        .replace("CAPTURE_TAG",&serde_json::to_string(&cfg.controller.capture_tag).unwrap())
+        .replace("RELEASE_TAG",&serde_json::to_string(&cfg.controller.release_tag).unwrap())
+}
+pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot,String> {
+    let reply=ipc(&format!("/eval {}",context_lua(cfg)))?;
     let json=reply.split_once("MIOS_INPUT_CONTEXT:").and_then(|(_,v)|v.lines().next()).ok_or("compositor context response missing")?;
     let value:serde_json::Value=serde_json::from_str(json).map_err(|e|format!("invalid native context: {e}"))?;
     Ok(snapshot(cfg,&value))
+}
+/// The ownership transaction for `input:window on|fullscreen|off` (C-02), the same for every window kind.
+/// on/fullscreen: remove release_tag, add capture_tag; fullscreen also sets fullscreen and marks it with
+/// capture_fullscreen_tag when the bridge set it. off: remove capture_tag, add release_tag, and unset a fullscreen only
+/// when capture_fullscreen_tag says the bridge set it. In the room the plugin selects the aimed window and owns its
+/// fullscreen. `expect` (the focused window address the router saw) guards a 2D capture against a focus race.
+pub fn window_lua(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<String,String> {
+    if !["on","off","fullscreen"].contains(&mode) {return Err("unsupported window ownership mode".into());}
+    let s=|v:&str| serde_json::to_string(v).unwrap();
+    let c=&cfg.controller;
+    Ok(format!(r#"local p=hl.plugin and hl.plugin.hypr3d;local mode={mode};local CAP={cap};local REL={rel};local FS={fs};local EXPECT={expect}
+local function has(w,t) for _,x in pairs(w.tags or {{}}) do if tostring(x):gsub('%*$','')==t then return true end end return false end
+local function tag(w,t,on) if has(w,t)~=on then hl.dispatch(hl.dsp.window.tag({{window=w,tag=(on and '+' or '-')..t}})) end end
+local function own(w,room)
+ if mode=='off' then
+  tag(w,CAP,false);tag(w,REL,true)
+  if has(w,FS) then tag(w,FS,false);if not room and tonumber(w.fullscreen)~=0 then hl.dispatch(hl.dsp.window.fullscreen({{window=w,mode='fullscreen',action='unset'}})) end end
+ else
+  tag(w,REL,false);tag(w,CAP,true)
+  if mode=='fullscreen' and not room and tonumber(w.fullscreen)~=2 then tag(w,FS,true);hl.dispatch(hl.dsp.window.fullscreen({{window=w,mode='fullscreen',action='set'}})) end
+ end
+end
+local target=nil;local ok,room=false,false
+if p and p.active then ok,room=pcall(p.active) end
+if ok and room then
+ assert(p.input_capture and p.input_owner,'room input ownership unavailable')
+ local id=p.input_owner()
+ assert(p.input_capture(mode),'no selected room window')
+ if mode~='off' then id=p.input_owner() end
+ for _,w in ipairs(hl.get_windows()) do if tonumber(w.address)==id then target=w;break end end
+ if not target and mode=='off' then target=hl.get_active_window() end
+ if target then own(target,true) end
+else
+ target=hl.get_active_window()
+ if not target then error('MIOS_INPUT_WINDOW_FAIL: no focused window',0) end
+ if EXPECT~='' and tostring(target.address)~=EXPECT then error('MIOS_INPUT_WINDOW_FAIL: controller focus changed; ownership unchanged',0) end
+ own(target,false)
+end
+local okp,policy=pcall(function() return MIOS_INPUT_POLICY end)
+if okp and type(policy)=='table' and type(policy.refresh)=='function' then pcall(policy.refresh) end
+error('MIOS_INPUT_WINDOW_OK:'..tostring(target and target.address or ''),0)"#,
+        mode=s(mode),cap=s(&c.capture_tag),rel=s(&c.release_tag),fs=s(&c.capture_fullscreen_tag),expect=s(expect.unwrap_or(""))))
+}
+/// Run one ownership transaction against the selected compositor; Ok(address) only on the success marker.
+pub fn window_transaction(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<String,String> {
+    let reply=ipc(&format!("/eval {}",window_lua(mode,cfg,expect)?))?;
+    match reply.split_once("MIOS_INPUT_WINDOW_OK:") {
+        Some((_,addr)) => Ok(addr.lines().next().unwrap_or("").trim().to_owned()),
+        None => Err(reply.trim().chars().take(400).collect()),
+    }
 }
 fn event_socket() -> Option<UnixStream> {
     let rt=std::env::var_os("XDG_RUNTIME_DIR")?;
@@ -228,38 +297,82 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
         _ => Err(format!("unknown action namespace {namespace}")),
     }
 }
-fn emit(
-    output: Output,
-    device: &mut RunningDevice,
-    pointer: &mut Option<VirtualDevice>,
+/// Ownership transactions run off the forwarding loop; their result reverts a pending capture/release at once when the
+/// compositor refused it (C-03), instead of leaving the app or the room holding the pad.
+struct OwnershipWorker {
+    requests: Option<std::sync::mpsc::Sender<(u64, String, Option<String>)>>,
+    results: std::sync::mpsc::Receiver<(u64, String, Result<String, String>)>,
+    last: u64,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl OwnershipWorker {
+    fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
+        let (requests, inbox) = std::sync::mpsc::channel::<(u64, String, Option<String>)>();
+        let (outbox, results) = std::sync::mpsc::channel();
+        let worker = std::thread::Builder::new().name("mios-ownership".into()).spawn(move || {
+            while let Ok((seq, mode, expect)) = inbox.recv() {
+                let cfg = policy.lock().map(|c| c.clone());
+                let result = match cfg {
+                    Ok(cfg) => window_transaction(&mode, &cfg, expect.as_deref()),
+                    Err(_) => Err("ownership policy lock failed".into()),
+                };
+                if outbox.send((seq, mode, result)).is_err() { break; }
+            }
+        }).map_err(|e| e.to_string())?;
+        Ok(Self { requests: Some(requests), results, last: 0, worker: Some(worker) })
+    }
+    fn submit(&mut self, mode: &str, expect: Option<String>) -> Result<(), String> {
+        self.last += 1;
+        self.requests.as_ref().ok_or("ownership worker stopped")?
+            .send((self.last, mode.into(), expect)).map_err(|_| "ownership worker stopped".to_string())
+    }
+}
+impl Drop for OwnershipWorker {
+    fn drop(&mut self) {
+        self.requests = None;
+        if let Some(w) = self.worker.take() { let _ = w.join(); }
+    }
+}
+struct Sinks {
+    pointer: Option<VirtualDevice>,
+    children: Vec<(Instant, Child)>,
+    ownership: Option<OwnershipWorker>,
     bridge: bool,
     execute_actions: bool,
-    children: &mut Vec<(Instant, Child)>,
-    focus: &ContextSnapshot,
-) -> Result<(), String> {
-    if bridge {
+}
+/// Returns the ownership change this output requested (`input:window on|fullscreen` = true, `off` = false), which the
+/// caller applies to every other controller of the session.
+fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &ContextSnapshot) -> Result<Option<bool>, String> {
+    if sinks.bridge {
         if let Some(virtual_pad) = &mut device.output {
             virtual_pad.write(&output.app).map_err(|e| e.to_string())?;
         }
-        if execute_actions && !output.pointer.is_empty() {
-            if pointer.is_none() {
-                *pointer = Some(VirtualDevice::pointer().map_err(|e| e.to_string())?);
+        if sinks.execute_actions && !output.pointer.is_empty() {
+            if sinks.pointer.is_none() {
+                sinks.pointer = Some(VirtualDevice::pointer().map_err(|e| e.to_string())?);
             }
-            pointer
+            sinks.pointer
                 .as_mut()
                 .unwrap()
                 .write(&output.pointer)
                 .map_err(|e| e.to_string())?;
         }
     }
+    let mut ownership = None;
     for action in output.actions {
         let mut submitted = false;
-        if execute_actions {
+        if let Some(mode) = action.strip_prefix("input:window ") {
+            ownership = Some(mode != "off");
+            if let Some(worker) = &mut sinks.ownership {
+                worker.submit(mode, focus.address.clone())?;
+                submitted = true;
+            }
+        } else if sinks.execute_actions {
             let args = configured_command(&action, device.router.policy())?;
             if !args.is_empty() {
                 // Cap/reap subprocesses; a stalled compositor cannot fill the host
                 // with an unbounded dispatch queue while a controller is held.
-                if children.len() >= 8 {
+                if sinks.children.len() >= 8 {
                     return Err("action dispatch queue full".into());
                 }
                 let child = Command::new(&args[0])
@@ -272,7 +385,7 @@ fn emit(
                     .stderr(Stdio::inherit())
                     .spawn()
                     .map_err(|e| e.to_string())?;
-                children.push((Instant::now(), child));
+                sinks.children.push((Instant::now(), child));
                 submitted = true;
             }
         }
@@ -281,7 +394,7 @@ fn emit(
             serde_json::json!({"device":device.device.path,"context":device.router.context,"action":action,"submitted":submitted,"executed":false})
         );
     }
-    Ok(())
+    Ok(ownership)
 }
 fn atomic_packet(path: &Path, pad: &PadState) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -342,6 +455,101 @@ fn discovery_worker(
     }).map_err(|e|e.to_string())?;
     Ok((receiver,worker))
 }
+fn install_stop_handlers() {
+    // SAFETY: signal handlers only store to a lock-free atomic boolean. File
+    // descriptors are dropped in normal control flow; SIGKILL closes them in-kernel.
+    unsafe {
+        libc::signal(
+            libc::SIGTERM,
+            stop_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(libc::SIGINT, stop_signal as *const () as libc::sighandler_t);
+    }
+}
+/// Why the physical bridge cannot own pads in this session, or None when it can.
+/// A user manager without a seat (SSH-only, a container) or without /dev/uinput access must idle, not crash-loop.
+pub fn seat_unavailable() -> Option<String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Err(e) = std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open("/dev/uinput") {
+        return Some(format!("no /dev/uinput access: {e}"));
+    }
+    if let Err(e) = std::fs::read_dir("/dev/input") {
+        return Some(format!("no /dev/input access: {e}"));
+    }
+    // SAFETY: getuid has no memory/ownership effects.
+    let uid = unsafe { libc::getuid() };
+    seat_from_logind_state(Path::new("/run/systemd"), uid)
+}
+/// logind's own runtime state (users/<uid> DISPLAY=, sessions/<id> SEAT=): read as files, so an idle serve never
+/// spawns a process per re-check (no loginctl, no interpreter, no D-Bus round trip).
+pub(crate) fn seat_from_logind_state(state: &Path, uid: u32) -> Option<String> {
+    let field = |path: PathBuf, key: &str| -> Result<String, String> {
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("logind state unavailable ({}): {e}", path.display()))?;
+        Ok(text.lines().find_map(|l| l.strip_prefix(key).and_then(|v| v.strip_prefix('='))).unwrap_or("").trim().to_owned())
+    };
+    let display = match field(state.join("users").join(uid.to_string()), "DISPLAY") { Ok(v) => v, Err(e) => return Some(e) };
+    if display.is_empty() || !display.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Some("no graphical session for this user".into());
+    }
+    match field(state.join("sessions").join(&display), "SEAT") {
+        Ok(seat) if seat.is_empty() => Some("the graphical session has no seat".into()),
+        Ok(_) => None,
+        Err(e) => Some(e),
+    }
+}
+/// The user-unit entry point (C-05). Disabled by SSOT: exit 0. No seat or no device access: idle until it appears
+/// (SIGTERM exits 0) and never start a second pad owner. A bridge error: exit non-zero, so systemd restarts it
+/// within the unit's start limit. There is no fallback process that could drive a game and the room at once.
+pub fn serve(mut global: GlobalConfig, mut legacy: LegacyConfig, root: Option<PathBuf>) -> Result<(), String> {
+    let disabled = |g: &GlobalConfig| !g.enabled || !g.controller.enabled || !g.controller.exclusive_grab;
+    if disabled(&global) {
+        eprintln!("{}", serde_json::json!({"serve":"disabled","reason":"SSOT disables the controller bridge","exit":0}));
+        return Ok(());
+    }
+    // SAFETY: geteuid has no memory/ownership effects.
+    if unsafe { libc::geteuid() } == 0 {
+        return Err("real input bridge must run as the active desktop user".into());
+    }
+    install_stop_handlers();
+    STOP.store(false, Ordering::Relaxed);
+    let mut stamp = config_fingerprint(root.as_deref());
+    let mut reported: Option<String> = None;
+    loop {
+        if STOP.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let now = config_fingerprint(root.as_deref());
+        if now != stamp {
+            stamp = now;
+            match GlobalConfig::load(root.as_deref()) {
+                Ok((g, l)) => { global = g; legacy = l; }
+                Err(e) => eprintln!("input policy reload rejected; keeping validated policy: {e}"),
+            }
+            if disabled(&global) {
+                eprintln!("{}", serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0}));
+                return Ok(());
+            }
+        }
+        match seat_unavailable() {
+            None => break,
+            Some(reason) => {
+                if reported.as_deref() != Some(reason.as_str()) {
+                    eprintln!("{}", serde_json::json!({"serve":"idle","reason":reason}));
+                    reported = Some(reason);
+                }
+                let until = Instant::now() + Duration::from_millis(global.controller.scan_ms);
+                while !STOP.load(Ordering::Relaxed) && Instant::now() < until {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    }
+    if reported.is_some() {
+        eprintln!("{}", serde_json::json!({"serve":"bridge","reason":"seat and device access available"}));
+    }
+    let pad_path = global.controller.legacy_pad_state_path.clone();
+    run(global, legacy, Options { root, bridge: true, fixture_only: false, device: None, context: None, duration: None, pad_path, live_context: false, write_pad: true })
+}
 pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> Result<(), String> {
     if opt.bridge && !opt.fixture_only {
         // SAFETY: geteuid has no memory/ownership effects.
@@ -367,6 +575,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     if opt.fixture_only && opt.device.is_none() {
         return Err("fixture mode requires one explicit owned device".into());
     }
+    if opt.live_context && !opt.fixture_only {
+        return Err("--live-context is a fixture-tier option (the physical bridge always follows its compositor)".into());
+    }
+    if opt.fixture_only && opt.write_pad && opt.pad_path == global.controller.legacy_pad_state_path {
+        return Err("a fixture never writes the live room packet; pass a private --pad-path".into());
+    }
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or("XDG_RUNTIME_DIR missing")?;
@@ -376,22 +590,13 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         "mios-inputd.lock"
     };
     let _lock = linux::singleton(&runtime.join(lockname)).map_err(|e| e.to_string())?;
-    // SAFETY: signal handlers only store to a lock-free atomic boolean. File
-    // descriptors are dropped in normal control flow; SIGKILL closes them in-kernel.
-    unsafe {
-        libc::signal(
-            libc::SIGTERM,
-            stop_signal as *const () as libc::sighandler_t,
-        );
-        libc::signal(libc::SIGINT, stop_signal as *const () as libc::sighandler_t);
-    }
+    install_stop_handlers();
     STOP.store(false, Ordering::Relaxed);
     let mut devices: BTreeMap<PathBuf, RunningDevice> = BTreeMap::new();
-    let mut pointer = None;
-    let mut children = vec![];
+    let follow = opt.context.is_none() && (!opt.fixture_only || opt.live_context);
     let mut selected: Option<PathBuf> = None;
     let mut seed = PadState::default();
-    if opt.bridge && !opt.fixture_only {
+    if opt.bridge && opt.write_pad {
         if let Ok(bytes) = std::fs::read(&opt.pad_path) {
             seed.seed_sequences(&bytes);
         }
@@ -400,11 +605,18 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let mut scan = start - Duration::from_secs(2);
     let mut last_tick = start;
     let mut last_reconcile = start;
-    let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "app-capture".into()), address:None, pid:None, room_capture:false,sampled:Instant::now() };
+    let mut focus = ContextSnapshot { name: opt.context.clone().unwrap_or_else(|| "app-capture".into()), address:None, pid:None, room_capture:false, released:false, sampled:Instant::now() };
     let shared_focus=std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
     let shared_policy=std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
+    let mut sinks = Sinks {
+        pointer: None,
+        children: vec![],
+        ownership: if follow && opt.bridge { Some(OwnershipWorker::spawn(shared_policy.clone())?) } else { None },
+        bridge: opt.bridge,
+        execute_actions: opt.bridge && !opt.fixture_only,
+    };
     let context_stop=std::sync::Arc::new(AtomicBool::new(false));
-    let context_worker=if opt.context.is_none() && !opt.fixture_only {
+    let context_worker=if follow {
         let cache=shared_focus.clone(); let policy=shared_policy.clone(); let stop=context_stop.clone();
         Some(std::thread::spawn(move || {
             let mut events=event_socket();
@@ -434,21 +646,14 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     || !next.controller.enabled
                                     || (!opt.fixture_only && !next.controller.exclusive_grab))
                             {
+                                eprintln!("{}", serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0}));
                                 break;
                             }
                             if policy_fingerprint(&global,&legacy)? != policy_fingerprint(&next,&next_legacy)? {
                             for dev in devices.values_mut() {
                                 let cursor=dev.router.cursor;
                                 let out = dev.router.reset();
-                                emit(
-                                    out,
-                                    dev,
-                                    &mut pointer,
-                                    opt.bridge,
-                                    opt.bridge && !opt.fixture_only,
-                                    &mut children,
-            &focus,
-                                )?;
+                                emit(out, dev, &mut sinks, &focus)?;
                                 let seq = dev.router.pad.sequences;
                                 dev.router = Router::new(
                                     next.clone(),
@@ -486,6 +691,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     if let Ok((keys, axes)) = device.snapshot() {
                         router.resync(keys, axes);
                     }
+                    // A pad that joins while a capture is pending follows the session's ownership at once.
+                    if let Some(owned) = devices.values().find_map(|d| d.router.ownership()) {
+                        router.adopt_ownership(owned);
+                    }
                     let output = if opt.bridge {
                         device
                             .grab()
@@ -510,24 +719,18 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     );
             }
             if let Ok(snapshot)=shared_focus.try_lock() { focus=snapshot.clone(); }
-            if !opt.fixture_only && opt.context.is_none() && focus.sampled.elapsed()>Duration::from_millis(global.controller.context_stale_ms) {
+            if follow && focus.sampled.elapsed()>Duration::from_millis(global.controller.context_stale_ms) {
                 focus.name="app-capture".into(); focus.room_capture=false;
             }
             ctx=focus.name.clone();
+            // Ownership is per session: a capture/release requested by one pad applies to every pad (INV-7).
+            let mut adopt: Vec<(PathBuf, bool)> = vec![];
             let paths: Vec<_> = devices.keys().cloned().collect();
             for path in paths {
                 let dev = devices.get_mut(&path).unwrap();
                 let target=focus.address.clone().zip(focus.pid);
                 let transition = dev.router.set_focus(&ctx,target,focus.room_capture);
-                emit(
-                    transition,
-                    dev,
-                    &mut pointer,
-                    opt.bridge,
-                    opt.bridge && !opt.fixture_only,
-                    &mut children,
-            &focus,
-                )?;
+                emit(transition, dev, &mut sinks, &focus)?;
                 match dev.device.read_events() {
                     Ok(events) => {
                         if events.iter().any(|e| {
@@ -544,43 +747,19 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     dev.device.snapshot().map_err(|e| e.to_string())?;
                                 let out = dev.router.resync(keys, axes);
                                 dev.dropped = false;
-                                emit(
-                                    out,
-                                    dev,
-                                    &mut pointer,
-                                    opt.bridge,
-                                    opt.bridge && !opt.fixture_only,
-                                    &mut children,
-            &focus,
-                                )?;
+                                emit(out, dev, &mut sinks, &focus)?;
                             } else {
                                 let out = dev
                                     .router
                                     .event(event, (linux::monotonic_ns() / 1_000_000) as u64);
-                                emit(
-                                    out,
-                                    dev,
-                                    &mut pointer,
-                                    opt.bridge,
-                                    opt.bridge && !opt.fixture_only,
-                                    &mut children,
-            &focus,
-                                )?;
+                                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
                             }
                         }
                     }
                     Err(e) => {
                         eprintln!("input disconnected {}: {e}", path.display());
                         let out = dev.router.reset();
-                        emit(
-                            out,
-                            dev,
-                            &mut pointer,
-                            opt.bridge,
-                            opt.bridge && !opt.fixture_only,
-                            &mut children,
-            &focus,
-                        )?;
+                        emit(out, dev, &mut sinks, &focus)?;
                         devices.remove(&path);
                         known_devices.lock().unwrap().remove(&path);
                         if selected.as_ref() == Some(&path) {
@@ -594,25 +773,44 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             last_tick = now;
             let reconcile_due = now.duration_since(last_reconcile) >= Duration::from_millis(global.controller.context_poll_ms);
             if reconcile_due { last_reconcile = now; }
-            for dev in devices.values_mut() {
+            for (path, dev) in devices.iter_mut() {
                 if reconcile_due && !dev.dropped {
                     if let Ok(held) = dev.device.held_keys() {
                         let out = dev.router.reconcile(&held, (linux::monotonic_ns()/1_000_000) as u64);
-                        emit(out,dev,&mut pointer,opt.bridge,opt.bridge && !opt.fixture_only,&mut children,&focus)?;
+                        if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
                     }
                 }
                 let out = dev.router.tick(dt);
-                emit(
-                    out,
-                    dev,
-                    &mut pointer,
-                    opt.bridge,
-                    opt.bridge && !opt.fixture_only,
-                    &mut children,
-            &focus,
-                )?;
+                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
             }
-            if opt.bridge && !opt.fixture_only {
+            for (source, owned) in adopt {
+                for (path, dev) in devices.iter_mut() {
+                    if *path != source {
+                        let out = dev.router.adopt_ownership(owned);
+                        emit(out, dev, &mut sinks, &focus)?;
+                    }
+                }
+            }
+            let mut failed = vec![];
+            if let Some(worker) = &sinks.ownership {
+                while let Ok((seq, mode, result)) = worker.results.try_recv() {
+                    match result {
+                        Ok(address) => eprintln!("{}", serde_json::json!({"ownership":mode,"window":address,"ok":true})),
+                        Err(error) => {
+                            eprintln!("{}", serde_json::json!({"ownership":mode,"ok":false,"error":error,"reverted":seq==worker.last}));
+                            // Only the latest request decides; an older failure must not undo a newer capture.
+                            if seq == worker.last { failed.push(mode); }
+                        }
+                    }
+                }
+            }
+            if !failed.is_empty() {
+                for dev in devices.values_mut() {
+                    let out = dev.router.ownership_failed();
+                    emit(out, dev, &mut sinks, &focus)?;
+                }
+            }
+            if opt.bridge && opt.write_pad {
                 let pad = selected
                     .as_ref()
                     .and_then(|p| devices.get(p))
@@ -631,19 +829,19 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 }
             }
             let mut i = 0;
-            while i < children.len() {
-                let expired = children[i].0.elapsed() > Duration::from_secs(2);
+            while i < sinks.children.len() {
+                let expired = sinks.children[i].0.elapsed() > Duration::from_secs(2);
                 if expired {
-                    let _ = children[i].1.kill();
+                    let _ = sinks.children[i].1.kill();
                 }
                 if expired
-                    || children[i]
+                    || sinks.children[i]
                         .1
                         .try_wait()
                         .map_err(|e| e.to_string())?
                         .is_some()
                 {
-                    let (_, mut child) = children.swap_remove(i);
+                    let (_, mut child) = sinks.children.swap_remove(i);
                     let _ = child.wait();
                 } else {
                     i += 1;
@@ -657,28 +855,21 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     })();
     for dev in devices.values_mut() {
         let out = dev.router.reset();
-        let _ = emit(
-            out,
-            dev,
-            &mut pointer,
-            opt.bridge,
-            opt.bridge && !opt.fixture_only,
-            &mut children,
-            &focus,
-        );
+        let _ = emit(out, dev, &mut sinks, &focus);
         dev.device.release();
     }
-    for (_, mut child) in children {
+    for (_, mut child) in std::mem::take(&mut sinks.children) {
         let _ = child.kill();
         let _ = child.wait();
     }
-    if opt.bridge && !opt.fixture_only {
+    if opt.bridge && opt.write_pad {
         seed.neutralize();
         let _ = atomic_packet(&opt.pad_path, &seed);
     }
     context_stop.store(true, Ordering::Relaxed);
     if let Some(worker)=context_worker { let _=worker.join(); }
     let _=discovery.join();
+    drop(sinks);
     result
 }
 fn legacy_owner_running() -> bool {
@@ -713,11 +904,7 @@ fn config_fingerprint(root: Option<&Path>) -> Vec<(PathBuf, u64, Option<std::tim
 
 pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<String>, String> {
     if let Some(mode)=action.strip_prefix("input:window ") {
-        if !["on","off","fullscreen"].contains(&mode) {return Err("unsupported window ownership mode".into());}
-        let mode=serde_json::to_string(mode).unwrap();
-        let tag=serde_json::to_string(&global.controller.capture_tag).unwrap();
-        let lua=format!("local p=hl.plugin and hl.plugin.hypr3d;local mode={mode};local function tag(w) if w then hl.dispatch(hl.dsp.window.tag({{window=w,tag=(mode=='off' and '-' or '+')..{tag}}})) end end;if p and p.active() then assert(p.input_capture and p.input_owner,'room input ownership unavailable');local id=p.input_owner();assert(p.input_capture(mode),'no selected room window');if mode~='off' then id=p.input_owner() end;local found=false;for _,w in ipairs(hl.get_windows()) do if tonumber(w.address)==id then tag(w);found=true;break end end;if not found and mode=='off' then tag(hl.get_active_window()) end else local w=hl.get_active_window();if not w then error('no focused window',0) end;tag(w);if mode=='fullscreen' then hl.dispatch(hl.dsp.window.fullscreen({{window=w,mode='fullscreen',action='set'}})) end end");
-        return Ok(vec!["/usr/bin/hyprctl".into(),"eval".into(),lua]);
+        return Ok(vec!["/usr/bin/hyprctl".into(),"eval".into(),window_lua(mode,global,None)?]);
     }
     if global.planned_actions.iter().any(|a|a==action) { return Err(format!("action is planned, not implemented: {action}")); }
     global
@@ -777,7 +964,7 @@ mod tests {
         let (cfg,_)=crate::config::tests::fixture();
         let mut v=serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":true,"fullscreen":2,"captured":true,"handler":"default"});
         assert!(snapshot(&cfg,&v).room_capture,"the installed room uses the compositor default fullscreen handler");
-        v["room"]=serde_json::json!(false);assert!(!snapshot(&cfg,&v).room_capture,"a normal fullscreen game keeps its thumbstick chord");
+        v["room"]=serde_json::json!(false);assert!(!snapshot(&cfg,&v).room_capture,"outside the room a fullscreen capture is a 2D capture; the held chord releases it to the desktop");
         v["room"]=serde_json::json!(true);v["fullscreen"]=serde_json::json!(0);assert!(snapshot(&cfg,&v).room_capture,"windowed room capture must support the held release chord");
     }
     #[test]
@@ -786,6 +973,46 @@ mod tests {
         let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();let before=policy_fingerprint(&cfg,&legacy).unwrap();
         doc["theme"]["font"]["size"]=toml::Value::Integer(18);
         let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();assert_eq!(policy_fingerprint(&cfg,&legacy).unwrap(),before);
+    }
+    #[test]
+    fn release_tag_is_reported_and_class_never_captures() {
+        let (cfg,_)=crate::config::tests::fixture();
+        let v=serde_json::json!({"class":"steam_app_570","address":"0xabc","pid":42,"room":false,"captured":false,"released":true});
+        let snap=snapshot(&cfg,&v);assert_eq!(snap.name,"game");assert!(snap.released);
+        assert!(!crate::router::Router::owns_controller(&snap.name),"an uncaptured game window is an ordinary window");
+        let lua=context_lua(&cfg);
+        assert!(lua.contains("\"mios-input-released\"") && lua.contains("if released then captured=false end"));
+        assert!(lua.contains("policy.captured"),"the generated MIOS_INPUT_POLICY.captured predicate is preferred when present");
+    }
+    #[test]
+    fn seat_check_reads_logind_state_files_without_spawning() {
+        let t=std::env::temp_dir().join(format!("mios-inputd-seat-{}",std::process::id()));
+        let _=std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("users")).unwrap();std::fs::create_dir_all(t.join("sessions")).unwrap();
+        assert!(seat_from_logind_state(&t,1000).unwrap().contains("logind state unavailable"),"no user record: idle");
+        std::fs::write(t.join("users/1000"),"STATE=active\nSESSIONS=4\n").unwrap();
+        assert_eq!(seat_from_logind_state(&t,1000).as_deref(),Some("no graphical session for this user"),"SSH-only login: idle");
+        std::fs::write(t.join("users/1000"),"DISPLAY=../x\n").unwrap();
+        assert_eq!(seat_from_logind_state(&t,1000).as_deref(),Some("no graphical session for this user"),"a path-like id is rejected");
+        std::fs::write(t.join("users/1000"),"STATE=active\nDISPLAY=3\n").unwrap();
+        std::fs::write(t.join("sessions/3"),"TYPE=wayland\nSEAT=\n").unwrap();
+        assert_eq!(seat_from_logind_state(&t,1000).as_deref(),Some("the graphical session has no seat"));
+        std::fs::write(t.join("sessions/3"),"TYPE=wayland\nSEAT=seat0\n").unwrap();
+        assert_eq!(seat_from_logind_state(&t,1000),None,"a seated graphical session reaches the bridge");
+        std::fs::remove_dir_all(&t).unwrap();
+    }
+    #[test]
+    fn window_transaction_tags_release_and_unsets_only_bridge_fullscreen() {
+        let (cfg,_)=crate::config::tests::fixture();
+        let off=window_lua("off",&cfg,None).unwrap();
+        assert!(off.contains("tag(w,CAP,false);tag(w,REL,true)"));
+        assert!(off.contains("if has(w,FS) then tag(w,FS,false)") && off.contains("action='unset'"));
+        let full=window_lua("fullscreen",&cfg,Some("0xabc")).unwrap();
+        assert!(full.contains("tag(w,REL,false);tag(w,CAP,true)") && full.contains("tag(w,FS,true)"));
+        assert!(full.contains("local EXPECT=\"0xabc\""));
+        assert!(off.contains("pcall(policy.refresh)"),"the keyboard policy re-reads the tags in the same transaction");
+        assert!(window_lua("toggle",&cfg,None).is_err());
+        assert_eq!(configured_command("input:window off",&cfg).unwrap()[2],off);
     }
     #[test]
     fn compositor_actions_use_current_lua_api() {

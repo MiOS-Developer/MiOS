@@ -34,17 +34,28 @@ app owns the input, or uncaptured, so MiOS owns it.**
   - the window tag `capture_tag = "mios-input-captured"`;
   - the Hypr3D room's input owner.
 
-  The window classes in `[keybindings.global.contexts]` select the `game` and
-  `vm-passthrough` contexts, which are captured too.
+  Capture and release are the same for every window kind: native, Flatpak, game, VM,
+  remote client, nested session, PiP and Theatre. **No window class captures the
+  controller.** The class lists in `[keybindings.global.contexts]` (`game`,
+  `vm-passthrough`) only scope keyboard passthrough. An uncaptured game is an ordinary
+  window until North captures it.
 - **Take ownership: North.** A tap captures the aimed or focused window. A hold of
   `capture_hold_ms` (500 ms) makes it fullscreen and captures it. In the room, a tap
   gives the aimed window all input, and a hold enters 2D fullscreen.
 - **Release: hold L3+R3** (`toggle_chord`) for `capture_hold_ms`. This is the only release.
-  - The release is stored on the window as `release_tag = "mios-input-released"`.
-  - If the bridge made the window fullscreen, the release also un-fullscreens it.
-  - A release cancels only fullscreen, tag or room capture. It never turns a
-    `vm-passthrough` or `game` window into a desktop window. [step I1]
-  - Today the release removes only the tag and leaves fullscreen set.
+  - The release is stored on the window as `release_tag = "mios-input-released"`. It
+    cancels fullscreen, `capture_tag` and room capture for that window until North
+    captures it again (North removes the tag).
+  - A North hold marks the fullscreen it sets with
+    `capture_fullscreen_tag = "mios-input-fullscreen"`. The release un-fullscreens only
+    that window. A fullscreen you made yourself (Super+F11) stays fullscreen.
+  - A release never changes a window's class context, so a `vm-passthrough` window keeps
+    its keyboard passthrough. It changes only who owns the controller.
+  - A capture or release that the compositor does not confirm within
+    `context_stale_ms` reverts, and one the compositor refuses reverts at once, so the
+    app or the room never keeps the pad by accident.
+  - Ownership is per session: a capture or release from one controller applies to every
+    connected controller.
 - **While captured, the controller belongs to the app.** Every button, stick, trigger and
   Guide press reaches it through the `mios-vctl-*` virtual gamepad. A Guide tap is
   replayed to the app. There are two exceptions:
@@ -53,14 +64,16 @@ app owns the input, or uncaptured, so MiOS owns it.**
     - the right stick moves the host pointer;
     - the left stick scrolls;
     - LT and RT right-click and left-click;
-    - every button, Guide included, still goes to the app [step I1];
+    - every button, Guide included, still goes to the app (ShaderGlass, the Guide layer and
+      North never fire on the host);
     - Start or Guide+Select returns to full capture.
-
-  Today half-capture also runs Guide combinations and LB/RB on the host. That is a known
-  bug, and step I1 fixes it.
 - **While captured, the keyboard belongs to the app.** Only the chords on
   `bypass_mod = "SUPER+CTRL"` reach the host. Today that covers the declared bypass
   chords and the VM escape handles. The session-scale chords join them in step G1.
+  Every capture and release re-evaluates the keyboard policy in the same transaction, so
+  a tag-only capture or release changes the host chords at once. The keyboard projection
+  does not read `release_tag` yet: a fullscreen you made yourself still counts as captured
+  for the keyboard after a controller release [step G1].
 - **Notice.** Every capture and release shows "Controller -> <app>. Hold L3+R3 to
   release." [step I2]
 - A VM client's own keyboard/mouse capture state stays owned by the client.
@@ -75,7 +88,7 @@ app owns the input, or uncaptured, so MiOS owns it.**
 | `terminal` | uncaptured `mios-terminal`, Alacritty, kitty or foot |
 | `desktop-3d` | the Hypr3D room is active and no window owns input |
 | `app-capture` | fullscreen, `capture_tag` or room input owner |
-| `game`, `vm-passthrough` | class lists in `[keybindings.global.contexts]` |
+| `game`, `vm-passthrough` | class lists in `[keybindings.global.contexts]`; keyboard passthrough only, the controller follows capture like any window |
 | `console` | no compositor, or this user's active seat session is a tty [step I3] |
 
 Cursor mode (Start) and the Guide layer are **modes** on top of a context, not contexts.
@@ -139,19 +152,19 @@ sensors are not forwarded.
 
 | Input | Captured app | Half-capture | Guide held (desktop) | VT with tmux [step I3] | VT without tmux [step I3] |
 |---|---|---|---|---|---|
-| South | app | app [step I1] | toggle floating | Enter | Enter |
-| East | app | app [step I1] | close window | Esc · Ctrl+C | Esc · Ctrl+C |
-| West | app | app [step I1] | terminal | Tab | Tab |
-| North | app | app [step I1] | browser | zoom pane | none |
+| South | app | app | toggle floating | Enter | Enter |
+| East | app | app | close window | Esc · Ctrl+C | Esc · Ctrl+C |
+| West | app | app | terminal | Tab | Tab |
+| North | app | app | browser | zoom pane | none |
 | D-pad | app | app | focus window (HAT d-pads [step I4]) | arrows | arrows |
 | Left stick | app | scroll | volume (Y), previous/next track (X) [step I4] | page up/down | none |
 | Right stick | app | pointer | move window [step I4] | focus pane | none |
 | LT / RT | app | right / left click | move window to previous/next workspace | previous/next tmux window | none |
-| LB / RB | app | app [step I1] | previous/next workspace | previous/next tmux session | none |
+| LB / RB | app | app | previous/next workspace | previous/next tmux session | none |
 | Select | app | app | Guide+Select = cursor / half-capture | session tree · bindings popup | none |
 | Start | app | back to full capture | system monitor | copy mode | none |
-| Guide tap | replayed to app | replayed to app [step I1] | (modifier) | MiOS menu | none |
-| L3 / R3 | app | app [step I1] | lock / VM passthrough latch | new tmux window / compact view | none |
+| Guide tap | replayed to app | replayed to app | (modifier) | MiOS menu | none |
+| L3 / R3 | app | app | lock / VM passthrough latch | new tmux window / compact view | none |
 | L3+R3 tap | app | app | suppressed [step I2] | back to the graphical VT | back to the graphical VT |
 | L3+R3 hold | release capture | release capture | suppressed [step I2] | | |
 
@@ -283,10 +296,15 @@ devices. The daemon:
 Each physical controller has its own chord state, so two controllers can never form one
 chord. Force feedback and hidraw forwarding are not implemented.
 
-On a bridge error, `serve` today executes `recovery_argv` (the legacy daemon). After step I1:
-- `serve` exits 0 when disabled.
-- It idles when the user has no seat or device access (SSH-only logins).
-- On an error it exits non-zero, and systemd restarts it under a start limit.
+`serve` never starts a second pad owner:
+- It exits 0 when the SSOT disables the bridge (`enabled = false` or
+  `exclusive_grab = false`), including when a reload disables it.
+- It idles when the user has no graphical seat session or no `/dev/uinput` or
+  `/dev/input` access (SSH-only logins, containers), re-checking every `scan_ms`.
+- On a bridge error it exits non-zero, and systemd restarts it under the unit's start
+  limit (`StartLimitIntervalSec=60`, `StartLimitBurst=5`).
+- `recovery_argv` is retired: `check` rejects it if a tier plants it. The legacy
+  `mios-gamepad-hypr3d` daemon has no `[Install]` section, and the bridge `Conflicts=` it.
 
 The kernel releases grabs when a descriptor closes, including after the process is
 killed. See the kernel's [event protocol](https://docs.kernel.org/input/event-codes.html)
@@ -299,6 +317,8 @@ and [uinput interface](https://docs.kernel.org/input/uinput.html).
 /usr/libexec/mios/mios-inputd map
 /usr/libexec/mios/mios-inputd normalize 'SUPER_CTRL+Space'
 /usr/libexec/mios/mios-inputd observe --seconds 10
+/usr/libexec/mios/mios-inputd context            # focused window, "released", "controller_owner": app|mios
+/usr/libexec/mios/mios-inputd window on          # the North capture transaction (on|fullscreen|off)
 /usr/bin/mios-gate keybind-collisions --root /
 ```
 
@@ -306,6 +326,9 @@ and [uinput interface](https://docs.kernel.org/input/uinput.html).
 - `replay` takes bounded JSON events on stdin and reports the routed app and pointer
   input, the named actions and the 68-byte Hypr3D state. It does not execute commands.
 - Invalid configuration replacements keep the last validated policy.
+- `window` runs the same ownership transaction as North (`on`, `fullscreen`) and the held
+  L3+R3 (`off`) against the focused window of the compositor named by
+  `HYPRLAND_INSTANCE_SIGNATURE`, for any window kind.
 
 Run the real executable tests with explicit candidate paths:
 
@@ -314,6 +337,11 @@ MIOS_GATE=/path/to/mios-gate python3 /tests/test-keybind-collisions.py
 MIOS_INPUTD_BIN=/path/to/mios-inputd \
   MIOS_INPUTD_SSOT=/usr/share/mios/mios.toml \
   MIOS_INPUTD_UINPUT_TEST=1 python3 /tests/test-mios-inputd.py
+# ownership contract (capture/release, half-capture, tags, serve); the OLD pair runs the negative controls
+MIOS_INPUTD_BIN=/path/to/mios-inputd MIOS_INPUTD_OLD_BIN=/path/to/pre-I1/mios-inputd \
+  MIOS_INPUTD_OLD_SSOT=/path/to/pre-I1/mios.toml MIOS_INPUTD_UNIT_TEST=1 python3 /tests/test-inputd-ownership.py
+# live, in an owned nested session driven by a private uinput pad (xpad and DualSense layouts)
+MIOS_LIVE_NESTED=1 MIOS_INPUTD_BIN=/path/to/mios-inputd python3 /tests/test-inputd-ownership-live.py
 ```
 
 If the gate binary is missing, the collision tests fail instead of skipping.

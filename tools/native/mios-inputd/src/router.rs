@@ -117,6 +117,17 @@ impl PadState {
         self.west = false;
     }
 }
+/// Who consumes an axis this frame (INV-5). Exactly one sink per axis per frame, so no stick can move an app and the
+/// room camera (or the host pointer) at the same time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sink {
+    /// The virtual pad: the captured app (or, uncaptured until I2, the focused client).
+    App,
+    /// The Hypr3D room packet (camera, movement, grab/resize).
+    Room,
+    /// The host pointer (cursor mode or half-capture).
+    Pointer,
+}
 pub struct Router {
     global: GlobalConfig,
     legacy: LegacyConfig,
@@ -136,7 +147,10 @@ pub struct Router {
     dropping: bool,
     capture_target: Option<(String,u64)>,
     room_capture: bool,
+    /// A capture/release this bridge requested that the compositor has not confirmed yet (C-03). It expires after
+    /// context_stale_ms, or at once when the ownership transaction fails, and the snapshot decides again.
     capture_override: Option<bool>,
+    override_ms: f64,
     north_pending: bool,
     north_elapsed: f64,
     north_fired: bool,
@@ -146,6 +160,8 @@ pub struct Router {
     fraction_x: f64,
     fraction_y: f64,
     fraction_scroll: f64,
+    #[cfg(test)]
+    pub(crate) mutant_room_forward: bool,
 }
 impl Router {
     pub fn new(global: GlobalConfig, legacy: LegacyConfig, axes: BTreeMap<u16, Axis>) -> Self {
@@ -169,6 +185,7 @@ impl Router {
             capture_target: None,
             room_capture: false,
             capture_override: None,
+            override_ms: 0.0,
             north_pending: false,
             north_elapsed: 0.0,
             north_fired: false,
@@ -178,36 +195,53 @@ impl Router {
             fraction_x: 0.0,
             fraction_y: 0.0,
             fraction_scroll: 0.0,
+            #[cfg(test)]
+            mutant_room_forward: false,
         }
     }
     pub fn policy(&self) -> &GlobalConfig {
         &self.global
     }
+    /// Capture is decided by ownership alone (North capture, fullscreen==2, capture_tag or the room's input_owner,
+    /// cancelled by release_tag): the snapshot names that "app-capture". A window's class (game, VM, remote client,
+    /// terminal, nested session, PiP) never captures the controller by itself, so capture and release are the same
+    /// for every window kind.
+    pub fn owns_controller(context: &str) -> bool { context == "app-capture" }
+    fn app_context(context: &str) -> bool { Self::owns_controller(context) }
+    pub fn app_owned(&self) -> bool { self.capture_override.unwrap_or_else(||Self::app_context(&self.context)) }
+    /// Half-capture (C-01): the app still owns every button; only the sticks and LT/RT drive the host pointer.
+    pub fn half_capture(&self) -> bool { self.app_owned() && self.cursor }
+    /// The pending (unconfirmed) ownership this router requested, if any.
+    pub fn ownership(&self) -> Option<bool> { self.capture_override }
     pub fn set_focus(&mut self, context: &str, target: Option<(String,u64)>, from_room: bool) -> Output {
-        let force=self.capture_target!=target && (self.app_owned() || Self::app_context(context));
-        if self.capture_target!=target || self.capture_override==Some(Self::app_context(context)) {
+        let target_changed=self.capture_target!=target;
+        let (owned,room)=(self.app_owned(),self.room());
+        let force=target_changed && (owned || Self::app_context(context));
+        if target_changed || self.capture_override==Some(Self::app_context(context)) {
             self.capture_override=None;
         }
         self.capture_target=target; self.room_capture=from_room || context=="desktop-3d";
-        self.transition_context(context,force)
+        self.transition_context(context,force,owned,room)
     }
-    fn app_context(context: &str) -> bool { ["game","vm-passthrough","app-capture"].contains(&context) }
-    fn app_owned(&self) -> bool { self.capture_override.unwrap_or_else(||Self::app_context(&self.context)) }
-    pub fn set_context(&mut self, context: &str) -> Output { self.transition_context(context,false) }
-    fn transition_context(&mut self, context: &str, force: bool) -> Output {
-        // Pointer drags and cursor mode survive focus moving between ordinary
-        // desktop clients, terminals and HUDs. Actual capture boundaries reset.
-        let host2d=|v:&str| ["desktop-2d","terminal"].contains(&v);
-        if !force && (self.context == context || (host2d(&self.context) && host2d(context))) {
-            self.context=context.into();
+    pub fn set_context(&mut self, context: &str) -> Output {
+        let (owned,room)=(self.app_owned(),self.room());
+        self.transition_context(context,false,owned,room)
+    }
+    fn transition_context(&mut self, context: &str, force: bool, was_owned: bool, was_room: bool) -> Output {
+        // Pointer drags, held keys and cursor mode survive focus moving between uncaptured clients of any kind
+        // (and a compositor confirming a capture this bridge already applied). Ownership or room boundaries reset.
+        let previous=std::mem::replace(&mut self.context,context.into());
+        if !force && self.app_owned()==was_owned && self.room()==was_room {
             return Output::default();
         }
+        self.context=previous;
         let mut o = self.release_outputs();
         self.suppressed.extend(&self.pressed);
         self.blocked.extend(&self.pressed);
         self.context = context.into();
         self.cursor = false;
         self.pending_guide = false;
+        self.north_pending = false;
         self.last_jump = None;
         self.pad.neutralize();
         // A held axis must be released before the next context owns it.
@@ -300,28 +334,71 @@ impl Router {
     fn room(&self) -> bool {
         !self.app_owned() && (self.context == "desktop-3d" || (self.capture_override==Some(false) && self.room_capture))
     }
-    fn capture_window(&mut self, fullscreen: bool) -> Output {
+    /// The single sink of one axis this frame (INV-5).
+    pub fn axis_sink(&self, code: u16) -> Sink {
+        if self.room() {
+            return Sink::Room;
+        }
+        if self.pointer_mode() && (!self.half_capture() || self.pointer_axis(code)) {
+            return Sink::Pointer;
+        }
+        Sink::App
+    }
+    /// Axes the host pointer reads in cursor mode: both sticks and the analog triggers.
+    fn pointer_axis(&self, code: u16) -> bool {
+        let (rx, ry) = self.right_axes();
+        [0, 1, rx, ry].contains(&code)
+            || axis_code(&self.legacy.grab_axis).ok() == Some(code)
+            || axis_code(&self.legacy.resize_axis).ok() == Some(code)
+    }
+    fn set_ownership(&mut self, owned: bool) -> Output {
         let room=self.room();
-        let mut out=self.release_outputs();
-        self.room_capture=room;
-        self.capture_override=Some(true);
-        self.cursor=false;
+        let out=self.release_outputs();
+        if owned { self.room_capture=room; }
+        self.capture_override=Some(owned);
+        self.override_ms=0.0;
+        self.cursor=!owned && !self.room_capture;
+        self.north_pending=false;
+        self.pending_guide=false;
         self.pad.neutralize();
         self.suppressed.extend(&self.pressed);
+        out
+    }
+    fn capture_window(&mut self, fullscreen: bool) -> Output {
+        let mut out=self.set_ownership(true);
         out.actions.push(format!("input:window {}",if fullscreen {"fullscreen"} else {"on"}));
         out
     }
     fn release_window(&mut self) -> Output {
-        let mut out=self.release_outputs();
-        self.capture_override=Some(false);
-        self.cursor=!self.room_capture;
-        self.pad.neutralize();
-        self.suppressed.extend(&self.pressed);
+        let mut out=self.set_ownership(false);
         out.actions.push("input:window off".into());
         out
     }
+    /// Another controller of this session captured or released the focused window: ownership is per session, never
+    /// per pad, so every router follows it at once (no second pad may keep driving the room or the app).
+    pub fn adopt_ownership(&mut self, owned: bool) -> Output {
+        if self.capture_override==Some(owned) {
+            return Output::default();
+        }
+        self.set_ownership(owned)
+    }
+    /// The ownership transaction failed (or was never confirmed): drop the pending override and follow the snapshot.
+    pub fn ownership_failed(&mut self) -> Output {
+        if self.capture_override.is_none() {
+            return Output::default();
+        }
+        let (owned,room)=(self.app_owned(),self.room());
+        self.capture_override=None;
+        self.override_ms=0.0;
+        let context=self.context.clone();
+        self.transition_context(&context,false,owned,room)
+    }
     fn pointer_mode(&self) -> bool {
         self.cursor && !self.room()
+    }
+    /// Frames (SYN and non-axis events) reach the app whenever any of its input can.
+    fn forwards_frames(&self) -> bool {
+        !self.room() && (!self.pointer_mode() || self.half_capture())
     }
     fn legacy_action(&mut self, code: u16, now: u64, o: &mut Output) -> bool {
         let room = self.room();
@@ -437,12 +514,26 @@ impl Router {
             }
             let guide = button_code(&self.global.controller.guide_button).unwrap();
             let guide_held = self.pressed.contains(&guide);
-            let captured=self.app_owned() && !self.cursor && !self.global.controller.captured_system_layer;
-            if captured {
+            let owned = self.app_owned();
+            let half = self.half_capture();
+            // The captured app owns Guide and every button (full and half capture alike). Only the
+            // mode_override_chord (half-capture toggle), Start in half-capture and the held toggle_chord are host input.
+            let app_guide = owned && !self.global.controller.captured_system_layer;
+            if half && e.value == 1 && !already && e.code == button_code(&self.global.controller.cursor_mode_button).unwrap() {
+                o.extend(self.release_outputs());
+                self.suppressed.insert(e.code);
+                self.pending_guide = false;
+                self.cursor = false;
+                o.actions.push("input:cursor off".into());
+                return o;
+            }
+            if app_guide {
                 let escape:Vec<_>=self.global.controller.mode_override_chord.iter().map(|v|button_code(v).unwrap()).collect();
                 if e.value==1 && !already && escape.contains(&e.code) && escape.iter().all(|c|self.pressed.contains(c)) {
                     o.extend(self.release_outputs()); self.suppressed.extend(&escape); self.pending_guide=false;
-                    self.cursor=true; o.actions.push("input:cursor on".into()); return o;
+                    self.cursor=!self.cursor;
+                    o.actions.push(format!("input:cursor {}",if self.cursor {"on"} else {"off"}));
+                    return o;
                 }
                 if e.code==guide && e.value==1 { self.pending_guide=true; return o; }
                 if self.pending_guide && e.code!=guide && e.value==1 {
@@ -453,7 +544,7 @@ impl Router {
                     o.app.extend([Event::new(EV_KEY,guide,1),Event::new(EV_KEY,guide,0)]); return o;
                 }
             }
-            if !captured && e.code == guide {
+            if !app_guide && e.code == guide {
                 if e.value == 1 {
                     o.extend(self.release_outputs());
                     self.suppressed
@@ -461,7 +552,7 @@ impl Router {
                 }
                 return o;
             }
-            if !captured && guide_held {
+            if !app_guide && guide_held {
                 if e.value == 1 && !already {
                     let override_codes: Vec<_> = self
                         .global
@@ -506,7 +597,7 @@ impl Router {
                     .iter()
                     .map(|n| button_code(n).unwrap())
                     .collect();
-                if !self.app_owned()
+                if !owned
                     && toggle.contains(&e.code)
                     && toggle.iter().all(|c| self.pressed.contains(c))
                 {
@@ -529,7 +620,7 @@ impl Router {
                 }
                 let bindings = self.global.bindings.clone();
                 for b in &bindings {
-                    if captured || !b.chord.starts_with("BTN_") || !b.active_in(&self.context) {
+                    if app_guide || !b.chord.starts_with("BTN_") || !b.active_in(&self.context) {
                         continue;
                     }
                     let codes: Vec<_> = b
@@ -549,8 +640,9 @@ impl Router {
                         return o;
                     }
                 }
-                let app_context = self.app_owned();
-                if (!app_context || self.cursor) && self.legacy_action(e.code, now, &mut o) {
+                // Host (legacy) actions -- ShaderGlass, cursor mode, North capture, room buttons -- belong to an
+                // uncaptured controller only. A captured app keeps every one of these buttons, half-capture included.
+                if !owned && self.legacy_action(e.code, now, &mut o) {
                     self.suppressed.insert(e.code);
                     return o;
                 }
@@ -566,8 +658,11 @@ impl Router {
                 };
                 if let Some(code) = mouse {
                     self.pointer_button(code, e.value != 0, &mut o);
+                    return o;
                 }
-                return o;
+                if !half {
+                    return o;
+                }
             }
             if self.room() {
                 return o;
@@ -586,18 +681,20 @@ impl Router {
             if let Some(a) = self.axes.get_mut(&e.code) {
                 a.value = e.value;
             }
-            if !self.room()
-                && !self.pointer_mode()
+            let sink = self.axis_sink(e.code);
+            #[cfg(test)]
+            let sink = if self.mutant_room_forward && sink == Sink::Room { Sink::App } else { sink };
+            if sink == Sink::App
                 && (self.app_owned() || !self.button(&self.global.controller.guide_button))
             {
                 o.app.push(e);
             }
         } else if e.kind == EV_SYN && e.code == SYN_REPORT {
             self.update_pad();
-            if !self.room() && !self.pointer_mode() {
+            if self.forwards_frames() {
                 o.app.push(e);
             }
-        } else if !self.room() && !self.pointer_mode() {
+        } else if self.forwards_frames() {
             o.app.push(e);
         }
         o
@@ -693,6 +790,13 @@ impl Router {
     pub fn tick(&mut self, dt: f64) -> Output {
         let mut o = Output::default();
         let dt=if dt.is_finite() {dt.clamp(0.0,0.1)} else {0.0};
+        if self.capture_override.is_some() {
+            // C-03: a capture/release the compositor never confirmed must not keep the pad (or the room) forever.
+            self.override_ms+=dt*1000.0;
+            if self.override_ms>=self.global.controller.context_stale_ms as f64 {
+                o.extend(self.ownership_failed());
+            }
+        }
         if self.north_pending && !self.north_fired {
             self.north_elapsed+=dt;
             if self.north_elapsed*1000.0>=self.global.controller.capture_hold_ms as f64 {
@@ -860,8 +964,11 @@ mod tests {
         for _ in 0..4 {assert!(r.tick(0.1).actions.is_empty());}
         assert_eq!(r.tick(0.1).actions,vec!["input:window off"]);
         assert!(r.room(),"release returns ownership without closing the room");
-        let mut game=router();game.global.controller.captured_system_layer=false;game.set_context("game");
-        key(&mut game,0x13d,1,1);assert!(key(&mut game,0x13e,1,2).actions.is_empty(),"ordinary games retain both thumbstick buttons");
+        // A captured window of any kind keeps both thumbstick buttons for a short press; only the hold releases.
+        let mut game=router();game.set_focus("app-capture",Some(("0xgame".into(),7)),false);
+        key(&mut game,0x13d,1,1);assert!(key(&mut game,0x13e,1,2).actions.is_empty(),"a captured window keeps both thumbstick buttons for a short press");
+        let mut fired=vec![];for _ in 0..8 {fired.extend(game.tick(0.1).actions);}
+        assert_eq!(fired,vec!["input:window off"],"a held L3+R3 releases a captured game exactly once");
     }
     #[test]
     fn north_tap_hands_all_controls_to_a_window_without_fullscreen_or_room_motion() {
@@ -949,10 +1056,15 @@ mod tests {
         assert!(key(&mut r, 0x136, 2, 2).actions.is_empty());
     }
     #[test]
-    fn game_shoulder_passes_without_guide() {
+    fn captured_shoulder_passes_without_guide() {
         let mut r = router();
-        r.set_context("game");
-        assert!(!key(&mut r, 0x136, 1, 1).app.is_empty());
+        r.set_context("app-capture");
+        let o = key(&mut r, 0x136, 1, 1);
+        assert!(o.actions.is_empty() && o.app.contains(&Event::new(EV_KEY, 0x136, 1)));
+        // An uncaptured game is an ordinary window: LB is the host ShaderGlass cycle until North captures it.
+        let mut g = router();
+        g.set_context("game");
+        assert_eq!(key(&mut g, 0x136, 1, 1).actions, vec!["mios:shaderglass cycle"]);
     }
     #[test]
     fn start_toggles_2d_pointer_never_session() {
@@ -986,14 +1098,14 @@ mod tests {
         let mut r = router();
         key(&mut r, 0x13b, 1, 1);
         key(&mut r, 0x139, 1, 2);
-        let o = r.set_context("game");
+        let o = r.set_context("app-capture");
         assert!(o.pointer.contains(&Event::new(EV_KEY, 0x110, 0)));
         assert!(!r.cursor);
     }
     #[test]
     fn held_keys_do_not_cross_contexts() {
         let mut r = router();
-        r.set_context("game");
+        r.set_context("app-capture");
         key(&mut r, 0x130, 1, 1);
         let o = r.set_context("terminal");
         assert!(o.app.contains(&Event::new(EV_KEY, 0x130, 0)));
@@ -1114,6 +1226,224 @@ mod tests {
             .trigger(),
             0.0
         );
+    }
+}
+
+#[cfg(test)]
+mod ownership_contract {
+    //! I1: capture/release are the same for every window kind; half-capture keeps every button with the app;
+    //! one axis sink per frame; pending ownership expires or reverts.
+    use super::*;
+    const SOUTH: u16 = 0x130; const EAST: u16 = 0x131; const NORTH: u16 = 0x133; const LB: u16 = 0x136;
+    const RB: u16 = 0x137; const RT: u16 = 0x139; const SELECT: u16 = 0x13a; const START: u16 = 0x13b;
+    const GUIDE: u16 = 0x13c; const L3: u16 = 0x13d; const R3: u16 = 0x13e;
+    fn router() -> Router {
+        let (c, l) = crate::config::tests::fixture();
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] { axes.insert(c, Axis { min: -32768, max: 32767, value: 0 }); }
+        for c in [2, 5] { axes.insert(c, Axis { min: 0, max: 255, value: 0 }); }
+        for c in [16, 17] { axes.insert(c, Axis { min: -1, max: 1, value: 0 }); }
+        Router::new(c, l, axes)
+    }
+    fn key(r: &mut Router, c: u16, v: i32, t: u64) -> Output { r.event(Event::new(EV_KEY, c, v), t) }
+    fn tap(r: &mut Router, c: u16, t: u64) -> Output { let mut o = key(r, c, 1, t); o.extend(key(r, c, 0, t + 1)); o }
+    fn hold(r: &mut Router, ms: u64) -> Output { let mut o = Output::default(); for _ in 0..ms / 50 { o.extend(r.tick(0.05)); } o }
+    fn app_keys(o: &Output) -> Vec<(u16, i32)> { o.app.iter().filter(|e| e.kind == EV_KEY).map(|e| (e.code, e.value)).collect() }
+    // Every window kind the operator named: native, Flatpak, game, VM, remote, nested, PiP, Theatre, terminal.
+    const KINDS: [(&str, &str); 9] = [("org.gnome.Nautilus", "desktop-2d"), ("org.any.Flatpak", "desktop-2d"), ("steam_app_570", "game"),
+        ("looking-glass-client", "vm-passthrough"), ("xfreerdp", "vm-passthrough"), ("mios-nested-desktop", "desktop-2d"),
+        ("mios-pip-player", "desktop-2d"), ("mios-theatre", "desktop-2d"), ("Alacritty", "terminal")];
+
+    #[test]
+    fn capture_and_release_are_identical_for_every_window_kind() {
+        let (mut cfg, _) = crate::config::tests::fixture();
+        cfg.contexts.get_mut("vm-passthrough").unwrap().push("xfreerdp".into());
+        let mut transcripts = vec![];
+        for (class, expected) in KINDS {
+            let context = cfg.classify_window(Some(class), false, false);
+            let mut r = router();
+            r.set_focus(&context, Some((format!("0x{class}"), 9)), false);
+            let mut t = vec![context.clone(), format!("owned={}", r.app_owned())];
+            // North tap captures; RB, Guide and Start then belong to the app; a held L3+R3 releases.
+            t.extend(tap(&mut r, NORTH, 10).actions);
+            r.set_focus(&cfg.classify_window(Some(class), false, true), Some((format!("0x{class}"), 9)), false);
+            let o = tap(&mut r, RB, 20); t.push(format!("rb-actions={:?} rb-app={:?}", o.actions, app_keys(&o)));
+            key(&mut r, L3, 1, 30); key(&mut r, R3, 1, 31);
+            t.extend(hold(&mut r, 700).actions);
+            key(&mut r, L3, 0, 40); key(&mut r, R3, 0, 41);
+            r.set_focus(&cfg.classify_window(Some(class), false, false), Some((format!("0x{class}"), 9)), false);
+            t.push(format!("owned-after={}", r.app_owned()));
+            assert_eq!(context, expected, "{class}");
+            transcripts.push((class, t[1..].to_vec()));
+        }
+        let first = transcripts[0].1.clone();
+        assert_eq!(first, vec!["owned=false".to_string(), "input:window on".into(),
+            "rb-actions=[] rb-app=[(311, 1), (311, 0)]".into(), "input:window off".into(), "owned-after=false".into()]);
+        for (class, t) in &transcripts { assert_eq!(t, &first, "{class} must capture and release like every other window"); }
+    }
+    #[test]
+    fn half_capture_keeps_every_button_with_the_app() {
+        // tests.md C-01: the live bug was RB firing ShaderGlass after Guide+Select in a captured app.
+        let mut r = router(); r.set_context("app-capture");
+        let mut o = Output::default();
+        for (c, v, t) in [(GUIDE, 1, 1), (SELECT, 1, 2), (SELECT, 0, 3), (GUIDE, 0, 4), (RB, 1, 5), (RB, 0, 6)] { o.extend(key(&mut r, c, v, t)); }
+        assert_eq!(o.actions, vec!["input:cursor on"]);
+        assert!(r.half_capture());
+        assert_eq!(app_keys(&o), vec![(RB, 1), (RB, 0)], "RB reaches the app, never ShaderGlass");
+        // Guide+East after the escape: the app gets Guide then East; no hypr:killactive.
+        let mut o = Output::default();
+        for (c, v, t) in [(GUIDE, 1, 7), (EAST, 1, 8), (EAST, 0, 9), (GUIDE, 0, 10)] { o.extend(key(&mut r, c, v, t)); }
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        assert_eq!(app_keys(&o), vec![(GUIDE, 1), (EAST, 1), (EAST, 0), (GUIDE, 0)]);
+        // North after the escape belongs to the app: no capture transaction.
+        let o = tap(&mut r, NORTH, 11);
+        assert!(o.actions.is_empty() && app_keys(&o) == vec![(NORTH, 1), (NORTH, 0)]);
+        assert!(hold(&mut r, 600).actions.is_empty());
+        // Sticks and RT are host pointer input; the app never sees them in half-capture.
+        let stick = r.event(Event::new(EV_ABS, 3, 32767), 12);
+        assert!(stick.app.is_empty());
+        let moved = r.tick(0.02);
+        assert!(moved.pointer.iter().any(|e| e.kind == EV_REL && e.code == 0 && e.value > 0));
+        let click = key(&mut r, RT, 1, 13);
+        assert!(click.pointer.contains(&Event::new(EV_KEY, 0x110, 1)) && click.app.is_empty());
+        key(&mut r, RT, 0, 14);
+        // The HAT d-pad is a button set: it stays with the app.
+        let hat = Event::new(EV_ABS, 16, 1);
+        assert!(r.event(hat, 15).app.contains(&hat));
+        // Start returns to full capture.
+        let o = key(&mut r, START, 1, 16);
+        assert_eq!(o.actions, vec!["input:cursor off"]);
+        assert!(!r.half_capture() && r.app_owned());
+        key(&mut r, START, 0, 17);
+        assert_eq!(app_keys(&tap(&mut r, START, 18)), vec![(START, 1), (START, 0)], "Start in full capture is the app's");
+        // Guide+Select twice: on, then off again.
+        let mut o = Output::default();
+        for (c, v, t) in [(GUIDE, 1, 20), (SELECT, 1, 21), (SELECT, 0, 22), (GUIDE, 0, 23), (GUIDE, 1, 24), (SELECT, 1, 25), (SELECT, 0, 26), (GUIDE, 0, 27)] { o.extend(key(&mut r, c, v, t)); }
+        assert_eq!(o.actions, vec!["input:cursor on", "input:cursor off"]);
+        assert!(app_keys(&o).is_empty(), "the escape chord is never replayed to the app");
+    }
+    #[test]
+    fn uncaptured_contexts_keep_host_shaderglass_and_cursor() {
+        // Negative control for C-01: the same sequence uncaptured still reaches the host.
+        for context in ["desktop-2d", "game", "vm-passthrough", "terminal"] {
+            let mut r = router(); r.set_context(context);
+            let mut o = Output::default();
+            for (c, v, t) in [(GUIDE, 1, 1), (SELECT, 1, 2), (SELECT, 0, 3), (GUIDE, 0, 4)] { o.extend(key(&mut r, c, v, t)); }
+            assert_eq!(o.actions, vec!["input:cursor on"], "{context}");
+            assert_eq!(tap(&mut r, RB, 5).actions, vec!["mios:shaderglass toggle"], "{context}");
+            assert_eq!(tap(&mut r, NORTH, 6).actions, vec!["input:window on"], "North captures from cursor mode too ({context})");
+        }
+        let mut r = router(); r.set_context("desktop-2d");
+        assert_eq!(tap(&mut r, NORTH, 1).actions, vec!["input:window on"]);
+    }
+    #[test]
+    fn captured_system_layer_fixture_choice_matters() {
+        // C-27 negative control: with captured_system_layer=true the Guide layer is host input in a capture.
+        let mut r = router(); r.global.controller.captured_system_layer = true; r.set_context("app-capture");
+        let mut o = Output::default();
+        for (c, v, t) in [(GUIDE, 1, 1), (LB, 1, 2), (LB, 0, 3), (GUIDE, 0, 4)] { o.extend(key(&mut r, c, v, t)); }
+        assert_eq!(o.actions, vec!["hypr:workspace e-1"]);
+        let mut r = router(); r.set_context("app-capture");
+        let mut o = Output::default();
+        for (c, v, t) in [(GUIDE, 1, 1), (LB, 1, 2), (LB, 0, 3), (GUIDE, 0, 4)] { o.extend(key(&mut r, c, v, t)); }
+        assert!(o.actions.is_empty());
+    }
+    #[test]
+    fn ownership_is_per_session_not_per_pad() {
+        let mut a = router(); let mut b = router();
+        for r in [&mut a, &mut b] { r.set_focus("desktop-3d", Some(("0xroom".into(), 3)), false); }
+        assert_eq!(tap(&mut a, NORTH, 1).actions, vec!["input:window on"]);
+        b.event(Event::new(EV_ABS, 0, 32767), 2); b.tick(0.01);
+        assert!(b.pad.lx != 0.0, "precondition: the second pad drives the room before it adopts the capture");
+        let o = b.adopt_ownership(true);
+        assert!(o.app.iter().any(|e| e.kind == EV_ABS), "adoption flushes the second pad's axes");
+        assert!(b.app_owned() && b.pad.lx == 0.0);
+        let stick = b.event(Event::new(EV_ABS, 0, 32767), 3); b.tick(0.01);
+        assert!(stick.app.contains(&Event::new(EV_ABS, 0, 32767)) && b.pad.lx == 0.0, "the second pad now feeds only the app");
+        assert!(b.adopt_ownership(true).app.is_empty(), "adopting the same ownership twice is a no-op");
+    }
+    #[test]
+    fn unconfirmed_capture_reverts_after_context_stale_ms() {
+        // tests.md C-03 positive: a snapshot without the tag keeps the override pending; one with it commits.
+        let mut r = router(); r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
+        tap(&mut r, NORTH, 1);
+        r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
+        r.tick(0.5);
+        assert!(r.app_owned(), "pending inside context_stale_ms");
+        r.set_focus("app-capture", Some(("0xa".into(), 1)), false);
+        assert_eq!(r.ownership(), None, "the snapshot confirmed the capture");
+        r.tick(0.1); r.tick(0.1); for _ in 0..20 { r.tick(0.1); }
+        assert!(r.app_owned(), "a confirmed capture never expires");
+        // Negative: never confirmed -> the app does not keep the pad.
+        let mut r = router(); r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
+        tap(&mut r, NORTH, 1);
+        for _ in 0..9 { r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false); r.tick(0.1); }
+        assert!(r.app_owned());
+        r.tick(0.1); r.tick(0.05);
+        assert!(!r.app_owned() && r.ownership().is_none(), "unconfirmed capture reverted after context_stale_ms");
+        // Negative: a failed ownership transaction reverts at once and releases what the app held.
+        let mut r = router(); r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
+        tap(&mut r, NORTH, 1); key(&mut r, SOUTH, 1, 2);
+        let o = r.ownership_failed();
+        assert!(!r.app_owned() && o.app.contains(&Event::new(EV_KEY, SOUTH, 0)));
+    }
+    #[test]
+    fn confirmation_does_not_flush_a_held_stick() {
+        let mut r = router(); r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
+        tap(&mut r, NORTH, 1);
+        r.event(Event::new(EV_ABS, 0, 30000), 2);
+        let o = r.set_focus("app-capture", Some(("0xa".into(), 1)), false);
+        assert!(o.app.is_empty(), "the compositor confirming our own capture must not zero the game's stick");
+    }
+
+    struct Lcg(u64);
+    impl Lcg { fn next(&mut self) -> u64 { self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); self.0 >> 33 } }
+    /// INV-5 / C-04: random streams in every context. A frame never has a non-neutral room packet together with a
+    /// non-neutral stick event forwarded to the app or host pointer motion.
+    fn axis_owner_property(mutant: bool) -> Result<(), String> {
+        let contexts = ["desktop-2d", "desktop-3d", "terminal", "game", "vm-passthrough", "app-capture"];
+        let buttons = [SOUTH, EAST, NORTH, 0x134, LB, RB, 0x138, RT, SELECT, START, GUIDE, L3, R3];
+        for seed in 0..48u64 {
+            let mut g = Lcg(seed * 7919 + 13);
+            let mut r = router(); r.mutant_room_forward = mutant;
+            let mut held = BTreeSet::new();
+            let mut now = 1000;
+            for step in 0..400 {
+                now += 1 + g.next() % 40;
+                let mut o = Output::default();
+                match g.next() % 10 {
+                    0 => { let c = contexts[(g.next() % contexts.len() as u64) as usize]; let t = format!("0x{}", g.next() % 3);
+                           o.extend(r.set_focus(c, Some((t, 1)), c == "desktop-3d")); }
+                    1..=3 => { let b = buttons[(g.next() % buttons.len() as u64) as usize];
+                               let v = i32::from(!held.contains(&b)); if v == 1 { held.insert(b); } else { held.remove(&b); }
+                               o.extend(r.event(Event::new(EV_KEY, b, v), now)); }
+                    4..=7 => { let code = [0u16, 1, 3, 4][(g.next() % 4) as usize]; let v = (g.next() % 65536) as i32 - 32768;
+                               o.extend(r.event(Event::new(EV_ABS, code, v), now)); o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), now)); }
+                    8 => { if g.next() % 2 == 0 { o.extend(r.adopt_ownership(g.next() % 2 == 0)); } else { o.extend(r.ownership_failed()); } }
+                    _ => o.extend(r.tick(0.02)),
+                }
+                o.extend(r.tick(0.005));
+                let pad_live = r.pad.lx != 0.0 || r.pad.ly != 0.0 || r.pad.rx != 0.0 || r.pad.ry != 0.0;
+                let app_live = o.app.iter().any(|e| e.kind == EV_ABS && [0, 1, 3, 4].contains(&e.code) && e.value.unsigned_abs() > 4000);
+                let pointer_live = o.pointer.iter().any(|e| e.kind == EV_REL);
+                if pad_live && (app_live || pointer_live) {
+                    return Err(format!("seed {seed} step {step} context {} owned {} cursor {}: room and {} share a frame",
+                        r.context, r.app_owned(), r.cursor, if app_live { "app" } else { "pointer" }));
+                }
+                if app_live && pointer_live {
+                    return Err(format!("seed {seed} step {step}: app and pointer share a stick frame"));
+                }
+            }
+        }
+        Ok(())
+    }
+    #[test]
+    fn one_axis_owner_per_frame_property() {
+        axis_owner_property(false).unwrap();
+    }
+    #[test]
+    fn mutant_forwarding_in_the_room_fails_the_property() {
+        assert!(axis_owner_property(true).is_err(), "the property must catch a router that forwards room axes to the app");
     }
 }
 

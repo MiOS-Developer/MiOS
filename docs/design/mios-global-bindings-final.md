@@ -1,4 +1,4 @@
-<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 landed; G1 U1 I1-I4 P1 GT M1 pending). -->
+<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 and I1 landed; G1 U1 I2-I4 P1 GT M1 pending). -->
 <!-- AI-related: usr/share/mios/mios.toml [keybindings.*], docs/design/mios-global-bindings-staged.patch.toml, docs/design/mios-global-bindings-tests.md, usr/share/doc/mios/keybinds.md, tools/native/mios-inputd -->
 # MiOS global bindings: FINAL spec (controller + keyboard)
 
@@ -11,6 +11,8 @@ Labels:
 - **DOCUMENTED**: present in usr/share/doc/mios/keybinds.md.
 - Status of a behavior: **[K]** kept, **[F]** fix, **[N]** new.
 - Step tags (§7): S0, G1, U1, I1, I2, I3, I4, P1, GT, M1. A behavior tagged with a step is DECLARED in the patch but commented out, and becomes IMPLEMENTED when that step lands.
+
+**I1 as landed (operator decision 2026-10-29, supersedes O-1/O-4 defaults for the controller):** capture and release are identical for every window kind. No class list (`game`, `vm-passthrough`) captures the controller; those classes only scope keyboard passthrough. inputd's controller owner is `app` only for `app-capture` (fullscreen==2, `capture_tag` or the room `input_owner`, each cancelled by `release_tag`). The legacy daemon unit has no `[Install]`.
 
 Deliverables in this directory:
 - `ssot-keybindings.patch.toml`: the complete replacement tables.

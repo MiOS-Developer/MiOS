@@ -14,7 +14,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Operation {
     Check,
-    Context,
+    Context {
+        /// Print the compositor query (Lua) instead of running it; parity tests evaluate it against fixtures.
+        #[arg(long)]
+        lua: bool,
+    },
     Serve,
     Dispatch { action: String },
     VmAction { action: String },
@@ -41,11 +45,26 @@ enum Operation {
         fixture_only: bool,
         #[arg(long)]
         seconds: Option<u64>,
+        /// Fixture tier: follow the compositor named by HYPRLAND_INSTANCE_SIGNATURE and run ownership transactions there.
+        #[arg(long, requires = "fixture_only")]
+        live_context: bool,
+        /// Fixture tier: write the room packet to this private path (never the live one).
+        #[arg(long, requires = "fixture_only")]
+        pad_path: Option<PathBuf>,
     },
+    /// Capture (on, fullscreen) or release (off) the focused window: the same transaction North and a held
+    /// toggle_chord run, for every window kind.
+    Window { mode: String },
     Fixture,
     #[command(hide = true)]
     FixtureGrab {
         device: PathBuf,
+    },
+    /// Private uinput pad for tests ("mios-input-fixture-<layout>"); plays JSON lines from stdin, never a real device.
+    #[command(hide = true)]
+    FixturePad {
+        #[arg(long, default_value = "dualsense")]
+        layout: String,
     },
 }
 fn run() -> Result<(), String> {
@@ -63,15 +82,24 @@ fn run() -> Result<(), String> {
     if let Operation::FixtureGrab { device } = &args.command {
         return mios_inputd::linux::fixture_grab(device);
     }
+    #[cfg(target_os = "linux")]
+    if let Operation::FixturePad { layout } = &args.command {
+        return mios_inputd::linux::fixture_pad(layout);
+    }
     let (global, legacy) = GlobalConfig::load(args.root.as_deref())?;
-    let (bridge, fixture_only) = match &args.command {
-        Operation::Bridge { fixture_only, .. } => (true, *fixture_only),
-        _ => (false, false),
+    let (bridge, fixture_only, live_context, pad_override) = match &args.command {
+        Operation::Bridge { fixture_only, live_context, pad_path, .. } => (true, *fixture_only, *live_context, pad_path.clone()),
+        _ => (false, false, false, None),
     };
     match args.command {
-        Operation::Context => {
+        Operation::Context { lua: true } => println!("{}",serde_json::json!({"lua":mios_inputd::runtime::context_lua(&global),"executed":false})),
+        Operation::Context { lua: false } => {
             let c=mios_inputd::runtime::context(&global)?;
-            println!("{}",serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture}));
+            println!("{}",serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture,"released":c.released,"controller_owner":if mios_inputd::router::Router::owns_controller(&c.name) {"app"} else {"mios"}}));
+        }
+        Operation::Window { mode } => {
+            let address=mios_inputd::runtime::window_transaction(&mode,&global,None)?;
+            println!("{}",serde_json::json!({"window":address,"mode":mode,"ok":true}));
         }
         Operation::Dispatch { action } => {
             use std::os::unix::process::CommandExt;
@@ -79,18 +107,7 @@ fn run() -> Result<(), String> {
             let (program,rest)=argv.split_first().ok_or("action has no external dispatcher")?;
             return Err(std::process::Command::new(program).args(rest).exec().to_string());
         }
-        Operation::Serve => {
-            use std::os::unix::process::CommandExt;
-            let fallback=global.controller.recovery_argv.clone();
-            if global.enabled && global.controller.enabled && global.controller.exclusive_grab {
-                let pad_path=global.controller.legacy_pad_state_path.clone();
-                let result=mios_inputd::runtime::run(global,legacy,mios_inputd::runtime::Options {root:args.root,bridge:true,fixture_only:false,device:None,context:None,duration:None,pad_path});
-                if result.is_ok() { return Ok(()); }
-                eprintln!("native controller recovery: {}",result.unwrap_err());
-            }
-            let (program, rest) = fallback.split_first().ok_or("controller recovery_argv is empty")?;
-            return Err(std::process::Command::new(program).args(rest).exec().to_string());
-        }
+        Operation::Serve => return mios_inputd::runtime::serve(global, legacy, args.root),
         Operation::VmAction { action } => mios_inputd::runtime::vm_action(&action, &global)?,
         #[cfg(target_os = "linux")]
         Operation::ResolveAction { action } => println!(
@@ -145,7 +162,8 @@ fn run() -> Result<(), String> {
         | Operation::Bridge {
             device, seconds, ..
         } => {
-            let pad_path = global.controller.legacy_pad_state_path.clone();
+            let write_pad = bridge && (!fixture_only || pad_override.is_some());
+            let pad_path = pad_override.unwrap_or_else(|| global.controller.legacy_pad_state_path.clone());
             mios_inputd::runtime::run(
                 global,
                 legacy,
@@ -157,6 +175,8 @@ fn run() -> Result<(), String> {
                     context: None,
                     duration: seconds.map(std::time::Duration::from_secs),
                     pad_path,
+                    live_context,
+                    write_pad,
                 },
             )?;
         }

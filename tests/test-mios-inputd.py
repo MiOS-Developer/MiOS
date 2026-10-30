@@ -62,15 +62,18 @@ class InputPolicy(unittest.TestCase):
         value = self.call('map')
         self.assertGreater(len(value['global']['controller']['system_layer']), 0)
         self.assertIsInstance(value['global']['controller']['exclusive_grab'], bool)
-        self.assertTrue(Path(value['global']['controller']['recovery_argv'][0]).is_absolute())
+        self.assertNotIn('recovery_argv', value['global']['controller'], 'I1 retired the recovery owner')
 
-    def test_game_keeps_ordinary_shoulders(self):
-        result = self.replay('game', [self.key(0x136), self.key(0x136, 0)])
+    def test_captured_window_keeps_ordinary_shoulders(self):
+        result = self.replay('app-capture', [self.key(0x136), self.key(0x136, 0)])
         self.assertFalse(result['output']['actions'])
-        self.assertEqual([e['value'] for e in result['output']['app']], [1, 0])
+        self.assertEqual([e['value'] for e in result['output']['app'] if e['kind'] == 1], [1, 0])
+        # An uncaptured game is an ordinary window: no class captures the controller (I1, operator O-1/O-4).
+        result = self.replay('game', [self.key(0x136), self.key(0x136, 0)])
+        self.assertEqual(result['output']['actions'], ['mios:shaderglass cycle'])
 
     def test_captured_apps_do_not_fire_system_guide_combinations(self):
-        for context in ('game','vm-passthrough','app-capture'):
+        for context in ('app-capture',):
             with self.subTest(context=context):
                 result=self.replay(context,[self.key(0x13c),self.key(0x136),self.key(0x136,0),self.key(0x13c,0)])
                 self.assertFalse(result['output']['actions'])

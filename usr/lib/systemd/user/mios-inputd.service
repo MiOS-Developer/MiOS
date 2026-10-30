@@ -4,6 +4,8 @@ PartOf=mios-desktop.target
 After=graphical-session.target mios-gamepad-hypr3d.service
 Conflicts=mios-gamepad-hypr3d.service
 ConditionFileIsExecutable=/usr/libexec/mios/mios-inputd
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple

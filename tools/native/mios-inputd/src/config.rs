@@ -62,10 +62,17 @@ pub struct ControllerConfig {
     pub legacy_pad_state_path: std::path::PathBuf,
     pub debounce_ms: u64,
     pub scan_ms: u64,
-    pub recovery_argv: Vec<String>,
     pub captured_system_layer: bool,
     pub capture_fullscreen: bool,
     pub capture_tag: String,
+    /// Set by a held toggle_chord release; cancels fullscreen==2, capture_tag and the room input_owner for that
+    /// window (every window kind alike) until the next North capture removes it.
+    pub release_tag: String,
+    /// Marks a fullscreen the bridge itself set (North hold); a release unsets only that fullscreen.
+    pub capture_fullscreen_tag: String,
+    /// Retired (I1): serve never execs a fallback owner. Present only so a planted key is rejected, not ignored.
+    #[serde(default, skip_serializing)]
+    pub recovery_argv: Option<toml::Value>,
     pub context_poll_ms: u64,
     pub context_stale_ms: u64,
     #[serde(default = "capture_hold_ms")]
@@ -245,11 +252,16 @@ impl GlobalConfig {
         }
         self.vm.validate()?;
         let c = &self.controller;
-        if c.context_poll_ms==0 || c.context_poll_ms>1000 || c.context_stale_ms<c.context_poll_ms || c.context_stale_ms>10000 || c.capture_tag.is_empty() || !c.capture_tag.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_') {
+        let tag_ok=|t:&str| !t.is_empty() && t.len()<=64 && t.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_');
+        if c.context_poll_ms==0 || c.context_poll_ms>1000 || c.context_stale_ms<c.context_poll_ms || c.context_stale_ms>10000
+            || !tag_ok(&c.capture_tag) || !tag_ok(&c.release_tag) || !tag_ok(&c.capture_fullscreen_tag) {
             return Err("invalid capture/context timing policy".into());
         }
-        if c.recovery_argv.is_empty() || !Path::new(&c.recovery_argv[0]).is_absolute() || c.recovery_argv.iter().any(|a|a.contains('\0')) {
-            return Err("controller recovery requires an absolute executable argv".into());
+        if c.capture_tag==c.release_tag || c.capture_tag==c.capture_fullscreen_tag || c.release_tag==c.capture_fullscreen_tag {
+            return Err("capture_tag, release_tag and capture_fullscreen_tag must be distinct".into());
+        }
+        if c.recovery_argv.is_some() {
+            return Err("controller recovery_argv is retired: serve exits or idles instead of starting a second pad owner".into());
         }
         if !(1..=1000).contains(&c.pointer_hz)
             || !c.stick_deadzone.is_finite()
@@ -380,14 +392,12 @@ pub fn validate_action(action: &str) -> Result<(), String> {
 pub struct LegacyConfig {
     pub enabled: bool,
     pub toggle_chord: Vec<String>,
-    pub debounce_ms: u64,
     pub deadzone: f64,
     pub sensitivity: f64,
     pub move_sensitivity: f64,
     pub camera_sensitivity: f64,
     pub invert_y: bool,
     pub dpad_enabled: bool,
-    pub poll_ms: u64,
     pub fallback_axes: Vec<String>,
     pub grab_button: String,
     pub grab_axis: String,
@@ -395,7 +405,6 @@ pub struct LegacyConfig {
     pub resize_axis: String,
     pub trigger_threshold: f64,
     pub view_mode_button: String,
-    pub cursor_mode_button: String,
     pub jump_button: String,
     pub double_press_ms: u64,
     pub crouch_button: String,
@@ -407,9 +416,7 @@ impl LegacyConfig {
     fn validate(&self) -> Result<(), String> {
         if self.toggle_chord.len() < 2
             || self.fallback_axes.len() != 2
-            || self.debounce_ms == 0
             || self.double_press_ms == 0
-            || self.poll_ms == 0
             || !self.deadzone.is_finite()
             || !(0.0..=1.0).contains(&self.deadzone)
             || !self.trigger_threshold.is_finite()
@@ -421,7 +428,6 @@ impl LegacyConfig {
             self.grab_button.as_str(),
             &self.resize_button,
             &self.view_mode_button,
-            &self.cursor_mode_button,
             &self.jump_button,
             &self.crouch_button,
             &self.fullscreen_button,
@@ -496,10 +502,11 @@ cursor_mode_contexts=["desktop-2d","desktop-3d","terminal"]
 legacy_pad_state_path="/tmp/mios-hypr3d-pad.bin"
 debounce_ms=250
 scan_ms=2000
-recovery_argv=["/usr/libexec/mios/mios-gamepad-hypr3d","--daemon"]
-captured_system_layer=true
+captured_system_layer=false
 capture_fullscreen=true
 capture_tag="mios-input-captured"
+release_tag="mios-input-released"
+capture_fullscreen_tag="mios-input-fullscreen"
 context_poll_ms=50
 context_stale_ms=1000
 [keybindings.global.controller.system_layer]

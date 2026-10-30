@@ -709,3 +709,69 @@ pub fn fixture_grab(path: &Path) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
+
+/// A private test pad: a uinput device named `mios-input-fixture-<layout>` that only the fixture tier may open.
+/// stdin carries JSON lines: {"events":[[kind,code,value],...]} writes one batch, {"sleep_ms":N} waits, and EOF
+/// destroys the device. Layouts differ by USB id and axis ranges only; both report the Linux gamepad codes
+/// (BTN_SOUTH..BTN_THUMBR, sticks ABS_X/Y/RX/RY, triggers ABS_Z/RZ, HAT0X/Y).
+pub fn fixture_pad(layout: &str) -> Result<(), String> {
+    let (vendor, product, trigger_max) = match layout {
+        "dualsense" => (0x054c, 0x0ce6, 255),
+        "xpad" => (0x045e, 0x028e, 255),
+        _ => return Err(format!("unknown fixture layout {layout} (dualsense, xpad)")),
+    };
+    let mut abs = BTreeMap::new();
+    for code in [0u16, 1, 3, 4] {
+        abs.insert(code, AbsInfo { minimum: -32768, maximum: 32767, ..AbsInfo::default() });
+    }
+    for code in [2u16, 5] {
+        abs.insert(code, AbsInfo { minimum: 0, maximum: trigger_max, ..AbsInfo::default() });
+    }
+    for code in [16u16, 17] {
+        abs.insert(code, AbsInfo { minimum: -1, maximum: 1, ..AbsInfo::default() });
+    }
+    let keys = (0x130..=0x13e).filter(|c| ![0x132, 0x135].contains(c)).collect::<Vec<_>>();
+    let mut pad = VirtualDevice::create(
+        &format!("mios-input-fixture-{layout}"),
+        InputId { bustype: 3, vendor, product, version: 1 },
+        &keys,
+        &abs,
+        &[],
+    )
+    .map_err(|e| e.to_string())?;
+    let mut path = None;
+    for _ in 0..200 {
+        if let Ok(p) = pad.event_path() {
+            path = Some(p);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let path = path.ok_or("fixture pad did not enumerate")?;
+    println!("{}", serde_json::json!({"fixture_pad": layout, "path": path, "name": pad.name}));
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    let stdin = io::stdin();
+    loop {
+        line.clear();
+        if stdin.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+            return Ok(());
+        }
+        let v: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
+        if let Some(ms) = v.get("sleep_ms").and_then(serde_json::Value::as_u64) {
+            std::thread::sleep(std::time::Duration::from_millis(ms.min(10_000)));
+        }
+        if let Some(events) = v.get("events").and_then(serde_json::Value::as_array) {
+            let mut batch = vec![];
+            for e in events {
+                let t = e.as_array().filter(|t| t.len() == 3).ok_or("event must be [kind, code, value]")?;
+                let n = |i: usize| t[i].as_i64().ok_or("event fields must be integers");
+                batch.push(Event::new(u16::try_from(n(0)?).map_err(|e| e.to_string())?, u16::try_from(n(1)?).map_err(|e| e.to_string())?, i32::try_from(n(2)?).map_err(|e| e.to_string())?));
+            }
+            batch.push(Event::new(EV_SYN, SYN_REPORT, 0));
+            pad.write(&batch).map_err(|e| e.to_string())?;
+        }
+        println!("{}", serde_json::json!({"ok": true}));
+        std::io::stdout().flush().map_err(|e| e.to_string())?;
+    }
+}
