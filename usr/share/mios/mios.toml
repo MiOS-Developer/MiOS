@@ -4457,18 +4457,19 @@ enabled = true
 mod_key = "SUPER"
 bypass_mod = "SUPER+CTRL"            # host-escape modifier: reaches the host even while a VM owns the keyboard
 chord_sep = " "                      # separates the steps of a multi-step chord ("CTRL+x CTRL+b")
-action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline"]
+action_namespaces = ["hypr", "exec", "quickshell", "mios", "tmux", "readline", "key", "pointer"]
 # Chords the focused terminal owns (termios/Readline/job control); no host binding may shadow them there.
 # CTRL+b is the tmux prefix and CTRL+s is flow control. mios-inputd already reserves both (config.rs:328-336).
 reserved_terminal = ["CTRL+c", "CTRL+z", "CTRL+d", "CTRL+\\", "CTRL+a", "CTRL+e", "CTRL+k", "CTRL+u", "CTRL+w", "CTRL+r", "CTRL+l", "CTRL+b", "CTRL+s"]
 # Every quickshell: and mios: action a binding fires must be in one of these two (the gate enforces it): an
 # implemented action carries its argv; an action with no runtime handler yet is listed as planned and is reported,
 # never silently launched. hypr:, exec:, tmux: and readline: verbs resolve natively (compositor eval, program, tmux, readline).
+# key: (the mios-vctl-keyboard virtual keyboard, US layout) and pointer: (the analog wheel) are the nav projections.
 planned_actions = []
 native_actions = { "mios:vm-command-modifier" = "hyprland" }
 
 [keybindings.global.action_argv]
-"quickshell:monitor-toggle" = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal", "--action", "system"]
+"mios:system-monitor" = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal", "--action", "system"]
 "mios:toggle_vm_passthrough" = ["/usr/libexec/mios/mios-inputd", "vm-action", "toggle_vm_passthrough"]
 "mios:vm-fullscreen" = ["/usr/libexec/mios/mios-inputd", "vm-action", "vm-fullscreen"]
 "mios:shaderglass toggle" = ["/usr/bin/mios-shaderglass", "toggle"]
@@ -4482,10 +4483,16 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:session-scale-down" = ["/usr/bin/mios-gen", "session-scale", "down"]
 "mios:session-scale-reset" = ["/usr/bin/mios-gen", "session-scale", "reset"]
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
+"mios:volume up" = ["/usr/bin/wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]
+"mios:volume down" = ["/usr/bin/wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
+"mios:media previous" = ["/usr/bin/playerctl", "previous"]
+"mios:media next" = ["/usr/bin/playerctl", "next"]
 "mios:screenshot-region" = ["/usr/bin/mios-shot", "region"]
 
 # Window class -> context (anchored regexes). desktop-3d is the Hypr3D room itself, not a class.
 # app-capture is not a class: fullscreen==2, capture_tag or the room's input_owner select it, and release_tag cancels it.
+# A class never captures the controller: capture and release are the same for every window kind (native, Flatpak,
+# game, VM, remote, nested, PiP, Theatre). These classes only scope keyboard bindings (contexts/passthrough).
 # console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
@@ -4667,34 +4674,44 @@ x11_rdp_escape_key = "Control_R"
 # Tier 4: the controller. One physical bridge (mios-inputd) owns every pad. Captured: the app gets everything through
 # the virtual pad except a held toggle_chord (release, capture_hold_ms) and mode_override_chord (half-capture: the
 # sticks and triggers drive the host mouse; every button still goes to the app; Start or the chord again returns).
+# Capture is per window, never per class: North tap = capture (in the room the aimed window, staying in 3D), North
+# hold = fullscreen + capture, held toggle_chord = release to the desktop. Ownership is per session (every pad).
 # Uncaptured: unmodified buttons follow the nav profile of the context (I2) and the room map ([desktop.hyprland.hypr3d.
 # controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
 [keybindings.global.controller]
 enabled = true
-exclusive_grab = true                # one physical evdev owner; the bridge re-grabs after errors (Restart=on-failure)
+exclusive_grab = true                # one physical evdev owner; false (or enabled = false) = serve exits 0
 captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
 capture_fullscreen = true              # North-button fullscreen selects ANY application, not only known classes
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
+release_tag = "mios-input-released"            # set by a held L3+R3 release; cancels fullscreen==2, capture_tag and
+                                               # input_owner capture for that window (any kind) until North captures again
+capture_fullscreen_tag = "mios-input-fullscreen"  # marks a fullscreen the bridge set (North hold); release unsets it
+capture_osd = true                     # notify on every capture/release: "Controller -> <app>. Hold L3+R3 to release."
+# The notifier ({message} is replaced); it runs after the compositor confirmed the capture/release, off the input loop.
+capture_osd_argv = ["/usr/bin/notify-send", "-a", "MiOS Controller", "-e", "-t", "2500", "-h", "string:x-canonical-private-synchronous:mios-controller", "{message}"]
 virtual_keyboard = "mios-vctl-keyboard"   # the key: projection's uinput keyboard (Hyprland device name)
 virtual_keyboard_layout = "us"           # key: names are US keycodes; mios-gen pins this device to the layout
 context_poll_ms = 50                   # backup poll; native focus/fullscreen events wake the context worker
-context_stale_ms = 1000                # transport failure never invents terminal focus; a pending capture waits for it
+context_stale_ms = 1000                # transport failure never invents terminal focus; an unconfirmed capture/release
+                                       # reverts after this long (a failed ownership transaction reverts at once)
 capture_hold_ms = 500                 # THE hold threshold: North tap/hold, L3+R3 release, and every nav [tap, hold] pair
 guide_button = "BTN_MODE"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
 cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
-cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal"]
+cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal", "game", "vm-passthrough"]   # every uncaptured window alike
 legacy_pad_state_path = "/tmp/mios-hypr3d-pad.bin"
-recovery_argv = ["/usr/libexec/mios/mios-gamepad-hypr3d", "--daemon"]
 debounce_ms = 250                     # toggle_chord: both sticks within this window = one chord
-scan_ms = 2000
+scan_ms = 2000                        # device scan; also how often serve re-checks seat/device access while idle
 pointer_hz = 250
 stick_deadzone = 0.12                 # THE deadzone for pointer, scroll and nav flicks
 pointer_max_speed_px = 18.0
 scroll_sensitivity = 45.0
 
-# Guide held + button (uncaptured contexts with a compositor; none on a VT). BTN_DPAD_* matches pads that report d-pad
-# keys today. HAT d-pads (DualSense, xpad) match once I4 folds ABS_HAT0X/Y into BTN_DPAD_*.
+# Guide held + button (uncaptured contexts with a compositor; none on a VT). One action per press, never repeated.
+# BTN_DPAD_* matches BTN_DPAD pads and HAT d-pads alike (I4 folds ABS_HAT0X/Y into BTN_DPAD_*), BTN_TL2/TR2 also fire
+# from analog-only triggers (xpad) at trigger_threshold, and LS_*/RS_* are stick flicks (one per deflection past
+# nav.flick_on, re-armed below nav.flick_off). With Guide held the sticks never move the pointer or scroll.
 [keybindings.global.controller.system_layer]
 BTN_TL = "hypr:workspace e-1"
 BTN_TR = "hypr:workspace e+1"
@@ -4704,13 +4721,21 @@ BTN_SOUTH = "hypr:togglefloating"
 BTN_EAST = "hypr:killactive"
 BTN_WEST = "exec:mios-terminal"
 BTN_NORTH = "mios:launch-browser"
-BTN_START = "quickshell:monitor-toggle"
+BTN_START = "mios:system-monitor"
 BTN_THUMBL = "quickshell:lock"
 BTN_THUMBR = "mios:toggle_vm_passthrough"
 BTN_DPAD_LEFT = "hypr:movefocus left"
 BTN_DPAD_RIGHT = "hypr:movefocus right"
 BTN_DPAD_UP = "hypr:movefocus up"
 BTN_DPAD_DOWN = "hypr:movefocus down"
+LS_UP = "mios:volume up"
+LS_DOWN = "mios:volume down"
+LS_LEFT = "mios:media previous"
+LS_RIGHT = "mios:media next"
+RS_LEFT = "hypr:movewindow left"
+RS_RIGHT = "hypr:movewindow right"
+RS_UP = "hypr:movewindow up"
+RS_DOWN = "hypr:movewindow down"
 
 # --- Navigation projection: what an uncaptured controller does outside the room (I2; console I3) ---
 # Value grammar, the same for every profile:
@@ -4724,10 +4749,149 @@ BTN_DPAD_DOWN = "hypr:movefocus down"
 #   flick per deflection), TOGGLE_CHORD (the configured toggle_chord).
 # Not in nav (contract or room owned): BTN_NORTH capture, BTN_TL/TR ShaderGlass, BTN_START cursor mode, the
 #   toggle_chord room toggle and hold-release. A console profile may claim them, because no compositor runs there.
-# Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout. pointer: = analog wheel.
-#   tmux: = commands for the tmux client in the focused terminal or VT on socket_name: key <k> (prefix-table key k),
-#   focus <dir> (falls through to hypr:movefocus at the window edge), page-up, page-down, session-prev, session-next,
-#   menu, keymap.
+# Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout (the kernel console reads the
+#   same device on a VT). pointer: = analog wheel; pointer:cursor (a button) toggles cursor mode. tmux: = commands for
+#   the tmux client in the focused terminal or on the active VT: key <k> (prefix-table key k), focus <dir> (falls
+#   through to hypr:movefocus at the window edge; stops there on a VT), page-up, page-down, session-prev, session-next,
+#   menu, keymap (a popup of `mios-inputd map --text`). mios:graphical-vt = Ctrl+Alt+F<VTNr> of this user's graphical
+#   session (I3). Console profiles may use only key:, tmux:, mios:graphical-vt, pointer:cursor and "none".
+[keybindings.global.controller.nav]
+enabled = true
+flick_on = 0.6                      # right-stick radial deflection (after stick_deadzone) that fires one flick
+flick_off = 0.3                     # the stick must fall below this before it can flick again
+# tmux servers (-L names) whose clients select a *_tmux profile; the verbs reach exactly that client and server.
+tmux_sockets = ["mios-human", "mios-nested"]
+
+# Context -> profile. A table merges per key, so a higher tier changes one context without restating the rest.
+# "vpad" forwards the pad to the virtual gamepad instead (the behaviour before nav; operator decision O-1).
+# Every uncaptured window navigates alike: a game or VM class decides nothing about the controller (North captures).
+[keybindings.global.controller.nav.contexts]
+desktop-2d = "desktop"
+terminal = "terminal"               # terminal_tmux when a tmux client runs under the focused terminal, else terminal_plain
+game = "desktop"
+vm-passthrough = "desktop"
+console = "console"                 # I3: console_tmux when a tmux client is attached to the active VT, else console_plain
+
+# input -> [delay_ms, rate_ms]. Inputs not listed never repeat. Hold actions never repeat.
+[keybindings.global.controller.nav.repeat]
+BTN_DPAD_UP = [400, 60]
+BTN_DPAD_DOWN = [400, 60]
+BTN_DPAD_LEFT = [400, 60]
+BTN_DPAD_RIGHT = [400, 60]
+BTN_TL2 = [500, 250]
+BTN_TR2 = [500, 250]
+LS_UP = [500, 250]                  # discrete actions only (VT paging and arrows); pointer: wheel is analog and ignores it
+LS_DOWN = [500, 250]
+LS_LEFT = [500, 250]
+LS_RIGHT = [500, 250]
+
+[keybindings.global.controller.nav.desktop]
+BTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]
+BTN_EAST = ["key:ESC", "key:ALT+LEFT"]
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+BTN_DPAD_UP = "key:UP"
+BTN_DPAD_DOWN = "key:DOWN"
+BTN_DPAD_LEFT = "key:LEFT"
+BTN_DPAD_RIGHT = "key:RIGHT"
+LS_UP = "pointer:wheel-up"
+LS_DOWN = "pointer:wheel-down"
+LS_LEFT = "pointer:hwheel-left"
+LS_RIGHT = "pointer:hwheel-right"
+RS_LEFT = "hypr:movefocus left"
+RS_RIGHT = "hypr:movefocus right"
+RS_UP = "hypr:movefocus up"
+RS_DOWN = "hypr:movefocus down"
+BTN_TL2 = "key:CTRL+SHIFT+TAB"
+BTN_TR2 = "key:CTRL+TAB"
+BTN_SELECT = ["key:COMPOSE", "quickshell:keymap-toggle"]
+BTN_MODE = "quickshell:drawer-toggle"
+BTN_THUMBL = "key:CTRL+t"
+BTN_THUMBR = "key:CTRL+0"
+
+[keybindings.global.controller.nav.terminal_tmux]
+inherits = "desktop"
+BTN_EAST = ["key:ESC", "key:CTRL+c"]
+RS_LEFT = "tmux:focus left"
+RS_RIGHT = "tmux:focus right"
+RS_UP = "tmux:focus up"
+RS_DOWN = "tmux:focus down"
+BTN_TL2 = "tmux:key p"
+BTN_TR2 = "tmux:key n"
+BTN_SELECT = ["tmux:key w", "quickshell:keymap-toggle"]
+BTN_THUMBL = "tmux:key t"
+BTN_THUMBR = "tmux:key f"
+
+[keybindings.global.controller.nav.terminal_plain]
+inherits = "desktop"
+BTN_EAST = ["key:ESC", "key:CTRL+c"]
+BTN_TL2 = "key:SHIFT+PAGEUP"
+BTN_TR2 = "key:SHIFT+PAGEDOWN"
+BTN_SELECT = ["none", "quickshell:keymap-toggle"]
+BTN_THUMBL = "exec:mios-terminal"
+
+# I3: the Linux console (a VT; no compositor, shell or room). The uinput keyboard reaches the kernel console, so the
+# key: rows are the desktop's own strokes. West hold = Shift+Tab, as on the desktop (O-6): the installed `us` console
+# keymaps map Shift+Tab to Meta_Tab = ESC TAB, which is BTab (kcbt) in the linux terminfo, so tmux and ncurses programs
+# read it as back-tab. Start toggles cursor mode: the sticks move the virtual pointer, which gpm draws on the VT and the
+# console bridge reports to tmux while its mouse mode is on.
+[keybindings.global.controller.nav.console_tmux]
+inherits = "terminal_tmux"
+BTN_SOUTH = "key:ENTER"              # the VT sends the same byte for Shift+Enter
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+LS_UP = "tmux:page-up"
+LS_DOWN = "tmux:page-down"
+LS_LEFT = "none"
+LS_RIGHT = "none"
+BTN_NORTH = "tmux:key z"
+BTN_TL = "tmux:session-prev"
+BTN_TR = "tmux:session-next"
+BTN_SELECT = ["tmux:key w", "tmux:keymap"]
+BTN_START = ["tmux:key y", "pointer:cursor"]
+BTN_MODE = "tmux:menu"
+TOGGLE_CHORD = "mios:graphical-vt"
+
+# A bare VT (a shell, the session selector or any TUI): operator decision C-18. Sticks and d-pad = arrows, South =
+# Enter, East = Esc (hold Ctrl+C), West and the bumpers = Tab / BTab, triggers = PageUp / PageDown, Start = cursor
+# mode. Linux >= 5.9 has no console scrollback, so nothing pages the console itself.
+[keybindings.global.controller.nav.console_plain]
+BTN_SOUTH = "key:ENTER"
+BTN_EAST = ["key:ESC", "key:CTRL+c"]
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+BTN_DPAD_UP = "key:UP"
+BTN_DPAD_DOWN = "key:DOWN"
+BTN_DPAD_LEFT = "key:LEFT"
+BTN_DPAD_RIGHT = "key:RIGHT"
+LS_UP = "key:UP"
+LS_DOWN = "key:DOWN"
+LS_LEFT = "key:LEFT"
+LS_RIGHT = "key:RIGHT"
+RS_LEFT = "none"                     # the right stick is the pointer in cursor mode
+RS_RIGHT = "none"
+RS_UP = "none"
+RS_DOWN = "none"
+BTN_TL = "key:SHIFT+TAB"
+BTN_TR = "key:TAB"
+BTN_TL2 = "key:PAGEUP"
+BTN_TR2 = "key:PAGEDOWN"
+BTN_NORTH = "none"
+BTN_SELECT = "none"
+BTN_START = "pointer:cursor"         # gpm: RT selects, LT extends; nothing pastes
+BTN_MODE = "none"
+BTN_THUMBL = "none"
+BTN_THUMBR = "none"
+TOGGLE_CHORD = "mios:graphical-vt"
+
+# I3 (C-18): mios-terminal runs a local VT tmux client under `mios-inputd console-bridge`, a pty wrapper that owns the
+# mouse modes the client asks for: while tmux has mouse mode on, pointer events reach it as SGR 1006 reports (the VT
+# itself never enters mouse reporting). With mouse mode off the bridge holds no pointer source, so gpm's own
+# selection works on that VT.
+[keybindings.global.controller.console]
+bridge = true                        # false: a VT tmux client attaches directly (no console mouse)
+mouse = "auto"                       # auto (gpm when gpm_socket exists, else evdev) | gpm | evdev | off
+gpm_socket = "/dev/gpmctl"           # gpm draws the console pointer; MiOS reads its events while mouse mode is on
+pointer_names = ["mios-vctl-pointer"]  # evdev source: pointers read by name, never grabbed (the controller's cursor)
+cell_px = [8, 16]                    # evdev source: pointer pixels per character cell (x, y)
+keymap_argv = ["/usr/bin/less", "-R", "{file}"]   # tmux:keymap popup; {file} = the rendered `map --text`
 
 # --- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
 # Step P1 (mios-inputd router room table + hypr3d-mios-room-input.patch). Same value grammar as nav: "ns:action" fires on
@@ -4743,6 +4907,42 @@ BTN_THUMBL = "hypr:hypr3d:sprint"                     # toggle
 BTN_THUMBR = "hypr:hypr3d:recenter"
 BTN_SELECT = ["hypr:hypr3d:view", "quickshell:keymap-toggle"]   # tap = view cycle (packet slot 0), hold = keymap
 BTN_MODE = "quickshell:drawer-toggle"
+
+# --- Per-driver quirks (I4, operator decision O-7): MiOS maps every pad by its evdev codes (the positional Linux gamepad
+# layout: BTN_NORTH = the top face button, BTN_DPAD_* or the HAT = the d-pad). A quirk fixes a driver that reports
+# otherwise. [controller.quirks.<name>]: drivers = kernel driver names (sysfs), ids = "vvvv:pppp" USB ids (either
+# matches); remap = { reported = "positional" } (keys: button names or hex codes such as "0x2c0"; one-to-one). The
+# remap applies to routing only: a captured app gets the driver's own codes through the virtual pad clone.
+# xpad: the Xbox top button (Y) reports BTN_Y = 0x134 (BTN_WEST) and the left one (X) BTN_X = 0x133 (BTN_NORTH), the
+# reverse of the positional layout hid-playstation (DualSense) reports; xpad's dpad_to_buttons mode reports the d-pad as
+# BTN_TRIGGER_HAPPY1..4 (left, right, up, down). Confirm on hardware with `mios-inputd observe` (tests.md T-C28).
+[keybindings.global.controller.quirks.xpad]
+enabled = true                       # a higher tier sets false to turn the quirk off (T-C28 reads raw codes that way)
+drivers = ["xpad"]
+ids = ["045e:028e", "045e:02ea", "045e:0b12"]   # Xbox 360, Xbox One S, Xbox Series X|S over USB (always xpad)
+remap = { BTN_NORTH = "BTN_WEST", BTN_WEST = "BTN_NORTH", "0x2c0" = "BTN_DPAD_LEFT", "0x2c1" = "BTN_DPAD_RIGHT", "0x2c2" = "BTN_DPAD_UP", "0x2c3" = "BTN_DPAD_DOWN" }
+note = "Xbox face-button order and dpad_to_buttons d-pad"
+
+# --- The agent virtual controller (I4): `mios-inputd vpad <op>` (the [verbs.virtual_controller] tool runs the same argv).
+# A pad is a uinput gamepad (DualSense-like: positional face buttons, digital + analog triggers, HAT d-pad) held by one
+# holder process per pad; every stick and trigger change is an eased ramp sampled at rate_hz, so a camera driven by it
+# accelerates and stops smoothly (no teleport: any ramp is at least min_ms long). An unseated pad ("agent") is routed by
+# the session's own bridge like any controller. `vpad create --seat <s>` names it [desktop.nested.devices].
+# virtual_pad_name, so `mios-gen nested-session --seat <s> --device virtual-pad` binds it into that session (and the
+# host bridge never owns it); `vpad assign --pad <s>` then runs `mios-inputd bridge --nested <s>`: nav and the room map
+# reach the session's own compositor and its private room packet (Hypr3D inside the session moves with the pad).
+[keybindings.global.controller.agent_pad]
+enabled = true
+name = "MiOS Agent Pad {id}"         # an unseated pad's evdev name ({id} = --pad)
+usb_id = "1209:4d50"                 # vvvv:pppp the pad reports (BUS_VIRTUAL)
+rate_hz = 250                        # ramp sample rate
+ease = "in-out"                      # default curve: linear | in | out | in-out (cubic, zero velocity at both ends)
+ramp_ms = 400                        # default ramp length
+min_ms = 80                          # every ramp is stretched to at least this (nothing teleports)
+max_ms = 10000                       # longest ramp, hold or tap
+tap_ms = 80                          # a button or d-pad tap's press length
+idle_exit_s = 900                    # the holder exits (pad destroyed) after this long at rest without a command
+socket_dir = "mios-inputd/vpad"      # under XDG_RUNTIME_DIR: <pad>.sock (control, 0600), <pad>.json (state), logs
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
@@ -4838,7 +5038,7 @@ verbs = ["knowledge_search", "remember", "recall", "ingest", "summarize"]
 
 [routing.domains.computer_use]
 desc  = "GUI pixel/element control of the screen via mouse and keyboard"
-verbs = ["cu_screenshot", "cu_ground", "cu_atspi_query", "cu_window_list", "cu_click", "cu_type", "cu_key", "cu_key_combo", "pc_screenshot", "pc_type", "pc_key", "pc_click", "pc_find_element", "pc_click_element", "pc_list_elements"]
+verbs = ["cu_screenshot", "cu_ground", "cu_atspi_query", "cu_window_list", "cu_click", "cu_type", "cu_key", "cu_key_combo", "pc_screenshot", "pc_type", "pc_key", "pc_click", "pc_find_element", "pc_click_element", "pc_list_elements", "virtual_controller"]
 
 [routing.domains.code_shell]
 desc  = "run code, shell, or PowerShell commands (incl. explaining what a script/code does)"
@@ -9147,14 +9347,12 @@ cascade_px = 32                            # a window opening over another steps
 pixel_snap = true                          # the texel grid lands on the output pixel grid (sub-pixel shift once it settles)
 
 # Hypr3D room controls (camera, movement, grab/resize, CRT, face buttons) and the L3+R3 toggle chord.
-# Consumers: mios-inputd LegacyConfig (config.rs:380-405, every key it names is required) and, until I1 retires it,
-# the legacy recovery daemon /usr/libexec/mios/mios-gamepad-hypr3d (the only reader of the @drop:I1 keys).
+# Consumer: mios-inputd LegacyConfig (config.rs, every key it names is required). The retired legacy daemon
+# /usr/libexec/mios/mios-gamepad-hypr3d is no longer a recovery path; it keeps its own defaults when run by hand.
 [desktop.hyprland.hypr3d.controller]
 enabled = true
 # Simultaneous thumbstick chord: tap toggles the room (uncaptured); a hold of capture_hold_ms releases a capture.
 toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
-# Chord debounce window in milliseconds. The router uses [keybindings.global.controller].debounce_ms.
-debounce_ms = 250
 # Radial/axis deadzone threshold [0.0..1.0] for room movement and look.
 deadzone = 0.15
 # Global sensitivity multiplier.
@@ -9163,18 +9361,10 @@ sensitivity = 1.0
 move_sensitivity = 1.0
 # Rotation sensitivity multiplier for Right Stick camera look.
 camera_sensitivity = 1.0
-# Left stick movement mode: "continuous" (continuous 3D camera translation) or "wasd" (step movement).
-left_stick_mode = "continuous"
-# Right stick camera mode: "camera" (yaw/pitch rotation).
-right_stick_mode = "camera"
 # Invert camera pitch (look up/down).
 invert_y = false
 # D-pad (ABS_HAT0X, ABS_HAT0Y) drives discrete movement in the room.
 dpad_enabled = true
-# Polling/sampling interval in milliseconds for analog axes (legacy daemon; the bridge is event driven).
-poll_ms = 10
-# Device filter: "gamepad" checks EV_KEY for BTN_GAMEPAD/BTN_SOUTH or BTN_THUMBL+BTN_THUMBR and EV_ABS.
-device_filter = "gamepad"
 # Fallback axes for Right Stick on gamepads exposing Z/RZ instead of RX/RY.
 fallback_axes = ["ABS_Z", "ABS_RZ"]
 # Right Trigger (RT) grabs/drags aimed or focused window in 3D space while held.
@@ -9187,8 +9377,6 @@ resize_axis = "ABS_Z"
 trigger_threshold = 0.30
 # SELECT button cycles through Hypr3D camera views/modes (first-person, third-person behind, third-person front).
 view_mode_button = "BTN_SELECT"
-# Duplicate of [keybindings.global.controller].cursor_mode_button, which the router uses.
-cursor_mode_button = "BTN_START"
 # Bottom/South face button (BTN_SOUTH): single-press jumps; double-press within double_press_ms toggles Flying/Hover mode (hold = fly up).
 jump_button = "BTN_SOUTH"
 double_press_ms = 350
@@ -13128,6 +13316,54 @@ cmd = "if [ {action} = 'screenshot' ]; then mios-computer-use screenshot /tmp/li
   type = "integer"
   [verbs.linux_input.params.y]
   type = "integer"
+
+# The agent virtual controller ([keybindings.global.controller.agent_pad]): create a uinput gamepad, drive it with eased
+# analog ramps (sticks/triggers never jump), tap buttons and the d-pad, hand it to a nested session, destroy it.
+[verbs.virtual_controller]
+section = "Computer-use"
+sig = "op, pad?, seat?, stick?, x?, y?, side?, value?, button?, action?, dir?, ms?, hold_ms?, ease?, wait?"
+desc = "Drive a virtual game controller (agent pad) smoothly: op='create' (seat=<label> makes a nested seat's pad), 'stick' (stick=left|right, x/y in -1..1 eased over ms, optional hold_ms then eases back), 'trigger' (side, value 0..1), 'button' (BTN_SOUTH.., action tap|press|release), 'dpad' (dir), 'release' (all to rest), 'assign' (route it into the nested session of seat), 'status', 'destroy', 'list'. Moves the Hypr3D camera/walk smoothly in the room it controls."
+examples = ["create a virtual controller for nested seat agent1", "walk forward with the virtual controller for 1.5 seconds", "turn the 3D camera right smoothly", "press A on the agent pad"]
+tier = "rare"
+permission = "write"
+cmd = "/usr/libexec/mios/mios-inputd vpad {op!}{pad?--pad}{seat?--seat}{stick?--stick}{x?--x}{y?--y}{side?--side}{value?--value}{button?--button}{action?--action}{dir?--dir}{ms?--ms}{hold_ms?--hold-ms}{ease?--ease}{wait?--wait}"
+  [verbs.virtual_controller.params.op]
+  type = "string"
+  enum = ["create", "stick", "trigger", "button", "dpad", "release", "wait", "status", "info", "assign", "unassign", "destroy", "list"]
+  [verbs.virtual_controller.params.pad]
+  type = "string"
+  desc = "Pad key: a seat label or a pad id (default agent)."
+  [verbs.virtual_controller.params.seat]
+  type = "string"
+  [verbs.virtual_controller.params.stick]
+  type = "string"
+  enum = ["left", "right"]
+  [verbs.virtual_controller.params.x]
+  type = "number"
+  [verbs.virtual_controller.params.y]
+  type = "number"
+  [verbs.virtual_controller.params.side]
+  type = "string"
+  enum = ["left", "right"]
+  [verbs.virtual_controller.params.value]
+  type = "number"
+  [verbs.virtual_controller.params.button]
+  type = "string"
+  [verbs.virtual_controller.params.action]
+  type = "string"
+  enum = ["tap", "press", "release"]
+  [verbs.virtual_controller.params.dir]
+  type = "string"
+  enum = ["left", "right", "up", "down", "center"]
+  [verbs.virtual_controller.params.ms]
+  type = "integer"
+  [verbs.virtual_controller.params.hold_ms]
+  type = "integer"
+  [verbs.virtual_controller.params.ease]
+  type = "string"
+  enum = ["linear", "in", "out", "in-out"]
+  [verbs.virtual_controller.params.wait]
+  type = "boolean"
 
 [verbs.file_edit]
 section = "File edits"
@@ -18447,6 +18683,8 @@ Requires = "graphical-session.target"
 After = "graphical-session.target"
 BindsTo = "graphical-session.target"
 
+# Retired legacy room daemon (I1): it reads pads without a grab, so beside a game it moves the camera too. It has no
+# [Install] and no recovery path; only a manual start runs it, and mios-inputd Conflicts= it and refuses to share pads.
 [user_units."mios-gamepad-hypr3d.service".Unit]
 Description = "MiOS universal USB/Bluetooth gamepad daemon for Hypr3D"
 PartOf = "mios-desktop.target"
@@ -18456,8 +18694,6 @@ Type = "simple"
 ExecStart = "/usr/libexec/mios/mios-gamepad-hypr3d --daemon"
 Restart = "on-failure"
 RestartSec = 3
-[user_units."mios-gamepad-hypr3d.service".Install]
-WantedBy = "mios-desktop.target"
 
 [user_units."mios-wallpaper.service".Unit]
 Description = "MiOS shared Windows and Linux living wallpaper"
@@ -18666,13 +18902,17 @@ result_limit = 40
 debounce_ms = 120
 file_min_chars = 2
 
-# Native global-input controller bridge; the legacy executable is a recovery path.
+# Native global-input controller bridge. serve exits 0 when the SSOT disables it, idles without a seat or device access,
+# and exits non-zero on a bridge error; the start limit stops a crash loop. No fallback owner is ever started.
+# I3 (C-16): it serves the Linux console too, so it is not part of the graphical session: any seated login of the user
+# (a VT included) starts it; it follows the active session (graphical, console, or another session: no grab).
 [user_units."mios-inputd.service".Unit]
 Description = "MiOS native global input controller bridge"
-PartOf = "mios-desktop.target"
 After = "graphical-session.target mios-gamepad-hypr3d.service"
 Conflicts = "mios-gamepad-hypr3d.service"
 ConditionFileIsExecutable = "/usr/libexec/mios/mios-inputd"
+StartLimitIntervalSec = "60"
+StartLimitBurst = "5"
 
 [user_units."mios-inputd.service".Service]
 Type = "simple"
@@ -18686,7 +18926,7 @@ LockPersonality = "yes"
 UMask = "0077"
 
 [user_units."mios-inputd.service".Install]
-WantedBy = "mios-desktop.target"
+WantedBy = "default.target"
 
 
 # AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom, packed across both rails before squeezing), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware with minimum/launch/maximum size magnets, stay on top through Hyprland's native pinned layer, and settle with a spring. Spotify's mini-player, Discord call/stream/video popouts and browser PiP windows are adopted automatically on map. Maximize/fullscreen (any window) and Theatre/Hypr3D never move them. Consumed by tools/native/mios-pip-gravity. Hypr3D: flat placement pauses there (PiP are freely resizable in the room); adoption continues.
