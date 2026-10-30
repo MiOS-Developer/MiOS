@@ -204,6 +204,9 @@ struct Track {
     anim: Option<([f64; 4], [f64; 4], Rect)>,
     /// Hypr3D owns placement (see RoomHold).
     room: Option<RoomHold>,
+    /// Just released by the room: settle only on the exact kept slot. The room's close can leave a window a pixel or
+    /// two off (inside SETTLE_PX), which the ordinary settle tolerance would keep for good.
+    exact: bool,
 }
 
 /// Room ownership of one PiP. While the room is active, and after it closed until the window has been geometrically
@@ -225,7 +228,7 @@ const FRAME_GRACE: Duration = Duration::from_millis(1000);
 
 impl Track {
     fn new(cur: Rect, now: Instant) -> Self {
-        Track { last: cur, natural: (cur.w, cur.h), expected: Vec::new(), dispatched_at: None, stable_since: now, settled: false, anim: None, room: None }
+        Track { last: cur, natural: (cur.w, cur.h), expected: Vec::new(), dispatched_at: None, stable_since: now, settled: false, anim: None, room: None, exact: false }
     }
     /// The room took over placement this tick. The kept slot is the last flat geometry; re-entering the room before a
     /// release finished keeps the original slot (the window is still where the room left it).
@@ -286,6 +289,7 @@ impl Track {
                     // Still for settle_ms: release. Restore the kept slot and natural size at once (no further wait).
                     trace(&format!("room released {:?} (kept slot {:?}, natural {:?})", cur, hold.slot, self.natural));
                     self.room = None;
+                    self.exact = true;
                     self.settled = false;
                     self.stable_since = now.checked_sub(settle).unwrap_or(now);
                 }
@@ -302,6 +306,29 @@ impl Track {
             self.stable_since = now;
         }
         self.last = cur;
+    }
+}
+
+impl Track {
+    /// Settle on, or start animating toward, this tick's planned target (after `observe`).
+    fn step_toward(&mut self, cur: Rect, tgt: Rect, now: Instant, settle: Duration) {
+        let close = |a: Rect, b: Rect| (a.x - b.x).abs() < gravity::SETTLE_PX && (a.y - b.y).abs() < gravity::SETTLE_PX && (a.w - b.w).abs() < gravity::SETTLE_PX && (a.h - b.h).abs() < gravity::SETTLE_PX;
+        // Another PiP can change a settled window's target while this window itself is still.
+        if self.settled && !close(tgt, cur) {
+            self.settled = false;
+            self.stable_since = now.checked_sub(settle).unwrap_or(now);
+        }
+        if let Some((_, _, goal)) = self.anim.as_mut() {
+            *goal = tgt;
+        }
+        if self.anim.is_none() && !self.settled && now.duration_since(self.stable_since) >= settle {
+            if close(tgt, cur) && !(self.exact && cur != tgt) {
+                self.settled = true;
+                self.exact = false;
+            } else {
+                self.anim = Some(([cur.x, cur.y, cur.w, cur.h], [0.0; 4], tgt));
+            }
+        }
     }
 }
 
@@ -572,25 +599,12 @@ fn main() {
             for ((addr, cur, frozen), tgt) in pips.iter().zip(targets) {
                 if *frozen {continue;}
                 let t = tracks.entry(addr.clone()).or_insert_with(|| Track::new(*cur, now));
-                let close = |a: Rect, b: Rect| (a.x - b.x).abs() < gravity::SETTLE_PX && (a.y - b.y).abs() < gravity::SETTLE_PX && (a.w - b.w).abs() < gravity::SETTLE_PX && (a.h - b.h).abs() < gravity::SETTLE_PX;
                 let natural = t.natural;
                 t.observe(*cur, now, Duration::from_millis(cfg.settle_ms as u64));
                 if t.natural != natural {trace(&format!("  ^ {addr} fullscreen={} anim={}", clients.as_array().into_iter().flatten().find(|c| c["address"].as_str() == Some(addr)).map_or(-1, |c| c["fullscreen"].as_i64().unwrap_or(-1)), t.anim.is_some()));}
                 // Leaving the room: hold still (never dispatch) until the room's close has finished moving this window.
                 if t.held() {continue;}
-                // Another PiP can change a settled window's target while this window itself is still.
-                if t.settled && !close(tgt,*cur) {
-                    t.settled=false;
-                    t.stable_since=now-Duration::from_millis(cfg.settle_ms as u64);
-                }
-                if let Some((_,_,goal))=t.anim.as_mut() {*goal=tgt;}
-                if t.anim.is_none() && !t.settled && now.duration_since(t.stable_since).as_millis() >= cfg.settle_ms {
-                    if close(tgt, *cur) {
-                        t.settled = true;
-                    } else {
-                        t.anim = Some(([cur.x, cur.y, cur.w, cur.h], [0.0; 4], tgt));
-                    }
-                }
+                t.step_toward(*cur, tgt, now, Duration::from_millis(cfg.settle_ms as u64));
                 if let Some((p, v, tg)) = t.anim.as_mut() {
                     let goal = [tg.x, tg.y, tg.w, tg.h];
                     let mut done = true;
@@ -609,6 +623,7 @@ fn main() {
                     if done {
                         t.anim = None;
                         t.settled = true;
+                        t.exact = false;
                     }
                 }
             }
@@ -671,6 +686,29 @@ mod track_tests {
   t.observe(close[0], now, SETTLE);
   t.enter_room();
   assert_eq!(t.kept(), slot);
+ }
+ /// live2 of this round: the room's close left one PiP at y=677 for its kept slot y=678 (inside SETTLE_PX), and the
+ /// ordinary settle tolerance kept it there for good.
+ #[test] fn a_release_a_pixel_off_the_kept_slot_still_restores_it_exactly() {
+  let t0 = Instant::now();
+  let (mut t, slot) = roomed(t0);
+  let off = Rect::new(slot.x, slot.y - 1.0, slot.w, slot.h);
+  let exit = t0 + Duration::from_secs(5);
+  t.observe(off, exit, SETTLE);
+  t.observe(off, exit + SETTLE, SETTLE);
+  assert!(!t.held());
+  t.step_toward(off, slot, exit + SETTLE, SETTLE);
+  assert!(t.anim.is_some_and(|(_, _, goal)| goal == slot), "animates the last pixel back into the kept slot");
+  // ordinary operation keeps the tolerance: a settled window a pixel off its target is not re-animated
+  let mut u = Track::new(off, t0);
+  u.step_toward(off, slot, t0 + SETTLE, SETTLE);
+  assert!(u.settled && u.anim.is_none(), "no jitter for sub-SETTLE_PX differences outside a room release");
+  // exactly on the slot: settles without dispatching
+  let (mut t, slot) = roomed(t0);
+  t.observe(slot, exit, SETTLE);
+  t.observe(slot, exit + SETTLE, SETTLE);
+  t.step_toward(slot, slot, exit + SETTLE, SETTLE);
+  assert!(t.settled && t.anim.is_none() && !t.exact);
  }
  #[test] fn expired_dispatched_frames_no_longer_hide_a_later_operator_resize() {
   let t0 = Instant::now();
