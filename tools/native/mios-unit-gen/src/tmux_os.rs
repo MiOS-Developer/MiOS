@@ -710,10 +710,41 @@ pub(crate) fn render_tmux_keys(
         }
     }
 
+    // ---- mouse reporting on client terminals whose terminfo may lack it (U1 C-18: the Linux VT with gpm) ----
+    // The slot range is MiOS-owned and cleared on every reload; [keybindings].mouse = false emits only the clears.
+    let mouse_on = crate::config_bool(config, "keybindings", "mouse")?;
+    let mouse_terms = match tmux.get("mouse_terms") {
+        None => Vec::new(),
+        Some(v) => v
+            .as_array()
+            .ok_or_else(|| gm("[keybindings.tmux].mouse_terms must be an array".into()))?
+            .iter()
+            .map(|t| t.as_str().filter(|t| valid_term_pattern(t)).map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| gm("[keybindings.tmux].mouse_terms: invalid terminal pattern".into()))?,
+    };
+    if !mouse_terms.is_empty() {
+        let midx = req_int(tmux, sec, "mouse_features_index", 100..=1000)?;
+        let mslots = req_int(tmux, sec, "mouse_feature_slots", 1..=32)?;
+        if mouse_terms.len() as i64 > mslots {
+            return Err(gm(format!("[keybindings.tmux].mouse_terms has {} terms for {mslots} slots", mouse_terms.len())));
+        }
+        if midx < idx + slots && idx < midx + mslots {
+            return Err(gm("[keybindings.tmux].mouse_features_index overlaps the extended-keys terminal-features slots".into()));
+        }
+        for i in 0..mslots {
+            out += &format!("set -su terminal-features[{}]\n", midx + i);
+        }
+        if mouse_on {
+            for (i, t) in mouse_terms.iter().enumerate() {
+                out += &format!("set -s terminal-features[{}] '{t}:mouse'\n", midx + i as i64);
+            }
+        }
+    }
+
     // ---- menus as command aliases (every slot of the range is cleared first: reloads stay idempotent) ----
     let aidx = req_int(tmux, sec, "command_alias_index", 100..=10_000)?;
     let aslots = req_int(tmux, sec, "command_alias_slots", 2..=128)?;
-    let mouse_on = crate::config_bool(config, "keybindings", "mouse")?;
     let mouse_ids: Vec<&str> = if mouse_on { MOUSE_MENUS.to_vec() } else { Vec::new() };
     let needed = menus.len() * 2 + mouse_ids.len() * 2 + 1;
     if needed as i64 > aslots {
@@ -787,9 +818,19 @@ pub(crate) fn render_tmux_keys(
         }
     }
 
-    // `mios-menu`: the entry point the controller's `tmux:menu` verb runs (mios-bindings-final FINAL.md 3.3):
-    // the same size- and console-aware opener as prefix Space and the status-line right-click.
+    // `mios-menu`: the same size- and console-aware opener as prefix Space and the status-line right-click, by
+    // name (the command prompt, scripts with one client). An alias appends its CLI arguments to the END of its
+    // expansion, so `-c <client>` cannot aim it: run from outside, tmux picks the client. The controller's
+    // `tmux:menu` verb (FINAL.md 3.3) therefore uses the client-exact route
+    //   tmux -L <socket> send-keys -c <client> -K <tmux_prefix> <menu_key>
+    // whose key words the server publishes as @mios-menu-keys, so a caller never re-derives them from the SSOT.
     out += &format!("set -s command-alias[{slot}] {}\n", quote(&format!("mios-menu={}", opener("root")?)));
+    let prefix = req_str(config, "keybindings", "tmux_prefix")?;
+    if prefix.is_empty() || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err(gm(format!("[keybindings].tmux_prefix {prefix:?} is not a tmux key name")));
+    }
+    // Two argv words (split on the space, no shell): send-keys -c <client> -K <prefix> <menu_key>.
+    out += &format!("set -s @mios-menu-keys {}\n", quote(&format!("{prefix} {menu_key}")));
 
     for b in &binds {
         if let Some(v) = &b.gate {
@@ -1071,7 +1112,9 @@ mod tests {
         assert!(aliases.iter().any(|l| l.contains("\"mios-menu-root-vt-mouse=") && l.contains("-b single")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Pane") && l.contains("'mios-menu-pane-mouse'")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Status") && l.contains("'mios-menu-root-vt-mouse'")));
-        assert!(aliases.iter().any(|l| l.contains("\"mios-menu=if-shell -F ")), "controller tmux:menu entry point");
+        assert!(aliases.iter().any(|l| l.contains("\"mios-menu=if-shell -F ")), "mios-menu by name");
+        // (a) the controller's client-exact tmux:menu route: send-keys -c <client> -K <prefix> <menu_key>
+        assert!(conf.lines().any(|l| l == "set -s @mios-menu-keys \"C-b Space\""), "client-exact menu route published");
         let vt = aliases.iter().find(|l| l.contains("\"mios-menu-root-vt=")).unwrap();
         assert!(vt.contains("-b single") && vt.contains("mios-menu-pane-vt") && !vt.contains("'mios-menu-pane'"));
         assert!(!vt.contains("#2") && !vt.contains("#F"), "console variant must not carry hex colours");
