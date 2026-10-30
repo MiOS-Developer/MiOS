@@ -4,8 +4,9 @@
 //          watches only for the surfaces that still exist (`hyprctl mios-pacing window` -> "watched"). Bounded: it
 //          exits after <seconds> (at most 600) and prints `frames= created= destroyed=`. Test-only (never installed).
 // AI-related: usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp,
-// AI-related: tests/test-window-fps-live.py, tools/native/mios-wl-fixtures/Cargo.toml
-// AI-functions: main, run, buffer, parse_args
+// AI-related: tests/test-window-fps-live.py, tools/native/mios-wl-fixtures/Cargo.toml, tools/native/mios-wl-fixtures/src/lib.rs
+// An example, not a [[bin]]: a test client is never an SSOT-categorized (installed) native executable.
+// AI-functions: main, run, buffer
 
 #![forbid(unsafe_code)]
 
@@ -20,6 +21,8 @@ use wayland_client::protocol::{
 };
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+
+use mios_wl_fixtures::parse_args;
 
 #[derive(Default)]
 struct State {
@@ -70,19 +73,6 @@ fn buffer(shm: &wl_shm::WlShm, qh: &QueueHandle<State>, w: i32, h: i32, argb: u3
     let b = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Argb8888, qh, ());
     pool.destroy();
     Ok(b)
-}
-
-fn parse_args(args: &[String]) -> Result<(f64, u64, f64), String> {
-    let [fps, life, secs] = args else {
-        return Err("usage: mios-subsurface-churn <fps> <life_frames> <seconds>".into());
-    };
-    let fps: f64 = fps.parse().map_err(|_| format!("bad fps {fps:?}"))?;
-    let life: u64 = life.parse().map_err(|_| format!("bad life_frames {life:?}"))?;
-    let secs: f64 = secs.parse().map_err(|_| format!("bad seconds {secs:?}"))?;
-    if !(fps > 0.0 && fps <= 1000.0) || life == 0 || !(secs > 0.0 && secs <= 600.0) {
-        return Err("fps in (0, 1000], life_frames >= 1, seconds in (0, 600]".into());
-    }
-    Ok((fps, life, secs))
 }
 
 fn run(fps: f64, life: u64, secs: f64) -> Result<(u64, u64, u64), String> {
@@ -164,23 +154,5 @@ fn main() -> ExitCode {
             eprintln!("mios-subsurface-churn: {e}");
             ExitCode::FAILURE
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_args;
-
-    fn a(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn arguments_are_bounded() {
-        assert_eq!(parse_args(&a(&["30", "3", "10"])), Ok((30.0, 3, 10.0)));
-        assert!(parse_args(&a(&["0", "3", "10"])).is_err());
-        assert!(parse_args(&a(&["30", "0", "10"])).is_err());
-        assert!(parse_args(&a(&["30", "3", "601"])).is_err(), "never unbounded");
-        assert!(parse_args(&a(&["30", "3"])).is_err());
     }
 }

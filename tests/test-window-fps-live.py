@@ -18,7 +18,8 @@
 #   MIOS_PACING_SO       candidate mios-pacing.so (default: the installed one, which then fails the positive pass)
 #   MIOS_PACING_OLD      plugin(s) for the negative passes, comma-separated (default /usr/lib64/mios/mios-pacing.so;
 #                        "" skips them; one with the candidate's bytes is skipped and said so)
-#   MIOS_WL_CHURN        the mios-subsurface-churn fixture (default: the shared musl target dir build)
+#   MIOS_WL_CHURN        the mios-subsurface-churn fixture (default: the shared musl target dir build of the
+#                        mios-wl-fixtures example: cargo build --release --example mios-subsurface-churn)
 #   MIOS_VENDOR_TOML     SSOT the test copies (default: this tree's); MIOS_TOML is ignored
 #   MIOS_WINDOW_FPS_OUT  directory for the screenshots (default: a temp dir)
 # Known Hypr3D limit (not the meter's): a waylandsink video subsurface stops presenting when the room opens (with the
@@ -32,7 +33,7 @@ SSOT = os.environ.get('MIOS_VENDOR_TOML', str(ROOT / 'usr/share/mios/mios.toml')
 SHELL = str(ROOT / 'usr/share/mios/quickshell/Nested.qml')
 CAND = os.environ.get('MIOS_PACING_SO', '/usr/lib64/mios/mios-pacing.so')
 OLD = [p for p in os.environ.get('MIOS_PACING_OLD', '/usr/lib64/mios/mios-pacing.so').split(',') if p]
-CHURN = os.environ.get('MIOS_WL_CHURN', '/var/lib/mios-build/tmp/mios-controls-app/target/x86_64-unknown-linux-musl/release/mios-subsurface-churn')
+CHURN = os.environ.get('MIOS_WL_CHURN', '/var/lib/mios-build/tmp/mios-controls-app/target/x86_64-unknown-linux-musl/release/examples/mios-subsurface-churn')
 OUT = Path(os.environ.get('MIOS_WINDOW_FPS_OUT') or tempfile.mkdtemp(prefix='mios-window-fps-'))
 # Redraws one terminal line at absolute deadlines 1/rate apart (no drift); bounded to two minutes.
 PRINTER = ('import sys,time\nr=float(sys.argv[1]);t=time.monotonic()\nfor i in range(int(r*120)):\n'

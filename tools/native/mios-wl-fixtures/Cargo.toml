@@ -1,7 +1,7 @@
 # AI-hint: Cargo manifest for mios-wl-fixtures -- Wayland test clients for MiOS live tests: mios-subsurface-churn, a
 #          frame-paced toplevel that keeps destroying and recreating a subsurface (the mios-pacing window meter must
 #          read its rate and must not keep watches of the destroyed subsurfaces). Test-only; never installed.
-# AI-related: tools/native/Cargo.toml, usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, tests/test-window-fps-live.py
+# AI-related: tools/native/Cargo.toml, tools/native/mios-wl-fixtures/src/lib.rs, tools/native/mios-wl-fixtures/examples/mios-subsurface-churn.rs, usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, tests/test-window-fps-live.py
 
 [package]
 name = "mios-wl-fixtures"
@@ -10,9 +10,13 @@ edition.workspace = true
 description = "Wayland test clients for MiOS live tests (subsurface-churning, frame-paced toplevel)"
 license = "MIT"
 
-[[bin]]
+# Test clients are examples, never [[bin]]s: nothing here is an installed (SSOT-categorized) native executable.
+[lib]
+path = "src/lib.rs"
+
+[[example]]
 name = "mios-subsurface-churn"
-path = "src/main.rs"
+path = "examples/mios-subsurface-churn.rs"
 
 [dependencies]
 rustix = { version = "1.1", features = ["fs"] }
