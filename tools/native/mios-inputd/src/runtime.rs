@@ -138,23 +138,11 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
                 "movefocus" => format!("hl.dispatch(hl.dsp.focus({{direction={q}}}))"),
                 name if name.starts_with("hypr3d:") => {
                     let name = &name[7..];
-                    if ![
-                        "mode",
-                        "view",
-                        "crt",
-                        "grab",
-                        "resize",
-                        "fly",
-                        "posture",
-                        "click",
-                        "fullscreen",
-                        "jump",
-                    ]
-                    .contains(&name)
-                    {
+                    if !crate::config::ROOM_VERBS.contains(&name) {
                         return Err(format!("unsupported room action {name}"));
                     }
-                    if ["fullscreen", "jump"].contains(&name) && arg.is_empty() {
+                    // A bare verb takes the plugin's default argument (cancel/recenter have none; sprint toggles).
+                    if ["fullscreen", "jump", "cancel", "sprint", "recenter"].contains(&name) && arg.is_empty() {
                         format!("hl.plugin.hypr3d.{name}()")
                     } else {
                         format!("hl.plugin.hypr3d.{name}({q})")
@@ -728,6 +716,16 @@ pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<Str
         .unwrap_or_else(|| command_for(action))
 }
 pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
+    let room: Vec<String> = global
+        .controller
+        .room
+        .values()
+        .flat_map(|v| {
+            let (tap, hold) = v.parts();
+            std::iter::once(tap.to_owned()).chain(hold.map(str::to_owned))
+        })
+        .filter(|a| a != "none")
+        .collect();
     global
         .controller
         .system_layer
@@ -739,6 +737,7 @@ pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
                 .filter(|b| b.scope == "host" && b.chord.starts_with("BTN_"))
                 .map(|b| &b.action),
         )
+        .chain(room.iter())
         .filter(|a| configured_command(a, global).is_err())
         .cloned()
         .collect()
@@ -786,6 +785,25 @@ mod tests {
         let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();let before=policy_fingerprint(&cfg,&legacy).unwrap();
         doc["theme"]["font"]["size"]=toml::Value::Integer(18);
         let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();assert_eq!(policy_fingerprint(&cfg,&legacy).unwrap(),before);
+    }
+    #[test]
+    fn room_verbs_reach_the_plugin_lua_api() {
+        // spec P1 (C-14a/b): the room table's verbs become hl.plugin.hypr3d.<verb>(...) in the room's compositor
+        assert_eq!(command_for("hypr:hypr3d:cancel").unwrap()[2], "hl.plugin.hypr3d.cancel()");
+        assert_eq!(command_for("hypr:hypr3d:sprint").unwrap()[2], "hl.plugin.hypr3d.sprint()");
+        assert_eq!(command_for("hypr:hypr3d:sprint on").unwrap()[2], "hl.plugin.hypr3d.sprint(\"on\")");
+        assert_eq!(command_for("hypr:hypr3d:recenter").unwrap()[2], "hl.plugin.hypr3d.recenter()");
+        assert_eq!(command_for("hypr:hypr3d:view").unwrap()[2], "hl.plugin.hypr3d.view(\"\")");
+        assert!(command_for("hypr:hypr3d:unknown").unwrap_err().contains("unsupported room action"));
+        // every vendor room action has an installed dispatcher
+        let doc: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (cfg, _) = GlobalConfig::from_value(&doc).unwrap();
+        for v in cfg.controller.room.values() {
+            let (tap, hold) = v.parts();
+            for a in std::iter::once(tap).chain(hold).filter(|a| *a != "none") {
+                assert!(configured_command(a, &cfg).is_ok(), "room action without a dispatcher: {a}");
+            }
+        }
     }
     #[test]
     fn compositor_actions_use_current_lua_api() {

@@ -70,8 +70,46 @@ pub struct ControllerConfig {
     pub context_stale_ms: u64,
     #[serde(default = "capture_hold_ms")]
     pub capture_hold_ms: u64,
+    /// `[keybindings.global.controller.room]` (spec P1, C-14b): the room's additions to the Hypr3D map. A value is an
+    /// action fired on press (on the toggle_chord buttons and Guide: on a clean release/tap) or `[tap, hold]`
+    /// (tap on release before capture_hold_ms, hold once at it). `"none"` unbinds.
+    #[serde(default)]
+    pub room: BTreeMap<String, RoomAction>,
 }
 fn capture_hold_ms() -> u64 { 500 }
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum RoomAction {
+    Press(String),
+    TapHold(Vec<String>),
+}
+impl RoomAction {
+    /// (tap-or-press, hold)
+    pub fn parts(&self) -> (&str, Option<&str>) {
+        match self {
+            Self::Press(a) => (a, None),
+            Self::TapHold(v) => (v.first().map_or("", String::as_str), v.get(1).map(String::as_str)),
+        }
+    }
+}
+/// A room action: `"none"`, or a valid action whose `hypr:` form the room dispatcher whitelists (runtime.rs).
+pub fn validate_room_action(action: &str) -> Result<(), String> {
+    if action == "none" {
+        return Ok(());
+    }
+    validate_action(action)?;
+    if let Some(verb) = action.strip_prefix("hypr:hypr3d:") {
+        let name = verb.split_whitespace().next().unwrap_or("");
+        if !ROOM_VERBS.contains(&name) {
+            return Err(format!("unsupported room action {name}"));
+        }
+    }
+    Ok(())
+}
+/// The Hypr3D verbs the compositor dispatcher may call (hl.plugin.hypr3d.<verb>); one list for validation and runtime.
+pub const ROOM_VERBS: [&str; 13] = [
+    "mode", "view", "crt", "grab", "resize", "fly", "posture", "click", "fullscreen", "jump", "cancel", "sprint", "recenter",
+];
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GlobalConfig {
     pub enabled: bool,
@@ -119,6 +157,17 @@ impl GlobalConfig {
             .try_into()
             .map_err(|e: toml::de::Error| e.to_string())?;
         legacy.validate()?;
+        // The ownership contract is not a room binding: North captures, the toggle_chord (as a chord) toggles/releases.
+        for button in cfg.controller.room.keys() {
+            if button_code(button)? == button_code(&legacy.fullscreen_button)? {
+                return Err(format!("room {button}: the capture button ({}) belongs to the ownership contract", legacy.fullscreen_button));
+            }
+            if let RoomAction::TapHold(_) = cfg.controller.room[button] {
+                if legacy.toggle_chord.iter().any(|b| button_code(b).ok() == button_code(button).ok()) {
+                    return Err(format!("room {button}: a toggle_chord button fires one action on a clean release, not [tap, hold]"));
+                }
+            }
+        }
         Ok((cfg, legacy))
     }
     fn resolve_actions(&mut self, v: &toml::Value) -> Result<(), String> {
@@ -282,6 +331,22 @@ impl GlobalConfig {
         for (button, action) in &c.system_layer {
             button_code(button)?;
             validate_action(action)?;
+        }
+        for (button, value) in &c.room {
+            let code = button_code(button)?;
+            let (tap, hold) = value.parts();
+            if let RoomAction::TapHold(v) = value {
+                if v.len() != 2 {
+                    return Err(format!("room {button}: [tap, hold] needs exactly two actions"));
+                }
+            }
+            validate_room_action(tap).map_err(|e| format!("room {button}: {e}"))?;
+            if let Some(hold) = hold {
+                validate_room_action(hold).map_err(|e| format!("room {button}: {e}"))?;
+                if code == button_code(&c.guide_button)? {
+                    return Err(format!("room {button}: Guide is a tap (its hold is the system layer)"));
+                }
+            }
         }
         let mut ids = BTreeSet::new();
         for b in &self.bindings {
@@ -515,6 +580,43 @@ BTN_TR="hypr:workspace e+1"
             .insert("global".into(), section["keybindings"]["global"].clone());
         v["keybindings"]["global"].as_table_mut().unwrap().insert("vm".into(), vm);
         GlobalConfig::from_value(&v).unwrap()
+    }
+    fn vendor_with_room(extra: &str) -> Result<(GlobalConfig, LegacyConfig), String> {
+        let mut v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let room: toml::Value = extra.parse().unwrap();
+        v["keybindings"]["global"]["controller"]
+            .as_table_mut()
+            .unwrap()
+            .insert("room".into(), room);
+        GlobalConfig::from_value(&v)
+    }
+    #[test]
+    fn vendor_room_table_is_declared_and_valid() {
+        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let (g, _) = GlobalConfig::from_value(&v).unwrap();
+        let room = &g.controller.room;
+        assert_eq!(room.get("BTN_EAST"), Some(&RoomAction::Press("hypr:hypr3d:cancel".into())));
+        assert_eq!(room.get("BTN_THUMBL"), Some(&RoomAction::Press("hypr:hypr3d:sprint".into())));
+        assert_eq!(room.get("BTN_THUMBR"), Some(&RoomAction::Press("hypr:hypr3d:recenter".into())));
+        assert_eq!(room.get("BTN_SELECT"), Some(&RoomAction::TapHold(vec!["hypr:hypr3d:view".into(), "quickshell:keymap-toggle".into()])));
+        assert_eq!(room.get("BTN_MODE"), Some(&RoomAction::Press("quickshell:drawer-toggle".into())));
+    }
+    #[test]
+    fn room_table_rejects_what_the_dispatcher_cannot_run_and_the_contract_buttons() {
+        assert!(vendor_with_room("BTN_EAST = \"none\"").is_ok(), "none is the unbind word");
+        for (bad, why) in [
+            ("BTN_EAST = \"hypr:hypr3d:unknown\"", "unsupported room action unknown"),
+            ("BTN_EAST = \"\"", "action needs namespace"),
+            ("BTN_EAST = \"bogus\"", "action needs namespace"),
+            ("BTN_NOPE = \"hypr:hypr3d:cancel\"", ""),
+            ("BTN_EAST = [\"hypr:hypr3d:cancel\"]", "exactly two"),
+            ("BTN_MODE = [\"quickshell:drawer-toggle\", \"quickshell:keymap-toggle\"]", "Guide is a tap"),
+            ("BTN_THUMBL = [\"hypr:hypr3d:sprint\", \"hypr:hypr3d:recenter\"]", "clean release"),
+            ("BTN_NORTH = \"hypr:hypr3d:cancel\"", "ownership contract"),
+        ] {
+            let e = vendor_with_room(bad).err().unwrap_or_else(|| panic!("accepted {bad}"));
+            assert!(e.contains(why), "{bad}: {e}");
+        }
     }
     #[test]
     fn canonical_modifier_order() {
