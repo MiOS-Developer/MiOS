@@ -106,9 +106,9 @@ class Grammar(Base):
                 r = self.run_bin('check')
                 self.assertNotEqual(r.returncode, 0, body)
                 self.assertIn(why, r.stderr)
-        self.host_layer('[keybindings.global.controller.nav.terminal_tmux]\nBTN_TL2 = "tmux:key q"\n')
+        self.host_layer('[keybindings.global.controller.nav.terminal_tmux]\nBTN_TL2 = "tmux:key r"\n')
         r = self.run_bin('check')
-        self.assertIn('not a prefix-table key', r.stderr, 'tests.md C-30: q is not bound in the SSOT prefix table')
+        self.assertIn('not a prefix-table key', r.stderr, 'tests.md C-30: a key the SSOT prefix table does not bind (r)')
 
 
     def test_c08_arrays_replace_atomically_across_tiers(self):
@@ -210,8 +210,10 @@ class Projection(Base):
         self.assertFalse(any(a.startswith('tmux:') for a in plain['output']['actions']), 'no tmux without a client')
         strokes = plain['resolved'][0]['projection']['events']
         self.assertNotIn(dict(kind=1, code=48, value=1), strokes, 'a bare shell never receives Ctrl+B')
-        r = self.run_bin('resolve-action', 'tmux:key q', '--tmux-client', '/dev/pts/7')
+        r = self.run_bin('resolve-action', 'tmux:key r', '--tmux-client', '/dev/pts/7')
         self.assertNotEqual(r.returncode, 0)
+        r = json.loads(self.run_bin('resolve-action', 'tmux:menu', '--tmux-client', '/dev/pts/7').stdout)
+        self.assertEqual(r['argv'][3:], ['send-keys', '-c', '/dev/pts/7', '-K', 'C-b', 'Space'], 'U1: prefix + menu_key opens the MiOS menu')
 
     def test_c07_key_projection_is_an_atomic_us_stroke(self):
         r = json.loads(self.run_bin('resolve-action', 'key:CTRL+SHIFT+TAB').stdout)

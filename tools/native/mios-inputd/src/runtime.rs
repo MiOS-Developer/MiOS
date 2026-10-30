@@ -305,9 +305,14 @@ pub fn tmux_argv(cfg: &GlobalConfig, client: &TmuxClient, verb: &str) -> Result<
         ["key",k] => base(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]),
         ["session-prev"] => base(&["switch-client","-c",&client.tty,"-p"]),
         ["session-next"] => base(&["switch-client","-c",&client.tty,"-n"]),
+        // U1: prefix + [keybindings.tmux].menu_key opens the generated MiOS menu on exactly this client.
+        ["menu"] => match &cfg.tmux_menu_key {
+            Some(k) => base(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]),
+            None => return Err("tmux:menu needs [keybindings.tmux].menu_key (the generated MiOS menu)".into()),
+        },
         ["focus",d] => base(&["display-message","-p","-c",&client.tty,"-t",&client.tty,&format!("#{{pane_at_{d}}}")]),
         ["page-up"] | ["page-down"] => base(&["display-message","-p","-c",&client.tty,"-t",&client.tty,"#{pane_id} #{pane_in_mode}"]),
-        _ => return Err(format!("tmux:{verb} has no runtime projection yet (U1 menu alias / I3 keymap popup)")),
+        _ => return Err(format!("tmux:{verb} has no runtime projection yet (I3 keymap popup)")),
     })
 }
 /// Run a tmux verb (C-30), including the two-step ones: `focus` falls through to the compositor at the pane edge.
@@ -1362,8 +1367,12 @@ mod tests {
         assert_eq!(tmux_argv(&cfg, &c, "key p").unwrap(), ["/usr/bin/tmux", "-S", "/run/t/mios-human", "send-keys", "-c", "/dev/pts/7", "-K", "C-b", "p"]);
         assert_eq!(tmux_argv(&cfg, &c, "focus left").unwrap()[3..], ["display-message", "-p", "-c", "/dev/pts/7", "-t", "/dev/pts/7", "#{pane_at_left}"]);
         assert_eq!(tmux_argv(&cfg, &c, "session-next").unwrap()[3..], ["switch-client", "-c", "/dev/pts/7", "-n"]);
-        assert!(tmux_argv(&cfg, &c, "key q").unwrap_err().contains("prefix-table"), "q is not bound in the SSOT prefix table");
-        assert!(tmux_argv(&cfg, &c, "menu").is_err(), "the menu alias is U1's");
+        assert!(tmux_argv(&cfg, &c, "key r").unwrap_err().contains("prefix-table"), "r is not bound in the SSOT prefix table");
+        for k in ["e", "*", "`", "F", "Space", "Enter"] { assert!(tmux_argv(&cfg, &c, &format!("key {k}")).is_ok(), "{k}: a U1 launcher/float/menu/accept prefix key"); }
+        assert_eq!(tmux_argv(&cfg, &c, "menu").unwrap()[3..], ["send-keys", "-c", "/dev/pts/7", "-K", "C-b", "Space"], "U1's menu_key");
+        let mut no_menu = cfg.clone(); no_menu.tmux_menu_key = None;
+        assert!(tmux_argv(&no_menu, &c, "menu").is_err(), "without the U1 menu key there is no menu projection");
+        assert!(tmux_argv(&cfg, &c, "keymap").is_err(), "the keymap popup is I3's");
         assert!(unsupported_actions(&cfg).is_empty(), "every vendor nav action resolves: {:?}", unsupported_actions(&cfg));
     }
     #[test]

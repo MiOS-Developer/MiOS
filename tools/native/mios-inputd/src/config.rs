@@ -125,6 +125,9 @@ pub struct GlobalConfig {
     /// The tmux prefix-table keys the SSOT binds ([keybindings.actions].key and [keybindings.tmux].bindings[].key).
     #[serde(default)]
     pub tmux_prefix_keys: BTreeSet<String>,
+    /// [keybindings.tmux].menu_key (U1): prefix + this key opens the generated MiOS menu; `tmux:menu` sends it.
+    #[serde(default)]
+    pub tmux_menu_key: Option<String>,
 }
 impl GlobalConfig {
     pub fn load(root: Option<&Path>) -> Result<(Self, LegacyConfig), String> {
@@ -167,8 +170,21 @@ impl GlobalConfig {
             arr.and_then(toml::Value::as_array).into_iter().flatten()
                 .filter_map(|a| a.get("key").and_then(toml::Value::as_str).map(str::to_owned)).collect()
         };
+        self.tmux_menu_key = kb.and_then(|k| k.get("tmux")).and_then(|t| t.get("menu_key")).and_then(toml::Value::as_str).map(str::to_owned);
+        // Every prefix-table key the SSOT binds: actions, tmux bindings, the menu/launcher keys, the float keys and the
+        // agent accept key (mios-unit-gen projects exactly these into the prefix table).
+        let tmux = kb.and_then(|k| k.get("tmux"));
+        let named = |t: Option<&toml::Value>, names: &[&str]| -> Vec<String> {
+            names.iter().filter_map(|n| t.and_then(|t| t.get(*n)).and_then(toml::Value::as_str).map(str::to_owned)).collect()
+        };
+        let float_keys: Vec<String> = tmux.and_then(|t| t.get("float")).and_then(toml::Value::as_table).into_iter().flatten()
+            .filter(|(k, _)| k.ends_with("_key")).filter_map(|(_, v)| v.as_str().map(str::to_owned)).collect();
         self.tmux_prefix_keys = keys(kb.and_then(|k| k.get("actions"))).into_iter()
-            .chain(keys(kb.and_then(|k| k.get("tmux")).and_then(|t| t.get("bindings")))).collect();
+            .chain(keys(tmux.and_then(|t| t.get("bindings"))))
+            .chain(named(tmux, &["menu_key", "launcher_key"]))
+            .chain(float_keys)
+            .chain(named(kb.and_then(|k| k.get("agent")), &["accept_key"]))
+            .collect();
     }
     fn resolve_actions(&mut self, v: &toml::Value) -> Result<(), String> {
         // Reuse existing desktop launch definitions. A terminal entry must open
@@ -589,7 +605,7 @@ BTN_TR="hypr:workspace e+1"
         let mut v = vendor.clone();
         let mut global = toml::Value::try_from(&cfg).unwrap();
         let g = global.as_table_mut().unwrap();
-        g.remove("tmux_prefix"); g.remove("tmux_prefix_keys");
+        g.remove("tmux_prefix"); g.remove("tmux_prefix_keys"); g.remove("tmux_menu_key");
         g.insert("action_namespaces".into(), vendor["keybindings"]["global"]["action_namespaces"].clone());
         let c = g.get_mut("controller").unwrap().as_table_mut().unwrap();
         c.insert("nav".into(), vendor["keybindings"]["global"]["controller"]["nav"].clone());

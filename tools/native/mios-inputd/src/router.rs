@@ -2093,7 +2093,7 @@ mod nav_contract {
         for (path, val, why) in [
             (vec!["desktop", "BTN_SOUTH"], toml::Value::from(""), "\"\" is not a value"),
             (vec!["desktop", "BTN_SOUTH"], toml::Value::from("app"), "namespace"),
-            (vec!["terminal_tmux", "BTN_TL2"], toml::Value::from("tmux:key q"), "prefix-table key"),
+            (vec!["terminal_tmux", "BTN_TL2"], toml::Value::from("tmux:key r"), "prefix-table key"),
             (vec!["desktop", "BTN_TL"], toml::Value::from("key:ENTER"), "capture contract"),
             (vec!["desktop", "BTN_MODE"], toml::Value::Array(vec!["key:ENTER".into(), "key:ESC".into()]), "Guide hold"),
             (vec!["desktop", "BTN_SOUTH"], toml::Value::from("pointer:wheel-up"), "only LS_*/RS_*"),

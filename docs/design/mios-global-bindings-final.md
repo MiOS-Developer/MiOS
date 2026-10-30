@@ -19,7 +19,7 @@ Labels:
 - `tmux:` verbs address the server of the client that discovery found (`tmux -S <socket>`, with the socket resolved from the client's `-L`/`-S` and `TMUX_TMPDIR`, because MiOS terminals set `TMUX_TMPDIR`), not `-L socket_name`. Which servers count is the SSOT list `nav.tmux_sockets` (`mios-human`, `mios-nested`). Discovery reads `/proc` only (once per second per focused terminal, no spawn).
 - The HAT d-pad folds into `BTN_DPAD_*` for nav (the system-layer fold stays I4). Pads that report triggers only as axes (xpad: no BTN_TL2/TR2) get digital nav edges at `trigger_threshold`.
 - `capture_osd_argv` (default `notify-send`) is the notifier; the OSD runs after the compositor confirmed the transaction, whose success marker now carries the window class.
-- `inherits` is resolved in mios-inputd (nav.rs), not in mios-resolver. `tmux:menu` (U1 alias) and `tmux:keymap` (I3 popup) validate but have no runtime projection yet; no shipped profile uses them.
+- `inherits` is resolved in mios-inputd (nav.rs), not in mios-resolver. `tmux:menu` sends `<prefix> <[keybindings.tmux].menu_key>` to the client (U1's binding opens the generated MiOS menu there, with its own small-terminal and VT handling), instead of invoking the alias without a target client. `tmux:keymap` (I3 popup) validates but has no runtime projection yet; no shipped profile uses either.
 - An empty `""` in any tier reaches the grammar and is a validation error (the Rust resolver does not drop it).
 - The fixture tier with `--live-context` projects `key:` (send_key_state to the focused window), `hypr:` and `tmux:` into the followed (nested) compositor, so the live test needs no uinput keyboard on the operator's seat.
 
