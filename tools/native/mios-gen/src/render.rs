@@ -186,6 +186,10 @@ pub mod render_desktop {
         {
             lines.push(format!("MimeType={mt}"));
         }
+        // Preserve the sandbox identity on project-owned Flatpak wrappers.
+        if let Some(app) = cfg.and_then(|t| t.get("flatpak_app_id")).and_then(|v|v.as_str()) {
+            if !app.is_empty() && !app.chars().any(char::is_control) {lines.push(format!("X-Flatpak={app}"));}
+        }
         // [[actions]] = { id, name, exec }: desktop-entry-spec additional
         // application actions (dock/drawer right-click entries). Listed in the
         // main group as Actions=, each rendered as its own [Desktop Action id]
@@ -242,6 +246,7 @@ pub mod render_desktop {
                 r#"
                 title = "Browser"
                 exec_cmd = "browser %u"
+                flatpak_app_id = "org.example.Browser"
                 mime_type = "text/html;x-scheme-handler/https;"
                 actions = [
                   { id = "new-window", name = "New Window", exec = "browser --new-window" },
@@ -251,6 +256,7 @@ pub mod render_desktop {
             )
             .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
             let out = render_launcher("browser", &cfg, &BTreeMap::new());
+            assert!(out.contains("\nX-Flatpak=org.example.Browser\n"),"{out}");
             assert!(out.contains("\nMimeType=text/html;x-scheme-handler/https;\n"), "{out}");
             assert!(out.contains("\nActions=new-window;\n"), "{out}");
             assert!(
