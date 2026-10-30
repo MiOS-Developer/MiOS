@@ -7049,7 +7049,13 @@ progressive        = true          # EGFX RemoteFX Progressive for clients disab
 progressive_hz     = 0             # 0 inherits target_hz; nonzero is an explicit lower Progressive capture ceiling
 progressive_quant  = 8             # wavelet base quantization 6..15; 6 retains more detail, larger values reduce bandwidth
 audio_control_program = "pactl"    # native PipeWire-Pulse control executable; no shell expansion
+audio_server = ""                  # "" = the operator's PipeWire-Pulse socket (unix:/run/user/<operator_uid>/pulse/native); or unix:/<absolute socket> for an isolated audio server
+audio_recovery_attempts = 60       # per outage: recreate the session speaker sink / microphone source after PipeWire-Pulse restarts or drops them (0 = no recovery, 0..1000)
+audio_recovery_interval_ms = 500   # wait between recovery attempts, 100..10000 ms (60 x 500 ms = 30 s per outage)
 microphone_queue_packets = 8       # bounded 10ms remote microphone queue, drops stale audio
+speaker_packet_ms = 20             # RDPSND wave size read from the session speaker sink, 10..100 ms
+speaker_max_latency_ms = 200       # withhold new waves while more than this much sent audio is unconfirmed by the client (speaker_packet_ms..2000)
+speaker_idle_ms = 500              # stop sending after this much digital silence and resume on the first sound; 0 = always stream (0..10000)
 camera_video_program = "gst-launch-1.0" # native decoder and PipeWire video provider
 camera_graph_program = "pw-dump"   # inspect only the session-owned video node
 camera_max_width = 1280             # maximum negotiated camera dimensions (16..1920)
@@ -7074,7 +7080,7 @@ clipboard           = "both"        # "both" | "to-client" | "to-host" | "off" (
 clipboard_max_mb    = 64            # larger clipboard data is refused in either direction
 touch               = true          # MS-RDPEI multi-touch -> uinput "MiOS Remote Touch", mapped to the remote output before it exists
 pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen" (pressure 0-1024, tilt, eraser, barrel)
-audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
+audio_output        = true          # MS-RDPEA (RDPSND) speaker: a per-connection PipeWire sink "MiOS-Remote-Speaker" streams negotiated PCM to the client; apps choose it, defaults never change; client permission still required
 microphone          = true          # negotiated MS-RDPEAI PCM -> per-session PipeWire microphone; client permission still required
 drives              = true          # negotiated client folders -> session-owned native FUSE mounts; client selects what to share
 camera              = true          # client-selected cameras become per-session native PipeWire video sources
@@ -7086,6 +7092,7 @@ smartcard           = false         # MS-RDPESC smartcard redirection (off by de
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
 pen_device          = "MiOS Remote Pen"     # Hyprland device name mios-remote-pen
 microphone_source_prefix = "mios-remote-microphone" # unique native source per connected microphone
+speaker_sink_prefix = "mios-remote-speaker" # unique native sink per connected RDP audio client
 camera_source_prefix = "mios-remote-camera" # unique Video/Source node per selected remote camera
 
 
