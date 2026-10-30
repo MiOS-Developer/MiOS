@@ -111,7 +111,19 @@ fn normalize_step(step: &str) -> Result<String, String> {
     Ok(out.join("+"))
 }
 
+/// A real controller button: an evdev key code a device can report. Every controller role (chords, the legacy
+/// Hypr3D buttons, Guide/cursor, the room table, quirks, the agent pad) takes only these. The stick pseudo-keys
+/// (LS_*/RS_*) are refused here: they are accepted by [`system_layer_code`] only.
 pub fn button_code(name: &str) -> Result<u16, String> {
+    let code = system_layer_code(name)?;
+    if is_stick_pseudo(code) {
+        return Err(format!("{name} is a stick direction, accepted only as a [controller.system_layer] key, not a button"));
+    }
+    Ok(code)
+}
+/// A Guide system-layer key: a real button ([`button_code`]) or, since I4 (C-15b), a stick direction pseudo-key
+/// (LS_*/RS_*: one action per flick). Only the system layer resolves names through this.
+pub fn system_layer_code(name: &str) -> Result<u16, String> {
     match name {
         "BTN_SOUTH" | "BTN_A" | "BTN_GAMEPAD" => Ok(0x130),
         "BTN_EAST" | "BTN_B" => Ok(0x131),

@@ -3,7 +3,9 @@
 # AI-related: tools/native/mios-inputd/src/{router.rs,vpad.rs,nested.rs,runtime.rs,linux.rs,config.rs}, usr/share/mios/mios.toml [keybindings.global.controller.system_layer|quirks|agent_pad] [verbs.virtual_controller] [desktop.nested], docs/design/mios-global-bindings-tests.md (I4)
 # AI-functions: Base, Grammar, Vpad, FakeCompositor, Fixture
 # Environment: MIOS_INPUTD_BIN = the binary under test (default: installed). MIOS_INPUTD_OLD_BIN + MIOS_INPUTD_OLD_SSOT =
-# the pre-I4 binary and SSOT for the negative controls (skipped when absent). MIOS_INPUTD_UINPUT_TEST=1 enables the
+# the pre-I4 binary and SSOT for the negative controls (skipped when absent). MIOS_INPUTD_PREFIX_BIN = the pre-fix I4
+# binary for the round-3 negatives (D1 legacy pseudo-keys, D2 captured layer, partial quirk remaps, ungrabbed fixture
+# emits, the shared seat bridge). MIOS_INPUTD_UINPUT_TEST=1 enables the
 # private uinput tests: fixture pads and fixture-named agent pads (mios-input-fixture-*, which no live bridge opens), a
 # fake compositor socket and a fake nested-session registry in a private XDG_RUNTIME_DIR. No physical device, no real
 # compositor and no live session is touched.
@@ -28,6 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.environ.get('MIOS_INPUTD_BIN', '/usr/libexec/mios/mios-inputd'))
 OLD = Path(os.environ.get('MIOS_INPUTD_OLD_BIN', '/nonexistent'))
 OLD_SSOT = Path(os.environ.get('MIOS_INPUTD_OLD_SSOT', '/nonexistent'))
+# Round-3 negatives: the pre-fix I4 binary (it reads the same SSOT as the binary under test).
+PREFIX = Path(os.environ.get('MIOS_INPUTD_PREFIX_BIN', '/nonexistent'))
 UINPUT = os.environ.get('MIOS_INPUTD_UINPUT_TEST') == '1'
 SOUTH, EAST, NORTH, WEST, LT, RT, GUIDE, START = 0x130, 0x131, 0x133, 0x134, 0x138, 0x139, 0x13c, 0x13b
 STICK = {c: dict(min=-32768, max=32767, value=0) for c in ('0', '1', '3', '4')}
@@ -149,7 +153,7 @@ class Base(unittest.TestCase):
 
     def replay(self, context, script, binary=None, root=None, **extra):
         payload = dict(context=context, axes=AXES, **extra)
-        if binary is None:
+        if binary is None or binary == PREFIX:
             payload['script'] = script
         else:
             payload['events'] = [s for s in script if 'kind' in s]
@@ -160,6 +164,10 @@ class Base(unittest.TestCase):
     def need_old(self):
         if not (OLD.is_file() and OLD_SSOT.is_file()):
             self.skipTest('negative control needs MIOS_INPUTD_OLD_BIN + MIOS_INPUTD_OLD_SSOT (the pre-I4 pair)')
+
+    def need_prefix(self):
+        if not PREFIX.is_file():
+            self.skipTest('round-3 negative control needs MIOS_INPUTD_PREFIX_BIN (the pre-fix I4 binary)')
 
     def host_layer(self, text):
         path = self.root / 'etc/mios/mios.toml'
@@ -224,6 +232,48 @@ class Grammar(Base):
         self.assertFalse({'hypr:movefocus left', 'hypr:movewindow right'} & set(old['output']['actions']),
                          'negative control: the pre-I4 router swallows the HAT and the sticks under Guide')
         self.assertIn('quickshell:drawer-toggle', old['output']['actions'], 'and its quick Guide+HAT also opened the drawer (fixed: a layer action is no Guide tap)')
+
+    def test_d1_legacy_roles_refuse_stick_pseudo_keys(self):
+        # LS_*/RS_* are system-layer keys only: a toggle chord or capture button bound to one could never fire.
+        layer = '[desktop.hyprland.hypr3d.controller]\ntoggle_chord = ["LS_UP", "BTN_THUMBR"]\nfullscreen_button = "RS_DOWN"\n'
+        for text, field in [(layer, 'toggle_chord'),
+                            ('[desktop.hyprland.hypr3d.controller]\nfullscreen_button = "RS_DOWN"\n', 'fullscreen_button'),
+                            ('[desktop.hyprland.hypr3d.controller]\ngrab_button = "LS_LEFT"\n', 'grab_button'),
+                            ('[keybindings.global.controller]\nmode_override_chord = ["BTN_SELECT", "RS_UP"]\n', 'stick direction')]:
+            with self.subTest(field=field):
+                self.host_layer(text)
+                r = self.run_bin('check')
+                self.assertNotEqual(r.returncode, 0, f'{field}: a stick pseudo-key was accepted')
+                self.assertIn('stick direction', r.stderr)
+                self.assertIn(field, r.stderr)
+        self.host_layer('[keybindings.global.controller.system_layer]\nRS_UP = "hypr:movewindow up"\n')
+        self.assertEqual(self.run_bin('check').returncode, 0, 'the system layer still takes LS_*/RS_*')
+        self.need_prefix()
+        self.host_layer(layer)
+        r = self.run_bin('check', binary=PREFIX)
+        self.assertEqual(r.returncode, 0, 'negative control: the pre-fix I4 binary accepts LS_UP in the toggle chord')
+
+    def test_d2_captured_system_layer_input_is_delivered_once(self):
+        self.host_layer('[keybindings.global.controller]\ncaptured_system_layer = true\n')
+        script = [key(GUIDE)] + wait(20) + ab(16, -1) + ab(16, 0) + ab(3, 32767) + wait(50)
+        out = self.replay('app-capture', script)
+        self.assertEqual(out['output']['actions'], ['hypr:movefocus left', 'hypr:movewindow right'])
+        leaked = [e for e in out['output']['app'] if e['kind'] == 3 and e['value'] != 0]
+        self.assertEqual(leaked, [], 'the captured app does not also receive the layer\'s HAT/stick input')
+        back = self.replay('app-capture', script + [key(GUIDE, 0)])
+        self.assertIn(dict(kind=3, code=3, value=32767), back['output']['app'], 'Guide up: the app gets the live stick back')
+        self.need_prefix()
+        old = self.replay('app-capture', script, binary=PREFIX)
+        self.assertEqual(old['output']['actions'], ['hypr:movefocus left', 'hypr:movewindow right'])
+        self.assertIn(dict(kind=3, code=16, value=-1), old['output']['app'], 'negative control: the pre-fix router delivers Guide+HAT twice')
+
+    def test_o7_partial_face_remap_is_refused(self):
+        self.host_layer('[keybindings.global.controller.quirks.partial]\ndrivers = ["hid-test"]\nremap = { BTN_WEST = "BTN_NORTH" }\n')
+        r = self.run_bin('check')
+        self.assertNotEqual(r.returncode, 0, 'BTN_WEST -> BTN_NORTH alone routes two physical buttons as North')
+        self.assertIn('a swap', r.stderr)
+        self.need_prefix()
+        self.assertEqual(self.run_bin('check', binary=PREFIX).returncode, 0, 'negative control: the pre-fix binary accepts the partial remap')
 
     def test_o7_quirk_table_is_validated(self):
         for body, why in [('remap = { BTN_NORTH = "BTN_WEST", BTN_SOUTH = "BTN_WEST" }', 'one-to-one'),
@@ -355,6 +405,51 @@ class Vpad(Base):
         self.assertEqual(r.returncode, 0, r.stderr + line)
         self.assertEqual(json.loads(r.stdout)['wait']['state']['left'], [0.5, 0.0])
         self.assertIsNone(compile_template(verb['cmd']).render('virtual_controller', dict(pad='mcp1')), 'op is required')
+
+    def test_a_fixture_pad_never_emits_without_an_exclusive_reader(self):
+        # Steam (SDL) on the host reads every uinput pad: a test event must reach exactly one grabbing reader.
+        pad = subprocess.Popen([str(BIN), 'fixture-pad', '--layout', 'dualsense'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: pad.poll() is None and (pad.kill(), pad.wait(5)))
+        info = json.loads(pad.stdout.readline())
+        self.assertEqual(info.get('emits'), 'grabbed-only')
+        # An empty batch is a lone SYN_REPORT: the kernel delivers it to no reader, so the refusal is proven without
+        # ever emitting an event a host app could see.
+        pad.stdin.write(json.dumps({'events': []}) + '\n')
+        pad.stdin.flush()
+        self.assertEqual(pad.wait(5), 1, 'an ungrabbed batch ends the fixture')
+        err = pad.stderr.read()
+        for f in (pad.stdin, pad.stdout, pad.stderr):
+            f.close()
+        self.assertIn('no exclusive grab', err)
+        pad2 = subprocess.Popen([str(BIN), 'fixture-pad', '--layout', 'dualsense'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (pad2.stdin.close(), pad2.wait(5)))
+        rd = Reader(json.loads(pad2.stdout.readline())['path'], grab=True)
+        self.addCleanup(rd.close)
+        pad2.stdin.write(json.dumps({'events': [[1, SOUTH, 1], [1, SOUTH, 0]]}) + '\n')
+        pad2.stdin.flush()
+        self.assertEqual(json.loads(pad2.stdout.readline()), {'ok': True})
+        self.assertIn((1, SOUTH, 1), rd.read(0.2), 'a grabbed batch is delivered')
+        self.need_prefix()
+        old = subprocess.Popen([str(PREFIX), 'fixture-pad', '--layout', 'dualsense'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: old.poll() is None and (old.kill(), old.wait(5)))
+        old.stdout.readline()
+        old.stdin.write(json.dumps({'events': []}) + '\n')
+        old.stdin.flush()
+        self.assertEqual(json.loads(old.stdout.readline()), {'ok': True}, 'negative control: the pre-fix fixture writes with nobody holding the grab')
+        old.stdin.close()
+        old.wait(5)
+
+    def test_an_ungrabbed_fixture_vpad_withholds_motion_until_a_reader_grabs(self):
+        c = self.create('hold1')
+        self.vp('stick', 'hold1', '--stick', 'left', '--x', '0.5', '--ms', '60', '--wait')
+        info = self.vp('info', 'hold1')
+        self.assertGreater(info['withheld_frames'], 0, 'nobody grabbed the pad: nothing was emitted')
+        rd = Reader(c['path'], grab=True)
+        self.addCleanup(rd.close)
+        got = rd.read(0.4)
+        self.assertIn((3, 0, round(0.5 * 32767)), got, 'the grabbing reader gets the whole state at once')
+        self.assertEqual(self.vp('info', 'hold1')['withheld_frames'], 0)
 
     def test_an_idle_pad_exits_and_takes_its_device_with_it(self):
         self.host_layer('[keybindings.global.controller.agent_pad]\nidle_exit_s = 10\n')
@@ -574,10 +669,11 @@ class Fixture(Base):
 
     # --- the nested-session contract -----------------------------------------------------------------------------
     def registry(self, seat, node, launcher, runtime=None, sig='sess_sig', pad_state=None, state='running'):
+        nodes = node if isinstance(node, list) else [node]
         entry = dict(seat=seat, launcher_pid=launcher.pid, launcher_start=start_time(launcher.pid), state=state,
                      runtime=str(runtime or self.tmp / 'sess'), instance=sig, wayland_display='wayland-test',
                      pad_state=str(pad_state) if pad_state else None,
-                     devices=[dict(path=node, kind='controller', siblings=[], name='', spec='', virtual=True)])
+                     devices=[dict(path=n, kind='controller', siblings=[], name='', spec='', virtual=True) for n in nodes])
         p = self.reg / f'{seat}.json'
         p.write_text(json.dumps(entry))
         return p
@@ -695,6 +791,45 @@ class Fixture(Base):
         self.assertTrue(until(lambda: '"nested":"ended"' in (self.runtime / 'mios-inputd/vpad/room1-bridge.log').read_text(), 6))
         info = json.loads(self.run_bin('vpad', 'info', '--pad', 'room1').stdout)
         self.assertTrue(until(lambda: json.loads(self.run_bin('vpad', 'info', '--pad', 'room1').stdout)['assigned'] is None, 5), info)
+
+    def test_two_pads_of_one_seat_share_its_bridge(self):
+        a = json.loads(self.run_bin('vpad', 'create', '--pad', 'duo-a', '--fixture').stdout)['created']
+        b = json.loads(self.run_bin('vpad', 'create', '--pad', 'duo-b', '--fixture').stdout)['created']
+        self.addCleanup(self.run_bin, 'vpad', 'destroy', '--pad', 'duo-b')
+        self.addCleanup(self.run_bin, 'vpad', 'destroy', '--pad', 'duo-a')
+        fake, pad_state, launcher = self.session('duo', [a['path'], b['path']])
+        ra = json.loads(self.run_bin('vpad', 'assign', '--pad', 'duo-a', '--seat', 'duo').stdout)
+        rb = json.loads(self.run_bin('vpad', 'assign', '--pad', 'duo-b', '--seat', 'duo').stdout)
+        pid = ra['bridge']['bridge_pid']
+        self.assertEqual(rb['bridge']['bridge_pid'], pid, 'the second pad shares the seat bridge')
+        self.assertTrue(rb['bridge']['shared'])
+        self.assertTrue(until(lambda: self.ly(pad_state) is not None, 10), 'the bridge writes the session room packet')
+        self.run_bin('vpad', 'destroy', '--pad', 'duo-a')
+        def running():
+            try:
+                return 'State:\tZ' not in Path(f'/proc/{pid}/status').read_text()
+            except OSError:
+                return False
+        blog = self.runtime / 'mios-inputd/vpad/duo-a-bridge.log'
+        self.assertTrue(until(lambda: '"nested":"gone"' in blog.read_text(), 8), 'the bridge notices the vanished node\n' + blog.read_text()[-600:])
+        time.sleep(0.5)
+        self.assertTrue(running(), 'destroying the first pad keeps the bridge the second still uses\n' + blog.read_text()[-600:])
+        self.assertEqual(json.loads(self.run_bin('vpad', 'info', '--pad', 'duo-b').stdout)['assigned']['seat'], 'duo')
+        self.run_bin('vpad', 'stick', '--pad', 'duo-b', '--stick', 'left', '--y', '-1', '--ms', '200', '--wait')
+        self.assertTrue(until(lambda: (self.ly(pad_state) or 0) < -0.9, 3), 'the second pad still drives the room')
+        self.run_bin('vpad', 'release', '--pad', 'duo-b', '--ms', '60', '--wait')
+        self.run_bin('vpad', 'destroy', '--pad', 'duo-b')
+        self.assertTrue(until(lambda: not running(), 6), 'the last pad of the seat stops its bridge')
+        self.assertEqual(list((self.runtime / 'mios-inputd/vpad/seats').glob('duo*')), [], 'no seat record is left')
+        if PREFIX.is_file():
+            c1 = json.loads(self.run_bin('vpad', 'create', '--pad', 'old-a', '--fixture', binary=PREFIX).stdout)['created']
+            c2 = json.loads(self.run_bin('vpad', 'create', '--pad', 'old-b', '--fixture', binary=PREFIX).stdout)['created']
+            self.addCleanup(self.run_bin, 'vpad', 'destroy', '--pad', 'old-b', binary=PREFIX)
+            self.addCleanup(self.run_bin, 'vpad', 'destroy', '--pad', 'old-a', binary=PREFIX)
+            self.session('olds', [c1['path'], c2['path']])
+            o1 = json.loads(self.run_bin('vpad', 'assign', '--pad', 'old-a', '--seat', 'olds', binary=PREFIX).stdout)
+            o2 = json.loads(self.run_bin('vpad', 'assign', '--pad', 'old-b', '--seat', 'olds', binary=PREFIX).stdout)
+            self.assertNotEqual(o1['bridge_pid'], o2['bridge_pid'], 'negative control: the pre-fix holder starts a rival bridge per pad')
 
     def test_assign_refuses_a_session_that_does_not_hold_the_pad(self):
         c = json.loads(self.run_bin('vpad', 'create', '--pad', 'room2', '--fixture').stdout)['created']

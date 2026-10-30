@@ -190,13 +190,22 @@ impl Device {
         let link = std::fs::read_link(Path::new("/sys/class/input").join(event).join("device/device/driver")).ok()?;
         link.file_name().map(|n| n.to_string_lossy().into_owned())
     }
-    /// Apply the SSOT quirk table (O-7) to this device; returns the matching quirk names.
-    pub fn apply_quirks(&mut self, quirks: &BTreeMap<String, crate::config::Quirk>) -> Vec<String> {
-        let (names, map) = crate::config::quirk_maps(quirks, self.driver().as_deref(), self.id.vendor, self.id.product);
+    /// Apply the SSOT quirk table (O-7) to this device; returns the matching quirk names. Only codes the device
+    /// reports are remapped (a source it never sends is inert, and must not invert a code it does send). A merged
+    /// map that would route two of the device's buttons as one code is refused whole: the device keeps its codes.
+    pub fn apply_quirks(&mut self, quirks: &BTreeMap<String, crate::config::Quirk>) -> Result<Vec<String>, String> {
+        let (names, mut map) = crate::config::quirk_maps(quirks, self.driver().as_deref(), self.id.vendor, self.id.product);
+        map.retain(|from, _| self.keys.contains(from));
+        self.remap.clear();
+        self.unmap.clear();
+        self.quirks.clear();
+        if let Some((a, b, to)) = crate::config::quirk_collision(&self.keys, &map) {
+            return Err(format!("quirks {names:?} refused for {}: codes 0x{a:x} and 0x{b:x} would both route as 0x{to:x}", self.path.display()));
+        }
         self.unmap = map.iter().map(|(a, b)| (*b, *a)).collect();
         self.remap = map;
         self.quirks = names.clone();
-        names
+        Ok(names)
     }
     /// A reported key code as the router sees it (positional).
     pub fn logical(&self, code: u16) -> u16 {
@@ -214,7 +223,21 @@ impl Device {
         !self.keys.contains(&0x138) && !self.keys.contains(&0x139) && (self.abs.contains_key(&2) || self.abs.contains_key(&5))
     }
     pub fn grab(&mut self) -> io::Result<()> {
-        ioctl_int(self.file.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1)?;
+        // A fixture pad's GrabProbe holds the grab for one ioctl pair while nobody else does: a few short retries
+        // ride that out; a real owner still refuses after them.
+        let mut tries = 0;
+        loop {
+            match ioctl_int(self.file.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1) {
+                Err(e) if e.raw_os_error() == Some(libc::EBUSY) && tries < 4 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                r => {
+                    r?;
+                    break;
+                }
+            }
+        }
         self.grabbed = true;
         Ok(())
     }
@@ -287,6 +310,38 @@ impl Drop for Device {
 pub struct VirtualDevice {
     file: File,
     pub name: String,
+}
+/// The fixture tier's emit guard. A host app (Steam through SDL) reads every uinput pad, so an event a test pad
+/// emits must reach exactly one exclusive reader, never an ungrabbed node. The probe keeps its own descriptor of the
+/// pad's node and asks the kernel whether another descriptor holds EVIOCGRAB: taking the grab succeeds only while
+/// nobody holds it (the probe then drops it at once and the caller must not emit).
+pub struct GrabProbe {
+    file: File,
+    pub path: PathBuf,
+}
+impl GrabProbe {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW).open(path)?;
+        Ok(Self { file, path: path.to_owned() })
+    }
+    /// Another descriptor holds the exclusive grab now.
+    pub fn held_elsewhere(&self) -> bool {
+        let fd = self.file.as_raw_fd();
+        match ioctl_int(fd, ioc(1, b'E', 0x90, 4), 1) {
+            Ok(()) => {
+                let _ = ioctl_int(fd, ioc(1, b'E', 0x90, 4), 0);
+                false
+            }
+            Err(e) => e.raw_os_error() == Some(libc::EBUSY),
+        }
+    }
+    pub fn require(&self) -> Result<(), String> {
+        if self.held_elsewhere() {
+            Ok(())
+        } else {
+            Err(format!("refusing to emit on {}: no exclusive grab holds it (a host app such as Steam would read the event)", self.path.display()))
+        }
+    }
 }
 impl VirtualDevice {
     fn create(
@@ -627,6 +682,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let path = path.ok_or("fixture did not enumerate")?;
+    let probe = GrabProbe::open(&path).map_err(|e| e.to_string())?;
     if !Device::open(&path,false).err().is_some_and(|e|e.to_string().contains("isolated from the live bridge")) {
         return Err("private fixture could enter live controller routing".into());
     }
@@ -641,6 +697,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         Event::new(EV_KEY, 0x136, 1),
         Event::new(EV_SYN, SYN_REPORT, 0),
     ];
+    probe.require()?;
     producer.write(&sample).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let got = input.read_events().map_err(|e| e.to_string())?;
@@ -682,6 +739,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         Event::new(EV_KEY, 0x131, 1),
         Event::new(EV_SYN, SYN_REPORT, 0),
     ];
+    probe.require()?;
     producer.write(&ordinary).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let incoming = input.read_events().map_err(|e| e.to_string())?;
@@ -701,6 +759,13 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
     }
     drop(duplicate);
     input.release();
+    // The release restores the other reader: it can now take the grab itself (proof without an ungrabbed event), and
+    // a grabbed event then reaches it.
+    let grab = ioc(1, b'E', 0x90, 4);
+    if ioctl_int(other.as_raw_fd(), grab, 1).is_err() {
+        return Err("release did not restore other reader".into());
+    }
+    probe.require()?;
     producer
         .write(&[
             Event::new(EV_KEY, 0x136, 0),
@@ -708,7 +773,9 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         ])
         .map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
-    if other.read(&mut b).is_err() {
+    let restored = other.read(&mut b).is_ok();
+    let _ = ioctl_int(other.as_raw_fd(), grab, 0);
+    if !restored {
         return Err("release did not restore other reader".into());
     }
     let mut signal_results = vec![];
@@ -756,16 +823,23 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
             libc::kill(child.id() as i32, signal);
         }
         child.wait().map_err(|e| e.to_string())?;
+        // The killed child's grab is gone when the other reader can take it; a grabbed event then reaches it.
+        if ioctl_int(other.as_raw_fd(), grab, 1).is_err() {
+            return Err(format!("signal {signal} left private device grabbed"));
+        }
         // Drain previous events before proving a new press reaches the reader.
         while other.read(&mut b).is_ok() {}
-        producer
-            .write(&[
-                Event::new(EV_KEY, 0x131, if signal == libc::SIGTERM { 0 } else { 1 }),
-                Event::new(EV_SYN, SYN_REPORT, 0),
-            ])
-            .map_err(|e| e.to_string())?;
+        let mut batch = vec![Event::new(EV_KEY, 0x131, if signal == libc::SIGTERM { 0 } else { 1 }), Event::new(EV_SYN, SYN_REPORT, 0)];
+        if signal != libc::SIGTERM {
+            // Leave nothing held: the device's last state is all released.
+            batch.extend([Event::new(EV_KEY, 0x131, 0), Event::new(EV_SYN, SYN_REPORT, 0)]);
+        }
+        probe.require()?;
+        producer.write(&batch).map_err(|e| e.to_string())?;
         std::thread::sleep(std::time::Duration::from_millis(20));
-        if other.read(&mut b).is_err() {
+        let reached = other.read(&mut b).is_ok();
+        let _ = ioctl_int(other.as_raw_fd(), grab, 0);
+        if !reached {
             return Err(format!("signal {signal} left private device grabbed"));
         }
         signal_results.push(signal);
@@ -827,7 +901,8 @@ pub fn fixture_grab(path: &Path) -> Result<(), String> {
 
 /// A private test pad: a uinput device named `mios-input-fixture-<layout>` that only the fixture tier may open.
 /// stdin carries JSON lines: {"events":[[kind,code,value],...]} writes one batch, {"sleep_ms":N} waits, and EOF
-/// destroys the device. Layouts emulate a driver's code layout (O-7): its USB ids, axis ranges and which codes exist.
+/// destroys the device. A batch is written only while another descriptor (the bridge's or the test's) holds the pad's
+/// exclusive grab; an ungrabbed batch is refused and the fixture exits, so no host app ever reads a test event. Layouts emulate a driver's code layout (O-7): its USB ids, axis ranges and which codes exist.
 /// The test writes the codes that driver reports (xpad: physical Y = 0x134, X = 0x133; DualSense: positional).
 ///   dualsense          054c:0ce6, BTN_TL2/TR2 digital + ABS_Z/RZ, HAT d-pad
 ///   xpad               045e:028e, triggers only as ABS_Z/RZ, HAT d-pad
@@ -873,7 +948,8 @@ pub fn fixture_pad(layout: &str) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let path = path.ok_or("fixture pad did not enumerate")?;
-    println!("{}", serde_json::json!({"fixture_pad": layout, "path": path, "name": pad.name}));
+    let probe = GrabProbe::open(&path).map_err(|e| e.to_string())?;
+    println!("{}", serde_json::json!({"fixture_pad": layout, "path": path, "name": pad.name, "emits": "grabbed-only"}));
     std::io::stdout().flush().map_err(|e| e.to_string())?;
     let mut line = String::new();
     let stdin = io::stdin();
@@ -894,6 +970,8 @@ pub fn fixture_pad(layout: &str) -> Result<(), String> {
                 batch.push(Event::new(u16::try_from(n(0)?).map_err(|e| e.to_string())?, u16::try_from(n(1)?).map_err(|e| e.to_string())?, i32::try_from(n(2)?).map_err(|e| e.to_string())?));
             }
             batch.push(Event::new(EV_SYN, SYN_REPORT, 0));
+            // Nothing is ever emitted while no exclusive reader (the bridge's or the test's grab) holds the pad.
+            probe.require()?;
             pad.write(&batch).map_err(|e| e.to_string())?;
         }
         println!("{}", serde_json::json!({"ok": true}));

@@ -950,6 +950,10 @@ fn discovery_worker(
     let worker=std::thread::Builder::new().name("mios-devices".into()).spawn(move || {
         let mut rejected=BTreeMap::new();let mut sent=BTreeMap::new();let mut previous=BTreeSet::new();
         let mut skipped:BTreeSet<PathBuf>=BTreeSet::new();
+        // I4 --nested: a session node that vanished (its pad was destroyed) is gone for good: the bridge keeps serving
+        // the session's other controllers, and never opens whatever device the kernel later gives the same path.
+        let mut first_seen:BTreeMap<PathBuf,(u64,u64)>=BTreeMap::new();
+        let mut gone:BTreeSet<PathBuf>=BTreeSet::new();
         while !stop.load(Ordering::Relaxed) {
             let current=known.lock().unwrap().clone();
             for path in previous.difference(&current) {sent.remove(path);}
@@ -969,6 +973,16 @@ fn discovery_worker(
                 }
                 let identity=std::fs::metadata(&path).ok().map(|m|(m.rdev(),m.ino()));
                 if identity.is_some_and(|id|rejected.get(&path)==Some(&id)||sent.get(&path)==Some(&id)) {continue;}
+                if nested {
+                    if gone.contains(&path) {continue;}
+                    let replaced=match (identity,first_seen.get(&path)) {(Some(id),Some(first))=>id!=*first,(None,Some(_))=>true,_=>false};
+                    if replaced {
+                        gone.insert(path.clone());
+                        eprintln!("{}",serde_json::json!({"nested":"gone","device":path}));
+                        continue;
+                    }
+                    if let Some(id)=identity {first_seen.entry(path.clone()).or_insert(id);}
+                }
                 match Device::open(&path,fixture_only) {
                     // A seat's agent pad ([desktop.nested.devices].virtual_pad_name) is never the host's controller.
                     Ok(device) if !nested && crate::nested::seat_pad_name_matches(&policy.lock().unwrap().seat_pad_name,&device.name) => {
@@ -977,6 +991,10 @@ fn discovery_worker(
                         if let Some(id)=identity {rejected.insert(path,id);}
                     }
                     Ok(device)=> {if sender.try_send(Ok(device)).is_ok() {if let Some(id)=identity {sent.insert(path,id);}}}
+                    Err(e) if nested && first_seen.contains_key(&path) && (e.kind()==std::io::ErrorKind::NotFound || e.raw_os_error()==Some(libc::ENODEV)) => {
+                        gone.insert(path.clone());
+                        eprintln!("{}",serde_json::json!({"nested":"gone","device":path}));
+                    }
                     Err(e)=> {if !explicit.is_empty() {let _=sender.try_send(Err(format!("{}: {e}",path.display())));return;}
                         if let Some(id)=identity {rejected.insert(path,id);}}
                 }
@@ -1156,6 +1174,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         Some(_) => return Err("--console-sink-fd must be an inherited descriptor above 2".into()),
         None => None,
     };
+    // The placeholder context (app-capture until the compositor answers) is no evidence that an app owns the pad.
+    let boot_sample=focus.sampled;
     let shared_focus=std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
     let shared_policy=std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
     let mut sinks = Sinks {
@@ -1319,7 +1339,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     dev.device.snapshot().map_err(|e| e.to_string())?.1,
                                 );
                                 dev.router.pad.sequences = seq;
-                                dev.device.apply_quirks(&next.controller.quirks);
+                                if let Err(e) = dev.device.apply_quirks(&next.controller.quirks) { eprintln!("{}", serde_json::json!({"quirks_refused":e})); }
                                 dev.router.analog_triggers = dev.device.analog_triggers();
                                 dev.router.tmux = focus.tmux_client.is_some();
                                 dev.router.set_context(&ctx);
@@ -1345,7 +1365,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             while let Ok(candidate)=new_devices.try_recv() {
                     let mut device=candidate?;
                     let path=device.path.clone();
-                    let quirks=device.apply_quirks(&global.controller.quirks);
+                    let quirks=device.apply_quirks(&global.controller.quirks).unwrap_or_else(|e| { eprintln!("{}", serde_json::json!({"quirks_refused":e})); vec![] });
                     if !quirks.is_empty() {
                         eprintln!("{}", serde_json::json!({"quirks":quirks,"device":path,"driver":device.driver(),"usb_id":format!("{:04x}:{:04x}",device.usb_id().0,device.usb_id().1)}));
                     }
@@ -1488,8 +1508,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
                 // I4 --nested: a captured app in the session reads the assigned node itself, so the grab is released
                 // while the app owns the pad (the bridge still sees the held toggle_chord that releases it).
+                // Until the session compositor has answered once, the bridge keeps the grab: the placeholder context
+                // would otherwise release the node for a moment at start, where any host reader could see it.
                 if nested && opt.bridge {
-                    let want = !dev.router.app_owned();
+                    let want = !dev.router.app_owned() || (follow && focus.sampled == boot_sample);
                     if want && !dev.device.grabbed() {
                         dev.device.grab().map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
                         eprintln!("{}", serde_json::json!({"nested":"grab","device":path}));

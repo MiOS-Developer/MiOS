@@ -18,7 +18,7 @@ pub const CONTEXTS: [&str; 8] = [
 ];
 pub const VIRTUAL_PREFIX: &str = "mios-vctl";
 
-pub use mios_resolver::keybindings::{axis_code, button_code, normalize_chord};
+pub use mios_resolver::keybindings::{axis_code, button_code, normalize_chord, system_layer_code};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Binding {
@@ -132,17 +132,29 @@ pub struct Quirk {
 fn yes() -> bool {
     true
 }
+/// BTN_SOUTH..BTN_THUMBR: the codes every gamepad reports itself.
+pub const GAMEPAD_BLOCK: std::ops::RangeInclusive<u16> = 0x130..=0x13e;
+/// The merged remap of one device is usable only if it keeps the device's buttons distinct: no two codes the device
+/// reports may route as the same positional code (else one button would shadow another, and the inverse map that
+/// gives a captured app the driver's own codes back would be ambiguous). A source the device never reports is inert.
+/// Returns the first collision as (first code, second code, shared positional code).
+pub fn quirk_collision(device_keys: &[u16], map: &BTreeMap<u16, u16>) -> Option<(u16, u16, u16)> {
+    let mut seen: BTreeMap<u16, u16> = BTreeMap::new();
+    for k in device_keys.iter().copied().collect::<BTreeSet<_>>() {
+        let to = map.get(&k).copied().unwrap_or(k);
+        if let Some(prev) = seen.insert(to, k) {
+            return Some((prev, k, to));
+        }
+    }
+    None
+}
 /// A remap key: a button name or a hex evdev key code (0x100..=0x2ff).
 pub fn quirk_code(name: &str) -> Result<u16, String> {
     if let Some(hex) = name.strip_prefix("0x") {
         let c = u16::from_str_radix(hex, 16).map_err(|_| format!("quirk code {name}: hex evdev key code"))?;
         return if (0x100..=0x2ff).contains(&c) { Ok(c) } else { Err(format!("quirk code {name}: outside the evdev button range 0x100..0x2ff")) };
     }
-    let c = button_code(name)?;
-    if mios_resolver::keybindings::is_stick_pseudo(c) {
-        return Err(format!("quirk code {name}: a stick direction is not a reported code"));
-    }
-    Ok(c)
+    button_code(name).map_err(|e| format!("quirk code {name}: {e}"))
 }
 impl Quirk {
     /// The reported -> positional code map.
@@ -155,6 +167,15 @@ impl Quirk {
                 return Err(format!("quirk remap: {to} is the target of two codes (the map must be one-to-one)"));
             }
             out.insert(f, t);
+        }
+        // Every gamepad reports the face/shoulder/stick-click block itself, so a target there must also be a remapped
+        // source (a swap within the block): BTN_WEST -> BTN_NORTH alone would route two physical buttons as North.
+        // Targets outside the block (xpad's dpad_to_buttons -> BTN_DPAD_*) are checked per device at open.
+        for (from, to) in &self.remap {
+            let t = quirk_code(to)?;
+            if GAMEPAD_BLOCK.contains(&t) && !out.contains_key(&t) {
+                return Err(format!("quirk remap: {from} -> {to} leaves {to} itself unmapped, so two buttons would report {to} (remap it too: a swap)"));
+            }
         }
         Ok(out)
     }
@@ -618,12 +639,9 @@ impl GlobalConfig {
         {
             return Err("invalid controller rate/deadzone/sensitivity".into());
         }
-        // Stick pseudo-keys (LS_*/RS_*, I4) name stick flicks of the system layer only; no chord or role takes them.
-        let real = |b: &str| -> Result<u16, String> {
-            let code = button_code(b)?;
-            if mios_resolver::keybindings::is_stick_pseudo(code) { return Err(format!("{b} is a stick direction, not a button")); }
-            Ok(code)
-        };
+        // Stick pseudo-keys (LS_*/RS_*, I4) name stick flicks of the system layer only: button_code refuses them for
+        // every other role (Guide, cursor, mode override, the room table, the legacy Hypr3D buttons, quirks).
+        let real = button_code;
         real(&c.guide_button)?;
         real(&c.cursor_mode_button)?;
         if c.scan_ms == 0
@@ -644,7 +662,7 @@ impl GlobalConfig {
         }
         for (button, action) in &c.system_layer {
             // A button (Guide + button) or, since I4, a stick direction (Guide + one flick: LS_UP, RS_LEFT, ...).
-            if button_code(button)? == real(&c.guide_button)? {
+            if system_layer_code(button)? == real(&c.guide_button)? {
                 return Err(format!("system_layer {button}: the guide button is the layer's modifier"));
             }
             validate_action_in(action, &self.action_namespaces)?;
@@ -798,17 +816,19 @@ impl LegacyConfig {
         {
             return Err("invalid legacy controller ranges".into());
         }
-        for b in self.toggle_chord.iter().map(String::as_str).chain([
-            self.grab_button.as_str(),
-            &self.resize_button,
-            &self.view_mode_button,
-            &self.jump_button,
-            &self.crouch_button,
-            &self.fullscreen_button,
-            &self.shaderglass_toggle_button,
-            &self.shaderglass_cycle_button,
+        // Real buttons only: a stick pseudo-key (LS_*/RS_*) is a system-layer key, never the toggle chord (the
+        // universal held-L3+R3 release), the North capture or any other role a device must be able to press.
+        for (field, b) in self.toggle_chord.iter().map(|b| ("toggle_chord", b.as_str())).chain([
+            ("grab_button", self.grab_button.as_str()),
+            ("resize_button", &self.resize_button),
+            ("view_mode_button", &self.view_mode_button),
+            ("jump_button", &self.jump_button),
+            ("crouch_button", &self.crouch_button),
+            ("fullscreen_button", &self.fullscreen_button),
+            ("shaderglass_toggle_button", &self.shaderglass_toggle_button),
+            ("shaderglass_cycle_button", &self.shaderglass_cycle_button),
         ]) {
-            button_code(b)?;
+            button_code(b).map_err(|e| format!("desktop.hyprland.hypr3d.controller.{field}: {e}"))?;
         }
         for a in self
             .fallback_axes
@@ -969,8 +989,11 @@ BTN_TR="hypr:workspace e+1"
             (set(&["quirks", "xpad", "remap"], remap(&[("0x400", "BTN_WEST")])), "outside the evdev button range"),
             (set(&["quirks", "xpad", "remap"], remap(&[("LS_UP", "BTN_WEST")])), "stick direction"),
             (set(&["quirks", "xpad", "ids"], toml::Value::Array(vec!["45e:28e".into()])), "vvvv:pppp"),
-            (set(&["quirks", "bare", "remap"], remap(&[("BTN_NORTH", "BTN_WEST")])), "names no driver"),
-            (set(&["room", "LS_UP"], "hypr:hypr3d:cancel".into()), "stick direction, not a button"),
+            (set(&["quirks", "bare", "remap"], remap(&[("BTN_NORTH", "BTN_WEST"), ("BTN_WEST", "BTN_NORTH")])), "names no driver"),
+            (set(&["quirks", "xpad", "remap"], remap(&[("BTN_WEST", "BTN_NORTH")])), "a swap"),
+            (set(&["mode_override_chord"], toml::Value::Array(vec!["BTN_SELECT".into(), "RS_UP".into()])), "stick direction"),
+            (set(&["cursor_mode_button"], "LS_LEFT".into()), "stick direction"),
+            (set(&["room", "LS_UP"], "hypr:hypr3d:cancel".into()), "stick direction"),
             (set(&["guide_button"], "LS_UP".into()), "stick direction"),
             (set(&["system_layer", "BTN_MODE"], "hypr:killactive".into()), "the layer's modifier"),
             (set(&["system_layer", "LS_NOWHERE"], "hypr:killactive".into()), "unknown controller button"),
@@ -991,10 +1014,42 @@ BTN_TR="hypr:workspace e+1"
         assert!(vendor_with(set(&["quirks", "x", "drivers"], toml::Value::Array(vec!["hid-nintendo".into()]))).is_ok(), "a quirk without remap is inert, not an error");
     }
     #[test]
+    fn legacy_controller_buttons_refuse_stick_pseudo_keys() {
+        // D1: the resolver takes LS_*/RS_* as system-layer keys only. The legacy Hypr3D roles (the held L3+R3
+        // toggle/release chord, the North capture, grab/resize, view/jump/crouch, ShaderGlass) need real buttons.
+        let mut fields: Vec<(String, toml::Value)> = vec![("toggle_chord".into(), toml::Value::Array(vec!["LS_UP".into(), "BTN_THUMBR".into()]))];
+        for f in ["grab_button", "resize_button", "view_mode_button", "jump_button", "crouch_button", "fullscreen_button", "shaderglass_toggle_button", "shaderglass_cycle_button"] {
+            fields.push((f.into(), "RS_DOWN".into()));
+        }
+        for (field, val) in fields {
+            let f2 = field.clone();
+            let e = vendor_with(move |v| {
+                v["desktop"]["hyprland"]["hypr3d"]["controller"].as_table_mut().unwrap().insert(f2, val);
+            })
+            .err()
+            .unwrap_or_else(|| panic!("{field} accepted a stick pseudo-key"));
+            assert!(e.contains(&format!("controller.{field}")) && e.contains("stick direction"), "{field}: {e}");
+        }
+        assert!(vendor_with(|_| {}).is_ok(), "the vendor SSOT uses real buttons");
+    }
+    #[test]
+    fn a_device_quirk_map_never_routes_two_buttons_as_one() {
+        let xpad_keys: Vec<u16> = (0x130..=0x13e).filter(|c| ![0x132, 0x135, 0x138, 0x139].contains(c)).collect();
+        let swap: BTreeMap<u16, u16> = [(0x134, 0x133), (0x133, 0x134), (0x2c0, 0x222)].into_iter().collect();
+        assert_eq!(quirk_collision(&xpad_keys, &swap), None, "a swap keeps every button distinct; an unreported source is inert");
+        let partial: BTreeMap<u16, u16> = [(0x134, 0x133)].into_iter().collect();
+        assert_eq!(quirk_collision(&xpad_keys, &partial), Some((0x133, 0x134, 0x133)), "West -> North alone: two Norths");
+        let mut dpad = xpad_keys.clone();
+        dpad.extend([0x2c0, 0x222]);
+        let into_dpad: BTreeMap<u16, u16> = [(0x2c0, 0x222)].into_iter().collect();
+        assert!(quirk_collision(&dpad, &into_dpad).is_some(), "a target the device also reports natively collides");
+    }
+    #[test]
     fn stick_pseudo_keys_are_never_real_codes() {
         for n in ["LS_UP", "LS_DOWN", "LS_LEFT", "LS_RIGHT", "RS_UP", "RS_DOWN", "RS_LEFT", "RS_RIGHT"] {
-            let c = button_code(n).unwrap();
+            let c = system_layer_code(n).unwrap();
             assert!(c > 0x2ff && mios_resolver::keybindings::is_stick_pseudo(c), "{n}");
+            assert!(button_code(n).unwrap_err().contains("stick direction"), "{n}: only the system layer takes it");
         }
         assert!(normalize_chord("BTN_SOUTH+LS_UP", " ").is_err(), "a chord takes buttons only");
     }

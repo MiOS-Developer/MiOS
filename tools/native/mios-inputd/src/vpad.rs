@@ -247,6 +247,19 @@ impl Model {
         json!({"left": [v[0], v[1]], "right": [v[2], v[3]], "triggers": [v[4], v[5]], "dpad": [self.hat.0, self.hat.1],
                "buttons": self.buttons.iter().map(|c| crate::nav::Input::Button(*c).name()).collect::<Vec<_>>(), "busy": self.busy()})
     }
+    /// The whole emitted state as one frame: what a reader that missed frames needs to be current again.
+    pub fn state_frame(&self) -> Vec<Event> {
+        let mut out: Vec<_> = AXES.iter().zip(self.last).map(|(c, v)| Event::new(EV_ABS, *c, v)).collect();
+        out.extend([Event::new(EV_ABS, 16, self.last_hat.0), Event::new(EV_ABS, 17, self.last_hat.1)]);
+        for (k, code) in [(0usize, 0x138u16), (1, 0x139)] {
+            out.push(Event::new(EV_KEY, code, i32::from(self.digital[k])));
+        }
+        for c in KEYS.iter().filter(|c| ![0x138, 0x139].contains(*c)) {
+            out.push(Event::new(EV_KEY, *c, i32::from(self.last_buttons.contains(c))));
+        }
+        out.push(Event::new(EV_SYN, SYN_REPORT, 0));
+        out
+    }
     /// Advance `dt_ms` and return the evdev frame of what changed (empty when nothing did).
     pub fn tick(&mut self, dt_ms: f64) -> Vec<Event> {
         let mut out = vec![];
@@ -365,6 +378,11 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
         std::thread::sleep(Duration::from_millis(10));
     }
     let path = path.ok_or("the pad did not enumerate")?;
+    // Fixture tier: a test pad emits only while an exclusive reader (a fixture bridge or the test) holds its grab;
+    // frames are withheld otherwise and the reader gets the whole state once a grab holds it again.
+    let probe = if fixture { Some(crate::linux::GrabProbe::open(&path).map_err(|e| e.to_string())?) } else { None };
+    let mut withheld = 0u64;
+    let mut last_probe = Instant::now();
     let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
     std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
@@ -389,48 +407,105 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
     }
     let mut model = Model::new(cfg.clone());
     let mut waiters: Vec<(UnixStream, Instant)> = vec![];
-    let mut bridge: Option<(String, std::process::Child)> = None;
+    // Connections whose request line has not fully arrived yet (read without blocking; dropped after 2 s).
+    let mut conns: Vec<(UnixStream, Vec<u8>, Instant)> = vec![];
+    let mut bridge: Option<SeatBridge> = None;
+    // Bridges this holder started that other pads of the seat still use: reaped here when they exit.
+    let mut orphans: Vec<std::process::Child> = vec![];
     let mut last_cmd = Instant::now();
     let mut last_tick = Instant::now();
     let period = Duration::from_secs_f64(1.0 / f64::from(cfg.rate_hz));
     let result = (|| -> Result<(), String> {
         while !STOP.load(Ordering::Relaxed) {
+            // Accept and read without blocking: a client slow to write its line never stalls the ramp sampler.
             loop {
                 match listener.accept() {
-                    Ok((mut s, _)) => {
+                    Ok((s, _)) => {
                         last_cmd = Instant::now();
-                        let _ = s.set_nonblocking(false);
-                        let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
-                        let mut line = String::new();
-                        if BufReader::new(&s).take(65536).read_line(&mut line).is_err() {
-                            continue;
+                        if s.set_nonblocking(true).is_ok() {
+                            conns.push((s, Vec::new(), Instant::now()));
                         }
-                        let req: Json = match serde_json::from_str(line.trim()) {
-                            Ok(v) => v,
-                            Err(e) => { let _ = writeln!(s, "{}", json!({"ok": false, "error": e.to_string()})); continue; }
-                        };
-                        let op = req.get("op").and_then(Json::as_str).unwrap_or("");
-                        let reply = match op {
-                            "destroy" => { let _ = writeln!(s, "{}", json!({"ok": true, "destroyed": key})); return Ok(()); }
-                            "wait" => { waiters.push((s, Instant::now() + Duration::from_millis(cfg.max_ms * 3 + 1000))); continue; }
-                            "info" => Ok(json!({"ok": true, "pad": state, "assigned": bridge.as_ref().map(|(s, c)| json!({"seat": s, "bridge_pid": c.id()}))})),
-                            "assign" => assign(&global, root.as_deref(), &path, fixture, req.get("seat").and_then(Json::as_str).unwrap_or(key), &d, key, &mut bridge),
-                            "unassign" => { if let Some((_, mut c)) = bridge.take() { stop_child(&mut c); } Ok(json!({"ok": true, "assigned": null})) }
-                            _ => model.command(&req),
-                        };
-                        let reply = reply.unwrap_or_else(|e| json!({"ok": false, "error": e}));
-                        let _ = writeln!(s, "{reply}");
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                     Err(e) => return Err(e.to_string()),
                 }
             }
+            let mut ready = vec![];
+            for (mut s, mut buf, since) in std::mem::take(&mut conns) {
+                let mut chunk = [0u8; 4096];
+                let complete = loop {
+                    match s.read(&mut chunk) {
+                        Ok(0) => break Some(!buf.is_empty()),
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if buf.contains(&b'\n') || buf.len() > 65536 { break Some(true); }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break None,
+                        Err(_) => break Some(false),
+                    }
+                };
+                match complete {
+                    Some(true) => ready.push((s, buf)),
+                    Some(false) => {}
+                    None if since.elapsed() < Duration::from_secs(2) => conns.push((s, buf, since)),
+                    None => {}
+                }
+            }
+            for (mut s, buf) in ready {
+                last_cmd = Instant::now();
+                let _ = s.set_nonblocking(false);
+                let _ = s.set_write_timeout(Some(Duration::from_millis(200)));
+                if buf.len() > 65536 {
+                    let _ = writeln!(s, "{}", json!({"ok": false, "error": "request line over 64 KiB"}));
+                    continue;
+                }
+                let line = String::from_utf8_lossy(buf.split(|b| *b == b'\n').next().unwrap_or(&[])).into_owned();
+                let req: Json = match serde_json::from_str(line.trim()) {
+                    Ok(v) => v,
+                    Err(e) => { let _ = writeln!(s, "{}", json!({"ok": false, "error": e.to_string()})); continue; }
+                };
+                let op = req.get("op").and_then(Json::as_str).unwrap_or("");
+                let reply = match op {
+                    "destroy" => { let _ = writeln!(s, "{}", json!({"ok": true, "destroyed": key})); return Ok(()); }
+                    "wait" => { waiters.push((s, Instant::now() + Duration::from_millis(cfg.max_ms * 3 + 1000))); continue; }
+                    "info" => Ok(json!({"ok": true, "pad": state, "assigned": bridge.as_ref().map(SeatBridge::json), "withheld_frames": withheld})),
+                    "assign" => {
+                        let seat = req.get("seat").and_then(Json::as_str).unwrap_or(key).to_owned();
+                        assign(&global, root.as_deref(), &path, fixture, &seat, &d, key, &mut bridge, &mut orphans)
+                            .inspect(|_| write_state(&state_file, &state, bridge.as_ref()))
+                    }
+                    "unassign" => {
+                        if let Some(b) = bridge.take() {
+                            write_state(&state_file, &state, None);
+                            release(&d, key, b, &mut orphans);
+                        }
+                        Ok(json!({"ok": true, "assigned": null}))
+                    }
+                    _ => model.command(&req),
+                };
+                let reply = reply.unwrap_or_else(|e| json!({"ok": false, "error": e}));
+                let _ = writeln!(s, "{reply}");
+            }
             let now = Instant::now();
             let dt = now.duration_since(last_tick).as_secs_f64().min(0.1) * 1000.0;
             last_tick = now;
             let frame = model.tick(dt);
-            if !frame.is_empty() {
-                pad.write(&frame).map_err(|e| e.to_string())?;
+            match &probe {
+                None if !frame.is_empty() => pad.write(&frame).map_err(|e| e.to_string())?,
+                None => {}
+                // Probe only when there is something to emit (withheld state is re-offered every 100 ms).
+                Some(p) if !frame.is_empty() || (withheld > 0 && last_probe.elapsed() >= Duration::from_millis(100)) => {
+                    last_probe = Instant::now();
+                    if !p.held_elsewhere() {
+                        withheld += u64::from(!frame.is_empty());
+                    } else if withheld > 0 {
+                        withheld = 0;
+                        pad.write(&model.state_frame()).map_err(|e| e.to_string())?;
+                    } else {
+                        pad.write(&frame).map_err(|e| e.to_string())?;
+                    }
+                }
+                Some(_) => {}
             }
             waiters.retain_mut(|(s, until)| {
                 if !model.busy() || Instant::now() > *until {
@@ -440,12 +515,19 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                     true
                 }
             });
-            if let Some((seat, c)) = &mut bridge {
-                if let Ok(Some(status)) = c.try_wait() {
-                    eprintln!("{}", json!({"bridge": "exited", "seat": seat, "status": status.code()}));
+            if let Some(b) = &mut bridge {
+                if let Some(status) = b.exited() {
+                    eprintln!("{}", json!({"bridge": "exited", "seat": b.seat, "status": status}));
+                    if let Ok(_lock) = lock_seat(&d, &b.seat) {
+                        if read_seat_record(&d, &b.seat).is_some_and(|(pid, start)| pid == b.pid && start == b.start) {
+                            let _ = std::fs::remove_file(seats_dir(&d).join(format!("{}.json", b.seat)));
+                        }
+                    }
                     bridge = None;
+                    write_state(&state_file, &state, None);
                 }
             }
+            orphans.retain_mut(|c| !matches!(c.try_wait(), Ok(Some(_))));
             if model.at_rest() && bridge.is_none() && last_cmd.elapsed() > Duration::from_secs(cfg.idle_exit_s) {
                 eprintln!("{}", json!({"pad": key, "exit": "idle"}));
                 return Ok(());
@@ -460,9 +542,12 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
     rest.last_hat = model.last_hat;
     rest.last_buttons = model.last_buttons.clone();
     rest.digital = model.digital;
-    let _ = pad.write(&rest.tick(0.0));
-    if let Some((_, mut c)) = bridge.take() {
-        stop_child(&mut c);
+    if probe.as_ref().is_none_or(crate::linux::GrabProbe::held_elsewhere) {
+        let _ = pad.write(&rest.tick(0.0));
+    }
+    let _ = std::fs::remove_file(&state_file);
+    if let Some(b) = bridge.take() {
+        release(&d, key, b, &mut orphans);
     }
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_file(&state_file);
@@ -482,17 +567,132 @@ fn stop_child(c: &mut std::process::Child) {
     let _ = c.kill();
     let _ = c.wait();
 }
+/// The nested bridge routing a seat. One bridge serves every pad assigned to the seat (it opens all of the session's
+/// controllers and holds the session's lock), so a second pad shares it instead of starting a rival, and it stops
+/// only when the last pad of the seat lets go. `<socket_dir>/seats/<seat>.json` names it (pid + start time).
+pub struct SeatBridge {
+    pub seat: String,
+    pub pid: u32,
+    pub start: u64,
+    pub fixture: bool,
+    /// Set when this holder started it (it reaps it).
+    child: Option<std::process::Child>,
+}
+impl SeatBridge {
+    fn json(&self) -> Json {
+        json!({"seat": self.seat, "bridge_pid": self.pid, "shared": self.child.is_none()})
+    }
+    /// The recorded process still runs (same pid and start time, and not a zombie awaiting its reaper).
+    fn alive(&self) -> bool {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", self.pid)) else { return false };
+        let f: Vec<&str> = stat.rsplit_once(')').map(|(_, r)| r.split_whitespace().collect()).unwrap_or_default();
+        f.first().is_some_and(|st| *st != "Z" && *st != "X") && f.get(19).and_then(|v| v.parse().ok()) == Some(self.start)
+    }
+    /// Some(exit code) once the bridge is gone.
+    fn exited(&mut self) -> Option<Option<i32>> {
+        match &mut self.child {
+            Some(c) => c.try_wait().ok().flatten().map(|s| s.code()),
+            None => (!self.alive()).then_some(None),
+        }
+    }
+}
+fn seats_dir(d: &Path) -> PathBuf {
+    d.join("seats")
+}
+/// Serialises assign/release across holders: an advisory lock on the `seats` directory itself (no lock file is left
+/// behind; assign and release are rare and short, so one lock for every seat costs nothing).
+fn lock_seat(d: &Path, _seat: &str) -> Result<std::fs::File, String> {
+    use std::os::fd::AsRawFd;
+    private_dir(&seats_dir(d))?;
+    let f = std::fs::File::open(seats_dir(d)).map_err(|e| e.to_string())?;
+    // SAFETY: flock on our own valid descriptor; the lock goes with the File.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(f)
+}
+fn read_seat_json(d: &Path, seat: &str) -> Option<Json> {
+    serde_json::from_slice(&std::fs::read(seats_dir(d).join(format!("{seat}.json"))).ok()?).ok()
+}
+/// The recorded bridge's (pid, start), live or not.
+fn read_seat_record(d: &Path, seat: &str) -> Option<(u32, u64)> {
+    let j = read_seat_json(d, seat)?;
+    Some((u32::try_from(j["pid"].as_u64()?).ok()?, j["start"].as_u64()?))
+}
+/// The seat's live bridge, if one runs.
+fn read_seat(d: &Path, seat: &str) -> Option<SeatBridge> {
+    let j = read_seat_json(d, seat)?;
+    let b = SeatBridge { seat: seat.into(), pid: u32::try_from(j["pid"].as_u64()?).ok()?, start: j["start"].as_u64()?, fixture: j["fixture"].as_bool()?, child: None };
+    b.alive().then_some(b)
+}
+/// Live holders other than `me` whose state names `seat` as their assignment.
+fn other_holders(d: &Path, seat: &str, me: &str) -> usize {
+    std::fs::read_dir(d).into_iter().flatten().flatten().filter_map(|e| {
+        let p = e.path();
+        (p.extension().is_some_and(|x| x == "json")).then(|| std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<Json>(&b).ok())).flatten()
+    }).filter(|j| {
+        j["pad"].as_str() != Some(me) && j["assigned"].as_str() == Some(seat)
+            && j["pid"].as_u64().and_then(|p| u32::try_from(p).ok()).and_then(|p| crate::nested::start_time(Path::new("/proc"), p)) == j["start"].as_u64()
+    }).count()
+}
+fn write_state(file: &Path, state: &Json, bridge: Option<&SeatBridge>) {
+    let mut st = state.clone();
+    st["assigned"] = bridge.map_or(Json::Null, |b| Json::from(b.seat.clone()));
+    let tmp = file.with_extension("json.tmp");
+    if std::fs::write(&tmp, format!("{st}\n")).is_ok() {
+        let _ = std::fs::rename(&tmp, file);
+    }
+}
+/// Let go of a seat: the bridge stops only when no other live pad holder is assigned to it.
+fn release(d: &Path, key: &str, mut b: SeatBridge, orphans: &mut Vec<std::process::Child>) {
+    let Ok(_lock) = lock_seat(d, &b.seat) else { return };
+    if other_holders(d, &b.seat, key) > 0 {
+        eprintln!("{}", json!({"bridge": "kept", "seat": b.seat, "reason": "another pad of the seat still uses it"}));
+        orphans.extend(b.child.take());
+        return;
+    }
+    match b.child.take() {
+        Some(mut c) => stop_child(&mut c),
+        None if b.alive() => {
+            // SAFETY: pid + start time name the seat's bridge process.
+            unsafe { libc::kill(b.pid as i32, libc::SIGTERM) };
+            let end = Instant::now() + Duration::from_secs(3);
+            while b.alive() && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if b.alive() {
+                // SAFETY: as above, still the same process.
+                unsafe { libc::kill(b.pid as i32, libc::SIGKILL) };
+            }
+        }
+        None => {}
+    }
+    let _ = std::fs::remove_file(seats_dir(d).join(format!("{}.json", b.seat)));
+}
 /// Route the pad into a nested session: the session must hold this pad's node (launched with `--device virtual-pad`
-/// or `--device name:<pad name>`); the holder then runs that session's `bridge --nested <seat>`.
+/// or `--device name:<pad name>`). The seat's bridge (`bridge --nested <seat>`) is started once and shared.
 #[allow(clippy::too_many_arguments)]
-fn assign(global: &GlobalConfig, root: Option<&Path>, node: &Path, fixture: bool, seat: &str, d: &Path, key: &str, bridge: &mut Option<(String, std::process::Child)>) -> Result<Json, String> {
+fn assign(global: &GlobalConfig, root: Option<&Path>, node: &Path, fixture: bool, seat: &str, d: &Path, key: &str, bridge: &mut Option<SeatBridge>, orphans: &mut Vec<std::process::Child>) -> Result<Json, String> {
     let registry = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("XDG_RUNTIME_DIR missing")?.join(&global.nested_registry);
     let s = crate::nested::session(&registry, Path::new("/proc"), seat)?;
     if !s.controllers.iter().any(|p| p == node) {
         return Err(format!("the session for seat {seat:?} does not hold this pad ({}); launch it with --seat {seat} --device virtual-pad", node.display()));
     }
-    if let Some((_, mut c)) = bridge.take() {
-        stop_child(&mut c);
+    if bridge.as_ref().is_some_and(|b| b.seat == seat && b.alive()) {
+        let b = bridge.as_ref().map(SeatBridge::json).unwrap_or_default();
+        return Ok(json!({"ok": true, "assigned": seat, "bridge": b, "session": s.entry, "pad_state": s.pad_state}));
+    }
+    if let Some(old) = bridge.take() {
+        release(d, key, old, orphans);
+    }
+    let _lock = lock_seat(d, seat)?;
+    if let Some(shared) = read_seat(d, seat) {
+        if shared.fixture != fixture {
+            return Err(format!("seat {seat:?} is routed by a {} bridge (pid {}); a {} pad cannot share it", if shared.fixture { "fixture-tier" } else { "live" }, shared.pid, if fixture { "fixture" } else { "live" }));
+        }
+        let j = shared.json();
+        *bridge = Some(shared);
+        return Ok(json!({"ok": true, "assigned": seat, "bridge": j, "session": s.entry, "pad_state": s.pad_state}));
     }
     let log = std::fs::OpenOptions::new().create(true).append(true).open(d.join(format!("{key}-bridge.log"))).map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
@@ -506,8 +706,14 @@ fn assign(global: &GlobalConfig, root: Option<&Path>, node: &Path, fixture: bool
     let child = cmd.stdin(std::process::Stdio::null()).stdout(log.try_clone().map_err(|e| e.to_string())?).stderr(log)
         .spawn().map_err(|e| format!("nested bridge: {e}"))?;
     let pid = child.id();
-    *bridge = Some((seat.to_owned(), child));
-    Ok(json!({"ok": true, "assigned": seat, "bridge_pid": pid, "session": s.entry, "pad_state": s.pad_state}))
+    let start = (0..50).find_map(|_| crate::nested::start_time(Path::new("/proc"), pid).or_else(|| { std::thread::sleep(Duration::from_millis(2)); None }))
+        .ok_or("nested bridge: no start time")?;
+    let record = json!({"seat": seat, "pid": pid, "start": start, "fixture": fixture, "holder": key});
+    std::fs::write(seats_dir(d).join(format!("{seat}.json")), format!("{record}\n")).map_err(|e| e.to_string())?;
+    let b = SeatBridge { seat: seat.into(), pid, start, fixture, child: Some(child) };
+    let j = b.json();
+    *bridge = Some(b);
+    Ok(json!({"ok": true, "assigned": seat, "bridge": j, "bridge_pid": pid, "session": s.entry, "pad_state": s.pad_state}))
 }
 
 /// Start a holder for `key` and return its ready line (the pad's name, node and socket).

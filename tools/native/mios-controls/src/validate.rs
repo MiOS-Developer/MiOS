@@ -1,6 +1,6 @@
 // AI-hint: mios-controls validation: renders the draft's compositor Lua through mios-gen (stdout only, the draft as a private user tier), runs the gate's keybind-collision analysis over the merged draft, adds controller system-layer checks, and reports only findings the draft introduces.
 // AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-controls/src/model.rs
-// AI-functions: Validator::run, render_lua, controller_findings, Outcome::new_findings
+// AI-functions: Validator::run, render_lua, controller_findings, controller_role_findings, Outcome::new_findings
 use crate::model::{at, str_list, Layers};
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -102,10 +102,49 @@ impl Drop for Remove {
     }
 }
 
-/// The controller system layer: real evdev button names, never the guide button itself (it is the layer's
-/// modifier), and actions under the same namespace/implemented rules the keyboard bindings follow.
-pub fn controller_findings(merged: &Value) -> Vec<String> {
+/// Every controller role outside the system layer names a real button a device can press: the stick pseudo-keys
+/// (LS_*/RS_*) are system-layer keys only, so a toggle chord, capture button or Guide bound to one could never fire.
+/// The same rule mios-inputd's loader applies (mios_resolver::keybindings::button_code).
+pub fn controller_role_findings(merged: &Value) -> Vec<String> {
+    const LEGACY: [&str; 8] = ["grab_button", "resize_button", "view_mode_button", "jump_button", "crouch_button", "fullscreen_button", "shaderglass_toggle_button", "shaderglass_cycle_button"];
     let mut out = Vec::new();
+    let mut check = |tag: String, name: &str| {
+        if let Err(e) = mios_resolver::keybindings::button_code(name) {
+            out.push(format!("{tag}: {e}"));
+        }
+    };
+    let strs = |path: &str| -> Vec<String> { at(merged, path).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect() };
+    for key in ["guide_button", "cursor_mode_button"] {
+        if let Some(b) = at(merged, &format!("keybindings.global.controller.{key}")).and_then(Value::as_str) {
+            check(format!("controller.{key}"), b);
+        }
+    }
+    for b in strs("keybindings.global.controller.mode_override_chord") {
+        check("controller.mode_override_chord".into(), &b);
+    }
+    if let Some(room) = at(merged, "keybindings.global.controller.room").and_then(Value::as_table) {
+        for b in room.keys() {
+            check(format!("controller.room.{b}"), b);
+        }
+    }
+    for b in strs("desktop.hyprland.hypr3d.controller.toggle_chord") {
+        check("hypr3d.controller.toggle_chord".into(), &b);
+    }
+    for key in LEGACY {
+        if let Some(b) = at(merged, &format!("desktop.hyprland.hypr3d.controller.{key}")).and_then(Value::as_str) {
+            check(format!("hypr3d.controller.{key}"), b);
+        }
+    }
+    for b in strs("keybindings.controller.hypr3d_toggle_chord") {
+        check("keybindings.controller.hypr3d_toggle_chord".into(), &b);
+    }
+    out
+}
+
+/// The controller system layer: real evdev button names or stick pseudo-keys, never the guide button itself (it is
+/// the layer's modifier), and actions under the same namespace/implemented rules the keyboard bindings follow.
+pub fn controller_findings(merged: &Value) -> Vec<String> {
+    let mut out = controller_role_findings(merged);
     let Some(layer) = at(merged, "keybindings.global.controller.system_layer").and_then(Value::as_table) else {
         return out;
     };
@@ -122,7 +161,8 @@ pub fn controller_findings(merged: &Value) -> Vec<String> {
         .unwrap_or_default();
     for (button, action) in layer {
         let tag = format!("controller.system_layer.{button}");
-        if let Err(e) = mios_resolver::keybindings::button_code(button) {
+        // The system layer is the one table that also takes the stick pseudo-keys (LS_*/RS_*: one action per flick).
+        if let Err(e) = mios_resolver::keybindings::system_layer_code(button) {
             out.push(format!("{tag}: {e}"));
         }
         if button == guide {
@@ -170,6 +210,18 @@ mod tests {
         assert!(f.iter().any(|x| x.contains("BTN_SOUTH") && x.contains("namespace")));
         assert!(f.iter().any(|x| x.contains("BTN_WEST") && x.contains("planned_actions")));
         assert!(f.iter().any(|x| x.contains("BTN_EAST")));
+    }
+
+    #[test]
+    fn stick_pseudo_keys_are_system_layer_keys_only() {
+        // D1: LS_*/RS_* name one flick in the system layer; every other role needs a button a device can press.
+        assert!(controller_findings(&merged("LS_UP=\"mios:ok\"\nRS_LEFT=\"hypr:movewindow left\"\n")).is_empty());
+        let roles: Value = "[keybindings.global.controller]\nguide_button=\"BTN_MODE\"\ncursor_mode_button=\"RS_UP\"\nmode_override_chord=[\"BTN_SELECT\",\"LS_DOWN\"]\n[keybindings.global.controller.room]\nRS_RIGHT=\"hypr:hypr3d:cancel\"\nBTN_EAST=\"hypr:hypr3d:cancel\"\n[desktop.hyprland.hypr3d.controller]\ntoggle_chord=[\"LS_UP\",\"BTN_THUMBR\"]\nfullscreen_button=\"RS_DOWN\"\ngrab_button=\"BTN_TR2\"\n[keybindings.controller]\nhypr3d_toggle_chord=[\"BTN_THUMBL\",\"LS_LEFT\"]\n".parse().unwrap();
+        let f = controller_findings(&roles);
+        for tag in ["controller.cursor_mode_button", "controller.mode_override_chord", "controller.room.RS_RIGHT", "hypr3d.controller.toggle_chord", "hypr3d.controller.fullscreen_button", "keybindings.controller.hypr3d_toggle_chord"] {
+            assert!(f.iter().any(|x| x.starts_with(&format!("{tag}:")) && x.contains("stick direction")), "{tag} not flagged: {f:#?}");
+        }
+        assert_eq!(f.len(), 6, "real buttons are not flagged: {f:#?}");
     }
 
     #[test]

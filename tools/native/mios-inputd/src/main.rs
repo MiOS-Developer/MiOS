@@ -229,7 +229,11 @@ fn run() -> Result<(), String> {
         Operation::Bridge { nested: Some(seat), .. } => {
             let rt = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("XDG_RUNTIME_DIR missing")?;
             let s = mios_inputd::nested::session(&rt.join(&global.nested_registry), std::path::Path::new("/proc"), seat)?;
-            // Single-threaded here: no other thread reads the environment yet.
+            // Single-threaded here: no other thread reads the environment yet. Action children (wpctl, playerctl)
+            // keep the host's PipeWire and user bus: the session runtime has neither (D3).
+            for (k, v) in mios_inputd::nested::host_service_env(&rt, |k| std::env::var(k).ok()) {
+                std::env::set_var(k, v);
+            }
             std::env::set_var("XDG_RUNTIME_DIR", &s.runtime);
             std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &s.instance);
             std::env::set_var("WAYLAND_DISPLAY", &s.wayland_display);

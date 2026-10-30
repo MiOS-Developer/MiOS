@@ -1,6 +1,6 @@
 // AI-hint: The nested-session device contract on the inputd side (I4): read mios-gen's live registry ([desktop.nested].registry_dir) so the host bridge never owns a node assigned to a nested session, and so `bridge --nested <seat>` follows exactly that session (its compositor, its private room packet, its assigned controller nodes).
 // AI-related: tools/native/mios-gen/src/nested_devices.rs (Claim, live_sessions), tools/native/mios-gen/src/nested_session.rs (session.json, pad_state), usr/share/mios/mios.toml [desktop.nested]
-// AI-functions: start_time, live_sessions, assigned_nodes, session, seat_pad_name_matches
+// AI-functions: start_time, live_sessions, assigned_nodes, session, host_service_env, seat_pad_name_matches
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -109,6 +109,22 @@ pub fn session(registry: &Path, proc_root: &Path, seat: &str) -> Result<Session,
     })
 }
 
+/// The host services a nested bridge's action children still reach after it switches XDG_RUNTIME_DIR to the session
+/// runtime (which has no pipewire-0 and no bus socket): PipeWire through PIPEWIRE_RUNTIME_DIR (the same variable
+/// mios-gen gives the session itself) and the user bus through DBUS_SESSION_BUS_ADDRESS (playerctl, notifications).
+/// A value the bridge already inherited wins; the bus is named only when its socket exists.
+pub fn host_service_env(host_runtime: &Path, inherited: impl Fn(&str) -> Option<String>) -> Vec<(&'static str, String)> {
+    let mut out = vec![];
+    if inherited("PIPEWIRE_RUNTIME_DIR").is_none_or(|v| v.is_empty()) {
+        out.push(("PIPEWIRE_RUNTIME_DIR", host_runtime.display().to_string()));
+    }
+    let bus = host_runtime.join("bus");
+    if inherited("DBUS_SESSION_BUS_ADDRESS").is_none_or(|v| v.is_empty()) && bus.exists() {
+        out.push(("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", bus.display())));
+    }
+    out
+}
+
 /// [desktop.nested.devices].virtual_pad_name with `{seat}` filled by any label: a seat's pad, never the host's.
 pub fn seat_pad_name_matches(template: &str, name: &str) -> bool {
     let Some((pre, post)) = template.split_once("{seat}") else { return false };
@@ -169,5 +185,18 @@ mod tests {
         assert!(!seat_pad_name_matches(t, "MiOS Nested Pad "));
         assert!(!seat_pad_name_matches(t, "MiOS Agent Pad host"));
         assert!(!seat_pad_name_matches("no placeholder", "no placeholder"));
+    }
+    #[test]
+    fn a_nested_bridge_keeps_the_host_pipewire_and_bus_for_its_actions() {
+        // D3: the session runtime has no pipewire-0 or bus; wpctl/playerctl children must still reach the host's.
+        let t = tempfile::tempdir().unwrap();
+        let none = |_: &str| None;
+        let env = host_service_env(t.path(), none);
+        assert_eq!(env, vec![("PIPEWIRE_RUNTIME_DIR", t.path().display().to_string())], "no bus socket: no bus address");
+        std::fs::write(t.path().join("bus"), "").unwrap();
+        let env = host_service_env(t.path(), none);
+        assert!(env.contains(&("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}/bus", t.path().display()))), "{env:?}");
+        let inherited = |k: &str| (k == "DBUS_SESSION_BUS_ADDRESS" || k == "PIPEWIRE_RUNTIME_DIR").then(|| "kept".to_string());
+        assert!(host_service_env(t.path(), inherited).is_empty(), "an inherited value wins");
     }
 }

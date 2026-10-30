@@ -1,6 +1,6 @@
 // AI-hint: Per-controller input state machine: ownership contract first, then the nav projection of uncaptured windows (tap/hold, repeat, flicks, HAT fold, thumb/Guide disambiguation); system actions never enter app replay.
 // AI-related: usr/libexec/mios/mios-gamepad-hypr3d, keybindings.global.controller
-use crate::config::{axis_code, button_code, ControllerConfig, GlobalConfig, LegacyConfig, RoomAction};
+use crate::config::{axis_code, button_code, system_layer_code, ControllerConfig, GlobalConfig, LegacyConfig, RoomAction};
 use crate::nav::{Dir, Input, Value, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -750,6 +750,15 @@ impl Router {
                         self.guide_tap = (self.pressed.len() == 1).then_some((now, 0.0));
                     }
                 } else if e.value == 0 && !self.repairing {
+                    // The layer gave the pad back: a captured app (captured_system_layer) got rest at the Guide press
+                    // and nothing while the layer held it, so it gets the axes' live values again now.
+                    if owned {
+                        let live: Vec<_> = self.axes.iter().filter(|(c, _)| self.axis_sink(**c) == Sink::App).map(|(c, a)| Event::new(EV_ABS, *c, a.value)).collect();
+                        if !live.is_empty() {
+                            o.app.extend(live);
+                            o.app.push(Event::new(EV_SYN, SYN_REPORT, 0));
+                        }
+                    }
                     // A tap is short on the tick clock (the live loop) and on the event clock (replays without ticks).
                     let hold = self.global.controller.capture_hold_ms;
                     if self.guide_tap.take().is_some_and(|(at, _)| now.saturating_sub(at) < hold) {
@@ -937,8 +946,12 @@ impl Router {
             let sink = self.axis_sink(e.code);
             #[cfg(test)]
             let sink = if self.mutant_room_forward && sink == Sink::Room { Sink::App } else { sink };
+            // While the Guide system layer holds the pad (captured_system_layer = true lets it reach a captured app),
+            // the HAT, sticks and analog triggers are layer input (one action per press/flick): the app does not
+            // also receive them, exactly as it does not receive Guide + a button (D2).
             if sink == Sink::App
                 && (self.app_owned() || !self.button(&self.global.controller.guide_button))
+                && !self.system_layer_held()
             {
                 o.app.push(e);
             }
@@ -1157,7 +1170,7 @@ impl Router {
 }
 impl Router {
     fn system_action(&self, code: u16) -> Option<String> {
-        self.global.controller.system_layer.iter().find(|(name, _)| button_code(name).ok() == Some(code)).map(|(_, a)| a.clone())
+        self.global.controller.system_layer.iter().find(|(name, _)| system_layer_code(name).ok() == Some(code)).map(|(_, a)| a.clone())
     }
     /// The nav profile that owns the controller now, or None (captured, the room, an unlisted context or "vpad").
     pub fn nav_profile(&self) -> Option<String> {
@@ -2748,6 +2761,27 @@ mod guide_layer_contract {
         o.extend(key(&mut r, 0x138, 1));
         o.extend(abs(&mut r, 2, 255));
         assert_eq!(o.actions, vec!["hypr:movetoworkspace e-1"]);
+    }
+    #[test]
+    fn captured_system_layer_delivers_guide_hat_and_flicks_once_never_also_to_the_app() {
+        // D2: with captured_system_layer = true the layer reaches a captured app; its HAT/stick/trigger input is then
+        // layer input only (as Guide + South is), and the app gets the live axes back when Guide goes up.
+        let mut r = vendor("app-capture");
+        r.global.controller.captured_system_layer = true;
+        let mut o = key(&mut r, GUIDE, 1);
+        assert!(o.app.iter().filter(|e| e.kind == EV_ABS).all(|e| e.value == 0 || [2, 5].contains(&e.code)), "rest at the Guide press: {o:?}");
+        o = abs(&mut r, 16, -1);
+        o.extend(abs(&mut r, 16, 0));
+        o.extend(abs(&mut r, 3, 32767));
+        o.extend(abs(&mut r, 2, 255));
+        assert_eq!(o.actions, vec!["hypr:movefocus left", "hypr:movewindow right"]);
+        assert!(!o.app.iter().any(|e| e.kind == EV_ABS), "no HAT/stick/trigger reaches the app under the layer: {:?}", o.app);
+        let mut o = key(&mut r, GUIDE, 0);
+        assert!(o.app.contains(&Event::new(EV_ABS, 3, 32767)) && o.app.contains(&Event::new(EV_ABS, 2, 255)), "the app gets the live axes back: {:?}", o.app);
+        assert!(!o.app.contains(&Event::new(EV_KEY, GUIDE, 1)), "Guide itself stays the layer's");
+        o.extend(abs(&mut r, 3, 0));
+        assert!(o.app.contains(&Event::new(EV_ABS, 3, 0)), "ordinary motion reaches the app again");
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
     }
     #[test]
     fn guide_stays_no_modifier_on_a_vt() {

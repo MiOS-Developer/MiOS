@@ -624,8 +624,15 @@ class FixtureBridge(Base):
         self.logind(active='gr')
         self.assertTrue(until(lambda: self.records('seat') and self.records('seat')[-1].get('seat') == 'released', 5), self.log[-4:])
         self.assertTrue(self.grab_free(), 'another session can own the pad')
-        m = mark(); self.press(SOUTH)
-        self.assertEqual(got(m), b'', 'nothing is synthesized for another session')
+        # The other session owns it now: the test holds that exclusive grab while the pad moves (a fixture pad never
+        # emits ungrabbed: a host app such as Steam reads every uinput pad), and released, the bridge projects nothing.
+        other = os.open(self.pad_info['path'], os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            fcntl.ioctl(other, EVIOCGRAB, 1)
+            m = mark(); self.press(SOUTH)
+            self.assertEqual(got(m), b'', 'nothing is synthesized for another session')
+        finally:
+            os.close(other)
         self.logind(active='c7')
         self.assertTrue(until(lambda: self.records('seat')[-1].get('seat') == 'owned', 5), self.log[-4:])
         m = mark(); self.press(SOUTH)

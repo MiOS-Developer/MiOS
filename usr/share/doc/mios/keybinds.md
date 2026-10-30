@@ -240,7 +240,15 @@ line reverts one context. For example, `desktop-2d = "vpad"` sends the pad to th
 gamepad in ordinary windows, as it did before navigation existed.
 
 Inputs: `BTN_*`, `BTN_DPAD_*`, `BTN_TL2`/`BTN_TR2`, `LS_*`/`RS_*` and `TOGGLE_CHORD`. In the
-system layer, `LS_*`/`RS_*` are stick flicks (one action per flick).
+system layer, `LS_*`/`RS_*` are stick flicks (one action per flick). Outside nav profiles and
+the system layer, every controller role needs a real button: the Hypr3D `toggle_chord`, the
+capture button and the other `[desktop.hyprland.hypr3d.controller]` buttons, Guide, the cursor
+button, `mode_override_chord`, the room table and quirks all refuse `LS_*`/`RS_*`
+(`mios-inputd check` fails and `mios-controls check` reports a finding).
+
+With `captured_system_layer = true`, Guide + the d-pad, a stick flick or a trigger reaches only
+the system layer: the captured app does not also receive it, and gets the live stick values back
+when Guide is released.
 
 Namespaces: `key:`, `pointer:`, `tmux:`, `hypr:`, `quickshell:` and `mios:`.
 
@@ -455,6 +463,12 @@ a physical pad: `--device /dev/input/eventN` on the session, then
 `mios-inputd bridge --nested p2`. While an app inside the session captures the pad, the
 bridge lets go of it and the app reads it directly; the held L3+R3 still releases it. The
 desktop's own bridge never takes a pad that a nested session holds, or a seat's pad.
+
+Several pads of one seat share one bridge: the second `assign` joins the running one, and the
+bridge stops only when the last pad of the seat is unassigned or destroyed. A pad that goes away
+leaves the bridge serving the session's other controllers. The bridge's actions keep the
+desktop's PipeWire and user bus (`PIPEWIRE_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`), so Guide +
+left stick sets the volume from a nested seat too.
 
 A sent escape is reported as `native_command_sent`. The client's capture state remains
 unknown.
