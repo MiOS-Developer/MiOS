@@ -240,6 +240,14 @@ pub struct PipeStats {
     pub drive_workers: AtomicU64,
     pub drive_mounts: Mutex<Vec<serde_json::Value>>,
     pub drive_error: Mutex<Option<String>>,
+    /// Incremented once per established connection (ConnectionHandler::on_connection_info);
+    /// remote USB claims are scoped to it.
+    pub connection_serial: AtomicU64,
+    pub usb_workers: AtomicU64,
+    pub usb_urbs: AtomicU64,
+    /// (connection serial, devices the client announced on it)
+    pub usb_announced: Mutex<(u64, u64)>,
+    pub usb_devices: Mutex<Vec<serde_json::Value>>,
     pub microphone_ready: AtomicBool,
     pub microphone_bytes: AtomicU64,
     pub microphone_dropped: AtomicU64,

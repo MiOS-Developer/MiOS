@@ -2355,6 +2355,28 @@
             <input type="number" id="f-rdp-camera-timeout-ms" data-key="remote.rdp.native.camera_timeout_ms" min="2000" max="30000" data-type="int" value="10000">
             <label for="f-rdp-camera-source">Camera source prefix</label>
             <input type="text" id="f-rdp-camera-source" data-key="remote.rdp.naming.camera_source_prefix" value="mios-remote-camera">
+            <label for="f-rdp-usb-enabled">Allow generic USB devices redirected by Windows clients (needs vhci_hcd already loaded; MiOS never loads it)</label>
+            <input type="text" id="f-rdp-usb-enabled" data-key="remote.rdp.redirect.usb" data-type="bool" placeholder="false">
+            <label for="f-df-usb-allow">USB allow list (CSV: VVVV:PPPP, VVVV:* or class:CC; empty forwards nothing)</label>
+            <input type="text" id="f-df-usb-allow" data-key="remote.device_forwarding.usb.allow" data-array="csv" placeholder="">
+            <label for="f-df-usb-deny">USB deny list (CSV; deny wins over allow)</label>
+            <input type="text" id="f-df-usb-deny" data-key="remote.device_forwarding.usb.deny" data-array="csv" placeholder="class:09,class:03,class:e0">
+            <label for="f-df-usb-max">USB devices per session</label>
+            <input type="number" id="f-df-usb-max" data-key="remote.device_forwarding.usb.max_devices" min="1" max="16" data-type="int" value="4">
+            <label for="f-df-default-target">Default forwarding target per session (auto | none)</label>
+            <input type="text" id="f-df-default-target" data-key="remote.device_forwarding.default_target" value="auto">
+            <label for="f-df-libvirt">SPICE usbredir inventory libvirt URIs (CSV)</label>
+            <input type="text" id="f-df-libvirt" data-key="remote.device_forwarding.libvirt_uris" data-array="csv" placeholder="qemu:///session">
+            <label for="f-df-exclude">Domains never inspected or targeted (CSV globs)</label>
+            <input type="text" id="f-df-exclude" data-key="remote.device_forwarding.exclude_domains" data-array="csv" placeholder="mios-xbox*">
+            <label for="f-rdp-usb-attach-timeout">USB descriptor preflight + attach timeout (ms)</label>
+            <input type="number" id="f-rdp-usb-attach-timeout" data-key="remote.rdp.native.usb_attach_timeout_ms" min="1000" max="30000" data-type="int" value="5000">
+            <label for="f-rdp-usb-max-transfer">Largest USB transfer (KiB)</label>
+            <input type="number" id="f-rdp-usb-max-transfer" data-key="remote.rdp.native.usb_max_transfer_kib" min="4" max="16384" data-type="int" value="1024">
+            <label for="f-rdp-usb-max-inflight">In-flight USB requests per device</label>
+            <input type="number" id="f-rdp-usb-max-inflight" data-key="remote.rdp.native.usb_max_inflight" min="1" max="1024" data-type="int" value="64">
+            <label for="f-rdp-usb-helper">USB attach helper socket</label>
+            <input type="text" id="f-rdp-usb-helper" data-key="remote.rdp.native.usb_helper_socket" value="/run/mios-rdp-usb.sock">
             <label for="f-rdp-files-enabled">Allow client-selected shared folders</label>
             <input type="text" id="f-rdp-files-enabled" data-key="remote.rdp.redirect.drives" data-type="bool" placeholder="true">
             <label for="f-rdp-drive-timeout">Remote file request timeout (ms)</label>

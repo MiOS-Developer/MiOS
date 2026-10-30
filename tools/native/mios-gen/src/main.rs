@@ -25,6 +25,7 @@ mod pod_quadlets;
 mod global_bindings;
 mod nested_session;
 mod nested_devices;
+mod device_forwarding;
 mod session_scale;
 mod render;
 mod sync;
@@ -384,6 +385,23 @@ enum Commands {
         #[arg(long)] list_devices: bool,
         /// List live nested sessions from the registry (JSON).
         #[arg(long)] list_sessions: bool,
+    },
+
+    /// Generic USB forwarding ([remote.device_forwarding]): capability report for RDP URBDRC (USB/IP vhci), USB/IP, SPICE usbredir and nested sessions; per-session target selection; the SPICE usbredir filter from the shared policy.
+    #[command(name = "device-forwarding")]
+    DeviceForwarding {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(value_parser=["report","select","spice-filter"])] action: String,
+        /// Session: rdp, nested:<seat> or spice:<domain> (select, spice-filter).
+        #[arg(long)] session: Option<String>,
+        /// Target for select: auto, none or the session's transport (host-vhci, nested-evdev, spice-usbredir).
+        #[arg(long)] target: Option<String>,
+        /// Runtime directory holding the target file and live stats (default $XDG_RUNTIME_DIR).
+        #[arg(long)] runtime_dir: Option<PathBuf>,
+        /// Alternative sysfs root for the read-only probes (tests); modules.dep is read from <sys>/lib-modules.
+        #[arg(long)] sys: Option<PathBuf>,
+        /// Skip the libvirt domain inventory.
+        #[arg(long)] no_libvirt: bool,
     },
 
     /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
@@ -1547,6 +1565,10 @@ fn main() -> ExitCode {
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
+        ),
+        Commands::DeviceForwarding {root,action,session,target,runtime_dir,sys,no_libvirt} => (
+            "device-forwarding", "remote",
+            device_forwarding::run(&root.unwrap_or_else(||PathBuf::from("/")),&action,session.as_deref(),target.as_deref(),runtime_dir,sys,no_libvirt).map_err(|e|(e,1)),
         ),
         Commands::SessionScale {root,direction} => (
             "session-scale", "desktop",

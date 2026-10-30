@@ -12,7 +12,7 @@ default = []
 test-auth = []
 
 [dependencies]
-ironrdp-server = { path = "../../../ironrdp/crates/ironrdp-server", features = ["egfx", "helper", "nscodec"] }
+ironrdp-server = { path = "../../../ironrdp/crates/ironrdp-server", features = ["egfx", "helper", "nscodec", "usb"] }
 ironrdp-egfx = { path = "../../../ironrdp/crates/ironrdp-egfx" }
 ironrdp-cliprdr = { path = "../../../ironrdp/crates/ironrdp-cliprdr" }
 ironrdp-displaycontrol = { path = "../../../ironrdp/crates/ironrdp-displaycontrol" }
@@ -26,6 +26,8 @@ ironrdp-rdpeai = { path = "../../../ironrdp/crates/ironrdp-rdpeai" }
 ironrdp-rdpdr = { path = "../../../ironrdp/crates/ironrdp-rdpdr" }
 ironrdp-rdpecam = { path = "../../../ironrdp/crates/ironrdp-rdpecam" }
 ironrdp-rdpel = { path = "../../../ironrdp/crates/ironrdp-rdpel" }
+ironrdp-rdpeusb = { path = "../../../ironrdp/crates/ironrdp-rdpeusb" }
+ironrdp-usb = { path = "../../../ironrdp/crates/ironrdp-usb" }
 ironrdp-graphics = { path = "../../../ironrdp/crates/ironrdp-graphics" }
 ironrdp-nscodec = { path = "../../../ironrdp/crates/ironrdp-nscodec" }
 tokio = { version = "1", features = ["rt", "net", "macros", "sync", "time", "io-util", "signal"] }

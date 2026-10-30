@@ -7062,6 +7062,10 @@ drive_timeout_ms = 10000           # timeout poisons drive transport until recon
 drive_max_devices = 16             # total accepted/hot-removed file devices per connection, 1..64
 drive_max_entries = 4096           # bounded native inode and directory-entry caches, 64..65536
 drive_io_kib = 256                 # native file read/write chunk ceiling, 4..1024 in 4KiB multiples
+usb_helper_socket = "/run/mios-rdp-usb.sock" # root vhci attach helper (mios-rdp-usb.socket); it holds each port until the device closes
+usb_attach_timeout_ms = 5000       # descriptor preflight + vhci attach deadline per device, 1000..30000 ms
+usb_max_transfer_kib = 1024        # largest single URB buffer accepted from the kernel, 4..16384 KiB
+usb_max_inflight = 64              # in-flight URBs per redirected device, 1..1024; more are refused with -EAGAIN
 bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
@@ -7081,12 +7085,33 @@ camera              = true          # client-selected cameras become per-session
 location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
 timezone            = "report"      # "report" | "follow" | "ignore" (Client Info TS_TIME_ZONE_INFORMATION)
 smartcard           = false         # MS-RDPESC smartcard redirection (off by default)
+usb                 = false         # MS-RDPEUSB generic USB -> USB/IP vhci port (only when vhci_hcd is already loaded; MiOS never loads it). Windows clients only; policy [remote.device_forwarding.usb]
 
 [remote.rdp.naming]                 # names of the virtual devices (test instances add " test")
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
 pen_device          = "MiOS Remote Pen"     # Hyprland device name mios-remote-pen
 microphone_source_prefix = "mios-remote-microphone" # unique native source per connected microphone
 camera_source_prefix = "mios-remote-camera" # unique Video/Source node per selected remote camera
+
+# ----------------------------------------------------------------------------
+# [remote.device_forwarding] -- one policy and one capability report for every
+# remote/VM generic-USB path on MiOS: RDP URBDRC (MS-RDPEUSB -> USB/IP vhci,
+# [remote.rdp.redirect].usb), SPICE usbredir (remote-viewer / QEMU usb-redir) and
+# USB/IP; nested sessions bind evdev input nodes only ([desktop.nested.devices]).
+# Consumer: `mios-gen device-forwarding report|select|spice-filter`, mios-rdp-server.
+# Nothing here loads a kernel module, claims a host device or touches a VM:
+# libvirt inventory reads only libvirt_uris and never inspects exclude_domains.
+# ----------------------------------------------------------------------------
+[remote.device_forwarding]
+targets_file    = "mios/device-forwarding/targets.json"   # per-session target selection, under $XDG_RUNTIME_DIR (written by `mios-gen device-forwarding select`)
+default_target  = "auto"            # "auto" = the session kind's own transport when available | "none" = forward nothing until selected
+libvirt_uris    = ["qemu:///session"]   # SPICE usbredir inventory; system VMs are never queried unless listed here
+exclude_domains = ["mios-xbox*"]    # glob; never inspected and never selectable as a target
+
+[remote.device_forwarding.usb]
+allow       = []                    # "VVVV:PPPP", "VVVV:*" or "class:CC" (hex); empty = nothing is forwarded
+deny        = ["class:09", "class:03", "class:e0"]   # hubs, HID (keyboards/mice/pads inject input), wireless controllers; deny wins over allow
+max_devices = 4                     # redirected devices per session, 1..16
 
 
 [flatpak]
@@ -18527,6 +18552,44 @@ MemoryDenyWriteExecute = "yes"
 SystemCallArchitectures = "native"
 SystemCallFilter = ["@system-service", "~process_vm_readv process_vm_writev"]
 CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID CAP_SYS_PTRACE"
+
+[units."mios-rdp-usb.socket".Unit]
+Description = "MiOS RDP USB helper socket (attach a redirected device to an already-loaded vhci_hcd port)"
+Documentation = "file:///usr/share/doc/mios/remote-usb.md"
+[units."mios-rdp-usb.socket".Socket]
+ListenSequentialPacket = "/run/mios-rdp-usb.sock"
+SocketMode = "0666"
+Accept = "yes"
+MaxConnections = 16
+[units."mios-rdp-usb.socket".Install]
+WantedBy = "sockets.target"
+
+[units."mios-rdp-usb@.service".Unit]
+Description = "MiOS RDP USB helper (holds one vhci port for one redirected device)"
+Documentation = "file:///usr/share/doc/mios/remote-usb.md"
+[units."mios-rdp-usb@.service".Service]
+comment = """# One connection = one redirected device: the helper attaches the server's socket to a free vhci port
+# and detaches exactly that port when the connection closes (device close, disconnect or server exit).
+# /sys must stay writable for vhci attach/detach (no ProtectKernelTunables); ProtectKernelModules keeps
+# module loading impossible: an absent vhci_hcd is reported unsupported, never loaded."""
+Type = "simple"
+ExecStart = "/usr/libexec/mios/rdp-native/mios-rdp-priv --usb"
+StandardOutput = "journal"
+StandardError = "journal"
+PrivateNetwork = "yes"
+PrivateTmp = "yes"
+ProtectSystem = "strict"
+ProtectHome = "read-only"
+ProtectKernelModules = "yes"
+ProtectControlGroups = "yes"
+NoNewPrivileges = "yes"
+RestrictAddressFamilies = "AF_UNIX"
+RestrictNamespaces = "yes"
+LockPersonality = "yes"
+MemoryDenyWriteExecute = "yes"
+SystemCallArchitectures = "native"
+SystemCallFilter = ["@system-service", "~process_vm_readv process_vm_writev"]
+CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_SYS_PTRACE"
 
 [theme.windows]
 opacity_pct = 85
