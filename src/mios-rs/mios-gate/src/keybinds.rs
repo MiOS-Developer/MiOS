@@ -146,6 +146,47 @@ fn steps_prefix(a: &[String], b: &[String]) -> bool {
     a.len() < b.len() && b[..a.len()] == *a
 }
 
+/// A tmux key name (`C-a`, `M-x`, `S-Enter`) as a global-contract chord (`CTRL+a`, `ALT+x`, `SHIFT+Return`).
+fn tmux_key_chord(key: &str) -> String {
+    let mut mods = Vec::new();
+    let mut rest = key;
+    loop {
+        let m = match rest.get(..2) {
+            Some("C-") => "CTRL",
+            Some("M-") => "ALT",
+            Some("S-") => "SHIFT",
+            _ => break,
+        };
+        mods.push(m);
+        rest = &rest[2..];
+    }
+    mods.push(rest);
+    mods.join("+")
+}
+
+/// rule 8 (tier 3, MiOS-Tmux): every root-table key tmux takes from the focused terminal (the agent accept
+/// chord; the right-click menus are mouse events) must not be a reserved terminal chord. The tmux prefix is the
+/// tier-3 owner of its chord and is exempt; prefix-table keys are second steps after it and cannot shadow one.
+fn tmux_root_findings(ssot: &Value, reserved: &[(String, Vec<String>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(kb) = ssot.get("keybindings") else { return out };
+    let prefix = kb.get("tmux_prefix").and_then(Value::as_str).unwrap_or("");
+    let roots = kb.get("agent").and_then(|a| a.get("accept_chord")).and_then(Value::as_str).into_iter();
+    for key in roots.filter(|k| *k != prefix) {
+        match normalize_chord(&tmux_key_chord(key), false) {
+            Ok(steps) => {
+                for (raw, r) in reserved {
+                    if *r == steps {
+                        out.push(format!("keybindings.agent.accept_chord: tmux root key {key} shadows reserved terminal chord {raw:?} in every terminal"));
+                    }
+                }
+            }
+            Err(e) => out.push(format!("keybindings.agent.accept_chord: tmux key {key:?} does not normalise: {e}")),
+        }
+    }
+    out
+}
+
 pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
     let global = ssot
         .get("keybindings")
@@ -194,6 +235,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
         .map_err(|e| format!("reserved_terminal: {e}"))?;
 
     let mut findings = findings_pre;
+    findings.extend(tmux_root_findings(ssot, &reserved));
     let mut bound: Vec<Bound> = Vec::new();
     let mut ids = BTreeSet::new();
     let mut realized: Vec<(String, Vec<String>)> = Vec::new();
@@ -701,6 +743,19 @@ passthrough = ["vm-passthrough"]
         let toml = format!("{BASE}\n[[keybindings.global.bindings]]\nid = \"ghost-action\"\ntier = 1\nchord = \"SUPER+F6\"\naction = \"mios:no-such-verb\"\ncontexts = [\"game\"]\n").replace("planned_actions = [\"quickshell:launcher\"", "planned_actions = [\"mios:no-such-verb\", \"quickshell:launcher\"");
         let v: Value = toml.parse().unwrap();
         assert!(analyze(&v, None).unwrap().findings.is_empty());
+    }
+
+    #[test]
+    fn tmux_root_key_may_not_shadow_a_reserved_chord_but_the_prefix_is_exempt() {
+        let clean = run("\n[keybindings]\ntmux_prefix = \"C-b\"\n[keybindings.agent]\naccept_chord = \"S-Enter\"\n");
+        assert!(clean.findings.is_empty(), "{:?}", clean.findings);
+        let bad = run("\n[keybindings]\ntmux_prefix = \"C-b\"\n[keybindings.agent]\naccept_chord = \"C-a\"\n");
+        assert!(bad.findings.iter().any(|f| f.contains("tmux root key C-a shadows reserved terminal chord")), "{:?}", bad.findings);
+        // A prefix equal to a reserved chord is the tier-3 owner's own choice, not a root-table steal.
+        let own = run("\n[keybindings]\ntmux_prefix = \"C-a\"\n[keybindings.agent]\naccept_chord = \"C-a\"\n");
+        assert!(own.findings.is_empty(), "{:?}", own.findings);
+        assert_eq!(tmux_key_chord("S-Enter"), "SHIFT+Enter");
+        assert_eq!(tmux_key_chord("C-M-x"), "CTRL+ALT+x");
     }
 
     #[test]

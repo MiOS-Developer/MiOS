@@ -98,6 +98,21 @@ class Gate(unittest.TestCase):
     def test_reserved_terminal_chord_fails(self):
         self.bad('[[keybindings.global.bindings]]\nid="steal"\ntier=3\nchord="CTRL+c"\naction="exec:x"\ncontexts=["terminal"]\n', 'reserved terminal chord')
 
+    def test_tmux_root_key_on_a_reserved_chord_fails_but_the_prefix_is_exempt(self):
+        # MiOS-Tmux tier 3: a root-table key (the agent accept chord) taken from every terminal must not be a
+        # reserved terminal chord; the prefix is the tier-3 owner's own chord and stays legal.
+        text = SSOT.read_text()
+        self.assertIn('accept_chord = "S-Enter"', text)
+        root = self.tmp_root()
+        (root / 'usr/share/mios/mios.toml').write_text(text.replace('accept_chord = "S-Enter"', 'accept_chord = "C-a"', 1))
+        result = run_gate(self.binary, root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('tmux root key C-a shadows reserved terminal chord', result.stdout + result.stderr)
+        prefix = re.search(r'^tmux_prefix\s*=\s*"([^"]+)"', text, re.M).group(1)
+        (root / 'usr/share/mios/mios.toml').write_text(text.replace('accept_chord = "S-Enter"', f'accept_chord = "{prefix}"', 1))
+        result = run_gate(self.binary, root)
+        self.assertNotIn('tmux root key', result.stdout + result.stderr)
+
     def test_host_binding_leaking_to_vm_fails(self):
         self.bad('[[keybindings.global.bindings]]\nid="leak"\ntier=1\nchord="SUPER+F9"\naction="exec:x"\n', 'vm-passthrough')
 

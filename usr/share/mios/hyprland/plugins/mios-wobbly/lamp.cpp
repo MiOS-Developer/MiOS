@@ -39,6 +39,9 @@
 #include <hyprland/src/config/values/types/StringValue.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
+#include <hyprland/src/layout/space/Space.hpp>
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
+#include <hyprland/src/layout/algorithm/tiled/dwindle/DwindleAlgorithm.hpp>
 
 // C linkage: the plugin's private Lua 5.5 (liblua.a from the compositor SRPM), exactly like the hyprbars plugin
 extern "C" {
@@ -52,13 +55,16 @@ extern "C" {
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -70,9 +76,9 @@ namespace {
     HANDLE PH = nullptr;
 
     struct SCfg {
-        SP<Config::Values::CBoolValue>   enabled;
+        SP<Config::Values::CBoolValue>   enabled, restoreTree;
         SP<Config::Values::CIntValue>    durOpen, durMinimize, durRestore, cols, rows, launchTimeout;
-        SP<Config::Values::CStringValue> curve, events, hiddenDock, fallbackEdge, minimizedWs, tag, dockFile, launchFile;
+        SP<Config::Values::CStringValue> curve, events, hiddenDock, fallbackEdge, minimizedWs, tag, dockFile, launchFile, minimizedFile;
         SP<Config::Values::CFloatValue>  paneAlpha;
     } g_cfg;
 
@@ -138,7 +144,10 @@ namespace {
     std::unordered_map<CWindow*, UP<SLamp>>                                g_lamps;
     std::vector<SMinimized>                                                g_minimized;
     std::unordered_map<std::string, std::unordered_map<std::string, CBox>> g_wsFullLayout;
+    std::unordered_map<std::string, std::deque<STileTree>>                 g_wsTiles; // workspace -> split trees, newest first
+    constexpr size_t                                                       kTileSnapshots = 16;
     std::deque<std::string>                                                g_consumed; // launch ids already animated (bounded)
+    std::string                                                            g_publishedMinimized; // last body written to minimized_file
     std::vector<CHyprSignalListener>        g_listeners;
     SP<CEventLoopTimer>                     g_timer;
     Clock::time_point                       g_dockChecked;
@@ -659,6 +668,45 @@ namespace {
         }
     }
 
+    // Each minimized window's own origin for the shell, WITHOUT a process: Hyprland keeps one monitor per workspace,
+    // so special:minimized reports one output for all of them; the dock reads this small file (FileView, inotify)
+    // instead of spawning `hyprctl mios-lamp status`. Rewritten atomically (temp + rename) only when it changes, so
+    // window moves, resizes and focus changes never touch it; removed when the plugin unloads.
+    std::string minimizedJson() {
+        std::string out = "{\"version\":1,\"minimized\":[";
+        bool        first = true;
+        for (const auto& m : g_minimized) {
+            out += std::format("{}{{\"address\":\"{}\",\"workspace\":\"{}\",\"monitor\":\"{}\"}}", first ? "" : ",", m.address, jsonEscape(m.workspace), jsonEscape(m.monitor));
+            first = false;
+        }
+        return out + "]}";
+    }
+    std::string minimizedFilePath() {
+        return runtimePath(g_cfg.minimizedFile, "mios-lamp-minimized.json");
+    }
+    void publishMinimized() {
+        if (g_exiting)
+            return;
+        const auto body = minimizedJson();
+        if (body == g_publishedMinimized)
+            return;
+        const auto path = minimizedFilePath();
+        const auto tmp  = std::format("{}.tmp.{}", path, (long)getpid());
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f)
+                return;
+            f << body << '\n';
+            if (!f.flush())
+                return;
+        }
+        if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+            std::remove(tmp.c_str());
+            return;
+        }
+        g_publishedMinimized = body;
+    }
+
     void rehomeDeadMonitors(const PHLMONITOR& dying = nullptr) {
         for (auto& m : g_minimized) {
             const auto w   = m.window.lock();
@@ -683,12 +731,16 @@ namespace {
             if (w && w->m_isMapped && onMinimizedWs(w))
                 syncWorkspaceMonitor(w, nullptr, dying, false);
         }
+        publishMinimized();
     }
 
     void pruneMinimized() {
         std::erase_if(g_minimized, [](const SMinimized& m) {
             const auto w = m.window.lock();
             return !w || !w->m_isMapped || (!onMinimizedWs(w) && !g_lamps.contains(w.get()));
+        });
+        std::erase_if(g_wsTiles, [](const auto& kv) {
+            return std::none_of(g_minimized.begin(), g_minimized.end(), [&](const SMinimized& m) { return m.workspace == kv.first; });
         });
         rehomeDeadMonitors();
     }
@@ -709,10 +761,173 @@ namespace {
         }
     }
 
+    // ---- exact tiled restore through the dwindle tree (lampmath.hpp STileTree) ----------------------------------
+    using Layout::Tiled::SDwindleNodeData;
+
+    Layout::Tiled::CDwindleAlgorithm* dwindleOf(const PHLWINDOW& w) {
+        if (!w || w->m_isFloating)
+            return nullptr;
+        const auto target = w->layoutTarget();
+        const auto space  = target ? target->space() : nullptr;
+        const auto algo   = space ? space->algorithm() : nullptr;
+        if (!algo || !algo->tiledAlgo())
+            return nullptr;
+        return dynamic_cast<Layout::Tiled::CDwindleAlgorithm*>(algo->tiledAlgo().get());
+    }
+
+    SP<SDwindleNodeData> tileRootOf(SP<SDwindleNodeData> n) {
+        for (int guard = 0; n && n->pParent && guard < 256; ++guard)
+            n = n->pParent.lock();
+        return n && !n->pParent ? n : nullptr;
+    }
+
+    std::optional<STileTree> serializeTiles(const SP<SDwindleNodeData>& root) {
+        STileTree                                                 t;
+        std::function<int(const SP<SDwindleNodeData>&, int)> ser = [&](const SP<SDwindleNodeData>& n, int depth) -> int {
+            if (!n || depth > 64)
+                return -1;
+            STileNode out;
+            const auto a = n->children[0].lock(), b = n->children[1].lock();
+            if (!a && !b) {
+                const auto tgt = n->pTarget.lock();
+                const auto win = tgt ? tgt->window() : nullptr;
+                if (!win)
+                    return -1;
+                out.address = addressOf(win);
+            } else {
+                if (!a || !b)
+                    return -1;
+                out.leaf       = false;
+                out.splitTop   = n->splitTop;
+                out.splitRatio = n->splitRatio;
+                out.child[0]   = ser(a, depth + 1);
+                out.child[1]   = ser(b, depth + 1);
+                if (out.child[0] < 0 || out.child[1] < 0)
+                    return -1;
+            }
+            t.nodes.push_back(out);
+            return (int)t.nodes.size() - 1;
+        };
+        t.root = ser(root, 0);
+        if (!tileTreeValid(t))
+            return std::nullopt;
+        return t;
+    }
+
+    // Just before a tiled window leaves its workspace: remember the whole split tree it is part of.
+    void recordTiles(const PHLWINDOW& w) {
+        if (!w || !g_cfg.restoreTree->value() || !w->m_workspace || onMinimizedWs(w))
+            return;
+        const auto ws = workspaceSelector(w->m_workspace);
+        auto*      dw = ws.empty() ? nullptr : dwindleOf(w);
+        const auto leaf = dw ? dw->getNodeFromWindow(w) : nullptr;
+        const auto tree = leaf ? serializeTiles(tileRootOf(leaf)) : std::nullopt;
+        if (!tree || tileLeaves(*tree).size() < 2)
+            return;
+        auto& list = g_wsTiles[ws];
+        list.push_front(*tree);
+        while (list.size() > kTileSnapshots)
+            list.pop_back();
+    }
+
+    // After the window is back on `ws` (tiled, wherever dwindle inserted it): rebuild the live tree to the newest
+    // snapshot that covers exactly the windows tiled there now. Pure pointer rewiring of the existing nodes (n leaves
+    // and n-1 splits on both sides), then one recalculation; verified against the snapshot and rolled back on any
+    // mismatch, so a failure leaves dwindle's own placement.
+    bool applyTiles(const std::string& ws, const PHLWINDOW& w) {
+        const auto it = g_wsTiles.find(ws);
+        if (!g_cfg.restoreTree->value() || it == g_wsTiles.end() || it->second.empty() || !w || !w->m_workspace)
+            return false;
+        auto* dw = dwindleOf(w);
+        if (!dw)
+            return false;
+        std::vector<std::string>                              addrs;
+        std::unordered_map<std::string, SP<SDwindleNodeData>> leafOf;
+        std::vector<SP<SDwindleNodeData>>                     inner;
+        for (const auto& sib : Desktop::windowState()->windows()) {
+            if (!sib || !sib->m_isMapped || sib->m_isFloating || sib->m_workspace != w->m_workspace)
+                continue;
+            const auto n = dw->getNodeFromWindow(sib);
+            if (!n || n->children[0] || n->children[1])
+                return false;
+            addrs.push_back(addressOf(sib));
+            leafOf[addrs.back()] = n;
+            int guard = 0;
+            for (auto p = n->pParent.lock(); p && guard < 256; p = p->pParent.lock(), ++guard)
+                if (std::find(inner.begin(), inner.end(), p) == inner.end())
+                    inner.push_back(p);
+        }
+        if (addrs.size() < 2 || inner.size() + 1 != addrs.size())
+            return false;
+        const auto proj = pickTileTree({it->second.begin(), it->second.end()}, addrs);
+        if (!proj)
+            return false;
+
+        struct SWiring {
+            SP<SDwindleNodeData>                n;
+            WP<SDwindleNodeData>                parent;
+            std::array<WP<SDwindleNodeData>, 2> children;
+            bool                                splitTop;
+            float                               splitRatio;
+        };
+        std::vector<SWiring> backup;
+        for (const auto& [a, n] : leafOf)
+            backup.push_back({n, n->pParent, n->children, n->splitTop, n->splitRatio});
+        for (const auto& n : inner)
+            backup.push_back({n, n->pParent, n->children, n->splitTop, n->splitRatio});
+
+        std::vector<SP<SDwindleNodeData>> live(proj->nodes.size());
+        size_t                            k = 0;
+        for (size_t i = 0; i < proj->nodes.size(); ++i)
+            live[i] = proj->nodes[i].leaf ? leafOf[proj->nodes[i].address] : inner[k++];
+        for (size_t i = 0; i < proj->nodes.size(); ++i) {
+            const auto& pn = proj->nodes[i];
+            if (pn.leaf)
+                continue;
+            const auto& n  = live[i];
+            n->children[0] = live[pn.child[0]];
+            n->children[1] = live[pn.child[1]];
+            live[pn.child[0]]->pParent = n;
+            live[pn.child[1]]->pParent = n;
+            n->splitTop   = pn.splitTop;
+            n->splitRatio = (float)std::clamp(pn.splitRatio, 0.1, 1.9);
+            n->isNode     = true;
+        }
+        live[proj->root]->pParent = WP<SDwindleNodeData>{};
+        dw->recalculate();
+
+        // verify: same structure and ratios, and every window at the box that structure gives in the root's area
+        const auto  root  = live[proj->root];
+        const auto  check = serializeTiles(root);
+        bool        ok    = check && tileLeaves(*check) == tileLeaves(*proj) && check->nodes.size() == proj->nodes.size();
+        if (ok) {
+            const auto want = tileBoxes(*check, rectOf(root->box), false);
+            for (const auto& [a, n] : leafOf) {
+                const auto wb = want.find(a);
+                if (wb == want.end() || std::abs(wb->second.x - n->box.x) > 1.0 || std::abs(wb->second.y - n->box.y) > 1.0 || std::abs(wb->second.w - n->box.w) > 1.0 ||
+                    std::abs(wb->second.h - n->box.h) > 1.0) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if (!ok) {
+            for (const auto& b : backup) {
+                b.n->pParent    = b.parent;
+                b.n->children   = b.children;
+                b.n->splitTop   = b.splitTop;
+                b.n->splitRatio = b.splitRatio;
+            }
+            dw->recalculate();
+        }
+        return ok;
+    }
+
     void plainMinimize(const PHLWINDOW& w) {
         const auto origMon = w ? w->m_monitor.lock() : nullptr;
         const auto lua = std::format("hl.dsp.window.move({{workspace = \"{}\", window = \"address:{}\", follow = false}})", minimizedWs(), addressOf(w));
         g_pEventLoopManager->doLater([lua, w, origMon] {
+            recordTiles(w);
             dispatch(lua);
             if (w)
                 syncWorkspaceMonitor(w, origMon, nullptr, true);
@@ -770,6 +985,7 @@ namespace {
         }
         recordFullLayout(rec);
         g_minimized.push_back(rec);
+        publishMinimized();
 
         auto       s   = makeUnique<SLamp>();
         const auto tgt = targetFor(w, false);
@@ -869,6 +1085,7 @@ namespace {
                 dispatch(std::format("hl.dsp.focus({{window = \"address:{}\"}})", sel));
             });
             std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.lock() == w; });
+            publishMinimized();
             return {};
         }
         const auto tgt = targetFor(w, true, sourceHint, preMonName);
@@ -1034,7 +1251,9 @@ namespace {
             if ((w->sizeAnimation()->goal() - g.size()).size() > 0.5)
                 dispatch(std::format("hl.dsp.window.resize({{x = {}, y = {}, window = \"{}\"}})", (int)std::lround(g.w), (int)std::lround(g.h), sel));
         } else if (!s.wasFloating && !w->m_isFloating && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
-            if (g_layoutManager && !desiredBoxes.empty()) {
+            // exact: the recorded split tree (structure + ratios); the slot heuristics below only when it cannot apply
+            const bool treeRestored = applyTiles(s.workspaceTo, w);
+            if (!treeRestored && g_layoutManager && !desiredBoxes.empty()) {
                 std::vector<PHLWINDOW> allTiled = targetTiled;
                 allTiled.push_back(w);
                 for (size_t pass = 0; pass < allTiled.size(); ++pass) {
@@ -1067,7 +1286,7 @@ namespace {
             dispatch(std::format("hl.dsp.focus({{window = \"{}\"}})", sel));
             const CBox wDesired = desiredBoxes.contains(s.address) ? desiredBoxes[s.address] : s.preMinBox;
             const auto curBox   = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};
-            if (!boxesMatch(curBox, wDesired) && !boxContainsPoint(curBox, boxCenter(wDesired))) {
+            if (!treeRestored && !boxesMatch(curBox, wDesired) && !boxContainsPoint(curBox, boxCenter(wDesired))) {
                 if ((wDesired.h > curBox.h * 1.4) || (wDesired.w > curBox.w * 1.4)) {
                     dispatch("hl.dsp.layout(\"movetoroot\")");
                 }
@@ -1078,11 +1297,10 @@ namespace {
                     const double preCx = boxCenter(wDesired).x;
                     const double preCy = boxCenter(wDesired).y;
 
-                    if (std::abs(preCx - curCx) > std::abs(preCy - curCy)) {
-                        dispatch(preCx < curCx ? "swapwindow l" : "swapwindow r");
-                    } else {
-                        dispatch(preCy < curCy ? "swapwindow u" : "swapwindow d");
-                    }
+                    // hyprctl dispatch on a Lua config evaluates hl.dispatch(<arg>): a legacy "swapwindow l" is a Lua
+                    // syntax error that silently did nothing, so this fallback never ran before.
+                    const char* swapDir = std::abs(preCx - curCx) > std::abs(preCy - curCy) ? (preCx < curCx ? "left" : "right") : (preCy < curCy ? "up" : "down");
+                    dispatch(std::format("hl.dsp.window.swap({{direction = \"{}\", window = \"{}\"}})", swapDir, sel));
                 }
             }
         }
@@ -1108,6 +1326,7 @@ namespace {
             s.targetSource = tgt.source;
         }
         std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.lock() == w; });
+        publishMinimized();
     }
 
     SDispatchResult toggle(PHLWINDOW w) {
@@ -1226,6 +1445,7 @@ namespace {
                         s.t = 1.0;
                         applyAlphas(s, w);
                         const auto origMon = s.preMinMonitor.lock() ? s.preMinMonitor.lock() : w->m_monitor.lock();
+                        recordTiles(w);
                         dispatch(std::format("hl.dsp.window.move({{workspace = \"{}\", window = \"address:{}\", follow = false}})", minimizedWs(), s.address));
                         syncWorkspaceMonitor(w, origMon, nullptr, true);
                         s.phase      = ePhase::FINISHING;
@@ -1453,9 +1673,11 @@ namespace MiosLampFx {
         g_cfg.dockFile      = makeShared<CStringValue>("plugin:mios_lamp:dock_file", "Dock icon rects (empty: $XDG_RUNTIME_DIR/mios-dock-icons.json)", "");
         g_cfg.launchFile    = makeShared<CStringValue>("plugin:mios_lamp:launch_file", "Pending dock launches (empty: $XDG_RUNTIME_DIR/mios-lamp-launch.json)", "");
         g_cfg.paneAlpha     = makeShared<CFloatValue>("plugin:mios_lamp:pane_alpha", "Layout alpha the rigid glass pane fades to while the lamp runs (content compensated)", 0.4F);
+        g_cfg.minimizedFile = makeShared<CStringValue>("plugin:mios_lamp:minimized_file", "Minimized windows' origins for the shell (empty: $XDG_RUNTIME_DIR/mios-lamp-minimized.json)", "");
+        g_cfg.restoreTree   = makeShared<CBoolValue>("plugin:mios_lamp:restore_tree", "Restore a tiled window into its exact recorded dwindle split tree (structure and ratios)", true);
         for (const SP<IValue>& v : std::initializer_list<SP<IValue>>{g_cfg.enabled, g_cfg.durOpen, g_cfg.durMinimize, g_cfg.durRestore, g_cfg.curve, g_cfg.cols, g_cfg.rows, g_cfg.events,
                                                                      g_cfg.launchTimeout, g_cfg.hiddenDock, g_cfg.fallbackEdge, g_cfg.minimizedWs, g_cfg.tag, g_cfg.dockFile,
-                                                                     g_cfg.launchFile, g_cfg.paneAlpha})
+                                                                     g_cfg.launchFile, g_cfg.paneAlpha, g_cfg.restoreTree, g_cfg.minimizedFile})
             HyprlandAPI::addConfigValueV2(PH, v);
 
         HyprlandAPI::addLuaFunction(PH, "mios_lamp", "minimize", &luaMinimize);
@@ -1504,6 +1726,7 @@ namespace MiosLampFx {
             recordFullLayout(rec);
             g_minimized.push_back(rec);
             syncWorkspaceMonitor(w, mon, nullptr, true);
+            publishMinimized();
         }));
 
         g_listeners.push_back(Event::bus()->m_events.window.open.listen([](PHLWINDOW w) {
@@ -1518,8 +1741,12 @@ namespace MiosLampFx {
                 applyAlphas(*it->second, w);
         }));
         g_listeners.push_back(Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) {
-            if (w)
-                g_lamps.erase(w.get());
+            if (!w)
+                return;
+            g_lamps.erase(w.get());
+            // a window closed while minimized leaves the published list now (its address may be reused)
+            if (std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.get() == w.get(); }) > 0)
+                publishMinimized();
         }));
         g_listeners.push_back(Event::bus()->m_events.monitor.added.listen([](PHLMONITOR) {
             rehomeDeadMonitors();
@@ -1534,6 +1761,8 @@ namespace MiosLampFx {
     }
 
     void exit() {
+        if (!g_publishedMinimized.empty())
+            std::remove(minimizedFilePath().c_str()); // a stale list would outlive the windows it names
         g_exiting = true;
         g_listeners.clear();
         if (g_timer) {

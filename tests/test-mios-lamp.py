@@ -33,7 +33,8 @@ QS_DIR = os.environ.get("MIOS_QS_DIR") or os.path.join(ROOT, "usr", "share", "mi
 PLUGIN_DIR = os.path.join(ROOT, "usr", "share", "mios", "hyprland", "plugins", "mios-wobbly")
 RENDER_RS = os.path.join(ROOT, "tools", "native", "mios-gen", "src", "render.rs")
 QS = shutil.which("quickshell")
-CXX = shutil.which("g++") or shutil.which("clang++")
+# MIOS_TEST_CXX: the compiler for the C++ suites ("" skips them, e.g. on the live host where builds run in the dev container)
+CXX = os.environ.get("MIOS_TEST_CXX", shutil.which("g++") or shutil.which("clang++") or "")
 
 EVENTS = {"launch", "minimize", "restore"}
 IDENT = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -95,6 +96,8 @@ def lamp_ssot_errors(d: dict) -> list[str]:
         errs.append("remote must be 'same'")
     if not isinstance(lamp.get("hide_hyprbars"), bool):
         errs.append("hide_hyprbars must be a boolean")
+    if not isinstance(lamp.get("restore_tree"), bool):
+        errs.append("restore_tree must be a boolean")
     sh = lamp.get("windowshade_open")
     if sh is not None and (not isinstance(sh, str) or not IDENT.match(sh)):
         errs.append("windowshade_open must be a shader identifier")
@@ -157,6 +160,8 @@ class SsotAndProjection(unittest.TestCase):
             ("anim_tag", "../bad", "anim_tag"),
             ("remote", "lite", "remote"),
             ("hide_hyprbars", "true", "hide_hyprbars"),
+            ("restore_tree", "true", "restore_tree"),
+            ("restore_tree", 1, "restore_tree"),
             ("windowshade_open", "../none", "windowshade_open"),
             ("launch_timeout_ms", 100, "launch_timeout_ms"),
         )
@@ -173,10 +178,10 @@ class SsotAndProjection(unittest.TestCase):
         self.assertTrue(minimize_action_errors(d_act))
 
 
-@unittest.skipUnless(CXX, "C++ compiler missing")
 class PluginHostTests(unittest.TestCase):
     """Runs the C++ unit tests for wobble_model.hpp and lampmath.hpp (positive and negative controls)."""
 
+    @unittest.skipUnless(CXX, "C++ compiler missing")
     def test_wobble_model_and_lampmath_cpp_suites(self):
         with tempfile.TemporaryDirectory(prefix="mios-lamp-cpp-") as d:
             for src_name, bin_name in (("model_test.cpp", "model-test"), ("lamp_test.cpp", "lamp-test")):
@@ -200,9 +205,14 @@ class PluginHostTests(unittest.TestCase):
         self.assertIn("uniform float uGain;", src)
         self.assertIn("clamp(texture(uTex, vUV) * uGain, 0.0, 1.0)", src)
         self.assertIn("WINDOW_ALPHA_LAYOUT", src)
-        self.assertIn("            s.paneFade = 1.0f;\n", src)
-        self.assertIn("            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.0f);\n", src)
-        self.assertNotIn("wobblePaneFade(dev", src)
+        # the glass pane during a wobble: plugin:mios_wobbly:pane_fade, default 1 (full-strength glass, no fade); < 1
+        # fades the rigid pane with the deviation, clamped to [0.05, 1], content compensated by the same paneFade
+        self.assertIn('makeShared<CFloatValue>("plugin:mios_wobbly:pane_fade", ', src)
+        self.assertRegex(src, r'"plugin:mios_wobbly:pane_fade", "[^"]*", 1\.F\)')
+        self.assertIn("            const float paneMin = std::clamp((float)g_cfg.paneFade->value(), 0.05f, 1.0f);\n", src)
+        self.assertIn("            s.paneFade          = paneMin >= 1.0f ? 1.0f : (float)MiosLamp::wobblePaneFade(dev, paneMin, 2.0);\n", src)
+        self.assertIn("            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);\n", src)
+        self.assertIn("g_cfg.flipY, g_cfg.paneFade})", src)
         self.assertIn("        const float gain = 1.0f / std::max(s.paneFade, 0.05f);", src)
         self.assertNotIn("const float gain = 1.0f;", src)
         self.assertIn("            glUniform1f(g_locGain, gain);", src)
@@ -233,8 +243,24 @@ class PluginHostTests(unittest.TestCase):
             "                    if (splitDesired.x >= pDesired.x + pDesired.w - 8.0) {\n                        dir = 'r';\n                    } else if (pDesired.x >= splitDesired.x + splitDesired.w - 8.0) {\n                        dir = 'l';",
             src,
         )
-        self.assertIn("            if (g_layoutManager && !desiredBoxes.empty()) {", src)
+        self.assertIn("            if (!treeRestored && g_layoutManager && !desiredBoxes.empty()) {", src)
+        # exact tiled restore: the split tree is recorded right before BOTH minimize moves and replayed on restore
+        self.assertEqual(src.count("recordTiles(w);\n"), 2)
+        self.assertIn("            const bool treeRestored = applyTiles(s.workspaceTo, w);\n", src)
+        self.assertIn("dynamic_cast<Layout::Tiled::CDwindleAlgorithm*>", src)
+        self.assertIn('"plugin:mios_lamp:restore_tree"', src)
+        # rollback on a verification mismatch leaves dwindle's own placement
+        self.assertIn("        if (!ok) {\n            for (const auto& b : backup) {", src)
+        # hyprctl dispatch on a Lua config evaluates hl.dispatch(<arg>): legacy dispatcher strings are dead code
+        self.assertNotRegex(src, r'dispatch\("swapwindow')
+        self.assertIn('dispatch(std::format("hl.dsp.window.swap({{direction = \\"{}\\", window = \\"{}\\"}})", swapDir, sel));', src)
         self.assertNotIn("if (false &&", src)
+        # minimized origins reach the shell through a file rewritten only on change (no hyprctl per event)
+        self.assertIn('"plugin:mios_lamp:minimized_file"', src)
+        self.assertIn("        if (body == g_publishedMinimized)\n            return;\n", src)
+        self.assertIn("        if (std::rename(tmp.c_str(), path.c_str()) != 0) {", src)
+        self.assertEqual(src.count("publishMinimized();\n"), 6)
+        self.assertIn("if (std::erase_if(g_minimized, [&](const SMinimized& m) { return m.window.get() == w.get(); }) > 0)", src)
         self.assertIn(
             '                continue; // Do NOT overwrite with "slot", "edge", or "fallback"',
             src,
@@ -243,6 +269,22 @@ class PluginHostTests(unittest.TestCase):
             "            if (sib && sib != w && sib->m_isMapped && sib->m_workspace == targetWs && !sib->m_isFloating) {\n                sib->positionAnimation()->warp();\n                sib->sizeAnimation()->warp();",
             src,
         )
+
+
+class QmlNoPerEventSpawn(unittest.TestCase):
+    def test_dock_lamp_spawns_no_process_per_hyprland_event(self):
+        with open(os.path.join(QS_DIR, "DockLamp.qml"), encoding="utf-8") as f:
+            qml = f.read()
+        self.assertNotIn('"mios-lamp", "status"', qml)
+        self.assertRegex(qml, r"property FileView dockWriter: FileView \{")
+        self.assertRegex(qml, r"property FileView launchWriter: FileView \{[^}]*blockWrites: true")
+        self.assertRegex(qml, r"property FileView minimizedView: FileView \{[^}]*watchChanges: true")
+        # the event-driven refresh timers only re-read Hyprland's own IPC state (no Process.running there)
+        for timer in ("refreshFast", "refreshSettled", "refreshAfterLamp"):
+            body = re.search(r"property Timer " + timer + r": Timer \{(.*?)\n    \}", qml, re.S)
+            self.assertIsNotNone(body, timer)
+            self.assertNotIn("running = true", body.group(1), timer)
+            self.assertNotIn("Status", body.group(1), timer)
 
 
 class QmlSyntax(unittest.TestCase):
@@ -385,6 +427,8 @@ class DockLampContractIntegration(unittest.TestCase):
         self.launch_json = os.path.join(self.tmp, "mios-lamp-launch.json")
         self.prefs_json = os.path.join(self.tmp, "dock-prefs.json")
         self.fixture_json = os.path.join(self.tmp, "fixture.json")
+        self.minimized_json = os.path.join(self.tmp, "mios-lamp-minimized.json")
+        self.spawn_log = os.path.join(self.tmp, "spawns.log")
         self.log_path = os.path.join(self.tmp, "qs.log")
         self.procs = []
         self.logs = []
@@ -414,6 +458,8 @@ class DockLampContractIntegration(unittest.TestCase):
             MIOS_LAMP_LAUNCH_JSON=self.launch_json,
             MIOS_DOCK_PREFS_JSON=self.prefs_json,
             MIOS_DOCK_FIXTURE_JSON=self.fixture_json if fixture_text is not None else "",
+            MIOS_LAMP_MINIMIZED_JSON=self.minimized_json,
+            MIOS_TEST_SPAWN_LOG=self.spawn_log,
         )
         for k in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY"):
             self.env.pop(k, None)
@@ -435,10 +481,16 @@ class DockLampContractIntegration(unittest.TestCase):
                 '        exit 1\n'
                 '        ;;\n'
                 'esac\n'
+                'printf "hyprctl %s\\n" "$*" >> "$MIOS_TEST_SPAWN_LOG"\n'
                 'echo "ok"\n'
                 'exit 0\n'
             )
         os.chmod(stub_hyprctl, 0o755)
+        # every `sh` the shell spawns is logged: the dock/launch writers and the minimized-origin reader must spawn none
+        stub_sh = os.path.join(stub_dir, "sh")
+        with open(stub_sh, "w", encoding="utf-8") as f:
+            f.write('#!/bin/bash\nprintf "sh %s\\n" "$*" >> "$MIOS_TEST_SPAWN_LOG"\nexec /bin/sh "$@"\n')
+        os.chmod(stub_sh, 0o755)
         self.env["PATH"] = f"{stub_dir}:{self.env.get('PATH', '')}"
 
         out = open(self.log_path, "w", encoding="utf-8")
@@ -587,6 +639,92 @@ class DockLampContractIntegration(unittest.TestCase):
             disk_prefs = json.load(f)
         self.assertEqual(disk_prefs["pinned"], ["mios-terminal"])
         self.assertEqual(disk_prefs["starred"], ["mios-portal"])
+
+    def spawns(self) -> list[str]:
+        if not os.path.exists(self.spawn_log):
+            return []
+        with open(self.spawn_log, encoding="utf-8") as f:
+            return [l.rstrip("\n") for l in f if l.strip()]
+
+    def write_minimized(self, entries: list[dict]) -> None:
+        # what the lamp plugin does (publishMinimized): temp + rename, so the reader never sees half a file
+        tmp = self.minimized_json + ".tmp.test"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "minimized": entries}, f)
+        os.replace(tmp, self.minimized_json)
+
+    def _two_output_minimized(self, entries: list[dict] | None) -> dict:
+        # Both minimized windows REPORT the same monitor (Hyprland: one monitor per workspace, special:minimized
+        # follows whichever window was minimized last); only the plugin knows that 0xb0b0 came from HEADLESS-PHONE.
+        fixture = json.dumps({"clients": [
+            {"address": "0xa0a0", "workspace": {"name": "special:minimized"}, "class": "desk.app", "title": "D", "monitorName": "HDMI-A-1"},
+            {"address": "0xb0b0", "workspace": {"name": "special:minimized"}, "class": "phone.app", "title": "P", "monitorName": "HDMI-A-1"},
+        ]})
+        if entries is not None:
+            self.write_minimized(entries)
+        self.start_harness(fixture)
+        return self.wait_state(lambda s: len(s.get("minimized_windows", [])) == 2 and s.get("write_count", 0) >= 1)
+
+    ORIGINS = [
+        {"address": "0xa0a0", "workspace": "1", "monitor": "HDMI-A-1"},
+        {"address": "0xb0b0", "workspace": "2", "monitor": "HEADLESS-PHONE"},
+    ]
+
+    def test_positive_minimized_origin_comes_from_the_lamp_plugin_file(self):
+        self._two_output_minimized(self.ORIGINS)
+        st = self.wait_state(lambda s: s.get("plugin_origin", {}).get("0xb0b0") == "HEADLESS-PHONE")
+        by = {m["address"]: m["monitorName"] for m in st["minimized_windows"]}
+        self.assertEqual(by, {"0xa0a0": "HDMI-A-1", "0xb0b0": "HEADLESS-PHONE"}, st)
+        # the plugin rewrites the file (origin output unplugged -> re-homed): picked up through inotify, no restart
+        self.write_minimized([dict(self.ORIGINS[0]), dict(self.ORIGINS[1], monitor="HDMI-A-1")])
+        st = self.wait_state(lambda s: s.get("plugin_origin", {}).get("0xb0b0") == "HDMI-A-1")
+        by = {m["address"]: m["monitorName"] for m in st["minimized_windows"]}
+        self.assertEqual(by, {"0xa0a0": "HDMI-A-1", "0xb0b0": "HDMI-A-1"}, st)
+        self.assertEqual([l for l in self.spawns() if "mios-lamp" in l], [], "the origin is read from the file, never via hyprctl")
+
+    def test_negative_without_the_plugin_file_the_shared_workspace_monitor_wins(self):
+        # control: no plugin file (plugin not loaded) -> both tiles land on the reported, shared monitor
+        self._two_output_minimized(None)
+        time.sleep(1.0)
+        st = json.loads(self.call_ipc("state"))
+        self.assertEqual(st.get("plugin_origin"), {})
+        by = {m["address"]: m["monitorName"] for m in st["minimized_windows"]}
+        self.assertEqual(by, {"0xa0a0": "HDMI-A-1", "0xb0b0": "HDMI-A-1"}, st)
+        # and a garbage file degrades to the same, never to a crash
+        with open(self.minimized_json, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        time.sleep(1.0)
+        st = json.loads(self.call_ipc("state"))
+        self.assertEqual(st.get("plugin_origin"), {})
+
+    def test_dock_and_launch_writes_spawn_no_process_while_the_prefs_writer_still_does(self):
+        fixture = json.dumps({"clients": [
+            {"address": "0xdeadbeef01", "workspace": {"name": "special:minimized"}, "class": "lamptest.phone1", "title": "Phone Win", "monitorName": "HEADLESS-PHONE"},
+        ]})
+        self.start_harness(fixture)
+        self.wait_state(lambda s: s.get("write_count", 0) >= 1 and s.get("launch_write_count", 0) >= 1)
+        for _ in range(5):  # more launches -> more launch-file writes
+            self.call_ipc("launch", "org.gnome.Nautilus.desktop", "HDMI-A-1")
+
+        def on_disk() -> int:
+            try:
+                with open(self.launch_json, encoding="utf-8") as f:
+                    return len(json.load(f)["pending"])
+            except (OSError, ValueError, KeyError):
+                return 0
+        end = time.monotonic() + 10
+        while on_disk() < 6 and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertEqual(on_disk(), 6, "every launch is on disk")
+        st = json.loads(self.call_ipc("state"))
+        with open(self.dock_json, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["version"], 1)
+        positive = [l for l in self.spawns() if self.dock_json in l or self.launch_json in l or "mios-lamp" in l]
+        self.assertEqual(positive, [], f"in-process writers; write_count={st.get('write_count')}")
+        # negative control (detector sensitivity): the prefs writer still runs `sh`, and the stub sees it
+        self.call_ipc("pin", "mios-terminal.desktop")
+        self.wait_state(lambda s: s.get("prefs_write_count", 0) >= 1)
+        self.assertTrue([l for l in self.spawns() if l.startswith("sh ") and self.prefs_json in l], self.spawns())
 
     def test_negative_malformed_fixture_and_bad_address_degrade_safely(self):
         self.start_harness("{malformed json")

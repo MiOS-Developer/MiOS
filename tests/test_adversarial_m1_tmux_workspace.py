@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Adversarial suite for M1 tmux workspace recovery: recreated, killed and empty-server sessions.
+# AI-hint: Adversarial suite for M1 tmux workspace recovery: recreated, killed and empty-server sessions; MiOS-Tmux floating panes and managed-pane guards.
 """
 Adversarial empirical challenge suite for Milestone M1 (R1 Tmux Workspace Recovery).
 Tests session recreation on missing/killed sessions, empty tmux server recovery,
@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 RELAY = ROOT / "usr/libexec/mios/mios-mcp-server"
@@ -383,6 +384,53 @@ class TestAdversarialM1TmuxRecovery(unittest.TestCase):
             res = relay._workspace_call("resize", {"socket": str(self.socket), "pane": fake_id})
             self.assertEqual(res, {"managed": False})
 
+
+    # ---- MiOS-Tmux: floating panes and managed-pane guards (MIOS_AGENT_RELAY_BIN selects a candidate relay) ----
+    def _relay_data(self):
+        data = json.loads(json.dumps(relay.mios_toml.load_merged()))
+        candidate = os.environ.get("MIOS_AGENT_RELAY_BIN")
+        if candidate:
+            data["mcp"]["agents"]["binary"] = candidate
+        return data
+
+    def _open(self, name):
+        return relay._workspace_call(
+            "open", socket=str(self.socket), session=name, directory="/tmp",
+            latch=f"mios-latch-{secrets.token_hex(4)}", command="sleep 3600",
+            observer_command="sleep 3600", adapter=f"{sys.executable} {RELAY}")
+
+    def test_challenge_7a_resize_keeps_a_floating_pane_floating(self):
+        """Challenge 7A: a workspace resize never lays out over a tmux 3.7 floating pane."""
+        if subprocess.run(["tmux", "-S", str(self.socket), "list-commands", "new-pane"], capture_output=True, timeout=5).returncode:
+            self.skipTest("tmux without floating panes")
+        data = self._relay_data()
+        with mock.patch.object(relay.mios_toml, "load_merged", return_value=data):
+            name = f"adv-float-{secrets.token_hex(4)}"
+            head = self._open(name)["head"]
+            self.tmux("resize-window", "-t", head, "-x", "200", "-y", "60")
+            # Negative control: a plain preset does turn a float into a tiled pane (with two tiled panes).
+            self.tmux("split-window", "-d", "-t", self.session_base, "sleep 3600")
+            probe = self.tmux("new-pane", "-d", "-P", "-F", "#{pane_id}", "-t", self.session_base, "-x", "20", "-y", "5", "-X", "1", "-Y", "1", "sleep 3600")
+            self.tmux("select-layout", "-t", self.session_base, "tiled")
+            self.assertEqual(self.tmux("display", "-p", "-t", probe, "#{pane_floating_flag}"), "0")
+            fl = self.tmux("new-pane", "-d", "-P", "-F", "#{pane_id}", "-t", head, "-x", "40", "-y", "10", "-X", "5", "-Y", "5", "sleep 3600")
+            relay._workspace_call("resize", socket=str(self.socket), session=name, head=head,
+                                  adapter=f"{sys.executable} {RELAY}", observer_command="sleep 3600")
+            self.assertEqual(self.tmux("display", "-p", "-t", fl, "#{pane_floating_flag}"), "1",
+                             "the relay laid out over a floating pane")
+
+    def test_challenge_7b_managed_workspace_panes_trip_the_mios_tmux_guard(self):
+        """Challenge 7B: relay-managed panes match @mios-managed-pane, so float/lift/break/swap keys refuse there."""
+        head = self._open(f"adv-managed-{secrets.token_hex(4)}")["head"]
+        keys = ROOT / "usr/share/mios/tmux/mios-keys.tmux.conf"
+        self.tmux("source-file", str(keys))
+        plain = self.tmux("display", "-p", "-t", f"={self.session_base}:", "#{pane_id}")
+        self.assertEqual(self.tmux("display", "-p", "-t", head, "#{E:@mios-managed-pane}"), "1")
+        self.assertEqual(self.tmux("display", "-p", "-t", plain, "#{E:@mios-managed-pane}"), "0", "negative control")
+        listing = self.tmux("list-keys", "-T", "prefix")
+        for key in ("F", "!", "{", "}"):
+            line = next((l for l in listing.splitlines() if l.split()[3:4] == [key] or l.split()[3:4] == ["\\" + key]), "")
+            self.assertIn("Managed AI workspace pane", line, f"prefix {key} is not guarded: {line!r}")
 
 
 if __name__ == "__main__":

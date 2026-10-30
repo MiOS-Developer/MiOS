@@ -60,7 +60,7 @@ namespace {
     struct SConfig {
         SP<Config::Values::CBoolValue>   enabled;
         SP<Config::Values::CStringValue> tag, excludeTag;
-        SP<Config::Values::CFloatValue>  springK, anchorK, friction, maxStretch;
+        SP<Config::Values::CFloatValue>  springK, anchorK, friction, maxStretch, paneFade;
         SP<Config::Values::CIntValue>    grid, render, flipY;
     } g_cfg;
 
@@ -506,9 +506,12 @@ namespace {
                     y1  = std::max(y1, s.P[i][j].y);
                 }
 
-            // Always render hyprglass pane at full strength while grabbing/moving/dragging
-            s.paneFade = 1.0f;
-            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.0f);
+            // The rigid hyprglass pane while the shape deforms (plugin:mios_wobbly:pane_fade): 1 keeps the glass at full
+            // strength (the rigid pane shows beside the bent content), < 1 fades it with the deviation -- the content is
+            // compensated by 1/paneFade in the shader, so >= 0.4 keeps 8-bit content free of banding (desk-042 (8)).
+            const float paneMin = std::clamp((float)g_cfg.paneFade->value(), 0.05f, 1.0f);
+            s.paneFade          = paneMin >= 1.0f ? 1.0f : (float)MiosLamp::wobblePaneFade(dev, paneMin, 2.0);
+            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);
 
             const auto ws    = w->m_workspace;
             const auto shift = (w->m_pinned || !ws) ? Vector2D{} : ws->m_renderOffset->value();
@@ -553,10 +556,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_cfg.friction   = makeShared<CFloatValue>("plugin:mios_wobbly:friction", "Velocity damping (1/s); higher settles faster", 11.F);
     g_cfg.maxStretch = makeShared<CFloatValue>("plugin:mios_wobbly:max_stretch", "Largest node deviation as a fraction of the window's short side", 0.3F);
     g_cfg.grid       = makeShared<CIntValue>("plugin:mios_wobbly:grid", "Render mesh subdivisions per axis", 24);
+    g_cfg.paneFade   = makeShared<CFloatValue>("plugin:mios_wobbly:pane_fade", "Layout alpha the rigid glass pane fades to while the shape deforms (1: glass stays at full strength)", 1.F);
     g_cfg.render     = makeShared<CIntValue>("plugin:mios_wobbly:render", "1 draws the deformed mesh; 0 runs the model with a pass-through draw", 1);
     g_cfg.flipY      = makeShared<CIntValue>("plugin:mios_wobbly:flip_y", "Work-buffer row order (0 top-down, 1 bottom-up)", 0);
     for (const SP<IValue>& v : std::initializer_list<SP<IValue>>{g_cfg.enabled, g_cfg.tag, g_cfg.excludeTag, g_cfg.springK, g_cfg.anchorK, g_cfg.friction, g_cfg.maxStretch, g_cfg.grid,
-                                                                 g_cfg.render, g_cfg.flipY})
+                                                                 g_cfg.render, g_cfg.flipY, g_cfg.paneFade})
         HyprlandAPI::addConfigValueV2(PHANDLE, v);
     MiosLampFx::init(PHANDLE); // plugin:mios_lamp:*, hl.plugin.mios_lamp.*, `hyprctl mios-lamp`
 

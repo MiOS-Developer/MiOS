@@ -21,7 +21,11 @@ clients and HTTP terminal capabilities use private headless sessions. Closing a
 connection reclaims only its witnessed helper panes.
 
 Press **Ctrl+B, then G** for the existing MiOS Agents pane in an AI workspace,
-without adding a tab. `mios agents --watch` shows
+without adding a tab. **Ctrl+B, then Space** opens the MiOS menu (apps, float
+shell, pane/window/session actions). In a managed workspace, layout-breaking
+keys refuse, and floats open in the hidden per-session float shell. The relay's
+layout therefore never fights an operator overlay
+([MiOS-Tmux floats](../usr/share/doc/mios/mcp-tmux.md#mios-tmux-floats-hidden-sessions-and-the-apps-catalogue)). `mios agents --watch` shows
 registrations, queued/received receipts and detected tmux panes.
 `mios agents --observe` and `mios_agent_observe` return the sanitized snapshot.
 Observation does not consume inboxes or acknowledge messages.

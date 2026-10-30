@@ -25,6 +25,7 @@ namespace MiosLamp {
 
     struct SRect {
         double x = 0, y = 0, w = 0, h = 0;
+        bool   operator==(const SRect&) const = default;
         bool   valid() const {
             return std::isfinite(x) && std::isfinite(y) && std::isfinite(w) && std::isfinite(h) && w >= 1.0 && h >= 1.0 && std::abs(x) < 1e6 && std::abs(y) < 1e6 &&
                 w < 1e6 && h < 1e6;
@@ -810,5 +811,142 @@ namespace MiosLamp {
             return p;
         }
         return std::nullopt;
+    }
+
+    // ---- exact tiled restore: the dwindle split tree of a workspace ------------------------------------------------
+    // A snapshot of the binary split tree taken just before a tiled window leaves for the minimized workspace: leaves
+    // are window addresses, nodes keep their split ratio (dwindle: the first child gets ratio/2 of the parent along the
+    // split axis; ratio in 0.1..1.9) and orientation. Restore projects the newest snapshot that still contains every
+    // window now tiled there onto exactly those windows (a missing leaf collapses its parent into the sibling -- what
+    // dwindle itself does when a window leaves), so a restore reproduces structure AND ratios, not just equal halves.
+    struct STileNode {
+        bool        leaf       = true;
+        std::string address;          // leaf only
+        bool        splitTop   = false; // node only: children stacked top/bottom
+        double      splitRatio = 1.0;   // node only
+        int         child[2]   = {-1, -1};
+    };
+    struct STileTree {
+        std::vector<STileNode> nodes;
+        int                    root = -1;
+    };
+
+    inline void tileLeaves(const STileTree& t, int i, std::vector<std::string>& out) {
+        if (i < 0 || i >= (int)t.nodes.size())
+            return;
+        const auto& n = t.nodes[i];
+        if (n.leaf) {
+            out.push_back(n.address);
+            return;
+        }
+        tileLeaves(t, n.child[0], out);
+        tileLeaves(t, n.child[1], out);
+    }
+    inline std::vector<std::string> tileLeaves(const STileTree& t) {
+        std::vector<std::string> out;
+        tileLeaves(t, t.root, out);
+        return out;
+    }
+
+    // Structural sanity: every index in range, each node reached once, leaves named and unique, nodes binary.
+    inline bool tileTreeValid(const STileTree& t) {
+        if (t.root < 0 || t.root >= (int)t.nodes.size())
+            return false;
+        std::vector<int> seen(t.nodes.size(), 0);
+        std::vector<int> stack{t.root};
+        std::vector<std::string> names;
+        while (!stack.empty()) {
+            const int i = stack.back();
+            stack.pop_back();
+            if (i < 0 || i >= (int)t.nodes.size() || seen[i]++)
+                return false;
+            const auto& n = t.nodes[i];
+            if (n.leaf) {
+                if (n.address.empty())
+                    return false;
+                names.push_back(n.address);
+            } else {
+                if (!std::isfinite(n.splitRatio) || n.splitRatio < 0.1 - 1e-6 || n.splitRatio > 1.9 + 1e-6)
+                    return false;
+                stack.push_back(n.child[0]);
+                stack.push_back(n.child[1]);
+            }
+        }
+        std::sort(names.begin(), names.end());
+        return std::adjacent_find(names.begin(), names.end()) == names.end();
+    }
+
+    namespace detail {
+        inline int projectTile(const STileTree& in, int i, const std::vector<std::string>& keep, STileTree& out) {
+            if (i < 0 || i >= (int)in.nodes.size())
+                return -1;
+            const auto& n = in.nodes[i];
+            if (n.leaf) {
+                if (std::find(keep.begin(), keep.end(), n.address) == keep.end())
+                    return -1;
+                out.nodes.push_back(n);
+                return (int)out.nodes.size() - 1;
+            }
+            const int a = projectTile(in, n.child[0], keep, out);
+            const int b = projectTile(in, n.child[1], keep, out);
+            if (a < 0 || b < 0)
+                return a < 0 ? b : a; // a missing side: the survivor takes the parent's place
+            STileNode m = n;
+            m.child[0]  = a;
+            m.child[1]  = b;
+            out.nodes.push_back(m);
+            return (int)out.nodes.size() - 1;
+        }
+    }
+
+    // The snapshot restricted to `keep`; nullopt unless every kept address is a leaf of it.
+    inline std::optional<STileTree> projectTileTree(const STileTree& t, const std::vector<std::string>& keep) {
+        if (!tileTreeValid(t) || keep.empty())
+            return std::nullopt;
+        const auto leaves = tileLeaves(t);
+        for (const auto& k : keep)
+            if (std::find(leaves.begin(), leaves.end(), k) == leaves.end())
+                return std::nullopt;
+        STileTree out;
+        out.root = detail::projectTile(t, t.root, keep, out);
+        if (out.root < 0 || tileLeaves(out).size() != keep.size())
+            return std::nullopt;
+        return out;
+    }
+
+    // Newest-first snapshot list -> the first that covers exactly `current` after projection.
+    inline std::optional<STileTree> pickTileTree(const std::vector<STileTree>& newestFirst, const std::vector<std::string>& current) {
+        for (const auto& t : newestFirst)
+            if (auto p = projectTileTree(t, current))
+                return p;
+        return std::nullopt;
+    }
+
+    // Leaf boxes for a tree laid out in `area`, exactly as dwindle's recalcSizePosRecursive does. With autoSplit
+    // (dwindle:preserve_split = 0, smart_split = 0, precise_mouse_move = 0) the orientation follows each node's aspect
+    // (h * widthMult > w -> stacked), otherwise the recorded orientation is kept.
+    inline void tileBoxes(const STileTree& t, int i, SRect box, bool autoSplit, double widthMult, std::map<std::string, SRect>& out) {
+        if (i < 0 || i >= (int)t.nodes.size())
+            return;
+        const auto& n = t.nodes[i];
+        if (n.leaf) {
+            out[n.address] = box;
+            return;
+        }
+        const bool top = autoSplit ? box.h * widthMult > box.w : n.splitTop;
+        if (!top) {
+            const double first = box.w / 2.0 * n.splitRatio;
+            tileBoxes(t, n.child[0], {box.x, box.y, first, box.h}, autoSplit, widthMult, out);
+            tileBoxes(t, n.child[1], {box.x + first, box.y, box.w - first, box.h}, autoSplit, widthMult, out);
+        } else {
+            const double first = box.h / 2.0 * n.splitRatio;
+            tileBoxes(t, n.child[0], {box.x, box.y, box.w, first}, autoSplit, widthMult, out);
+            tileBoxes(t, n.child[1], {box.x, box.y + first, box.w, box.h - first}, autoSplit, widthMult, out);
+        }
+    }
+    inline std::map<std::string, SRect> tileBoxes(const STileTree& t, SRect area, bool autoSplit = true, double widthMult = 1.0) {
+        std::map<std::string, SRect> out;
+        tileBoxes(t, t.root, area, autoSplit, widthMult, out);
+        return out;
     }
 }

@@ -123,6 +123,7 @@ pub mod framerate;
 pub mod palette;
 pub mod ports;
 pub mod sigstore;
+pub mod terminal_tuis;
 pub mod walk;
 
 use crate::error::ResolverError;

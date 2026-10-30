@@ -24,10 +24,12 @@ mod metal_vs_hosted;
 mod pod_quadlets;
 mod global_bindings;
 mod nested_session;
+mod nested_devices;
 mod session_scale;
 mod render;
 mod sync;
 mod terminal;
+mod tmux_os;
 
 use ai::{ai_manifest, pipe_boundaries};
 use docs::{standardize_docs, sync_wiki};
@@ -121,6 +123,39 @@ enum Commands {
     TmuxClientEnv {
         #[arg(long)]
         root: Option<PathBuf>,
+    },
+    /// Print the MiOS-Tmux Apps and TUIs menu as NUL-separated `display-menu` argv ([[terminal.tuis]]).
+    #[command(name = "tmux-menu")]
+    TmuxMenu {
+        /// Menu to build (only `apps` is dynamic; the static menus are generated command aliases)
+        which: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// 1 for a Linux-console client (argv_vt, vt_ok filter, single borders)
+        #[arg(long, default_value = "0")]
+        console: String,
+        /// Client height in rows; a menu that does not fit pages by section
+        #[arg(long, default_value_t = 24)]
+        rows: u32,
+        #[arg(long)]
+        section: Option<String>,
+    },
+    /// Print a launchable TUI's NUL-separated spec (mode, label, width, height, hold, argv); exit 3 when hidden or not installed.
+    #[command(name = "tui-spec")]
+    TuiSpec {
+        id: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long, default_value = "0")]
+        console: String,
+    },
+    /// MiOS-Tmux executor behind mios-terminal (menu apps | app ID | float shell|lift|attach|reap | session-cycle next|prev | new).
+    #[command(name = "tmux-os")]
+    TmuxOs {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        args: Vec<String>,
     },
     /// Render the complete Windows host tmux configuration from layered SSOT.
     RenderHostTmux {
@@ -326,12 +361,29 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Run an isolated minimal MiOS desktop as a native PiP window.
+    /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
     #[command(name = "nested-session")]
     NestedSession {
         #[arg(long)] root: Option<PathBuf>,
         #[arg(long)] dry_run: bool,
-        #[arg(long,value_parser=["pip","window","side-by-side"])] layout: Option<String>,
+        /// Launch target ([desktop.nested].launch_layout): pip, window, side-by-side, output, remote or hypr3d.
+        #[arg(long="target",visible_alias="layout",value_parser=["pip","window","side-by-side","output","remote","hypr3d"])] layout: Option<String>,
+        /// Parent output for the output target (required there) or an explicit remote display output.
+        #[arg(long)] output: Option<String>,
+        /// Seat label (a-z, 0-9, '-'): the session's identity, tmux namespace suffix and [desktop.nested.seats.<seat>] preset.
+        #[arg(long)] seat: Option<String>,
+        /// Display name of the session's user (default: the seat label).
+        #[arg(long)] user: Option<String>,
+        /// Assign an input device (repeatable): /dev/input/eventN or a by-id/by-path link, name:<evdev name>, or virtual-pad.
+        #[arg(long="device")] device: Vec<String>,
+        /// Assign no device, overriding the seat preset and [desktop.nested.devices].default.
+        #[arg(long,conflicts_with="device")] no_devices: bool,
+        /// Print the resolved launch (target, identity, resolved devices) as JSON and exit without starting anything.
+        #[arg(long)] plan: bool,
+        /// List the host's input devices with their kind and current session assignment (JSON).
+        #[arg(long)] list_devices: bool,
+        /// List live nested sessions from the registry (JSON).
+        #[arg(long)] list_sessions: bool,
     },
 
     /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
@@ -1221,6 +1273,67 @@ fn main() -> ExitCode {
                 }
             };
         }
+        Commands::TmuxMenu { which, root, console, rows, section } => {
+            let root = resolve_root(root);
+            let result = (|| -> Result<Option<Vec<String>>, String> {
+                if which != "apps" {
+                    return Err("tmux-menu: only the apps menu is dynamic".into());
+                }
+                let console = match console.as_str() { "1" => true, "0" => false, _ => return Err("--console must be 0 or 1".into()) };
+                let merged = mios_resolver::resolve_merged(Some(&root), false).map_err(|e| e.to_string())?;
+                tmux_os::menu_argv(&merged, console, rows, section.as_deref(), mios_resolver::terminal_tuis::is_installed)
+            })();
+            return match result {
+                Ok(Some(argv)) => {
+                    use std::io::Write;
+                    let mut out = std::io::stdout().lock();
+                    for a in argv {
+                        let _ = out.write_all(a.as_bytes());
+                        let _ = out.write_all(b"\0");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Ok(None) => ExitCode::from(tmux_os::HIDDEN),
+                Err(error) => {
+                    eprintln!("[tmux-menu] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::TuiSpec { id, root, console } => {
+            let root = resolve_root(root);
+            let result = (|| -> Result<Option<Vec<String>>, String> {
+                let console = match console.as_str() { "1" => true, "0" => false, _ => return Err("--console must be 0 or 1".into()) };
+                let merged = mios_resolver::resolve_merged(Some(&root), false).map_err(|e| e.to_string())?;
+                tmux_os::tui_spec(&merged, &id, console, mios_resolver::terminal_tuis::is_installed)
+            })();
+            return match result {
+                Ok(Some(fields)) => {
+                    use std::io::Write;
+                    let mut out = std::io::stdout().lock();
+                    for f in fields {
+                        let _ = out.write_all(f.as_bytes());
+                        let _ = out.write_all(b"\0");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Ok(None) => ExitCode::from(tmux_os::HIDDEN),
+                Err(error) => {
+                    eprintln!("[tui-spec] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::TmuxOs { root, args } => {
+            let root = resolve_root(root);
+            return match tmux_os::run(&root, &args) {
+                Ok(code) => ExitCode::from(code),
+                Err(error) => {
+                    eprintln!("[tmux-os] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         Commands::RenderHostTmux {
             root,
             font_verified,
@@ -1431,9 +1544,9 @@ fn main() -> ExitCode {
                 },
             )
         }
-        Commands::NestedSession {root,dry_run,layout} => (
+        Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
-            nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,layout.as_deref()).map_err(|e|(e,1)),
+            nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
         ),
         Commands::SessionScale {root,direction} => (
             "session-scale", "desktop",

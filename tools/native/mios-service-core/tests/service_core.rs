@@ -189,7 +189,7 @@ mod host_tmux {
         // the SSOT's own placement ([theme.tmux].status_position is the operator's choice, not a fixed default)
         let position = config["theme"]["tmux"]["status_position"].as_str().unwrap();
         assert!(rendered.contains(&format!("set -g status-position {position}")));
-        assert!(rendered.contains("bind-key h select-pane -L"));
+        assert!(rendered.contains("bind-key -N \"Pane left\" h select-pane -L\n"));
         assert!(rendered.contains("mios.cmd ai"));
         assert!(rendered.contains("mios.cmd agents --watch"));
         assert!(!rendered.contains("/usr/libexec/"));
