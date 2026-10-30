@@ -8108,7 +8108,9 @@ managed_tag = "mios-placed"
 # resizing X11 windows, and a game that never recreates its swapchain shows black wherever the window grew. A fixed
 # game larger than the HUD-free area is centred on the whole output; one larger than the output takes `oversize`
 # ("fit" = opening size; Wine/DXVK re-render at any size, "keep" = centred and cropped). Fixed games are not tiled on
-# move, and Super+V re-centres them instead of tiling them. class names an SSOT key holding the shared game-class
+# move, Super+V re-centres them instead of tiling them, and pin_fixed_size sets their min_size == max_size == the
+# placed size (clamps drags) and has miosd restore an XWayland one that a dispatch grew anyway (Hyprland's resize
+# dispatch ignores both), after the pointer is released and at most a few times per window. class names an SSOT key holding the shared game-class
 # list (or an inline array); extra_class adds placement-only patterns (plain Wine names WM_CLASS after the .exe).
 # content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland).
 [desktop.hyprland.placement.games]
@@ -8117,6 +8119,7 @@ class = "keybindings.global.contexts.game"
 extra_class = ['.+\.exe']
 content_game = true
 suppress_client_geometry = true
+pin_fixed_size = true
 oversize = "fit"
 tag = "mios-place-game"
 fixed_tag = "mios-place-game-fixed"

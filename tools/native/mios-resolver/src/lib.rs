@@ -546,6 +546,9 @@ pub mod window_opening {
         pub classes: Vec<String>,
         pub content_game: bool,
         pub suppress_client_geometry: bool,
+        /// Pin a fixed-size game's min_size/max_size to the size it was placed at, so no interactive or
+        /// scripted resize can grow it past the swapchain it renders.
+        pub pin_fixed_size: bool,
         pub tag: String,
         pub fixed_tag: String,
         pub oversize: Oversize,
@@ -588,6 +591,7 @@ pub mod window_opening {
             };
             let games = Self {
                 classes, content_game, suppress_client_geometry: flag("suppress_client_geometry")?,
+                pin_fixed_size: flag("pin_fixed_size")?,
                 tag: tag(g, "tag")?, fixed_tag: tag(g, "fixed_tag")?, oversize,
             };
             if games.tag == games.fixed_tag { return Err("desktop.hyprland.placement.games tag and fixed_tag must differ".into()); }
@@ -664,6 +668,7 @@ class = "keybindings.global.contexts.game"
 extra_class = ['.+\.exe']
 content_game = true
 suppress_client_geometry = true
+pin_fixed_size = true
 tag = "mios-place-game"
 fixed_tag = "mios-place-game-fixed"
 oversize = "fit"
@@ -698,7 +703,8 @@ oversize = "fit"
             assert_eq!(Games::from_ssot(&d).unwrap(), None, "placement off turns game placement off");
             for (k, v) in [("oversize", Value::String("stretch".into())), ("tag", Value::String("a b".into())),
                            ("fixed_tag", Value::String("mios-place-game".into())), ("class", Value::String("no.such.key".into())),
-                           ("suppress_client_geometry", Value::String("yes".into()))] {
+                           ("suppress_client_geometry", Value::String("yes".into())),
+                           ("pin_fixed_size", Value::Integer(1))] {
                 let mut d = doc("");
                 d["desktop"]["hyprland"]["placement"]["games"][k] = v;
                 assert!(Games::from_ssot(&d).is_err(), "{k}");

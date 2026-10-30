@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Game window placement: games open centred at the window_opening size on the focused output, fixed-size games are never resized (no black regrown area), self-placement is refused; SSOT/configurator wiring, real mios-gen/miosd binaries, and an opt-in live nested PiP session (MIOS_LIVE_NESTED=1) with XWayland, Wine and Vulkan clients.
+# AI-hint: Game window placement: games open centred at the window_opening size on the focused output, fixed-size games are never resized and are pinned to their size (no black regrown area), self-placement is refused; SSOT/configurator wiring, real mios-gen/miosd binaries, and an opt-in live nested PiP session (MIOS_LIVE_NESTED=1) with XWayland, Wine and Vulkan clients.
 # AI-related: src/mios-rs/miosd/src/placement.rs, tools/native/mios-resolver/src/lib.rs (window_opening::Games), tools/native/mios-gen/src/render.rs, tools/native/mios-gen/src/nested_session.rs, tests/fixtures/game-clients/x11-game-probe.py, usr/share/mios/mios.toml [desktop.hyprland.placement.games]
 # AI-functions: TestGamePlacementWiring, TestGamePlacementBinaries, TestGamePlacementLive
 """Game window placement.
@@ -35,7 +35,7 @@ MIOS_GEN = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 MIOSD = os.environ.get('MIOSD', '/usr/bin/miosd')
 PROBE = ROOT / 'tests/fixtures/game-clients/x11-game-probe.py'
 RULE = re.compile(r'^hl\.window_rule\(.*\["name"\] = "(mios-placement[^"]*)".*\)$')
-GAME_KEYS = ['enabled', 'class', 'extra_class', 'content_game', 'suppress_client_geometry', 'oversize', 'tag', 'fixed_tag']
+GAME_KEYS = ['enabled', 'class', 'extra_class', 'content_game', 'suppress_client_geometry', 'pin_fixed_size', 'oversize', 'tag', 'fixed_tag']
 
 
 def clean_env(**kw):
@@ -132,6 +132,10 @@ class TestGamePlacementBinaries(unittest.TestCase):
 
 # ------------------------------------------------------------------------------------------------ live
 
+# A compositor-grown area the client never painted renders near-black through the glass tint, e.g. (6, 5, 15).
+BLACK = 24
+
+
 def black_fraction(png, box, scale):
     from PIL import Image
     im = Image.open(png).convert('RGB')
@@ -139,8 +143,8 @@ def black_fraction(png, box, scale):
     x0, y0, x1, y1 = max(x + 2, 0), max(y + 2, 0), min(x + w - 2, im.width), min(y + h - 2, im.height)
     if x1 <= x0 or y1 <= y0:
         return None
-    px = list(im.crop((x0, y0, x1, y1)).getdata())
-    return round(sum(1 for p in px if max(p) < 12) / len(px), 3)
+    px = list(im.crop((x0, y0, x1, y1)).get_flattened_data() if hasattr(im, 'get_flattened_data') else im.crop((x0, y0, x1, y1)).getdata())
+    return round(sum(1 for p in px if max(p) < BLACK) / len(px), 3)
 
 
 @unittest.skipUnless(os.environ.get('MIOS_LIVE_NESTED') == '1', 'live nested session test (MIOS_LIVE_NESTED=1)')
@@ -352,6 +356,20 @@ class TestGamePlacementLive(unittest.TestCase):
         (self.out / 'toggle.json').write_text(json.dumps({'before': before, 'after': after, 'client': c}))
         self.assertEqual(c['size'], [480, 320], f'toggle resized a fixed-size game to {c["size"]}')
         self.assertLess(after, 0.05, f'black area after toggle: {after}')
+        self.stop(p)
+
+    def test_21_fixed_game_cannot_be_grown_past_its_swapchain(self):
+        # pin_fixed_size: a scripted resize (the same core path as a drag) of a placed fixed-size game that never
+        # re-renders leaves it at its size, so no black area appears. Old miosd: the window grows and shows black.
+        self.require_x11()
+        p, _ = self.probe('steam_app_4106', '--fixed', '--no-adapt', '--size', '480x320', '--color', '40a0e0')
+        c = self.settled(lambda c: c['class'] == 'steam_app_4106')
+        self.ctl('eval', f"hl.dispatch(hl.dsp.window.resize({{x=840, y=600, window='address:{c['address']}'}}))")
+        c = self.settled(lambda c: c['class'] == 'steam_app_4106', 1.2)
+        frac = black_fraction(self.shot('pin-after'), c['at'] + c['size'], self.scale)
+        (self.out / 'pin.json').write_text(json.dumps({'black': frac, 'client': c}))
+        self.assertEqual(c['size'], [480, 320], f'fixed-size game grown to {c["size"]} (black {frac})')
+        self.assertLess(frac, 0.05, f'black area after resize: {frac}')
         self.stop(p)
 
     def wine(self, exe, cls_name):

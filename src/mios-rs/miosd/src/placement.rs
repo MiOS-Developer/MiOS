@@ -605,17 +605,47 @@ pub fn game_plan(cfg: &Config, c: &Json, monitors: &Json, kind: GameKind, manage
     let win = lua_str(&format!("address:{address}"));
     let mut lua = format!("local w={win}; ");
     if let Some(id) = workspace {
-        lua += &format!("hl.dispatch(hl.dsp.window.move({{workspace='{id}', silent=true, window=w}})); ");
+        lua += &format!("hl.dispatch(hl.dsp.window.move({{workspace='{id}', follow=false, window=w}})); ");
     }
     lua += "hl.dispatch(hl.dsp.window.float({action='enable', window=w})); ";
     if resized {
         lua += &format!("hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); ", g.w, g.h);
     }
     lua += &format!("hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))", g.x, g.y);
+    if kind == GameKind::Fixed && cfg.games.as_ref().is_some_and(|g| g.pin_fixed_size) {
+        // Hyprland ignores X11 size hints when it resizes; min == max == the placed size is what stops a drag,
+        // a keybind or another tool from growing the window past the swapchain the game keeps rendering.
+        for prop in ["min_size", "max_size"] {
+            lua += &format!("; hl.dispatch(hl.dsp.window.set_prop({{prop='{prop}', value='{} {}', window=w}}))", g.w, g.h);
+        }
+    }
     if let (GameKind::Resizable, Some(t)) = (kind, managed) {
         lua += &format!("; hl.dispatch(hl.dsp.window.tag({{tag={}, window=w}}))", lua_str(&format!("+{t}")));
     }
     Some(GamePlan { monitor: mon, geometry: g, resized, workspace, lua })
+}
+
+/// A pinned fixed-size game that something grew or shrank anyway (Hyprland's `window.resize` dispatch ignores
+/// min_size/max_size and X11 size hints): Lua that puts it back at its pinned size around the same centre, or None
+/// while it still has that size or is fullscreen (fullscreen is the game's own mode switch; Wine/DXVK re-render it).
+/// Restores per pinned window over its lifetime.
+pub const PIN_RESTORE_TRIES: u8 = 8;
+
+pub fn pin_restore(c: &Json, pinned: (f64, f64)) -> Option<String> {
+    let address = c.get("address").and_then(Json::as_str)?;
+    if c.get("fullscreen").and_then(Json::as_i64).unwrap_or(0) != 0 {
+        return None;
+    }
+    let (x, y) = pair(c, "at")?;
+    let (w, h) = pair(c, "size")?;
+    if (w - pinned.0).abs() <= 2.0 && (h - pinned.1).abs() <= 2.0 {
+        return None;
+    }
+    let (nx, ny) = ((x + (w - pinned.0) / 2.0).round(), (y + (h - pinned.1) / 2.0).round());
+    Some(format!(
+        "local w={}; hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))",
+        lua_str(&format!("address:{address}")), pinned.0 as i64, pinned.1 as i64, nx as i64, ny as i64
+    ))
 }
 
 // ---------------------------------------------------------------- evdev button state
@@ -856,6 +886,8 @@ struct Server {
     class_filter: Option<Regex>,
     hypr: Hypr,
     tracked: HashMap<String, Track>,
+    /// Fixed-size XWayland games pinned at placement ([`pin_restore`]): address -> ((w, h), restores so far).
+    pinned: HashMap<String, ((f64, f64), u8)>,
     pending: HashMap<String, u8>,
     buttons: Buttons,
 }
@@ -957,6 +989,15 @@ impl Server {
                 g.w, g.h, g.x, g.y, plan.monitor,
                 if plan.resized { "" } else { " at its own size" }
             ));
+            // XWayland only: suppress_client_geometry refuses an X11 game's own resize requests, so any later size
+            // change came from the compositor side. A Wayland game sizes its own buffers (a fixed one ignores the
+            // configure and shows no black), and restoring it would fight its own resizes.
+            if kind == GameKind::Fixed
+                && self.cfg.games.as_ref().is_some_and(|x| x.pin_fixed_size)
+                && c.get("xwayland").and_then(Json::as_bool) == Some(true)
+            {
+                self.pinned.insert(address.to_owned(), ((g.w as f64, g.h as f64), 0));
+            }
             if kind == GameKind::Resizable {
                 let last = (g.x as f64, g.y as f64, g.w as f64, g.h as f64);
                 self.tracked.insert(address.to_owned(), Track::Arming { last, since: Instant::now() });
@@ -1035,6 +1076,7 @@ impl Server {
             "closewindow" => {
                 let a = addr(data);
                 self.tracked.remove(&a);
+                self.pinned.remove(&a);
                 self.pending.remove(&a);
             }
             "changefloatingmode" => {
@@ -1085,6 +1127,35 @@ impl Server {
         Ok(())
     }
 
+    /// Pinned fixed-size games return to their size once no pointer button is held (a drag is never fought).
+    fn restore_pinned(&mut self) -> Result<(), String> {
+        let clients = self.clients()?;
+        let mut held: Option<Option<bool>> = None;
+        let addrs: Vec<String> = self.pinned.keys().cloned().collect();
+        for a in addrs {
+            let Some(c) = clients.iter().find(|c| c.get("address").and_then(Json::as_str) == Some(a.as_str())) else {
+                self.pinned.remove(&a);
+                continue;
+            };
+            let (size, tries) = self.pinned[&a];
+            let Some(lua) = pin_restore(c, size) else { continue };
+            if *held.get_or_insert_with(|| self.buttons.down()) == Some(true) {
+                continue;
+            }
+            if tries >= PIN_RESTORE_TRIES {
+                // Bounded per window: something keeps resizing it (another tool, a mode switch), so stop instead of
+                // fighting it.
+                self.pinned.remove(&a);
+                self.log(&format!("{a}: fixed-size game keeps being resized; unpinned after {tries} restores"));
+                continue;
+            }
+            self.hypr.eval(&lua)?;
+            self.pinned.insert(a.clone(), (size, tries + 1));
+            self.log(&format!("{a}: fixed-size game resized; restored {}x{}", size.0, size.1));
+        }
+        Ok(())
+    }
+
     fn tick(&mut self) -> Result<(), String> {
         let pending: Vec<String> = self.pending.keys().cloned().collect();
         let mut first_err: Option<String> = None;
@@ -1098,6 +1169,9 @@ impl Server {
         if let Some(e) = first_err {
             // Attempts were counted above; report (marks the connection stale) and retry next tick.
             return Err(e);
+        }
+        if !self.pinned.is_empty() {
+            self.restore_pinned()?;
         }
         if self.tracked.is_empty() || !self.cfg.tile_on_move {
             return Ok(());
@@ -1246,6 +1320,7 @@ fn serve(cfg: Config, class_filter: Option<String>) -> Result<(), String> {
         class_filter,
         hypr: Hypr::connect()?,
         tracked: HashMap::new(),
+        pinned: HashMap::new(),
         pending: HashMap::new(),
         buttons: Buttons::new(),
     };
@@ -1584,6 +1659,7 @@ class = "keybindings.global.contexts.game"
 extra_class = ['.+\.exe']
 content_game = true
 suppress_client_geometry = true
+pin_fixed_size = true
 oversize = "{oversize}"
 tag = "mios-place-game"
 fixed_tag = "mios-place-game-fixed"
@@ -1621,11 +1697,12 @@ fixed_tag = "mios-place-game-fixed"
         assert!(p.resized, "larger than the output: fit to the opening size");
         let g = p.geometry;
         assert!(g.x >= 1920 && g.x + g.w <= 3840 && g.y >= 44 && g.y + g.h <= 1080 - 72, "{g:?}");
-        assert!(p.lua.contains("workspace='2', silent=true") && p.lua.contains("hl.dsp.window.resize"));
+        assert!(p.lua.contains("workspace='2', follow=false") && p.lua.contains("hl.dsp.window.resize"));
         assert!(!p.lua.contains("mios-placed"), "fixed-size games are never tiled on move");
         // keep: centred on the output at its own size (cropped), never resized.
         let k = game_plan(&cfg_games("keep"), &w, &two_outputs(), GameKind::Fixed, None).unwrap();
-        assert!(!k.resized && !k.lua.contains("resize"));
+        assert!(!k.resized && !k.lua.contains("window.resize"));
+        assert!(p.lua.contains(&format!("prop='max_size', value='{} {}'", g.w, g.h)), "fit pins the fitted size");
         assert_eq!((k.geometry.x, k.geometry.w), (1920 + (1920 - 3840) / 2, 3840));
     }
 
@@ -1635,7 +1712,9 @@ fixed_tag = "mios-place-game-fixed"
         let c = cfg_games("fit");
         let w = game("steam_app_12", (700, 500), (640, 480), &["mios-place-game-fixed*"]);
         let p = game_plan(&c, &w, &two_outputs(), GameKind::Fixed, Some("mios-placed")).unwrap();
-        assert!(!p.resized && !p.lua.contains("resize"), "never resized: no black regrown area");
+        assert!(!p.resized && !p.lua.contains("window.resize"), "never resized: no black regrown area");
+        assert!(p.lua.contains("prop='min_size', value='640 480'") && p.lua.contains("prop='max_size', value='640 480'"),
+                "pinned to its own size: {}", p.lua);
         assert_eq!((p.geometry.w, p.geometry.h), (640, 480));
         assert_eq!((p.geometry.x, p.geometry.y), (1920 + 640, 44 + (1080 - 44 - 72 - 480) / 2));
         // 1920x1080 fits the output but not the HUD-free area: whole output, still not resized.
@@ -1653,12 +1732,26 @@ fixed_tag = "mios-place-game-fixed"
         let mut focused = MonitorBox { x: 1920.0, y: 0.0, w: 1920.0, h: 1080.0, reserved: [0.0, 44.0, 0.0, 72.0], width_mm: 530.0 };
         assert_eq!(p.geometry, geometry(&c, &focused));
         assert!(p.resized && p.lua.contains("tag='+mios-placed'"));
+        assert!(!p.lua.contains("set_prop"), "resizable games re-render at any size: never pinned");
         // No focus reported: the window's own output.
         let mut mons = two_outputs();
         mons[1]["focused"] = Json::Bool(false);
         let p = game_plan(&c, &w, &mons, GameKind::Resizable, None).unwrap();
         focused.x = 0.0;
         assert_eq!((p.monitor, p.workspace, p.geometry), (0, None, geometry(&c, &focused)));
+    }
+
+    #[test]
+    fn pinned_fixed_game_is_restored_around_its_centre() {
+        let mut w = game("steam_app_4106", (220, 86), (840, 600), &["mios-place-game-fixed*"]);
+        let lua = pin_restore(&w, (480.0, 320.0)).expect("grown: restore");
+        assert!(lua.contains("resize({x=480, y=320") && lua.contains("move({x=400, y=226"), "{lua}");
+        // Negative controls: at its pinned size (within 2 px) or fullscreen, nothing is dispatched.
+        w["size"] = serde_json::json!([481, 320]);
+        assert_eq!(pin_restore(&w, (480.0, 320.0)), None);
+        w["size"] = serde_json::json!([1920, 1080]);
+        w["fullscreen"] = serde_json::json!(2);
+        assert_eq!(pin_restore(&w, (480.0, 320.0)), None);
     }
 
     #[test]
