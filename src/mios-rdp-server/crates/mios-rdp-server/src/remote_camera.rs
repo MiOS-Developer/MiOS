@@ -728,6 +728,7 @@ impl Worker {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
+        die_with_spawner(&mut cmd);
         let mut child = cmd.spawn()?;
         let result = (|| -> anyhow::Result<()> {
             let mut input = child
@@ -984,6 +985,30 @@ fn video_node(bytes: &[u8], name: &str) -> Option<(u64, bool, bool)> {
         Some((v["id"].as_u64()?, v["info"]["state"] == "running", ready))
     })
 }
+/// The native provider must not outlive the server thread that owns it: a
+/// crashed or killed server would otherwise leave an orphaned, frameless
+/// camera node visible in every picker. The kernel SIGKILLs the child when the
+/// spawning thread exits; the worker thread keeps running for the provider's
+/// whole life (including bounded restarts) and reaps it itself.
+#[allow(unsafe_code)]
+fn die_with_spawner(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: the hook runs in the forked child before exec and calls only the
+    // async-signal-safe prctl(2)/getppid(2); it allocates nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The server died between fork and prctl: do not start orphaned.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+}
 #[allow(unsafe_code)]
 fn nonblocking(input: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
     // This owned pipe FD stays valid for both fcntl calls; no borrowed memory crosses FFI.
@@ -1233,6 +1258,38 @@ mod tests {
         std::fs::remove_file(&library).unwrap();
         assert_eq!(seen["v4l2"], true);
         assert_eq!(seen["v4l2_launcher"], "mios-camera-v4l2");
+    }
+    #[test]
+    fn provider_dies_with_its_spawning_thread() {
+        fn spawn(guard: bool) -> std::process::Child {
+            std::thread::spawn(move || {
+                let mut cmd = Command::new("sleep");
+                cmd.arg("30").stdout(Stdio::null());
+                if guard {
+                    die_with_spawner(&mut cmd);
+                }
+                cmd.spawn().unwrap()
+            })
+            .join()
+            .unwrap()
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let mut guarded = spawn(true);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = guarded.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "guarded provider outlived its spawner");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        // Negative control: the same spawn without the guard keeps running.
+        let mut unguarded = spawn(false);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(unguarded.try_wait().unwrap().is_none(), "an unguarded child survives its spawner");
+        unguarded.kill().unwrap();
+        unguarded.wait().unwrap();
     }
     #[test]
     fn camera_nodes_follow_the_configured_pipewire_runtime() {
@@ -1616,7 +1673,9 @@ mod tests {
     }
     fn native_reader(name: &str, frames: u32) -> Command {
         let mut cmd = Command::new("gst-launch-1.0");
-        cmd.args(["-q", "pipewiresrc", &format!("target-object={name}"), &format!("num-buffers={frames}"), "!", "fakesink"]);
+        // A converter gives pipewiresrc a concrete format to negotiate; straight into
+        // fakesink the link never forms ("target not found") even with a camera.
+        cmd.args(["-q", "pipewiresrc", &format!("target-object={name}"), &format!("num-buffers={frames}"), "!", "videoconvert", "!", "fakesink"]);
         cmd
     }
     #[allow(unsafe_code)]
@@ -1917,7 +1976,9 @@ mod tests {
             let portal = picker_probe(&mut wire);
             assert_ne!(portal, Some(true), "camera portal must report no camera");
             let mut native = Command::new("gst-launch-1.0");
-            native.args(["-q", "pipewiresrc", "autoconnect=true", "num-buffers=1", "!", "fakesink"]);
+            // Same probe shape that reads a present camera (see native_reader), so a
+            // refusal here means "no camera", not "probe cannot negotiate".
+            native.args(["-q", "pipewiresrc", "autoconnect=true", "num-buffers=1", "!", "videoconvert", "!", "fakesink"]);
             let native_reads = run_pumped(&mut wire, &mut native, 4) == Some(true);
             assert!(!native_reads, "a native consumer must find no camera");
             let blank = std::env::temp_dir()

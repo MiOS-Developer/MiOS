@@ -115,12 +115,13 @@ impl ServerEventSender for GfxFactory {
 }
 
 impl GfxServerFactory for GfxFactory {
-    fn build_gfx_handler(&self) -> Box<dyn GraphicsPipelineHandler> {
+    // Upstream passes per-connection auto-detect handles (GfxContext); our pacing uses its own ack statistics.
+    fn build_gfx_handler(&self, _ctx: ironrdp_server::GfxContext) -> Box<dyn GraphicsPipelineHandler> {
         Box::new(Handler { gfx: Arc::clone(&self.gfx), max_in_flight: self.max_in_flight })
     }
-    fn build_server_with_handle(&self) -> Option<(GfxDvcBridge, GfxServerHandle)> {
+    fn build_server_with_handle(&self, ctx: ironrdp_server::GfxContext) -> Option<(GfxDvcBridge, GfxServerHandle)> {
         // Built per connection before authentication: nothing here may have side effects.
-        let server = GraphicsPipelineServer::new(self.build_gfx_handler());
+        let server = GraphicsPipelineServer::new(self.build_gfx_handler(ctx));
         let handle: GfxServerHandle = Arc::new(Mutex::new(server));
         *self.gfx.handle.lock().expect("gfx") = Some(Arc::clone(&handle));
         Some((GfxDvcBridge::new(Arc::clone(&handle)), handle))
