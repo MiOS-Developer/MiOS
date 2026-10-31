@@ -14,8 +14,9 @@
 // MIOS_HOST_TOML unset, so the resolver fell back to <root>/etc/mios/mios.toml
 // and <root>/etc/mios/mios.d -- which on a deployed host, where the root is
 // `/`, is the operator's live admin tier. A committed baseline must depend on
-// the tree alone; tests/golden/README.md (env-snapshot) plants a host fragment
-// to keep that difference visible.
+// the tree alone; tests/test-env-snapshot-native-parity.py plants a host
+// fragment to keep that difference visible, and replays the frozen bash body
+// against this port for byte parity everywhere else.
 
 use std::collections::BTreeMap;
 use std::fs;
