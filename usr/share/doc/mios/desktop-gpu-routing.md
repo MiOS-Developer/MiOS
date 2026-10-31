@@ -129,6 +129,37 @@ own. It is not the default, for two reasons:
 * Connector names are global and depend on probe order: amdgpu probes first, so its connectors are DP-1, DP-2 and
   HDMI-A-1, and NVIDIA's are DP-3 to DP-5 and HDMI-A-2.
 
+## Nested sessions and GPU memory (GTT)
+
+The iGPU (Radeon 610M) has a 1 GiB VRAM carve-out and a GTT window of 23.4 GB of system RAM
+(`mem_info_gtt_total` = 24524595200). Pages in GTT come out of `MemAvailable`, and the kernel does not charge them
+to the session's memory cgroup.
+
+Measured on 2026-10-31: one idle nested PiP session for 25 s, sampled every second with `/proc/<pid>/fdinfo` and
+`mem_info_gtt_used`.
+
+| render node | session processes on the node | `drm-memory-gtt` (sum) | iGPU GTT used | MemAvailable drop |
+|---|---|---|---|---|
+| `renderD128` (iGPU, amdgpu) | Hyprland, Xwayland, alacritty, quickshell | 65 MiB (Hyprland 15, Xwayland 10, alacritty 20, quickshell 20); VRAM 161 MiB | 21 → 75 MiB (peak 89) | ~1.1 GB |
+| `renderD129` (dGPU, nvidia) | the same, plus 2 tmux processes that inherited a dGPU fd | not reported (NVIDIA fdinfo has no `drm-memory-*` keys) | unchanged (21 MiB) | ~0.8 GB |
+
+An idle nested session on either node used a bounded amount of memory in this run. The 28 GB → 0 runaway seen
+earlier did not reproduce in 25 s. Because the window is 23 GB, though, a GTT leak on the iGPU could still take all
+memory, so the proposal (not applied) is:
+
+* **Kernel cap per boot profile.** Add an SSOT key `gtt_limit_mb` in `[desktop.hyprland.hardware_profiles.<p>]`,
+  projected into that profile's `boot_append` as `ttm.pages_limit=<mb*256>` plus `amdgpu.gttsize=<mb>` (the latter
+  is deprecated but still read). Suggested values: dGPU boot 4096 (the iGPU then serves only nested sessions, about
+  70 MiB each); iGPU boot 12288 (the desktop runs there). TTM refuses allocations past the cap instead of draining
+  RAM. It takes effect at the next boot, and the iGPU entry changes only if the operator sets it there.
+* **Per-session guard.** `nested-session` reads the session's `drm-memory-gtt` from fdinfo (amdgpu reports it per
+  client) at its existing poll. Past `[desktop.nested].gtt_limit_mb` (suggested 1024), it ends the session the same
+  way a closed PiP window does.
+* **mem-admit.** `MemAvailable` already excludes allocated GTT pages, so admission sees what is used. What it
+  cannot see is the GTT headroom, so admission should also require
+  `mem_info_gtt_total - mem_info_gtt_used >= min_available_mb` on the target GPU, and should log the current GTT
+  in use.
+
 ## One monitor, two inputs
 
 This machine has one physical monitor wired to both GPUs: DP-3 on the RTX 4090 and HDMI-A-1 on the iGPU. In a dGPU
