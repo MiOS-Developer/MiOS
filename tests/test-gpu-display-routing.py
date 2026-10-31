@@ -12,6 +12,7 @@
 import glob
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -176,7 +177,8 @@ class NestedRender(unittest.TestCase):
 
     def test_negative_control_pre_change_nested_session_has_no_render_choice(self):
         # The pre-change binary reads the current SSOT (the shipped binary may need newer keys than the base commit's).
-        p = self.plan(BASE_GEN, NEW_SSOT, "dgpu")
+        ssot = re.sub(r'^\s*capture_guard\s*=.*$\n?', '', NEW_SSOT, flags=re.MULTILINE)
+        p = self.plan(BASE_GEN, ssot, "dgpu")
         self.assertNotIn("render", p, "the old nested session inherits the parent's main device (the dGPU)")
 
 
