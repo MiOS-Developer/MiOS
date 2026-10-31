@@ -287,6 +287,7 @@ pub struct Client {
     pub pid: u32,
     pub xwayland: bool,
     pub stable_id: u64,
+    pub title: String,
 }
 
 /// The live Hyprland instance directory. The inherited HYPRLAND_INSTANCE_SIGNATURE goes stale
@@ -330,6 +331,7 @@ fn client_from(v: &serde_json::Value) -> Option<Client> {
             .to_string(),
         pid: v.get("pid").and_then(|p| p.as_i64()).unwrap_or(0).max(0) as u32,
         xwayland: v.get("xwayland").and_then(|x| x.as_bool()).unwrap_or(false),
+        title: v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
         stable_id: v
             .get("stableId")
             .and_then(|s| s.as_str())
@@ -1176,6 +1178,24 @@ fn a11y_frame(nodes: &HashMap<String, A11yNode>) -> Option<String> {
     else { None } // Multiple inactive windows are never paired by guesswork.
 }
 
+/// The accessible frame of exactly the focused window: among several windows of one process the frame whose name is
+/// the window's title (toolkits name the frame after it), else the active / only frame. A dialog or tool window of
+/// the process never gets the main window's menu bar.
+fn a11y_frame_for(nodes: &HashMap<String, A11yNode>, client: &Client) -> Option<String> {
+    let title = client.title.trim();
+    if !title.is_empty() {
+        let named: HashMap<String, A11yNode> = nodes
+            .iter()
+            .filter(|(_, n)| matches!(n.role, 16 | 23) && !a11y_state(&n.states, 6) && n.label.trim() == title)
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if !named.is_empty() {
+            return a11y_frame(&named);
+        }
+    }
+    a11y_frame(nodes)
+}
+
 fn a11y_id(bus: &str, path: &str, frame: &str, client: &Client, index: i32) -> String {
     format!("a11y:{}", serde_json::to_string(&A11yAction {
         bus: bus.into(), path: path.into(), frame: frame.into(),
@@ -1283,7 +1303,7 @@ async fn a11y_menus(session: &Connection, client: &Client, provider: &Arc<Mutex<
         if !a11y_owner_matches(&bus, &name, client).await { continue; }
         if let Ok(mut current) = provider.lock() { *current = Some(name.clone()); }
         let nodes = a11y_nodes(&bus, &name, root.as_str()).await;
-        let Some(frame) = a11y_frame(&nodes) else { continue; };
+        let Some(frame) = a11y_frame_for(&nodes, client) else { continue; };
         let mut candidates: Vec<_> = nodes.iter().filter(|(path, node)|
             a11y_in_frame(&nodes, path, &frame) &&
             (a11y_native_button(node) || a11y_menubar_entry(node, nodes.get(&node.parent))))
@@ -1319,7 +1339,7 @@ async fn a11y_activate(session: &Connection, client: &Client, id: &str) -> Resul
     if !a11y_owner_matches(&bus, &action.bus, client).await { return Err("menu provider does not belong to the focused application".into()); }
     let nodes = a11y_nodes(&bus, &action.bus, &action.frame).await;
     let node = nodes.get(&action.path).ok_or("application menu is no longer available")?;
-    if !a11y_in_frame(&nodes, &action.path, &action.frame) || a11y_frame(&nodes).as_deref() != Some(action.frame.as_str()) {
+    if !a11y_in_frame(&nodes, &action.path, &action.frame) || a11y_frame_for(&nodes, client).as_deref() != Some(action.frame.as_str()) {
         return Err("application menu window changed".into());
     }
     if !a11y_enabled(node) { return Err("application menu action is disabled".into()); }
@@ -1801,6 +1821,10 @@ impl Ctx {
             }
         };
         if !snap.menus.is_empty() {
+            return snap;
+        }
+        let announced = kde_process_announces(&kde_appmenu_table(), c);
+        if announced {
             return snap;
         }
         // No exported model (or an exported but empty one): the toolkit-neutral accessibility menus.
@@ -2408,6 +2432,24 @@ mod tests {
         assert_eq!(a11y_frame(&nodes).as_deref(), Some("/second"));
         nodes.get_mut("/first").unwrap().states[0] |= 1 << 1;
         assert!(a11y_frame(&nodes).is_none());
+    }
+
+    #[test]
+    fn accessibility_pairs_the_frame_named_like_the_focused_window() {
+        let mut nodes = HashMap::from([
+            ("/main".into(), accessible(23, "Qt menubar fixture", "/app", &[1])),
+            ("/tool".into(), accessible(23, "Qt tool window", "/app", &[])),
+        ]);
+        let tool = Client { title: "Qt tool window".into(), ..Client::default() };
+        let main = Client { title: "Qt menubar fixture".into(), ..Client::default() };
+        // negative control: the active-state rule alone hands the tool window the (still active) main frame
+        assert_eq!(a11y_frame(&nodes).as_deref(), Some("/main"));
+        assert_eq!(a11y_frame_for(&nodes, &tool).as_deref(), Some("/tool"));
+        assert_eq!(a11y_frame_for(&nodes, &main).as_deref(), Some("/main"));
+        let other = Client { title: "Unrelated title".into(), ..Client::default() };
+        assert_eq!(a11y_frame_for(&nodes, &other).as_deref(), Some("/main"), "no name match: the active frame");
+        nodes.get_mut("/main").unwrap().states[0] = 0;
+        assert_eq!(a11y_frame_for(&nodes, &other), None, "ambiguous: nothing");
     }
 
     #[test]

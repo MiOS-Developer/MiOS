@@ -513,6 +513,7 @@ def live_tier():
                         break
                     time.sleep(0.25)
                 row['tool_window_menus'] = [m.get('label') for m in ts.get('menus') or []] if ts.get('address') == tool['address'] else 'no snapshot'
+                row['tool_window_source'] = (ts.get('source'), ts.get('binding'))
             if qml and menus and name in ('fixture-qt6', 'fixture-gtk3', 'fixture-electron-like', 'fixture-gtk4'):
                 focus(c)
                 st = None
@@ -524,12 +525,19 @@ def live_tier():
                 view = (row['menus'] or []).index('View') if 'View' in (row['menus'] or []) else -1
                 ipc('appmenu', 'openMenu', str(view))
                 time.sleep(0.8)
-                try:
-                    rows_ = json.loads(ipc('appmenu', 'rows') or '[]')
-                except (TypeError, ValueError):
-                    rows_ = []
+                opened = ipc('appmenu', 'state')
+                rows_ = ipc('appmenu', 'rows')
+                if isinstance(rows_, str):
+                    try:
+                        rows_ = json.loads(rows_)
+                    except ValueError:
+                        rows_ = []
+                rows_ = rows_ if isinstance(rows_, list) else []
                 lines0 = marker.read_text().count('\n') if marker.is_file() else 0
-                keyed = vkbd and sh([vkbd, 'down', 'enter'], env=env).returncode == 0
+                down = vkbd and sh([vkbd, 'down'], env=env)
+                time.sleep(0.4)
+                after_down = ipc('appmenu', 'state')
+                keyed = down and down.returncode == 0 and sh([vkbd, 'enter'], env=env).returncode == 0
                 for _ in range(30):
                     if marker.is_file() and marker.read_text().count('\n') > lines0:
                         break
@@ -537,6 +545,9 @@ def live_tier():
                 lines1 = marker.read_text().count('\n') if marker.is_file() else 0
                 after_keys = ipc('appmenu', 'state')
                 row['shell'] = {'pills': st.get('menus') if isinstance(st, dict) else st,
+                                'opened': opened.get('open_menu') if isinstance(opened, dict) else opened,
+                                'cursor_after_down': after_down.get('cursor') if isinstance(after_down, dict) else after_down,
+                                'vkbd_err': (down.stderr.strip()[:120] if down else 'no vkbd'),
                                 'rows': [(r['label'], r['toggle'], r['checked'], r['shortcut']) for r in rows_],
                                 'keys_activated': bool(keyed) and lines1 > lines0,
                                 'closed_after_enter': isinstance(after_keys, dict) and after_keys.get('open_menu') == -1}
