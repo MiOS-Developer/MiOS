@@ -48,7 +48,7 @@ QS.Scope {
     // ---- the island this output's blob grows from ----------------------------------------------------------------------
     readonly property real ui: screen ? Mobile.uiScale(screen.name) : 1
     readonly property bool mobile: !!screen && Mobile.isMobile(screen.name)
-    readonly property real margin: theme.edgeMargin * ui
+    readonly property real margin: Glass.gap * ui
     readonly property real outputWidth: screen ? screen.width : 0
     readonly property real outputHeight: screen ? screen.height : 0
     readonly property var drawn: ShellGeometry.drawnIslands[outputName] || null
@@ -59,17 +59,17 @@ QS.Scope {
     // The island rectangle (output-local px): the drawn one, or a bar-height dot at the island's place, top centre.
     readonly property rect islandRect: {
         if (!fallback) return Qt.rect(drawn.x, drawn.y, drawn.width, drawn.height)
-        const h = Math.round(theme.topHeight * ui)
-        return Qt.rect(Math.round((outputWidth - h) / 2), Math.round(theme.edgeMargin * ui), h, h)
+        const h = Math.round(Glass.bar * ui)
+        return Qt.rect(Math.round((outputWidth - h) / 2), Math.round(Glass.gap * ui), h, h)
     }
-    readonly property real islandRadius: fallback ? Glass.cornerFor(theme.topHeight) * ui : drawn.radius
+    readonly property real islandRadius: fallback ? Glass.corner(Glass.bar) * ui : drawn.radius
     // Card geometry: centred under the island, one MeltPopup gap below it, clamped inside the edge margins.
     readonly property real cardWidth: Math.max(1, Math.min(NotifModel.width * ui, outputWidth - 2 * margin))
-    readonly property real gap: (theme.edgeMargin / 2) * ui
+    readonly property real gap: Glass.gap * ui   // the MeltPopup gap below the bar (design language)
     readonly property real cardX: Math.max(margin, Math.min(islandRect.x + islandRect.width / 2 - cardWidth / 2,
                                                              outputWidth - margin - cardWidth))
     readonly property real cardY: islandRect.y + islandRect.height + gap
-    readonly property real cardRadius: Glass.rounding * ui
+    readonly property real cardRadius: Glass.rounding * ui   // GlassSurface clamps it: Glass.corner(min side), the layer glass rule
     readonly property real maxStackHeight: Math.max(1, outputHeight - cardY - margin)
     // the stack as drawn now (cards growing in / collapsing out) and settled (every card full height)
     property real stackDrawn: 1
@@ -400,7 +400,7 @@ QS.Scope {
         property bool interactive: true
         readonly property QtObject card: root.logicOf(uid)
         readonly property real appear: card ? card.appear : 0
-        readonly property real pad: 2 * root.theme.edgeMargin
+        readonly property real pad: Glass.panelPad   // rows and buttons concentric with the card corner
         readonly property real touch: root.mobile ? Glass.touchTarget : 0
         readonly property real fullHeight: content.implicitHeight + 2 * pad
         width: parent && parent.width > 0 ? parent.width : root.cardWidth / root.ui
@@ -434,7 +434,7 @@ QS.Scope {
         // Hairline between stacked cards.
         Rectangle {
             visible: view.index > 0
-            x: view.pad; width: parent.width - 2 * view.pad; height: 1
+            x: view.pad; width: parent.width - 2 * view.pad; height: Glass.hairline
             color: root.theme.outlineColor
         }
 
@@ -442,17 +442,17 @@ QS.Scope {
             id: content
             x: view.pad; y: view.pad
             width: parent.width - 2 * view.pad
-            spacing: root.theme.edgeMargin / 2
+            spacing: Glass.gap / 2
             opacity: Math.max(0, (view.appear - 0.5) * 2)
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: root.theme.edgeMargin
+                spacing: Glass.gap
                 Text {
                     text: root.kindIcon(view.card ? view.card.kind : "info")
                     color: root.kindColor(view.card ? view.card.kind : "info")
                     font.family: root.theme.fontFamily
-                    font.pixelSize: root.theme.fontSize + 1
+                    font.pixelSize: root.theme.fontSize
                     font.bold: true
                 }
                 Text {
@@ -468,7 +468,7 @@ QS.Scope {
                 Item {
                     id: closeHit
                     // dismiss cross: a touch target on mobile
-                    Layout.preferredWidth: Math.max(closeGlyph.implicitWidth + root.theme.edgeMargin, view.touch)
+                    Layout.preferredWidth: Math.max(closeGlyph.implicitWidth + Glass.gap, view.touch)
                     Layout.preferredHeight: Math.max(closeGlyph.implicitHeight, view.touch)
                     Text {
                         id: closeGlyph
@@ -515,17 +515,16 @@ QS.Scope {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: root.theme.edgeMargin / 2
+                spacing: Glass.gap / 2
                 visible: actionRepeater.count > 0
                 Repeater {
                     id: actionRepeater
                     model: (view.card ? view.card.actions || [] : []).filter(a => a && a.identifier !== "default" && a.text).slice(0, NotifModel.actionsMax)
-                    delegate: Rectangle {
+                    delegate: GlassSurface {
                         id: actionButton
                         required property var modelData
-                        width: Math.max(label.implicitWidth + 2 * root.theme.edgeMargin, view.touch)
-                        height: Math.max(label.implicitHeight + root.theme.edgeMargin, view.touch)
-                        radius: height / 2
+                        width: Math.max(label.implicitWidth + Glass.bar, view.touch)
+                        height: Math.max(Glass.bar, view.touch)
                         color: am.containsMouse ? root.theme.withAlpha(root.theme.accent, root.theme.selectionOpacity)
                                                 : root.theme.withAlpha(root.theme.subtle, root.theme.outlineOpacity)
                         Text {
@@ -661,14 +660,14 @@ QS.Scope {
         implicitWidth: root.restBox.width
         implicitHeight: root.restBox.height
         visible: root.restShown
-        mask: RoundedRegion { rx: restGlass.x; ry: restGlass.y; rw: restGlass.width; rh: restGlass.height; rad: restGlass.radius }
-        Rectangle {
+        mask: RoundedRegion { rx: restGlass.x; ry: restGlass.y; rw: restGlass.width; rh: restGlass.height; rad: restGlass.r }
+        GlassSurface {
             id: restGlass
             x: root.restCard.x - root.restBox.x
             y: root.restCard.y - root.restBox.y
             width: root.restCard.width
             height: root.restCard.height
-            radius: Math.min(root.cardRadius, width / 2, height / 2)
+            radius: root.cardRadius
             color: Glass.fill
             clip: true
             Connections {
@@ -746,7 +745,7 @@ QS.Scope {
                                hits: it.hits(origin) })
         }
         const g = atRest ? { x: restBox.x + restGlass.x, y: restBox.y + restGlass.y, width: restGlass.width, height: restGlass.height,
-                             radius: restGlass.radius, color: String(restGlass.color) }
+                             radius: restGlass.r, color: String(restGlass.color) }
                          : { x: blob.glass.x, y: blob.glass.y, width: blob.glass.width, height: blob.glass.height,
                              radius: blob.glass.radius, color: String(blob.glass.color) }
         return { output: outputName, mobile: mobile, ui: ui, phase: phase, active: active, wanted: wanted,

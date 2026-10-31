@@ -15,7 +15,7 @@
 // minimize/restore clicks through the feature-detected hl.plugin.mios_lamp dispatchers.
 // AI-related: usr/share/mios/mios.toml [theme.shell] [desktop.mobile] [desktop.hyprland.lamp], usr/share/mios/quickshell/Theme.qml,
 // usr/share/mios/quickshell/Mobile.qml, usr/share/mios/quickshell/Glass.qml, usr/share/mios/quickshell/DockLamp.qml,
-// usr/share/mios/quickshell/DockHotZone.qml, usr/share/mios/quickshell/AppDrawer.qml, tests/test-mios-lamp.py
+// usr/share/mios/quickshell/DockHotZone.qml, tests/test-mios-lamp.py
 import QtQuick
 import Quickshell as QS
 import Quickshell.Hyprland
@@ -265,7 +265,7 @@ QS.Scope {
         property int drawerWidth: root.paneDrawer ? screenW - 2 * theme.drawerPaneMargin
                                                   : Math.round(screenW * theme.drawerWidthFraction)
         property int drawerHeight: root.paneDrawer
-            ? screenH - (theme.topHeight + 2 * theme.edgeMargin) - theme.drawerPaneMargin - theme.edgeMargin
+            ? screenH - (theme.topHeight + 2 * Glass.gap) - theme.drawerPaneMargin - Glass.gap
             : Math.round(screenH * theme.drawerHeightFraction)
         // Glass parity (Glass.qml): the dock is the window-control tab's material -- [desktop.hyprland.hyprbars]
         // pill_palette at pill_alpha over the compositor's hyprglass layer glass -- morphing to the drawer's
@@ -282,28 +282,28 @@ QS.Scope {
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: expanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         anchors.bottom: true
-        margins.bottom: Math.round(theme.edgeMargin * ui)
+        margins.bottom: Math.round(Glass.gap * ui)
         visible: !reserveRebuild && ((root.revealed && (!root.fullscreen || root.fullscreenReveal)) || expanded || drawerProgress > 0)
-        implicitWidth: Math.round(ui * Math.min(screenW - 2 * theme.edgeMargin,
-                              tiles.implicitWidth + 2 * theme.edgeMargin +
-                              (drawerWidth - tiles.implicitWidth - 2 * theme.edgeMargin) * drawerProgress))
+        implicitWidth: Math.round(ui * Math.min(screenW - 2 * Glass.gap,
+                              tiles.implicitWidth + 2 * Glass.gap +
+                              (drawerWidth - tiles.implicitWidth - 2 * Glass.gap) * drawerProgress))
         implicitHeight: Math.round(ui * (theme.dockHeight + (drawerHeight - theme.dockHeight) * drawerProgress))
         // Windows sit above the dock; the drawer morph overlays them (the zone never grows, so nothing reflows).
         // Auto-hide reserves nothing here: DockHotZone holds one edge margin so windows stop where the top gap does.
         // EdgeReveal's reserved-rows guard re-asserts the zone (reserveNudge, reserveRebuild) when the compositor lost it.
-        exclusiveZone: zoneFor(root.autohide || !visible || root.fullscreen, theme.dockHeight, theme.edgeMargin, ui)
+        exclusiveZone: zoneFor(root.autohide || !visible || root.fullscreen, theme.dockHeight, Glass.gap, ui)
                        + (reserveNudge > 0 && !(root.autohide || !visible || root.fullscreen) ? reserveNudge : 0)
         function zoneFor(none, h, margin, scale) { return none ? 0 : Math.round((h + margin) * scale) }
         property int reserveNudge: 0
         property bool reserveRebuild: false
         // What the compositor then reserves on the bottom edge (the zone plus margins.bottom), from the current inputs.
         function reserveExpectedNow() {
-            const z = zoneFor(root.autohide || !visible || root.fullscreen, theme.dockHeight, theme.edgeMargin, ui)
-            return z > 0 ? z + Math.round(theme.edgeMargin * ui) : 0
+            const z = zoneFor(root.autohide || !visible || root.fullscreen, theme.dockHeight, Glass.gap, ui)
+            return z > 0 ? z + Math.round(Glass.gap * ui) : 0
         }
         function reserveDiag() {
             return { zone: exclusiveZone, mode: exclusionMode, layer: WlrLayershell.layer, visible: visible, nudge: reserveNudge,
-                     fullscreen: root.fullscreen, autohide: root.autohide, ui: ui, height: theme.dockHeight, margin: theme.edgeMargin }
+                     fullscreen: root.fullscreen, autohide: root.autohide, ui: ui, height: theme.dockHeight, margin: Glass.gap }
         }
         function nudgeReserve() { reserveNudge = 1; reserveNudgeBack.restart() }
         function recreateReserve() { reserveRebuild = true; Qt.callLater(() => { dock.reserveRebuild = false }) }
@@ -359,10 +359,10 @@ QS.Scope {
         property var lampGeometry: DockLamp.computeOutputGeometry({
             monX: root.monX,
             monY: root.monY,
-            screenLogicalW: root.screen ? root.screen.width : 1920,
+            screenLogicalW: root.screen ? root.screen.width : 0,
             screenLogicalH: root.screen ? root.screen.height : 1080,
             ui: dock.ui,
-            edgeMargin: dock.theme.edgeMargin,
+            edgeMargin: Glass.gap,
             dockHeight: dock.theme.dockHeight,
             dockRevealPx: dock.theme.dockRevealPx,
             visible: dock.visible,
@@ -420,11 +420,10 @@ QS.Scope {
             height: dock.height / dock.ui
             scale: dock.ui
             transformOrigin: Item.TopLeft
-            Rectangle {
+            GlassSurface {
                 anchors.fill: parent
-                // One clamped global radius for the dock and drawer. Expanding the drawer changes
-                // its size, not the glass material or the radius of its corners.
-                radius: Glass.cornerFor(height)
+                // One clamped global radius for the dock and drawer (GlassSurface: Glass.corner of its height).
+                // Expanding the drawer changes its size, not the glass material or the radius of its corners.
                 color: dock.theme.withAlpha(Glass.fillHex, dock.fillOpacity)
                 clip: true
                 focus: dock.expanded
@@ -433,8 +432,8 @@ QS.Scope {
 
                 Column {
                     anchors.fill: parent
-                    anchors.margins: dock.theme.edgeMargin
-                    spacing: dock.theme.edgeMargin
+                    anchors.margins: Glass.gap
+                    spacing: Glass.gap
                     visible: dock.drawerProgress > 0
                     opacity: dock.drawerProgress
                     TextInput {
@@ -461,12 +460,12 @@ QS.Scope {
                     Column {
                         id: favouritesSection
                         width: parent.width
-                        spacing: dock.theme.edgeMargin / 2
+                        spacing: Glass.gap / 2
                         visible: !search.text && (root.starredApplications.length > 0 || DockLamp.reorderMode)
 
                         Row {
                             width: parent.width
-                            spacing: dock.theme.edgeMargin
+                            spacing: Glass.gap
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
@@ -476,11 +475,10 @@ QS.Scope {
                                 font.pixelSize: dock.theme.smallFontSize
                                 font.bold: true
                             }
-                            Rectangle {
+                            GlassSurface {
                                 visible: DockLamp.reorderMode
-                                height: 22
-                                width: doneReorderLabel.implicitWidth + 16
-                                radius: dock.theme.radius / 2
+                                height: Glass.control + Glass.inset
+                                width: doneReorderLabel.implicitWidth + Glass.bar
                                 color: doneReorderMouse.containsMouse
                                     ? dock.theme.withAlpha(dock.theme.success, dock.theme.selectionOpacity)
                                     : dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity)
@@ -505,8 +503,8 @@ QS.Scope {
                         Row {
                             id: favouritesRow
                             width: parent.width
-                            height: root.starredApplications.length > 0 ? dock.theme.appTile : 28
-                            spacing: dock.theme.edgeMargin
+                            height: root.starredApplications.length > 0 ? dock.theme.appTile : Glass.bar
+                            spacing: Glass.gap
 
                             Text {
                                 visible: root.starredApplications.length === 0
@@ -526,19 +524,18 @@ QS.Scope {
                                     width: dock.theme.appTile
                                     height: dock.theme.appTile
 
-                                    Rectangle {
+                                    GlassSurface {
                                         anchors.fill: parent
-                                        anchors.margins: dock.theme.edgeMargin / 2
-                                        radius: dock.theme.radius
+                                        anchors.margins: Glass.inset
                                         color: favMouse.containsMouse
                                             ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity)
                                             : dock.theme.withAlpha(dock.theme.subtle, dock.theme.outlineOpacity)
-                                        border.width: DockLamp.reorderMode ? 1 : 0
-                                        border.color: dock.theme.cursor
+                                        hairline: DockLamp.reorderMode
+                                        borderColor: dock.theme.cursor
                                     }
                                     Image {
                                         anchors.top: parent.top
-                                        anchors.topMargin: dock.theme.edgeMargin
+                                        anchors.topMargin: Glass.gap
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         width: dock.theme.appIcon
                                         height: width
@@ -548,7 +545,7 @@ QS.Scope {
                                     Text {
                                         anchors.top: parent.top
                                         anchors.right: parent.right
-                                        anchors.margins: dock.theme.edgeMargin
+                                        anchors.margins: Glass.gap
                                         text: "★"
                                         color: dock.theme.cursor
                                         font.family: dock.theme.fontFamily
@@ -558,7 +555,7 @@ QS.Scope {
                                         anchors.left: parent.left
                                         anchors.right: parent.right
                                         anchors.bottom: parent.bottom
-                                        anchors.margins: dock.theme.edgeMargin
+                                        anchors.margins: Glass.gap
                                         text: modelData.name
                                         horizontalAlignment: Text.AlignHCenter
                                         elide: Text.ElideRight
@@ -601,37 +598,34 @@ QS.Scope {
                                         visible: DockLamp.reorderMode
                                         anchors.top: parent.top
                                         anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.topMargin: 4
-                                        spacing: 4
+                                        anchors.topMargin: Glass.inset / 2
+                                        spacing: Glass.inset / 2
                                         z: 4
 
-                                        Rectangle {
-                                            width: 18
-                                            height: 18
-                                            radius: 9
-                                            color: dock.theme.withAlpha(dock.theme.bg, 0.85)
+                                        GlassSurface {
+                                            width: Glass.control
+                                            height: Glass.control
+                                            color: dock.theme.withAlpha(dock.theme.bg, dock.theme.notificationOpacity)
                                             Text { anchors.centerIn: parent; text: "◀"; color: dock.theme.fg; font.pixelSize: 10 }
                                             MouseArea {
                                                 anchors.fill: parent
                                                 onClicked: DockLamp.moveStar(favTile.modelData, -1)
                                             }
                                         }
-                                        Rectangle {
-                                            width: 18
-                                            height: 18
-                                            radius: 9
-                                            color: dock.theme.withAlpha(dock.theme.error, 0.85)
+                                        GlassSurface {
+                                            width: Glass.control
+                                            height: Glass.control
+                                            color: dock.theme.withAlpha(dock.theme.error, dock.theme.notificationOpacity)
                                             Text { anchors.centerIn: parent; text: "×"; color: dock.theme.fg; font.pixelSize: 11 }
                                             MouseArea {
                                                 anchors.fill: parent
                                                 onClicked: DockLamp.unstarApp(favTile.modelData)
                                             }
                                         }
-                                        Rectangle {
-                                            width: 18
-                                            height: 18
-                                            radius: 9
-                                            color: dock.theme.withAlpha(dock.theme.bg, 0.85)
+                                        GlassSurface {
+                                            width: Glass.control
+                                            height: Glass.control
+                                            color: dock.theme.withAlpha(dock.theme.bg, dock.theme.notificationOpacity)
                                             Text { anchors.centerIn: parent; text: "▶"; color: dock.theme.fg; font.pixelSize: 10 }
                                             MouseArea {
                                                 anchors.fill: parent
@@ -648,8 +642,8 @@ QS.Scope {
                         id: appGrid
                         width: parent.width
                         height: Math.max(0, dock.drawerHeight - dock.theme.dockHeight - search.height
-                                         - (favouritesSection.visible ? favouritesSection.height + dock.theme.edgeMargin : 0)
-                                         - 4 * dock.theme.edgeMargin)
+                                         - (favouritesSection.visible ? favouritesSection.height + Glass.gap : 0)
+                                         - 4 * Glass.gap)
                         cellWidth: dock.theme.appTile
                         cellHeight: dock.theme.appTile
                         clip: true
@@ -663,15 +657,14 @@ QS.Scope {
                             height: appGrid.cellHeight
                             readonly property bool isStarredApp: DockLamp.isStarred(modelData)
                             readonly property bool isPinnedApp: DockLamp.isPinned(modelData, dock.theme.dockPinned)
-                            Rectangle {
+                            GlassSurface {
                                 anchors.fill: parent
-                                anchors.margins: dock.theme.edgeMargin / 2
-                                radius: dock.theme.radius
+                                anchors.margins: Glass.inset
                                 color: appMouse.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
                             }
                             Image {
                                 anchors.top: parent.top
-                                anchors.topMargin: dock.theme.edgeMargin
+                                anchors.topMargin: Glass.gap
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 width: dock.theme.appIcon
                                 height: width
@@ -682,7 +675,7 @@ QS.Scope {
                                 visible: gridTile.isStarredApp || gridTile.isPinnedApp
                                 anchors.top: parent.top
                                 anchors.right: parent.right
-                                anchors.margins: dock.theme.edgeMargin
+                                anchors.margins: Glass.gap
                                 text: (gridTile.isStarredApp ? "★" : "") + (gridTile.isPinnedApp ? "•" : "")
                                 color: dock.theme.cursor
                                 font.family: dock.theme.fontFamily
@@ -692,7 +685,7 @@ QS.Scope {
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.bottom: parent.bottom
-                                anchors.margins: dock.theme.edgeMargin
+                                anchors.margins: Glass.gap
                                 text: modelData.name
                                 horizontalAlignment: Text.AlignHCenter
                                 elide: Text.ElideRight
@@ -737,10 +730,10 @@ QS.Scope {
                     anchors.bottom: parent.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
                     height: dock.theme.dockHeight
-                    spacing: dock.theme.edgeMargin
+                    spacing: Glass.gap
 
                     Item {
-                        width: dock.theme.dockHeight - dock.theme.edgeMargin
+                        width: dock.theme.dockHeight - Glass.gap
                         height: dock.theme.dockHeight
                         Text {
                             anchors.centerIn: parent
@@ -767,20 +760,19 @@ QS.Scope {
                             readonly property var allWindows: root.windowsForEntry(modelData)
                             readonly property bool isPinnedTile: DockLamp.isPinned(modelData, dock.theme.dockPinned)
                             readonly property bool isStarredTile: DockLamp.isStarred(modelData)
-                            width: dock.theme.dockHeight - dock.theme.edgeMargin
+                            width: dock.theme.dockHeight - Glass.gap
                             height: dock.theme.dockHeight
                             scale: tileMouse.containsMouse ? dock.hoverMagScale : 1.0
                             Behavior on scale {
                                 NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
                             }
-                            Rectangle {
+                            GlassSurface {
                                 anchors.fill: parent
-                                anchors.topMargin: dock.theme.edgeMargin / 2
-                                anchors.bottomMargin: dock.theme.edgeMargin / 2
-                                radius: dock.theme.radius
+                                anchors.topMargin: Glass.inset
+                                anchors.bottomMargin: Glass.inset
                                 color: tileMouse.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
-                                border.width: DockLamp.reorderMode && appTile.isPinnedTile ? 1 : 0
-                                border.color: dock.theme.cursor
+                                hairline: DockLamp.reorderMode && appTile.isPinnedTile
+                                borderColor: dock.theme.cursor
                             }
                             Image {
                                 anchors.centerIn: parent
@@ -794,21 +786,20 @@ QS.Scope {
                                 visible: appTile.isStarredTile && !DockLamp.reorderMode
                                 anchors.top: parent.top
                                 anchors.right: parent.right
-                                anchors.topMargin: 2
-                                anchors.rightMargin: 2
+                                anchors.topMargin: Glass.inset / 2
+                                anchors.rightMargin: Glass.inset / 2
                                 text: "★"
                                 color: dock.theme.cursor
                                 font.family: dock.theme.fontFamily
                                 font.pixelSize: Math.max(8, dock.theme.smallFontSize - 2)
                             }
-                            Rectangle {
+                            GlassSurface {
                                 visible: appTile.running !== undefined || appTile.minimizedWin !== undefined
                                 anchors.bottom: parent.bottom
-                                anchors.bottomMargin: dock.theme.edgeMargin / 2
+                                anchors.bottomMargin: Glass.inset
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                width: dock.theme.edgeMargin + (appTile.allWindows.length > 1 ? 6 : 0)
-                                height: 3
-                                radius: dock.theme.radius
+                                width: Glass.gap + (appTile.allWindows.length > 1 ? Glass.inset : 0)
+                                height: Glass.inset / 2
                                 color: appTile.running && appTile.running.activated ? dock.theme.cursor
                                      : (appTile.running ? dock.theme.subtle : dock.theme.warning)
                             }
@@ -922,37 +913,34 @@ QS.Scope {
                                 visible: DockLamp.reorderMode && appTile.isPinnedTile
                                 anchors.top: parent.top
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.topMargin: 2
-                                spacing: 2
+                                anchors.topMargin: Glass.inset / 2
+                                spacing: Glass.inset / 2
                                 z: 5
 
-                                Rectangle {
-                                    width: 14
-                                    height: 14
-                                    radius: 7
-                                    color: dock.theme.withAlpha(dock.theme.bg, 0.9)
+                                GlassSurface {
+                                    width: Glass.control
+                                    height: Glass.control
+                                    color: dock.theme.withAlpha(dock.theme.bg, dock.theme.notificationOpacity)
                                     Text { anchors.centerIn: parent; text: "◀"; color: dock.theme.fg; font.pixelSize: 8 }
                                     MouseArea {
                                         anchors.fill: parent
                                         onClicked: DockLamp.movePin(appTile.modelData, -1, dock.theme.dockPinned)
                                     }
                                 }
-                                Rectangle {
-                                    width: 14
-                                    height: 14
-                                    radius: 7
-                                    color: dock.theme.withAlpha(dock.theme.error, 0.9)
+                                GlassSurface {
+                                    width: Glass.control
+                                    height: Glass.control
+                                    color: dock.theme.withAlpha(dock.theme.error, dock.theme.notificationOpacity)
                                     Text { anchors.centerIn: parent; text: "×"; color: dock.theme.fg; font.pixelSize: 9 }
                                     MouseArea {
                                         anchors.fill: parent
                                         onClicked: DockLamp.unpinApp(appTile.modelData, dock.theme.dockPinned)
                                     }
                                 }
-                                Rectangle {
-                                    width: 14
-                                    height: 14
-                                    radius: 7
-                                    color: dock.theme.withAlpha(dock.theme.bg, 0.9)
+                                GlassSurface {
+                                    width: Glass.control
+                                    height: Glass.control
+                                    color: dock.theme.withAlpha(dock.theme.bg, dock.theme.notificationOpacity)
                                     Text { anchors.centerIn: parent; text: "▶"; color: dock.theme.fg; font.pixelSize: 8 }
                                     MouseArea {
                                         anchors.fill: parent
@@ -973,17 +961,16 @@ QS.Scope {
                             readonly property string iconName: entry && entry.icon ? entry.icon : (modelData.appId || "")
                             readonly property string iconSource: iconName ? QS.Quickshell.iconPath(iconName, true) : ""
                             readonly property var tileWindows: root.windowsForMinTile(modelData)
-                            width: dock.theme.dockHeight - dock.theme.edgeMargin
+                            width: dock.theme.dockHeight - Glass.gap
                             height: dock.theme.dockHeight
                             scale: minMouse.containsMouse ? dock.hoverMagScale : 1.0
                             Behavior on scale {
                                 NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
                             }
-                            Rectangle {
+                            GlassSurface {
                                 anchors.fill: parent
-                                anchors.topMargin: dock.theme.edgeMargin / 2
-                                anchors.bottomMargin: dock.theme.edgeMargin / 2
-                                radius: dock.theme.radius
+                                anchors.topMargin: Glass.inset
+                                anchors.bottomMargin: Glass.inset
                                 color: minMouse.containsMouse
                                     ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity)
                                     : dock.theme.withAlpha(dock.theme.subtle, dock.theme.outlineOpacity)
@@ -1006,13 +993,12 @@ QS.Scope {
                                 font.family: dock.theme.fontFamily
                                 font.pixelSize: dock.theme.fontSize
                             }
-                            Rectangle {
+                            GlassSurface {
                                 anchors.bottom: parent.bottom
-                                anchors.bottomMargin: dock.theme.edgeMargin / 2
+                                anchors.bottomMargin: Glass.inset
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                width: dock.theme.edgeMargin + 4
-                                height: 3
-                                radius: dock.theme.radius
+                                width: Glass.gap + 4
+                                height: Glass.inset / 2
                                 color: dock.theme.warning
                             }
                             Timer {
@@ -1083,11 +1069,10 @@ QS.Scope {
                     }
                     Item {
                         id: phoneTile
-                        width: dock.theme.dockHeight - dock.theme.edgeMargin
+                        width: dock.theme.dockHeight - Glass.gap
                         height: dock.theme.dockHeight
-                        Rectangle {
-                            anchors.fill: parent; anchors.topMargin: dock.theme.edgeMargin/2; anchors.bottomMargin: dock.theme.edgeMargin/2
-                            radius: Glass.cornerFor(height)
+                        GlassSurface {
+                            anchors.fill: parent; anchors.topMargin: Glass.inset; anchors.bottomMargin: Glass.inset
                             color: phoneHit.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
                         }
                         Text {

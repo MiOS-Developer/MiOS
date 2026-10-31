@@ -6,9 +6,7 @@
 #   publishes (virtio-win: CHECKSUM md5 of the RPM plus the sha256 per member its RPM header records, read with a ranged
 #   GET; the unsigned qemu-ga MSI: that header's sha256 of guest-agent/<package>, never an Authenticode claim). Writes ONLY build-manifest.json (never the SSOT); any resolver failure aborts and removes a
 #   stale manifest so nothing downstream can fall back to an older/cached version.
-# AI-related: /.devloop/tasks-mios-xbox.jsonl (xb-06, xb-04, xb-08, xb-15), usr/lib/mios/mios_toml.py,
-#   usr/libexec/mios/vfio/setup-looking-glass.py (idd_plan: same commit-matching rule), automation/69-bake-lookingglass-client.sh,
-#   tests/test-mios-xbox-resolve-latest.py, /home/mios/mios-desktop-work-1/staged-ssot/xbox-research.toml
+# AI-related: usr/lib/mios/mios_toml.py, usr/libexec/mios/vfio/setup-looking-glass.py, automation/69-bake-lookingglass-client.sh, tests/test-mios-xbox-resolve-latest.py, usr/share/mios/mios.toml
 # AI-functions: load_config, resolve_uup, resolve_virtio, resolve_qemu_ga, resolve_lg_host, resolve_winfsp,
 #   resolve_webview2, resolve_lg_idd, resolve_converter, resolve_all, verify_file, verify_tree, git_blob_sha1,
 #   write_manifest_atomic, main

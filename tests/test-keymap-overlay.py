@@ -105,7 +105,7 @@ def main():
             check(name, ok, detail)
         old = os.environ.get('MIOS_SYNC_THEME_OLD')
         if not old:
-            r = subprocess.run(['git', '-C', str(ROOT), 'show', 'main:usr/libexec/mios/mios-sync-theme'], capture_output=True, text=True)
+            r = subprocess.run(['git', '-C', str(ROOT), 'show', 'bcd6b3f22:usr/libexec/mios/mios-sync-theme'], capture_output=True, text=True)
             if r.returncode == 0:
                 old = str(Path(tmp) / 'old-sync-theme')
                 Path(old).write_text(r.stdout)
