@@ -391,13 +391,17 @@ def up_binary_path(root: str, build: bool = True):
 def up_run_binary(path: str, root: str):
     """(ok, output). The binary owns the rendering comparison; we only relay it."""
     env = dict(os.environ, MIOS_ROOT=os.path.abspath(root))
-    try:
-        proc = subprocess.run([path, "--check"], env=env, capture_output=True,
-                              text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return False, "mios-unit-gen --check could not run: %s" % exc
-    out = (proc.stdout + proc.stderr).strip()
-    return proc.returncode == 0, out
+    ok, outs = True, []
+    # System units AND session units: [user_units.*] has its own ceiling.
+    for extra in ([], ["--user"]):
+        try:
+            proc = subprocess.run([path, "--check", "--root", os.path.abspath(root)] + extra,
+                                  env=env, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, "mios-unit-gen --check %s could not run: %s" % (" ".join(extra), exc)
+        ok = ok and proc.returncode == 0
+        outs.append((proc.stdout + proc.stderr).strip())
+    return ok, "\n".join(outs)
 
 def up_main() -> int:
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.environ.get("MIOS_ROOT") or "."

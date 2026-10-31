@@ -6,6 +6,7 @@ Description='MiOS' Podman Garbage Collection
 # `!container` would silently skip WSL.
 ConditionVirtualization=|!container
 ConditionVirtualization=|wsl
+
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/podman system prune -a -f

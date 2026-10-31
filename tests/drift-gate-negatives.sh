@@ -2723,21 +2723,52 @@ test_unit_projection() {
     _up_run && _up_fail "check_unit_projection passed with a raised ceiling"
     cp "$bak" "$toml"
 
-    # (2) Toolchain-free half: register below its own ceiling. The renderer half
-    # is asserted by tests/projection.rs. See tasks.jsonl task_267.
-    python3 - "$toml" <<'PYX'
-import io, re, sys
-p = sys.argv[1]
-s = io.open(p, encoding="utf-8").read()
-start = s.index("[unit_projection]")
-end = s.index("\n]\n", start) + len("\n]\n")
-block = s[start:end]
-block, n = re.subn(r'\n  "[^"]+",(?=\n\])', '', block, count=1)
-assert n == 1, "no register entry was removed -- the mutation would prove nothing"
-io.open(p, "w", encoding="utf-8", newline="\n").write(s[:start] + block + s[end:])
-PYX
-    _up_run && _up_fail "check_unit_projection passed with the register below its own ceiling"
+    # (2) The register is drained (max_drift = 0): planting an entry for a
+    # unit that renders faithfully must FAIL -- an entry that does not drift is
+    # padding, and padding is how a register starts hiding the next defect.
+    sed -i '0,/^drift = \[$/s//drift = [\n  "mios-podman-gc.timer",/' "$toml"
+    sed -i 's/^max_drift = [0-9]*$/max_drift = 1/' "$toml"
+    _up_run && _up_fail "check_unit_projection passed with a faithful unit padded into the register"
     cp "$bak" "$toml"
+
+    # (2b) A hand-edited PROJECTED unit must FAIL (Law 8): the file is derived
+    # from [units.*] and `mios-unit-gen --write` is the only author.
+    local unit="${ROOT}/usr/lib/systemd/system/mios-podman-gc.timer" ubak
+    ubak="$(mktemp)"; cp "$unit" "$ubak"
+    printf '# hand edit\n' >> "$unit"
+    _up_run && { cp "$ubak" "$unit"; rm -f "$ubak"; _up_fail "check_unit_projection passed on a hand-edited projected unit"; }
+    cp "$ubak" "$unit"
+
+    # (2c) A unit shipped with no [units.*] declaration must FAIL the coverage
+    # ceiling (max_undeclared only comes down).
+    local planted="${ROOT}/usr/lib/systemd/system/mios-planted-undeclared.service"
+    printf '[Service]\nExecStart=/bin/true\n' > "$planted"
+    _up_run && { rm -f "$planted" "$ubak"; _up_fail "check_unit_projection passed on an undeclared unit"; }
+    rm -f "$planted"
+
+    # (2d) XW51B8MG: a ${VAR:-default} systemd cannot expand, declared AND
+    # shipped identically (so it is not drift), must still FAIL.
+    printf '[Service]\nEnvironment=PLANTED=${MIOS_PLANTED_ABSENT:-1}\n' > "$planted"
+    printf '\n[units."mios-planted-undeclared.service".Service]\nEnvironment = "PLANTED=${MIOS_PLANTED_ABSENT:-1}"\n' >> "$toml"
+    _up_run && { rm -f "$planted" "$ubak"; _up_fail "check_unit_projection passed on an unexpandable \${VAR:-default}"; }
+    # Control: the same planted unit with a plain value passes, so the
+    # placeholder -- not the plant -- is what turned the gate red.
+    printf '[Service]\nEnvironment=PLANTED=1\n' > "$planted"
+    cp "$bak" "$toml"
+    printf '\n[units."mios-planted-undeclared.service".Service]\nEnvironment = "PLANTED=1"\n' >> "$toml"
+    _up_run || { rm -f "$planted" "$ubak"; _up_fail "check_unit_projection failed on a clean declared plant (control)"; }
+    rm -f "$planted"; cp "$bak" "$toml"
+
+    # (2e) 6S2G69Q2: ProtectSystem=strict with no writable path, unlisted, must FAIL.
+    printf '[Service]\nProtectSystem=strict\n' > "$planted"
+    printf '\n[units."mios-planted-undeclared.service".Service]\nProtectSystem = "strict"\n' >> "$toml"
+    _up_run && { rm -f "$planted" "$ubak"; _up_fail "check_unit_projection passed on a strict unit with no write grant"; }
+    # Control: granting its state directory clears it.
+    printf '[Service]\nProtectSystem=strict\nStateDirectory=mios-planted\n' > "$planted"
+    cp "$bak" "$toml"
+    printf '\n[units."mios-planted-undeclared.service".Service]\nProtectSystem = "strict"\nStateDirectory = "mios-planted"\n' >> "$toml"
+    _up_run || { rm -f "$planted" "$ubak"; _up_fail "check_unit_projection failed on a strict unit that grants its path (control)"; }
+    rm -f "$planted" "$ubak"; cp "$bak" "$toml"
 
     # (3) An entry naming a unit [units.*] does not project must FAIL.
     sed -i '0,/^drift = \[$/s//drift = [\n  "mios-not-a-real-unit.service",/' "$toml"

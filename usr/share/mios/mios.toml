@@ -109,6 +109,14 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 55
+max_undeclared = 164
+max_undeclared_user = 19
+strict_no_write = [
+  "mios-embed-backfill.service",
+  "mios-node.service",
+  "mios-policy-arbiter.service",
+]
+strict_no_write_user = []
 drift = [
   "hermes-worker-firstboot.service",
   "hermes-worker.path",
@@ -1201,10 +1209,10 @@ Environment = [
   # references each BARE, which the renderer leaves for systemd to expand.
   # Without a supply here systemd expanded all four to the empty string
   # (task_3362). `mios-gate protected-refs` fails the build on the general case.
-  "\"MIOS_FRONTIER_LANE_B_MODEL=${MIOS_FRONTIER_LANE_B_MODEL:-}\"",
-  "\"MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=${MIOS_FRONTIER_CLAUDE_EFFORT_FLAG:-}\"",
-  "\"MIOS_A2O_AGY_EFFORT_FLAG=${MIOS_A2O_AGY_EFFORT_FLAG:-}\"",
-  "\"MIOS_A2O_GEMINI_EFFORT_FLAG=${MIOS_A2O_GEMINI_EFFORT_FLAG:-}\"",
+  "\"MIOS_FRONTIER_LANE_B_MODEL=Gemini 3.5 Flash (High)\"",
+  "\"MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=--effort {e}\"",
+  "\"MIOS_A2O_AGY_EFFORT_FLAG=\"",
+  "\"MIOS_A2O_GEMINI_EFFORT_FLAG=\"",
 ]
 EnvironmentFile = "-/etc/mios/install.env"
 TimeoutStartSec = "1200s"
@@ -1458,7 +1466,7 @@ Wants = "network-online.target"
 Type = "simple"
 User = "mios"
 Group = "mios"
-Environment = ["HF_HOME=/var/home/mios/.cache/huggingface", "MIOS_FINETUNE_SERVE_PORT=${MIOS_PORT_FINETUNE_SERVE:-11438}"]
+Environment = ["HF_HOME=/var/home/mios/.cache/huggingface", "MIOS_FINETUNE_SERVE_PORT=11438"]
 ExecStart = "/var/lib/mios/finetune/venv/bin/python /usr/libexec/mios/mios-finetune-serve"
 Restart = "on-failure"
 RestartSec = "5"
