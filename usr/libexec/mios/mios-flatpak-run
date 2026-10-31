@@ -1,9 +1,32 @@
 #!/bin/sh
-# AI-hint: Runs a Flatpak app without the session's MIOS_* exports. userenv.sh exports the whole
-#          resolved SSOT (thousands of MIOS_* variables); flatpak forwards each one to bwrap and
-#          aborts past bwrap's 9000-argument limit. Sandboxed apps do not read MIOS_*.
-# AI-related: /usr/lib/mios/userenv.sh, /usr/share/applications/mios-zen.desktop, mios.toml [browser.zen]
+# AI-hint: Runs a Flatpak app without the session's MIOS_* exports and with safe standard streams.
+#          Strips thousands of MIOS_* exports to stay well within bwrap's 9000-argument limit,
+#          and guards standard descriptors against closed pipes (EPIPE/SIGPIPE).
+# AI-related: /usr/lib/mios/userenv.sh, /usr/share/applications/mios-zen.desktop, mios.toml [browser.zen], usr/libexec/mios/mios-desktop-launch
 set -eu
+
+# Ensure standard descriptors are open
+if ! : <&0 2>/dev/null; then
+    exec 0</dev/null
+fi
+if ! : >&1 2>/dev/null; then
+    exec 1>/dev/null
+fi
+if ! : >&2 2>/dev/null; then
+    exec 2>/dev/null
+fi
+
+# If running outside an interactive terminal (e.g. desktop launch) and stdout/stderr are pipes,
+# protect child processes from closed pipe signals (EPIPE / SIGPIPE).
+if [ -z "${TERM:-}" ] && [ "${MIOS_KEEP_STDIO:-0}" != "1" ]; then
+    if [ -p /dev/fd/1 ] 2>/dev/null || [ -p /proc/self/fd/1 ] 2>/dev/null; then
+        exec 1>/dev/null
+    fi
+    if [ -p /dev/fd/2 ] 2>/dev/null || [ -p /proc/self/fd/2 ] 2>/dev/null; then
+        exec 2>/dev/null
+    fi
+fi
+
 # One sed pass emits "-u NAME" for every MIOS_* variable. (Building the list in a shell loop was
 # quadratic: ~1.6 s per launch with ~3,700 exports.)
 # shellcheck disable=SC2046  # word-split the -u NAME pairs
