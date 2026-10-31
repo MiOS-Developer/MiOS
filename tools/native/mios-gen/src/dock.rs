@@ -21,7 +21,8 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
+use mios_service_core::wayland_fd::{recv_fds, send_fds};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -450,76 +451,14 @@ pub fn observe_event(t: &mut Tracker, m: &[u8]) {
     }
 }
 
-fn recv(fd: RawFd, buf: &mut [u8], fds: &mut Vec<RawFd>) -> std::io::Result<usize> {
-    let mut cmsg = [0u8; 512];
-    let mut iov = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
-    let mut mh: libc::msghdr = unsafe { std::mem::zeroed() };
-    mh.msg_iov = &mut iov;
-    mh.msg_iovlen = 1;
-    mh.msg_control = cmsg.as_mut_ptr().cast();
-    mh.msg_controllen = cmsg.len() as _;
-    let r = unsafe { libc::recvmsg(fd, &mut mh, libc::MSG_CMSG_CLOEXEC) };
-    if r < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    unsafe {
-        let mut c = libc::CMSG_FIRSTHDR(&mh);
-        while !c.is_null() {
-            if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
-                let data = libc::CMSG_DATA(c) as *const RawFd;
-                let count = ((*c).cmsg_len as usize - libc::CMSG_LEN(0) as usize) / std::mem::size_of::<RawFd>();
-                for i in 0..count {
-                    fds.push(*data.add(i));
-                }
-            }
-            c = libc::CMSG_NXTHDR(&mh, c);
-        }
-    }
-    Ok(r as usize)
-}
-fn send(fd: RawFd, data: &[u8], fds: &[RawFd]) -> std::io::Result<()> {
-    let mut off = 0;
-    let mut first = true;
-    while off < data.len() {
-        let mut iov = libc::iovec { iov_base: data[off..].as_ptr() as *mut _, iov_len: data.len() - off };
-        let mut mh: libc::msghdr = unsafe { std::mem::zeroed() };
-        mh.msg_iov = &mut iov;
-        mh.msg_iovlen = 1;
-        let space = unsafe { libc::CMSG_SPACE((fds.len() * std::mem::size_of::<RawFd>()) as u32) } as usize;
-        let mut cmsg = vec![0u8; space.max(1)];
-        if first && !fds.is_empty() {
-            mh.msg_control = cmsg.as_mut_ptr().cast();
-            mh.msg_controllen = space as _;
-            unsafe {
-                let c = libc::CMSG_FIRSTHDR(&mh);
-                (*c).cmsg_level = libc::SOL_SOCKET;
-                (*c).cmsg_type = libc::SCM_RIGHTS;
-                (*c).cmsg_len = libc::CMSG_LEN((fds.len() * std::mem::size_of::<RawFd>()) as u32) as _;
-                std::ptr::copy_nonoverlapping(fds.as_ptr(), libc::CMSG_DATA(c) as *mut RawFd, fds.len());
-            }
-        }
-        let r = unsafe { libc::sendmsg(fd, &mh, libc::MSG_NOSIGNAL) };
-        if r < 0 {
-            let e = std::io::Error::last_os_error();
-            if e.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(e);
-        }
-        first = false;
-        off += r as usize;
-    }
-    Ok(())
-}
-
 /// One direction of a proxied connection: whole messages are parsed (and requests rewritten), fds ride with the next
 /// non-empty chunk (libwayland queues fds apart from the bytes, so order is all that matters).
 fn pump(from: UnixStream, to: UnixStream, tracker: Arc<Mutex<Tracker>>, rect: Option<OskRect>) {
     let mut buf = vec![0u8; 65536];
     let mut pending: Vec<u8> = Vec::new();
-    let mut fds: Vec<RawFd> = Vec::new();
+    let mut fds: Vec<OwnedFd> = Vec::new();
     loop {
-        let got = match recv(from.as_raw_fd(), &mut buf, &mut fds) {
+        let got = match recv_fds(from.as_raw_fd(), &mut buf, &mut fds) {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
@@ -544,24 +483,16 @@ fn pump(from: UnixStream, to: UnixStream, tracker: Arc<Mutex<Tracker>>, rect: Op
         }
         pending.drain(..at);
         if !out.is_empty() {
-            if send(to.as_raw_fd(), &out, &fds).is_err() {
+            if send_fds(to.as_raw_fd(), &out, &fds).is_err() {
                 break;
             }
-            for f in fds.drain(..) {
-                unsafe { libc::close(f) };
-            }
+            fds.clear();
         }
     }
     let _ = to.shutdown(std::net::Shutdown::Both);
-    for f in fds {
-        unsafe { libc::close(f) };
-    }
 }
 
 static STOP: AtomicBool = AtomicBool::new(false);
-extern "C" fn on_term(_: libc::c_int) {
-    STOP.store(true, Ordering::SeqCst);
-}
 
 pub struct OskOptions {
     pub width: u32,
@@ -592,10 +523,7 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
     let _ = fs::remove_file(&sock);
     let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-    unsafe {
-        libc::signal(libc::SIGTERM, on_term as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_term as libc::sighandler_t);
-    }
+    mios_service_core::process::register_stop_signals(&STOP);
     let mut cmd = if o.private_bus {
         // A private session bus for the keyboard's sm.puri.OSK0 name: never the operator's bus (test sessions).
         let mut c = Command::new("dbus-run-session");
@@ -610,12 +538,7 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
     if o.force_show {
         cmd.env("POS_DEBUG", "force-show");
     }
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-            Ok(())
-        });
-    }
+    mios_service_core::process::set_pdeathsig(&mut cmd, 15);
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", argv[0]))?;
     let mut status = None;
     while !STOP.load(Ordering::SeqCst) {
@@ -639,7 +562,7 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
     }
     let _ = fs::remove_file(&sock);
     if status.is_none() {
-        unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+        let _ = std::process::Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
         let until = Instant::now() + Duration::from_secs(2);
         while child.try_wait().ok().flatten().is_none() && Instant::now() < until {
             thread::sleep(Duration::from_millis(20));
