@@ -2358,8 +2358,8 @@ check_nested_podman_caps() {
 check_bake_budget() {
     _need_python || return 0
     local py_res
-    py_res="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py bake-budget 2>&1)"
-    local rc=$?
+    local rc=0
+    py_res="$(MIOS_DRIFT_ROOT="$ROOT" python3 tools/drift-checks.py bake-budget 2>&1)" || rc=$?
     if [[ $rc -ne 0 ]]; then
         echo "  [bake-budget-drift] $py_res" >&2
         _violation "bake-budget gate failed: $py_res"
