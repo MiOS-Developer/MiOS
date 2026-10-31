@@ -1,5 +1,5 @@
 // AI-hint: miosd launcher: the tmux-os launcher for everything -- one organised, centred popup (grouped sections with headers, an aligned key column, two columns where wide enough) over running instances, AI and agents, every installed TUI and the pane/window/session menu rows; keyboard, mouse (right-click = options) and controller vocabulary; instance management (go to, pop out to its own desktop window, float/tile, move to window/session, rename, close); opened by the prefix keys, the controller's tmux:menu and the desktop CTRL+SUPER chord.
-// AI-related: /usr/share/mios/mios.toml [keybindings.tmux.launcher] [keybindings.tmux] [[keybindings.tmux.menus]] [[keybindings.actions]] [terminal.tui_launcher] [[terminal.tuis]] [keybindings.global] (tmux-os-launcher), tools/native/mios-unit-gen/src/tmux_os.rs, tools/native/mios-gen/src/tmux_os.rs, usr/libexec/mios/mios-terminal, src/mios-rs/miosd/src/sessions.rs
+// AI-related: usr/share/mios/mios.toml, tools/native/mios-unit-gen/src/tmux_os.rs, tools/native/mios-gen/src/tmux_os.rs, usr/libexec/mios/mios-terminal, src/mios-rs/miosd/src/sessions.rs
 //! `miosd launcher`: the tmux-os launcher.
 //!
 //! `open` runs on the tmux server (a `run-shell -b` job of the prefix keys) or from the desktop chord: it sizes and

@@ -1,5 +1,5 @@
 // AI-hint: Main entrypoint for mios-controls: with no verb (on a terminal) the binding-editor TUI; verbs list/check/set/add/remove/pad/room/rebind/restore-defaults/export/import drive the same draft -> validate -> apply pipeline headlessly (dry-run unless --apply), and uses/search/conflicts/layout/devices/profile read the binding map and draw the device views as text.
-// AI-related: usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux] [desktop.controls], tools/native/Cargo.toml, src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py, tests/test-mios-controls-live.py
+// AI-related: usr/share/mios/mios.toml, tools/native/Cargo.toml, src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py, tests/test-mios-controls-live.py
 
 #![forbid(unsafe_code)]
 

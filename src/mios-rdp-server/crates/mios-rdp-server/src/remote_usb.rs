@@ -1,5 +1,5 @@
 // AI-hint: MS-RDPEUSB (URBDRC) generic USB redirection bridged to a native USB/IP vhci_hcd port: ironrdp-server DeviceFactory/UsbRedirDevice backend, SSOT allow/deny policy (announce + real descriptors), per-session claims, vhci capability probe (never loads a module), root attach helper hand-over, and the USB/IP CMD_SUBMIT/CMD_UNLINK engine that turns kernel URBs into UsbDeviceHandle requests.
-// AI-related: src/mios-rdp-server/crates/mios-rdp-priv/src/main.rs, usr/lib/systemd/system/mios-rdp-usb@.service, usr/share/mios/mios.toml [remote.rdp.redirect].usb [remote.device_forwarding.usb], tools/native/mios-gen/src/device_forwarding.rs, usr/share/doc/mios/remote-usb.md
+// AI-related: src/mios-rdp-server/crates/mios-rdp-priv/src/main.rs, usr/lib/systemd/system/mios-rdp-usb@.service, usr/share/mios/mios.toml, tools/native/mios-gen/src/device_forwarding.rs, usr/share/doc/mios/remote-usb.md
 // AI-functions: Factory, Policy, Identity, probe_vhci, usbip::serve, read_descriptors, status_json
 //! Generic USB redirection (MS-RDPEUSB).
 //!

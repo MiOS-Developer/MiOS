@@ -1,5 +1,5 @@
 <!-- AI-hint: Operator guide for generic USB forwarding: RDP MS-RDPEUSB (URBDRC) bridged to an already-loaded USB/IP vhci_hcd port, the shared [remote.device_forwarding] allow/deny policy, per-session target selection, the SPICE usbredir filter and the capability report across RDP, USB/IP, SPICE and nested sessions. -->
-<!-- AI-related: src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs, src/mios-rdp-server/crates/mios-rdp-priv/src/main.rs, tools/native/mios-gen/src/device_forwarding.rs, usr/share/mios/mios.toml [remote.rdp.redirect].usb [remote.device_forwarding], usr/lib/systemd/system/mios-rdp-usb.socket, tests/test-device-forwarding.py -->
+<!-- AI-related: src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs, src/mios-rdp-server/crates/mios-rdp-priv/src/main.rs, tools/native/mios-gen/src/device_forwarding.rs, usr/share/mios/mios.toml, usr/lib/systemd/system/mios-rdp-usb.socket, tests/test-device-forwarding.py -->
 
 # Remote USB forwarding
 

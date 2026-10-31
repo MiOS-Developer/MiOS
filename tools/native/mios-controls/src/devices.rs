@@ -1,5 +1,5 @@
 // AI-hint: mios-controls devices: connected keyboards, mice and controllers read from /proc/bus/input/devices (name, USB ids, event node, KEY/ABS/REL capability bitmaps) and the controller family ([desktop.controls.pad_families]); read-only (no open, no grab), so mios-inputd's exclusive controller grab is never disturbed.
-// AI-related: tools/native/mios-inputd/src/linux.rs (VIRTUAL_PREFIX, fixture names), tools/native/mios-controls/src/layout.rs, usr/share/mios/mios.toml [desktop.controls.pad_families]
+// AI-related: tools/native/mios-inputd/src/linux.rs, tools/native/mios-controls/src/layout.rs, usr/share/mios/mios.toml
 // AI-functions: scan, parse, Device::family, Family::from_ssot
 use crate::model::{at, str_list};
 use std::collections::{BTreeMap, BTreeSet};

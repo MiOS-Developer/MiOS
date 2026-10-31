@@ -1,5 +1,5 @@
 // AI-hint: mios-controls model: loads the layered SSOT (vendor+host below the user tier, the user tier as an editable document), holds the binding draft (global bindings, Guide layer, Hypr3D room table, tmux-os prefix keys, compositor binding tables) and projects it back into the user tier touching only the [desktop.controls].editable paths.
-// AI-related: tools/native/mios-resolver/src/layers.rs, tools/native/mios-resolver/src/merge.rs, usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux] [desktop.controls]
+// AI-related: tools/native/mios-resolver/src/layers.rs, tools/native/mios-resolver/src/merge.rs, usr/share/mios/mios.toml
 // AI-functions: Layers::load, Layers::effective, Layers::user_doc_for, Draft::from_merged, keybindings_fragment, import_fragment, without_paths
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

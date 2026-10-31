@@ -8,8 +8,7 @@
 # Run: MIOS_GEN=<candidate mios-gen> python3 -I tests/test-gpu-display-routing.py
 #   MIOS_GEN_BASELINE (default /usr/bin/mios-gen) = the pre-change binary; MIOS_ROUTING_BASE (default bcd6b3f22).
 # Touches no live state: hermetic SSOT roots, a mock greetd socket, a private headless cage on its own runtime dir.
-# AI-related: tools/native/mios-gen/src/{gpu_topology,wl_device_proxy,greeter,nested_session,render}.rs,
-#   usr/libexec/mios/mios-greeter-session, usr/share/mios/mios.toml [desktop.hyprland.hardware_profiles], usr/share/doc/mios/desktop-gpu-routing.md
+# AI-related: tools/native/mios-gen/src/gpu_topology.rs, tools/native/mios-gen/src/wl_device_proxy.rs, tools/native/mios-gen/src/greeter.rs, tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/render.rs, usr/libexec/mios/mios-greeter-session, usr/share/mios/mios.toml, usr/share/doc/mios/desktop-gpu-routing.md
 import glob
 import json
 import os
