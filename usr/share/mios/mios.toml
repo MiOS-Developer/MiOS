@@ -8604,7 +8604,7 @@ flatpak_program = "flatpak"
 systemctl_program = "systemctl"
 signal_program = "kill"
 notification_program = "notify-send"
-desktop_launcher_program = "gio"
+desktop_launcher_program = "/usr/libexec/mios/mios-desktop-launch"
 environment_program = "env"
 terminal_command = ["alacritty", "--title", "{name}", "-e"]
 application_dirs = ["$XDG_DATA_HOME/applications", "~/.local/share/flatpak/exports/share/applications", "/var/lib/flatpak/exports/share/applications", "/usr/local/share/applications", "/usr/share/applications"]
@@ -18260,6 +18260,7 @@ unit = [
     "tests/test-tasks-integrity.py",
     "tests/test-app-launch-health.py",
     "tests/test-app-launch-qml.py",
+    "tests/test-flatpak-apps-launch.py",
     "tests/test-framerate-retina-nested-live.py",
     "tests/test-game-placement.py",
     "tests/test-hypr3d-input-transitions-live.py",

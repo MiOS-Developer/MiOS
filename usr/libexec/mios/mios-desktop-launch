@@ -1,0 +1,80 @@
+#!/bin/sh
+# AI-hint: Dedicated desktop application launcher. Decouples GUI apps from caller stdio pipes, strips MIOS_* environment variables to prevent bubblewrap argument overflow, detaches session, and encapsulates execution in a transient systemd user scope while propagating dispatch status.
+# AI-related: usr/share/mios/quickshell/AppLaunch.qml, usr/share/mios/mios.toml [desktop.launch], usr/libexec/mios/mios-flatpak-run
+# AI-doc: usr/share/doc/mios/manual/desktop.md
+
+set -eu
+
+# Handle both 'mios-desktop-launch launch <desktop-file>' and 'mios-desktop-launch <desktop-file>'
+if [ "${1:-}" = "launch" ]; then
+    shift
+fi
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: mios-desktop-launch [launch] <desktop-file> [args...]" >&2
+    exit 1
+fi
+
+# Ensure standard file descriptors 0, 1, 2 are open and safely connected
+if ! : <&0 2>/dev/null; then
+    exec 0</dev/null
+fi
+if ! : >&1 2>/dev/null; then
+    exec 1>/dev/null
+fi
+if ! : >&2 2>/dev/null; then
+    exec 2>/dev/null
+fi
+
+# Linear-time unsetting of MIOS_* environment variables
+# Prevents bubblewrap (bwrap) argument limit exhaustion (>9,000 args)
+UNSET_ARGS=$(env | sed -n 's/^\(MIOS_[A-Za-z0-9_]*\)=.*/-u \1/p')
+
+# Check if systemd user scope is functional and reachable
+_USE_SYSTEMD=0
+if command -v systemd-run >/dev/null 2>&1; then
+    if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ] || [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/private" ]; then
+        if systemd-run --user --quiet true 2>/dev/null; then
+            _USE_SYSTEMD=1
+        fi
+    fi
+fi
+
+# Locate gio or fallback launcher
+LAUNCHER="gio"
+LAUNCH_ARGS="launch"
+if ! command -v "$LAUNCHER" >/dev/null 2>&1; then
+    if command -v gtk-launch >/dev/null 2>&1; then
+        LAUNCHER="gtk-launch"
+        LAUNCH_ARGS=""
+    else
+        echo "mios-desktop-launch: error: gio or gtk-launch not found" >&2
+        exit 127
+    fi
+fi
+
+# Execute launch detached with stdio decoupled (stdin/stdout/stderr connected to /dev/null)
+# Propagate GIO's dispatch exit status to the caller
+STATUS=0
+if [ "$_USE_SYSTEMD" = "1" ]; then
+    _SCOPE_NAME="app-launch-$$-$(date +%s%N 2>/dev/null || echo $RANDOM)"
+    if command -v setsid >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        setsid -w systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
+            env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+    else
+        # shellcheck disable=SC2086
+        systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
+            env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+    fi
+else
+    if command -v setsid >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        setsid -w env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+    else
+        # shellcheck disable=SC2086
+        env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+    fi
+fi
+
+exit "$STATUS"
