@@ -10059,6 +10059,9 @@ rust.categories.tests.description  MIOS_RUST_CATEGORIES_TESTS_DESCRIPTION
 rust.categories.tests.replaces  MIOS_RUST_CATEGORIES_TESTS_REPLACES
 rust.categories.tests.crates  MIOS_RUST_CATEGORIES_TESTS_CRATES
 rust.categories.tests.scope  MIOS_RUST_CATEGORIES_TESTS_SCOPE
+generation.walk.excluded_sections  MIOS_GENERATION_WALK_EXCLUDED_SECTIONS
+generation.walk.mostly_dead_sections  MIOS_GENERATION_WALK_MOSTLY_DEAD_SECTIONS
+generation.walk.emit_keep  MIOS_GENERATION_WALK_EMIT_KEEP
 generation.sync.unit_projections  MIOS_GENERATION_SYNC_UNIT_PROJECTIONS
 generation.sync.steps  MIOS_GENERATION_SYNC_STEPS
 packages.console-pointer.enable  MIOS_PACKAGES_CONSOLE_POINTER_ENABLE

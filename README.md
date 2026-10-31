@@ -43,9 +43,12 @@ Run `mios-gen names --root .` to inspect naming metadata without configuration
 values. Run `mios-gen sync --root . --plan` to validate and inspect the complete
 generation pipeline, then `mios-gen sync --root .` to execute it. The ordered
 stages live in `[generation.sync]` in the SSOT. The old `tools/sync-generated.sh`
-entry point delegates to this native command. Some declared stages still invoke
-Python or Bash adapters; completing those Rust ports and verifying installed
-Windows and Linux pipelines remain required work.
+entry point delegates to this native command. The environment baseline
+(`mios-gen env-snapshot`) and the AI header catalog (`mios-gen ai-metadata`) are
+native stages. Three declared stages still invoke Python adapters
+(`tools/sync-dotfiles.py`, `usr/libexec/mios/mios-dotfiles-render` and
+`usr/libexec/mios/mios-manual`); completing those Rust ports and verifying
+installed Windows and Linux pipelines remain required work.
 
 ## Local AI contract
 

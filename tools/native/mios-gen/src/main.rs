@@ -15,6 +15,8 @@ mod app_preflight;
 mod ai;
 mod btop_theme;
 mod display_scale;
+mod env_snapshot;
+mod ai_metadata;
 mod hypr3d_spawn;
 mod docs;
 mod greeter;
@@ -99,6 +101,33 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Project the resolved MIOS_* login environment of the vendor tiers (env-baseline.txt).
+    #[command(name = "env-snapshot")]
+    EnvSnapshot {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Vendor SSOT to resolve (default: <root>/usr/share/mios/mios.toml).
+        #[arg(long)]
+        vendor: Option<PathBuf>,
+        /// Write the snapshot here instead of printing it.
+        #[arg(long, conflicts_with = "check")]
+        out: Option<PathBuf>,
+        /// Compare a committed snapshot with a fresh one; write nothing.
+        #[arg(long)]
+        check: Option<PathBuf>,
+    },
+    /// Project the AI header metadata catalog (usr/share/mios/ai/v1/metadata.json) from the tracked tree.
+    #[command(name = "ai-metadata")]
+    AiMetadata {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Write the catalog here (default: <root>/usr/share/mios/ai/v1/metadata.json).
+        #[arg(long, conflicts_with = "check_fresh")]
+        export: Option<PathBuf>,
+        /// Fail unless the committed catalog is byte-identical to a fresh one, naming each differing entry.
+        #[arg(long = "check-fresh")]
+        check_fresh: bool,
+    },
     /// Regenerate every declared SSOT projection in dependency order.
     Sync {
         #[arg(long)]
@@ -106,6 +135,9 @@ enum Commands {
         /// Validate every prerequisite and print the plan without changing files or the index.
         #[arg(long)]
         plan: bool,
+        /// Verify the plan's copy stages read-only (check_sync_copies) and exit.
+        #[arg(long = "check-copies", conflicts_with = "plan")]
+        check_copies: bool,
     },
     /// Audit every SSOT variable's canonical name, aliases and collisions (no values).
     Names {
@@ -1205,6 +1237,32 @@ fn main() -> ExitCode {
                 }
             };
         }
+        Commands::EnvSnapshot { root, vendor, out, check } => {
+            let root = resolve_root(root);
+            return match env_snapshot::run(&root, vendor.as_deref(), out.as_deref(), check.as_deref()) {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("[mios-gen env-snapshot] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::AiMetadata { root, export, check_fresh } => {
+            let root = resolve_root(root);
+            return match ai_metadata::run(&root, export.as_deref(), check_fresh) {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprint!("{error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         Commands::NamesRegistry { root, check } => {
             let root = resolve_root(root);
             let result = if check {
@@ -1220,8 +1278,20 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Commands::Sync { root, plan } => {
+        Commands::Sync { root, plan, check_copies } => {
             let root = resolve_root(root);
+            if check_copies {
+                return match sync::check_copies(&root) {
+                    Ok(summary) => {
+                        println!("[mios-gen sync] {summary}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("[mios-gen sync] {error}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
             return match sync::run(&root, plan) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {

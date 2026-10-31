@@ -253,6 +253,11 @@ def diff(a, b, label_a, label_b, limit=6):
 
 # ---- single home of the walk rules -------------------------------------------
 
+# Three distinctive members of the exclusion list, each as a quoted literal. Built
+# at run time so this file never matches its own signature.
+SIGNATURE = tuple('"%s"' % m for m in ('install_phases', 'btop', 'messages'))
+
+
 def walk_list_homes(root):
     """Tracked sources (other than the SSOT) that restate the walk's exclusion
     list. The signature is the list itself: three of its distinctive members on
@@ -271,7 +276,7 @@ def walk_list_homes(root):
         except OSError:
             continue
         for line in text.splitlines():
-            if ('"install_phases"' in line and '"btop"' in line and '"messages"' in line) \
+            if all(quoted in line for quoted in SIGNATURE) \
                     or line.lstrip().startswith(("EXCLUDED_SECTIONS =", "WALK_EMIT_KEEP =",
                                                  "WALK_MOSTLY_DEAD =", "pub const EXCLUDED_SECTIONS",
                                                  "pub const WALK_EMIT_KEEP", "pub const WALK_MOSTLY_DEAD")):
@@ -364,7 +369,9 @@ class Law13DropinParity(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             planted = Path(tmp) / "usr/lib/mios/mios_toml.py"
             planted.parent.mkdir(parents=True)
-            planted.write_text('EXCLUDED_SECTIONS = {"containers", "install_phases", "btop", "messages"}\n')
+            # Assembled at run time so this file does not itself carry the signature.
+            members = ", ".join('"%s"' % m for m in ('containers', 'install_phases', 'btop', 'messages'))
+            planted.write_text("EXCLUDED_SECTIONS = {%s}\n" % members)
             self.assertEqual(walk_list_homes(tmp), ["usr/lib/mios/mios_toml.py"])
 
 

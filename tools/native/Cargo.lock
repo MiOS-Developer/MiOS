@@ -2233,6 +2233,9 @@ version = "0.3.0"
 [[package]]
 name = "mios-ssot-walk"
 version = "0.3.0"
+dependencies = [
+ "toml",
+]
 
 [[package]]
 name = "mios-task"

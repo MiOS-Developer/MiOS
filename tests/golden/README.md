@@ -90,6 +90,19 @@ $ mios-gen ai-manifest --check
 [OK] AI repository and tool manifests are in sync
 ```
 
+### ai-metadata
+
+Port of `usr/libexec/mios/mios-ai-metadata.py` (the `ai.metadata` sync stage); the committed catalog is the Python leg's output, so the positive control is byte parity with it. `tests/test-ai-metadata-native-parity.py` diffs both legs over the tree and planted edge cases.
+
+```console
+$ mios-gen ai-metadata --root [CWD]/nonexistent --check-fresh
+? 1
+[ai-metadata] FAIL: usr/share/mios/ai/v1/metadata.json is unreadable ([..]); nothing was compared.
+
+$ mios-gen ai-metadata --root [CWD] --check-fresh
+[ai-metadata] PASS: usr/share/mios/ai/v1/metadata.json is byte-identical to a fresh export ([..] entries).
+```
+
 ### bib-configs
 
 ```console
@@ -143,6 +156,23 @@ Error: generate-egress-firewall: Failed to read [CWD]/nonexistent/usr/share/mios
 
 $ mios-gen egress-firewall --check
 [egress-fw] ./usr/share/mios/security/egress.nft matches SSOT
+```
+
+### env-snapshot
+
+Port of the bash body of `usr/libexec/mios/mios-env-snapshot` (the `env.baseline` sync stage; the script is now a shim onto this verb). The baseline reads the vendor tiers only: the bash body also read `<root>/etc/mios`, which on a deployed host is the live admin tier (unit test `only_the_vendor_tiers_are_read`). The second case is a planted defect: a file that is not the snapshot.
+
+```console
+$ mios-gen env-snapshot --root [CWD]/nonexistent
+? 1
+[mios-gen env-snapshot] vendor SSOT not found: [CWD]/nonexistent/usr/share/mios/mios.toml
+
+$ mios-gen env-snapshot --root [CWD] --check [CWD]/tests/golden/README.md
+? 1
+[mios-gen env-snapshot] [CWD]/tests/golden/README.md is stale: it differs from a fresh environment snapshot
+
+$ mios-gen env-snapshot --root [CWD] --check [CWD]/usr/share/mios/reference/env-baseline.txt
+[CWD]/usr/share/mios/reference/env-baseline.txt matches the resolved environment ([..] values)
 ```
 
 ### fastfetch
