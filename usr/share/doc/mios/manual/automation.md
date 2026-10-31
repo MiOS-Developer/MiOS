@@ -1029,3 +1029,75 @@ These generators' Python twins were ported and deleted ([rust.categories.gen].re
 a missing native binary is a violation, never a fallback to a script that no longer exists.
 
 <!-- mios-src:4836d6daebbb from automation/98-drift-checks.sh:128-129 -->
+### Operator account + password come ONLY from the layered SSOT...
+
+Operator account + password come ONLY from the layered SSOT (vendor < host < user + mios.d,
+resolved for this build tree) or an explicit build input. No literal fallback: a missing
+value fails the build, naming the key (usr/libexec/mios/mios-credential).
+
+<!-- mios-src:60df2e2566d4 from automation/11-user.sh:19-21 -->
+
+### }. The MiOS signing key is an operator secret (ruling Q4...
+
+/}. The MiOS signing key is an operator secret (ruling Q4, task_3536): create it with 'cosign generate-key-pair', keep the private key as a publisher secret, sign every ghcr.io/mios-dev image by digest with it, then commit only the public key at ${_dst#/}."
+
+<!-- mios-src:15e140aa2db7 from automation/49-cosign-policy.sh:96-96 -->
+
+### The RPM %post generates /etc/xrdp/{cert,key}.pem at build...
+
+The RPM %post generates /etc/xrdp/{cert,key}.pem at build time; MiOS never
+uses them (mios-rdp creates a per-host cert under [remote.rdp].cert_dir on
+first start), so drop them instead of baking one key into every image.
+
+<!-- mios-src:686ac7e294b5 from automation/58-gnome-remote-desktop.sh:25-27 -->
+
+### code-server, native: the [image.sidecars].code_server...
+
+code-server, native: the [image.sidecars].code_server release (":latest" floats
+to upstream's newest release, resolved here), its workbench stylesheet and both
+workbench.js patches baked and verified. A container that cannot run the sidecar
+(the devcontainer, Codespaces, a cloud session) starts this one on
+[ports].code_server; an upstream release that moves a patch anchor fails the build.
+The RPM is accepted only against the sha256 GitHub publishes for that asset, and
+the resolved version is build output (version manifest + SBOM), not SSOT.
+
+<!-- mios-src:f453765f4e29 from automation/59-tools.sh:32-38 -->
+
+### Satty (MPL-2.0, Satty-org/Satty): mios-shot's annotation...
+
+Satty (MPL-2.0, Satty-org/Satty): mios-shot's annotation editor ([desktop.screenshot].editors), run as its own
+program and never linked. The newest upstream release (resolved here, never pinned in the SSOT); its prebuilt
+satty-<arch>-unknown-linux-gnu.tar.gz is accepted only against the sha256 GitHub publishes for that asset, the
+licence must still be MPL-2.0, and the resolved version is build output (version manifest + SBOM).
+
+<!-- mios-src:1add6c93eb8a from automation/59-tools.sh:85-88 -->
+
+### Hyprland closes the event socket of a client that falls...
+
+Hyprland closes the event socket of a client that falls behind during an event storm (PeerClosedError); upstream
+Quickshell then never reconnects and the shell stops seeing fullscreen/workspace/window events (the HUD no longer
+hides under fullscreen windows). Carry the reconnect-and-resync fix until upstream has its own.
+
+<!-- mios-src:f14eeedcba73 from automation/66-bake-quickshell.sh:71-73 -->
+
+### Folded from 13 copies. ONE resolution order for the native...
+
+Folded from 13 copies.  ONE resolution order for the native gate, because
+a copy that forgot the debug path made check_version_ssot violate
+unconditionally in CI (which builds `cargo build -p mios-gate`, debug).
+An explicit MIOS_GATE_BIN always wins.  Otherwise the NEWEST built gate is used: a stale
+target/debug binary left behind by an older checkout must not shadow a fresh release or
+installed build (it ran yesterday's gate logic against today's tree).
+
+<!-- mios-src:53939c423fea from automation/98-drift-checks.sh:97-102 -->
+
+### Credentials have NO literal default
+
+Credentials have NO literal default: [identity].username / default_password / fullname come
+from the LAYERED mios.toml (vendor < /etc/mios + mios.d < ~/.config/mios + mios.d) when one
+is present on this host; otherwise the operator must type them (empty is refused).
+ONE reader: usr/libexec/mios/mios-credential over usr/lib/mios/mios_credentials.py (the same
+layered resolver the image build, 11-user.sh and the Windows projection use) -- no private
+TOML parser here. This tree's vendor file is used when present (fresh host before the overlay).
+
+<!-- mios-src:e4b1eaf8a2bf from automation/install-bootstrap.sh:6-11 -->

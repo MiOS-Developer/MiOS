@@ -215,9 +215,14 @@ class ControllerAudit(Base):
         r = self.run_cli('check')
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn('BTN_SOUTH: action "bogus" must be <namespace>:<verb>', r.stdout)
-        self.write_user(self.NAV.format(south='hypr:movefocus down').replace('BTN_EAST = "none"\n', ''))
+        # Plant the gap in a user-named profile: the vendor tier's full nav.desktop would fill a removed
+        # BTN_EAST back in through the layered merge, but nothing below the user tier defines "mine".
+        mine = (self.NAV.format(south='hypr:movefocus down').replace('BTN_EAST = "none"\n', '')
+                .replace('desktop-2d = "desktop"', 'desktop-2d = "mine"').replace('controller.nav.desktop]', 'controller.nav.mine]'))
+        self.write_user(mine)
         r = self.run_cli('check')
-        self.assertIn('desktop-2d (desktop): BTN_EAST unmapped', r.stdout, 'every nav input maps to an action or "none"')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn('desktop-2d (mine): BTN_EAST unmapped', r.stdout, 'every nav input maps to an action or "none"')
 
     def test_console_rows_take_console_namespaces_only(self):
         row = '[[keybindings.global.bindings]]\nid = "vt-x"\ntier = 1\nchord = "SUPER+CTRL+F3"\naction = "{a}"\ncontexts = ["console"]\n'

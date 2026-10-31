@@ -3328,7 +3328,29 @@
         <label>Enable MiOS Guide combinations while an app captures controls <input data-key="keybindings.global.controller.captured_system_layer" type="checkbox"></label>
         <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
         <label>Capture hold time (ms) <input data-key="keybindings.global.controller.capture_hold_ms" data-type="int" type="number" min="100" max="3000" value="500"></label>
+        <label>Captured-window tag (North capture) <input data-key="keybindings.global.controller.capture_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Released-window tag (held L3+R3 release) <input data-key="keybindings.global.controller.release_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Bridge-fullscreen tag (North hold; a release unsets only this fullscreen) <input data-key="keybindings.global.controller.capture_fullscreen_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Unconfirmed capture/release timeout (ms) <input data-key="keybindings.global.controller.context_stale_ms" data-type="int" type="number" min="1" max="10000"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
+        <label>Capture notice (Controller -> app; hold L3+R3 to release) <input data-key="keybindings.global.controller.capture_osd" type="checkbox"></label>
+        <label>Capture notice command (argv; {message} is replaced) <textarea data-key="keybindings.global.controller.capture_osd_argv" data-type="json-array"></textarea></label>
+        <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <label>Right-stick flick threshold <input data-key="keybindings.global.controller.nav.flick_on" data-type="float" type="number" min="0.05" max="1" step="0.05"></label>
+        <label>Right-stick re-arm threshold <input data-key="keybindings.global.controller.nav.flick_off" data-type="float" type="number" min="0" max="0.95" step="0.05"></label>
+        <label>tmux servers driven by the controller (-L names) <textarea data-key="keybindings.global.controller.nav.tmux_sockets" data-type="json-array"></textarea></label>
+        <label>Ordinary windows: nav profile ("vpad" = raw gamepad) <input data-key="keybindings.global.controller.nav.contexts.desktop-2d" type="text"></label>
+        <label>Terminals: nav profile (terminal = terminal_tmux / terminal_plain) <input data-key="keybindings.global.controller.nav.contexts.terminal" type="text"></label>
+        <label>Game-class windows: nav profile <input data-key="keybindings.global.controller.nav.contexts.game" type="text"></label>
+        <label>VM/remote-class windows: nav profile <input data-key="keybindings.global.controller.nav.contexts.vm-passthrough" type="text"></label>
+        <label>Linux console (VT): nav profile (console = console_tmux / console_plain) <input data-key="keybindings.global.controller.nav.contexts.console" type="text"></label>
+        <label>VT West tap, hold (O-6; Shift+Tab is BTab on the console) <input data-key="keybindings.global.controller.nav.console_plain.BTN_WEST" data-array="csv" type="text"></label>
+        <label>VT tmux mouse bridge (gpm and the controller pointer reach tmux while its mouse mode is on) <input data-key="keybindings.global.controller.console.bridge" type="checkbox"></label>
+        <label>VT pointer source <select data-key="keybindings.global.controller.console.mouse"><option value="auto">auto (gpm when its socket exists, else evdev)</option><option value="gpm">gpm</option><option value="evdev">evdev pointer devices</option><option value="off">off</option></select></label>
+        <label>gpm client socket <input data-key="keybindings.global.controller.console.gpm_socket" type="text" pattern="/.*"></label>
+        <label>evdev pointer devices read by name (never grabbed) <textarea data-key="keybindings.global.controller.console.pointer_names" data-type="json-array"></textarea></label>
+        <label>evdev pointer pixels per character cell [x, y] <textarea data-key="keybindings.global.controller.console.cell_px" data-type="json-array"></textarea></label>
+        <label>tmux bindings popup command (argv; {file} = the rendered controller map) <textarea data-key="keybindings.global.controller.console.keymap_argv" data-type="json-array"></textarea></label>
         <label>Controller virtual keyboard device <input data-key="keybindings.global.controller.virtual_keyboard" type="text"></label>
         <label>Controller virtual keyboard layout <input data-key="keybindings.global.controller.virtual_keyboard_layout" type="text"></label>
         <label>Looking Glass escape keysym <input data-key="keybindings.global.vm.looking_glass_escape_key" type="text"></label>
@@ -3344,6 +3366,32 @@
         <label>Guide + BTN_START action <input data-key="keybindings.global.controller.system_layer.BTN_START" type="text"></label>
         <label>Guide + BTN_THUMBL action <input data-key="keybindings.global.controller.system_layer.BTN_THUMBL" type="text"></label>
         <label>Guide + BTN_THUMBR action <input data-key="keybindings.global.controller.system_layer.BTN_THUMBR" type="text"></label>
+        <label>Guide + D-pad left (HAT pads too) action <input data-key="keybindings.global.controller.system_layer.BTN_DPAD_LEFT" type="text"></label>
+        <label>Guide + D-pad right action <input data-key="keybindings.global.controller.system_layer.BTN_DPAD_RIGHT" type="text"></label>
+        <label>Guide + D-pad up action <input data-key="keybindings.global.controller.system_layer.BTN_DPAD_UP" type="text"></label>
+        <label>Guide + D-pad down action <input data-key="keybindings.global.controller.system_layer.BTN_DPAD_DOWN" type="text"></label>
+        <label>Guide + left-stick flick up action <input data-key="keybindings.global.controller.system_layer.LS_UP" type="text"></label>
+        <label>Guide + left-stick flick down action <input data-key="keybindings.global.controller.system_layer.LS_DOWN" type="text"></label>
+        <label>Guide + left-stick flick left action <input data-key="keybindings.global.controller.system_layer.LS_LEFT" type="text"></label>
+        <label>Guide + left-stick flick right action <input data-key="keybindings.global.controller.system_layer.LS_RIGHT" type="text"></label>
+        <label>Guide + right-stick flick left action <input data-key="keybindings.global.controller.system_layer.RS_LEFT" type="text"></label>
+        <label>Guide + right-stick flick right action <input data-key="keybindings.global.controller.system_layer.RS_RIGHT" type="text"></label>
+        <label>Guide + right-stick flick up action <input data-key="keybindings.global.controller.system_layer.RS_UP" type="text"></label>
+        <label>Guide + right-stick flick down action <input data-key="keybindings.global.controller.system_layer.RS_DOWN" type="text"></label>
+        <label>Xbox (xpad) quirk: face-button order and d-pad buttons <input data-key="keybindings.global.controller.quirks.xpad.enabled" type="checkbox"></label>
+        <label>Xbox (xpad) quirk: drivers <textarea data-key="keybindings.global.controller.quirks.xpad.drivers" data-type="json-array"></textarea></label>
+        <label>Xbox (xpad) quirk: USB ids (vvvv:pppp) <textarea data-key="keybindings.global.controller.quirks.xpad.ids" data-type="json-array"></textarea></label>
+        <label>Agent virtual controller (mios-inputd vpad) <input data-key="keybindings.global.controller.agent_pad.enabled" type="checkbox"></label>
+        <label>Agent pad name ({id} = the pad id) <input data-key="keybindings.global.controller.agent_pad.name" type="text"></label>
+        <label>Agent pad USB id (vvvv:pppp) <input data-key="keybindings.global.controller.agent_pad.usb_id" type="text" pattern="[0-9a-fA-F]{4}:[0-9a-fA-F]{4}"></label>
+        <label>Agent pad ramp sample rate (Hz) <input data-key="keybindings.global.controller.agent_pad.rate_hz" data-type="int" type="number" min="10" max="1000"></label>
+        <label>Agent pad default curve <select data-key="keybindings.global.controller.agent_pad.ease"><option value="in-out">in-out (zero velocity at both ends)</option><option value="in">in</option><option value="out">out</option><option value="linear">linear</option></select></label>
+        <label>Agent pad default ramp (ms) <input data-key="keybindings.global.controller.agent_pad.ramp_ms" data-type="int" type="number" min="1" max="60000"></label>
+        <label>Agent pad shortest ramp (ms; nothing teleports) <input data-key="keybindings.global.controller.agent_pad.min_ms" data-type="int" type="number" min="1" max="60000"></label>
+        <label>Agent pad longest ramp, hold or tap (ms) <input data-key="keybindings.global.controller.agent_pad.max_ms" data-type="int" type="number" min="1" max="60000"></label>
+        <label>Agent pad tap length (ms) <input data-key="keybindings.global.controller.agent_pad.tap_ms" data-type="int" type="number" min="10" max="2000"></label>
+        <label>Agent pad idle exit (s) <input data-key="keybindings.global.controller.agent_pad.idle_exit_s" data-type="int" type="number" min="10" max="86400"></label>
+        <label>Agent pad sockets (under XDG_RUNTIME_DIR) <input data-key="keybindings.global.controller.agent_pad.socket_dir" type="text"></label>
         <label>Hypr3D room: East action (cancel) <input data-key="keybindings.global.controller.room.BTN_EAST" type="text"></label>
         <label>Hypr3D room: L3 action (sprint toggle) <input data-key="keybindings.global.controller.room.BTN_THUMBL" type="text"></label>
         <label>Hypr3D room: R3 action (recenter) <input data-key="keybindings.global.controller.room.BTN_THUMBR" type="text"></label>
@@ -3526,8 +3574,17 @@
         <label>Top pill width (pixels) <input data-key="theme.shell.top_width_px" data-type="int" type="number" min="1"></label>
         <label>Shared surface radius (pixels) <input data-key="desktop.hyprland.config.decoration.rounding" data-type="int" type="number" min="0"></label>
         <label>Glass panel fill (%) <input data-key="theme.shell.fill_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
+        <p>Glass opacity per window state: the shell glass (island, pills, dock, popups) takes the level of the focused window&#39;s state, globally.</p>
+        <label>Glass fill, focused floating window or desktop (%) <input data-key="theme.shell.glass_states.focused_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, tiled window (%) <input data-key="theme.shell.glass_states.tiled_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, maximized window (%) <input data-key="theme.shell.glass_states.maximized_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, fullscreen window (revealed HUD) (%) <input data-key="theme.shell.glass_states.fullscreen_pct" data-type="int" type="number" min="0" max="100"></label>
+        <label>Glass fill, VR passthrough (reserved) (%) <input data-key="theme.shell.glass_states.vr_passthrough_pct" data-type="int" type="number" min="0" max="100"></label>
         <label>Surface outline opacity (%) <input data-key="theme.shell.outline_opacity_pct" data-type="int" type="number" min="0" max="100"></label>
         <label>Shell edge margin (pixels) <input data-key="theme.shell.edge_margin_px" data-type="int" type="number" min="0"></label>
+        <p>Design language: one geometry for every surface. The bar height (top pill height) sizes the status island, app-menu pills, window-controls tab and popup rows; the inset pads bars and panels and spaces the window buttons (button size = bar height minus two insets); the edge margin is every outer margin and gap between groups; the shared surface radius rounds windows and tall surfaces (shorter ones are capsules); the corner curve is the one corner shape everywhere (2 = circular arc).</p>
+        <label>Design inset inside bars and panels (pixels) <input data-key="theme.shell.inset_px" data-type="int" type="number" min="0" max="13"></label>
+        <label>Corner curve (superellipse exponent; 2 = circular, higher = squarer continuous corner) <input data-key="theme.shell.corner_power" data-type="float" type="number" min="2" max="10" step="0.1"></label>
         <label>Shell popup animation (ms) <input data-key="desktop.topbar.popup_ms" data-type="int" type="number" min="0"></label>
         <label>Top bar reveals over fullscreen windows (top-edge hot zone) <input type="text" data-key="desktop.topbar.fullscreen_reveal" data-type="bool"></label>
         <label>Top bar fullscreen reveal zone (pixels) <input data-key="desktop.topbar.fullscreen_reveal_px" data-type="int" type="number" min="1"></label>
@@ -3537,6 +3594,23 @@
         <label>Highest volume the wheel sets (%) <input data-key="desktop.topbar.volume_max_pct" data-type="int" type="number" min="1" max="150"></label>
         <label>Volume percentage shown after a change (ms; 0 hides it) <input data-key="desktop.topbar.volume_osd_ms" data-type="int" type="number" min="0"></label>
         <label>Top bar FPS also shows the focused window's frame rate ("144 FPS/92 FPS") <input type="text" data-key="desktop.topbar.window_fps" data-type="bool"></label>
+        <p>Island popups: each sound, network and power popup is built from modules; switch a module off or change its order (lower first).</p>
+        <label>Sound popup: output module <input type="text" data-key="desktop.topbar.popups.sound.modules.output.enabled" data-type="bool"></label>
+        <label>Sound popup: output module order <input data-key="desktop.topbar.popups.sound.modules.output.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Sound popup: input module <input type="text" data-key="desktop.topbar.popups.sound.modules.input.enabled" data-type="bool"></label>
+        <label>Sound popup: input module order <input data-key="desktop.topbar.popups.sound.modules.input.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Sound popup: settings module <input type="text" data-key="desktop.topbar.popups.sound.modules.settings.enabled" data-type="bool"></label>
+        <label>Sound popup: settings module order <input data-key="desktop.topbar.popups.sound.modules.settings.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Network popup: status module <input type="text" data-key="desktop.topbar.popups.network.modules.status.enabled" data-type="bool"></label>
+        <label>Network popup: status module order <input data-key="desktop.topbar.popups.network.modules.status.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Network popup: settings module <input type="text" data-key="desktop.topbar.popups.network.modules.settings.enabled" data-type="bool"></label>
+        <label>Network popup: settings module order <input data-key="desktop.topbar.popups.network.modules.settings.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Power popup: settings module <input type="text" data-key="desktop.topbar.popups.power.modules.settings.enabled" data-type="bool"></label>
+        <label>Power popup: settings module order <input data-key="desktop.topbar.popups.power.modules.settings.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Power popup: session module <input type="text" data-key="desktop.topbar.popups.power.modules.session.enabled" data-type="bool"></label>
+        <label>Power popup: session module order <input data-key="desktop.topbar.popups.power.modules.session.order" data-type="int" type="number" min="1" max="20"></label>
+        <label>Power popup: power module <input type="text" data-key="desktop.topbar.popups.power.modules.power.enabled" data-type="bool"></label>
+        <label>Power popup: power module order <input data-key="desktop.topbar.popups.power.modules.power.order" data-type="int" type="number" min="1" max="20"></label>
         <label>Window controls reveal <select data-key="desktop.hyprland.hyprbars.config.reveal_on"><option>focus+proximity</option><option>focus</option><option>proximity</option><option>always</option></select></label>
         <label>Window controls reveal distance (pixels) <input data-key="desktop.hyprland.hyprbars.config.reveal_radius" data-type="int" type="number" min="0"></label>
         <label>Opening text reference size (pixels) <input data-key="desktop.hyprland.hypr3d.spawn.text_reference_px" data-type="int" type="number" min="4" max="200"></label>
@@ -3613,6 +3687,8 @@
         <label>Glass lens distortion <input data-key="desktop.hyprland.hyprglass.presets.mios.lens_distortion" data-type="float" type="number" step="0.01"></label>
         <label>Glass chromatic aberration <input data-key="desktop.hyprland.hyprglass.presets.mios.chromatic_aberration" data-type="float" type="number" step="0.01"></label>
         <label>Glass fresnel strength <input data-key="desktop.hyprland.hyprglass.presets.mios.fresnel_strength" data-type="float" type="number" step="0.01"></label>
+        <label>Glass light direction, specular (degrees clockwise from the top) <input data-key="desktop.hyprland.hyprglass.presets.mios.specular_angle" data-type="float" type="number" min="0" max="360" step="1"></label>
+        <label>Glass light direction, bevel ring (keep equal to the specular: one light) <input data-key="desktop.hyprland.hyprglass.presets.mios.bevel_angle" data-type="float" type="number" min="0" max="360" step="1"></label>
         <label>Glass specular strength <input data-key="desktop.hyprland.hyprglass.presets.mios.specular_strength" data-type="float" type="number" step="0.01"></label>
         <label>Glass bevel strength <input data-key="desktop.hyprland.hyprglass.presets.mios.bevel_strength" data-type="float" type="number" step="0.01"></label>
         <label>Glass bevel size <input data-key="desktop.hyprland.hyprglass.presets.mios.bevel_size" data-type="float" type="number" step="0.01"></label>

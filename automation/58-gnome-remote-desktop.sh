@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=universal
 # AI-hint: Remote desktop phase. With [remote.rdp].enabled it installs [packages.remote-desktop] (xrdp + wayvnc) and enables xrdp.service (SSOT-rendered config via /usr/libexec/mios/mios-rdp, PAM gateway auth, TLS) plus mios-rdp-firewall.service (RDP port on the tailnet zone only); the per-session capture (mios-rdp-vnc.service) is pulled in by mios-desktop.target. With it disabled, xrdp stays masked as before.
-# AI-related: xrdp.service, xrdp-sesman.service, mios-rdp-firewall.service, /usr/lib/systemd/user/mios-rdp-vnc.service, /usr/libexec/mios/mios-rdp, /usr/share/mios/mios.toml [remote.rdp] [packages.remote-desktop]
+# AI-related: xrdp.service, xrdp-sesman.service, mios-rdp-firewall.service, /usr/lib/systemd/user/mios-rdp-vnc.service, /usr/libexec/mios/mios-rdp, /usr/share/mios/mios.toml
 set -euo pipefail
 # shellcheck disable=SC1090  # log.sh resolves at runtime: build ctx or installed
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
