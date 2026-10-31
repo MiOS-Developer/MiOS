@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4019,
-  "total_metadata_entries": 3293,
-  "total_hints": 3287,
-  "total_functions_indexed": 1882,
-  "total_related_links": 6269,
+  "total_files_scanned": 4044,
+  "total_metadata_entries": 3318,
+  "total_hints": 3312,
+  "total_functions_indexed": 1983,
+  "total_related_links": 6379,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -2867,7 +2867,7 @@
     },
     {
       "path": "docs/design/mios-global-bindings-final.md",
-      "hint": "Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 and P1 landed; G1 U1 I1-I4 GT M1 pending).",
+      "hint": "Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0, I1, I2, I3, P1 and I4 landed; G1 U1 GT M1 pending).",
       "related": [
         "usr/share/mios/mios.toml [keybindings.*]",
         "docs/design/mios-global-bindings-staged.patch.toml",
@@ -2882,7 +2882,7 @@
     },
     {
       "path": "docs/design/mios-global-bindings-staged.patch.toml",
-      "hint": "Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, P1, G1, U1 and GT (landed), \"#@<STEP>\" lines are uncommented by the step that ships the code reading them.",
+      "hint": "Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, I1, I2, I3, I4, P1, G1, U1 and GT (landed), \"#@<STEP>\" lines are uncommented by the step that ships the code reading them.",
       "related": [
         "usr/share/mios/mios.toml",
         "docs/design/mios-global-bindings-final.md"
@@ -2898,6 +2898,19 @@
       "related": [
         "docs/design/mios-global-bindings-final.md",
         "tests/test-keybind-collisions.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "docs/design/mios-lead-handoff.md",
+      "hint": "Lead-agent handoff for the MiOS desktop/RDP/roadmap lanes: live state of main, every lane's branch and gate status, the integration procedure, safety rules learned from incidents, and the operator's standing decisions.",
+      "related": [
+        "docs/design/mios-desktop-continuation-handoff.md",
+        "usr/share/mios/mios.toml",
+        "tools/native/mios-gen/src/mem_admit.rs"
       ],
       "functions": [],
       "doc": null,
@@ -6202,6 +6215,27 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-ai-metadata-native-parity.py",
+      "hint": "Differential gate for the ai.metadata sync stage: `mios-gen ai-metadata` must export byte-identically to usr/libexec/mios/mios-ai-metadata.py over the real tree and over planted edge cases (CRLF, lone CR, BOM, non-ASCII and astral text, U+2028 and U+001C separators, the 60-line and 8192-character cuts, invalid UTF-8, dotfile extensions, symlinks, skipped directories); a deliberately mutated Python leg must make it go red.",
+      "related": [
+        "tools/native/mios-gen/src/ai_metadata.rs",
+        "usr/libexec/mios/mios-ai-metadata.py",
+        "usr/lib/mios/mios_comments.py",
+        "usr/share/mios/ai/v1/metadata.json",
+        "tests/golden/README.md (ai-metadata)"
+      ],
+      "functions": [
+        "native_gen",
+        "python_leg",
+        "native_leg",
+        "plant_edge_cases",
+        "TestAiMetadataNativeParity"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-ai.py",
       "hint": "Consolidated MiOS AI-stack unit tests: accelerator router, audit chain, GPU sched, model matrix, paged attention, prompt cache, self-heal, skills, spec decoding, synthetic QA, kernels, TTS, visual RAG, VRAM.",
       "related": [],
@@ -6779,6 +6813,46 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": false
+    },
+    {
+      "path": "tests/test-design-language-live.py",
+      "hint": "LIVE opt-in (MIOS_LIVE_NESTED=1) design-language capture and bar-row alignment gate in an OWNED nested PiP",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/GlassSurface.qml"
+      ],
+      "functions": [
+        "main",
+        "check",
+        "sh",
+        "shells_in",
+        "build_vptr",
+        "blobs",
+        "measure_row"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-design-language.py",
+      "hint": "Gate for the ONE design language (mios.toml [theme.shell] comment block): fails when a Quickshell surface or a",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/GlassSurface.qml",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [
+        "qml_errors",
+        "toml_errors",
+        "bridge_errors",
+        "projection_errors",
+        "tree_errors",
+        "main_tree"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "tests/test-dgm-loop.py",
@@ -7553,6 +7627,171 @@
         "tests/bake-smoke.sh"
       ],
       "functions": [
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-console-live.py",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of mios-inputd step I3 in an owned nested MiOS PiP session: one fixture bridge follows the nested compositor AND a private logind state, so the same pad press lands in the nested window while this user's graphical session is active, in a pty standing in for the VT while the tty session is active (console bytes, O-6 West hold, C-17 VT switch instead of the room), nowhere (and ungrabbed) while the greeter owns the seat, and in the nested window again after; then a VT tmux client behind the C-18 console bridge gets tmux verbs and an evdev-pointer click as an SGR report. The pre-I3 binary is the negative control.",
+      "related": [
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tools/native/mios-inputd/src/console.rs",
+        "tests/test-inputd-console.py",
+        "tests/test-inputd-nav-live.py",
+        "docs/design/mios-global-bindings-tests.md (I3)"
+      ],
+      "functions": [
+        "check",
+        "Nested",
+        "Pad",
+        "Bridge",
+        "Probe",
+        "Vt"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-console.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I3 (the Linux console): console_tmux/console_plain profiles, O-6 West hold, C-23 console row validation, R-08 Guide, map --text, tmux:keymap; the C-18 console bridge (pty + private tmux server + a fixture gpm socket or evdev FIFO) turning pointer events into SGR 1006 reports only while tmux has mouse mode on; and (private uinput pad) the fixture bridge on a private logind state: console bytes into a pty that stands in for the VT, tmux verbs against the VT client, the graphical-VT switch, INV-8 release, and C-16 compositor rediscovery.",
+      "related": [
+        "tools/native/mios-inputd/src/console.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tools/native/mios-inputd/src/nav.rs",
+        "docs/design/mios-global-bindings-tests.md (I3)",
+        "usr/libexec/mios/mios-terminal"
+      ],
+      "functions": [
+        "Base",
+        "Grammar",
+        "ConsoleBridge",
+        "GpmFixture",
+        "FixtureBridge",
+        "FakeCompositor"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-nav-live.py",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of mios-inputd step I2 in an owned nested MiOS PiP session: a private uinput pad (xpad = analog-only triggers, then DualSense) drives the candidate fixture bridge, which projects nav output into the nested compositor; raw bytes reaching nested Alacritty probes prove key:, a right-stick flick moves nested focus, a private tmux server proves tmux discovery/verbs, the capture OSD fires once per capture/release; the I1 binary is the negative control.",
+      "related": [
+        "tools/native/mios-inputd/src/nav.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tests/test-inputd-nav.py",
+        "tests/test-inputd-ownership-live.py",
+        "docs/design/mios-global-bindings-tests.md (I2)"
+      ],
+      "functions": [
+        "check",
+        "Nested",
+        "Pad",
+        "Bridge",
+        "Probe"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-nav.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I2 (the nav grammar): uncaptured windows of every kind navigate (key:/pointer:/hypr:/tmux:), tap/hold/repeat/flick timing, thumb and Guide disambiguation, cursor mode keeps button meanings, grammar validation, the uinput virtual keyboard, and (fake compositor + private tmux server) tmux discovery, tmux verbs and the capture OSD.",
+      "related": [
+        "tools/native/mios-inputd/src/nav.rs",
+        "tools/native/mios-inputd/src/router.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "docs/design/mios-global-bindings-tests.md (I2)",
+        "usr/lib/udev/rules.d/70-mios-input.rules"
+      ],
+      "functions": [
+        "Base",
+        "Grammar",
+        "Timing",
+        "Projection",
+        "FakeCompositor",
+        "Bridge"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-ownership-live.py",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of mios-inputd step I1 in an owned nested MiOS PiP session: a private uinput pad (xpad and DualSense layouts) drives the candidate bridge; capture/release (North tap, North hold, held L3+R3) are identical for every window kind, half-capture keeps RB/Guide/North with the app, release unsets only a bridge fullscreen, Super+C works again after release, the room stick has one sink; old binary as negative control.",
+      "related": [
+        "tools/native/mios-inputd",
+        "docs/design/mios-global-bindings-tests.md (I1)",
+        "tests/test-inputd-ownership.py",
+        "tests/test-global-bindings-s0-live.py"
+      ],
+      "functions": [
+        "check",
+        "Nested",
+        "Pad",
+        "Bridge"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-ownership.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I1: capture/release identical for every window kind, half-capture keeps every button with the app, release/fullscreen tags (Lua, run against a mock compositor), serve exits/idles instead of exec'ing a recovery owner, unit start limit.",
+      "related": [
+        "tools/native/mios-inputd",
+        "docs/design/mios-global-bindings-tests.md (I1)",
+        "usr/lib/systemd/user/mios-inputd.service"
+      ],
+      "functions": [
+        "Ownership",
+        "Serve"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-platform.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I4 (the universal input platform): the Guide layer on every pad shape (HAT d-pad, LS_*/RS_* flicks, analog-only triggers, hypr:movewindow, volume/media), the C-19 system-monitor rename, the O-7 per-driver quirk table proven with uinput fixtures that emulate xpad (face order, dpad_to_buttons) and DualSense code layouts, the agent virtual controller (`vpad`: eased evdev stream, taps, idle exit, the MCP verb argv), and the nested-session contract (the host bridge never owns an assigned node or a seat pad; `bridge --nested` / `vpad assign` follow the session, ease its room packet, project keys into it and pass a captured pad through).",
+      "related": [
+        "tools/native/mios-inputd/src/{router.rs",
+        "vpad.rs",
+        "nested.rs",
+        "runtime.rs",
+        "linux.rs",
+        "config.rs}",
+        "usr/share/mios/mios.toml [keybindings.global.controller.system_layer|quirks|agent_pad] [verbs.virtual_controller] [desktop.nested]",
+        "docs/design/mios-global-bindings-tests.md (I4)"
+      ],
+      "functions": [
+        "Base",
+        "Grammar",
+        "Vpad",
+        "FakeCompositor",
+        "Fixture"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-vpad-live.py",
+      "hint": "LIVE opt-in (MIOS_LIVE_NESTED=1): the agent virtual controller drives Hypr3D smoothly inside an owned nested PiP session: `vpad create` (fixture-named), `mios-gen nested-session --layout pip --seat <s> --device <pad node>` binds it, `vpad assign` runs the session's `bridge --nested`, and eased stick ramps walk and turn the session's room camera with a gradual speed profile; a raw fixture-pad step and the unassigned pad are the contrast and negative controls.",
+      "related": [
+        "tools/native/mios-inputd/src/vpad.rs",
+        "tools/native/mios-inputd/src/nested.rs",
+        "tools/native/mios-gen/src/nested_session.rs",
+        "usr/share/mios/mios.toml [keybindings.global.controller.agent_pad] [desktop.nested]"
+      ],
+      "functions": [
+        "Session",
+        "speeds",
+        "profile",
         "main"
       ],
       "doc": null,
@@ -9165,6 +9404,30 @@
       "has_shebang": false
     },
     {
+      "path": "tests/test-resolver-dropin-parity.py",
+      "hint": "Law 13 (NATIVE-DROPINS) differential gate: generates seeded layered fixtures (vendor < vendor.d < host < host.d < user < user.d, with lexical-order, hidden, non-.toml, directory, empty-string and type-flip traps plus [generation.walk] variants) and goes red on ANY disagreement between userenv.sh (through mios-resolver), mios_toml.py and an independent tier-major precedence model. Also proves the SSOT walk rules have one home and that editing it moves both twins.",
+      "related": [
+        "usr/lib/mios/userenv.sh",
+        "usr/lib/mios/mios_toml.py",
+        "tools/native/mios-resolver/src/layers.rs",
+        "tools/native/mios-resolver/src/merge.rs",
+        "tools/native/mios-ssot-walk/src/lib.rs",
+        "usr/share/mios/mios.toml [generation.walk]",
+        "automation/98-drift-checks.sh (check_resolver_twin_parity)"
+      ],
+      "functions": [
+        "native_resolver",
+        "Fixture",
+        "spec_merge",
+        "bash_leg",
+        "python_leg",
+        "walk_list_homes"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-roaming-seat.py",
       "hint": "Automated unit test suite for roaming multi-seat session orchestrator and GPU assignment manager.",
       "related": [
@@ -9668,6 +9931,20 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch83-task-failover-resilience.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-tasks-integrity.py",
+      "hint": "Regression and integrity gate test for tasks.jsonl title/status contradiction rejection (ADR-0028).",
+      "related": [
+        "tasks.jsonl",
+        "TASKS.md",
+        "tools/check-tasks.py",
+        "tools/native/mios-task/"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -10503,7 +10780,8 @@
         "main",
         "status_parity_main",
         "schema_main",
-        "agy_main"
+        "agy_main",
+        "integrity_main"
       ],
       "doc": "usr/share/doc/mios/manual/tools.md",
       "comment_style": "hash",
@@ -11282,6 +11560,8 @@
         "Validator::run",
         "render_lua",
         "controller_findings",
+        "controller_role_findings",
+        "quirk_findings",
         "Outcome::new_findings"
       ],
       "doc": null,
@@ -11563,6 +11843,30 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-gen/src/ai_metadata.rs",
+      "hint": "Native AI header metadata catalog (usr/share/mios/ai/v1/metadata.json): the AI-hint/AI-related/AI-functions/AI-doc headers of every tracked regular file, rendered byte-identically to the Python adapter it replaces on the generation path (json.dumps indent=2, ensure_ascii).",
+      "related": [
+        "usr/libexec/mios/mios-ai-metadata.py",
+        "usr/lib/mios/mios_comments.py (tracked_file_modes)",
+        "usr/share/mios/ai/v1/metadata.json",
+        "usr/share/mios/mios.toml [generation.sync] ai.metadata",
+        "automation/98-drift-checks.sh (check_ai_metadata_fresh)",
+        "tests/test-ai-metadata-native-parity.py",
+        "tests/golden/README.md"
+      ],
+      "functions": [
+        "tracked_file_modes",
+        "extract",
+        "catalog",
+        "render",
+        "diff_entries",
+        "run"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-gen/src/app_preflight.rs",
       "hint": "Shared native application preflight: validate desktop entries, recover only a missing document-portal mount under a user lock, and probe installed Flatpak sandboxes with bounded commands.",
       "related": [
@@ -11637,6 +11941,26 @@
         "extract_ai_hint",
         "standardize_content",
         "run_standardize_docs"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/src/env_snapshot.rs",
+      "hint": "Native env-baseline projection (usr/share/mios/reference/env-baseline.txt): the MIOS_* environment a sealed login shell gets from userenv.sh over the vendor tiers of a tree, one escaped KEY=value per line, byte-sorted -- the Rust port of the former bash body of usr/libexec/mios/mios-env-snapshot.",
+      "related": [
+        "usr/libexec/mios/mios-env-snapshot",
+        "usr/lib/mios/userenv.sh",
+        "tools/native/mios-resolver/src/emit.rs (emit_shell::shell_exports)",
+        "usr/share/mios/mios.toml [generation.sync] env.baseline",
+        "automation/98-drift-checks.sh (check_resolved_env_lossless)",
+        "tests/golden/README.md"
+      ],
+      "functions": [
+        "snapshot",
+        "render",
+        "run"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -11744,6 +12068,19 @@
         "tools/native/Cargo.toml",
         "docs/design/doc-rust-static-port.md",
         "usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/src/mem_admit.rs",
+      "hint": "Memory admission for heavy work (`mios-gen mem-admit`, nested-session launches): refuse, or wait, while /proc/meminfo MemAvailable is below [system.memory_admission].min_available_mb, so agent builds and nested sessions cannot drive the operator's host into the OOM killer.",
+      "related": [
+        "usr/share/mios/mios.toml [system.memory_admission]",
+        "tools/native/mios-gen/src/nested_session.rs",
+        "usr/lib/systemd/system/user-.slice.d/10-mios-memory.conf"
       ],
       "functions": [],
       "doc": null,
@@ -12044,6 +12381,26 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-inputd/src/console.rs",
+      "hint": "Linux console (VT) pty bridge for tmux-os (I3, C-18): wraps a VT tmux client in a pty, owns the mouse modes the client asks the terminal for, and turns gpm (or evdev pointer) events into SGR 1006 / legacy mouse reports only while the client has mouse mode on.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.console]",
+        "usr/libexec/mios/mios-terminal",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "docs/design/mios-global-bindings-final.md (I3)"
+      ],
+      "functions": [
+        "MouseModes::filter",
+        "MouseModes::report",
+        "Pointer::gpm",
+        "Pointer::evdev",
+        "run"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-inputd/src/lib.rs",
       "hint": "Shared global binding policy used by the input daemon and collision gate.",
       "related": [
@@ -12057,7 +12414,7 @@
     },
     {
       "path": "tools/native/mios-inputd/src/linux.rs",
-      "hint": "Linux evdev/uinput file-descriptor ownership, capability cloning and private fixture gate.",
+      "hint": "Linux evdev/uinput file-descriptor ownership, capability cloning, the virtual pointer and keyboard, and private fixture gates.",
       "related": [
         "https://docs.kernel.org/input/uinput.html",
         "https://docs.kernel.org/input/event-codes.html"
@@ -12080,8 +12437,52 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-inputd/src/nav.rs",
+      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules and the Linux console byte translation of a key: stroke.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.nav]",
+        "tools/native/mios-inputd/src/router.rs",
+        "docs/design/mios-global-bindings-final.md (section 3)"
+      ],
+      "functions": [
+        "NavConfig::from_value",
+        "NavConfig::profile_name",
+        "NavConfig::text",
+        "parse_key_chord",
+        "stroke",
+        "keysym",
+        "vt_bytes",
+        "validate_tmux"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/nested.rs",
+      "hint": "The nested-session device contract on the inputd side (I4): read mios-gen's live registry ([desktop.nested].registry_dir) so the host bridge never owns a node assigned to a nested session, and so `bridge --nested <seat>` follows exactly that session (its compositor, its private room packet, its assigned controller nodes).",
+      "related": [
+        "tools/native/mios-gen/src/nested_devices.rs (Claim",
+        "live_sessions)",
+        "tools/native/mios-gen/src/nested_session.rs (session.json",
+        "pad_state)",
+        "usr/share/mios/mios.toml [desktop.nested]"
+      ],
+      "functions": [
+        "start_time",
+        "live_sessions",
+        "assigned_nodes",
+        "session",
+        "host_service_env",
+        "seat_pad_name_matches"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-inputd/src/router.rs",
-      "hint": "Per-controller input state machine; system actions never enter app replay.",
+      "hint": "Per-controller input state machine: ownership contract first, then the nav projection of uncaptured windows (tap/hold, repeat, flicks, HAT fold, thumb/Guide disambiguation); system actions never enter app replay.",
       "related": [
         "usr/libexec/mios/mios-gamepad-hypr3d",
         "keybindings.global.controller"
@@ -12093,7 +12494,7 @@
     },
     {
       "path": "tools/native/mios-inputd/src/runtime.rs",
-      "hint": "Native controller service, bounded compositor IPC and named action dispatch.",
+      "hint": "Native controller service, bounded compositor IPC with live socket rediscovery, the logind seat view (graphical / console / another session), named action dispatch, the virtual keyboard/tmux/OSD/VT projections and /proc tmux client discovery (focused terminal or active VT).",
       "related": [
         "keybindings.global",
         "desktop.hyprland.hypr3d.controller",
@@ -12112,6 +12513,30 @@
         "mios-gen/src/global_bindings.rs"
       ],
       "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/vpad.rs",
+      "hint": "The agent virtual controller (I4): a per-session uinput gamepad held by one `mios-inputd vpad hold` process and driven over a private control socket with eased analog ramps (sticks/triggers never jump), button taps, the HAT d-pad, release-to-rest, and assignment to a nested session (it then runs that session's `bridge --nested <seat>`).",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.agent_pad] [desktop.nested.devices] [verbs.virtual_controller]",
+        "tools/native/mios-inputd/src/nested.rs",
+        "tools/native/mios-gen/src/nested_devices.rs (virtual-pad)",
+        "tests/test-inputd-platform.py",
+        "tests/test-inputd-vpad-live.py"
+      ],
+      "functions": [
+        "Ease::at",
+        "Channel::step",
+        "Model::command",
+        "Model::tick",
+        "hold",
+        "create",
+        "request",
+        "list"
+      ],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false
@@ -12366,7 +12791,7 @@
     },
     {
       "path": "tools/native/mios-resolver/src/emit.rs",
-      "hint": "Canonical export-map builder -- combines walked canonical keys with legacy aliases and applies WALK_MOSTLY_DEAD suppression -- and every emitter over it: shell, PowerShell, JSON, install.env, build and repos.",
+      "hint": "Canonical export-map builder -- combines walked canonical keys with legacy aliases and applies the [generation.walk] exclusion and suppression rules -- and every emitter over it: shell, PowerShell, JSON, install.env, build and repos.",
       "related": [
         "tools/native/mios-ssot-walk",
         "usr/lib/mios/mios_toml.py",
@@ -12722,7 +13147,7 @@
     },
     {
       "path": "tools/native/mios-ssot-walk/Cargo.toml",
-      "hint": "Single-sourced mios.toml SSOT-walk library Cargo manifest.",
+      "hint": "Cargo manifest of the SSOT-walk rules reader shared by every MIOS_* export projection.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -12731,8 +13156,13 @@
     },
     {
       "path": "tools/native/mios-ssot-walk/src/lib.rs",
-      "hint": "Single-sourced mios.toml SSOT-walk logic for resolver-twin and names-registry generators.",
-      "related": [],
+      "hint": "Reads the SSOT walk rules ([generation.walk]: excluded_sections, mostly_dead_sections, emit_keep) from the tree being projected, so every MIOS_* export projection and both resolver twins apply one copy of them.",
+      "related": [
+        "usr/share/mios/mios.toml [generation.walk]",
+        "usr/lib/mios/mios_toml.py (walk_rules)",
+        "tools/native/mios-resolver/src/emit.rs",
+        "tests/test-resolver-dropin-parity.py"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "slash",
@@ -21482,6 +21912,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/session-.scope.d/10-mios-memory.conf",
+      "hint": "Memory floor for the login session scope that holds the primary compositor (Hyprland via greetd).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "user-.slice.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/sshd-keygen@.service.d/disable-sshd-keygen-if-cloud-init-active.conf",
       "hint": "Configuration profile for disable-sshd-keygen-if-cloud-init-active.conf in the MiOS operating system.",
       "related": [
@@ -21685,6 +22127,31 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/user-.slice.d/10-mios-memory.conf",
+      "hint": "Memory floor for every user slice, so the kernel reclaims system services and agent work before the operator's session.",
+      "related": [
+        "usr/share/mios/mios.toml [system.memory_admission]",
+        "session-.scope.d/10-mios-memory.conf",
+        "user@.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/user@.service.d/10-mios-memory.conf",
+      "hint": "Memory floor for the user manager (shell, portals, apps); its children share it through memory_recursiveprot.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "mios-shell.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/user@.service.d/10-mios-wsl-runtime.conf",
       "hint": "Configures the XDG_RUNTIME_DIR environment variable for user instances to ensure systemd user managers start correctly in WSL2 environments where pam_systemd cannot provide the session path.",
       "related": [],
@@ -21866,6 +22333,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/user.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/user/mios-shell.service.d/10-mios-memory.conf",
+      "hint": "Memory floor for the desktop shell so agent processes in app.slice cannot claim its share of the user manager's protection.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "user@.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -22069,7 +22548,7 @@
     },
     {
       "path": "usr/lib/udev/rules.d/70-mios-input.rules",
-      "hint": "Classify the native input bridge outputs without hiding its desktop pointer.",
+      "hint": "Classify the native input bridge outputs: the virtual pointer and keyboard stay visible, the virtual pads are hidden from libinput.",
       "related": [
         "tools/native/mios-inputd/src/linux.rs",
         "keybindings.global.controller"
@@ -25126,11 +25605,12 @@
     },
     {
       "path": "usr/libexec/mios/mios-env-snapshot",
-      "hint": "Captures a clean-environment snapshot of resolved MIOS_* environment variables for lossless diffing.",
+      "hint": "Thin glue for the env-baseline projection: prints the sealed snapshot of the resolved MIOS_* environment (one escaped KEY=value per line) by exec'ing the native `mios-gen env-snapshot`, which owns every rule the former bash body applied.",
       "related": [
+        "tools/native/mios-gen/src/env_snapshot.rs",
         "/usr/share/mios/mios.toml",
         "/usr/lib/mios/userenv.sh",
-        "/tools/lib/userenv.sh"
+        "/usr/share/mios/reference/env-baseline.txt"
       ],
       "functions": [
         "main"
@@ -38243,24 +38723,11 @@
       "has_shebang": false
     },
     {
-      "path": "usr/share/mios/quickshell/AppDrawer.qml",
-      "hint": "Full-pane glass app drawer: search field, running windows and the installed-app grid.",
-      "related": [
-        "usr/share/mios/quickshell/Sidebar.qml",
-        "usr/share/mios/mios.toml [theme.shell].drawer_*"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
       "path": "usr/share/mios/quickshell/AppLaunch.qml",
       "hint": "Shared desktop entry launcher. Rust preflight recovers missing portal mounts and bounds sandbox probes; GIO handles desktop activation, while the configured terminal opens TUIs. Checks time out with visible failure.",
       "related": [
         "tools/native/mios-gen/src/app_preflight.rs",
         "Sidebar.qml",
-        "AppDrawer.qml",
         "Search.qml",
         "usr/share/mios/mios.toml [desktop.launch]"
       ],
@@ -38379,6 +38846,19 @@
       "hint": "The window-control glass for the shell, resolved from the SAME SSOT keys the desktop window controls",
       "related": [
         "usr/share/mios/mios.toml [desktop.hyprland.hyprbars] [desktop.hyprland.hyprglass] [colors]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/GlassSurface.qml",
+      "hint": "THE one glass shape of the shell (operator rule: ONE QML glass component for every surface). Every body",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/Theme.qml",
+        "usr/share/mios/mios.toml"
       ],
       "functions": [],
       "doc": null,
