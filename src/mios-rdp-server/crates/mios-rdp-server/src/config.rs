@@ -78,6 +78,10 @@ pub struct Native {
     pub drive_max_devices: usize,
     pub drive_max_entries: usize,
     pub drive_io_kib: u32,
+    pub usb_helper_socket: PathBuf,
+    pub usb_attach_timeout_ms: u64,
+    pub usb_max_transfer_kib: u32,
+    pub usb_max_inflight: usize,
     pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
@@ -146,6 +150,10 @@ impl Default for Native {
             drive_max_devices: 16,
             drive_max_entries: 4096,
             drive_io_kib: 256,
+            usb_helper_socket: PathBuf::from("/run/mios-rdp-usb.sock"),
+            usb_attach_timeout_ms: 5000,
+            usb_max_transfer_kib: 1024,
+            usb_max_inflight: 64,
             bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
@@ -179,6 +187,7 @@ pub struct Redirect {
     pub location: bool,
     pub timezone: String,
     pub smartcard: bool,
+    pub usb: bool,
 }
 
 impl Default for Redirect {
@@ -195,6 +204,45 @@ impl Default for Redirect {
             location: false,
             timezone: "report".into(),
             smartcard: false,
+            usb: false,
+        }
+    }
+}
+
+/// [remote.device_forwarding]: per-session target file and the generic USB policy shared with
+/// `mios-gen device-forwarding` (SPICE filter, report). Unknown keys (libvirt inventory) are ignored here.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct DeviceForwarding {
+    pub targets_file: String,
+    pub default_target: String,
+    pub usb: UsbForwarding,
+}
+
+impl Default for DeviceForwarding {
+    fn default() -> Self {
+        Self {
+            targets_file: "mios/device-forwarding/targets.json".into(),
+            default_target: "auto".into(),
+            usb: UsbForwarding::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct UsbForwarding {
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+    pub max_devices: usize,
+}
+
+impl Default for UsbForwarding {
+    fn default() -> Self {
+        Self {
+            allow: Vec::new(),
+            deny: vec!["class:09".into(), "class:03".into(), "class:e0".into()],
+            max_devices: 4,
         }
     }
 }
@@ -260,6 +308,7 @@ pub struct Config {
     pub native: Native,
     pub redirect: Redirect,
     pub naming: Naming,
+    pub device_forwarding: DeviceForwarding,
 }
 
 impl Default for Config {
@@ -302,6 +351,7 @@ impl Default for Config {
             native: Native::default(),
             redirect: Redirect::default(),
             naming: Naming::default(),
+            device_forwarding: DeviceForwarding::default(),
         }
     }
 }
@@ -323,6 +373,19 @@ impl Config {
             || self.native.drive_io_kib % 4 != 0 {
             bail!("drive limits: timeout_ms 100..60000, devices 1..64, entries 64..65536, IO 4..1024 KiB aligned to 4 KiB");
         }
+        if !(1000..=30000).contains(&self.native.usb_attach_timeout_ms) || !(4..=16384).contains(&self.native.usb_max_transfer_kib)
+            || !(1..=1024).contains(&self.native.usb_max_inflight) || !(1..=16).contains(&self.device_forwarding.usb.max_devices)
+            || !self.native.usb_helper_socket.is_absolute() {
+            bail!("usb limits: attach_timeout_ms 1000..30000, max_transfer_kib 4..16384, max_inflight 1..1024, max_devices 1..16, absolute helper socket");
+        }
+        if !matches!(self.device_forwarding.default_target.as_str(), "auto" | "none") {
+            bail!("[remote.device_forwarding].default_target must be \"auto\" or \"none\"");
+        }
+        let targets = Path::new(&self.device_forwarding.targets_file);
+        if targets.is_absolute() || targets.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            bail!("[remote.device_forwarding].targets_file must be a relative path under the runtime directory");
+        }
+        crate::remote_usb::Policy::from_config(&self.device_forwarding.usb).map_err(|e| anyhow::anyhow!("[remote.device_forwarding.usb]: {e}"))?;
         let prefix = &self.naming.microphone_source_prefix;
         if !node_prefix_ok(prefix) {
             bail!("microphone source prefix must contain 1..=64 ASCII letters, digits, hyphens or underscores");

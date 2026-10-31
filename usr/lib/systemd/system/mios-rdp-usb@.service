@@ -1,0 +1,28 @@
+[Unit]
+Description=MiOS RDP USB helper (holds one vhci port for one redirected device)
+Documentation=file:///usr/share/doc/mios/remote-usb.md
+
+# One connection = one redirected device: the helper attaches the server's socket to a free vhci port
+# and detaches exactly that port when the connection closes (device close, disconnect or server exit).
+# /sys must stay writable for vhci attach/detach (no ProtectKernelTunables); ProtectKernelModules keeps
+# module loading impossible: an absent vhci_hcd is reported unsupported, never loaded.
+[Service]
+Type=simple
+ExecStart=/usr/libexec/mios/rdp-native/mios-rdp-priv --usb
+StandardOutput=journal
+StandardError=journal
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~process_vm_readv process_vm_writev
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE

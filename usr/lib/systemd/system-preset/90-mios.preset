@@ -77,6 +77,7 @@ enable mios-cdi-detect.service
 enable mios-libvirtd-setup.service
 # Obsolete: remote desktop is [remote.rdp] (xrdp, mios-rdp-firewall.service, tailnet zone only).
 enable mios-rdp-priv.socket
+enable mios-rdp-usb.socket
 disable mios-grd-setup.service
 # Hyper-V Enhanced Session bring-up: hv_sock module + hv-kvp-daemon +
 # hv-vss-daemon + hv-fcopy-daemon + xrdp on the VMBus vsock transport.

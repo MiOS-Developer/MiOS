@@ -26,6 +26,7 @@ mod redirect;
 mod remote_audio;
 mod remote_storage;
 mod remote_camera;
+mod remote_usb;
 mod session;
 mod stats;
 mod tls;
@@ -66,7 +67,7 @@ fn main() -> Result<()> {
     if args.iter().any(|a| a == "--print-defaults") {
         // the code defaults the SSOT [remote.rdp.native|redirect|naming] tables must equal (tests)
         let c = Config::default();
-        println!("{}", serde_json::to_string_pretty(&json!({"native": c.native, "redirect": c.redirect, "naming": c.naming}))?);
+        println!("{}", serde_json::to_string_pretty(&json!({"native": c.native, "redirect": c.redirect, "naming": c.naming, "device_forwarding": c.device_forwarding}))?);
         return Ok(());
     }
     if args.iter().any(|a| a == "--self-test") {
@@ -459,6 +460,9 @@ async fn serve(cfg: Config) -> Result<()> {
     if cfg.redirect.camera {
         builder = builder.with_static_channel_factory(Box::new(remote_camera::Factory {cfg:cfg.clone(),stats:Arc::clone(&s.stats)}));
     }
+    if cfg.redirect.usb {
+        builder = builder.with_usb_factory(Some(Box::new(remote_usb::Factory::new(cfg.clone(), Arc::clone(&s.stats))?)));
+    }
     let _loc = if cfg.redirect.location { Some(redirect::LocationWriter::new()) } else { None };
     redirect::log_redirections(&cfg);
     if cfg.native.auto_reconnect {
@@ -550,7 +554,7 @@ async fn serve(cfg: Config) -> Result<()> {
     info!("stopping");
     drop(server);
     let microphone_deadline = Instant::now() + Duration::from_secs(12);
-    while (s.stats.microphone_workers.load(Ordering::Acquire) > 0 || s.stats.speaker_workers.load(Ordering::Acquire) > 0 || s.stats.drive_workers.load(Ordering::Acquire) > 0 || s.stats.camera_workers.load(Ordering::Acquire) > 0) && Instant::now() < microphone_deadline {
+    while (s.stats.microphone_workers.load(Ordering::Acquire) > 0 || s.stats.speaker_workers.load(Ordering::Acquire) > 0 || s.stats.drive_workers.load(Ordering::Acquire) > 0 || s.stats.camera_workers.load(Ordering::Acquire) > 0 || s.stats.usb_workers.load(Ordering::Acquire) > 0) && Instant::now() < microphone_deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let d = Arc::clone(&display);
@@ -797,7 +801,7 @@ async fn stats_loop(s: Arc<Session>) {
                     "consumers": remote_camera::consumers(&s.cfg),
                     "error": s.stats.camera_error.lock().unwrap().clone()},
                 "drives": {"implemented": true, "permitted": s.cfg.redirect.drives, "mounts": s.stats.drive_mounts.lock().unwrap().clone(), "error": s.stats.drive_error.lock().unwrap().clone()},
-                "usb": {"implemented": false, "reason": "native_usb_bridge_pending", "protocol": "MS-RDPEUSB"},
+                "usb": remote_usb::status_json(&s.cfg, &s.stats),
             },
             "encoded_payload_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,

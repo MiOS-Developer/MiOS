@@ -7,6 +7,14 @@
 //!   FALLBACK reason         -> writes /run/mios/rdp/fallback and starts xrdp.service (no-block)
 //! The password is zeroised after use; every AUTH is logged with user, peer and result.
 //!
+//! `--usb` (mios-rdp-usb.socket, its own unit with a writable /sys and no module loading): one
+//! connection holds one vhci_hcd port for one redirected device:
+//!   USBIP-ATTACH speed devid + SCM_RIGHTS [stream socket] -> "OK <port>" | "DENY <reason>"
+//! then the connection stays open; its EOF (device closed, RDP disconnect, server exit or crash)
+//! or "DETACH" detaches exactly that port (checked by port + devid in the vhci status). The caller
+//! must be the installed mios-rdp-server, [remote.rdp.redirect].usb must be true and vhci_hcd must
+//! already be loaded: an absent module is refused, never loaded.
+//!
 //! Exception E2 of the static-binary policy: glibc + libpam (PAM modules are dlopen'd, NSS by design).
 //! Test mode (only when run by hand, never from the socket unit): `mios-rdp-priv --test-auth
 //! --service S --group G` reads "user\0password" on stdin and prints the decision.
@@ -317,6 +325,183 @@ fn serve(fd: RawFd) -> i32 {
     code
 }
 
+const VHCI: &str = "/sys/devices/platform/vhci_hcd.0";
+const VDEV_ST_NULL: u32 = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VhciPort {
+    pub hub: String,
+    pub port: u32,
+    pub status: u32,
+    pub devid: u32,
+}
+
+/// `hub port sta spd dev sockfd local_busid` rows of vhci_hcd.0/status*.
+pub fn parse_vhci_status(text: &str) -> Vec<VhciPort> {
+    text.lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            if f.len() < 5 || !(f[0] == "hs" || f[0] == "ss") {
+                return None;
+            }
+            Some(VhciPort { hub: f[0].to_owned(), port: f[1].parse().ok()?, status: f[2].parse().ok()?, devid: u32::from_str_radix(f[4], 16).ok()? })
+        })
+        .collect()
+}
+
+/// A free high-speed root-hub port (USB 1.1/2.0 devices; RDPEUSB v1 has no SuperSpeed).
+pub fn free_hs_port(ports: &[VhciPort]) -> Option<u32> {
+    ports.iter().find(|p| p.hub == "hs" && p.status == VDEV_ST_NULL).map(|p| p.port)
+}
+
+/// The port still carries the device this connection attached (not a later attach that reused it).
+pub fn port_owned(ports: &[VhciPort], port: u32, devid: u32) -> bool {
+    ports.iter().any(|p| p.port == port && p.devid == devid && p.status != VDEV_ST_NULL)
+}
+
+/// `USBIP-ATTACH\0speed\0devid`: speed is the kernel usb_device_speed (2 full, 3 high).
+pub fn parse_attach(msg: &[u8]) -> Result<(u32, u32), String> {
+    let mut parts = msg.split(|b| *b == 0);
+    if parts.next() != Some(b"USBIP-ATTACH".as_slice()) {
+        return Err("unknown op".into());
+    }
+    let num = |p: Option<&[u8]>| std::str::from_utf8(p.unwrap_or_default()).ok().and_then(|s| s.parse::<u32>().ok());
+    let speed = num(parts.next()).ok_or("bad speed")?;
+    let devid = num(parts.next()).ok_or("bad devid")?;
+    if parts.next().is_some() {
+        return Err("trailing fields".into());
+    }
+    if !matches!(speed, 2 | 3) {
+        return Err(format!("unsupported speed {speed}"));
+    }
+    if devid == 0 {
+        return Err("devid 0".into());
+    }
+    Ok((speed, devid))
+}
+
+fn vhci_ports(root: &str) -> Vec<VhciPort> {
+    let mut out = Vec::new();
+    for i in 0..16 {
+        let name = if i == 0 { format!("{root}/status") } else { format!("{root}/status.{i}") };
+        match std::fs::read_to_string(&name) {
+            Ok(t) => out.extend(parse_vhci_status(&t)),
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+/// One message plus at most one SCM_RIGHTS descriptor.
+fn recv_with_fd(fd: RawFd) -> Option<(Vec<u8>, Option<OwnedFd>)> {
+    let mut buf = vec![0u8; 512];
+    let mut cbuf = vec![0u8; 128];
+    // SAFETY: recvmsg into local buffers; received descriptors are taken over as OwnedFd.
+    unsafe {
+        let mut iov = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
+        let mut mh: libc::msghdr = std::mem::zeroed();
+        mh.msg_iov = &mut iov;
+        mh.msg_iovlen = 1;
+        mh.msg_control = cbuf.as_mut_ptr().cast();
+        mh.msg_controllen = cbuf.len();
+        let n = libc::recvmsg(fd, &mut mh, libc::MSG_CMSG_CLOEXEC);
+        if n <= 0 {
+            return None;
+        }
+        let mut fds = Vec::new();
+        let mut c = libc::CMSG_FIRSTHDR(&mh);
+        while !c.is_null() {
+            if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SCM_RIGHTS {
+                let data = libc::CMSG_DATA(c).cast::<RawFd>();
+                let count = ((*c).cmsg_len as usize - libc::CMSG_LEN(0) as usize) / size_of::<RawFd>();
+                for i in 0..count {
+                    fds.push(OwnedFd::from_raw_fd(*data.add(i)));
+                }
+            }
+            c = libc::CMSG_NXTHDR(&mh, c);
+        }
+        buf.truncate(n as usize);
+        if fds.len() > 1 {
+            return Some((buf, None));
+        }
+        Some((buf, fds.pop()))
+    }
+}
+
+fn socket_type(fd: RawFd) -> i32 {
+    let mut t: c_int = -1;
+    let mut len = size_of::<c_int>() as libc::socklen_t;
+    // SAFETY: SO_TYPE into a local int.
+    unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE, (&raw mut t).cast(), &mut len) };
+    t
+}
+
+fn serve_usb(fd: RawFd) -> i32 {
+    let op_uid: u32 = toml_get("remote.rdp", "operator_uid", "1000").parse().unwrap_or(1000);
+    let Some(cred) = peer_cred(fd) else { return 1 };
+    if cred.uid != op_uid {
+        log(&format!("USB: peer uid {} is not the operator ({op_uid}); closed", cred.uid));
+        send(fd, b"DENY peer", &[]);
+        return 1;
+    }
+    let tv = libc::timeval { tv_sec: 5, tv_usec: 0 };
+    // SAFETY: SO_RCVTIMEO on our socket (the request only; cleared once the port is held).
+    unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO, (&raw const tv).cast(), size_of::<libc::timeval>() as u32) };
+    let Some((msg, passed)) = recv_with_fd(fd) else { return 1 };
+    let (speed, devid) = match parse_attach(&msg) {
+        Ok(v) => v,
+        Err(why) => {
+            send(fd, format!("DENY {why}").as_bytes(), &[]);
+            return 1;
+        }
+    };
+    let deny = |why: &str| {
+        log(&format!("USBIP-ATTACH devid={devid:#x}: DENY ({why})"));
+        send(fd, format!("DENY {why}").as_bytes(), &[]);
+        1
+    };
+    let expected = std::env::var_os("MIOS_RDP_PRIV_ALLOW_EXE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/usr/libexec/mios/rdp-native/mios-rdp-server"));
+    if let Err(why) = verify_tls_key_caller(cred.pid, &expected) {
+        return deny(&format!("unauthorized caller ({why})"));
+    }
+    if toml_get("remote.rdp.redirect", "usb", "false") != "true" {
+        return deny("[remote.rdp.redirect].usb is false");
+    }
+    let Some(sock) = passed else { return deny("expected exactly one socket descriptor") };
+    if socket_type(sock.as_raw_fd()) != libc::SOCK_STREAM {
+        return deny("descriptor is not a stream socket");
+    }
+    if !std::path::Path::new(VHCI).is_dir() {
+        return deny("vhci_hcd is not loaded (MiOS never loads kernel modules)");
+    }
+    let Some(port) = free_hs_port(&vhci_ports(VHCI)) else { return deny("no free high-speed vhci port") };
+    let line = format!("{port} {} {devid} {speed}", sock.as_raw_fd());
+    if let Err(e) = std::fs::write(format!("{VHCI}/attach"), &line) {
+        return deny(&format!("vhci attach: {e}"));
+    }
+    // The kernel holds its own reference to the socket now.
+    drop(sock);
+    log(&format!("USBIP-ATTACH devid={devid:#x} speed={speed}: port {port} attached for pid {}", cred.pid));
+    send(fd, format!("OK {port}").as_bytes(), &[]);
+    let none = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    // SAFETY: clear SO_RCVTIMEO: the connection now lives as long as the redirected device.
+    unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO, (&raw const none).cast(), size_of::<libc::timeval>() as u32) };
+    while let Some((m, _)) = recv_with_fd(fd) {
+        if m == b"DETACH" {
+            break;
+        }
+    }
+    if port_owned(&vhci_ports(VHCI), port, devid) {
+        let r = std::fs::write(format!("{VHCI}/detach"), port.to_string());
+        log(&format!("USB: port {port} (devid {devid:#x}) detached: {r:?}"));
+    } else {
+        log(&format!("USB: port {port} no longer carries devid {devid:#x}; nothing to detach"));
+    }
+    0
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--test-auth") {
@@ -351,6 +536,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.iter().any(|a| a == "--usb") {
+        // No whole-process watchdog: the connection deliberately lives as long as the device.
+        std::process::exit(serve_usb(sock.as_raw_fd()));
+    }
     std::thread::spawn(|| {
         std::thread::sleep(Duration::from_secs(15));
         log("watchdog: request took longer than 15 s");
@@ -392,6 +581,28 @@ mod tests {
             assert_eq!(decide("nobody", b"pw", g, &deny), Err("Authentication failure".into()));
             assert_eq!(decide("nobody", b"pw", g, &ok_pam), Ok(()));
         }
+    }
+
+    #[test]
+    fn usb_attach_request_parsing() {
+        assert_eq!(parse_attach(b"USBIP-ATTACH\x003\x001296629761"), Ok((3, 1296629761)));
+        assert_eq!(parse_attach(b"USBIP-ATTACH\x002\x007"), Ok((2, 7)));
+        for bad in [&b"AUTH\x00x"[..], b"USBIP-ATTACH\x005\x007", b"USBIP-ATTACH\x003\x000", b"USBIP-ATTACH\x003", b"USBIP-ATTACH\x003\x007\x00x", b"USBIP-ATTACH\x00a\x007"] {
+            assert!(parse_attach(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn vhci_port_choice_and_ownership() {
+        let t = "hub port sta spd dev      sockfd local_busid\nhs  0000 006 003 4d490001 000005 0-0\nhs  0001 004 000 00000000 000000 0-0\nss  0008 004 000 00000000 000000 0-0\n";
+        let ports = parse_vhci_status(t);
+        assert_eq!(ports.len(), 3);
+        assert_eq!(free_hs_port(&ports), Some(1));
+        assert!(port_owned(&ports, 0, 0x4d490001));
+        assert!(!port_owned(&ports, 0, 0x4d490002), "a reused port carrying another device is never detached");
+        assert!(!port_owned(&ports, 1, 0), "a free port is not owned");
+        let full = parse_vhci_status("hs  0000 006 003 4d490001 000005 0-0\nss  0008 004 000 00000000 000000 0-0\n");
+        assert_eq!(free_hs_port(&full), None, "SuperSpeed ports are not used for RDPEUSB devices");
     }
 
     #[test]

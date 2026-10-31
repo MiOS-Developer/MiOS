@@ -176,7 +176,7 @@ rec = {
     "source_preparation": json.load(open(preparation)),
     "cargo_lock_sha256": lock,
     "target": "x86_64-unknown-linux-gnu",
-    "features": ["egfx", "helper", "nscodec"],
+    "features": ["egfx", "helper", "nscodec", "usb"],
     "static_policy_exceptions": ["E1 mios-rdp-server glibc dynamic (EGL, GBM, xkbcommon, dlopen libopenh264)",
                                  "E2 mios-rdp-priv glibc + libpam"],
     "self_test": json.loads(selftest or "{}"),

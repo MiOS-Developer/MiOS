@@ -469,9 +469,11 @@ cmd_enabled() {
 # native.json for mios-rdp-server ($VNC_DIR, atomic): the merged [remote.rdp] table (also the display
 # service's config), its native/redirect/naming sub-tables, and runtime facts.
 _native_json() {
-    local rt="$1" bin="$2" mons_json
+    local rt="$1" bin="$2" mons_json df_json
     mons_json="$("$TOML_GET" --section desktop.hyprland.monitors 2>/dev/null || echo '{}')"
-    printf '%s' "$RDP_JSON" | VNC_DIR="$VNC_DIR" RT="$rt" MONS_JSON="$mons_json" PORT="$RDP_PORT" BIN="$bin" python3 -I -c '
+    # [remote.device_forwarding]: the generic USB policy + per-session target file shared with mios-gen device-forwarding
+    df_json="$("$TOML_GET" --section remote.device_forwarding 2>/dev/null || echo '{}')"
+    printf '%s' "$RDP_JSON" | VNC_DIR="$VNC_DIR" RT="$rt" MONS_JSON="$mons_json" DF_JSON="$df_json" PORT="$RDP_PORT" BIN="$bin" python3 -I -c '
 import json, os, sys
 c = json.load(sys.stdin)
 e = os.environ
@@ -481,6 +483,11 @@ except ValueError:
     mons = {}
 prim = [n for n, m in (mons.items() if isinstance(mons, dict) else []) if isinstance(m, dict) and m.get("primary") is True]
 c["primary_output"] = sorted(prim)[0] if prim else ""
+try:
+    df = json.loads(e.get("DF_JSON") or "{}")
+except ValueError:
+    df = {}
+c["device_forwarding"] = df if isinstance(df, dict) else {}
 n = c.get("native") or {}
 listen_addr = "127.0.0.1:%s" % e["PORT"] if c.get("allow_loopback") else "[::]:%s" % e["PORT"]
 bind_dev = "" if (c.get("allow_loopback") or c.get("allow_lan")) else c.get("tailscale_interface", "tailscale0")
@@ -645,6 +652,13 @@ if neg:
     print("negotiated: " + json.dumps(neg))' "$st" 2>/dev/null || true
 }
 
+# [remote.rdp.redirect].usb (generic USB, MS-RDPEUSB): only Windows clients offer it.
+_rdp_usb_permitted() {
+    printf '%s' "$RDP_JSON" | python3 -I -c 'import json,sys
+d = json.load(sys.stdin)
+print("true" if (d.get("redirect") or {}).get("usb") is True else "false")' 2>/dev/null || echo false
+}
+
 # .rdp file for mstsc / Windows App on Windows (no redirection UI there).
 cmd_rdp_file() {
     load_cfg
@@ -669,6 +683,7 @@ encode redirected video capture:i:1
 redirected video capture encoding quality:i:1
 redirectclipboard:i:1
 drivestoredirect:s:*
+$( [[ "$(_rdp_usb_permitted)" == true ]] && echo 'usbdevicestoredirect:s:*' )
 redirectlocation:i:1
 redirectsmartcards:i:1
 redirectprinters:i:0
