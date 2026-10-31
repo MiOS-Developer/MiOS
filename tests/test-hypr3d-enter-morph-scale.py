@@ -2,7 +2,7 @@
 # AI-hint: Pure-math regression for Hypr3D buildEnterMorph (fresh-window branch): the room placement of
 #   tiled 2D windows must project back to the same on-screen rectangles. Models the pinhole mapping in
 #   src/main.cpp (dir = FWD + RIGHT*xRatio + UP*yRatio, dist = baseDist + layer*STEP_Z, 1:1 at baseDist).
-# AI-related: usr/share/mios/hyprland/patches/hypr3d-*.patch, tests/test-hyprbars-overlay.py
+# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch, tests/test-hyprbars-overlay.py
 import unittest
 
 MON_W, MON_H = 2560.0, 1440.0

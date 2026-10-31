@@ -4,8 +4,8 @@
 //          Hypr3D refraction/reflection), wallpaper rate W = D / wallpaper_divisor (living wallpaper, Hypr3D dome).
 //          Also the host readers both runtimes need (tuned-ppd profile map, sysfs mains/battery) and the
 //          $XDG_RUNTIME_DIR state file every consumer reads (miosd writes it; Lua, Host.qml, the room toggle read it).
-// AI-related: usr/share/mios/mios.toml [desktop.framerate], src/mios-rs/miosd/src/framerate.rs,
-// AI-related: tools/native/mios-gen/src/render.rs (framerate_lua, toggle_3d), usr/share/mios/wallpaper/Host.qml
+// AI-related: usr/share/mios/mios.toml, src/mios-rs/miosd/src/framerate.rs,
+// AI-related: tools/native/mios-gen/src/render.rs, usr/share/mios/wallpaper/Host.qml
 //! Operator policy (2026-10-23 20:15 / 20:20): performance 90, balanced/power-saver/battery 60, gaming 120,
 //! unlocked = no cap (the output's own maximum, an explicit opt-in "at risk"); glass at 1/3 of the desktop rate
 //! (1/2 for gaming and unlocked); the wallpaper at 1/2 of the desktop rate except unlocked (full rate).

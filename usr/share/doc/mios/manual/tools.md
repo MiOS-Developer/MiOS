@@ -911,3 +911,13 @@ own shrink-only ceiling and target. max_tracked_files is this repo's count,
 which ratchet-direction also compares with main's tree.
 
 <!-- mios-src:52f88e0dbf52 from tools/drift-checks.py:279-283 -->
+### Verifies that the memory-poisoning scan runs in the mode...
+
+Verifies that the memory-poisoning scan runs in the mode declared by SSOT.
+
+    Fail-closed requirements:
+    1. [pgvector].memory_guard_mode MUST exist in mios.toml and be one of ('log', 'strip', 'reject').
+    2. [pgvector].memguard_judge_mode MUST exist and be 'model'.
+    3. Code defaults in knowledge.py and server.py must derive from SSOT and never hardcode 'off'.
+
+<!-- mios-src:f6248763e0cb from tools/drift-checks.py:4862-4868 -->

@@ -1064,3 +1064,629 @@ The fixture sandbox after `migrate-ids`: opaque ids, numbers, typed labels. K-40
 operator decision maps it (as the real migration does for its dangling tokens).
 
 <!-- mios-src:ac5acea360d7 from tools/native/mios-task/tests/cli.rs:1393-1394 -->
+### Every renderer takes the account name, password and...
+
+Every renderer takes the account name, password and AutoLogon settings from the
+LAYERED SSOT (vendor < host /etc/mios/mios.d < user ~/.config/mios), and fails closed
+(non-zero, naming the key) when a credential is missing. Fixture values only -- no
+real credential is read, printed or written outside the temp dir.
+
+Env: MIOS_CRED_TEST_ROOT (MiOS tree, default repo root), MIOS_BOOTSTRAP_DIR (bootstrap
+tree, default /var/lib/mios-build/repos/mios-bootstrap-build). PowerShell cases skip
+when pwsh is absent.
+
+<!-- mios-src:17961c93d0b6 from tests/test-credential-ssot.py:4-12 -->
+
+### Two-sided test suite for Milestone 3 (Multimodal Wayland...
+
+Two-sided test suite for Milestone 3 (Multimodal Wayland Computer-Use Agent CUA Loop).
+
+Validates:
+1. High-speed Wayland screencopy directed to RAM tmpfs (/run/user/1000/mios-vision/) with < 2ms capture and sub-50ms perception SLA.
+2. 0-1000 coordinate normalizer math mapping logical normalized coordinates to physical display pixels across multi-monitor canvases (hyprctl monitors -j).
+3. Native Wayland virtual pointer and keyboard event injection (wlr-virtual-* protocols) without root privileges.
+4. Local vision-language grounding on heavy inference lane (:8520 vLLM) with GPU Arbiter sleep-mode fallback (:8760 -> :8500).
+5. OpenAI-compatible tool verbs (screen_observe, mouse_action, keyboard_action) exposed through mios-mcp-server.
+6. Two-sided controls: positive controls prove genuine execution, planted negative controls prove strict error rejection.
+
+<!-- mios-src:da59e9d49fff from tests/test-cua-wayland.py:5-14 -->
+
+### Test 4
+
+------------------------------------------------------------------------------
+Test 4: Negative Delta Gate Blocking (Negative Control: Regression)
+------------------------------------------------------------------------------
+
+<!-- mios-src:9e788717d3e1 from tests/test-dgm-loop.py:127-129 -->
+
+### Live frame-rate + Retina checks in an owned nested PiP...
+
+Live frame-rate + Retina checks in an owned nested PiP session.
+
+Primary compositor: only the launcher's own PiP window appears there; nothing is dispatched to it. The nested
+compositor gets the candidate plugins; the daemon runs against the nested instance with a private runtime, state
+home, user tier and private buses (nothing activatable). The nested Hyprland is SIGTERMed at the end.
+
+Env: MIOS_LIVE_NESTED=1; MIOS_GEN (candidate launcher; needs extended-vblank), MIOS_FR_MIOSD, MIOS_FR_WALLPAPERD,
+MIOS_FR_PACING_SO, MIOS_FR_HYPR3D_SO (default: installed); MIOS_LIVE_OUT (outside /tmp: the nest's /tmp is private);
+MIOS_FR_APPLY_SCRIPT (optional: the lead's DP-3 apply script, rehearsed on the nested output); MIOS_FR_PREFIX_MIOSD
+(optional: a miosd built before the exact-baseline fix, the negative control of baseline_checks).
+The nested window's frame callbacks follow the PRIMARY's own rate (its cap, 60 Hz at power-saver), so the tiers here
+are scaled below it (18/24/30/36 Hz; divisors are the vendor ones); the vendor table itself is unit-tested in
+tests/test-framerate.py.
+
+<!-- mios-src:1c7172627f8b from tests/test-framerate-retina-nested-live.py:12-25 -->
+
+### mode_outputs + extended-vblank on the nested output (a...
+
+mode_outputs + extended-vblank on the nested output (a virtual output: its EDID comes through the test hook).
+    Hyprland takes a modeline only on a DRM output ("Tried to set custom modeline on non-DRM output") and a Wayland-
+    backend output keeps the parent's 60 Hz, so here the daemon's planned modeline can never verify: the checks are the
+    plan (against the CLI derivation), the switch, the unverified path (reverted at once, blocklisted, never retried)
+    and the advertised negative control. The verified 15 s confirm-or-revert path needs a DRM panel (the lead's DP-3
+    apply script); its logic is unit-tested in plan.rs.
+
+<!-- mios-src:c3f683762085 from tests/test-framerate-retina-nested-live.py:459-464 -->
+
+### D1 (the verifier's): the daemon's baseline and revert...
+
+D1 (the verifier's): the daemon's baseline and revert snapshot must never be a "WxH@Hz" of a mode the output does
+    not advertise (Hyprland would program a custom CVT timing for it). Here the nested output advertises (test hook
+    MIOS_FRAMERATE_TEST_MODES) 50 and 30 Hz but shows 60 -- the shape of DP-3 on the apply script's modeline. The
+    candidate names the configured rule's advertised mode as the way back and says why; a pre-fix miosd
+    (MIOS_FR_PREFIX_MIOSD) names the unadvertised 60.00 (the negative control reproduces the defect).
+
+<!-- mios-src:4ac08454d8b7 from tests/test-framerate-retina-nested-live.py:507-511 -->
+
+### MIOS_FR_APPLY_SCRIPT (the lead's apply-dp3-90hz.sh)...
+
+MIOS_FR_APPLY_SCRIPT (the lead's apply-dp3-90hz.sh) rehearsed on the NESTED output with the synthetic EDID:
+    `check` is read-only and prints the CLI's modeline; `apply` arms the transient revert timer FIRST, then switches; a
+    non-DRM output cannot show the modeline, so the script's own verification fails and it reverts at once (the timer
+    then finds the revert done and does nothing); `confirm` after a revert is refused (the control). The verified +
+    confirm path needs the real DRM panel.
+
+<!-- mios-src:170bd1ebd399 from tests/test-framerate-retina-nested-live.py:558-562 -->
+
+### confirm is the operator's: no tty (a script, an agent) ->...
+
+confirm is the operator's: no tty (a script, an agent) -> refused, nothing confirmed. A copy of the dir that looks
+like a verified apply (no timer behind it: its unit name is a dummy)
+
+<!-- mios-src:d3bd1c806448 from tests/test-framerate-retina-nested-live.py:595-596 -->
+
+### Retina in the nested PiP session
+
+Retina in the nested PiP session: its output at the size and scale the session has. Both are the PARENT window's
+(the PiP on the primary): a mode, scale (the session zoom included) or transform requested from inside a Wayland-
+backend output is reported by hyprctl but not committed (the room keeps the parent-sized output: evidence in the lane
+report), and headless outputs get no swapchain in the nest; so a portrait/mobile-shaped viewport needs a portrait
+PiP, which only the primary's PiP gravity can give. Rotated and phone (1170x2532 @3, mobile) outputs are the
+oracle/CLI tiers of tests/test-hypr3d-retina-spawn.py.
+
+<!-- mios-src:2b153a90f7ca from tests/test-framerate-retina-nested-live.py:638-643 -->
+
+### Any automatic display-mode change is restored after...
+
+Any automatic display-mode change is restored after mode_confirm_s (15 s) unless the operator confirms it,
+        and stopping the daemon restores every mode it changed (the nested tier runs it; this is the source contract).
+
+<!-- mios-src:3da1f6fdd751 from tests/test-framerate.py:219-220 -->
+
+### Negative control
+
+Negative control: the mios-gen installed before this change, on the policy SSOT, sets no frame cap and no
+        policy glass rate (nothing on the host caps today). Once the policy is deployed (the installed generator carries
+        the projection, as on this host) there is no pre-policy generator on the host; the disabled-policy test is
+        then the negative control for the projection itself.
+
+<!-- mios-src:d9ee91a09ad0 from tests/test-framerate.py:639-642 -->
+
+### The cap holds D
+
+The cap holds D: never above it, and at it whenever the clients outpace it (frames were deferred in that
+        reading). A fast producer asks at the output's maximum, so the cap defers about (max - D) frames a second; a
+        reading with at least half of that is cap-limited. The nest renders on a shared 2-CU iGPU: client stalls there
+        dip the rate below D for seconds with few deferrals -- the producers, not the cap; those readings are not
+        counted for the 'at D' part (measured at 60 on 144: 81 deferred/s steady, 4-17/s in a stall).
+
+<!-- mios-src:dc37572ac60d from tests/test-framerate.py:768-772 -->
+
+### One measurement of the open room from Hypr3D's status file...
+
+One measurement of the open room from Hypr3D's status file and the compositor's meter:
+        room_fps: room frames per second (glassDue + glassKept: one per drawn room frame), compositor_fps: frames the
+        output presented (mios-pacing meter, median), glass_due_per_s: frames whose refraction backdrops and reflected
+        dome refreshed, dome_per_s: live dome re-captures per second (time-weighted), status_fps: the status line's own
+        `fps=` -- an EMA of 1/dt, which overstates a paced (uneven) cadence, recorded but not asserted.
+
+<!-- mios-src:d083db40feb0 from tests/test-framerate.py:866-870 -->
+
+### The 3D room (staged hypr3d.so, opened in the nest over an...
+
+The 3D room (staged hypr3d.so, opened in the nest over an animated client and the live wallpaper) follows the
+    daemon's tier: the room and the compositor at D, glass refraction/reflection refreshes at G, the live dome at W;
+    unlocked lifts the cap. Runs in the small nest (run-tests.sh: HEADLESS-DESK 640x360@144, a small client): at
+    1920x1080 the nest's 2-CU iGPU draws the glass room at 17-37 fps, below every tier (measured, explore/).
+
+<!-- mios-src:da24d419cbda from tests/test-framerate.py:1088-1091 -->
+
+### The room's OWN rate keys, with nothing else in the nest...
+
+The room's OWN rate keys, with nothing else in the nest asking for frames (the daemon, the animated client and
+    the wallpaper stopped; mios-pacing as a meter only): render.max_fps holds the room's frame pump at D, glass_fps
+    its refraction/reflection refreshes at G. Negative control: the installed hypr3d.so (before this change) takes
+    the same keys silently and pumps at its fixed 8 ms (about 125 frames/s).
+
+<!-- mios-src:bc056558d515 from tests/test-framerate.py:1165-1168 -->
+
+### The advertised-mode path (mechanism = "mode" in the nest's...
+
+The advertised-mode path (mechanism = "mode" in the nest's user tier; MIOS_FRAMERATE_TEST_MODES gives the
+    virtual HEADLESS-DESK the modes 60/100/144): a new mode is restored after mode_confirm_s (15 s) unless confirmed,
+    and the panel then gets no more automatic modesets; a confirmed mode stays and needs no answer again; stopping the
+    daemon restores the mode the output had before the policy. The daemon stops at the end (NestedIsolated runs
+    without it).
+
+<!-- mios-src:311a80aa8b19 from tests/test-framerate.py:1230-1234 -->
+
+### Game window placement. Unit (always): the SSOT table, its...
+
+Game window placement.
+
+Unit (always): the SSOT table, its configurator inputs and the committed Hyprland projection agree.
+Real binaries (MIOS_GEN / MIOSD, default the installed ones): render-hyprland projects the game rules from
+an SSOT copy and drops them when the table is disabled; invalid values fail the render; miosd's rule size is
+the size the game rule carries.
+Live (MIOS_LIVE_NESTED=1): an owned nested PiP session (`MIOS_GEN nested-session --layout pip`) with the
+placement rules of MIOS_HYPRLAND_LUA installed and `MIOSD placement serve` running inside it; X11 game probes,
+Wine (winemine = fixed size, notepad = resizable; MIOS_LIVE_WINEPREFIX) and vkcube (xcb + wayland) are
+placed, toggled and resized; screenshots measure black regions. Old-code controls: MIOS_GEN=/usr/bin/mios-gen
+(no nested XWayland), MIOSD=/usr/bin/miosd with MIOS_HYPRLAND_LUA=<main's projection> (games left offscreen).
+The primary compositor is never addressed; the nested Hyprland is SIGTERMed at the end.
+
+<!-- mios-src:351c4586a814 from tests/test-game-placement.py:5-17 -->
+
+### A windowed game applying 640x400 from its menu: hints...
+
+A windowed game applying 640x400 from its menu: hints re-pinned, then a size-only ConfigureRequest. Rejected
+lane (every ConfigureRequest suppressed): stays 480x320, renders 640x400 into it (cropped).
+
+<!-- mios-src:f068e49632de from tests/test-game-placement.py:371-372 -->
+
+### A resizable WM_TRANSIENT_FOR dialog of a Wine application...
+
+A resizable WM_TRANSIENT_FOR dialog of a Wine application (class setup.exe matches the game list's .+\.exe):
+Hyprland floats it, but it is no game. Rejected lane: tagged fixed, re-centred, pinned, resizes reverted.
+
+<!-- mios-src:f802c7235574 from tests/test-game-placement.py:389-390 -->
+
+### Operator moves (verifier round-2 regression): the daemon...
+
+Operator moves (verifier round-2 regression): the daemon cannot tell who moved a window, so position alone is
+never a remap. A keyboard move binding or a released drag is a dispatch with no button held at the next poll.
+
+<!-- mios-src:7fd005ea9078 from tests/test-game-placement.py:463-464 -->
+
+### Verifier round-2 defect A
+
+Verifier round-2 defect A: the ShaderGlass pane (Wine class shaderglass.exe, which the games rule tags;
+pinned by its own rule) follows its target exactly, and over a fullscreen target on one output that box is
+the output = the XWayland root. A fresh map never watched it (pinned), but adopt() after a daemon restart
+had no pinned/exclude gate and refused the follower's placement. One gate now decides both.
+
+<!-- mios-src:50308e196e43 from tests/test-game-placement.py:593-596 -->
+
+### Two-Sided Regression Test Suite for Milestone 4: Hypr3D...
+
+Two-Sided Regression Test Suite for Milestone 4: Hypr3D Controller Support.
+
+Verifies:
+1. Positive controls:
+   - Simultaneous L3 + R3 (BTN_THUMBL + BTN_THUMBR) chord within debounce window triggers Hypr3D toggle.
+   - Left stick 3D translation when Hypr3D mode is active.
+   - Right stick 3D camera look (yaw/pitch) when Hypr3D mode is active.
+   - Fallback axes (ABS_Z / ABS_RZ) when primary axes (ABS_RX / ABS_RY) are absent.
+   - Gamepad capability detection (EV_KEY + EV_ABS).
+   - SSOT configuration parsing.
+
+2. Negative controls:
+   - Single button press (L3 alone or R3 alone) does NOT trigger toggle.
+   - Unrelated buttons (BTN_SOUTH, BTN_EAST, etc.) do NOT trigger toggle.
+   - Debounce hold suppression: holding chord down triggers exactly once.
+   - Deadzone suppression: stick inputs below threshold (< 0.15) are ignored.
+   - Inactive suppression: stick inputs while Hypr3D is inactive produce zero commands.
+   - Device filter: non-gamepad devices (keyboards, mice) are rejected.
+   - Invalid SSOT bounds rejection.
+
+<!-- mios-src:3433924c3e4a from tests/test-hypr3d-controller.py:5-25 -->
+
+### Simulates Hyprland + Hypr3D PiP snapshot coordinate...
+
+Simulates Hyprland + Hypr3D PiP snapshot coordinate computation.
+    
+    When pinned == True and unpin_for_snapshot == False, Hyprland ignores the workspace
+    renderOffset shift and renders the snapshot at (0, 0), while sampledBox is shifted,
+    causing top/left margin and bottom/right cutoff.
+    When unpin_for_snapshot == True, the shift is applied both to the render and sampledBox.
+
+<!-- mios-src:fd8707e2c0c1 from tests/test-hypr3d-crt.py:66-72 -->
+
+### The corner past the arc
+
+The corner past the arc: wedge W (inside the client box, outside the arc by >= 2 px), band O (2..12 px outside
+    the box along the corner), far backdrop B. A layer clipped by the box instead of the radius makes W differ from O.
+
+<!-- mios-src:86bb3384e9eb from tests/test-hypr3d-edge-quality.py:230-231 -->
+
+### The primary compositor pid and the OPERATOR's...
+
+The primary compositor pid and the OPERATOR's document-portal mount count ($XDG_RUNTIME_DIR/doc). Other
+    sessions' portal mounts share this mount namespace and come and go, so only the operator's mount point counts.
+
+<!-- mios-src:f966ecf0be56 from tests/test-hypr3d-input-transitions-live.py:37-38 -->
+
+### Top edge of a bright quad over a dark background, columns...
+
+Top edge of a bright quad over a dark background, columns [x0, x1).
+
+    Per column: coarse edge = first row brighter than the midpoint; normalised coverage n = (I - bg) / (fg - bg) over
+    +-window rows; sub-pixel edge e(x) = y_top + window*2 - sum(n). A straight antialiased edge gives a linear e(x); a
+    stair-stepped one leaves a residual of up to +-0.5 px (RMS ~0.29). Also: error of n against the analytic box-filtered
+    coverage of the fitted line (16x16 subsamples per pixel), and intermediate pixels per edge column.
+
+<!-- mios-src:0de5c1eddc5d from tests/test-hypr3d-quality.py:112-118 -->
+
+### On-screen ink height (output px) of each text line of the...
+
+On-screen ink height (output px) of each text line of the test window: the rows with a dark pixel inside the
+    line's band (window-local logical px mapped through the marker-derived scale). The glyph size the operator reads:
+    at M = 1 it equals the flat desktop's.
+
+<!-- mios-src:fc3d7eb6874f from tests/test-hypr3d-retina-spawn.py:625-627 -->
+
+### The real `mios-gen hyprland-3d-toggle` (SUPER+G) on the...
+
+The real `mios-gen hyprland-3d-toggle` (SUPER+G) on the nest's output, judged by the plugin's live status numbers
+    only -- no screenshots, so it also holds on a nested PiP output below scale 1, where one logical px is a fraction
+    of a pixel: mios-gen's per-output window scale (from the output's mode, scale, transform, bars, mobile verdict and
+    text size), spawn box and fit area are the oracle's. criterion = "fixed" (the control) sends no Retina keys.
+
+<!-- mios-src:ca4fdb5fc0db from tests/test-hypr3d-retina-spawn.py:980-983 -->
+
+### tier 5
+
+---- tier 5: the operator's own applications -------------------------------------------------------------------------
+MIOS_H3R_APPS=1 + the nest + MIOS_GEN: the MiOS terminal (alacritty with the MiOS-rendered config, i.e. the SSOT
+[theme.font] GeistMono 12) and the MiOS-Portal browser (the Gecko build, a page with 16 px Geist and 12 px GeistMono
+text) are opened at the flat desktop's default size (the live `mios-placement` rule) and at an oversized size, then
+the room is opened by the real `mios-gen hyprland-3d-toggle`. Measured on screen, against the same window in 2D:
+  (a) texel:pixel at the window centre = 1 / M, M = the on-screen distance of two markers around the window centre
+      in the room over the same distance in 2D (where the compositor draws one buffer texel per output pixel);
+  (b) the ink height (screen px) of every text line, x-height line included, room vs 2D;
+  (c) the window's on-screen rectangle inside the work area minus the fit margin, all four corners visible.
+The old build (MIOS_H3R_OLD_SO + MIOS_H3R_OLD_GEN + MIOS_H3R_OLD_SSOT: the frame-rate stage, i.e. everything but
+this lane; the fixed 0.5 / 5 m placement) is the negative control. Apps run with `env -i` (nothing of the live
+session), the private bus (nothing activatable: no portals), the browser in its own network namespace.
+
+<!-- mios-src:9c09d88aebe4 from tests/test-hypr3d-retina-spawn.py:1044-1055 -->
+
+### The MiOS-Portal's floating chat panel and Zen sidebar are...
+
+The MiOS-Portal's floating chat panel and Zen sidebar are kept closed (prefs): they float over the page and would
+cover the markers on a narrow window; the browser keeps the MiOS autoconfig, theme and fonts otherwise.
+Text bands below the red marker, in units of the marker's on-screen height / width (so one layout serves 2D and
+any magnification): (name, top, bottom), and the band's width.
+
+<!-- mios-src:380fa66b8049 from tests/test-hypr3d-retina-spawn.py:1067-1070 -->
+
+### the chrome per edge, in 2D (output px at M = 1) where both...
+
+the chrome per edge, in 2D (output px at M = 1) where both the window edge and the page edge are on screen;
+an edge that is off screen in 2D (a window wider / taller than the output) takes the rest of that axis'
+chrome from the page's own viewport size (its title: "h3r-page WxH@dpr") against the client size
+
+<!-- mios-src:e8fc3eb45e55 from tests/test-hypr3d-retina-spawn.py:1425-1427 -->
+
+### MiOS-Tmux reads the live line from a file...
+
+MiOS-Tmux reads the live line from a file ("EPOCH<TAB>LINE<TAB>COMPACT") instead of spawning `quickshell ipc`
+per refresh; COMPACT (mobile_items, icon+value, no watts) feeds narrow tmux clients (mios-sysmon-line --compact)
+
+<!-- mios-src:a56ccd49fc83 from tests/test-island-sysmon.py:571-572 -->
+
+### Automated Two-Sided Verification Test Suite for Milestone...
+
+Automated Two-Sided Verification Test Suite for Milestone M5.
+
+Milestone M5: 4-Tier Sandbox Execution Ladder & Permissive Licensing (R5)
+1. Tier 1 Sandbox (Bubblewrap bwrap <1ms):
+   - Confinement via usr/libexec/mios/mios-sandbox-exec with --ro-bind / /, --unshare-all, --cap-drop ALL, and seccomp filter on fd 9.
+2. Tier 2 Sandbox (Rootless OCI crun ~15ms with CDI):
+   - Rootless OCI Quadlets under UID 1000 with static CDI manifest /etc/cdi/nvidia.json binding /dev/nvidia* without --privileged.
+3. Tier 3 Sandbox (MicroVMs libkrun <=90ms):
+   - Runtime=krun with /dev/kvm hardware acceleration and single virtio-net namespace isolation (task_170 ISOL-01).
+4. Tier 4 Sandbox (Hardware VMs KVM/VFIO):
+   - Hardware VM isolation specifications, whole-device RTX dGPU passthrough via vfio-pci, 128 MB IVSHMEM (/dev/kvmfr0).
+5. Permissive Licensing Migration (Elimination of Copyleft Taint):
+   - MIT/Apache-2.0 alternatives: uutils-coreutils (MIT), youki (Apache-2.0), systemd-boot (LGPL-2.1+), dbus-broker (Apache-2.0).
+   - Zero copyleft taint policy across core runtime packages in mios.toml.
+6. fapolicyd Execution Perimeter:
+   - etc/fapolicyd/fapolicyd.rules and usr/lib/fapolicyd/rules.d/ enforcing deny_audit perm=execute : all outside /usr.
+7. Planted Negative Controls:
+   - Unsigned binary in /tmp denied by fapolicyd fails RED.
+   - Missing seccomp filter in bwrap fails RED.
+   - Injected GPLv3 component in core fails RED.
+   - Restored canonical state passes GREEN.
+
+<!-- mios-src:e09c9f4a6348 from tests/test-m5-sandbox-licensing.py:4-25 -->
+
+### D1 (generators verify): a realized_by row moved onto...
+
+D1 (generators verify): a realized_by row moved onto SUPER+J (the compositor's togglesplit) used to pass
+with 0 findings and a dead row. Now render-hyprland refuses it, so the draft is rejected and never written.
+The pre-fix generator (MIOS_GEN_OLD) is the negative control: it accepts the same draft.
+
+<!-- mios-src:9b11d29c3d80 from tests/test-mios-controls.py:69-71 -->
+
+### V1 (generators verify, round 2): an exec:<prog> row on a...
+
+V1 (generators verify, round 2): an exec:<prog> row on a chord whose literal merely MENTIONS the program
+(CTRL+ALT+SHIFT+m runs `alacritty -e ... mios-terminal --action system`) was taken as realized: no dispatch
+handle, 0 findings, and --apply wrote the dead row. The literals come from [keybindings.actions] and the
+terminal/launcher keys, not the compositor tables. Positive control: the same row on a free chord.
+
+<!-- mios-src:2959c3c0088f from tests/test-mios-controls.py:91-94 -->
+
+### Pixels that are the workspace background lightened by a...
+
+Pixels that are the workspace background lightened by a faint glass tint (no channel darker, channel sum +2..+20):
+    the rigid hyprglass pane (and its bevel) showing where the bent content no longer covers the real window box.
+
+<!-- mios-src:fef976f10773 from tests/test-mios-lamp-live.py:417-418 -->
+
+### 2026-10-17: the refresh follows what the client takes (90...
+
+2026-10-17: the refresh follows what the client takes (90 when it keeps up), floor 30. Until the
+staged [remote.rdp] fragment is merged the keys are absent and mios-rdp's defaults (the same
+values, TestWayvncArgv.test_pacing_keys_reach_the_bridge) apply; once present they must match.
+
+<!-- mios-src:469e58596148 from tests/test-mios-rdp-bridge.py:521-523 -->
+
+### Against the running Hyprland
+
+Against the running Hyprland: a throwaway HEADLESS-MIOS-SCALETEST far from the layout,
+    never the operator's outputs or windows; always removed. CAUTION (observed 2026-10-16, three runs):
+    after creating/removing the headless output the seat cursor sat near the primary's centre
+    (Hyprland 0.56 appears to warp on headless add/remove), so run it only with the operator's consent.
+
+<!-- mios-src:cc68880e4328 from tests/test-mios-rdp-bridge.py:1297-1300 -->
+
+### A nested Hyprland (test compositor running as a window...
+
+A nested Hyprland (test compositor running as a window, started with WAYLAND_DISPLAY) must never
+    capture the remote display, even when it is newer than the operator's session.
+
+<!-- mios-src:a097776f37e1 from tests/test-mios-rdp-bridge.py:1664-1665 -->
+
+### users per operator decision (render_spec cross-check with...
+
+---------------------------------------------------------------------------
+users per operator decision (render_spec cross-check with mios_credentials)
+---------------------------------------------------------------------------
+
+<!-- mios-src:de6ef0580f74 from tests/test-mios-xbox-build.py:143-145 -->
+
+### Simulates PostgreSQL 16 + pgvector engine enforcing: 1....
+
+Simulates PostgreSQL 16 + pgvector engine enforcing:
+    1. Transaction-scoped SET LOCAL mios.owner_user = %(principal)s (set_config GUC).
+    2. Row-Level Security (RLS) policy:
+       USING (current_setting('mios.owner_user', true) IS NULL OR owner_user IS NULL OR owner_user = current_setting('mios.owner_user', true))
+    3. 4-tier memory tables: scratch, agent_memory, knowledge, mios_rag.
+    4. K-LRU access counter atomic increments and hot-tier promotion.
+    5. Cold eviction sweep with hot/pinned immunity.
+
+<!-- mios-src:e88fceeaf004 from tests/test-pgvector-rls.py:41-48 -->
+
+### root / for real, without touching the host: a user...
+
+--root / for real, without touching the host: a user namespace (uid 0 mapped to the caller) whose / is a tmpfs,
+    with the host /usr read-only (its tools, libraries and ancestor directories) and only the candidate's four
+    destination directories bound from scratch copies seeded like the packaged 0.2.1. The state (/var) is scratch.
+    bwrap's namespace forbids setgroups, so a shim stands in for setpriv (the staged binary still runs; only the
+    privilege drop is skipped). Killing bwrap on timeout kills the whole PID namespace.
+
+<!-- mios-src:2fc94a5ce39a from tests/test-quickshell-candidate-install.py:332-336 -->
+
+### Run `binary shaderglass args` under a private /tmp (and...
+
+Run `binary shaderglass args` under a private /tmp (and, for `primary`, a private directory bound over
+        /run/user/<uid>, so the primary-session path runs without the operator's runtime directory).
+
+<!-- mios-src:b78796abf794 from tests/test-shaderglass-state.py:388-389 -->
+
+### Real ShaderGlass in an owned nested PiP session. The...
+
+Real ShaderGlass in an owned nested PiP session. The primary compositor and the operator's prefix, state,
+    portal and user manager are never touched: every XDG home, the D-Bus session and the Wine prefix are private.
+
+<!-- mios-src:21f52e10d5d1 from tests/test-shaderglass-state.py:578-579 -->
+
+### Always the Wine Wayland driver here. The vendor x11 driver...
+
+Always the Wine Wayland driver here. The vendor x11 driver needs DISPLAY, and an X client resolves ":N"
+through the abstract socket @/tmp/.X11-unix/XN first -- a network-namespace name a private /tmp does not
+isolate -- so a nested pane on X11 could open on the operator's own XWayland.
+
+<!-- mios-src:efc73d15744b from tests/test-shaderglass-state.py:603-605 -->
+
+### Guard
+
+Guard: nothing under test may reach the operator's user manager (the installed miosd imports the
+compositor environment and restarts portal units from its launch path).
+
+<!-- mios-src:71ba0d85b600 from tests/test-shaderglass-state.py:613-614 -->
+
+### The installed miosd writes the primary session's hand-over...
+
+The installed miosd writes the primary session's hand-over files (/tmp/mios-shaderglass.state,
+/tmp/mios-shaderglass-3d-request.txt) whatever compositor it serves: give it a private /tmp so the
+negative control never rewrites or consumes the operator's.
+
+<!-- mios-src:8f2c4674ffce from tests/test-shaderglass-state.py:711-713 -->
+
+### Setup mode on (menu, focus), ShaderGlass' own next-shader...
+
+Setup mode on (menu, focus), ShaderGlass' own next-shader key typed into the Wine window -- the
+        operator picking a shader inside ShaderGlass -- then setup off. Returns (setup replies, picked shader).
+
+<!-- mios-src:95f217dbf27c from tests/test-shaderglass-state.py:758-759 -->
+
+### Hypr3D room and Theatre. The plugin appends to the...
+
+Hypr3D room and Theatre. The plugin appends to the host-global /tmp/hypr3d-status.txt, which the
+operator's own session reads, so the room is entered only when this whole test runs with a private /tmp
+(the driver: bwrap --bind <dir> /tmp, MIOS_SHADERGLASS_PRIVATE_TMP=<dir>).
+
+<!-- mios-src:ee0009b37c0b from tests/test-shaderglass-state.py:907-909 -->
+
+### setup
+
+---- setup: ShaderGlass' own menu is shown, the operator picks a shader with ShaderGlass' own keyboard
+input (a key typed into the Wine window, not a miosd command), leaving setup hides the menu and keeps
+that pick for the class.
+
+<!-- mios-src:01837263fb13 from tests/test-shaderglass-state.py:970-972 -->
+
+### The [desktop.mobile] tile rule against the ShaderGlass pane...
+
+The [desktop.mobile] tile rule against the ShaderGlass pane rule, in an owned nested PiP session whose
+    output the test vendor makes mobile. A window with the pane's class and title (no Wine needed) must map
+    floating and pinned. The candidate projector (MIOS_NESTED_LAUNCHER, a mios-gen build) launches the
+    session; the installed projector, whose tile rule takes every non-floating window, is the negative control
+    (MIOS_NESTED_OLD_LAUNCHER, default /usr/bin/mios-gen).
+
+<!-- mios-src:81f4f131fde0 from tests/test-shaderglass-state.py:1058-1062 -->
+
+### This test runs with a private XDG_RUNTIME_DIR, i.e. as a...
+
+This test runs with a private XDG_RUNTIME_DIR, i.e. as a non-primary session: its own supervisor unit
+instance, so it never stops or replaces the operator's app-mios-org.mios.ShaderGlass@overlay.service.
+
+<!-- mios-src:2ddb6a475abe from tests/test-shaderglass.py:561-562 -->
+
+### A private session bus
+
+A private session bus: the exporter, the fixture apps and the shell under test share it; the primary
+session's mios-appmenu (and its AppMenu registrar) never see any of this. It runs with the nested
+session's XDG_RUNTIME_DIR: --session activates the standard services, and a GTK app activating
+xdg-document-portal on a bus that carries the operator's runtime dir lazily unmounts the operator's
+$XDG_RUNTIME_DIR/doc (the portal's stale-mount cleanup), killing the primary portal (exit 21).
+
+<!-- mios-src:1f4215bba741 from tests/test-shell-appmenu-live.py:107-111 -->
+
+### The operator's root cause, reproduced: Quickshell <...
+
+The operator's root cause, reproduced: Quickshell < 1bd5b083 leaks a Qt property update group; afterwards the
+        surfaces of a reload send a zone of 0 forever. The guard must detect it (probe), skip the useless surface rebuild,
+        back off as "frozen" and tell the operator; a new shell process recovers. Runs last: it poisons the shell process.
+
+<!-- mios-src:f1e8398d3d1b from tests/test-shell-reserve.py:707-709 -->
+
+### Automated Two-Sided Verification Test Suite for Milestone...
+
+Automated Two-Sided Verification Test Suite for Milestone M4 (WS-SEC).
+
+Requirements Verified:
+1. 4-Tier Zero-Trust Sandbox Execution Ladder:
+   - Tier 1: Bubblewrap (bwrap <1ms)
+   - Tier 2: Rootless Podman/crun (~15ms with Container Device Interface CDI)
+   - Tier 3: gVisor runsc (~40ms)
+   - Tier 4: libkrun microVMs (~150ms)
+   - Progressive taint-driven tier selection and container profile compilation.
+2. Standalone Cilium Tetragon eBPF Quadlet Container:
+   - usr/share/containers/systemd/mios-enforcer.container
+   - Validates image, capabilities (CAP_BPF, CAP_SYS_ADMIN, etc.), volumes, User=mios-enforcer,
+     and ConditionVirtualization=!wsl.
+   - TracingPolicy attaching kprobe to sys_enter_connect with Sigkill on unauthorized egress.
+3. Out-of-Process eBPF/Tetragon Syscall Tracing & Quarantine (<65ms SLA):
+   - Positive control: Authorized socket connect to 127.0.0.1:8700 ($MIOS_AI_ENDPOINT) is permitted.
+   - Negative control: Unauthorized outbound socket connect (e.g. 1.1.1.1:443) triggers in-kernel
+     Sigkill (signal 9, latency <= 2ms) and container isolation in <65ms.
+4. Architectural Law 5 (UNIFIED-AI-REDIRECTS) Enforcement:
+   - Cryptographic Merkle-tree audit logging via usr/libexec/mios/ai/audit_chain.py.
+   - Ed25519 digital signature of violation blocks and tamper detection.
+
+<!-- mios-src:7047b0e30606 from tests/test-tetragon-quarantine.py:4-25 -->
+
+### Task 3 & 4: Out-of-Process Syscall Tracing, <65ms...
+
+=========================================================================
+Task 3 & 4: Out-of-Process Syscall Tracing, <65ms Quarantine & Law 5 Audit
+=========================================================================
+
+<!-- mios-src:745e7c64d403 from tests/test-tetragon-quarantine.py:309-311 -->
+
+### Every tmux server here is `tmux -L...
+
+Every tmux server here is `tmux -L mios-tmuxos-test-<pid>-<tag>-{i,o}` under a fresh 0700 TMUX_TMPDIR in /tmp,
+killed (and the directory removed) in cleanup. The SSOT is the worktree vendor file plus a private host layer;
+the user layer is pointed at a file that does not exist, so no personal configuration is read. Every tmux CLI call
+has a timeout (display-popup from a CLI blocks until the popup closes).
+
+<!-- mios-src:933f3d531fdb from tests/test-tmux-os.py:5-8 -->
+
+### Comprehensive unit and regression test suite for MiOS-Xbox...
+
+Comprehensive unit and regression test suite for MiOS-Xbox R3 requirements:
+1. Default Password Failure (negative controls fail on 'mios'/'user'/'password', positive control passes on non-default).
+2. Script-Referenced NVIDIA .inf Gate (negative control fails on nv*.inf, positive control passes on virtio).
+3. RealTimeIsUniversal=1 (negative control fails if missing or 0, positive control passes on 1; domain XML UTC clock).
+4. PreventDeviceEncryption=1 (negative control fails if missing or 0, positive control passes on 1; unattend XML UNATTEND-051).
+5. 4M Secure Boot OVMF QCow2 (negative control rejects 2M raw, positive control passes on 4M qcow2; TPM 2.0 emulator CRB).
+
+<!-- mios-src:ed8a1daf32ad from tests/test-xbox-r3-regression.py:4-10 -->
+
+### Validates domain XML firmware, NVRAM, and TPM stanzas...
+
+Validates domain XML firmware, NVRAM, and TPM stanzas according to R3.1 specifications.
+
+    Requirements:
+    1. Loader must use 4M QCow2: /usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.qcow2
+       type='pflash', readonly='yes', secure='yes', format='qcow2'
+    2. NVRAM template must use: /usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.qcow2
+       templateFormat='qcow2', format='qcow2'
+    3. Rejects 2M raw firmware (OVMF_CODE.secboot.fd / OVMF_VARS.secboot.fd)
+    4. Rejects format='raw' when using 4M QCow2 firmware
+    5. Rejects non-existent paths (/usr/share/edk2/x64/...)
+    6. TPM device must be present: model='tpm-crb', backend type='emulator', version='2.0'
+
+<!-- mios-src:e31a267d30dc from tests/test-xbox-r3-regression.py:54-65 -->
+
+### Validates domain XML clock configuration according to R3.4...
+
+Validates domain XML clock configuration according to R3.4 specifications.
+
+    Requirements:
+    1. Clock offset must be 'utc' (never 'localtime') to eliminate 4-hour clock skew.
+    2. Hyper-V clock enlightenment timer 'hypervclock' must have present='yes'.
+
+<!-- mios-src:4418479ba176 from tests/test-xbox-r3-regression.py:135-140 -->
+
+### Verifies that 4M Secure Boot OVMF firmware in QCow2 format...
+
+Verifies that 4M Secure Boot OVMF firmware in QCow2 format with TPM 2.0 emulator CRB
+    is required by domain XML, and that legacy 2M raw firmware is rejected.
+
+<!-- mios-src:df7483cf9cd0 from tests/test-xbox-r3-regression.py:561-562 -->
+
+### The native-binary shim must never exec the script itself....
+
+The native-binary shim must never exec the script itself.
+
+    /usr/libexec/mios/mios-hardcode-lint is one of its candidates; on a
+    repo-as-root host that path is this script, and once it was executable the
+    shim re-ran itself without end until the OOM killer stopped it.
+
+<!-- mios-src:5776d5bdb2fe from tests/test_adversarial_hardcode_lint.py:570-575 -->

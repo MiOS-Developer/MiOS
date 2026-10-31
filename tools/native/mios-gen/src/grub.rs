@@ -4,8 +4,7 @@
 // (mios-desktop-<profile>.conf). Every other BLS entry moves to [boot.grub].archive_dir; no kernel file is removed.
 // On kernel-install events the managed GPU entries are first re-rendered from the newest installed kernel
 // (render_hyprland::run_boot_profiles), so the menu never points at a removed kernel.
-// AI-related: usr/share/mios/mios.toml [boot.grub], tools/native/mios-gen/src/render.rs (desktop_boot,
-//   render_hyprland::run_boot_profiles), tools/native/mios-gen/src/main.rs (render-grub)
+// AI-related: usr/share/mios/mios.toml, tools/native/mios-gen/src/render.rs, tools/native/mios-gen/src/main.rs
 
 #![forbid(unsafe_code)]
 

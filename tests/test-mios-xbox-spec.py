@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Tests for the MiOS-Xbox spec renderer (xb-02): render == layered SSOT merge incl. host- and user-tier overrides (positive); missing taskbar_align, blank credential, dangling ref, duplicate registry owner, GPU vendor mode each fail naming the key (negative).
-# AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/lib/mios/mios_toml.py, usr/share/mios/mios.toml, /home/mios/mios-desktop-work-1/staged-ssot/xbox-spec.toml
+# AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/lib/mios/mios_toml.py, usr/share/mios/mios.toml
 # AI-functions: TestXboxSpecRender, TestXboxSpecNegative
 """Layers under test (lowest first): vendor mios.toml, the staged [windows.xbox] fragment (until it
 is merged into the vendor file), a fixture-credential layer, a host-tier and a user-tier override.

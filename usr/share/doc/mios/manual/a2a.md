@@ -38,3 +38,25 @@ Attests client card authenticity and negotiates mutual capabilities.
         capabilities are present; returns (False, missing_capabilities) otherwise.
 
 <!-- mios-src:b9b51841848a from usr/libexec/mios/a2a/attestation.py:338-343 -->
+### Validates AgentCard authenticity, signature, timestamps...
+
+Validates AgentCard authenticity, signature, timestamps, and clock skew.
+
+        Returns True only if the cryptographic signature is valid over the canonical payload
+        under ``trusted_public_key`` (resolved by the caller from provisioning -- see
+        :func:`resolve_trusted_key`), timestamps are within acceptable clock skew bounds,
+        and expiration has not occurred. With no trusted key the card is unverified: False.
+
+<!-- mios-src:443596a8c760 from usr/libexec/mios/a2a/attestation.py:237-244 -->
+
+### The provisioned passport public key of a REGISTERED...
+
+The provisioned passport public key of a REGISTERED identity.
+
+    Delegates to the one AgentCard trust-key resolver, ``_load_card_trusted_key``
+    in mios-mcp-server (the key its card signing is bound to):
+    ``[passport].key_dir/<agent_id>/public.key`` from the mios.toml SSOT. The
+    identity is the operator's choice, never the card's claim. Raises when the
+    identity is malformed or nothing usable is provisioned.
+
+<!-- mios-src:6b90d6a35506 from usr/libexec/mios/a2a/attestation.py:389-396 -->

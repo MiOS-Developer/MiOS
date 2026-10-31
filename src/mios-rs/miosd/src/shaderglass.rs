@@ -1,5 +1,5 @@
 // AI-hint: miosd shaderglass: ShaderGlass (mausimus, GPL-3.0) under Wine as a Hyprglass-decorated overlay pane pinned over one target window -- install the newest verified release, one supervisor user unit running every pane, follow the target, setup mode, the xdph custom picker and portal restore tokens.
-// AI-related: usr/share/mios/mios.toml [desktop.shaderglass] [desktop.hyprland.xdph], tools/native/mios-gen/src/render.rs (shaderglass_lua), usr/bin/mios-shaderglass, usr/libexec/mios/mios-share-picker, src/mios-rs/miosd/src/placement.rs
+// AI-related: usr/share/mios/mios.toml, tools/native/mios-gen/src/render.rs (shaderglass_lua), usr/bin/mios-shaderglass, usr/libexec/mios/mios-share-picker, src/mios-rs/miosd/src/placement.rs
 //! `miosd shaderglass` (glue: /usr/bin/mios-shaderglass):
 //!
 //! - `install` resolves the newest release of [desktop.shaderglass].channel, accepts the zip only against

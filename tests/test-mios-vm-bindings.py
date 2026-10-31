@@ -2,8 +2,7 @@
 # AI-hint: Executable tests for the native VM/remote host-key bindings lane (vm.rs + global_bindings.rs
 # wiring): mios-inputd check/resolve-action/dispatch/normalize/map/vm-action against fixture SSOT roots,
 # with the real binaries only. Absence of a binary carrying the vm-action surface FAILS (no skip-as-pass).
-# AI-related: tools/native/mios-inputd/src/{vm.rs,config.rs,main.rs}, tools/native/mios-gen/src/global_bindings.rs,
-# usr/share/mios/mios.toml [keybindings.global]
+# AI-related: tools/native/mios-inputd/src/vm.rs, tools/native/mios-inputd/src/config.rs, tools/native/mios-inputd/src/main.rs, tools/native/mios-gen/src/global_bindings.rs, usr/share/mios/mios.toml
 import json
 import re
 import os

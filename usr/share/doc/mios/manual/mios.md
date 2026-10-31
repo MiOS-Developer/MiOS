@@ -5928,3 +5928,1543 @@ FIRST domain of `order` whose glob matches (fnmatch: * also crosses /). max_file
 a fold lane lowers its domain in the commit that folds; a new file is paid for by a fold in that commit.
 
 <!-- mios-src:c7bfbbd9989c from usr/share/mios/mios.toml:12882-12884 -->
+### Layered SSOT credential resolver. There is NO built-in...
+
+Layered SSOT credential resolver. There is NO built-in credential default:
+a missing or empty key raises CredentialError naming the key.
+
+Keys (all read from the MERGED layers, so a host /etc/mios/mios.d/*.toml or a
+user ~/.config/mios/mios.toml override wins over the vendor file):
+  [identity]                 username (required), default_password (required), fullname
+  [[autounattend.accounts]]  name (required per entry), password ("" -> default_password),
+                             display_name, group
+  [autounattend.service]     enable (default true), svc_user (required when enabled),
+                             svc_password ("" -> default_password)
+  [autounattend]             autologon_enable (default true),
+                             autologon_user ("" -> identity.username; never svc_user),
+                             autologon_persistent (default true),
+                             autologon_count (required when not persistent)
+  [auth]                     password_hash (sha512-crypt; wins for Linux /etc/shadow)
+  [field.sysrescue]          username ("" -> identity.username), password ("" -> default_password)
+
+<!-- mios-src:5e968c26bc47 from usr/lib/mios/mios_credentials.py:4-20 -->
+
+### The console AutoLogon never signs in the service account...
+
+The console AutoLogon never signs in the service account: svc_user is the renamed
+built-in Administrator (RID 500), which mios-setup-finalize disables once setup is done
+(operator decision: a separate desktop admin account carries the persistent AutoLogon).
+The PowerShell twin (Resolve-MiOSCredentials) and unattend_gen refuse it identically.
+
+<!-- mios-src:b253b2bf6588 from usr/lib/mios/mios_credentials.py:119-122 -->
+
+### Validate SQLite table or column identifiers against strict...
+
+Validate SQLite table or column identifiers against strict regex and schema allowlist.
+
+    Invariants:
+    1. ident MUST be a string matching ^[A-Za-z_][A-Za-z0-9_]*$.
+    2. ident MUST be a member of the provided schema allowlist.
+    3. Raises ValueError before any query is formed or sent to execute().
+
+    Returns:
+        The validated identifier string.
+
+<!-- mios-src:244c93c4b94f from usr/lib/mios/mios_db_config.py:16-25 -->
+
+### Caller-owned MCP federation for the per-user MiOS MCP front...
+
+Caller-owned MCP federation for the per-user MiOS MCP front door.
+
+Ownership rule (the whole design):
+
+* A server id declared by a SYSTEM tier (vendor ``/usr/share/mios/mios.toml``,
+  ``/usr/lib/mios/mios.d``, host ``/etc/mios/mios.toml`` and its ``mios.d``)
+  belongs to the shared agent-pipe service. The front door never spawns it,
+  even when the user tier tweaks one of its keys.
+* A server id declared ONLY by the caller's own tier belongs to the caller.
+  The shared service cannot see it (it runs as another user under
+  ``ProtectHome=yes``), so the caller's front door runs it as the caller and
+  re-exports its tools under ``<namespace><tool>``.
+
+The child receives the MCP SDK's minimal default environment plus the
+declared ``env`` table: never the front door's own environment (relay
+pointers, endpoints, tokens). Its stderr goes to a private per-server log
+under ``$XDG_STATE_HOME/<[mcp.federation].log_directory>``. Federation is
+never offered over the HTTP front door unless ``serve_http`` says so.
+
+Spawn budget (one front door per agent session must never become a process
+storm): with ``catalog_cache`` a member's tool catalog is cached (0600, keyed
+by a fingerprint of its declaration) so a new front door lists the tools
+WITHOUT starting the server; the server starts on the first call only. A
+started member stops after ``idle_stop_s`` without calls. Failed starts back
+off exponentially from ``restart_backoff_s`` and stop for good (until the
+front door restarts) after ``max_restarts`` consecutive failures. No timer,
+watcher or loop runs per member: every start is caused by a list or a call.
+
+The MCP SDK is imported lazily, so configuration parsing is usable (and
+unit-testable) from any Python; running members needs the SDK 2.x the front
+door already requires.
+
+<!-- mios-src:feb897c85390 from usr/lib/mios/mios_mcp_federation.py:4-35 -->
+
+### mios-computer-use -- Linux/Wayland desktop computer-use...
+
+mios-computer-use -- Linux/Wayland desktop computer-use executor for MiOS.
+
+The Linux/Wayland peer of `mios-pc-control` (which drives the Windows host via
+Win32 SendInput through the WSL broker). This tool drives the LOCAL Linux
+graphical session -- bare-metal/VM GNOME or KDE on Wayland, or a wlroots
+compositor -- with NO ydotool dependency (ydotool is AGPLv3 + seat-wide):
+
+  * INPUT   -- the freedesktop RemoteDesktop portal (libei era; GNOME >= 45 /
+               KWin >= 6.1 production) over D-Bus, with a persisted restore
+               token for unattended re-use. Self-written `evdev`/uinput backend
+               as the compositor-agnostic fallback (our own code -> MIT-clean,
+               works on wlroots + headless seats too).
+  * CAPTURE -- the native mios-shot (ext-image-copy-capture / wlr-screencopy, no
+               flash/sound/notification) first, then the one-shot Screenshot portal,
+               with grim / gnome-screenshot / spectacle CLI fallbacks (all FOSS, offline).
+  * GROUND  -- AT-SPI2 a11y tree FIRST (role/name/text, no pixels, deterministic),
+               vision grounding (mios-pc-vision -> qwen3-vl:4b baseline or the
+               UI-TARS-1.5-7B vLLM `mios-grounding` lane) only when the tree is
+               empty (Chromium/Electron/canvas).
+
+ENVIRONMENT-ADAPTIVE (MiOS is a bootc image deployable on any hardware):
+  1. [computer_use].executor_endpoint set + reachable -> route every op to that
+     HTTP executor (federation: drive ANOTHER machine's desktop, same contract
+     mios-pc-control uses for the Windows executor + mios-computer-use-server
+     uses for Linux). Configured-but-down => honest error, never a blind local
+     fall-back (mirrors the os_control executor rule).
+  2. else local Wayland session (WAYLAND_DISPLAY present) -> portal/uinput.
+  3. else WSL2 with a reachable Windows host -> delegate to mios-pc-control so
+     the SAME verb works everywhere.
+  4. else honest "no desktop backend available" error.
+
+SUBCOMMANDS (contract-compatible with mios-pc-control so the cu_* verbs and the
+dual MCP+A2A server are backend-agnostic):
+    screenshot <out-path>          one-shot capture to PNG
+    click <x> <y> [button]         left|right|middle (default left)
+    double-click <x> <y>
+    mouse-move <x> <y>
+    type "<text>"                  literal text into the focused surface
+    key <name>                     Enter|Tab|Escape|Up|Down|...|F1..F12|<char>
+    key-combo "Ctrl+S"             modifier combo
+    window-list [--json]           AT-SPI / wmctrl / hyprctl / kdotool top-levels
+    window-focus <id>
+    window-move <id> <x> <y>
+    window-resize <id> <w> <h>
+    atspi-query "<query>" [--json] semantic element lookup (no pixels)
+    ground "<query>" [--json]      screenshot -> AT-SPI/vision -> {x,y,confidence}
+    help
+
+CONFIG (layered mios.toml, per-user > /etc > vendor):
+    [computer_use]
+    executor_endpoint = ""           # federation: drive a remote desktop
+    input_backend     = "auto"       # auto | portal | uinput
+    capture_backend   = "auto"       # auto | native | portal | grim | gnome | spectacle
+    restore_token_path = "$XDG_STATE_HOME/mios/cu-restore-token"
+
+<!-- mios-src:c288e2f6f0a5 from usr/libexec/mios/mios-computer-use:4-58 -->
+
+### High-speed Wayland screencopy directed to RAM tmpfs...
+
+High-speed Wayland screencopy directed to RAM tmpfs (/run/user/1000/mios-vision/).
+
+    Drops capture latency to < 2ms using raw PPM or fast PNG.
+    Enforces sub-50ms perception SLA.
+    Rejects with descriptive error if tmpfs directory is missing when strict_tmpfs=True.
+
+<!-- mios-src:b61d0cdd6428 from usr/libexec/mios/mios-computer-use:1144-1149 -->
+
+### Performs mouse interactions via native Wayland virtual...
+
+Performs mouse interactions via native Wayland virtual pointer protocol.
+
+    Requires normalized [0, 1000] coordinates for spatial actions.
+    Rejects out-of-bounds coordinates with descriptive error.
+    Maps 0-1000 grid to physical screen pixels across multi-monitor canvases.
+
+<!-- mios-src:756511da6dbc from usr/libexec/mios/mios-computer-use:1222-1227 -->
+
+### mios-credential -- fail-closed credential reads from the...
+
+mios-credential -- fail-closed credential reads from the layered mios.toml.
+
+  mios-credential username            [identity].username
+  mios-credential hash                sha512-crypt for /etc/shadow (env hash > [auth].password_hash > default_password)
+  mios-credential sysrescue-user      [field.sysrescue].username -> [identity].username
+  mios-credential identity KEY        a PUBLIC [identity] key (username|fullname|hostname|shell) from
+                                      the merged layers, WITHOUT validating the credential plane
+                                      (empty output when unset or when no layer exists; installers prompt)
+  mios-credential check               validate every credential key (no output on success)
+  mios-credential win-json --out F    write the Windows projection JSON (mode 0600, atomic)
+
+Layers follow mios_toml (MIOS_TOML_ROOT, MIOS_VENDOR_TOML(_D), MIOS_HOST_TOML(_D),
+MIOS_USER_TOML(_D)). Passwords are never printed except as a hash.
+
+<!-- mios-src:4d4cfb111bf2 from usr/libexec/mios/mios-credential:4-17 -->
+
+### Universal USB/Bluetooth Controller Daemon for Hypr3D....
+
+Universal USB/Bluetooth Controller Daemon for Hypr3D.
+
+Features:
+- evdev device discovery on /dev/input/event* filtering for gamepads (EV_KEY + EV_ABS) with EVIOCGABS per-axis range detection.
+- Simultaneous L3 + R3 (BTN_THUMBL + BTN_THUMBR) toggle chord with debounce window.
+- Dual-stick controls when Hypr3D mode is active:
+  * Left Stick (ABS_X, ABS_Y, and optional D-pad ABS_HAT0X, ABS_HAT0Y): 3D translation.
+  * Right Stick (ABS_RX, ABS_RY with fallback to ABS_Z, ABS_RZ): 3D camera yaw/pitch.
+  * Radial deadzone filtering (default 0.15).
+  * Sensitivity scaling and optional pitch inversion.
+- Trigger window manipulation when Hypr3D mode is active:
+  * RT (BTN_TR2 / ABS_RZ): Grabs/drags aimed or focused window in 3D space while held (hypr3d:grab down/up).
+  * LT (BTN_TL2 / ABS_Z): Resizes aimed or focused window in 3D space while held (hypr3d:resize down/up).
+- Inactive suppression: stick movements and trigger gestures are suppressed when Hypr3D is inactive.
+- CLI modes: --daemon, --check-config, --simulate, --dry-run.
+
+<!-- mios-src:a7b998441598 from usr/libexec/mios/mios-gamepad-hypr3d:5-21 -->
+
+### Override only when firmware already makes the iGPU the...
+
+Override only when firmware already makes the iGPU the primary VGA device (BIOS picks it), so the
+operator can wire a monitor to it before the reboot; the host stays reachable over ssh/cockpit meanwhile.
+
+<!-- mios-src:1e1ea417a420 from usr/libexec/mios/mios-gpu-roles:190-191 -->
+
+### True when `path` is this script (or a link to it), not a...
+
+True when `path` is this script (or a link to it), not a native build.
+
+    The candidate list includes /usr/libexec/mios/mios-hardcode-lint, which on a
+    repo-as-root host IS this script. While it was mode 0644 the exec failed and
+    the Python scan ran; made executable, the shim re-ran itself without end
+    until the OOM killer stopped it (98-drift-checks check_no_hardcode).
+
+<!-- mios-src:88930ddb567a from usr/libexec/mios/mios-hardcode-lint:38-44 -->
+
+### Local TCP ports in LISTEN state (st 0A) from procfs; None...
+
+Local TCP ports in LISTEN state (st 0A) from procfs; None where procfs is unavailable.
+
+    A connect probe opens a real session on every service at each refresh: xrdp forked a child and
+    logged a failed X.224 handshake for every probe (37,841 in one day). Reading the socket table
+    observes the same "is it listening" fact without touching the service.
+
+<!-- mios-src:71ac2e6614f5 from usr/libexec/mios/mios-mon.py:195-199 -->
+
+### Probe a MiOS-Portal build headless, in an instance of its...
+
+Probe a MiOS-Portal build headless, in an instance of its own.
+
+  mios-portal-probe layout --out DIR [--app DIR] [--url URL] [--width W] [--height H]
+  mios-portal-probe egress --out DIR [--app DIR] [--url URL] [--seconds N] [--plant-url URL]
+
+Both start the app from --app (default [desktop.portal.gecko].install_dir) with a fresh profile in
+DIR, inside `systemd-run --user --scope` (MemoryMax from --memory, no swap), with no display (the
+operator's session is never touched), and stop the scope afterwards. Every expectation comes from
+the SSOT; nothing is defaulted. Exit 0 only when every check passed; each failure is printed and
+recorded in DIR/result.json.
+
+layout: four states (tabs collapsed + chat hidden, tabs expanded by hovering the rail, chat
+revealed by hovering the right edge, chat hidden again), one screenshot each. It checks the tab
+rail is vertical and on the start side, the apps footer shows every [layout].tools entry when
+expanded, the centre (the selected page) runs edge to edge from the collapsed rail (overlaid, never
+shrunk, by the hovered rail under expand-on-hover; widened by collapsing it otherwise), the chat panel sits on the end side, is
+chat_width_px wide when revealed and shows exactly chat_peek_px at chat_peek_opacity when hidden,
+overlays the page instead of shrinking it, and that the screenshots of opposite states differ.
+
+egress: loads the URL (default home_url) and watches for --seconds (default 45): every socket of
+every process in the scope's cgroup is sampled twice a second, and Gecko's own resolver log
+(MOZ_LOG nsHostResolver) lists every host name it resolved. Any non-loopback peer or any resolved
+name other than a loopback name fails. It also fails when no firefox-bin was ever tracked (the
+probe would prove nothing) and when the console shows a `Policies:` error or a refused
+preference override. --plant-url opens an extra page: the negative control, which must fail.
+
+<!-- mios-src:796412e6aaf8 from usr/libexec/mios/mios-portal-probe:5-30 -->
+
+### Stage the MiOS-Portal product tree for a build, and verify...
+
+Stage the MiOS-Portal product tree for a build, and verify what a build produced.
+
+  mios-portal-tree stage --out DIR --versions FILE [--lane LANE]
+  mios-portal-tree check-import --project DIR [--engine DIR]
+  mios-portal-tree verify-stage --stage STAGE.json [--overlay DIR]
+  mios-portal-tree verify-install --run RUN_DIR --dest DIR --binary NAME [--root-owned]
+
+The committed tree carries no version: the resolved values arrive only here, in the build copy,
+through @BUILD:<key>@ sentinels. `stage` and `verify-stage` share one implementation of the stage
+(sentinel fill, lane mozconfig, branding icons), so an artifact verifies against the current tree
+exactly when the tree would stage to the same bytes. Every failure exits non-zero; nothing is
+defaulted and nothing is skipped (no Pillow -> fail).
+
+<!-- mios-src:fea372b5caeb from usr/libexec/mios/mios-portal-tree:4-16 -->
+
+### Accounts xrdp-sesman may admit
+
+Accounts xrdp-sesman may admit: allowed_users, or the operator alone. Every one of them
+attaches to the OPERATOR's live session, so the default is the operator only.
+
+<!-- mios-src:d9cc949e7e2f from usr/libexec/mios/mios-rdp:104-105 -->
+
+### Newest Hyprland SESSION instance whose lock-file PID is...
+
+Newest Hyprland SESSION instance whose lock-file PID is alive -> "signature wayland-N". Nested
+instances (started inside another Wayland/X session: WAYLAND_DISPLAY or DISPLAY in their initial
+environment, e.g. a test compositor running as a window) are never the operator's session.
+
+<!-- mios-src:92a1a253f0f0 from usr/libexec/mios/mios-rdp:350-352 -->
+
+### xrdp (RFB 3.3) <-> wayvnc (RFB 3.8) bridge on UNIX sockets...
+
+xrdp (RFB 3.3) <-> wayvnc (RFB 3.8) bridge on UNIX sockets, plus the remote display.
+
+Both sockets live in the operator's 0700 runtime dir; wayvnc's own socket is
+never handed to anything but this bridge. Authentication happens in front, in
+xrdp-sesman (PAM + group); the RFB hop itself carries security type None.
+
+virtual mode (default): the RDP client gets its own Hyprland output, never the
+physical monitor. Lifecycle per attach:
+  1. hl.workspace_rule / hl.monitor rules for the output, `hyprctl output create
+     headless <name>`, attached below the centre of the primary local output
+     (virtual_attach = "below-center"): top edge flush with its bottom edge, so the
+     cursor and windows cross the shared edge both ways;
+  2. wayvnc -o <name> --disable-resizing: wayvnc's own resize path uses
+     wlr-output-management, whose configuration re-lists every head; Hyprland 0.56
+     then replaced the PHYSICAL monitor's rule (preferred 60 Hz, auto position);
+  3. xrdp's SetDesktopSize (initial size and every DISP resize/rotation) is
+     consumed by the bridge, applied with hl.monitor to the virtual output only
+     (mode + [desktop.scaling] scale + re-centred position), and answered to xrdp
+     (ServerStream);
+  3b. wayvnc exiting while xrdp is still connected (e.g. the Fedora-packaged release's fatal cursor-capture
+     error on a scaled output) is recovered: the bridge completes the RFB message
+     xrdp was receiving, starts a new wayvnc, handshakes it itself, replays xrdp's
+     SetPixelFormat/SetEncodings and requests a full update (wayvnc_restarts per minute);
+  3c. a Hyprland config reload re-evaluates the projection (catch-all monitor rule
+     "preferred, auto, 1") and drops the bridge's runtime hl.monitor/workspace rules: the
+     socket2 watcher sees configreloaded and re-applies mode + scale + position (Bridge.reapply,
+     debounced and verified); a remote sibling output added/removed re-centres the group;
+  4. detach: wayvnc is stopped FIRST (it would otherwise fall back to capturing
+     the physical output), then the output is removed after linger_seconds
+     unless another attach arrives or keep_virtual_output is set;
+  5. refresh pacing (refresh_pacing = "adaptive"): the output starts at target_hz and
+     follows the delivered rate per stats window (Pacer) -- a client taking fewer than
+     half the frames gets a refresh >= 2x what it takes (floor min_hz), one keeping up
+     gets target_hz back at once -- so frames nobody receives are never rendered.
+
+Single seat: remote pointer input moves the one Hyprland cursor onto the remote
+display. The local position is saved at attach and handed back once at detach,
+only if the remote client sent pointer input and the cursor is still on the
+remote display (never per click/hover). hyprctl runs in worker threads only.
+
+<!-- mios-src:aa9a1ccbeb19 from usr/libexec/mios/mios-rdp-rfb-bridge:5-44 -->
+
+### Whether wayvnc composites the pointer into the captured...
+
+Whether wayvnc composites the pointer into the captured frames (--render-cursor).
+
+    wayvnc's cursor capture (ext-image-copy-capture cursor session, sent to xrdp as the RFB
+    Cursor pseudo-encoding) fails on a scaled Hyprland 0.56 output ("Failed to capture cursor.
+    The source probably went away") and wayvnc 0.10+ never retries it, so a phone on a scaled
+    remote output saw no pointer at all. [remote.rdp].render_cursor: "auto" (default) = overlay in
+    virtual mode whenever the output can be scaled (output_scale and a wayvnc that survives it);
+    true/false force it. An explicit -r/--render-cursor already in wayvnc_argv counts as true.
+
+<!-- mios-src:f74fcfa4af9e from usr/libexec/mios/mios-rdp-rfb-bridge:160-167 -->
+
+### Adaptive refresh of the remote display...
+
+Adaptive refresh of the remote display ([remote.rdp].refresh_pacing = "adaptive").
+
+    Hyprland renders the virtual output on every damaged frame up to its refresh, and on the 2-CU iGPU a
+    1100x2080 glass + living-wallpaper frame costs about as much as a local 1080p one: measured with the
+    remote display under motion, HDMI-A-1 fell from 77 to 25 FPS at 90 Hz while xrdp delivered only ~11
+    frames/s to a phone (the RDP link / legacy bitmap codec is the limit, 1.4 MB per full frame). Frames
+    the client never takes are pure iGPU cost, so the refresh follows the delivered rate (one stats window
+    each, FramebufferUpdates relayed to xrdp):
+      * the client keeps up (a window delivers >= UP x refresh): straight back to target_hz;
+      * the client is the limit (DOWN_WINDOWS windows deliver < DOWN x refresh, above IDLE): down to the
+        lowest level >= HEADROOM x delivered, never below the floor (min_hz);
+      * an idle screen (<= IDLE frames/s: nothing damaged, nothing rendered) keeps the refresh, and two
+        changes are at least DWELL seconds apart.
+    The delivered rate is never lowered: the refresh stays >= HEADROOM x what the client takes.
+
+<!-- mios-src:6807216ebdf2 from usr/libexec/mios/mios-rdp-rfb-bridge:242-255 -->
+
+### Frames the client->server RFB stream (after ClientInit) to...
+
+Frames the client->server RFB stream (after ClientInit) to spot SetDesktopSize.
+
+    Bytes are forwarded unchanged; only a single-screen SetDesktopSize may have
+    its size rounded down to `align` (so fractional scales stay possible), and in
+    virtual mode it is consumed here (the bridge resizes the headless output).
+    RFB client messages carry no generic length field, so an unknown message type
+    cannot be skipped: it raises RFBFramingError and the connection is closed
+    (forwarding a guessed byte count would desynchronise every later message).
+    PointerEvent coordinates are clamped (read signed, so a wrapped negative
+    coordinate becomes 0) into the current server framebuffer; on_pointer is a
+    pure notification (no I/O, never blocks or drops the event).
+
+<!-- mios-src:0a137a090970 from usr/libexec/mios/mios-rdp-rfb-bridge:467-478 -->
+
+### Frames the server->client RFB stream (wayvnc -> xrdp) in...
+
+Frames the server->client RFB stream (wayvnc -> xrdp) in virtual mode.
+
+    wayvnc runs with --disable-resizing (its own resize path goes through
+    wlr-output-management, which on Hyprland rewrites the PHYSICAL monitor's rule), so
+    neatvnc neither advertises ExtendedDesktopSize nor answers SetDesktopSize. The
+    bridge does both on its behalf:
+      * right after ServerInit it injects an initial-geometry ExtendedDesktopSize
+        update, which tells xrdp the server can be resized;
+      * a client SetDesktopSize is answered at once (reason 1 = this client,
+        status 0) at the next message boundary -- xrdp gives up on the resize if the
+        update it reads next is not the reply -- and the output mode follows;
+      * until wayvnc reports the new size, its size rects still carrying the old
+        size are rewritten to the target, so xrdp never "resizes the client back";
+      * if Hyprland never reaches the size, the real size is announced (reason 0)
+        and xrdp fits the client to it.
+    Injections happen only at message boundaries. Unknown encodings end framing
+    (raw passthrough, resizing disabled for the session).
+
+<!-- mios-src:cd44b3c988d6 from usr/libexec/mios/mios-rdp-rfb-bridge:607-624 -->
+
+### True if Hyprland pid was started INSIDE another Wayland/X...
+
+True if Hyprland pid was started INSIDE another Wayland/X session (WAYLAND_DISPLAY or DISPLAY
+    in its initial environment): a nested test compositor (a window on the desktop), never the
+    operator's session. A session Hyprland started from a tty has neither.
+
+<!-- mios-src:da5478de9f87 from usr/libexec/mios/mios-rdp-rfb-bridge:910-912 -->
+
+### hyprctl against the newest live Hyprland SESSION instance...
+
+hyprctl against the newest live Hyprland SESSION instance (re-resolved per attach): nested
+    Hyprland instances (test compositors running as a window, nested_compositor) are skipped, so a
+    nested test instance started after the session never captures the remote display.
+
+    All methods block (subprocess); the Bridge only calls them through
+    asyncio.to_thread so frame forwarding on the event loop never waits on hyprctl.
+
+<!-- mios-src:7568dd3990bd from usr/libexec/mios/mios-rdp-rfb-bridge:922-928 -->
+
+### Detach-time decision
+
+Detach-time decision: give the seat cursor back to the local operator only if the
+    remote client sent pointer input this attach, a local position was saved at attach,
+    and the cursor is STILL on the remote display (the operator has not taken it back);
+    the saved local monitor must still exist.
+
+<!-- mios-src:098cc2d5ad7f from usr/libexec/mios/mios-rdp-rfb-bridge:1045-1048 -->
+
+### One remote display, one RDP client at a time. Single seat...
+
+One remote display, one RDP client at a time.
+
+    Single seat: Hyprland has ONE pointer and ONE keyboard focus. wayvnc injects the
+    remote client's input through virtual-pointer/keyboard on that same seat, so remote
+    pointer input necessarily moves the operator's cursor onto the remote display while
+    the client uses it. The bridge never warps on button release or hover (that would
+    fight both users on every event); it saves the local position at attach and gives
+    the cursor + monitor focus back once, at detach, and only if the remote client
+    moved it and it is still on the remote display.
+
+<!-- mios-src:29b162497c79 from usr/libexec/mios/mios-rdp-rfb-bridge:1059-1068 -->
+
+### Blocking (worker thread): put virtual_output back to the...
+
+Blocking (worker thread): put virtual_output back to the mode, scale and below-centre
+        position the bridge gave it (self.applied) if Hyprland moved, resized or rescaled it -- a
+        config reload re-evaluates the projection, whose catch-all monitor rule replaces the
+        bridge's runtime hl.monitor rule. restate also re-adds the workspace rule (a reload drops
+        it too). True if a rule was applied. Local outputs are never touched.
+
+<!-- mios-src:d8b2c90e518b from usr/libexec/mios/mios-rdp-rfb-bridge:1258-1262 -->
+
+### Stop wayvnc the moment the virtual output disappears (it...
+
+Stop wayvnc the moment the virtual output disappears (it would fall back to HDMI);
+        the session then ends instead of restarting wayvnc. A config reload or another remote
+        output coming/going re-applies virtual_output's mode, scale and position (reapply).
+
+<!-- mios-src:7915dc504c0b from usr/libexec/mios/mios-rdp-rfb-bridge:1775-1777 -->
+
+### `--display-service`: the remote-output policy of the RFB...
+
+`--display-service`: the remote-output policy of the RFB path for the native RDP server
+    (mios-rdp-server, IronRDP + H.264 EGFX), as JSON lines on stdin (requests) / stdout (replies
+    with the request "id"; events without one). One implementation of the output policy for both
+    servers: headless output attached below the primary (virtual_attach), [desktop.scaling] scale
+    (policy_scale), refresh pacing (Pacer), workspace rule, re-apply after a Hyprland config reload,
+    cursor save/hand-back, and hl.device rules that map the remote touch/pen devices to the remote
+    output before the server creates them. Capture, encode and input are the server's own (it never
+    asks wayvnc to resize anything, so the physical outputs are never re-listed).
+
+<!-- mios-src:5c3a0b8affcf from usr/libexec/mios/mios-rdp-rfb-bridge:1845-1852 -->
+
+### Test hook
+
+Test hook: a private 0700 directory the caller owns and a mios-tmuxos-test-* socket. It can never
+name the shared socket root, a tmux-UID directory or the operator's socket (checked again below).
+
+<!-- mios-src:25737281f124 from usr/libexec/mios/mios-terminal:19-20 -->
+
+### An SSH client declaring a console TERM (phone apps send...
+
+An SSH client declaring a console TERM (phone apps send "linux") attaches as [theme.tmux].remote_term with
+COLORTERM=truecolor, so tmux grants it RGB and it draws the MiOS palette instead of 8-colour approximations
+([theme.tmux].remote_truecolor_terms). A local console is never changed; any failure keeps the client's own TERM.
+
+<!-- mios-src:1a64498168f9 from usr/libexec/mios/mios-terminal:151-153 -->
+
+### Return (new file text, whether the current content must be...
+
+Return (new file text, whether the current content must be backed up first).
+
+    - no file / empty: just the MiOS block.
+    - markers present: only the block between them is replaced; text outside is kept.
+    - unmarked legacy MiOS render: replaced by the block (backup, in case the user edited it).
+    - unmarked user CSS: kept verbatim, the MiOS block appended after it (so the user's
+      leading @import/@namespace rules stay first, as CSS requires), backup taken.
+    - BEGIN without END (damaged block): text before BEGIN kept, rest replaced, backup taken.
+
+<!-- mios-src:8337c222a4db from usr/libexec/mios/mios-theme-render:269-277 -->
+
+### Let the Zen Flatpak export its menubar for the top-bar...
+
+Let the Zen Flatpak export its menubar for the top-bar app-menu pills.
+
+    Gecko's widget.gtk.global-menu dlopens libdbusmenu-glib/-gtk3, which the Freedesktop runtime
+    lacks: stage the host copies in the app's own data dir and point LD_LIBRARY_PATH at them
+    (per-user override, so every launch path gets it). The menubar is then served at
+    /com/canonical/menu/<n> on Zen's bus connection, where `miosd appmenu` finds it.
+
+<!-- mios-src:0bb8f4240af6 from usr/libexec/mios/mios-theme-render:342-347 -->
+
+### Approved dynamic-linkage exceptions (Law 14 / ADR-0021)....
+
+Approved dynamic-linkage exceptions (Law 14 / ADR-0021). The rule is for MiOS-built native code;
+an exception names upstream binaries MiOS ships but does not build from its own workspaces, the
+ONE directory (scope, relative to the image root, listed in audit_scopes) where they are exempt,
+and why. mios-gate static-linkage scans every audit scope in full: a listed binary there is
+reported "exempt" by --census; any other ELF there, a listed one outside its scope, or every one of
+them once the exception is removed, is audited like MiOS code and fails when dynamic. Scope and
+rationale: usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md (Upstream exceptions).
+
+<!-- mios-src:f2ca76f64aa8 from usr/share/mios/mios.toml:2040-2046 -->
+
+### [autounattend] -- Windows answer-file accounts (credentials...
+
+----------------------------------------------------------------------------
+[autounattend] -- Windows answer-file accounts (credentials lane 2026-10-16). Resolved by
+usr/lib/mios/mios_credentials.py and the bootstrap Resolve-MiOSCredentials from the LAYERED SSOT;
+both fail closed naming the key. Every password key here is "" and inherits [identity].default_password.
+[[autounattend.accounts]] is optional: absent -> one Administrators account from [identity]; if added,
+give each entry name/display_name/group and password = "".
+----------------------------------------------------------------------------
+
+<!-- mios-src:42211dabb73e from usr/share/mios/mios.toml:2226-2232 -->
+
+### Motherboard fan control
+
+Motherboard fan control: ventulusd (MIT, github.com/Plan-B-Development/ventulusd)
+driven through the MiOS client mios-fanctl (CLI + ratatui TUI). The vendor
+files in /usr/share/mios/fan-control/ (daemon.toml, mios-fanctl.toml,
+profiles/mios-default.json) carry these same values and work without this
+table; automation/64-bake-fan-control.sh reads enabled/version. Safety model:
+only headers listed with control = "curve" are taken from firmware, every
+other header keeps its BIOS pwm_enable mode, and every taken header is handed
+back to its recorded original mode on stop, crash (ExecStopPost) or the next
+start (ExecStartPre replay). Copyleft tools (fan2go, CoolerControl,
+fancontrol, thinkfan) are excluded by license policy.
+
+<!-- mios-src:416e3db3e2e5 from usr/share/mios/mios.toml:2297-2306 -->
+
+### [smoke_tests] -- attempts + interval the dev-VM smoketests...
+
+----------------------------------------------------------------------------
+[smoke_tests] -- attempts + interval the dev-VM smoketests use during
+bootstrap. Phase-3 brings up the podman-MiOS-DEV machine and runs four
+smoketests (responsive / systemd / overlay / podman API) before declaring
+the dev VM ready. Tunables live here so operators don't need to edit code.
+----------------------------------------------------------------------------
+
+<!-- mios-src:ea373cd8b036 from usr/share/mios/mios.toml:2481-2486 -->
+
+### containers-policy.json(5), projected by `mios-gen...
+
+containers-policy.json(5), projected by `mios-gen cosign-policy` into
+usr/lib/containers/policy.json. 49-cosign-policy.sh validates it with
+containers/image and, in an image build only, makes it the image default
+/etc/containers/policy.json (containers/image never reads /usr/lib/containers).
+policy_mode is the requirement for every image no scope below names and must be
+a real type: insecureAcceptAnything or reject ("insecureAcceptEverything" is not
+one; containers/image refuses to load a policy that names it).
+
+<!-- mios-src:2c5af6da56f0 from usr/share/mios/mios.toml:2678-2684 -->
+
+### Per-scope requirements
+
+Per-scope requirements: transport, scope, type (insecureAcceptAnything | reject |
+sigstoreSigned), key_paths, signed_identity (matchRepository by default).
+Every image in the MiOS-owned namespace ([image].name's parent) must be
+sigstoreSigned by keys directly under /usr/share/pki/containers; the renderer,
+`mios-gate signature-policy` and 49-cosign-policy.sh each refuse anything else.
+Ruling Q4: one MiOS key plus a backup, both operator-held publisher secrets
+(task_3536). Only the public halves ship, from the tree's usr/share/pki/containers/,
+and the image build fails until they are there.
+
+<!-- mios-src:61bf6ec6b670 from usr/share/mios/mios.toml:2687-2694 -->
+
+### Tmux-OS AI workspace (operator sketch, desktop view). LEFT...
+
+Tmux-OS AI workspace (operator sketch, desktop view). LEFT column: chat (the
+head AI CLI) over metrics (resource_command). RIGHT region: the monitor (live
+agents observer) heads a golden-ratio (Fibonacci) spiral of worker cells.
+Each *_share is the named pane's fraction of its split (0.1-0.9); remove a share
+to derive it from golden_ratio. New workspaces and every relayout use this table.
+
+<!-- mios-src:ceb3fc52e7c5 from usr/share/mios/mios.toml:4086-4090 -->
+
+### Caller-owned MCP servers. An [mcp.servers.<id>] declared...
+
+Caller-owned MCP servers. An [mcp.servers.<id>] declared ONLY in a user tier
+(~/.config/mios/mios.toml or its mios.d/) is invisible to the shared
+agent-pipe (another user, ProtectHome). The caller's own MiOS MCP front door
+runs it as the caller (stdio only, minimal environment + its declared env)
+and re-exports its tools as <namespace><tool>; native names always win.
+Example: the per-user Blender Lab MCP (usr/share/doc/mios/blender-mcp.md).
+
+<!-- mios-src:06e81975d74c from usr/share/mios/mios.toml:4121-4126 -->
+
+### Mobile rule
+
+Mobile rule: every action below is also reachable from the MiOS menu (prefix Space) with arrows and Enter, so
+punctuation, digit and Shift keys are accelerators only. mios-unit-gen enforces the key grammar (one ASCII letter
+or digit, one of *`:?[]=,$!&(){}<>, or Space Enter Tab BTab BSpace Up Down Left Right PPage NPage) and rejects
+duplicates across bindings, menu/launcher keys, float keys and [keybindings.agent].accept_key. The controller
+does not add prefix keys: its tmux: actions run tmux commands against the focused client (FINAL.md section 3.3)
+and its tmux:menu verb is client-exact: `tmux -L <socket> send-keys -c <client> -K <tmux_prefix> <menu_key>`, the
+key words published by the server as @mios-menu-keys. The generated `mios-menu` command alias opens the same menu by
+name (command prompt, one-client scripts) but cannot be aimed: tmux appends CLI arguments to an alias's expansion.
+
+<!-- mios-src:890aed1b4c6e from usr/share/mios/mios.toml:4214-4221 -->
+
+### Client terminals that get the tmux "mouse" terminal...
+
+Client terminals that get the tmux "mouse" terminal feature, so tmux turns mouse reporting on there. "linux" is the
+kernel VT: while reporting is on, gpm injects the pointer as mouse reports (TIOCL_SELMOUSEREPORT), so a VT click
+selects a tmux pane. The linux terminfo already has kmous, so this entry pins that; a terminal type whose terminfo
+lacks kmous (vt220, vt100) only gets reporting through an entry here. "[]" emits only the slot clears;
+[keybindings].mouse = false wins.
+
+<!-- mios-src:37a11f8a5ded from usr/share/mios/mios.toml:4232-4236 -->
+
+### The generated menus must fit the smallest client MiOS sizes...
+
+The generated menus must fit the smallest client MiOS sizes ([terminal].rows); a smaller client gets this
+message instead of a silently dropped menu. Rows = items + separators + 2 border rows; 1 row is the status line.
+
+<!-- mios-src:0db4db32fb50 from usr/share/mios/mios.toml:4247-4248 -->
+
+### Generated menus (command aliases mios-menu-ID and the...
+
+Generated menus (command aliases mios-menu-ID and the Linux-console variant mios-menu-ID-vt). Every menu is
+keyboard-driven (Up/Down, PgUp/PgDn, Home/End, Enter, Esc or q) and also takes mouse clicks.
+Item forms: { label, key } runs the prefix binding of that key; { label, key, command } runs command;
+{ label, key, menu = "ID" } opens another menu; { separator = true }. Optional: mode = "copy" (enabled only in
+copy or view mode), managed = "disable" (disabled in managed AI workspace panes), platforms = ["linux"].
+
+<!-- mios-src:928454d8d648 from usr/share/mios/mios.toml:4331-4335 -->
+
+### Global input contract (/usr/share/doc/mios/keybinds.md) ---...
+
+--- Global input contract (/usr/share/doc/mios/keybinds.md) ---
+One audited map of every host keyboard/controller binding across the four tiers: 1 desktop/window manager,
+2 VM / Looking Glass / RDP / kernel VT, 3 terminal / POSIX / agent loop, 4 controller. `mios-gate
+keybind-collisions` fails on a chord bound twice in intersecting contexts, a multi-step prefix clash, a
+bypass that does not use bypass_mod, a host bind that leaks into vm-passthrough, a reserved POSIX terminal
+chord stolen from the focused terminal, and a `realized_by = "hyprland"` binding the compositor does not have.
+mios-inputd (Rust) consumes the same tables; both normalise chords to the vectors in
+usr/share/mios/keybinds/chord-vectors.json. POSIX/Readline defaults stay with the focused application.
+Ownership rule: the focused window is either captured (the app owns every keyboard handle except escapes, and every
+controller input except a held L3+R3 and Guide+Select) or uncaptured (MiOS owns the controller).
+
+<!-- mios-src:066d9c58acd8 from usr/share/mios/mios.toml:4428-4437 -->
+
+### Tier 4
+
+Tier 4: the controller. One physical bridge (mios-inputd) owns every pad. Captured: the app gets everything through
+the virtual pad except a held toggle_chord (release, capture_hold_ms) and mode_override_chord (half-capture: the
+sticks and triggers drive the host mouse; every button still goes to the app; Start or the chord again returns).
+Uncaptured: unmodified buttons follow the nav profile of the context (I2) and the room map ([desktop.hyprland.hypr3d.
+controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
+
+<!-- mios-src:d8ee12d0db1d from usr/share/mios/mios.toml:4650-4654 -->
+
+### Navigation projection
+
+--- Navigation projection: what an uncaptured controller does outside the room (I2; console I3) ---
+Value grammar, the same for every profile:
+  "ns:action"        fires on press. It auto-repeats only if the input has a [nav.repeat] entry.
+  ["tap", "hold"]    tap fires on release before capture_hold_ms. Hold fires once at capture_hold_ms and never repeats.
+  "none"             does nothing. This is the only unbind word; "" is rejected (an empty string never overrides).
+Arrays replace atomically across tiers, so an override always restates both halves.
+Inputs: BTN_SOUTH/EAST/WEST/NORTH, BTN_TL/TR (bumpers), BTN_TL2/TR2 (triggers, digital at trigger_threshold),
+  BTN_SELECT/START, BTN_MODE (Guide TAP: released before capture_hold_ms with nothing else pressed), BTN_THUMBL/R
+  (ignored while their own stick is deflected), BTN_DPAD_* (HAT folded in), LS_*/RS_* (stick directions; RS fires one
+  flick per deflection), TOGGLE_CHORD (the configured toggle_chord).
+Not in nav (contract or room owned): BTN_NORTH capture, BTN_TL/TR ShaderGlass, BTN_START cursor mode, the
+  toggle_chord room toggle and hold-release. A console profile may claim them, because no compositor runs there.
+Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout. pointer: = analog wheel.
+  tmux: = commands for the tmux client in the focused terminal or VT on socket_name: key <k> (prefix-table key k),
+  focus <dir> (falls through to hypr:movefocus at the window edge), page-up, page-down, session-prev, session-next,
+  menu, keymap.
+
+<!-- mios-src:ca450a3656a3 from usr/share/mios/mios.toml:4698-4713 -->
+
+### Room additions (desktop-3d, not captured). The rest of the...
+
+--- Room additions (desktop-3d, not captured). The rest of the room map is [desktop.hyprland.hypr3d.controller]. ---
+Step P1 (mios-inputd router room table + hypr3d-mios-room-input.patch). Same value grammar as nav: "ns:action" fires on
+press, except on the toggle_chord buttons (L3/R3), which fire on a clean release (any L3+R3 overlap cancels both
+singles; R3 is ignored while the right stick is deflected; L3 is not, so sprint works while walking); Guide (BTN_MODE)
+fires on a tap (released before capture_hold_ms, no other button between); ["tap", "hold"] resolves on release or at
+capture_hold_ms; "none" unbinds. hypr:hypr3d:<verb> runs hl.plugin.hypr3d.<verb>() in the room's compositor, except a
+plain hypr:hypr3d:view, which is the packet's view slot (cycles on the next room frame). The North capture button
+(fullscreen_button) and the toggle chord itself are the ownership contract: the room table cannot claim them.
+
+<!-- mios-src:7380b0e641a9 from usr/share/mios/mios.toml:4715-4722 -->
+
+### [remote.rdp] -- RDP access to the operator's LIVE Hyprland...
+
+----------------------------------------------------------------------------
+[remote.rdp] -- RDP access to the operator's LIVE Hyprland session (Microsoft
+"Windows App" on iOS / Android / macOS / Windows, mstsc, FreeRDP).
+Chain: RDP client --TLS--> xrdp on [ports].rdp (PAM auth through xrdp-sesman,
+gateway-only: no session is spawned) --UNIX socket--> mios-rdp-rfb-bridge
+(xrdp's libvnc speaks only RFB 3.3, wayvnc/neatvnc only 3.8) --UNIX socket
+wayvnc (started per RDP attach by the bridge in user unit mios-rdp-vnc.service).
+The VNC hop never listens on TCP: both sockets sit in the operator's 0700
+$XDG_RUNTIME_DIR, so only that user and root (xrdp) reach them.
+Remote display (mode): "virtual" gives every RDP client its OWN output of the
+same live Hyprland -- a headless output (virtual_output, must be HEADLESS-*)
+created on attach directly below the centre of the primary local output (virtual_attach),
+sized and oriented by the client (initial size and every resize/rotation: xrdp DISP ->
+RFB SetDesktopSize -> hl.monitor on the virtual output; [desktop.scaling] scale with
+output_scale; re-centred after every resize/rotation/scale change); the physical
+monitor's mode/scale/position are never touched: wayvnc runs --disable-resizing (its
+wlr-output-management resize re-lists every head and Hyprland 0.56 then replaced the
+physical monitor's rule) and the bridge applies hl.monitor to the virtual output only,
+answering xrdp's SetDesktopSize itself. Windows are moved there by
+the operator (or opened from the remote side); its default workspace is
+virtual_workspace. The pointer and keyboard focus are one seat: remote input
+moves the shared cursor onto the virtual output (focus follows it); cursor and
+windows cross the shared edge (primary's bottom edge) in both directions.
+wayvnc: the upstream build (automation/70-bake-wayvnc-upstream.sh ->
+/usr/libexec/mios/wayvnc/wayvnc, latest HEADs, commits recorded in its build.json)
+is preferred; wayvnc < 0.10 exits when the cursor is on a scaled output, so with it
+the bridge keeps scale 1. A wayvnc that dies mid-session is restarted transparently.
+On detach wayvnc stops first, then the output is removed after linger_seconds
+(a quick reconnect keeps windows in place) unless keep_virtual_output.
+"mirror" shares the physical output (output, or the focused one) unscaled.
+Consumer: /usr/libexec/mios/mios-rdp (render | cert | firewall | vnc);
+build/install: automation/58-gnome-remote-desktop.sh.
+Firewall: the port opens ONLY in the firewalld zone that holds
+tailscale_interface (or, when that interface has no zone binding, through a
+rich rule limited to tailscale_cidrs) -- never plainly in the public/default
+zone. allow_lan adds a source-restricted rule for lan_cidrs; default OFF.
+----------------------------------------------------------------------------
+
+<!-- mios-src:bfd6304923d5 from usr/share/mios/mios.toml:6947-6983 -->
+
+### accounts xrdp-sesman admits (managed group mios-rdp, exact...
+
+accounts xrdp-sesman admits (managed group mios-rdp, exact membership on every render); [] = the operator (operator_uid) only. Root is never admitted. Each admitted user sees the OPERATOR's live session
+
+<!-- mios-src:2538a0cc8a4c from usr/share/mios/mios.toml:6987-6987 -->
+
+### Single seat
+
+Single seat: Hyprland has ONE pointer and ONE keyboard focus; wayvnc injects the remote client's
+input on that same seat, so while the remote client moves its pointer the operator's cursor is on
+the remote display (local and remote users cannot point independently). The bridge never warps on
+remote clicks/hover/resize; it saves the local position at attach and hands the cursor + monitor
+focus back once at detach, only if the remote client moved it and it is still on virtual_output.
+
+<!-- mios-src:c97bb7a555ba from usr/share/mios/mios.toml:7001-7005 -->
+
+### remote display refresh
+
+remote display refresh: the virtual output runs WxH@target_hz (kept on every resize/reload re-apply) and wayvnc captures at most target_hz frames/s (-f). Operator 2026-10-16: target 90, never cap at 30
+
+<!-- mios-src:f90191bfa11a from usr/share/mios/mios.toml:7009-7009 -->
+
+### "adaptive" = the remote display runs at target_hz while the...
+
+"adaptive" = the remote display runs at target_hz while the RDP client keeps up (a stats window delivering >= 3/4 of the refresh) and drops to >= 2x the frames the client really takes when the client is the limit (3 windows below half the refresh; never below min_hz), so the iGPU stops rendering frames nobody receives. Measured 2026-10-17 (phone link ~17 MB/s, ~11 frames/s of 1100x2080 bitmaps): HDMI-A-1 25 -> 56 FPS with motion on both displays, delivered rate unchanged. "fixed" = always target_hz
+
+<!-- mios-src:173654e5c1ad from usr/share/mios/mios.toml:7010-7010 -->
+
+### Compositor animation leaves, projected by mios-gen...
+
+Compositor animation leaves, projected by mios-gen render-hyprland as hl.animation calls
+(speed is in deciseconds). The window open/close shaders ([desktop.hyprland.windowshade]) own
+the window's shape, so windowsIn/Out keep the box full size (popin 100%) and fadeIn/Out run for
+the shader's length: the window's glass backdrop (blur + tint) then fades with the effect.
+Named bezier curves for the leaves below. miosGlassIn is a strong ease-in: the window's glass
+backdrop (blur + tint, drawn by the compositor at full window size) stays transparent while the
+open shader grows its glass from a point, and only comes up as the window resolves.
+
+<!-- mios-src:18632febd436 from usr/share/mios/mios.toml:8268-8274 -->
+
+### Float-first window placement (`miosd placement`...
+
+Float-first window placement (`miosd placement`, mios-placement.service). New windows open
+floating and centered at one size; a placed window the operator drags drops into the tiling
+layout where it lands; Super+V toggles the active window through the same sizing function.
+The long axis of the usable monitor area (logical px, so the monitor scale carries DPI) gets
+width_ratio (0.56), the short axis follows aspect (1.414 = A4 landscape / portrait); both clamp to the pixel
+bounds, to max_width_ratio / max_height_ratio of the usable area, and the width to max_width_mm
+of physical panel (0 disables). Picture-in-Picture, dialogs, modals and windows the operator
+floats are never re-tiled. scope = "empty_workspace" floats new windows only on workspaces with
+no tiled window (others tile at once). The session rule tags placed windows open_tag; the daemon
+keeps the ones it manages tagged managed_tag. move_threshold_px / settle_ms / poll_ms tune how a
+drag is recognised (pointer buttons are read from evdev when the input group allows it).
+
+<!-- mios-src:cfbe9889b711 from usr/share/mios/mios.toml:8329-8339 -->
+
+### Game windows (Steam/Proton/Wine/SDL/gamescope) open on the...
+
+Game windows (Steam/Proton/Wine/SDL/gamescope) open on the FOCUSED output, centred, resizable ones at the same
+DPI-aware window_opening size as every window. Games defeated the general rule two ways: a game that declares a
+fixed size (WM_NORMAL_HINTS min == max: Wine non-resizable windows, SDL without RESIZABLE) is floated by Hyprland
+itself, so the `float = false` rule above never matched it and it stayed wherever it asked (0,0 of the XWayland
+root, or off the output's edge); and a floating X11 window's later ConfigureRequests are honoured, so Wine/Proton
+moved it back to 0,0 at the root size (recorded: Forza Horizon 6 / steam_app_2483190 remapped itself to 3840x1080,
+both outputs). A floated window of a game class is a game only when its X11 hints say min == max and it is no
+dialog (WM_TRANSIENT_FOR, modal, or a non-NORMAL window type): Wine dialogs (class <app>.exe) keep their place.
+suppress_client_geometry refuses only a game's remap to the XWayland root or to a size no single output can hold
+(miosd puts it back and Hyprland's resize answers with the real geometry); a game's own windowed resolution change
+stands, and so does any position: a window partly off-screen or straddling two outputs is where the operator (a
+released drag, a keyboard move) or the game put it, and is never moved back. Fixed-size
+games are never resized: Hyprland ignores size hints when resizing X11 windows, and a game that never recreates
+its swapchain shows black wherever the window grew. A fixed game larger than the HUD-free area is centred on the
+whole output; one larger than the output takes `oversize` ("fit" = opening size; Wine/DXVK re-render at any size,
+"keep" = centred and cropped). Fixed games are not tiled on move, Super+V re-centres them instead of tiling them,
+and pin_fixed_size sets their min_size == max_size == the placed size (clamps drags; re-pinned when the game
+declares a new size) and has miosd restore an XWayland one that a dispatch grew anyway (Hyprland's resize
+dispatch ignores both) to its declared size, after the pointer is released and settle_ms, at most a few times per
+window. class names an SSOT key holding the shared game-class
+list (or an inline array); extra_class adds placement-only patterns (plain Wine names WM_CLASS after the .exe).
+Limitation of '.+\.exe': X11 cannot tell a fixed-size game from a non-resizable Wine application window (winecfg,
+an installer's main wizard page: min == max, NORMAL, not transient), so those are treated as fixed-size games too:
+centred at open at their own size, never grown or tiled, freely movable. That matches what the window declares
+(Hyprland ignores the hints, so a grown non-resizable window would show garbage); drop '.+\.exe' to place only
+Steam/Proton and listed classes.
+content_game also matches Wayland surfaces whose content type is "game" (SDL3, Proton Wayland). Tags: `tag` = a
+resizable game (rule), `candidate_tag` = a floated window of a game class (rule; maybe a dialog), `fixed_tag` = a
+confirmed fixed-size game (set by miosd).
+
+<!-- mios-src:1866fd428ac6 from usr/share/mios/mios.toml:8359-8387 -->
+
+### Upstream policy (operator 2026-10-16, "latest + fail...
+
+Upstream policy (operator 2026-10-16, "latest + fail loudly"): no source_revision pin; the build
+takes source_repository default-branch HEAD, logs the resolved commit, and fails naming any
+MiOS patch that no longer applies (mios-gen build-hyprland-plugin refuses a pin).
+
+<!-- mios-src:d0a7c7044b5f from usr/share/mios/mios.toml:8408-8410 -->
+
+### What reveals a window's controls tab (a hidden tab never...
+
+What reveals a window's controls tab (a hidden tab never claims clicks). The tab is a glass tab that
+protrudes above the window's top edge at its top-left (inset bar_padding) and rises out of / melts back
+into that window's own edge on the fadeIn animation curve; it never moves between windows.
+  "focus+proximity" - only the focused window, and only while the cursor is within reveal_radius px of
+                      its tab area (default)
+  "focus"           - the focused window's tab is always raised
+  "proximity"       - any window's tab rises when the cursor comes near it
+  "always"          - always shown
+
+<!-- mios-src:e7992a7e64e0 from usr/share/mios/mios.toml:8424-8431 -->
+
+### desktop
+
+desktop: the tab reveals when the window is focused AND the cursor is near its top-left (operator: "always" left the controls stuck open). Mobile outputs show their controls permanently via [desktop.mobile] instead.
+
+<!-- mios-src:f9c9aeeb4bbd from usr/share/mios/mios.toml:8432-8432 -->
+
+### Glass tab
+
+Glass tab: the window's own glass. glass_preset names the [desktop.hyprland.hyprglass] preset the window
+body is drawn with; mios-gen projects its frost and look into the plugin (no hand-tuned copies):
+  pill_blur_sigma  = 4 x blur_strength x sqrt(blur_iterations)  (hyprglass' kernel: radius blur_strength x 12
+                     px, sigma radius/3, blur_iterations H+V passes = one gaussian of that sigma, device px;
+                     mios: 4 x 0.25 x sqrt 2 = 1.41)
+  pill_sheen/pill_edge/pill_fresnel = specular/bevel/fresnel_strength x 100, pill_dim = adaptive_dim x 100,
+  pill_brightness/contrast/saturation/vibrancy, pill_bevel_size, pill_edge_thickness, and the tint, fresnel
+  and bevel colours (pill_glass_tint, pill_rim_color, pill_bevel_color) from the preset's default_theme table.
+Over that glass the tab carries the window's colour layer, pill_palette at pill_alpha (an SSOT percentage:
+[theme] opacity, the terminals' background), times the window's live active/inactive opacity, as Hyprland
+composites the window's surface over hyprglass' pane. Concave fillets of the shared radius join the tab to the
+window edge; the window's drop shadow is divided back out of the backdrop (pill_shadow_comp) and the glass
+continues pill_merge px down over the window's top edge, fading out, so tab and window read as one pane.
+
+<!-- mios-src:c6626713cd4a from usr/share/mios/mios.toml:8434-8446 -->
+
+### The tab and its buttons are drawn BY hyprglass with the...
+
+The tab and its buttons are drawn BY hyprglass with the window's preset (MiOS patches: hyprglass-mios-glass.patch
+exports the shaped-glass call, hyprbars-overlay.patch uses it; the projection points the tab at the loaded plugin):
+refraction, chromatic fringe, lens, tint, bevel, fresnel and specular exactly as on the window body, the dock and
+the top bar. The colour layer above folds into the glass tint, under the lights. button_glass: each button is a
+glass orb tinted with its own colour at this strength (0 = flat dots).
+
+<!-- mios-src:6ab1907aed02 from usr/share/mios/mios.toml:8452-8456 -->
+
+### Where the tab goes
+
+Where the tab goes: it protrudes above the window's top-left unless that would put it under a yield_layers
+surface (the status island and the dock have priority), off the monitor, or under a neighbouring window drawn
+above it; then it hangs inside the window's top-left as an overlay. Fullscreen windows always get the inset
+tab (it drops down from the top edge on the same reveal). A protruding tab in the bar row pushes the top-bar
+app-menu pills to its right (usr/share/mios/quickshell/AppMenu.qml).
+
+<!-- mios-src:90129fca73ea from usr/share/mios/mios.toml:8460-8464 -->
+
+### Mobile tabs (MiOS hyprbars patch): on windows of mobile...
+
+Mobile tabs (MiOS hyprbars patch): on windows of mobile outputs ([desktop.mobile]) the projection sets the
+window rule hyprbars:mobile and the controls tab above is split in two around the status pill -- the left tab
+holds the window-menu button (window controls + the app's exported menu), the right one the close button. Same
+glass, silhouette rules and button rendering as the desktop tab; always raised, focused or not, never yielded.
+Each tab is at least touch_target logical px wide and tall and the whole tab is its button's hit area; the
+shell's mobile row is that tall too, so the tabs rise from the window's top edge to the pill's top
+(usr/share/mios/quickshell/PanelWindow.qml, ControlsTab.qml, Glass.qml read these same keys).
+
+<!-- mios-src:3ceae6a30ffc from usr/share/mios/mios.toml:8490-8496 -->
+
+### Window open/close animations
+
+Window open/close animations: HyprWindowShade (github.com/ManofJELLO/HyprWindowShade, MIT, pinned)
+plays a one-shot fragment shader as a window maps (open) and over Hyprland's close snapshot
+(close). Effects are MiOS-original shaders in shader_dir; lines marked `// @palette <key>` are
+rewritten from [colors] into $XDG_RUNTIME_DIR/mios-shader-<name>.glsl at login. open/close name
+the global effect (glass-dissolve-*, ember-burn-*, glide-*, none-*); each override's match is a
+Hyprland window-rule match and its open/close outrank the global pair. Layer shells are never
+animated. Built by `mios-gen build-hyprland-plugin --name windowshade` (ABI hold: hyprglass).
+
+<!-- mios-src:7cb03bf6cafe from usr/share/mios/mios.toml:8505-8511 -->
+
+### Wobbly windows (Compiz-style): mios-wobbly, MiOS-original...
+
+Wobbly windows (Compiz-style): mios-wobbly, MiOS-original plugin source in the tree. While a
+floating window moves, Hyprland renders it into a work buffer and the plugin redraws it through a
+grid x grid mesh shaped by a 5x5 spring-mass Bezier patch (grab point pinned to the cursor while
+dragging, the top edge for keyboard/dispatch moves), then settles with friction. Every window is
+tagged `tag`; matches in `exclude` get `exclude_tag` and never wobble. Tiled and fullscreen
+windows never wobble. config feeds plugin:mios_wobbly:* (spring_k/anchor_k in 1/s^2,
+friction in 1/s, max_stretch as a fraction of the window's short side).
+
+<!-- mios-src:c435c1c6ffc9 from usr/share/mios/mios.toml:8530-8536 -->
+
+### Magic lamp (Compiz-style genie, MiOS-original): minimize...
+
+Magic lamp (Compiz-style genie, MiOS-original): minimize, restore and launch-from-dock flow the window through a
+curved funnel into / out of its dock icon (sides bend to a smoothstep tube from the window's width to the icon's,
+then the content slides down it near end first), rendered from the window's own texture -- surfaces, shadow, tab
+and the hyprglass edge pass -- at the output's refresh on every output, local or remote/mobile alike. It lives in
+the mios-wobbly plugin ([desktop.hyprland.mios-wobbly].path; one compositor mesh backend, same frame pacing as the
+wobble); with the wobble disabled the projection loads that plugin for the lamp alone. Contract with the dock
+(usr/share/mios/quickshell/Sidebar.qml): $XDG_RUNTIME_DIR/mios-dock-icons.json (per-output icon rects in layout
+coordinates, auto-hidden state, minimized entries) and mios-lamp-launch.json (pending dock launches). Every minimize
+entry point calls hl.plugin.mios_lamp.minimize / .restore / .toggle({window = "address:0x.."}) -- feature-detected:
+`(hl.plugin.mios_lamp and hl.plugin.mios_lamp.minimize({...}) or hl.dsp.window.move({workspace = "special:minimized",
+..., follow = false}))` -- and `hyprctl mios-lamp status` lists what it minimized. The plugin also publishes each
+minimized window's own origin output to $XDG_RUNTIME_DIR/mios-lamp-minimized.json (rewritten atomically only when the
+list changes, re-homed to a surviving output the moment its origin output is unplugged, removed on unload): Hyprland
+keeps one monitor for special:minimized, and the dock reads this file through inotify instead of spawning hyprctl
+(no process per compositor event). Precedence: the lamp owns
+minimize/restore (workspace moves; HyprWindowShade never plays for them) and dock launches (the window carries
+anim_tag while the lamp runs: windowshade_open replaces the open shader, hide_hyprbars drops the tab that hyprbars
+draws rigidly at the real box); HyprWindowShade keeps every other open and every close; the wobble never touches a
+window the lamp owns. The glass pane hyprglass draws rigidly under the window is faded to pane_alpha (pane alpha =
+pane_alpha ^ fade_gamma, i.e. gone) while the deformed content is compensated, so no rectangle is left behind.
+
+<!-- mios-src:18d024d55fa7 from usr/share/mios/mios.toml:8556-8575 -->
+
+### Edge pass (MiOS patch, operator 2026-10-16: "ALL windows...
+
+Edge pass (MiOS patch, operator 2026-10-16: "ALL windows are glass"): the glass pane sits UNDER a window, so an
+opaque client (most Flatpak/RPM apps, VM viewers, dialogs) hides it. A second pass drawn OVER every window's
+content carries only the preset's edge light along the rounded outline -- bevel ring, fresnel rim, top specular,
+inner shadow, the same terms and colours as the pane -- whatever the app's opacity, floating or tiled, dialogs,
+modals and Xwayland included (internal fullscreen excepted: no outline). Nothing excludes a window but the
+hyprglass_disabled tag. edge_pass = gain on the preset's strengths (0 = off); edge_pass_width = the logical px
+the fresnel/specular falloff spans (the shell surfaces' scale: the dock's edge_thickness x its height; 0 = the
+pane's edge_thickness x the window's short side, which spreads it to nothing on a large window).
+
+<!-- mios-src:7aa219558666 from usr/share/mios/mios.toml:8621-8628 -->
+
+### Live re-sample rate...
+
+Live re-sample rate (plugin:hyprglass:{layers,windows}:live_resample_fps): a pane only re-samples and re-blurs
+what is behind it when that content commits (a video, the wallpaper); the rate is the glass rate G of
+[desktop.framerate] (desktop rate / glass_divisor: 1/3, 1/2 for gaming and unlocked), projected at login and set
+live by miosd framerate. No fixed value here: mios-gen rejects one while the policy is enabled.
+
+<!-- mios-src:5b4d86979626 from usr/share/mios/mios.toml:8635-8638 -->
+
+### Desktop frame rate (operator 2026-10-23 20:15: "lock the...
+
+Desktop frame rate (operator 2026-10-23 20:15: "lock the framerate on high-performance to 90Hz/90fps--60 for
+medium and low-power/power-saving/battery--120 for gaming and unlocked as a risk low windows/panes/apps/VMs/Games
+... That goes for the desktop environment(s)(Hypr3D and 2D compositor modes)--glass refractions/reflection(s) are
+1/3rd rate globally(1/2 rate for 120/Unlocked)"; 20:20: "wallpaper(s) are 1/2 rate globally--except for Unlocked
+mode(s)"). `miosd framerate serve` (user unit mios-framerate.service) picks the tier at runtime, first match wins:
+  unlocked (this key, or `miosd framerate set-unlocked on` into the user tier) > gaming (GameMode ClientCount > 0,
+  session bus) > battery (UPower OnBattery, whatever the profile) > the power profile (net.hadess.PowerProfiles
+  ActiveProfile -- tuned-ppd -- mapped through [desktop.framerate.profiles]; the daemon never sets a profile).
+A tier gives the desktop rate D (desktop_hz; 0 = the output's own maximum, no cap) for the 2D compositor and Hypr3D,
+the glass rate G = D / glass_divisor (Hyprglass re-sampling behind panes, Hypr3D refraction and reflection) and the
+wallpaper rate W = D / wallpaper_divisor (the native living wallpaper's steps, Hypr3D's live dome). Whole numbers,
+rounded down; D is capped at each output's maximum; G and W are process-wide and follow the largest local D.
+Outputs matching exclude_prefixes (default: [desktop.displays].ignore_prefixes -- the RDP/VNC headless outputs)
+keep their own refresh and pacing ([remote.rdp]) and are never capped or re-moded; G and W still apply there.
+Mechanism: "auto" holds D with the mios-pacing compositor plugin on an output that runs VRR (60/90/120 are real
+panel refresh rates inside the VRR range: no modeset, instant) and, on an output without active VRR, switches to
+a display mode for D (a modeset: the screen blanks); "cap" never changes a mode; "mode" always uses modes;
+mode_outputs lists outputs that use modes even with VRR (a real fixed-rate scanout, e.g. DP-3 at 90 Hz).
+Mode selection: the advertised (EDID) mode nearest D when one is within mode_tolerance_hz; otherwise, with
+modes = "extended-vblank", the panel's fastest EDID timing at the output's size with a longer vertical front porch
+(its horizontal timing, the clock truncated to whole MHz as a Hyprland 0.56 modeline carries it, only more blank
+lines per frame -- what VRR does on every frame): DP-3 (LG 24GL600F, 144 Hz, VRR 48-144) has no 90 Hz mode, so 90
+is `modeline 332 1920 1944 1976 2056 1080 1755 1760 1794 +hsync +vsync` = 90.010 Hz as Hyprland programs it
+(`miosd framerate modeline DP-3 --hz 90` prints it; only inside the EDID range limits);
+modes = "advertised" never applies a timing the panel did not list (90 -> 99.93/100). The vendor value stays
+"advertised" (a miosd / mios-gen / mios-wallpaperd built before extended-vblank refuses the other value); a host or
+user tier opts in (`modes = "extended-vblank"`, mode_outputs = ["DP-3"]) once those binaries carry it. A mode switch is verified within revert_timeout_ms (mode
+shown, output present, DPMS on) or reverted and the mode blocklisted ($XDG_STATE_HOME/mios/framerate/bad-modes.json).
+Every automatic display-mode change to a mode the operator has not kept on that panel before is restored after
+mode_confirm_s unless `miosd framerate confirm-mode` keeps it (an on-screen notification says so); without an answer
+the panel gets no more automatic modesets until `miosd framerate confirm-mode --reset`. Stopping the daemon restores
+every mode it changed. A mode the operator pinned in [desktop.hyprland.monitors.<name>].mode ("WxH@Hz") is never
+changed.
+
+<!-- mios-src:67430dab7d55 from usr/share/mios/mios.toml:8640-8672 -->
+
+### Frame cap (MiOS-original compositor plugin in the tree...
+
+Frame cap (MiOS-original compositor plugin in the tree, [desktop.framerate]): hooks Hyprland's per-output frame
+handler and lets an output commit at most max_fps frames per second (phase-locked deadlines; the deferred frame is
+rescheduled at its deadline, so damage is never lost and clients pace at the cap through their frame callbacks).
+Only outputs with active VRR are capped (on a fixed-refresh output a cap would judder; miosd switches its mode
+instead); exclude_prefixes outputs never are. max_fps and exclude_prefixes come from [desktop.framerate] (projected
+at login, set live by miosd). The wallpaper's present rate W is held here too: Qt's layer update makes the native
+wallpaper commit every step twice, so the plugin releases the frame callbacks of the wallpaper_namespaces layer
+surfaces at most W times a second (wallpaper_fps, set by miosd together with the state file's wallpaper_paced;
+Host.qml then steps once per presented frame). `hyprctl mios-pacing status` reports per output cap, presented fps
+and deferrals, and per wallpaper surface the callbacks per second.
+
+<!-- mios-src:df70fbe016a2 from usr/share/mios/mios.toml:8724-8733 -->
+
+### Per-output monitor rules keyed by connector name...
+
+Per-output monitor rules keyed by connector name ([desktop.hyprland.monitors.HDMI-A-1]),
+projected after the catch-all so a named output overrides it. Keys: mode
+("preferred" | "highres" | "highrr" | "WxH@Hz"), position ("auto" | "XxY"), scale (0.25..4),
+transform (0..7), disabled (bool), primary (bool, one output: cursor.default_monitor).
+Vendor ships none; mios-displays saves the operator's layout into the
+[desktop.displays].save_tier mios.d drop-in.
+
+<!-- mios-src:ae985f17c96a from usr/share/mios/mios.toml:8751-8756 -->
+
+### mios-shot
+
+mios-shot: native Linux screenshots (tools/native/mios-shot -> /usr/bin/mios-shot; the selector is
+usr/share/mios/quickshell/Shot.qml in mios-shell, on the unified glass). Capture: ext-image-copy-capture-v1 (output and
+foreign-toplevel sources), wlr-screencopy-v1 for outputs where ext is missing, org.freedesktop.portal.Screenshot where
+neither exists (GNOME). Colour-management unaware on purpose (Hyprland converts HDR frames to SDR for such clients); shm
+buffers; the pointer is painted into the frame (paint_cursors) and no cursor session is ever opened (Hyprland 0.56.2
+can crash in cursor capture after an output is removed). Region mode freezes every output on the captured frame and
+crops that same frame, so the file is exactly what was on screen while selecting. A separate binary on purpose:
+Hyprland grants screencopy per executable path. xdg-desktop-portal-hyprland stays the Screenshot/ScreenCast portal
+and runs grim + slurp itself, so both stay in [packages.hyprland].
+
+<!-- mios-src:bb2f8fa2b9c1 from usr/share/mios/mios.toml:8784-8792 -->
+
+### ShaderGlass overlay pane
+
+ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
+shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.
+On Linux ShaderGlass is Clone-mode only: WineCap (a Winelib .so next to ShaderGlass.exe) captures the target
+through the xdg-desktop-portal ScreenCast API + PipeWire, and xdg-desktop-portal-hyprland's window capture
+renders only that window, so the pane is never in its own input (no feedback loop) and miosd refuses a
+ShaderGlass window as a target. Hyprland 0.56 cannot leave one window out of an output capture
+(no_screen_share paints it black), so ShaderGlass' see-through "Glass" mode is not possible here.
+`miosd shaderglass` (src/mios-rs/miosd/src/shaderglass.rs; /usr/bin/mios-shaderglass is its glue) installs the
+newest release, runs every pane from one transient user unit (app-mios-<app_id>@overlay.service) and keeps each
+pane on its target; mios-gen render-hyprland projects [desktop.shaderglass.window] and the bindings below (only
+while enabled). Nothing here is a version: `install` resolves the newest release of `channel` at install time,
+accepts the asset only against the sha256 GitHub publishes for it, builds WineCap from the same tag's source plus
+the MiOS patches, and records tag, commit and digests in <install_dir>/INSTALLED.json (never here). The release
+is fetched on the operator's host, never committed (.gitignore) and never baked into the image; an image that
+bakes it must ship or offer the Corresponding Source (GPL-3 section 6).
+
+<!-- mios-src:f95a30e4bf58 from usr/share/mios/mios.toml:8850-8864 -->
+
+### Seeded once as %LOCALAPPDATA%\ShaderGlassDefault.sgp...
+
+Seeded once as %LOCALAPPDATA%\ShaderGlassDefault.sgp (ShaderGlass' default profile, loaded at start) when the prefix
+has none; Processing > Set as default replaces it and is never overwritten. Keys are ShaderGlass' profile
+mnemonics (ShaderGlass/Options.h); a shader the release no longer ships falls back to ShaderGlass' own default.
+
+<!-- mios-src:71a85dea72d7 from usr/share/mios/mios.toml:8902-8904 -->
+
+### What survives a pane
+
+What survives a pane: ShaderGlass keeps its live state only in memory, so miosd saves it per target window class
+through the patched WineCap (ShaderGlass' own "Set as default", swapped so the operator's default is never touched)
+when a pane closes, leaves setup mode or cycles, and starts the next pane of that class with it -- after a detach,
+a crash, a supervisor restart, in a nested session and through 2D/Hypr3D room/Theatre/PiP/fullscreen alike.
+
+<!-- mios-src:9d063898df0b from usr/share/mios/mios.toml:8955-8958 -->
+
+### WineCap, the capture library ShaderGlass loads from its own...
+
+WineCap, the capture library ShaderGlass loads from its own directory. build = compile the installed tag's WineCap/
+with these patches in the builder below (fails loudly naming a patch that no longer applies); release = the zip's
+prebuilt WineCap.dll (patches unused, so no restore tokens); auto = release when no patch is listed.
+
+<!-- mios-src:6b6fc12d048b from usr/share/mios/mios.toml:8977-8979 -->
+
+### One glass look (MiOS rule): the room's glass is the...
+
+One glass look (MiOS rule): the room's glass is the [desktop.hyprland.hyprglass.presets] entry the desktop draws
+windows with. mios-gen hyprland-3d-toggle resolves it as hyprglass does (theme table, preset, inherits, hyprglass
+config and defaults) and sends it as the plugin's glass table, with the frost (blur_sigma = 4 x blur_strength x
+sqrt(blur_iterations)) and the edge pass ([desktop.hyprland.hyprglass.config] edge_pass, edge_pass_width).
+hypr3d-mios-edge-quality.patch composites the desktop's stack in 3D: that pane over the room, the client at its
+own opacity, the edge pass over it (no hand-tuned copy here; a [config.glass] table would override keys).
+
+<!-- mios-src:56b48d4cf45f from usr/share/mios/mios.toml:9014-9019 -->
+
+### Face the viewer (hypr3d-mios-room-input.patch): a PiP whose...
+
+Face the viewer (hypr3d-mios-room-input.patch): a PiP whose centre is within face_distance metres of the camera turns
+its plane to face the camera POSITION and follows it as the camera moves; a Theatre PiP uses theatre_face_distance.
+Outside the distance it eases back to the pose it was placed with (that placed pose is what the room remembers).
+Every turn is an exponential ease with time constant face_seconds (no snapping); face_hysteresis metres beyond the
+distance end the facing, so a viewer standing on the boundary never flaps. face_viewer = "pip" (managed PiPs only),
+"all" (every room window) or "off".
+
+<!-- mios-src:4ad7244f0e44 from usr/share/mios/mios.toml:9028-9033 -->
+
+### texel_sharp (hypr3d-mios-retina-spawn.patch): at 1:1 and...
+
+texel_sharp (hypr3d-mios-retina-spawn.patch): at 1:1 and magnified, each window texel is flat over the scene pixels it
+covers (only the pixel a texel edge crosses blends), so with scale >= 1.5 a window opened at 1:1 keeps 1-px detail at
+full contrast (bilinear then the box filter halves it: modulation 0.5). Minified textures keep the mip + anisotropic
+path; the glass, rim and edge pass are untouched (one glass look). false = bilinear.
+
+<!-- mios-src:ef9b6beebafd from usr/share/mios/mios.toml:9065-9068 -->
+
+### Retina window opening (hypr3d-mios-retina-spawn.patch...
+
+Retina window opening (hypr3d-mios-retina-spawn.patch; tools/native/mios-gen/src/hypr3d_spawn.rs). A window opens in
+the room at magnification M = 1 (its on-screen size / its 2D size): one snapshot texel per output pixel at the window
+centre (no minification blur) and every client's glyphs at their flat-desktop size, whatever font, app zoom or text
+scaling the client uses (they are baked into its buffer). For a window facing the camera
+  M = window_scale x d1 / distance,  d1 = (logical height / 100 / 2) / tan(65 deg / 2)
+(logical height = the output's mode / scale, rotated by its transform), and only M = 1 gives both one texel per
+pixel and the 2D glyph size. So the reading distance stays a world constant and window_scale follows the output:
+1920x1080 0.58988, 2560x1440 0.44241, 2560x1440 @1.25 0.55301, portrait 1080x1920 0.33181, phone 390x844 0.75482
+(the plugin default 0.5 gave M = 0.85 on 1080p, 1.13 on 1440p, 0.66 on a phone). `mios-gen hyprland-3d-toggle`
+plans the room's output (hyprctl monitors: mode, scale, transform, reserved bars; its [desktop.mobile] verdict) and
+sends windows = {window_scale, spawn_distance, spawn_size, pixel_exact, fit, fit_margin, pixel_snap, cascade,
+min_magnification}; the patched plugin re-derives window_scale live per output (pixel_exact) and places each window.
+Explicit [desktop.hyprland.hypr3d.config.windows] keys win (an explicit window_scale turns pixel_exact off).
+`mios-gen hyprland-3d-spawn` prints the plan per output. criterion = "fixed" (or enabled = false) sends nothing.
+Unaffected: the frame-rate policy (placement is computed once per window, no extra pass; fitted boxes never take the
+tiled capture path), render.stills, the one glass look, per-GPU render.scale (it only sets the legibility floor).
+Rotated and flipped outputs (portrait by transform): hypr3d-mios-transform.patch renders the room upright and maps it
+through the output transform (upstream drew it sideways with the wrong window content), so the same numbers hold.
+
+<!-- mios-src:f98583dde1df from usr/share/mios/mios.toml:9090-9107 -->
+
+### Hypr3D supersampling for this GPU. It replaces...
+
+Hypr3D supersampling for this GPU. It replaces [desktop.hyprland.hypr3d.config.render].scale (1..4) while
+this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+F12) finds the running profile in
+MIOS_DESKTOP_HARDWARE_PROFILE (exported to the compositor by `hyprland-session`), then in the kernel's
+mios.desktop.gpu=, then in [desktop.hyprland].hardware_profile. An unknown profile or a missing key keeps the
+global scale. A value that is not a number in 1..4 is rejected by render-hyprland (--check) and by the toggle.
+Each SUPER+F12 re-applies it. Radeon 610M (2 CU) at 1920x1080 with msaa 4: 1.5 = 10.2 ms/frame and holds
+60 fps; 2.0 = 11.2 ms/frame and drops to about 55 fps.
+
+<!-- mios-src:49f428bb7215 from usr/share/mios/mios.toml:9202-9208 -->
+
+### GTK3 apps on Xwayland export their GtkMenuBar as...
+
+GTK3 apps on Xwayland export their GtkMenuBar as org.gtk.Menus (unity-gtk3-module, advertised
+through _GTK_* X window properties) for the top-bar app-menu pills. X11-only: Wayland-native GTK3
+needs gtk_shell1/org_kde_kwin_appmenu, which Hyprland lacks. Unknown modules are ignored by GTK.
+The startup line exports it to the systemd/D-Bus activation environment too, so apps launched from
+the shell (mios-shell.service) or by D-Bus activation load the module, not only Hyprland exec children.
+
+<!-- mios-src:16f9844928be from usr/share/mios/mios.toml:9283-9287 -->
+
+### A window that takes focus while another is fullscreen on...
+
+A window that takes focus while another is fullscreen on its workspace (a new tiled window, a focus switch) comes
+to the front: 2 = the fullscreen/maximized window steps back to its tile and the foreground window is shown and
+interactive (0 would keep it hidden behind the fullscreen window, 1 would make it fullscreen). Floating windows
+(dialogs, PiPs, pickers) open above fullscreen and maximized windows and keep them fullscreen/maximized.
+Maximized (mode 1) windows fill the work area inside the HUD's reserved rows; only a true fullscreen window (mode 2)
+auto-hides the status island and the dock (usr/share/mios/quickshell/EdgeReveal.qml; tests/test-shell-hud-live.py).
+2 is also Hyprland 0.56's own default: the key pins the HUD contract explicitly (a changed upstream default or a
+lower-tier override then shows here); it is not a behaviour change against the stock compositor.
+
+<!-- mios-src:05a7a0b6bdca from usr/share/mios/mios.toml:9296-9303 -->
+
+### X11 (XWayland: Steam, Proton/Wine, SDL-X11 games)...
+
+X11 (XWayland: Steam, Proton/Wine, SDL-X11 games) coordinates and configure sizes stay logical px, the units the
+placement geometry and the window_opening size are computed in, on every output scale; a scaled output upscales
+the X11 buffer. true would report device px to X11 clients and their positions per output, which the placement
+daemon and the X11 root layout (the union of the outputs) do not share.
+
+<!-- mios-src:9990e9dba5bc from usr/share/mios/mios.toml:9349-9352 -->
+
+### Looking Glass display of the MiOS-Xbox VM...
+
+Looking Glass display of the MiOS-Xbox VM (usr/libexec/mios/vfio/setup-looking-glass.py).
+One profile is projected into every Looking Glass domain -- the shipped templates
+(usr/libexec/mios/Xbox-*.xml via virt-apply.sh / xbox-repair.sh) and an installed domain
+(`setup-looking-glass.py --apply-domain`, shut-off domains only) -- and into the client
+(launcher args and client_ini), so the SPICE port the VM listens on and the one the client
+dials cannot drift: SPICE graphics on spice_listen:spice_port (autoport off, no VNC), one
+spicevmc virtio channel (spice_channel), audio over SPICE into a sound_model card, a
+host-passthrough CPU of 1 socket x (vcpus / threads_per_core) cores x threads_per_core with
+topoext (AMD guests otherwise cannot see SMT), the RTC in clock_offset (Windows keeps it in
+local time; timers untouched) and the ivshmem-plain framebuffer shm_name of shm_size_mb.
+The vCPU count is the domain's own (the templates: [vm.win11].vcpus). shm_path is created by
+tmpfiles (usr/lib/tmpfiles.d/50-mios.conf) and labelled shm_selinux_type so QEMU (svirt_t)
+may map it (automation/38-selinux.sh at build, --ensure-selinux at boot from
+mios-vfio-setup.service). The MiOS-Xbox launcher ([desktop.launchers.mios-xbox]) starts the
+first defined domain of `domains` and opens the client.
+
+<!-- mios-src:68db395b6e2e from usr/share/mios/mios.toml:10444-10458 -->
+
+### [bootstrap.linux] -- Linux self-host/dev bootstrap that...
+
+----------------------------------------------------------------------------
+[bootstrap.linux] -- Linux self-host/dev bootstrap that runs BEFORE pre-flight
+(installation/mios-bootstrap-linux.sh). Stage "prereqs" installs everything a
+Linux host needs to build and develop MiOS images for every platform; stage
+"overlay" makes / the MiOS git work tree and reconciles host settings. The
+Windows half of the same contract is [packages.windows] (winget) driven by
+field/autounattend/Install-MiOSBuildPrereqs.ps1.
+----------------------------------------------------------------------------
+Host CPU policy, projected to native TuneD INI profiles by mios-gen render-tuned.
+Balanced retains VM/container settings while allowing idle and burst scaling.
+
+<!-- mios-src:00d534beb312 from usr/share/mios/mios.toml:10660-10669 -->
+
+### One row per TUI. mode
+
+One row per TUI. mode: popup (transient, Esc closes) | window (long-lived; MCP/controller targetable) | float
+(native floating pane). A row whose argv[0] is not an executable (absolute path, or found on PATH) is hidden.
+vt_ok = false hides the row on the Linux console; argv_vt replaces argv there. hold = true (popup only) keeps
+the popup open after the program exits. The AI CLIs come from [[keybindings.actions]] and are listed first.
+
+<!-- mios-src:4ab318739697 from usr/share/mios/mios.toml:10901-10904 -->
+
+### System monitor in the status island...
+
+System monitor in the status island (usr/share/mios/quickshell/Sysmon.qml, SysmonItems.qml, SysmonDetails.qml):
+NATIVE -- the shell reads the kernel's own counters (/proc/stat, /proc/meminfo, /proc/net/dev,
+/sys/class/drm/card*/device/gpu_busy_percent, /sys/class/hwmon/*/temp*_input) itself: no helper process per sample,
+no extra package. One shared sampler for every output (one timer); only the sources a listed item needs are read.
+Items, in priority order: cpu (busy %), ram (used %), gpu (busy % of the GPU driving the desktop), temp (hottest
+CPU/GPU sensor), net (down/up rate of the physical interfaces). Hovering them (desktop) or a tap opens the details.
+
+<!-- mios-src:743ecd5742b4 from usr/share/mios/mios.toml:11198-11203 -->
+
+### Notifications (usr/share/mios/quickshell/Notifications.qml...
+
+Notifications (usr/share/mios/quickshell/Notifications.qml, NotifModel.qml): every notification -- apps over
+org.freedesktop.Notifications (mios-shell owns the name) and the shell's own toasts (mios-shot, the "notifications"
+IPC target) -- is ONE glass blob on the focused output. It starts as the status island itself (its rectangle, radius and
+glass; on a mobile output wherever the island sits between the window tabs, and it follows it) and grows on the island
+menus' morph (Emerge/MeltPopup: one half edge margin below the bar, the content fading in over the second half) into the
+card centred under the island; more notifications grow the same blob downward into a stack, and dismiss / expiry runs
+the morph backwards so it melts back into the island. Over a fullscreen window the island is revealed for it
+(EdgeReveal) and hides again afterwards. Material: the island's (Glass.qml fill over the hyprglass mios preset on the
+glass-covered "mios-notifications" layer); corner radius: the global window rounding. Never anywhere else on screen.
+
+<!-- mios-src:5e8dae59848d from usr/share/mios/mios.toml:11220-11228 -->
+
+### Global display scale policy -- ONE policy for every output...
+
+Global display scale policy -- ONE policy for every output, local and remote, on any GPU (Intel,
+AMD, NVIDIA, virtual). Displays are discovered at runtime; nothing here names an output.
+  density  = client DPI hint (remote: [remote.rdp] reads it from the xrdp journal and publishes it in
+             $XDG_RUNTIME_DIR/mios-display-hints.json) > EDID physical mm (hyprctl physicalWidth/
+             physicalHeight; 0 = unknown; rejected when smaller than min_physical_diagonal_mm or its
+             aspect differs from the mode's by more than edid_aspect_tolerance) > resolution fallback
+             (remote + phone-shaped -> fallback_handheld_dpi; otherwise a fallback_desktop_diagonal_in panel)
+  target   = logical DPI for the viewing distance, by physical diagonal: <= handheld_max_diagonal_in
+             -> handheld_logical_dpi, >= desktop_min_diagonal_in -> target_logical_dpi, linear between
+  scale    = density / target, rounded to snap_step, clamped to min_scale..max_scale and so the logical
+             short side keeps >= min_logical_short_px, then lowered to the largest scale Hyprland
+             accepts (1/120 grid with an integer logical size)
+  mobile   = logical short side < mobile_short_side_px and logical long side < mobile_max_long_side_px
+             (or any portrait output when portrait_is_mobile); decided on the SCALED size, never raw px
+Orientation: odd Hyprland transforms (90/270) swap width/height (and EDID mm) before all of the above.
+Precedence: an output with a saved scale ([desktop.hyprland.monitors.<output>].scale, e.g. the
+mios-displays save in the host tier; or a numeric [remote.rdp].virtual_scale) is EXPLICIT: that
+value is its scale and it is never auto-scaled. The catch-all [desktop.hyprland.monitor] rule is not
+explicit. apply_to: which outputs the Hyprland projection rescales live (monitor added/changed);
+"remote" stays off while wayvnc 0.9.1 cannot capture scaled outputs ([remote.rdp].output_scale) --
+remote outputs still get the policy's scale/mobile verdict for the shell.
+Consumers: mios-gen display-scale (CLI; JSON contract in tools/native/mios-gen/src/display_scale.rs),
+the [desktop.mobile] runtime handler (render_hyprland::mobile_profile, same arithmetic in Lua,
+parity-tested), usr/share/mios/quickshell/Mobile.qml ($XDG_RUNTIME_DIR/mios-mobile-outputs.json).
+
+<!-- mios-src:e5bf40f2388c from usr/share/mios/mios.toml:11242-11265 -->
+
+### Mobile layout profile
+
+Mobile layout profile: any output the [desktop.scaling] policy marks mobile (logical short side under
+its breakpoint after scaling; without [desktop.scaling]: portrait, or narrower than breakpoint_px logical px), local
+or remote (the RDP virtual display sized to a phone, e.g. 1100x2080), gets a phone-style desktop:
+ - windows tile full-size there (one window fills the work area; new windows open full-size),
+ - the status island fills the top row between the window-controls tabs, one edge margin clear of each,
+ - the focused window's top edge steps down around the pill: two "shoulders" left and right of the
+   pill carry a control dot each (left = window controls, right = the app's menu),
+ - the dock reserves its row, so the window ends above it and the dock never overlaps it.
+Evaluated at runtime per output by the Hyprland projection (mios-gen render-hyprland,
+render_hyprland::mobile_profile: monitor added/removed/layout changed) and published for Quickshell
+in $XDG_RUNTIME_DIR/mios-mobile-outputs.json (usr/share/mios/quickshell/Mobile.qml). No output names.
+
+<!-- mios-src:3e2cb1475bb7 from usr/share/mios/mios.toml:11290-11300 -->
+
+### Cheaper glass for windows on remote outputs (the RDP...
+
+Cheaper glass for windows on remote outputs (the RDP display): rendered and captured up to [remote.rdp].target_hz
+while HDMI keeps its refresh, so it must cost less GPU per frame. mios-gen defines hyprglass preset `preset` as a copy of
+[desktop.hyprland.hyprglass.presets.<base_preset>] (same palette-resolved tint/fresnel/bevel colours and blur strength:
+parity with the desktop glass) with `overrides` on top (only knobs that make it cheaper; never above the base), and tags
+every window on an output whose origin is in applies_to with hyprglass_preset_<preset> (dynamic window rule on m[<output>]).
+Shell layers opt in by namespace: <ns>-remote for each layer_namespaces entry takes the same preset (Mobile.layerNamespace).
+Published per output as "glass_preset" in $XDG_RUNTIME_DIR/mios-mobile-outputs.json for the shell.
+
+<!-- mios-src:d313a04f8383 from usr/share/mios/mios.toml:11328-11334 -->
+
+### Read by
+
+Read by: tools/native/mios-gen/src/greeter.rs (`mios-gen render-greetd`), which projects
+/etc/greetd/config.toml. Nothing reads it at runtime; editing it changes nothing until the
+coordinator re-renders greetd's config (see the lane report for the activation steps).
+
+Login display manager = greetd + the MiOS glass Quickshell greeter (usr/share/mios/greeter), launched
+in cage by usr/libexec/mios/mios-greeter-session, which execs the tuigreet fallback below whenever the
+glass greeter fails, hangs or the operator presses F10. kind = "tuigreet" renders the plain tuigreet
+command (the 2026-10-14 live config) with no glass greeter at all -- the one-key revert.
+
+<!-- mios-src:524ccbfa9f3d from usr/share/mios/mios.toml:11344-11351 -->
+
+### Linux console clients (kernel VT: 8/16 colours, 512-glyph...
+
+Linux console clients (kernel VT: 8/16 colours, 512-glyph font, no rounded arcs). A tmux client whose TERM
+matches terms (or that is not UTF-8) gets ASCII status glyphs, single borders and these named colours, per
+client: a VT and a desktop client attached to one session each see their own variant. An SSH client whose
+TERM matches remote_truecolor_terms is re-declared as remote_term before it attaches, so it is not a console.
+
+<!-- mios-src:329153e87124 from usr/share/mios/mios.toml:11465-11468 -->
+
+### [windows.xbox] is THE MiOS-Xbox image specification: the...
+
+----------------------------------------------------------------------------
+[windows.xbox] is THE MiOS-Xbox image specification: the only input of every Windows build step.
+usr/libexec/mios/win/xbox/render_spec.py resolves it through mios_toml.load_merged
+(vendor -> host -> user) into xbox-spec.json; a missing required key or an empty credential is a
+hard failure naming the key. Rules for this tree:
+  * No version pins. Upstream components carry a channel ("latest"/"stable"/"evergreen"); the
+    resolved versions go to build-manifest.json only (xb-06).
+  * No credentials. Accounts reference SSOT keys by dotted path (*_ref); the renderer resolves them.
+  * Registry-backed scalars are applied through [windows.xbox.registry_map] (one owner per value).
+  * Superseded by this tree once merged: BS [autounattend.xbox] feature_ids/device_form_spoof/
+    home_app/start_on_startup, AU/mios-xbox-features.txt, AU/mios-debloat.json, and
+    [editions.mios-xbox] autounattend.posture (dropped) / autounattend.debloat_profile
+    (-> windows.xbox.debloat.profile).
+
+<!-- mios-src:63c621ffb4b0 from usr/share/mios/mios.toml:11735-11747 -->
+
+### Inbox apps of the SAME update, integrated offline by the...
+
+Inbox apps of the SAME update, integrated offline by the converter (CustomAppsList.txt -> Apps\<family>): the edition
+file list carries none of them, so without this the image has no Microsoft Store, no App Installer (winget) and no
+Xbox app (round-1 boot of build-20261023T224037Z: 3 provisioned packages, a GamingHomeApp naming an absent app and a
+Hydrate stage without winget). Package family names; each must be offered by the update, else the resolve aborts.
+
+<!-- mios-src:74de83791db1 from usr/share/mios/mios.toml:11761-11764 -->
+
+### Capture of the per-family blobs (build.py capture / auto in...
+
+Capture of the per-family blobs (build.py capture / auto in build.py run, xb-11): one GPU-less worker session
+applies exactly the start.folders / start.pins policy values above, autologons a throwaway local account
+(random password generated inside the worker overlay; it never leaves the guest and the overlay is deleted),
+waits for StartMenuExperienceHost to write start2.bin, exports the layout (must equal start.pins) and reads
+VisiblePlaces. The capture refuses when the worker's BuildBranch is not the image's family.
+
+<!-- mios-src:bb3c16510280 from usr/share/mios/mios.toml:11822-11826 -->
+
+### Controlled-Feature-Rollout toggles (FeatureManagement...
+
+Controlled-Feature-Rollout toggles (FeatureManagement overrides), one named entry per feature id:
+every id of the former AU/mios-xbox-features.txt (operator: all ship) + upstream research (2026-10-16).
+enabled = false keeps the entry documented but writes nothing.
+Fields: id = FeatureManagement override id (written as ...\Overrides\8\<id> EnabledState=2 offline when
+  enabled = true); group = review group; name = internal feature name (ViVeTool FeatureDictionary /
+  mach2 feature store); confidence = dictionary | community | unverified; builds = where it was observed;
+  risk = low | medium | unknown; sources = keys of the [windows.xbox.research.sources] table below.
+Feature ids are switches, not versions (no pin): an id absent on a build is a harmless unused override.
+Operator decision (GOALS 2026-10-16): every id from the file ships (enabled = true), including the AI-surface
+and test-flag ids flagged in their notes. research_2026 additions carry the recommended enabled value.
+
+CORRECTIONS vs the file's comments (feature dictionary wins):
+  42550315 is RunInPlaceUpgrade (file: "Auto SR controls"); 55305888 is KnowYourPC_W11FAQList
+  (file: "Auto SR notifications"); 60786016 is the native NVMe stack (file: "DirectStorage 2.1 bypass");
+  45624564 DTF_Test / 53397005 STWP_Test / 42105254 MTestUx15 are internal test flags.
+  12 ids have no public mapping (confidence = "unverified").
+
+<!-- mios-src:accafb67fba9 from usr/share/mios/mios.toml:11849-11864 -->
+
+### PCI vendors that are virtual displays, never a GPU to...
+
+PCI vendors that are virtual displays, never a GPU to drive: 1AF4 virtio-gpu, 1B36 Red Hat QXL, 1234 Bochs/std VGA,
+15AD VMware SVGA, 1414 Microsoft Hyper-V, 80EE VirtualBox. Non-PCI displays (Looking Glass IDD, ROOT\BasicDisplay,
+SWD\ software devices) are never enumerated. A real GPU still on "Microsoft Basic Display Adapter" (no driver yet) is
+NOT skipped: it is matched by its PCI vendor ID, which is the point of this step.
+
+<!-- mios-src:57655c83e105 from usr/share/mios/mios.toml:12117-12120 -->
+
+### Static lookup parameters; the script adds...
+
+Static lookup parameters; the script adds dIDa=["<dev>_<ven>"] and osB=<Windows build>. dch=1 DCH package,
+isCRD=0 Game Ready (1 = Studio), iLp=0 desktop, prvMd=0 no preview/beta. (No client-version gcV: not required, verified 2026-10-16.)
+
+<!-- mios-src:ab5f7f9b4825 from usr/share/mios/mios.toml:12127-12128 -->
+
+### Device and Resource Redirection policies for the official...
+
+Device and Resource Redirection policies for the official Windows App. Each allow_* key is written by its
+registry_map entry, which names the Microsoft TerminalServer.admx policy (render_spec checks the value name
+against Microsoft's Policy CSP ADMX_TerminalServer table; the image gate checks it against the image's own
+Windows\PolicyDefinitions\TerminalServer.admx). Every key here must be mapped (an unmapped key fails the render).
+
+<!-- mios-src:7d8e3b6d56f0 from usr/share/mios/mios.toml:12317-12320 -->
+
+### provisioning stages (fix-a M1). Microsoft...
+
+--- provisioning stages (fix-a M1). Microsoft: SetupComplete.cmd "runs with local system permissions" after Windows
+is installed, before the logon screen; FirstLogonCommands run as the first user to log on and, for a user without
+administrative privileges under UAC, only after an administrator approves (Cancel = not run). The desktop account is
+a standard user, so every privileged step runs as SYSTEM (SetupComplete or a SYSTEM scheduled task).
+
+<!-- mios-src:57d0ce850444 from usr/share/mios/mios.toml:12516-12519 -->
+
+### Tetragon eBPF enforcement plane (WS-SEC / KENF-01). It runs...
+
+Tetragon eBPF enforcement plane (WS-SEC / KENF-01). It runs as the dedicated
+mios-enforcer account (Law 6: no root uid) with only the capabilities needed to
+attach kprobes/tracepoints. The TracingPolicy it loads from tetragon.tp.d is the
+agent egress quarantine: kprobe sys_enter_connect, AF_INET/AF_INET6, action Sigkill
+for the mios-agents / podman-unprivileged / coderun-sandbox namespaces (compiled
+by usr/lib/mios/agent-pipe/mios_isolation.py TetragonTracingPolicy).
+
+<!-- mios-src:00bcfe8ffb18 from usr/share/mios/mios.toml:13683-13688 -->
+
+### Off-image capped builder for the MiOS-Portal Gecko build...
+
+Off-image capped builder for the MiOS-Portal Gecko build (mp-04/mp-05; Law 12: the image never
+fetches or compiles Gecko). usr/libexec/mios/mios-portal-build reads this table, builds the
+builder image from containerfile_dir, and runs usr/share/mios/portal-build/mios-portal-build-inner
+in it. Nothing here is a version: Firefox comes from product-details, Surfer from the npm
+`latest` dist-tag and the artifact revision from the release's buildhub.json, all resolved at
+build time and recorded only in the output manifest. A failed lookup fails the build.
+
+<!-- mios-src:9bd548c33b74 from usr/share/mios/mios.toml:16812-16817 -->
+
+### MiOS-Portal product spec (MP-1): the MiOS desktop GUI app...
+
+MiOS-Portal product spec (MP-1): the MiOS desktop GUI app, stock Firefox built with Surfer into one
+app whose home and new tab are the Portal. Every product file under src/mios-portal/ (surfer.json,
+configs/*/mozconfig, configs/lanes/*.mozconfig, the branding pref, the chrome CSS, policies.json and
+the default prefs) is rendered from this table and its sub-tables through [dotfiles.registry.portal-*]
+(mios-dotfiles-render; check_dotfiles_projection gates the committed render). Nothing here is a
+version: the build copy gets the Firefox version, the Surfer version and the release revision from
+`mios-bake-plan latest-portal` ([desktop.portal.builder] URLs) at build time, through @BUILD:<key>@
+sentinels that `mios-portal-tree stage` fills and refuses to leave unfilled. check_portal_product
+(tools/drift-checks.py portal-product) rejects a version, hex colour or port literal here, in the
+templates or in the hand-written product files.
+
+<!-- mios-src:327f8c517cf3 from usr/share/mios/mios.toml:16871-16880 -->
+
+### Pages. Both are full URLs so a host or user layer can point...
+
+Pages. Both are full URLs so a host or user layer can point them anywhere; the defaults are the
+Portal on agent-pipe. The chat sidebar provider is the one MiOS AI front door (Law 5): no Mozilla
+cloud AI endpoint is reachable from the defaults below.
+
+<!-- mios-src:e037ab496eeb from usr/share/mios/mios.toml:16898-16900 -->
+
+### Simulation steps per second (URL query fps; the HTML's...
+
+Simulation steps per second (URL query fps; the HTML's FPS): the look's REFERENCE rate. One step advects by
+1/framerate and the per-step decay/blend/blur constants are tuned at it. The Windows HTML steps at it; the
+native Linux host steps at the live wallpaper rate W of [desktop.framerate] (desktop rate / 2, the full desktop
+rate when unlocked: Host.qml reads it from the state file once a second) and rescales those constants by
+framerate / W, so the field evolves the same per wall-clock second at any rate (bit-identical at W = framerate).
+
+<!-- mios-src:c6f38ffb7cdd from usr/share/mios/mios.toml:18369-18373 -->
+
+### RDP remote display of the live session ([remote.rdp])...
+
+RDP remote display of the live session ([remote.rdp]): mios-rdp-rfb-bridge (RFB 3.3 for xrdp)
+listens on a UNIX socket in the operator's 0700 $XDG_RUNTIME_DIR and, per attach, creates the
+client-sized headless output (mode "virtual") and starts wayvnc on it, re-resolving the running
+Hyprland instance (lock-file PID + wayland socket) every time so it follows Hyprland restarts.
+Stopping the unit removes the remote display. xrdp fronts it.
+
+<!-- mios-src:c7269fea02dc from usr/share/mios/mios.toml:18536-18540 -->
+
+### AI-hint
+
+AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom, packed across both rails before squeezing), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware with minimum/launch/maximum size magnets, stay on top through Hyprland's native pinned layer, and settle with a spring. Spotify's mini-player, Discord call/stream/video popouts and browser PiP windows are adopted automatically on map. Maximize/fullscreen (any window) and Theatre/Hypr3D never move them. Consumed by tools/native/mios-pip-gravity. Hypr3D: flat placement pauses there (PiP are freely resizable in the room); adoption continues.
+AI-related: tools/native/mios-pip-gravity/src/{main.rs,gravity.rs,matrix.rs,window.rs}, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip, usr/share/doc/mios/desktop-pip.md
+
+<!-- mios-src:fbf3fad4c089 from usr/share/mios/mios.toml:18671-18672 -->
+
+### Automatic adoption on map (a window leaving PiP gets...
+
+Automatic adoption on map (a window leaving PiP gets mios-pip-disabled and is never re-captured). Firefox-family
+"Picture-in-Picture" and Chromium-family "Picture in picture" windows; Discord's call, stream and video popouts
+(initial title "Discord Popout"; channel titles change later) for the native client, its Flatpak/PTB/Canary builds
+and Vesktop; Spotify's mini-player (a Chromium document-PiP window whose title is the current track) only when a
+same-process Spotify window exists, so ordinary Chromium windows are never captured.
+
+<!-- mios-src:130df3dd60dd from usr/share/mios/mios.toml:18697-18701 -->
+
+### Input devices bound into a session's otherwise empty...
+
+Input devices bound into a session's otherwise empty /dev/input (--device, a seat preset's devices, else default).
+Specs: /dev/input/eventN or a by-id/by-path link, name:<exact evdev name>, or virtual-pad (the seat's mios-inputd pad).
+Binding makes the nodes openable inside the session (applications, games, an in-session bridge); the registry entry
+tells mios-inputd which nodes a session owns so it can stop routing them to the parent and forward keyboard/pointer
+input into the session's compositor (the session compositor itself reads only its parent window's Wayland seat).
+
+<!-- mios-src:f98a33cfb7dc from usr/share/mios/mios.toml:18746-18750 -->

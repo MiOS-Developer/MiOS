@@ -405,7 +405,7 @@ mod projection_tests {
 }
 
 // AI-hint: Shared output-aware opening geometry for native placement and the room.
-// AI-related: mios-gen/src/hypr3d_spawn.rs, miosd/src/placement.rs
+// AI-related: tools/native/mios-gen/src/hypr3d_spawn.rs, src/mios-rs/miosd/src/placement.rs
 pub mod window_opening {
     use toml::Value;
 

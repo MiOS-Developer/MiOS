@@ -1,5 +1,5 @@
 // AI-hint: Linux evdev/uinput file-descriptor ownership, capability cloning, the virtual pointer and keyboard, and private fixture gates.
-// AI-related: docs.kernel.org/input/uinput.html, docs.kernel.org/input/event-codes.html
+// AI-related: https://docs.kernel.org/input/uinput.html, https://docs.kernel.org/input/event-codes.html
 use crate::config::VIRTUAL_PREFIX;
 use crate::router::{Axis, Event, EV_ABS, EV_KEY, EV_REL, EV_SYN, SYN_REPORT};
 use std::collections::{BTreeMap, BTreeSet};

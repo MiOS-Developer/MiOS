@@ -229,7 +229,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-screen-stream` | Hardware-accelerated PipeWire WebRTC desktop video streamer (task_732). |
 | `usr/libexec/mios/mios-screenshot` | Screenshot entry point behind the screenshot/snap/prtscr aliases: in a Linux Wayland session it hands off to the native /usr/bin/mios-shot (mios-shot modes and flags pass through; the legacy... |
 | `usr/libexec/mios/mios-seccomp-filter` | Emits the compiled seccomp cBPF program that mios-sandbox-exec hands bwrap on --seccomp FD. Reads the denylist and action from mios.toml [sandbox] through the layered resolver, builds the program... |
-| `usr/libexec/mios/mios-shaderglass` | ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, stop, status, install/update, prefix,... |
+| `usr/libexec/mios/mios-shaderglass` | ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, next shader (cycle, saved per app),... |
 | `usr/libexec/mios/mios-shadow-test` | Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718). |
 | `usr/libexec/mios/mios-share-picker` | xdg-desktop-portal-hyprland custom picker ([desktop.hyprland.xdph].custom_picker_binary): `miosd shaderglass pick` answers the ShaderGlass supervisor's one-shot request with its target window (no... |
 | `usr/libexec/mios/mios-shell-session` | SHELL-01 runner for the persistent PTY substrate. Drives tmux with the pure protocol in mios_pipe.routing.pty: `exec` sends one nonce-framed command into the chat's session (creating it under the... |
@@ -262,7 +262,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-sysview` | Provides a unified system inspection tool for agents to query journalctl, process lists, and podman containers by abstracting complex command construction and flag validation into a single interface. |
 | `usr/libexec/mios/mios-tailscale-sync` | Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT. |
 | `usr/libexec/mios/mios-template-engine` | Thin shim delegating template rendering to the mios-new canonical generator, preserving the legacy <kind> <target_filepath> [description] contract. |
-| `usr/libexec/mios/mios-terminal` | Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation. |
+| `usr/libexec/mios/mios-terminal` | Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation; inside tmux it hands MiOS-Tmux helpers (menus, apps, floats, session... |
 | `usr/libexec/mios/mios-text-edit` | Provides a robust, filesystem-direct text editing primitive for agents to view, create, and mutate files via atomic str_replace or line-based insertion, bypassing unreliable UI-driven keystroke... |
 | `usr/libexec/mios/mios-theme-broadcast` | Theme event emitter synchronizing GNOME settings and living wallpaper via DBus and Unix domain sockets (task_444). |
 | `usr/libexec/mios/mios-theme-render` | Multi-surface live theme renderer with ANSI OSC 4/10/11 PTY injector and GTK/QT CSS generator (task_443). |
@@ -811,12 +811,13 @@ is generated, its generator is here.
 | `usr/lib/mios/mios_credentials.py` | The ONE fail-closed credential resolution over the layered mios.toml SSOT (vendor < host < user + mios.d) -- account names, passwords, service account and persistent AutoLogon for every MiOS image... |
 | `usr/lib/mios/mios_db_config.py` | Peer of mios_toml.py resolving configuration settings from PostgreSQL config tables (WS-VECTOR V1 / task_222). |
 | `usr/lib/mios/mios_env.py` | Shared environment helper for stripping empty MIOS_* environment variables. |
+| `usr/lib/mios/mios_mcp_federation.py` | Caller-owned MCP federation. An [mcp.servers.<id>] declared ONLY in the caller's own SSOT tier (~/.config/mios/mios.toml + its mios.d/) runs as the caller and is re-exported by the per-user MiOS MCP... |
 | `usr/lib/mios/mios_oscontrol_client.py` | Shared layered SSOT endpoint and fail-closed HTTP verdict contract for Windows OS-control clients. |
 | `usr/lib/mios/mios_toml.py` | The single shared Python resolver for the layered mios.toml SSOT -- the Python peer of tools/lib/userenv.sh. |
 | `usr/lib/mios/mios_translate.py` | Pure Python translation engine for loop.v1 events, Responses items, and cross-harness frame normalization. |
 | `usr/lib/mios/test_mios_comments.py` | Unit tests for the comment lexer and classifier -- one fixture per classifier rule so every rule is proven to fire, plus lexer tests f... |
 
-<!-- derived from the AI-hint headers of 447 file(s) matching usr/lib/mios/*.py -->
+<!-- derived from the AI-hint headers of 448 file(s) matching usr/lib/mios/*.py -->
 <!-- /MIOS-GEN:index:usr/lib/mios/*.py -->
 
 ## Cross-refs
