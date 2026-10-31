@@ -247,6 +247,24 @@ pub struct PipeStats {
     pub microphone_dropped: AtomicU64,
     pub microphone_source: Mutex<Option<String>>,
     pub microphone_error: Mutex<Option<String>>,
+    /// Session-owned microphone sources recreated after the audio server restarted.
+    pub microphone_recoveries: AtomicU64,
+    pub speaker_generation: AtomicU64,
+    pub speaker_workers: AtomicU64,
+    pub speaker_ready: AtomicBool,
+    pub speaker_sink: Mutex<Option<String>>,
+    pub speaker_format: Mutex<Option<String>>,
+    pub speaker_error: Mutex<Option<String>>,
+    pub speaker_waves: AtomicU64,
+    pub speaker_bytes: AtomicU64,
+    /// Waves withheld because the client had not confirmed audio within speaker_max_latency_ms.
+    pub speaker_dropped: AtomicU64,
+    /// Digital-silence packets not sent after speaker_idle_ms of silence.
+    pub speaker_idle_packets: AtomicU64,
+    /// Times the sink stopped delivering samples mid-stream (suspended or starved).
+    pub speaker_gaps: AtomicU64,
+    pub speaker_backlog_ms: AtomicU32,
+    pub speaker_recoveries: AtomicU64,
     pub bitrate_bps: AtomicU64,
     pub frames_in_flight: AtomicU32,
     pub samples: Mutex<Samples>,

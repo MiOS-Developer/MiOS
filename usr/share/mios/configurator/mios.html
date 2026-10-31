@@ -2372,6 +2372,22 @@
             <input type="number" min="1" max="128" id="f-rdp-mic-queue" data-key="remote.rdp.native.microphone_queue_packets" data-type="int" value="8">
             <label for="f-rdp-mic-source">Microphone source prefix</label>
             <input type="text" id="f-rdp-mic-source" data-key="remote.rdp.naming.microphone_source_prefix" value="mios-remote-microphone">
+            <label for="f-rdp-speaker-enabled">Forward session audio to the client's speakers (MS-RDPEA; a per-connection MiOS-Remote-Speaker sink apps can choose)</label>
+            <input type="text" id="f-rdp-speaker-enabled" data-key="remote.rdp.redirect.audio_output" data-type="bool" placeholder="true">
+            <label for="f-rdp-speaker-sink">Speaker sink prefix</label>
+            <input type="text" id="f-rdp-speaker-sink" data-key="remote.rdp.naming.speaker_sink_prefix" value="mios-remote-speaker">
+            <label for="f-rdp-speaker-packet">Speaker wave size (ms)</label>
+            <input type="number" min="10" max="100" id="f-rdp-speaker-packet" data-key="remote.rdp.native.speaker_packet_ms" data-type="int" value="20">
+            <label for="f-rdp-speaker-latency">Speaker latency limit: withhold waves while this much audio is unconfirmed (ms)</label>
+            <input type="number" min="10" max="2000" id="f-rdp-speaker-latency" data-key="remote.rdp.native.speaker_max_latency_ms" data-type="int" value="200">
+            <label for="f-rdp-speaker-idle">Stop streaming after this much silence (ms; 0 = always stream)</label>
+            <input type="number" min="0" max="10000" id="f-rdp-speaker-idle" data-key="remote.rdp.native.speaker_idle_ms" data-type="int" value="500">
+            <label for="f-rdp-audio-server">Audio server for session devices (empty = the operator's PipeWire-Pulse)</label>
+            <input type="text" id="f-rdp-audio-server" data-key="remote.rdp.native.audio_server" value="" placeholder="unix:/run/user/1000/pulse/native">
+            <label for="f-rdp-audio-recovery">Audio-server restart recovery attempts per outage (0 = off)</label>
+            <input type="number" min="0" max="1000" id="f-rdp-audio-recovery" data-key="remote.rdp.native.audio_recovery_attempts" data-type="int" value="60">
+            <label for="f-rdp-audio-recovery-ms">Recovery attempt interval (ms)</label>
+            <input type="number" min="100" max="10000" id="f-rdp-audio-recovery-ms" data-key="remote.rdp.native.audio_recovery_interval_ms" data-type="int" value="500">
             <label for="f-rdp-camera-enabled">Allow cameras selected and permitted by the remote client</label>
             <input type="text" id="f-rdp-camera-enabled" data-key="remote.rdp.redirect.camera" data-type="bool" placeholder="true">
             <label for="f-rdp-camera-video-program">Native video executable</label>
