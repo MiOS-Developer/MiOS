@@ -366,6 +366,7 @@ impl ConnectionHandler for Hooks {
             }
         }
         self.s.authenticated.store(true, Ordering::SeqCst);
+        self.s.stats.connection_serial.fetch_add(1, Ordering::AcqRel);
         info!(
             keyboard_layout = format!("{:#x}", info.keyboard_layout),
             keyboard_type = ?info.keyboard_type,

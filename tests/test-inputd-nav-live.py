@@ -207,8 +207,8 @@ try:
     check('tmux client attached', wait(lambda: tmux('list-clients').stdout.strip(), 10))
     # mios-i2-tmux is not a terminal class; the tmux profile is chosen by class 'terminal' only, so tag it as a
     # terminal through the SSOT copy's terminal context list.
-    t = (root / 'usr/share/mios/mios.toml').read_text().replace('terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]',
-                                                               'terminal = ["mios-terminal", "Alacritty", "kitty", "foot", "mios-i2-tmux"]')
+    t = (root / 'usr/share/mios/mios.toml').read_text().replace('terminal = ["mios-terminal", "mios-nested-terminal", "Alacritty", "kitty", "foot"]',
+                                                               'terminal = ["mios-terminal", "mios-nested-terminal", "Alacritty", "kitty", "foot", "mios-i2-tmux"]')
     (root / 'usr/share/mios/mios.toml').write_text(t)
 
     # Two probes side by side on the active workspace, opted out of PiP gravity (which keeps one visible window), so

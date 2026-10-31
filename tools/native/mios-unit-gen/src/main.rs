@@ -1,7 +1,9 @@
 // AI-hint: CLI driver for mios-unit-gen rendering systemd unit files from SSOT.
 use mios_unit_gen::{
-    drift_register, project, project_deployment, project_user, render_keybindings, render_units,
-    render_user_units, DeploymentKind,
+    drift_register, import_unit, project, project_deployment, project_user, projection_ceiling,
+    projection_list, strict_without_write_grant,
+    render_keybindings, render_units, render_user_units, unexpandable_placeholders, write_projection,
+    DeploymentKind,
 };
 use std::env;
 use std::fs;
@@ -132,6 +134,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // The inverse: emit the [units.*] declaration that renders a shipped unit,
+    // proven by rendering it back. `--all` covers every undeclared unit plus
+    // every registered (drifting) one -- the file on disk is what boots.
+    if let Some(i) = args.iter().position(|a| a == "--import") {
+        let user = args.iter().any(|a| a == "--user");
+        let ssot = read_ssot(&root);
+        let p = if user { project_user(&root)? } else { project(&root)? };
+        let mut names: Vec<String> = args[i + 1..]
+            .iter()
+            .filter(|a| !a.starts_with("--"))
+            .filter(|a| args.windows(2).all(|w| !(w[0] == "--root" && &w[1] == *a)))
+            .cloned()
+            .collect();
+        if args.iter().any(|a| a == "--all") {
+            names.extend(p.undeclared.iter().cloned());
+            names.extend(p.drifted.iter().cloned());
+            names.sort();
+            names.dedup();
+        }
+        let dir = root.join(if user { "usr/lib/systemd/user" } else { "usr/lib/systemd/system" });
+        let table = if user { "user_units" } else { "units" };
+        let mut failed = 0;
+        for name in &names {
+            let body = fs::read_to_string(dir.join(name))?;
+            match import_unit(&ssot, table, name, &body) {
+                Ok((decl, changes)) => {
+                    if changes {
+                        eprintln!("  RESOLVES     {name}: its placeholders resolve from SSOT; --write rewrites the file");
+                    }
+                    print!("{decl}")
+                }
+                Err(e) => {
+                    eprintln!("  NOT-IMPORTED {e}");
+                    failed += 1;
+                }
+            }
+        }
+        eprintln!(
+            "[mios-unit-gen] imported {} of {} unit(s) into [{table}.*]",
+            names.len() - failed,
+            names.len()
+        );
+        if failed > 0 {
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+
+    // The generator half: write [units.*] (or [user_units.*] with --user) onto
+    // the tree. `--check` is the gate that proves nobody edited the output.
+    if args.iter().any(|a| a == "--write") {
+        let user = args.iter().any(|a| a == "--user");
+        let changed = write_projection(&root, user)?;
+        for name in &changed {
+            println!("  wrote {name}");
+        }
+        println!(
+            "[mios-unit-gen] {} unit(s) written from [{}units.*]",
+            changed.len(),
+            if user { "user_" } else { "" }
+        );
+        return Ok(());
+    }
+
     // A drift check must COMPARE. This one used to render into memory and
     // return; --selftest diffed the tree against a copy of itself.
     if args.iter().any(|a| a == "--check" || a == "--selftest") {
@@ -167,7 +233,82 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             p.undeclared.len()
         );
 
-        if unexpected.is_empty() && stale.is_empty() && p.missing.is_empty() {
+        // Coverage ratchet: a shipped unit or drop-in the SSOT does not declare
+        // is outside the projection entirely. The ceiling only comes down, so a
+        // hand-authored unit fails here instead of widening the hole.
+        let ceiling_key = if args.iter().any(|a| a == "--user") {
+            "max_undeclared_user"
+        } else {
+            "max_undeclared"
+        };
+        let mut coverage_failed = false;
+        match projection_ceiling(&read_ssot(&root), ceiling_key)? {
+            None => {
+                eprintln!("  UNBOUNDED  [unit_projection].{ceiling_key} is unset -- nothing stops an undeclared unit");
+                coverage_failed = true;
+            }
+            Some(max) if p.undeclared.len() > max => {
+                for f in &p.undeclared {
+                    eprintln!("  UNDECLARED {f}  (ships without a [units.*] declaration)");
+                }
+                eprintln!(
+                    "  CEILING    {} undeclared > [unit_projection].{ceiling_key} = {max}: declare the unit, do not raise the ceiling",
+                    p.undeclared.len()
+                );
+                coverage_failed = true;
+            }
+            Some(max) if p.undeclared.len() < max => {
+                eprintln!(
+                    "  CEILING    {} undeclared < [unit_projection].{ceiling_key} = {max}: lower the ceiling so the ground is held",
+                    p.undeclared.len()
+                );
+                coverage_failed = true;
+            }
+            Some(_) => {}
+        }
+
+        // XW51B8MG / 43B32AST at the source: a projected unit may not carry what
+        // systemd leaves unexpanded -- `${X:-d}` anywhere, `${X}` outside Exec*=.
+        let rendered = if args.iter().any(|a| a == "--user") {
+            render_user_units(&read_ssot(&root))?
+        } else {
+            render_units(&read_ssot(&root))?
+        };
+        let mut placeholder_failed = false;
+        for (name, body) in &rendered {
+            for (line, text) in unexpandable_placeholders(body) {
+                eprintln!("  UNEXPANDABLE {name}:{line}  {}  (systemd never expands this; declare it so the projection resolves it)", text.trim());
+                placeholder_failed = true;
+            }
+        }
+
+        // 6S2G69Q2: a ProtectSystem=strict unit granting no writable path is
+        // listed deliberately in [unit_projection].strict_no_write[_user], or
+        // it fails; a listed unit that gained its grant must leave the list.
+        let list_key = if args.iter().any(|a| a == "--user") {
+            "strict_no_write_user"
+        } else {
+            "strict_no_write"
+        };
+        let listed = projection_list(&read_ssot(&root), list_key)?;
+        let strict = strict_without_write_grant(&rendered);
+        let mut strict_failed = false;
+        for u in strict.iter().filter(|u| !listed.contains(u)) {
+            eprintln!("  NO-WRITE     {u}  (ProtectSystem=strict and no ReadWritePaths=/StateDirectory=/...: declare what it writes, or list it in [unit_projection].{list_key})");
+            strict_failed = true;
+        }
+        for u in listed.iter().filter(|u| !strict.contains(u)) {
+            eprintln!("  NO-LONGER    {u}  (grants a writable path or is no longer strict: drop it from [unit_projection].{list_key})");
+            strict_failed = true;
+        }
+
+        if unexpected.is_empty()
+            && stale.is_empty()
+            && !strict_failed
+            && p.missing.is_empty()
+            && !coverage_failed
+            && !placeholder_failed
+        {
             return Ok(());
         }
         for f in &unexpected {
@@ -182,6 +323,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    println!("mios-unit-gen: --check | --list | --render <unit> | blade-dropins | blade-karg | uki-cmdline | cockpit | ipa-enroll | bootc-install [--root DIR] [--toml FILE] [--check]");
+    println!("mios-unit-gen: --check | --write | --import <unit>|--all | --list | --render <unit> [--user] | blade-dropins | blade-karg | uki-cmdline | cockpit | ipa-enroll | bootc-install [--root DIR] [--toml FILE] [--check]");
     Ok(())
 }

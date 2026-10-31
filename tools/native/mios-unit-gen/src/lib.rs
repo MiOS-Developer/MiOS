@@ -739,44 +739,119 @@ pub struct PrivilegedUnitsRoster {
     pub unconfined: Option<Vec<String>>,
 }
 
-/// systemd expands `${VAR}` only in Exec*= command lines. Anywhere else
-/// (Environment=, ListenStream=, ...) a `${MIOS_PORTS_<NAME>}` placeholder
-/// reaches the daemon verbatim, so the projection resolves it from SSOT
-/// [ports] (+ stack_id * 10000) and the shipped unit carries the number. A
-/// name [ports] does not declare is left as written.
-fn resolve_port_placeholders(key: &str, value: &str, ports: Option<&toml::Value>) -> String {
-    let Some(ports) = ports.filter(|_| !key.starts_with("Exec")) else {
+/// systemd expands `${VAR}` only in Exec*= command lines, and `${VAR:-default}`
+/// nowhere at all (it is shell syntax). So the projection resolves, from SSOT:
+///   * `${NAME}` outside Exec*= -- systemd would hand the daemon the literal;
+///   * `${NAME:-default}` ANYWHERE -- systemd never expands it, Exec*= included;
+/// where NAME is `MIOS_PORTS_<key>` / `MIOS_PORT_<key>` ([ports].<key> +
+/// stack_id * 10000) or `MIOS_NETWORK_<key>` ([network].<key>). A bare `${NAME}`
+/// on an Exec*= line stays: that is a runtime reference systemd expands from
+/// the unit's environment. A name the SSOT does not declare is left as written,
+/// and `unexpandable_placeholders` turns what survives into a gate failure.
+fn resolve_port_placeholders(key: &str, value: &str, ssot: Option<&toml::Value>) -> String {
+    let Some(ssot) = ssot else {
         return value.to_owned();
     };
+    let exec = key.starts_with("Exec");
+    let ports = ssot.get("ports");
     let offset = ports
-        .get("stack_id")
+        .and_then(|p| p.get("stack_id"))
         .and_then(|v| {
             v.as_integer()
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
         .unwrap_or(0)
         * 10000;
+    let lookup = |name: &str| -> Option<String> {
+        if let Some(k) = name
+            .strip_prefix("MIOS_PORTS_")
+            .or_else(|| name.strip_prefix("MIOS_PORT_"))
+        {
+            let port = ports?.get(k.to_ascii_lowercase())?.as_integer()?;
+            return Some((port + offset).to_string());
+        }
+        let k = name.strip_prefix("MIOS_NETWORK_")?.to_ascii_lowercase();
+        match ssot.get("network")?.get(k)? {
+            toml::Value::String(s) => Some(s.clone()),
+            toml::Value::Integer(i) => Some(i.to_string()),
+            _ => None,
+        }
+    };
     let mut out = String::with_capacity(value.len());
     let mut rest = value;
-    while let Some(start) = rest.find("${MIOS_PORTS_") {
+    while let Some(start) = rest.find("${") {
         let Some(len) = rest[start..].find('}') else {
             break;
         };
         let placeholder = &rest[start..start + len + 1];
-        let name = placeholder["${MIOS_PORTS_".len()..placeholder.len() - 1]
-            .split(":-")
-            .next()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
+        // `$${...}` is systemd's escaped dollar: a literal, never a placeholder.
+        if rest[..start].ends_with('$') {
+            out.push_str(&rest[..start + len + 1]);
+            rest = &rest[start + len + 1..];
+            continue;
+        }
+        let inner = &placeholder[2..placeholder.len() - 1];
+        let (name, has_default) = match inner.split_once(":-") {
+            Some((n, _)) => (n, true),
+            None => (inner, false),
+        };
         out.push_str(&rest[..start]);
-        match ports.get(&name).and_then(toml::Value::as_integer) {
-            Some(port) => out.push_str(&(port + offset).to_string()),
+        match lookup(name).filter(|_| has_default || !exec) {
+            Some(v) => out.push_str(&v),
             None => out.push_str(placeholder),
         }
         rest = &rest[start + len + 1..];
     }
     out.push_str(rest);
     out
+}
+
+/// What systemd would leave unexpanded in a rendered unit: any `${...:-...}`
+/// (shell syntax, on every line) and any `${...}` outside an Exec*= command
+/// line. Comments are documentation and are skipped; an Exec*= continuation
+/// keeps its Exec-ness. Returns (line number, offending line).
+pub fn unexpandable_placeholders(body: &str) -> Vec<(usize, String)> {
+    let mut found = Vec::new();
+    let mut in_exec = false;
+    let mut continued = false;
+    for (i, line) in body.lines().enumerate() {
+        let t = line.trim_start();
+        if !continued {
+            if t.starts_with('#') || t.starts_with(';') {
+                continue;
+            }
+            in_exec = t.starts_with("Exec");
+        }
+        continued = line.trim_end().ends_with('\\');
+        let mut rest = line;
+        while let Some(start) = rest.find("${") {
+            let tail = &rest[start + 2..];
+            let end = tail.find('}').unwrap_or(tail.len());
+            let inner = &tail[..end];
+            let escaped = rest[..start].ends_with('$');
+            if !escaped && (inner.contains(":-") || !in_exec) {
+                found.push((i + 1, line.to_owned()));
+                break;
+            }
+            rest = &tail[end..];
+        }
+    }
+    found
+}
+
+/// `comment_<anything>` inside a section table: an interior comment block.
+/// The bare `comment` key is the block ABOVE the section header.
+fn is_inline_comment(key: &str) -> bool {
+    key != "comment" && key.starts_with("comment")
+}
+
+/// `Environment#2` -> `Environment`. Only a purely numeric suffix is stripped:
+/// `#` is not legal in a systemd directive name, so nothing real is shadowed.
+fn directive_name(key: &str) -> &str {
+    match key.rsplit_once('#') {
+        Some((name, n)) if !name.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => key,
+    }
 }
 
 /// Render units from SSOT TOML string. Returns map of relative path -> rendered content.
@@ -796,7 +871,7 @@ pub fn render_user_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, Un
 pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
     let root: SsotRoot = toml::from_str(ssot_toml)?;
     let doc: toml::Value = toml::from_str(ssot_toml)?;
-    let ports = doc.get("ports");
+    let ports = Some(&doc);
     let mut rendered = BTreeMap::new();
 
     let unconfined_units: Vec<String> = root
@@ -819,7 +894,8 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
                 fn section_rank(sec: &str) -> (usize, &str) {
                     match sec.to_lowercase().as_str() {
                         "unit" => (0, sec),
-                        "service" | "path" | "timer" | "socket" | "mount" => (1, sec),
+                        "service" | "path" | "timer" | "socket" | "mount" | "automount" | "swap"
+                        | "slice" | "scope" => (1, sec),
                         "install" => (2, sec),
                         _ => (3, sec),
                     }
@@ -856,7 +932,22 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
                             if k == "comment" {
                                 continue;
                             }
-                            existing_keys.insert(k.as_str(), v);
+                            // `comment_<n>` is a comment block INSIDE the
+                            // section, emitted where the table places it, so
+                            // a directive keeps the prose that explains it.
+                            if let (true, Some(c)) = (is_inline_comment(k), v.as_str()) {
+                                out.push_str(c);
+                                if !c.ends_with('\n') {
+                                    out.push('\n');
+                                }
+                                continue;
+                            }
+                            // `Key#<n>`: the n-th run of a directive the unit
+                            // repeats after something else (another key or a
+                            // comment). TOML forbids a duplicate key; systemd
+                            // keeps the order, so the run is its own entry.
+                            let k = directive_name(k);
+                            existing_keys.insert(k, v);
                             match v {
                                 toml::Value::String(s) => {
                                     let s = resolve_port_placeholders(k, s, ports);
@@ -950,23 +1041,379 @@ pub fn drift_register(ssot_toml: &str) -> Result<Vec<String>, UnitGenError> {
         .unwrap_or_default())
 }
 
+fn is_unit_name(name: &str) -> bool {
+    UNIT_SUFFIXES.iter().any(|sfx| name.ends_with(sfx))
+}
+
+/// Top-level units plus their drop-ins (`<unit>.d/<name>.conf`): a drop-in
+/// changes what boots exactly as much as the unit it extends, so leaving it out
+/// of the inventory would let one be hand-authored outside the projection.
 fn shipped_units(unit_dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
     if let Ok(entries) = fs::read_dir(unit_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if path.is_file() {
+                if is_unit_name(name) {
+                    out.push(name.to_string());
+                }
                 continue;
             }
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if UNIT_SUFFIXES.iter().any(|sfx| name.ends_with(sfx)) {
-                    out.push(name.to_string());
+            let Some(unit) = name.strip_suffix(".d") else {
+                continue;
+            };
+            if !path.is_dir() || !is_unit_name(unit) {
+                continue;
+            }
+            if let Ok(dropins) = fs::read_dir(&path) {
+                for d in dropins.flatten() {
+                    let dp = d.path();
+                    if let Some(conf) = dp.file_name().and_then(|n| n.to_str()) {
+                        if dp.is_file() && conf.ends_with(".conf") {
+                            out.push(format!("{name}/{conf}"));
+                        }
+                    }
                 }
             }
         }
     }
     out.sort();
     out
+}
+
+/// A `[unit_projection]` ceiling (`max_drift`, `max_undeclared`, ...), when set.
+pub fn projection_list(ssot_toml: &str, key: &str) -> Result<Vec<String>, UnitGenError> {
+    let root: toml::Value = toml::from_str(ssot_toml)?;
+    Ok(root
+        .get("unit_projection")
+        .and_then(|t| t.get(key))
+        .and_then(toml::Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default())
+}
+
+/// Directives that let a `ProtectSystem=strict` unit write anything at all.
+const WRITE_GRANTS: [&str; 6] = [
+    "ReadWritePaths",
+    "StateDirectory",
+    "RuntimeDirectory",
+    "CacheDirectory",
+    "LogsDirectory",
+    "ConfigurationDirectory",
+];
+
+/// 6S2G69Q2: units whose rendering sets `ProtectSystem=strict` (the whole file
+/// system read-only) and grants no writable path. Each is either genuinely
+/// read-only or a "Read-only file system" failure waiting for its first write,
+/// so `[unit_projection].strict_no_write` must list exactly these -- a new one
+/// fails the gate until its grant is declared or it is listed deliberately.
+pub fn strict_without_write_grant(rendered: &BTreeMap<String, String>) -> Vec<String> {
+    // A unit and its drop-ins are one effective unit: a drop-in may set the
+    // strictness or grant the path.
+    let mut effective: BTreeMap<&str, String> = BTreeMap::new();
+    for (name, body) in rendered {
+        let base = name.split_once(".d/").map_or(name.as_str(), |(u, _)| u);
+        let e = effective.entry(base).or_default();
+        e.push_str(body);
+        e.push('\n');
+    }
+    effective
+        .into_iter()
+        .filter(|(_, body)| {
+            let kv: Vec<(&str, &str)> = body
+                .lines()
+                .filter_map(|l| l.split_once('='))
+                .map(|(k, v)| (k.trim(), v.trim()))
+                .collect();
+            // The last ProtectSystem= wins, as in systemd.
+            kv.iter().rev().find(|(k, _)| *k == "ProtectSystem").is_some_and(|(_, v)| *v == "strict")
+                && !kv.iter().any(|(k, v)| WRITE_GRANTS.contains(k) && !v.is_empty())
+        })
+        .map(|(n, _)| n.to_owned())
+        .collect()
+}
+
+pub fn projection_ceiling(ssot_toml: &str, key: &str) -> Result<Option<usize>, UnitGenError> {
+    let root: toml::Value = toml::from_str(ssot_toml)?;
+    Ok(root
+        .get("unit_projection")
+        .and_then(|t| t.get(key))
+        .and_then(toml::Value::as_integer)
+        .and_then(|n| usize::try_from(n).ok()))
+}
+
+/// Write every declared unit the drift register does not exempt, so the tree
+/// IS the projection rather than a copy someone keeps in step by hand. Returns
+/// the paths whose content changed. A registered (drifting) unit is left alone:
+/// its declaration is the stale side, and the file on disk is what boots.
+pub fn write_projection(root: &Path, user: bool) -> Result<Vec<String>, UnitGenError> {
+    let ssot = fs::read_to_string(root.join("usr/share/mios/mios.toml"))?;
+    let rendered = if user {
+        render_user_units(&ssot)?
+    } else {
+        render_units(&ssot)?
+    };
+    let register = if user { Vec::new() } else { drift_register(&ssot)? };
+    let unit_dir = root.join(if user {
+        "usr/lib/systemd/user"
+    } else {
+        "usr/lib/systemd/system"
+    });
+    let mut changed = Vec::new();
+    for (name, body) in &rendered {
+        if register.contains(name) || name.contains("..") || name.starts_with('/') {
+            continue;
+        }
+        let path = unit_dir.join(name);
+        let mut body = body.clone();
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        if fs::read_to_string(&path).is_ok_and(|cur| cur == body) {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = path.with_extension("mios-unit-gen.tmp");
+        fs::write(&tmp, &body)?;
+        fs::rename(&tmp, &path)?;
+        changed.push(name.clone());
+    }
+    Ok(changed)
+}
+
+/// A TOML key: bare when it may be, quoted otherwise (`"Environment#2"`).
+fn toml_key(key: &str) -> String {
+    if !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        key.to_owned()
+    } else {
+        format!("\"{}\"", key.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+/// A TOML string: a literal string when the value allows one (no quote, no
+/// control character), so an ExecStart reads as written; else a basic string.
+fn toml_string(value: &str) -> String {
+    if !value.contains('\'') && !value.chars().any(char::is_control) {
+        return format!("'{value}'");
+    }
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[derive(Default)]
+struct ImportSection {
+    name: String,
+    /// The block above the header (the renderer's section `comment`).
+    above: Vec<String>,
+    /// (toml key, values, is_comment) in file order.
+    entries: Vec<(String, Vec<String>, bool)>,
+}
+
+/// The inverse of `render_units` for ONE shipped unit or drop-in: the
+/// `[<table>."<name>".<Section>]` declaration that renders `body` again.
+/// Comment blocks become `comment` (above a header) and `comment_<n>` (inside a
+/// section); a directive repeated after something else becomes `Key#<n>`. The
+/// result is proven, not assumed: rendered on its own it must give back `body`
+/// (the bool is true when the SSOT's `[ports]`/`[network]` then resolve a
+/// placeholder, i.e. the projection rewrites the file), and a unit the renderer
+/// cannot reproduce (a header
+/// with no blank line above it, `Key = value` spacing, a duplicated section,
+/// an unresolved port placeholder) is an error naming the first difference.
+pub fn import_unit(
+    ssot_toml: &str,
+    table: &str,
+    name: &str,
+    body: &str,
+) -> Result<(String, bool), UnitGenError> {
+    let fail = |why: String| UnitGenError::GoldenMaster(format!("{name}: {why}"));
+    let text = body.replace("\r\n", "\n");
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    while lines.last().is_some_and(|l| l.trim().is_empty()) {
+        lines.pop();
+    }
+    let mut sections: Vec<ImportSection> = Vec::new();
+    let mut pending: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        i += 1;
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            pending.push(if trimmed.is_empty() { String::new() } else { line.to_owned() });
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let sec_name = trimmed[1..trimmed.len() - 1].to_owned();
+            if sections.iter().any(|s| s.name == sec_name) {
+                return Err(fail(format!("[{sec_name}] appears twice")));
+            }
+            let mut above = std::mem::take(&mut pending);
+            if let Some(prev) = sections.last_mut() {
+                // The renderer puts exactly one blank line before a header.
+                // Lines before the first blank belong to the previous section.
+                match above.iter().position(String::is_empty) {
+                    Some(blank) => {
+                        let tail: Vec<String> = above.drain(..blank).collect();
+                        if !tail.is_empty() {
+                            prev.entries.push((String::new(), tail, true));
+                        }
+                        above.remove(0);
+                    }
+                    None => {
+                        return Err(fail(format!(
+                            "[{sec_name}] has no blank line above it (the projection always emits one)"
+                        )))
+                    }
+                }
+            }
+            sections.push(ImportSection {
+                name: sec_name,
+                above,
+                entries: Vec::new(),
+            });
+            continue;
+        }
+        let Some(sec) = sections.last_mut() else {
+            return Err(fail(format!("directive before any section: {line:?}")));
+        };
+        let Some((key, first)) = line.split_once('=') else {
+            return Err(fail(format!("not a directive: {line:?}")));
+        };
+        if key.is_empty() || key != key.trim() {
+            return Err(fail(format!("directive key {key:?} is not written as Key=")));
+        }
+        let mut value = first.to_owned();
+        while value.ends_with('\\') && i < lines.len() {
+            value.push('\n');
+            value.push_str(lines[i]);
+            i += 1;
+        }
+        if !pending.is_empty() {
+            sec.entries.push((String::new(), std::mem::take(&mut pending), true));
+        }
+        match sec.entries.last_mut() {
+            Some((k, vals, false)) if directive_name(k) == key => vals.push(value),
+            _ => {
+                let used = sec
+                    .entries
+                    .iter()
+                    .filter(|(k, _, c)| !c && directive_name(k) == key)
+                    .count();
+                let k = if used == 0 {
+                    key.to_owned()
+                } else {
+                    format!("{key}#{}", used + 1)
+                };
+                sec.entries.push((k, vec![value], false));
+            }
+        }
+    }
+    if !pending.is_empty() {
+        match sections.last_mut() {
+            Some(sec) => sec.entries.push((String::new(), pending, true)),
+            None => return Err(fail("no section at all".into())),
+        }
+    }
+
+    let mut out = String::new();
+    for sec in &sections {
+        out.push_str(&format!(
+            "[{table}.{}.{}]\n",
+            toml_key(name),
+            toml_key(&sec.name)
+        ));
+        if !sec.above.is_empty() {
+            out.push_str(&format!("comment = {}\n", toml_string(&comment_block(&sec.above))));
+        }
+        let mut n = 0;
+        for (key, vals, is_comment) in &sec.entries {
+            if *is_comment {
+                n += 1;
+                out.push_str(&format!("comment_{n} = {}\n", toml_string(&comment_block(vals))));
+            } else if vals.len() == 1 {
+                out.push_str(&format!("{} = {}\n", toml_key(key), toml_string(&vals[0])));
+            } else {
+                let items: Vec<String> = vals.iter().map(|v| toml_string(v)).collect();
+                out.push_str(&format!("{} = [{}]\n", toml_key(key), items.join(", ")));
+            }
+        }
+        out.push('\n');
+    }
+
+    // Prove it. Rendered WITHOUT the SSOT's tables the declaration must give
+    // back the file exactly (structure, comments, order); rendered WITH them
+    // it may differ only where a placeholder resolves -- the projection then
+    // owns that difference, and `--write` puts the resolved unit on disk.
+    let mut doc: toml::Value = toml::from_str(&out)
+        .map_err(|e| fail(format!("generated declaration does not parse: {e}")))?;
+    let tbl = doc
+        .as_table_mut()
+        .ok_or_else(|| fail("declaration is not a table".into()))?;
+    if table != "units" {
+        let v = tbl.remove(table).unwrap_or(toml::Value::Table(Default::default()));
+        tbl.insert("units".into(), v);
+    }
+    let identity = render_units(&toml::to_string(&doc).map_err(|e| fail(e.to_string()))?)?;
+    let got = identity.get(name).map(String::as_str).unwrap_or("");
+    let (want, have) = (normalize(&text), normalize(got));
+    if want != have {
+        let line = want
+            .lines()
+            .zip(have.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or_else(|| want.lines().count().min(have.lines().count()));
+        return Err(fail(format!(
+            "declaration does not render the file (first difference at line {}: file {:?}, rendered {:?})",
+            line + 1,
+            want.lines().nth(line).unwrap_or(""),
+            have.lines().nth(line).unwrap_or("")
+        )));
+    }
+    let ssot: toml::Value = toml::from_str(ssot_toml)?;
+    let tbl = doc.as_table_mut().expect("checked above");
+    for t in ["ports", "network"] {
+        if let Some(v) = ssot.get(t) {
+            tbl.insert(t.into(), v.clone());
+        }
+    }
+    let resolved = render_units(&toml::to_string(&doc).map_err(|e| fail(e.to_string()))?)?;
+    let changes = resolved
+        .get(name)
+        .is_none_or(|r| normalize(r) != want);
+    Ok((out, changes))
+}
+
+/// A comment block as the renderer re-emits it: it appends a newline only when
+/// the value lacks one, so a block ending in a blank line keeps every newline
+/// and one ending in text drops its last (the renderer's) newline.
+fn comment_block(lines: &[String]) -> String {
+    let mut s: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    if lines.last().is_some_and(|l| !l.is_empty()) {
+        s.pop();
+    }
+    s
 }
 
 /// Render `[units.*]` from the SSOT at `root` and compare it to the shipped tree.
@@ -1046,7 +1493,7 @@ mod tests {
         assert!(tmux.contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
         assert!(tmux.contains("'send-keys -M' \"if-shell -F '#{e|<:#{client_height},"));
         assert!(tmux.contains("mios-menu-pane=display-menu"));
-        assert!(tmux.contains("\"mios-menu-root=display-menu -T MiOS -x "));
+        assert!(tmux.contains("\"mios-menu-root=display-menu -T \\\"#[align=centre]MiOS\\\" -x "));
         // The master toggle must disable menu interception as well as mouse capture.
         let mut doc: toml::Value = toml::from_str(ssot).unwrap();
         doc["keybindings"]["mouse"] = toml::Value::Boolean(false);
@@ -1250,6 +1697,102 @@ Environment = ["A=${MIOS_PORTS_NODE:-8650}/v1", "B=${MIOS_PORTS_ABSENT:-9}", "C=
             "[Service]\nExecStart=/usr/bin/x --port ${MIOS_PORTS_NODE}\n\
              Environment=A=18650/v1\nEnvironment=B=${MIOS_PORTS_ABSENT:-9}\nEnvironment=C=${MIOS_OTHER}\n"
         );
+    }
+
+    /// XW51B8MG: `${X:-d}` is shell syntax systemd never expands, Exec*= lines
+    /// included, so the projection resolves it everywhere; `[network]` and the
+    /// Law 9 singular `MIOS_PORT_` resolve too; `$${...}` stays a literal.
+    #[test]
+    fn test_default_forms_resolve_on_exec_lines_and_network_keys() {
+        let toml_str = r#"
+[ports]
+stack_id = 0
+agent_pipe = 8700
+igpu = 11436
+[network]
+loopback = "127.0.0.1"
+[units."s.socket".Socket]
+ListenStream = "${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_AGENT_PIPE:-8700}"
+[units."s.service".Service]
+ExecStart = "/usr/bin/socat TCP:${MIOS_NETWORK_LOOPBACK:-x}:${MIOS_PORTS_AGENT_PIPE:-8700} ${MIOS_RUNTIME}"
+Environment = ["H=${MIOS_PORT_IGPU:-11436}", "E=$${MIOS_PORTS_AGENT_PIPE}"]
+"#;
+        let out = render_units(toml_str).unwrap();
+        assert_eq!(out["s.socket"], "[Socket]\nListenStream=127.0.0.1:8700\n");
+        assert_eq!(
+            out["s.service"],
+            "[Service]\nExecStart=/usr/bin/socat TCP:127.0.0.1:8700 ${MIOS_RUNTIME}\n\
+             Environment=H=11436\nEnvironment=E=$${MIOS_PORTS_AGENT_PIPE}\n"
+        );
+        for body in out.values() {
+            assert!(unexpandable_placeholders(body).is_empty(), "{body}");
+        }
+    }
+
+    /// The gate half: what systemd leaves unexpanded is named with its line;
+    /// an Exec runtime reference, a comment and an escaped `$$` are not.
+    #[test]
+    fn test_unexpandable_placeholders_names_each_survivor() {
+        let body = "# ${DOC:-ok}\n[Service]\nExecStart=/bin/x ${RUNTIME} \\\n  --p ${MIOS_PORTS_X:-1}\n\
+                    Environment=A=${MIOS_ABSENT}\nEnvironment=B=$${LITERAL}\nExecStop=/bin/y ${Z}\n";
+        let found: Vec<usize> = unexpandable_placeholders(body).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(found, vec![4, 5]);
+    }
+
+    /// 6S2G69Q2: strict with no grant is named; a grant in the unit or in its
+    /// drop-in clears it; an empty ReadWritePaths= (a reset) grants nothing.
+    #[test]
+    fn test_strict_without_write_grant() {
+        let r = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let units = r(&[
+            ("a.service", "[Service]\nProtectSystem=strict\n"),
+            ("b.service", "[Service]\nProtectSystem=strict\nStateDirectory=b\n"),
+            ("c.service", "[Service]\nProtectSystem=strict\n"),
+            ("c.service.d/10-rw.conf", "[Service]\nReadWritePaths=/var/lib/c\n"),
+            ("d.service", "[Service]\nProtectSystem=strict\nReadWritePaths=\n"),
+            ("e.service", "[Service]\nProtectSystem=full\n"),
+        ]);
+        assert_eq!(strict_without_write_grant(&units), vec!["a.service", "d.service"]);
+    }
+
+    /// The importer is the renderer's inverse: comments above and inside
+    /// sections, repeated runs, continuations and blank-line gaps all survive.
+    #[test]
+    fn test_import_round_trips_layout() {
+        let unit = "# AI-hint: x\n\n[Unit]\nDescription=x\nAfter=a.service\nAfter=b.service\n# why c\nAfter=c.service\n\n\n# above service\n[Service]\nExecStart=/bin/x \\\n  --flag 'q'\nEnvironment=\n# tail\n\n[Install]\nWantedBy=multi-user.target\n";
+        let (decl, changes) = import_unit("", "units", "x.service", unit).unwrap();
+        assert!(!changes);
+        assert!(decl.contains("After = ['a.service', 'b.service']"), "{decl}");
+        assert!(decl.contains("\"After#2\" = 'c.service'"), "{decl}");
+        let rendered = render_units(&decl).unwrap();
+        assert_eq!(rendered["x.service"], unit);
+    }
+
+    /// Negative control: layouts the renderer cannot emit are refused, never
+    /// silently imported as something else.
+    #[test]
+    fn test_import_refuses_what_it_cannot_reproduce() {
+        for bad in [
+            "[Unit]\nA=1\n[Service]\nB=2\n",
+            "[Service]\nEnvironment = X=1\n",
+            "[Unit]\nA=1\n\n[Unit]\nB=2\n",
+            "A=1\n",
+        ] {
+            assert!(import_unit("", "units", "bad.service", bad).is_err(), "{bad:?}");
+        }
+        let (_, changes) = import_unit(
+            "[ports]\nhermes = 8720\n",
+            "units",
+            "p.service",
+            "[Service]\nEnvironment=PORT=${MIOS_PORTS_HERMES:-8720}\n",
+        )
+        .unwrap();
+        assert!(changes, "a resolving placeholder must be reported as a rewrite");
     }
 
     /// `normalize` must forgive line endings and a trailing newline, and NOTHING

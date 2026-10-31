@@ -37,7 +37,12 @@ pub fn normalize_path(p: &Path) -> PathBuf {
     PathBuf::from(normalize_path_str(&p.to_string_lossy()))
 }
 
-fn _frags(dirpath: &Path) -> Vec<PathBuf> {
+/// The `*.toml` drop-ins of `dirpath`, sorted by basename (systemd `.d`
+/// ordering); empty when the directory is absent. A hidden file is never a
+/// layer: systemd skips dotfiles in a `.d` directory and mios_toml.py's glob
+/// never matched them, so an editor's `.50-x.toml.swp`-style leftover named
+/// `.x.toml` outranked the operator's fragments here alone (Law 13).
+pub fn fragments(dirpath: &Path) -> Vec<PathBuf> {
     if !dirpath.exists() || !dirpath.is_dir() {
         return Vec::new();
     }
@@ -45,7 +50,8 @@ fn _frags(dirpath: &Path) -> Vec<PathBuf> {
     if let Ok(read_dir) = fs::read_dir(dirpath) {
         for entry in read_dir.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
+            let hidden = entry.file_name().to_string_lossy().starts_with('.');
+            if !hidden && path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
                 entries.push(normalize_path(&path));
             }
         }
@@ -153,17 +159,17 @@ pub fn resolve_layer_paths(root_dir: Option<&Path>) -> Vec<PathBuf> {
     if vendor.exists() {
         paths.push(vendor);
     }
-    paths.extend(_frags(&vendor_d));
+    paths.extend(fragments(&vendor_d));
 
     if host.exists() {
         paths.push(host);
     }
-    paths.extend(_frags(&host_d));
+    paths.extend(fragments(&host_d));
 
     if user.exists() {
         paths.push(user);
     }
-    paths.extend(_frags(&user_d));
+    paths.extend(fragments(&user_d));
 
     paths
 }
@@ -176,11 +182,11 @@ pub fn resolve_layer_paths_below_user(root_dir: Option<&Path>) -> Vec<PathBuf> {
     if vendor.exists() {
         paths.push(vendor);
     }
-    paths.extend(_frags(&vendor_d));
+    paths.extend(fragments(&vendor_d));
     if host.exists() {
         paths.push(host);
     }
-    paths.extend(_frags(&host_d));
+    paths.extend(fragments(&host_d));
     paths
 }
 
@@ -269,6 +275,21 @@ mod tests {
         let (vendor, host, vendor_d) = unrooted_defaults(false);
         assert_eq!(vendor, "usr/share/mios/mios.toml");
         assert!(Path::new(&host).is_absolute() && Path::new(&vendor_d).is_absolute());
+    }
+
+    #[test]
+    fn hidden_and_foreign_entries_are_never_layers() {
+        let dir = tempdir().unwrap();
+        for name in ["10-a.toml", "9-b.toml", ".hidden.toml", ".99-late.toml", "notes.txt", "x.toml.bak", "X.TOML", "A.toml"] {
+            fs::write(dir.path().join(name), "").unwrap();
+        }
+        fs::create_dir(dir.path().join("dir.toml")).unwrap();
+        let names: Vec<String> = fragments(dir.path())
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["10-a.toml", "9-b.toml", "A.toml"]);
+        assert!(fragments(&dir.path().join("absent.d")).is_empty());
     }
 
     #[test]

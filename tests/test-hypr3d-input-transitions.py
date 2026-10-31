@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Static + series controls for hypr3d-mios-input-transitions.patch: leaving the Hypr3D room always hands the keyboard to a window (the room's exit focus, else the 2D owner saved at entry, else the newest still-shown window in the focus history, else the newest window on the room monitor; never under a session lock). The pre-fix patch (exit focus only) is the negative control.
-# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch, usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d].patches, tests/test-hypr3d-input-transitions-live.py
+# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch, usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d], tests/test-hypr3d-input-transitions-live.py
 # AI-functions: Patch, Upstream
 # Tier 1 needs only the tree. Tier 2 (MIOS_H3D_UPSTREAM = a checkout of the current upstream HEAD) applies the whole SSOT
 # series and inspects the patched deactivate3D/enter3D; the live key-delivery proof is the opt-in live test.

@@ -1,0 +1,20 @@
+# AI-hint: Oneshot, read-only: records this boot's fbcon / framebuffer / DRM driver order and the console-map verdict as one JSON line in the journal.
+# AI-related: tools/native/mios-gen/src/gpu_topology.rs (boot-display-report), usr/share/mios/mios.toml [desktop.hyprland.hardware_profiles], usr/share/doc/mios/desktop-gpu-routing.md
+[Unit]
+Description=MiOS boot display report (fbcon, framebuffers, DRM order)
+After=systemd-udev-settle.service systemd-modules-load.service greetd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mios-gen boot-display-report --root /
+StandardOutput=journal
+CapabilityBoundingSet=CAP_SYSLOG CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+DevicePolicy=closed
+DeviceAllow=/dev/kmsg r
+
+[Install]
+WantedBy=multi-user.target

@@ -926,6 +926,14 @@ class trs_TestProfileRetired(unittest.TestCase):
             out = trs_mod.rs_check_profile_retired(trs_data(), tmp)
             self.assertTrue(any("MIOS_PROFILE_ROLE" in v for v in out))
 
+    def test_the_ssot_keep_list_naming_a_retired_var_fails(self):
+        d = trs_data()
+        d["generation"] = {"walk": {"emit_keep": ["MIOS_AI_ENDPOINT", "MIOS_PROFILE_FEATURES"]}}
+        out = trs_mod.rs_check_profile_retired(d, trs__NOROOT)
+        self.assertTrue(any("[generation.walk].emit_keep" in v and "MIOS_PROFILE_FEATURES" in v for v in out))
+        d["generation"]["walk"]["emit_keep"] = ["MIOS_AI_ENDPOINT"]
+        self.assertEqual(trs_mod.rs_check_profile_retired(d, trs__NOROOT), [])
+
 class trs_TestNoHardcodedRoles(unittest.TestCase):
     def test_a_literal_archetype_in_blade_code_fails(self):
         import tempfile

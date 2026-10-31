@@ -2,6 +2,8 @@
 // AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml, tools/native/mios-launch, tools/native/mios-agent-relay, usr/libexec/mios/mios-mcp-server, tools/native/mios-resolver
 
 pub mod dashboard;
+#[cfg(unix)]
+pub mod wayland_fd;
 pub mod host_tmux {
     use std::fs::{self, OpenOptions};
     use std::io::Write;
@@ -269,6 +271,43 @@ pub mod process {
         lock.lock()
             .map_err(|e| ProcessError::LockFailed(e.to_string()))?;
         Ok(lock)
+    }
+
+    #[cfg(unix)]
+    static STOP_SIGNAL_TARGET: std::sync::atomic::AtomicPtr<std::sync::atomic::AtomicBool> =
+        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+    #[cfg(unix)]
+    extern "C" fn on_stop_signal(_: libc::c_int) {
+        let ptr = STOP_SIGNAL_TARGET.load(std::sync::atomic::Ordering::SeqCst);
+        if !ptr.is_null() {
+            unsafe {
+                (*ptr).store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Registers SIGTERM and SIGINT to store true into the provided AtomicBool.
+    #[cfg(unix)]
+    pub fn register_stop_signals(stop: &'static std::sync::atomic::AtomicBool) {
+        STOP_SIGNAL_TARGET.store(stop as *const _ as *mut _, std::sync::atomic::Ordering::SeqCst);
+        unsafe {
+            libc::signal(libc::SIGTERM, on_stop_signal as *const () as libc::sighandler_t);
+            libc::signal(libc::SIGINT, on_stop_signal as *const () as libc::sighandler_t);
+        }
+    }
+
+    /// Configures PR_SET_PDEATHSIG on Linux so the child process receives the given signal when the parent dies.
+    #[cfg(unix)]
+    pub fn set_pdeathsig(cmd: &mut std::process::Command, sig: i32) -> &mut std::process::Command {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::prctl(libc::PR_SET_PDEATHSIG, sig as libc::c_ulong);
+                Ok(())
+            });
+        }
+        cmd
     }
 }
 pub mod socket {
@@ -736,6 +775,8 @@ pub mod tmux_theme;
 pub use process::{
     configure_hidden, is_hidden_flag, workspace_lock, ProcessError, CREATE_NO_WINDOW,
 };
+#[cfg(unix)]
+pub use process::{register_stop_signals, set_pdeathsig};
 pub use socket::{
     check_socket_path_length, find_active_socket, find_active_socket_required, owned_path,
     socket_candidates, validate_workspace_socket, verify_socket_owner, SocketError,

@@ -15,6 +15,8 @@ mod shaderglass;
 mod framerate;
 #[cfg(target_os = "linux")]
 mod sessions;
+#[cfg(target_os = "linux")]
+mod launcher;
 use miosd::fhs_sync;
 use miosd::native_generator;
 use miosd::rde;
@@ -477,6 +479,12 @@ enum Commands {
         /// Print the discovered nodes and sessions as JSON instead of opening the selector
         #[arg(long)]
         list: bool,
+    },
+    /// The tmux-os launcher: one organised popup for apps, TUIs, running instances and the tmux-os actions ([keybindings.tmux.launcher])
+    #[cfg(target_os = "linux")]
+    Launcher {
+        #[command(subcommand)]
+        action: launcher::LauncherCommand,
     },
     /// Real application menus of the focused window (GTK org.gtk.Menus + dbusmenu registrar)
     #[cfg(target_os = "linux")]
@@ -1768,6 +1776,13 @@ async fn main() {
         Commands::Sessions { root, list } => {
             if let Err(error) = sessions::run(std::path::Path::new(root), *list) {
                 eprintln!("[miosd] sessions: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        Commands::Launcher { action } => {
+            if let Err(error) = launcher::run(action) {
+                eprintln!("[miosd] launcher: {error}");
                 std::process::exit(1);
             }
         }

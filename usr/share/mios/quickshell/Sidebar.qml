@@ -1,8 +1,8 @@
 // AI-hint: MiOS dock scope: the app dock (always shown; auto-hidden under a fullscreen window, revealed
 // over it on the overlay layer from the bottom edge when [theme.shell].dock_fullscreen_reveal; optional
-// auto-hide via DockHotZone when [theme.shell].dock_autohide = true), and the app drawer, which
-// is the dock surface itself morphing (width, height, radius) out of the dock into the drawer -- the
-// full glass pane size when drawer_full_pane, else the drawer_*_fraction size -- and back on close. Tiles come only from real desktop
+// auto-hide via DockHotZone when [theme.shell].dock_autohide = true), and the expanded dock (DockExpanded.qml): the
+// dock surface growing UPWARD out of its bar at the bar's own width to [desktop.dock] expand_* (never the whole
+// display), with targets, window previews, apps and the nested on-screen keyboard toggle. Tiles come only from real desktop
 // entries, running toplevels, and minimized windows on special:minimized (DockLamp.qml). Every size/behaviour knob is SSOT [theme.shell] via Theme.qml.
 // On a mobile output ([desktop.mobile], Mobile.qml) the dock never auto-hides: it always reserves its
 // row, so the full-size window ends above it and the dock never overlaps it. Mobile.uiScale(screen.name)
@@ -15,10 +15,12 @@
 // minimize/restore clicks through the feature-detected hl.plugin.mios_lamp dispatchers.
 // AI-related: usr/share/mios/mios.toml [theme.shell] [desktop.mobile] [desktop.hyprland.lamp], usr/share/mios/quickshell/Theme.qml,
 // usr/share/mios/quickshell/Mobile.qml, usr/share/mios/quickshell/Glass.qml, usr/share/mios/quickshell/DockLamp.qml,
-// usr/share/mios/quickshell/DockHotZone.qml, tests/test-mios-lamp.py
+// usr/share/mios/quickshell/DockHotZone.qml, usr/share/mios/quickshell/DockExpanded.qml, usr/share/mios/quickshell/DockConfig.qml,
+// usr/share/mios/mios.toml [desktop.dock], tools/native/mios-gen/src/dock.rs, tests/test-mios-lamp.py, tests/test-dock-hud.py
 import QtQuick
 import Quickshell as QS
 import Quickshell.Hyprland
+import Quickshell.Io
 import Quickshell.Wayland
 
 QS.Scope {
@@ -192,6 +194,53 @@ QS.Scope {
         shellState.drawerOpen = false
     }
 
+    // ---- the on-screen keyboard nested in the expanded dock ([desktop.dock.osk]) ------------------------------------
+    // A toggle in the expanded dock; the choice is remembered per device (output name) in the user state file
+    // ($XDG_STATE_HOME/mios/dock-state.json -- user tier, never the vendor SSOT). Default per output: the SSOT `show`
+    // policy (expanded, and touch/mobile outputs).
+    readonly property string outputName: screen ? screen.name : ""
+    property var dockState: ({})
+    readonly property bool oskWanted: {
+        const per = (dockState.osk || {})[outputName]
+        if (typeof per === "boolean") return per
+        return DockConfig.oskOnExpand || (DockConfig.oskOnTouch && root.mobile)
+    }
+    function setOskWanted(on) {
+        const next = JSON.parse(JSON.stringify(dockState || {}))
+        next.osk = next.osk || {}
+        next.osk[outputName] = !!on
+        dockState = next
+        stateFile.setText(JSON.stringify(next, null, 1) + "\n")
+    }
+    FileView {
+        id: stateFile
+        path: (QS.Quickshell.env("XDG_STATE_HOME") || (QS.Quickshell.env("HOME") + "/.local/state")) + "/mios/dock-state.json"
+        atomicWrites: true
+        printErrors: false
+        preload: true
+        onLoaded: { try { root.dockState = JSON.parse(text()) || ({}) } catch (e) { root.dockState = ({}) } }
+    }
+    // The keyboard runs only while the dock is expanded with the toggle on, placed by `mios-gen dock osk` inside the
+    // panel: the dock's width, osk height_px tall, its bottom edge on the dock bar. Collapsing the dock stops it.
+    Process {
+        id: oskProc
+        running: DockConfig.oskEnabled && root.oskWanted && dock.expanded && dock.drawerProgress >= 1
+        command: [DockConfig.backend, "dock", "osk",
+                  "--width", String(Math.round(dock.width)),
+                  "--height", String(Math.round(DockConfig.oskHeight * dock.ui)),
+                  "--bottom", String(Math.round((Glass.gap + theme.dockHeight) * dock.ui))]
+            .concat(QS.Quickshell.env("MIOS_DOCK_OSK_PRIVATE_BUS") === "1" ? ["--private-bus"] : [])
+            .concat(["--force-show"])   // the toggle is on: shown, not waiting for a text field
+    }
+    function openAppMenu(entry, item) {
+        const pt = item.mapToItem(null, item.width / 2, 0)
+        const winLeft = Math.round((dock.screen.width - dock.width) / 2)
+        const winTop = Math.round(dock.screen.height - dock.margins.bottom - dock.height)
+        dockPopups.openContextMenu({ entry: entry, appId: entry.id, title: entry.name, icon: entry.icon,
+                                     windows: root.windowsForEntry(entry), rect: dock.rectForEntry(entry), sourceKind: "icon",
+                                     screenX: winLeft + pt.x, screenY: winTop + pt.y })
+    }
+
     DockHotZone {
         screen: root.screen
         theme: root.theme
@@ -261,21 +310,12 @@ QS.Scope {
         }
 
         property real drawerProgress: expanded ? 1 : 0
-        // Full pane: the area under the top bar inset by drawer_pane_margin_px, down to the dock's own edge margin.
-        property int drawerWidth: root.paneDrawer ? screenW - 2 * theme.drawerPaneMargin
-                                                  : Math.round(screenW * theme.drawerWidthFraction)
-        property int drawerHeight: root.paneDrawer
-            ? screenH - (theme.topHeight + 2 * Glass.gap) - theme.drawerPaneMargin - Glass.gap
-            : Math.round(screenH * theme.drawerHeightFraction)
         // Glass parity (Glass.qml): the dock is the window-control tab's material -- [desktop.hyprland.hyprbars]
         // pill_palette at pill_alpha over the compositor's hyprglass layer glass -- morphing to the drawer's
         // [theme.shell] drawer_fill_opacity_pct as it opens.
         property real fillOpacity: Glass.fillAlpha + ((root.paneDrawer ? theme.drawerOpacity : Glass.fillAlpha) - Glass.fillAlpha) * drawerProgress
         Behavior on drawerProgress {
-            NumberAnimation {
-                duration: (dock.theme.topbar && dock.theme.topbar.popup_ms !== undefined) ? dock.theme.topbar.popup_ms : 200
-                easing.type: Easing.OutCubic
-            }
+            NumberAnimation { duration: DockConfig.expandMs; easing.type: Easing.OutCubic }
         }
         // "mios-dock-remote" where [desktop.mobile.remote_effects] applies (cheaper hyprglass preset, same look).
         WlrLayershell.namespace: Mobile.layerNamespace("mios-dock", root.screen ? root.screen.name : "")
@@ -284,10 +324,13 @@ QS.Scope {
         anchors.bottom: true
         margins.bottom: Math.round(Glass.gap * ui)
         visible: !reserveRebuild && ((root.revealed && (!root.fullscreen || root.fullscreenReveal)) || expanded || drawerProgress > 0)
-        implicitWidth: Math.round(ui * Math.min(screenW - 2 * Glass.gap,
-                              tiles.implicitWidth + 2 * Glass.gap +
-                              (drawerWidth - tiles.implicitWidth - 2 * Glass.gap) * drawerProgress))
-        implicitHeight: Math.round(ui * (theme.dockHeight + (drawerHeight - theme.dockHeight) * drawerProgress))
+        // Expanding keeps the bar's width ([desktop.dock].expand_min_width_px floor) and grows the panel upward from the
+        // bar to DockConfig.expandedHeight (an SSOT fraction of the output, clamped, never past the top bar).
+        readonly property real barWidth: Math.min(screenW - 2 * Glass.gap, tiles.implicitWidth + 2 * Glass.gap)
+        readonly property real expandedWidth: Math.min(screenW - 2 * Glass.gap, Math.max(barWidth, DockConfig.expandMinWidth))
+        readonly property real expandedHeight: DockConfig.expandedHeight(screenH, theme.topHeight + 4 * Glass.gap)
+        implicitWidth: Math.round(ui * (barWidth + (expandedWidth - barWidth) * drawerProgress))
+        implicitHeight: Math.round(ui * (theme.dockHeight + (expandedHeight - theme.dockHeight) * drawerProgress))
         // Windows sit above the dock; the drawer morph overlays them (the zone never grows, so nothing reflows).
         // Auto-hide reserves nothing here: DockHotZone holds one edge margin so windows stop where the top gap does.
         // EdgeReveal's reserved-rows guard re-asserts the zone (reserveNudge, reserveRebuild) when the compositor lost it.
@@ -410,7 +453,8 @@ QS.Scope {
         // once the morph finishes: armed mid-resize it cleared at once and the drawer never opened.
         HyprlandFocusGrab {
             windows: [dock]
-            active: dock.expanded && dock.drawerProgress >= 1
+            // While the nested keyboard is up its taps land on another client (stevia): they must not close the dock.
+            active: dock.expanded && dock.drawerProgress >= 1 && !oskProc.running
             onCleared: root.shellState.drawerOpen = false
         }
 
@@ -430,299 +474,25 @@ QS.Scope {
                 Keys.onEscapePressed: root.shellState.drawerOpen = false
                 HoverHandler { onHoveredChanged: root.dockHovered = hovered }
 
-                Column {
-                    anchors.fill: parent
-                    anchors.margins: Glass.gap
-                    spacing: Glass.gap
+                // Expanded: the panel grows upward out of the bar at the bar's width (DockExpanded.qml).
+                DockExpanded {
+                    id: expandedPanel
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.bottom: tiles.top
+                    anchors.leftMargin: Glass.gap
+                    anchors.rightMargin: Glass.gap
+                    anchors.topMargin: Glass.gap
                     visible: dock.drawerProgress > 0
                     opacity: dock.drawerProgress
-                    TextInput {
-                        id: search
-                        width: parent.width
-                        height: dock.theme.appIcon
-                        color: dock.theme.fg
-                        selectionColor: dock.theme.accent
-                        selectedTextColor: dock.theme.fg
-                        font.family: dock.theme.fontFamily
-                        clip: true
-                        Text {
-                            anchors.fill: parent
-                            visible: !search.text && !search.activeFocus
-                            text: "Search installed applications"
-                            color: dock.theme.muted
-                            font: search.font
-                        }
-                        Keys.onEscapePressed: root.shellState.drawerOpen = false
-                        onAccepted: if (appGrid.count > 0) root.launch(appGrid.model[0], null)
-                    }
-
-                    // Starred / Favourites bar (shown when not filtering by search and at least 1 app is starred, or in reorder mode)
-                    Column {
-                        id: favouritesSection
-                        width: parent.width
-                        spacing: Glass.gap / 2
-                        visible: !search.text && (root.starredApplications.length > 0 || DockLamp.reorderMode)
-
-                        Row {
-                            width: parent.width
-                            spacing: Glass.gap
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "★ Starred / Favourites"
-                                color: dock.theme.cursor
-                                font.family: dock.theme.fontFamily
-                                font.pixelSize: dock.theme.smallFontSize
-                                font.bold: true
-                            }
-                            GlassSurface {
-                                visible: DockLamp.reorderMode
-                                height: Glass.control + Glass.inset
-                                width: doneReorderLabel.implicitWidth + Glass.bar
-                                color: doneReorderMouse.containsMouse
-                                    ? dock.theme.withAlpha(dock.theme.success, dock.theme.selectionOpacity)
-                                    : dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity)
-                                Text {
-                                    id: doneReorderLabel
-                                    anchors.centerIn: parent
-                                    text: "✓ Done Re-organizing"
-                                    color: dock.theme.fg
-                                    font.family: dock.theme.fontFamily
-                                    font.pixelSize: dock.theme.smallFontSize
-                                }
-                                MouseArea {
-                                    id: doneReorderMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: DockLamp.reorderMode = false
-                                }
-                            }
-                        }
-
-                        Row {
-                            id: favouritesRow
-                            width: parent.width
-                            height: root.starredApplications.length > 0 ? dock.theme.appTile : Glass.bar
-                            spacing: Glass.gap
-
-                            Text {
-                                visible: root.starredApplications.length === 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "Right-click any app to Star / Favourite or Pin to Dock"
-                                color: dock.theme.muted
-                                font.family: dock.theme.fontFamily
-                                font.pixelSize: dock.theme.smallFontSize
-                            }
-
-                            Repeater {
-                                model: root.starredApplications
-                                delegate: Item {
-                                    id: favTile
-                                    required property var modelData
-                                    required property int index
-                                    width: dock.theme.appTile
-                                    height: dock.theme.appTile
-
-                                    GlassSurface {
-                                        anchors.fill: parent
-                                        anchors.margins: Glass.inset
-                                        color: favMouse.containsMouse
-                                            ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity)
-                                            : dock.theme.withAlpha(dock.theme.subtle, dock.theme.outlineOpacity)
-                                        hairline: DockLamp.reorderMode
-                                        borderColor: dock.theme.cursor
-                                    }
-                                    Image {
-                                        anchors.top: parent.top
-                                        anchors.topMargin: Glass.gap
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        width: dock.theme.appIcon
-                                        height: width
-                                        source: QS.Quickshell.iconPath(modelData.icon, true)
-                                        fillMode: Image.PreserveAspectFit
-                                    }
-                                    Text {
-                                        anchors.top: parent.top
-                                        anchors.right: parent.right
-                                        anchors.margins: Glass.gap
-                                        text: "★"
-                                        color: dock.theme.cursor
-                                        font.family: dock.theme.fontFamily
-                                        font.pixelSize: dock.theme.smallFontSize
-                                    }
-                                    Text {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        anchors.margins: Glass.gap
-                                        text: modelData.name
-                                        horizontalAlignment: Text.AlignHCenter
-                                        elide: Text.ElideRight
-                                        color: dock.theme.fg
-                                        font.family: dock.theme.fontFamily
-                                    }
-                                    MouseArea {
-                                        id: favMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                        pressAndHoldInterval: 450
-                                        cursorShape: Qt.PointingHandCursor
-                                        onPressAndHold: DockLamp.reorderMode = !DockLamp.reorderMode
-                                        onClicked: mouse => {
-                                            if (mouse.button === Qt.RightButton) {
-                                                const pt = favTile.mapToItem(null, mouse.x, mouse.y)
-                                                const winLeft = Math.round((dock.screen.width - dock.width) / 2)
-                                                const winTop = Math.round(dock.screen.height - dock.margins.bottom - dock.height)
-                                                dockPopups.openContextMenu({
-                                                    entry: modelData,
-                                                    appId: modelData.id,
-                                                    title: modelData.name,
-                                                    icon: modelData.icon,
-                                                    windows: root.windowsForEntry(modelData),
-                                                    rect: dock.rectForEntry(modelData),
-                                                    sourceKind: "icon",
-                                                    screenX: winLeft + pt.x,
-                                                    screenY: winTop + pt.y
-                                                })
-                                                return
-                                            }
-                                            if (DockLamp.reorderMode) return
-                                            root.launch(modelData, null)
-                                        }
-                                    }
-
-                                    // Re-organize overlay controls on starred tile (◀ ★ ▶)
-                                    Row {
-                                        visible: DockLamp.reorderMode
-                                        anchors.top: parent.top
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        anchors.topMargin: Glass.inset / 2
-                                        spacing: Glass.inset / 2
-                                        z: 4
-
-                                        GlassSurface {
-                                            width: Glass.control
-                                            height: Glass.control
-                                            color: dock.theme.withAlpha(dock.theme.bg, dock.theme.notificationOpacity)
-                                            Text { anchors.centerIn: parent; text: "◀"; color: dock.theme.fg; font.pixelSize: 10 }
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                onClicked: DockLamp.moveStar(favTile.modelData, -1)
-                                            }
-                                        }
-                                        GlassSurface {
-                                            width: Glass.control
-                                            height: Glass.control
-                                            color: dock.theme.withAlpha(dock.theme.error, dock.theme.notificationOpacity)
-                                            Text { anchors.centerIn: parent; text: "×"; color: dock.theme.fg; font.pixelSize: 11 }
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                onClicked: DockLamp.unstarApp(favTile.modelData)
-                                            }
-                                        }
-                                        GlassSurface {
-                                            width: Glass.control
-                                            height: Glass.control
-                                            color: dock.theme.withAlpha(dock.theme.bg, dock.theme.notificationOpacity)
-                                            Text { anchors.centerIn: parent; text: "▶"; color: dock.theme.fg; font.pixelSize: 10 }
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                onClicked: DockLamp.moveStar(favTile.modelData, 1)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    GridView {
-                        id: appGrid
-                        width: parent.width
-                        height: Math.max(0, dock.drawerHeight - dock.theme.dockHeight - search.height
-                                         - (favouritesSection.visible ? favouritesSection.height + Glass.gap : 0)
-                                         - 4 * Glass.gap)
-                        cellWidth: dock.theme.appTile
-                        cellHeight: dock.theme.appTile
-                        clip: true
-                        model: dock.drawerProgress > 0
-                            ? root.applications.filter(e => !search.text || (e.name + " " + e.genericName + " " + e.keywords.join(" ")).toLowerCase().includes(search.text.toLowerCase()))
-                            : []
-                        delegate: Item {
-                            id: gridTile
-                            required property var modelData
-                            width: appGrid.cellWidth
-                            height: appGrid.cellHeight
-                            readonly property bool isStarredApp: DockLamp.isStarred(modelData)
-                            readonly property bool isPinnedApp: DockLamp.isPinned(modelData, dock.theme.dockPinned)
-                            GlassSurface {
-                                anchors.fill: parent
-                                anchors.margins: Glass.inset
-                                color: appMouse.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
-                            }
-                            Image {
-                                anchors.top: parent.top
-                                anchors.topMargin: Glass.gap
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                width: dock.theme.appIcon
-                                height: width
-                                source: QS.Quickshell.iconPath(modelData.icon, true)
-                                fillMode: Image.PreserveAspectFit
-                            }
-                            Text {
-                                visible: gridTile.isStarredApp || gridTile.isPinnedApp
-                                anchors.top: parent.top
-                                anchors.right: parent.right
-                                anchors.margins: Glass.gap
-                                text: (gridTile.isStarredApp ? "★" : "") + (gridTile.isPinnedApp ? "•" : "")
-                                color: dock.theme.cursor
-                                font.family: dock.theme.fontFamily
-                                font.pixelSize: dock.theme.smallFontSize
-                            }
-                            Text {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                anchors.margins: Glass.gap
-                                text: modelData.name
-                                horizontalAlignment: Text.AlignHCenter
-                                elide: Text.ElideRight
-                                color: dock.theme.fg
-                                font.family: dock.theme.fontFamily
-                            }
-                            MouseArea {
-                                id: appMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                pressAndHoldInterval: 450
-                                cursorShape: Qt.PointingHandCursor
-                                onPressAndHold: DockLamp.reorderMode = !DockLamp.reorderMode
-                                onClicked: mouse => {
-                                    if (mouse.button === Qt.RightButton) {
-                                        const pt = gridTile.mapToItem(null, mouse.x, mouse.y)
-                                        const winLeft = Math.round((dock.screen.width - dock.width) / 2)
-                                        const winTop = Math.round(dock.screen.height - dock.margins.bottom - dock.height)
-                                        dockPopups.openContextMenu({
-                                            entry: modelData,
-                                            appId: modelData.id,
-                                            title: modelData.name,
-                                            icon: modelData.icon,
-                                            windows: root.windowsForEntry(modelData),
-                                            rect: dock.rectForEntry(modelData),
-                                            sourceKind: "icon",
-                                            screenX: winLeft + pt.x,
-                                            screenY: winTop + pt.y
-                                        })
-                                        return
-                                    }
-                                    root.launch(modelData, null)
-                                }
-                            }
-                        }
-                    }
+                    theme: dock.theme
+                    dockRoot: root
+                    open: dock.expanded && dock.drawerProgress >= 1
+                    focus: dock.expanded
+                    oskShown: root.oskWanted
+                    onOskToggled: root.setOskWanted(!root.oskWanted)
+                    onCloseRequested: root.shellState.drawerOpen = false
                 }
 
                 Row {
@@ -1067,32 +837,6 @@ QS.Scope {
                             }
                         }
                     }
-                    Item {
-                        id: phoneTile
-                        width: dock.theme.dockHeight - Glass.gap
-                        height: dock.theme.dockHeight
-                        GlassSurface {
-                            anchors.fill: parent; anchors.topMargin: Glass.inset; anchors.bottomMargin: Glass.inset
-                            color: phoneHit.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
-                        }
-                        Text {
-                            anchors.centerIn: parent; text: "\u{f011c}"
-                            color: root.shellState.remoteAttached ? dock.theme.success : dock.theme.fg
-                            font.family: dock.theme.fontFamily; font.pixelSize: dock.theme.appIcon
-                        }
-                        Timer { id: phoneHover; interval: 400; onTriggered: dockPopups.showPhone(root.phoneRect, false) }
-                        MouseArea {
-                            id: phoneHit
-                            anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onContainsMouseChanged: {
-                                root.tilePreviewHold = containsMouse
-                                if (containsMouse) phoneHover.restart()
-                                else { phoneHover.stop(); dockPopups.scheduleHidePreview() }
-                            }
-                            onClicked: { phoneHover.stop(); dockPopups.showPhone(root.phoneRect, true) }
-                        }
-                    }
                 }
             }
         }
@@ -1102,9 +846,18 @@ QS.Scope {
                 if (dock.expanded) {
                     dockPopups.hidePreviewImmediate()
                     dockPopups.closeContextMenu()
-                    search.forceActiveFocus()
+                    expandedPanel.forceActiveFocus()
                 }
             }
+        }
+    }
+
+    // The remote device's controls open from the topbar's inbound item (PanelWindow.qml "remote").
+    Connections {
+        target: root.shellState
+        ignoreUnknownSignals: true
+        function onPhoneRequested() {
+            if (!Hyprland.focusedMonitor || !root.screen || Hyprland.focusedMonitor.name === root.screen.name) dockPopups.showPhone(root.phoneRect, true)
         }
     }
 

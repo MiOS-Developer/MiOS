@@ -65,17 +65,14 @@ pub fn deep_merge_table(dst: &mut toml::Table, src: toml::Table) {
     }
 }
 
+/// An empty string never overrides a value below it -- ANY value but another
+/// empty string, as mios_toml.deep_merge reads the rule. Shadowing only a
+/// non-empty STRING let `port = ""` in a user tier blank an integer port, a
+/// boolean or a table for every native reader while mios_toml.py kept it
+/// (Law 13; tests/test-resolver-dropin-parity.py).
 fn is_empty_string_shadow(dst_val: &Value, src_val: &Value) -> bool {
-    if let Value::String(s_src) = src_val {
-        if s_src.is_empty() {
-            if let Value::String(s_dst) = dst_val {
-                if !s_dst.is_empty() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    matches!(src_val, Value::String(s) if s.is_empty())
+        && !matches!(dst_val, Value::String(s) if s.is_empty())
 }
 
 #[cfg(test)]
@@ -171,6 +168,37 @@ mod tests {
         deep_merge(&mut base, overlay);
 
         assert_eq!(base["key"].as_str().unwrap(), "value");
+    }
+
+    #[test]
+    fn empty_string_never_overrides_a_non_string_below_it() {
+        let mut base: Value = toml! {
+            [s]
+            port = 8080
+            off = false
+            zero = 0
+            list = ["a"]
+            empty_list = []
+            [s.table]
+            leaf = "x"
+        }
+        .into();
+        let before = base.clone();
+        let overlay: Value = toml! {
+            [s]
+            port = ""
+            off = ""
+            zero = ""
+            list = ""
+            empty_list = ""
+            table = ""
+        }
+        .into();
+        deep_merge(&mut base, overlay);
+        assert_eq!(base, before);
+        // A real value still replaces any type.
+        deep_merge(&mut base, toml! { [s] port = "named" }.into());
+        assert_eq!(base["s"]["port"].as_str(), Some("named"));
     }
 
     #[test]

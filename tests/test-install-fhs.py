@@ -132,11 +132,11 @@ def test_linux_install_failure_propagation():
     source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
     trigger = _function(source, "trigger_mios_install")
     # Redirect file probes and mutation commands into an isolated fixture.
-    trigger = trigger.replace('"/.git"', '"$MIOS_TEST_ROOT/.git"')
     for path in ("/usr/libexec/mios/system-sync-env.sh",
-                 "/automation/15-render-quadlets.sh"):
-        trigger = trigger.replace(path, "$MIOS_TEST_ROOT" + path)
-    trigger = trigger.replace("cd /automation", 'cd "$MIOS_TEST_ROOT/automation"')
+                 "/usr/libexec/mios/miosd", '"/automation/'):
+        assert path in trigger, path
+        prefix = '"$MIOS_TEST_ROOT' if path.startswith('"') else "$MIOS_TEST_ROOT"
+        trigger = trigger.replace(path, prefix + path.lstrip('"'))
     harness = r"""
 set -euo pipefail
 log_info() { printf '[INFO] %s\n' "$*"; }
@@ -146,7 +146,14 @@ log_warn() { printf '[WARN] %s\n' "$*" >&2; }
 log_phase() { :; }
 spin_start() { :; }
 spin_stop() { :; }
-git() { printf 'git %s\n' "$*" >> "$MIOS_TEST_TRACE"; }
+git() {
+    printf 'git %s\n' "$*" >> "$MIOS_TEST_TRACE"
+    [[ "$*" != *ls-files* || "$MIOS_TEST_FAIL" != ssot-untracked ]]
+}
+mios_root_merge() {
+    printf 'root-merge %s\n' "$*" >> "$MIOS_TEST_TRACE"
+    [[ "$MIOS_TEST_FAIL" != merge ]] || return 49
+}
 cp() {
     printf 'copy %s\n' "$*" >> "$MIOS_TEST_TRACE"
     [[ "$MIOS_TEST_FAIL" != copy ]] || return 40
@@ -204,7 +211,13 @@ MIOS_FHS_TOTAL_ROOT_MERGE=1
         "tmpfiles": "Persistent directory provisioning failed",
         "reload": "Systemd daemon reload failed",
         "environment": "Environment synchronization failed",
-        "quadlet": "Quadlet rendering failed",
+        "merge": "Failed to merge mios.git",
+        "ssot-untracked": "does not track the SSOT",
+        "native": "stage 55-native-build.sh failed",
+        "quadlet-generate": "stage 33-generate-quadlets.sh failed",
+        "quadlet": "stage 34-render-quadlets.sh failed",
+        "runtime": "Native runtime catalog is incomplete",
+        "stage-missing": "lacks /automation/34-render-quadlets.sh",
     }
     with tempfile.TemporaryDirectory(prefix="mios-install-failures-") as tmp:
         root = pathlib.Path(tmp)
@@ -217,14 +230,24 @@ MIOS_FHS_TOTAL_ROOT_MERGE=1
             artifact.chmod(mode)
         for name, failure in (
             ("usr/libexec/mios/system-sync-env.sh", "environment"),
-            ("automation/15-render-quadlets.sh", "quadlet"),
+            ("usr/libexec/mios/miosd", "runtime"),
+            ("automation/55-native-build.sh", "native"),
+            ("automation/33-generate-quadlets.sh", "quadlet-generate"),
+            ("automation/34-render-quadlets.sh", "quadlet"),
         ):
             script = root / name
-            script.write_text('#!/bin/bash\n[[ "$MIOS_TEST_FAIL" != ' + failure + ' ]]\n')
+            script.write_text('#!/bin/bash\necho "' + name + ' $*" >> "$MIOS_TEST_TRACE"\n'
+                              '[[ "$MIOS_TEST_FAIL" != ' + failure + ' ]]\n')
             script.chmod(0o755)
         trace = root / "trace"
+        last_stage = root / "automation/34-render-quadlets.sh"
+        stage_source = last_stage.read_text()
         for failure in ("", *failures):
             trace.write_text("")
+            if failure == "stage-missing":
+                last_stage.unlink()
+            elif not last_stage.exists():
+                last_stage.write_text(stage_source)
             env = dict(os.environ, MIOS_TEST_ROOT=tmp,
                        MIOS_TEST_TRACE=str(trace), MIOS_TEST_FAIL=failure)
             result = subprocess.run(
@@ -242,9 +265,165 @@ MIOS_FHS_TOTAL_ROOT_MERGE=1
                 assert "FHS system init complete" in result.stdout, result
                 assert "dnf install -y --best fixture-system" in recorded
                 assert "sysusers" in recorded and "tmpfiles" in recorded
+                assert "root-merge / fixture-system-repository main" in recorded
+                order = [recorded.index(step) for step in (
+                    "root-merge", "dnf install -y --best", "tmpfiles",
+                    "automation/55-native-build.sh", "automation/33-generate-quadlets.sh",
+                    "automation/34-render-quadlets.sh",
+                    "usr/libexec/mios/miosd native-runtime-check --root /")]
+                assert order == sorted(order), recorded
                 for name, mode in (("config.toml", 0o644), ("fixture-tool", 0o755)):
                     assert (root / "usr/libexec/mios" / name).stat().st_mode & 0o777 == mode
-        print("PASS fixture overlay/package/init path and 12 injected failures; modes preserved")
+        print(f"PASS fixture merge/overlay/package/init/native path and {len(failures)} injected failures; modes preserved")
+
+
+def test_target_prerequisite_failures_stop_the_target():
+    """A prerequisite dnf cannot install fails the dispatcher instead of being ignored."""
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    prereqs = _function(source, "resolve_target_prereqs")
+    harness = r"""
+set -euo pipefail
+log_info() { echo "[INFO] $*"; }
+log_err() { echo "[FAIL] $*" >&2; }
+die() { log_err "$*"; exit 1; }
+rpm() { [[ "$2" != podman ]]; }
+cargo() { :; }
+sudo() { "$@"; }
+dnf() { echo "dnf $*" >> "$MIOS_TEST_TRACE"; [[ "$MIOS_TEST_FAIL" != dnf ]]; }
+"""
+    with tempfile.TemporaryDirectory(prefix="mios-prereqs-") as tmp:
+        trace = pathlib.Path(tmp, "trace")
+        for failure in ("", "dnf"):
+            trace.write_text("")
+            result = subprocess.run(
+                ["bash", "-c", harness + prereqs +
+                 "\nresolve_target_prereqs fedora\necho TARGET-RAN\n"],
+                env=dict(os.environ, MIOS_TEST_TRACE=str(trace), MIOS_TEST_FAIL=failure),
+                capture_output=True, text=True)
+            assert "dnf install -y podman" in trace.read_text(), result
+            if failure:
+                assert result.returncode == 1, result
+                assert "Failed to install prerequisites for target 'fedora': podman" in result.stderr
+                assert "TARGET-RAN" not in result.stdout, result
+            else:
+                assert result.returncode == 0 and "TARGET-RAN" in result.stdout, result
+    print("PASS failed prerequisite install stops the target")
+
+
+OS_RELEASE_FIXTURES = {
+    "fedora": ('ID=fedora\nVERSION_ID=44\nPLATFORM_ID="platform:f44"\n', True),
+    "mios-overlaid-fedora": ('ID=mios\nID_LIKE="fedora coreos"\nPLATFORM_ID="platform:f44"\n', True),
+    "ubuntu": ('ID=ubuntu\nID_LIKE=debian\nVERSION_ID="24.04"\n', False),
+    "rhel-family": ('ID="rhel"\nID_LIKE="fedora"\nPLATFORM_ID="platform:el9"\n', False),
+    "fedora-substring": ('ID=notfedora\nPLATFORM_ID="platform:f44"\n', False),
+    "no-platform": ('ID=fedora\n', False),
+    "empty": ("", False),
+    "missing": (None, False),
+}
+
+
+def test_unsupported_host_rejected_before_mutation():
+    """do_install_core classifies os-release before any package manager or mutation runs."""
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    functions = "\n".join(_function(source, name) for name in (
+        "detect_host_kind", "mios_os_release_kind", "do_install_core"))
+    assert functions.count("/etc/os-release") == 1, "one os-release reader"
+    functions = functions.replace("/etc/os-release", '"$MIOS_TEST_OS_RELEASE"')
+    steps = ("check_network", "install_prerequisites", "load_profile_defaults",
+             "launch_configurator", "gather_user_choices", "print_summary",
+             "trigger_mios_install", "deploy_system_prompt", "apply_user_profile",
+             "stage_user_profile_artifacts", "reboot_prompt", "dnf", "dnf5", "git")
+    harness = "set -euo pipefail\n" + "".join(
+        f'{step}() {{ echo "MUTATION {step}"; exit 44; }}\n' for step in steps) + r"""
+log_info() { echo "[INFO] $*"; }
+log_err() { echo "[FAIL] $*" >&2; }
+log_phase() { :; }
+initialize_dynamic_branding() { :; }
+require_root() { :; }
+bootc() { return 1; }
+"""
+    with tempfile.TemporaryDirectory(prefix="mios-os-release-") as tmp:
+        for name, (text, supported) in OS_RELEASE_FIXTURES.items():
+            release = pathlib.Path(tmp, name)
+            if text is not None:
+                release.write_text(text)
+            result = subprocess.run(
+                ["bash", "-c", harness + functions + "\ndo_install_core fhs\n"],
+                env=dict(os.environ, MIOS_TEST_OS_RELEASE=str(release)),
+                capture_output=True, text=True)
+            if supported:
+                assert result.returncode == 44, (name, result)
+                assert "Detected host: fhs-fedora" in result.stdout, (name, result)
+                assert "MUTATION check_network" in result.stdout, (name, result)
+            else:
+                assert result.returncode == 1, (name, result)
+                assert "Host is not Fedora" in result.stderr, (name, result)
+                assert "MUTATION" not in result.stdout, (name, result)
+    print(f"PASS os-release classification over {len(OS_RELEASE_FIXTURES)} fixtures; rejection precedes mutation")
+
+
+def _bootstrap_root():
+    """mios-bootstrap checkout (Law 15): MIOS_BOOTSTRAP_ROOT or the sibling directory."""
+    for candidate in (os.environ.get("MIOS_BOOTSTRAP_ROOT"), os.path.join(_ROOT, "..", "mios-bootstrap")):
+        if candidate and os.path.isfile(os.path.join(candidate, "field", "MiOS-Field.sh")):
+            return pathlib.Path(candidate).resolve()
+    return None
+
+
+def test_bootstrap_launchers_reach_the_installer():
+    """bootstrap.sh / install.sh reach installation/mios-install.sh, checked out or piped.
+
+    A PATH shim bounds bash nesting so a launcher loop fails fast (exit 99)
+    instead of recursing; a curl shim fails so no network is touched.
+    """
+    bootstrap = _bootstrap_root()
+    if bootstrap is None:
+        print("SKIP bootstrap launchers: no mios-bootstrap checkout (set MIOS_BOOTSTRAP_ROOT)")
+        return
+    with tempfile.TemporaryDirectory(prefix="mios-bootstrap-launch-") as tmp:
+        tmp = pathlib.Path(tmp)
+        tree, shims, elsewhere = tmp / "bootstrap", tmp / "shims", tmp / "elsewhere"
+        subprocess.run(["git", "clone", "-q", str(bootstrap), str(tree)], check=True)
+        for name in ("bootstrap.sh", "install.sh", "build-mios.sh", "field", "installation"):
+            source = bootstrap / name
+            if source.is_dir():
+                subprocess.run(["cp", "-a", f"{source}/.", str(tree / name)], check=True)
+            else:
+                (tree / name).write_bytes(source.read_bytes())
+        (tree / "installation/mios-install.sh").write_text(
+            '#!/usr/bin/env bash\necho "INSTALLER-REACHED target=$1"\nexit 37\n')
+        for args in (["add", "-A"], ["-c", "user.name=MiOS", "-c", "user.email=mios@example.invalid",
+                                     "commit", "-q", "-m", "fixture", "--allow-empty"]):
+            subprocess.run(["git", "-C", str(tree), *args], check=True)
+        shims.mkdir()
+        elsewhere.mkdir()
+        (shims / "bash").write_text(
+            "#!/usr/bin/bash\nd=$(( ${MIOS_TEST_DEPTH:-0} + 1 )); export MIOS_TEST_DEPTH=$d\n"
+            '[ "$d" -le 8 ] || { echo "RECURSION depth $d" >&2; exit 99; }\n'
+            'exec /usr/bin/bash "$@"\n')
+        (shims / "curl").write_text("#!/usr/bin/bash\nexit 22\n")
+        (shims / "bootc").write_text("#!/usr/bin/bash\nexit 1\n")
+        for shim in shims.iterdir():
+            shim.chmod(0o755)
+        env = dict(os.environ, PATH=f"{shims}:{os.environ['PATH']}", MIOS_NO_COLOR="1")
+        env.pop("INSTALL_MODE", None)
+        for launcher in ("bootstrap.sh", "install.sh"):
+            for mode, repo in (("checkout", None), ("piped", str(tree)), ("piped-unreachable", str(tmp / "missing"))):
+                run_env = dict(env, MIOS_BOOTSTRAP_REPO=repo) if repo else env
+                if mode == "checkout":
+                    result = subprocess.run(["bash", str(tree / launcher)], cwd=elsewhere,
+                                            env=run_env, capture_output=True, text=True, timeout=60)
+                else:
+                    result = subprocess.run(["bash"], input=(tree / launcher).read_text(), cwd=elsewhere,
+                                            env=run_env, capture_output=True, text=True, timeout=60)
+                label = (launcher, mode, result.returncode, result.stdout[-400:], result.stderr[-400:])
+                if mode == "piped-unreachable":
+                    assert result.returncode not in (0, 37, 99), label
+                    assert "INSTALLER-REACHED" not in result.stdout, label
+                else:
+                    assert result.returncode == 37, label
+                    assert "INSTALLER-REACHED target=fedora" in result.stdout, label
+    print("PASS bootstrap launchers reach the installer (checkout and piped); failed fetch fails")
 
 
 def test_legacy_bootstrap_failures():
@@ -264,6 +443,14 @@ def test_legacy_bootstrap_failures():
             assert "network-reached" not in result.stdout
         else:
             assert "network-reached" in result.stdout, result
+    hostname = subprocess.run(
+        ["bash", "-c", definitions + '\nrequire_root() { :; }\n'
+         'detect_host_kind() { echo Fhs-fedora; }\ncheck_network() { :; }\n'
+         'prompt_default() { [[ "$1" != Hostname ]] || { echo "hostname-default=$2" >&2; exit 45; }; echo fixture; }\n'
+         'main\n'],
+        capture_output=True, text=True)
+    assert hostname.returncode == 45, hostname
+    assert "unbound variable" not in hostname.stderr, hostname
     package_block = re.search(
         r'^    if \[\[ -n "\$\{all_pkgs// \}" \]\]; then.*?^    fi',
         source, re.M | re.S)
@@ -301,8 +488,11 @@ def main() -> int:
     test_apply_stage_selection()
     test_linux_core_dispatch()
     test_linux_install_failure_propagation()
+    test_unsupported_host_rejected_before_mutation()
+    test_target_prerequisite_failures_stop_the_target()
+    test_bootstrap_launchers_reach_the_installer()
     test_legacy_bootstrap_failures()
-    print("[test-install-fhs] PASS: overlay refusal, four substrate plans, fail-closed apply and Linux core dispatch.")
+    print("[test-install-fhs] PASS: overlay refusal, four substrate plans, fail-closed apply, Linux core dispatch, failure propagation and host rejection.")
     return 0
 
 if __name__ == "__main__":

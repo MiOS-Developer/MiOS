@@ -22,7 +22,6 @@ struct Step {
     #[serde(default)]
     register: bool,
     copy: Option<[String; 2]>,
-    snapshot: Option<[String; 2]>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -38,7 +37,6 @@ struct Context {
     root: PathBuf,
     tools: BTreeMap<String, PathBuf>,
     python: Option<PathBuf>,
-    bash: Option<PathBuf>,
     git: PathBuf,
 }
 
@@ -193,7 +191,6 @@ fn load(root: &Path) -> Result<Plan, String> {
         }
         let actions = usize::from(step.register)
             + usize::from(step.copy.is_some())
-            + usize::from(step.snapshot.is_some())
             + usize::from(!step.calls.is_empty());
         if actions != 1 {
             return Err(format!(
@@ -212,7 +209,7 @@ fn load(root: &Path) -> Result<Plan, String> {
                 local(root, script)?;
             }
         }
-        for paths in [&step.copy, &step.snapshot].into_iter().flatten() {
+        for paths in step.copy.iter() {
             for path in paths {
                 local(root, path)?;
             }
@@ -225,7 +222,6 @@ fn preflight(root: &Path, plan: &Plan) -> Result<Context, String> {
     let git = on_path("git").ok_or("git is required for generation censuses")?;
     let mut tools = BTreeMap::new();
     let mut needs_python = false;
-    let mut needs_bash = false;
     for step in &plan.steps {
         for call in &step.calls {
             if let Some(name) = &call.tool {
@@ -238,12 +234,9 @@ fn preflight(root: &Path, plan: &Plan) -> Result<Context, String> {
                 }
             }
         }
-        for (paths, snapshot) in [(&step.copy, false), (&step.snapshot, true)] {
-            if let Some(paths) = paths {
-                if !local(root, &paths[0])?.is_file() {
-                    return Err(format!("required generation source missing: {}", paths[0]));
-                }
-                needs_bash |= snapshot;
+        if let Some(paths) = &step.copy {
+            if !local(root, &paths[0])?.is_file() {
+                return Err(format!("required generation source missing: {}", paths[0]));
             }
         }
     }
@@ -268,19 +261,10 @@ fn preflight(root: &Path, plan: &Plan) -> Result<Context, String> {
     } else {
         None
     };
-    let bash = if needs_bash {
-        Some(
-            on_path("bash")
-                .ok_or("bash is required by the declared environment snapshot adapter")?,
-        )
-    } else {
-        None
-    };
     let context = Context {
         root: root.to_path_buf(),
         tools,
         python,
-        bash,
         git,
     };
     // A stale unit generator must fail before ports, globals or any other writes.
@@ -363,6 +347,27 @@ fn strip_verbatim(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// The `copy` stages, compared read-only: every declared target must hold its
+/// source's bytes. The only projection sync.rs writes itself (Law 8).
+pub fn check_copies(root: &Path) -> Result<String, String> {
+    let plan = load(root)?;
+    let mut stale = Vec::new();
+    let mut count = 0usize;
+    for step in &plan.steps {
+        if let Some([source, target]) = &step.copy {
+            count += 1;
+            let want = fs::read(local(root, source)?).map_err(|e| format!("{source}: {e}"))?;
+            if fs::read(local(root, target)?).ok().as_deref() != Some(want.as_slice()) {
+                stale.push(format!("{target} is not a copy of {source} (step {})", step.id));
+            }
+        }
+    }
+    if !stale.is_empty() {
+        return Err(stale.join("; "));
+    }
+    Ok(format!("{count} declared copy stage(s) match their sources"))
+}
+
 pub fn run(root: &Path, plan_only: bool) -> Result<(), String> {
     let root = strip_verbatim(&root.canonicalize().map_err(|e| e.to_string())?);
     let plan = load(&root)?;
@@ -404,29 +409,6 @@ pub fn run(root: &Path, plan_only: bool) -> Result<(), String> {
                 &local(&root, target)?,
                 &fs::read(local(&root, source)?).map_err(|e| e.to_string())?,
             )?;
-        } else if let Some([source, target]) = &step.snapshot {
-            let output = context
-                .command(context.bash.as_ref().ok_or("missing snapshot adapter")?)
-                .env_clear()
-                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                .env("HOME", "/nonexistent")
-                .env("MIOS_VENDOR_TOML", root.join("usr/share/mios/mios.toml"))
-                .env("MIOS_TOML_ROOT", &root)
-                .arg(local(&root, source)?)
-                .output()
-                .map_err(|e| e.to_string())?;
-            if !output.status.success() {
-                use std::io::Write;
-                let _ = std::io::stderr().write_all(&output.stderr);
-                return Err(format!(
-                    "environment snapshot failed with {}",
-                    output.status
-                ));
-            }
-            if output.stdout.is_empty() {
-                return Err("environment snapshot produced no values".into());
-            }
-            replace(&local(&root, target)?, &output.stdout)?;
         } else {
             for call in &step.calls {
                 let mut args = Vec::new();
@@ -490,6 +472,23 @@ mod tests {
         assert!(load(root.path())
             .unwrap_err()
             .contains("exactly one action"));
+    }
+    #[test]
+    fn copy_stages_are_checked_without_writing() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("usr/share/mios")).unwrap();
+        fs::write(
+            root.path().join("usr/share/mios/mios.toml"),
+            "[generation.sync]\nunit_projections=[]\n[[generation.sync.steps]]\nid='c'\ncopy=['a.conf','b.conf']\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("a.conf"), "x\n").unwrap();
+        assert!(check_copies(root.path()).unwrap_err().contains("b.conf is not a copy of a.conf"));
+        fs::write(root.path().join("b.conf"), "y\n").unwrap();
+        assert!(check_copies(root.path()).is_err());
+        assert_eq!(fs::read_to_string(root.path().join("b.conf")).unwrap(), "y\n");
+        fs::write(root.path().join("b.conf"), "x\n").unwrap();
+        assert!(check_copies(root.path()).unwrap().starts_with("1 declared copy stage(s) match"));
     }
     #[test]
     fn replacement_preserves_bytes_on_output_failure() {

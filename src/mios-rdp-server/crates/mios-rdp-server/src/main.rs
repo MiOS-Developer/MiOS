@@ -23,8 +23,10 @@ mod gpu;
 mod input;
 mod pipeline;
 mod redirect;
+mod remote_audio;
 mod remote_storage;
 mod remote_camera;
+mod remote_usb;
 mod session;
 mod stats;
 mod tls;
@@ -65,7 +67,7 @@ fn main() -> Result<()> {
     if args.iter().any(|a| a == "--print-defaults") {
         // the code defaults the SSOT [remote.rdp.native|redirect|naming] tables must equal (tests)
         let c = Config::default();
-        println!("{}", serde_json::to_string_pretty(&json!({"native": c.native, "redirect": c.redirect, "naming": c.naming}))?);
+        println!("{}", serde_json::to_string_pretty(&json!({"native": c.native, "redirect": c.redirect, "naming": c.naming, "device_forwarding": c.device_forwarding}))?);
         return Ok(());
     }
     if args.iter().any(|a| a == "--self-test") {
@@ -447,7 +449,7 @@ async fn serve(cfg: Config) -> Result<()> {
         builder = builder.with_cliprdr_factory(Some(Box::new(clip::Factory { shared })));
     }
     if cfg.redirect.audio_output {
-        builder = builder.with_sound_factory(Some(Box::new(redirect::SoundFactory::new())));
+        builder = builder.with_sound_factory(Some(Box::new(remote_audio::SoundFactory::new(cfg.clone(), Arc::clone(&s.stats)))));
     }
     if should_enable_microphone(&cfg) {
         builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new(cfg.clone(), Arc::clone(&s.stats)))));
@@ -457,6 +459,9 @@ async fn serve(cfg: Config) -> Result<()> {
     }
     if cfg.redirect.camera {
         builder = builder.with_static_channel_factory(Box::new(remote_camera::Factory {cfg:cfg.clone(),stats:Arc::clone(&s.stats)}));
+    }
+    if cfg.redirect.usb {
+        builder = builder.with_usb_factory(Some(Box::new(remote_usb::Factory::new(cfg.clone(), Arc::clone(&s.stats))?)));
     }
     let _loc = if cfg.redirect.location { Some(redirect::LocationWriter::new()) } else { None };
     redirect::log_redirections(&cfg);
@@ -549,7 +554,7 @@ async fn serve(cfg: Config) -> Result<()> {
     info!("stopping");
     drop(server);
     let microphone_deadline = Instant::now() + Duration::from_secs(12);
-    while (s.stats.microphone_workers.load(Ordering::Acquire) > 0 || s.stats.drive_workers.load(Ordering::Acquire) > 0 || s.stats.camera_workers.load(Ordering::Acquire) > 0) && Instant::now() < microphone_deadline {
+    while (s.stats.microphone_workers.load(Ordering::Acquire) > 0 || s.stats.speaker_workers.load(Ordering::Acquire) > 0 || s.stats.drive_workers.load(Ordering::Acquire) > 0 || s.stats.camera_workers.load(Ordering::Acquire) > 0 || s.stats.usb_workers.load(Ordering::Acquire) > 0) && Instant::now() < microphone_deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let d = Arc::clone(&display);
@@ -769,17 +774,34 @@ async fn stats_loop(s: Arc<Session>) {
                 "bytes_forwarded": s.stats.microphone_bytes.load(Ordering::Relaxed),
                 "packets_dropped": s.stats.microphone_dropped.load(Ordering::Relaxed),
                 "error": s.stats.microphone_error.lock().unwrap().clone(),
+                "recoveries": s.stats.microphone_recoveries.load(Ordering::Relaxed),
+            },
+            "speaker": {
+                "enabled": s.cfg.redirect.audio_output,
+                "native_ready": s.stats.speaker_ready.load(Ordering::Relaxed),
+                "sink": s.stats.speaker_sink.lock().unwrap().clone(),
+                "format": s.stats.speaker_format.lock().unwrap().clone(),
+                "waves_sent": s.stats.speaker_waves.load(Ordering::Relaxed),
+                "bytes_forwarded": s.stats.speaker_bytes.load(Ordering::Relaxed),
+                "latency_dropped": s.stats.speaker_dropped.load(Ordering::Relaxed),
+                "idle_packets": s.stats.speaker_idle_packets.load(Ordering::Relaxed),
+                "source_gaps": s.stats.speaker_gaps.load(Ordering::Relaxed),
+                "backlog_ms": s.stats.speaker_backlog_ms.load(Ordering::Relaxed),
+                "recoveries": s.stats.speaker_recoveries.load(Ordering::Relaxed),
+                "error": s.stats.speaker_error.lock().unwrap().clone(),
             },
             "device_forwarding": {
-                "microphone": {"implemented": true, "permitted": s.cfg.redirect.microphone, "protocol": "MS-RDPEAI"},
-                "audio_output": {"implemented": false, "permitted": s.cfg.redirect.audio_output, "reason": "native_sink_backend_pending"},
+                "microphone": {"implemented": true, "permitted": s.cfg.redirect.microphone, "protocol": "MS-RDPEAI", "audio_server_recovery": s.cfg.native.audio_recovery_attempts > 0},
+                "audio_output": {"implemented": true, "permitted": s.cfg.redirect.audio_output, "protocol": "MS-RDPEA", "formats": "pcm s16le 48000/44100/22050 Hz", "audio_server_recovery": s.cfg.native.audio_recovery_attempts > 0},
                 "camera": {"implemented": true, "permitted": s.cfg.redirect.camera, "protocol": "MS-RDPECAM",
                     "sources": s.stats.camera_sources.lock().unwrap().clone(),
                     "frames_forwarded": s.stats.camera_frames.load(Ordering::Relaxed),
                     "bytes_forwarded": s.stats.camera_bytes.load(Ordering::Relaxed),
+                    "provider_restarts": s.stats.camera_restarts.load(Ordering::Relaxed),
+                    "consumers": remote_camera::consumers(&s.cfg),
                     "error": s.stats.camera_error.lock().unwrap().clone()},
                 "drives": {"implemented": true, "permitted": s.cfg.redirect.drives, "mounts": s.stats.drive_mounts.lock().unwrap().clone(), "error": s.stats.drive_error.lock().unwrap().clone()},
-                "usb": {"implemented": false, "reason": "native_usb_bridge_pending", "protocol": "MS-RDPEUSB"},
+                "usb": remote_usb::status_json(&s.cfg, &s.stats),
             },
             "encoded_payload_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,

@@ -1,5 +1,5 @@
 // AI-hint: miosd shaderglass wine: the per-user Wine prefix (created headless), the environment ShaderGlass runs with (driver, DXVK/wined3d and the GPU DXVK renders on, WineCap portal options) and the seeded default profile.
-// AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass.wine] [desktop.shaderglass.profile] [desktop.shaderglass.capture]
+// AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/share/mios/mios.toml [desktop.shaderglass.wine]
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};

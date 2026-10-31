@@ -588,11 +588,31 @@ require_root() {
 detect_host_kind() {
     if command -v bootc >/dev/null 2>&1 && bootc status --format=json 2>/dev/null | grep -q '"booted"'; then
         echo "bootc"
-    elif [[ -f /etc/os-release ]] && grep -qE '^ID(_LIKE)?=.*fedora' /etc/os-release; then
-        echo "fhs-fedora"
     else
-        echo "unsupported"
+        mios_os_release_kind /etc/os-release
     fi
+}
+
+# os-release(5) -> fhs-fedora | unsupported. The FHS path installs Fedora
+# packages, so it needs the Fedora platform: "fedora" as a whole token of ID or
+# ID_LIKE (a MiOS-overlaid host reads ID=mios ID_LIKE="fedora coreos") and a
+# Fedora PLATFORM_ID (platform:f<N>; RHEL-family hosts are platform:el<N>).
+mios_os_release_kind() {
+    local key value id="" like="" platform=""
+    if [[ -r "$1" ]]; then
+        while IFS='=' read -r key value || [[ -n "$key" ]]; do
+            value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+            case "$key" in
+                ID) id="$value" ;;
+                ID_LIKE) like="$value" ;;
+                PLATFORM_ID) platform="$value" ;;
+            esac
+        done < "$1"
+    fi
+    case " ${id} ${like} " in
+        *" fedora "*) [[ "$platform" =~ ^platform:f[0-9]+$ ]] && { echo "fhs-fedora"; return 0; } ;;
+    esac
+    echo "unsupported"
 }
 
 check_network() {
@@ -1304,38 +1324,22 @@ trigger_mios_install() {
                 esac
             fi
 
-            # 1. Initialize / as the git root for 'MiOS' core
+            # 1. Make / the MiOS Git worktree ("/ IS $ROOT") so `git -C / pull`
+            # works on Day-N+. mios_root_merge (mios-common.sh) fetches, resets,
+            # puts HEAD on ${DEFAULT_BRANCH} tracking origin, and fails unless /
+            # is then the clean Git top level of that commit.
             log_info "Staging 'MiOS' core repository (mios.git) to /"
-            if [[ ! -d "/.git" ]]; then
-                git init /
-                git -C / remote add origin "${MIOS_REPO}"
-            fi
             spin_start "Fetching mios.git (system layer)"
-            local fetch_err
-            fetch_err=$(git -C / fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1)
-            local fetch_rc=$?
-            if [[ $fetch_rc -ne 0 ]]; then
+            if ! mios_root_merge / "${MIOS_REPO}" "${DEFAULT_BRANCH}"; then
                 spin_stop
-                log_err "Failed to fetch mios.git from ${MIOS_REPO}: ${fetch_err}"
+                log_err "Failed to merge mios.git (${MIOS_REPO}) into /"
                 return 1
             fi
-            if ! git -C / reset --hard FETCH_HEAD; then
-                spin_stop
-                log_err "Failed to reset root filesystem to FETCH_HEAD"
-                return 1
-            fi
-            # Make / a first-class, SELF-UPDATING git work tree so `git -C / pull` works
-            # on Day-N+ -- "/ IS $ROOT": the deployed root is the SAME git tree the
-            # drift-gate resolves ($ROOT = $(cd automation/.. ) = /), and it pulls its own
-            # updates. `fetch <branch>` + `reset --hard FETCH_HEAD` leaves HEAD on
-            # git-init's default branch with NO upstream, so a bare `git pull` errors
-            # "no tracking information". checkout -B at the CURRENT commit renames/creates
-            # ${DEFAULT_BRANCH} with no working-tree change; the config lines wire its
-            # upstream to origin so `git -C / pull --ff-only` fast-forwards mios.git.
-            git -C / checkout -B "${DEFAULT_BRANCH}" >/dev/null 2>&1 || true
-            git -C / config "branch.${DEFAULT_BRANCH}.remote" origin
-            git -C / config "branch.${DEFAULT_BRANCH}.merge" "refs/heads/${DEFAULT_BRANCH}"
             spin_stop
+            if ! git -C / ls-files --error-unmatch usr/share/mios/mios.toml >/dev/null 2>&1; then
+                log_err "The merged root does not track the SSOT usr/share/mios/mios.toml"
+                return 1
+            fi
             log_ok "MiOS core (mios.git) merged to / (branch ${DEFAULT_BRANCH} tracks origin -- git -C / pull works)"
 
             # 2. Apply MiOS-bootstrap repo overlays. Prefer a LOCALLY-STAGED source
@@ -1352,8 +1356,9 @@ trigger_mios_install() {
                 spin_start "Cloning mios-bootstrap.git (user layer)"
                 rm -rf "${bootstrap_tmp}"
                 local clone_err
-                clone_err=$(git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1)
-                local clone_rc=$?
+                # umask 022: cp -a below copies these modes into /etc and /usr.
+                local clone_rc=0
+                clone_err=$(umask 022; git clone --depth=1 "${BOOTSTRAP_REPO}" "${bootstrap_tmp}" 2>&1) || clone_rc=$?
                 if [[ $clone_rc -ne 0 ]]; then
                     spin_stop
                     log_err "Failed to clone mios-bootstrap from ${BOOTSTRAP_REPO}: ${clone_err}"
@@ -1457,14 +1462,26 @@ trigger_mios_install() {
                 return 1
             fi
             spin_stop
-            if [[ -f "/automation/15-render-quadlets.sh" ]]; then
-                spin_start "Rendering Quadlet container files"
-                if ! (cd /automation && ./15-render-quadlets.sh); then
+            # 5. Native catalog, then the Quadlet stages that dispatch to it. The
+            # root merge put these stages at /automation; a missing one is a
+            # broken merge, not an optional step.
+            local stage
+            for stage in 55-native-build.sh 33-generate-quadlets.sh 34-render-quadlets.sh; do
+                if [[ ! -f "/automation/${stage}" ]]; then
+                    log_err "The merged root lacks /automation/${stage}"
+                    return 1
+                fi
+                spin_start "Running ${stage}"
+                if ! bash "/automation/${stage}"; then
                     spin_stop
-                    log_err "Quadlet rendering failed"
+                    log_err "Provisioning stage ${stage} failed"
                     return 1
                 fi
                 spin_stop
+            done
+            if ! /usr/libexec/mios/miosd native-runtime-check --root /; then
+                log_err "Native runtime catalog is incomplete (miosd native-runtime-check)"
+                return 1
             fi
             if systemctl is-system-running --quiet 2>/dev/null; then
                 spin_start "Reloading systemd daemon"
@@ -1562,47 +1579,33 @@ case "$TARGET" in
         die "Unknown target '${TARGET}'. Valid targets: live xbox fedora bootc oci seed flash build update config stage verify" ;;
 esac
 
+# A prerequisite that cannot be installed stops the target here: the target
+# would otherwise run without it and fail later (or report a false success).
 resolve_target_prereqs() {
-    local target="$1"
-    log_info "Resolving prerequisites for target '${target}'..."
+    local target="$1" pkg pkgs=() missing=() sudo=()
     case "$target" in
-        build|fedora|bootc)
-            if command -v dnf >/dev/null 2>&1; then
-                for pkg in git curl podman; do
-                    if ! rpm -q "$pkg" >/dev/null 2>&1; then
-                        log_info "Target prerequisite missing: ${pkg}"
-                        (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
-                    fi
-                done
-            fi
-            if ! command -v cargo >/dev/null 2>&1 && ! command -v rustup >/dev/null 2>&1; then
-                log_info "Target prerequisite missing: rustup/cargo for native tools"
-                if (( ! DRY_RUN )) && command -v dnf >/dev/null 2>&1; then
-                    sudo dnf install -y cargo rust || true
-                fi
-            fi
-            ;;
-        live|flash)
-            if command -v dnf >/dev/null 2>&1; then
-                for pkg in git curl podman ventoy; do
-                    if ! rpm -q "$pkg" >/dev/null 2>&1; then
-                        log_info "Target prerequisite missing: ${pkg}"
-                        (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
-                    fi
-                done
-            fi
-            ;;
-        update)
-            if command -v dnf >/dev/null 2>&1; then
-                for pkg in git curl; do
-                    if ! rpm -q "$pkg" >/dev/null 2>&1; then
-                        log_info "Target prerequisite missing: ${pkg}"
-                        (( DRY_RUN )) || sudo dnf install -y "$pkg" || true
-                    fi
-                done
-            fi
-            ;;
+        build|fedora|bootc) pkgs=(git curl podman) ;;
+        # The field menu neither partitions media nor installs Ventoy (see
+        # resolve_flash_or_live), so Ventoy is not a prerequisite here.
+        live|flash) pkgs=(git curl podman) ;;
+        update) pkgs=(git curl) ;;
+        *) return 0 ;;
     esac
+    command -v rpm >/dev/null 2>&1 || return 0
+    log_info "Resolving prerequisites for target '${target}'..."
+    for pkg in "${pkgs[@]}"; do
+        rpm -q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+    done
+    if [[ "$target" == build || "$target" == fedora || "$target" == bootc ]] \
+        && ! command -v cargo >/dev/null 2>&1 && ! command -v rustup >/dev/null 2>&1; then
+        missing+=(cargo rust)
+    fi
+    (( ${#missing[@]} )) || return 0
+    log_info "Target prerequisites missing: ${missing[*]}"
+    command -v dnf >/dev/null 2>&1 || die "Target '${target}' needs ${missing[*]} and dnf is unavailable to install them"
+    [[ "$(id -u)" -eq 0 ]] || sudo=(sudo)
+    "${sudo[@]}" dnf install -y "${missing[@]}" \
+        || die "Failed to install prerequisites for target '${target}': ${missing[*]}"
 }
 
 if [[ -n "$WINDOWS_GUIDANCE" ]]; then

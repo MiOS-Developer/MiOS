@@ -1155,44 +1155,23 @@ pub mod roadmap_index {
             }
         }
 
-        // 6. Units count
-        let mut declared_cnt = 0;
+        // 6. Units: MEASURED by the projection itself (render and compare),
+        // over the same inventory the gate uses -- top-level units plus their
+        // `<unit>.d/*.conf` drop-ins, system and session. Counting every file
+        // under the unit dir (enablement symlinks included) and subtracting the
+        // register from the declarations reported a number nothing measured.
         let mut drift_units_cnt = 0;
-        let toml_path = root.join("usr/share/mios/mios.toml");
-        if let Ok(txt) = fs::read_to_string(&toml_path) {
-            if let Ok(toml_val) = txt.parse::<toml::Value>() {
-                if let Some(units) = toml_val.get("units").and_then(|u| u.as_table()) {
-                    declared_cnt = units.values().filter(|v| v.is_table()).count();
-                }
-                if let Some(drift) = toml_val
-                    .get("unit_projection")
-                    .and_then(|u| u.get("drift"))
-                    .and_then(|d| d.as_array())
-                {
-                    drift_units_cnt = drift.len();
-                }
-            }
+        if let Ok(txt) = fs::read_to_string(root.join("usr/share/mios/mios.toml")) {
+            drift_units_cnt = mios_unit_gen::drift_register(&txt).map(|d| d.len()).unwrap_or(0);
         }
-
-        let mut shipped_cnt = 0;
-        let unit_dir = root.join("usr/lib/systemd/system");
-        if unit_dir.is_dir() {
-            let mut stack = vec![unit_dir];
-            while let Some(dir) = stack.pop() {
-                if let Ok(entries) = fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() {
-                            stack.push(path);
-                        } else if path.is_file() {
-                            shipped_cnt += 1;
-                        }
-                    }
-                }
-            }
+        let (mut faithful_cnt, mut shipped_cnt) = (0, 0);
+        for p in [mios_unit_gen::project(root), mios_unit_gen::project_user(root)]
+            .into_iter()
+            .flatten()
+        {
+            faithful_cnt += p.faithful.len();
+            shipped_cnt += p.faithful.len() + p.drifted.len() + p.undeclared.len();
         }
-
-        let faithful_cnt = declared_cnt.saturating_sub(drift_units_cnt);
 
         let table_lines = [
         "| | Measured | Note |",

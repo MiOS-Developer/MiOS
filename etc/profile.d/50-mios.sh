@@ -180,7 +180,7 @@ _mios_profile_step
 # ============================================================================
 _mios_profile_step() {
 # AI-hint: Configures the DOCKER_HOST environment variable to point to the Podman remote socket path, enabling Docker-compatible CLI tools and agents to interact with the container engine.
-# AI-related: mios-podman-ps.sh
+# AI-related: usr/lib/systemd/system/mios-podman-ps.service
 # shellcheck shell=bash
 # Export only when podman reports a path. Rootless podman cannot re-exec where
 # user namespaces are unavailable (a container inside a container), and an

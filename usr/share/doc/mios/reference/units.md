@@ -34,6 +34,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-backup-remote.service` | `usr/lib/systemd/system` | MiOS Remote Delta Snapshot Backup Synchronization Service |
 | `mios-backup-remote.timer` | `usr/lib/systemd/system` | Daily Off-Site Remote Delta Snapshot Backup Timer |
 | `mios-boot-diag.service` | `usr/lib/systemd/system` | MiOS' Boot Diagnostic -- prints service status to console |
+| `mios-boot-display-report.service` | `usr/lib/systemd/system` | MiOS boot display report (fbcon, framebuffers, DRM order) |
 | `mios-bootc-switch.path` | `usr/lib/systemd/system` | MiOS' watch for Forgejo Runner build output -> bootc switch |
 | `mios-bootc-switch.service` | `usr/lib/systemd/system` | MiOS' bootc-switch from local build sentinel |
 | `mios-bound-images-firstboot.service` | `usr/lib/systemd/system` | First-boot Bound Images Provisioner |
@@ -163,6 +164,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-rdp-native.service` | `usr/lib/systemd/user` | MiOS native RDP server (IronRDP, EGFX AVC420 H.264 via Cisco OpenH264) into the live Hyprland session |
 | `mios-rdp-priv.socket` | `usr/lib/systemd/system` | MiOS RDP root helper socket (PAM mios-rdp + group check, TLS key hand-over, xrdp fallback) |
 | `mios-rdp-priv@.service` | `usr/lib/systemd/system` | MiOS RDP root helper (one request from the native RDP server) |
+| `mios-rdp-usb.socket` | `usr/lib/systemd/system` | MiOS RDP USB helper socket (attach a redirected device to an already-loaded vhci_hcd port) |
+| `mios-rdp-usb@.service` | `usr/lib/systemd/system` | MiOS RDP USB helper (holds one vhci port for one redirected device) |
 | `mios-rdp-vnc.service` | `usr/lib/systemd/user` | MiOS RDP remote display of the live Hyprland session (per-attach wayvnc + RFB bridge on UNIX sockets, fronted by xrdp) |
 | `mios-registry.service` | `usr/lib/systemd/system` | MiOS Local OCI Distribution Registry (task_454) |
 | `mios-role.service` | `usr/lib/systemd/system` | MiOS' System Init & Role Engine |
@@ -227,5 +230,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (219 unit(s)) -->
+<!-- derived from tracked unit files (222 unit(s)) -->
 <!-- /MIOS-GEN:units -->

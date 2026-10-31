@@ -1,5 +1,5 @@
 # AI-hint: Native static CLI + ratatui TUI client for the ventulusd fan-control daemon's HTTP-over-Unix-socket API (MiOS fan control).
-# AI-related: /usr/bin/mios-fanctl, /usr/share/mios/fan-control/mios-fanctl.toml, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf
+# AI-related: src/main.rs, /usr/share/mios/fan-control/mios-fanctl.toml, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf
 [package]
 name = "mios-fanctl"
 version.workspace = true

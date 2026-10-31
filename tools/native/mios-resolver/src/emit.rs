@@ -1,6 +1,6 @@
-// AI-hint: Canonical export-map builder -- combines walked canonical keys with legacy aliases and applies WALK_MOSTLY_DEAD suppression -- and every emitter over it: shell, PowerShell, JSON, install.env, build and repos.
+// AI-hint: Canonical export-map builder -- combines walked canonical keys with legacy aliases and applies the [generation.walk] exclusion and suppression rules -- and every emitter over it: shell, PowerShell, JSON, install.env, build and repos.
 // AI-related: tools/native/mios-ssot-walk, usr/lib/mios/mios_toml.py, usr/libexec/mios/57-mios-sys-build.sh, usr/share/mios/mios.toml, /etc/mios/install.env, usr/share/containers/systemd, automation/lib/globals.ps1, automation/06-enable-external-repos.sh, usr/share/mios/mios.toml [repos.external], usr/lib/mios/userenv.sh, tools/lib/userenv.sh
-use mios_ssot_walk::{is_emit_keep_var, is_excluded_section, is_mostly_dead_section};
+use mios_ssot_walk::WalkRules;
 use std::collections::BTreeMap;
 use toml::Value;
 
@@ -71,6 +71,9 @@ fn build_exports(
     // untraceable everywhere rather than traced differently per build.
     let mut legacy_source: BTreeMap<String, Option<String>> = BTreeMap::new();
     let all_pairs = walk(merged);
+    // The walk rules come from the tree being projected ([generation.walk]),
+    // the same table mios_toml.py reads -- one copy for both twins.
+    let rules = WalkRules::from_ssot(merged);
 
     // Any character that is not [A-Za-z0-9_] becomes `_`, matching
     // render-globals.py's _UNSAFE_NAME_RE. Replacing only `.`, `-` and `/` left
@@ -98,14 +101,14 @@ fn build_exports(
         }
 
         // Projected by their own renderers, not exported as variables.
-        if is_excluded_section(path.split('.').next().unwrap_or(&path)) {
+        if rules.is_excluded_section(path.split('.').next().unwrap_or(&path)) {
             continue;
         }
 
         let canonical = crate::names::canonical_name(&path);
 
         let sec_name = path.split('.').next().unwrap_or(&path);
-        if is_mostly_dead_section(sec_name) && !is_emit_keep_var(&canonical) {
+        if rules.suppresses_canonical(sec_name, &canonical) {
             // Suppressed canonical key
         } else {
             if let Some(sources) = sources.as_deref_mut() {
@@ -351,18 +354,27 @@ overridden = "y"
 
     #[test]
     fn test_mostly_dead_suppression() {
-        let val: Value = toml::from_str(
-            r#"
-[ai]
-endpoint = "http://localhost:8000"
-random_setting = "test"
-"#,
-        )
-        .unwrap();
-
+        let ai = "[ai]\nendpoint = \"http://localhost:8000\"\nrandom_setting = \"test\"\n";
+        let walk = "[generation.walk]\nmostly_dead_sections = [\"ai\"]\nemit_keep = [\"MIOS_AI_ENDPOINT\"]\n";
+        let val: Value = toml::from_str(&format!("{ai}{walk}")).unwrap();
         let exports = build_exports_map(&val, 0);
-        assert!(exports.contains_key("MIOS_AI_ENDPOINT")); // In WALK_EMIT_KEEP
-        assert!(!exports.contains_key("MIOS_AI_RANDOM_SETTING")); // Suppressed!
+        assert!(exports.contains_key("MIOS_AI_ENDPOINT")); // kept by emit_keep
+        assert!(!exports.contains_key("MIOS_AI_RANDOM_SETTING")); // suppressed
+        // The rules are the tree's own: without the table nothing is suppressed.
+        let bare: Value = toml::from_str(ai).unwrap();
+        assert!(build_exports_map(&bare, 0).contains_key("MIOS_AI_RANDOM_SETTING"));
+    }
+
+    #[test]
+    fn excluded_sections_come_from_the_projected_tree() {
+        let units = "[units.\"x.service\".Unit]\nDescription = \"d\"\n[ports]\nhttp = 80\n";
+        let bare: Value = toml::from_str(units).unwrap();
+        assert!(build_exports_map(&bare, 0).contains_key("MIOS_UNITS_X_SERVICE_UNIT_DESCRIPTION"));
+        let ruled: Value =
+            toml::from_str(&format!("{units}[generation.walk]\nexcluded_sections = [\"units\"]\n")).unwrap();
+        let exports = build_exports_map(&ruled, 0);
+        assert!(!exports.keys().any(|k| k.starts_with("MIOS_UNITS_")), "{exports:?}");
+        assert_eq!(exports["MIOS_PORTS_HTTP"], "80");
     }
 }
 
@@ -370,7 +382,13 @@ random_setting = "test"
 mod canonical_export_tests {
     #[test]
     fn signing_build_inputs_survive_security_suppression() {
-        let data: toml::Value = "[security.sigstore]\ncosign_version='fixture-pin'\ncosign_release_url='https://example.invalid/releases'\nprivate_setting='must-not-export'\n".parse().unwrap();
+        // The vendor walk rules, so this guards the shipped keep-list.
+        let vendor: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let mut data: toml::Value = "[security.sigstore]\ncosign_version='fixture-pin'\ncosign_release_url='https://example.invalid/releases'\nprivate_setting='must-not-export'\n".parse().unwrap();
+        data.as_table_mut()
+            .unwrap()
+            .insert("generation".into(), vendor["generation"].clone());
         for exports in [
             super::build_exports_map(&data, 0),
             super::build_globals_map(&data, 0),
@@ -765,7 +783,11 @@ pub mod emit_shell {
         format!("'{}'", s.replace('\'', "'\"'\"'"))
     }
 
-    pub fn emit_shell(merged: &Value, stack_offset: i64, ref_names_path: Option<&Path>) -> String {
+    /// The NAME -> value map `emit_shell` exports, values raw (unquoted): the
+    /// canonical exports, the MIOS_PG_BIND_ADDR derivation and every ${MIOS_*}
+    /// reference resolved. `mios-gen env-snapshot` renders this same map, so
+    /// the committed environment baseline and a login shell can never differ.
+    pub fn shell_exports(merged: &Value, stack_offset: i64) -> std::collections::BTreeMap<String, String> {
         let mut exports = build_exports_map(merged, stack_offset);
 
         if !exports.contains_key("MIOS_PG_BIND_ADDR") {
@@ -798,6 +820,11 @@ pub mod emit_shell {
         // Resolving here is what makes userenv.sh's native tier agree with its
         // Python fallback.
         resolve_cross_references(&mut exports);
+        exports
+    }
+
+    pub fn emit_shell(merged: &Value, stack_offset: i64, ref_names_path: Option<&Path>) -> String {
+        let exports = shell_exports(merged, stack_offset);
 
         let mut lines = Vec::new();
         for (k, v) in &exports {

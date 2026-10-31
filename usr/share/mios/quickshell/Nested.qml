@@ -15,6 +15,7 @@ QS.ShellRoot {
         property string searchScreen: ""
         property string searchQuery: ""
         property var rdpStats: ({})
+        signal phoneRequested()
         readonly property bool remoteAttached: false
         property string shaderError: ""
         property string remoteError: ""

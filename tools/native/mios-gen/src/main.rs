@@ -15,8 +15,14 @@ mod app_preflight;
 mod ai;
 mod btop_theme;
 mod display_scale;
+mod env_snapshot;
+mod ai_metadata;
+mod flatpak_overrides;
 mod hypr3d_spawn;
+mod hyprland_build;
 mod docs;
+mod dock;
+mod gpu_topology;
 mod greeter;
 mod grub;
 use render::desktop_boot;
@@ -28,11 +34,13 @@ mod global_bindings;
 mod nested_session;
 mod mem_admit;
 mod nested_devices;
+mod device_forwarding;
 mod session_scale;
 mod render;
 mod sync;
 mod terminal;
 mod tmux_os;
+mod wl_device_proxy;
 
 use ai::{ai_manifest, pipe_boundaries};
 use docs::{standardize_docs, sync_wiki};
@@ -99,6 +107,33 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Project the resolved MIOS_* login environment of the vendor tiers (env-baseline.txt).
+    #[command(name = "env-snapshot")]
+    EnvSnapshot {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Vendor SSOT to resolve (default: <root>/usr/share/mios/mios.toml).
+        #[arg(long)]
+        vendor: Option<PathBuf>,
+        /// Write the snapshot here instead of printing it.
+        #[arg(long, conflicts_with = "check")]
+        out: Option<PathBuf>,
+        /// Compare a committed snapshot with a fresh one; write nothing.
+        #[arg(long)]
+        check: Option<PathBuf>,
+    },
+    /// Project the AI header metadata catalog (usr/share/mios/ai/v1/metadata.json) from the tracked tree.
+    #[command(name = "ai-metadata")]
+    AiMetadata {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Write the catalog here (default: <root>/usr/share/mios/ai/v1/metadata.json).
+        #[arg(long, conflicts_with = "check_fresh")]
+        export: Option<PathBuf>,
+        /// Fail unless the committed catalog is byte-identical to a fresh one, naming each differing entry.
+        #[arg(long = "check-fresh")]
+        check_fresh: bool,
+    },
     /// Regenerate every declared SSOT projection in dependency order.
     Sync {
         #[arg(long)]
@@ -106,6 +141,9 @@ enum Commands {
         /// Validate every prerequisite and print the plan without changing files or the index.
         #[arg(long)]
         plan: bool,
+        /// Verify the plan's copy stages read-only (check_sync_copies) and exit.
+        #[arg(long = "check-copies", conflicts_with = "plan")]
+        check_copies: bool,
     },
     /// Audit every SSOT variable's canonical name, aliases and collisions (no values).
     Names {
@@ -340,6 +378,21 @@ enum Commands {
         srpm: Option<PathBuf>,
     },
 
+    /// Rebuild the installed Hyprland release's SRPM with the MiOS compositor patch series ([desktop.hyprland.compositor]).
+    #[command(name = "build-hyprland")]
+    BuildHyprland {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        srpm: Option<PathBuf>,
+        /// Directory the patched RPMs are copied to.
+        #[arg(long)]
+        out: PathBuf,
+        /// Only check that every patch applies to the pristine release.
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Build the compositor plugin [desktop.hyprland.<name>] with the same SDK and ABI hold.
     #[command(name = "build-hyprland-plugin")]
     BuildHyprlandPlugin {
@@ -362,6 +415,13 @@ enum Commands {
         /// Report device selection without starting a compositor.
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Dock HUD backend: window-portability targets, verified moves, and the on-screen keyboard nested in the expanded dock.
+    #[command(name = "dock")]
+    Dock {
+        #[command(subcommand)]
+        action: DockAction,
     },
 
     /// Validate a desktop launch and recover a missing document-portal mount before sandbox creation.
@@ -409,6 +469,23 @@ enum Commands {
         #[arg(long)] list_sessions: bool,
     },
 
+    /// Generic USB forwarding ([remote.device_forwarding]): capability report for RDP URBDRC (USB/IP vhci), USB/IP, SPICE usbredir and nested sessions; per-session target selection; the SPICE usbredir filter from the shared policy.
+    #[command(name = "device-forwarding")]
+    DeviceForwarding {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(value_parser=["report","select","spice-filter"])] action: String,
+        /// Session: rdp, nested:<seat> or spice:<domain> (select, spice-filter).
+        #[arg(long)] session: Option<String>,
+        /// Target for select: auto, none or the session's transport (host-vhci, nested-evdev, spice-usbredir).
+        #[arg(long)] target: Option<String>,
+        /// Runtime directory holding the target file and live stats (default $XDG_RUNTIME_DIR).
+        #[arg(long)] runtime_dir: Option<PathBuf>,
+        /// Alternative sysfs root for the read-only probes (tests); modules.dep is read from <sys>/lib-modules.
+        #[arg(long)] sys: Option<PathBuf>,
+        /// Skip the libvirt domain inventory.
+        #[arg(long)] no_libvirt: bool,
+    },
+
     /// Print the Super+Escape overlay rows (JSON [{keys,label}]) generated from the binding tables; writes nothing.
     #[command(name = "keymap-overlay")]
     KeymapOverlay {
@@ -454,13 +531,45 @@ enum Commands {
         window: Vec<String>,
     },
 
-    /// Run the login chooser with the GPU profile selected at boot.
+    /// Run the login chooser with the GPU profile selected at boot, on that profile's display
+    /// ([desktop.hyprland.hardware_profiles.<p>].greeter_display).
     #[command(name = "hyprland-greeter")]
     HyprlandGreeter {
         #[arg(long, value_parser = ["glass", "tuigreet"])]
         kind: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Root whose layered SSOT is read (default: the live system)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Plan for this hardware profile instead of the booted one (with --dry-run)
+        #[arg(long, requires = "dry_run")]
+        hardware_profile: Option<String>,
+        /// Terminal client of the hosted text greeter (run by mios-greeter-session --client terminal)
+        #[arg(long, conflicts_with_all = ["dry_run", "hardware_profile"])]
+        hosted: bool,
+        /// The hosted greeter command (after --)
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+
+    /// Read-only boot display report: DRM cards, connectors, fb registrations from the kernel log, fbcon's console
+    /// map and whether tty1 reached the booted profile's GPU, as one JSON line (journald keeps it per boot).
+    #[command(name = "boot-display-report")]
+    BootDisplayReport {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Kernel log: /dev/kmsg (needs CAP_SYSLOG) or a saved log file
+        #[arg(long, default_value = "/dev/kmsg")]
+        kmsg: PathBuf,
+        #[arg(long, default_value = "/proc/cmdline")]
+        cmdline: PathBuf,
+        #[arg(long, default_value = "/sys/class/drm")]
+        sysfs_drm: PathBuf,
+        #[arg(long, default_value = "/dev/dri")]
+        dri: PathBuf,
+        #[arg(long, default_value = "/sys/class/vtconsole")]
+        vtconsole: PathBuf,
     },
 
     /// Select the matching managed GRUB entry; reboot when GPU ownership changes.
@@ -523,6 +632,18 @@ enum Commands {
         /// Project separate hardware boot choices from this existing BLS type-1 entry.
         #[arg(long)]
         boot_entry: Option<PathBuf>,
+    },
+
+    /// Renders var/lib/flatpak/overrides/global from mios.toml [flatpak.overrides.global]
+    #[command(name = "render-flatpak-overrides")]
+    RenderFlatpakOverrides {
+        /// Repository root directory
+        #[arg(long)]
+        root: Option<PathBuf>,
+
+        /// Check mode: report drift without writing
+        #[arg(long)]
+        check: bool,
     },
 
     /// Renders usr/lib/tuned/profiles/<name>/tuned.conf from mios.toml [host.tuning.profiles]
@@ -817,6 +938,31 @@ enum Commands {
         /// Generate configuration (alias for default execution)
         #[arg(long)]
         generate: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DockAction {
+    /// Where windows can go and how each move really happens (JSON); with --address, how that window's app moves.
+    Targets {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] address: Option<String>,
+    },
+    /// Move one window to a target and verify it (output: live; session: migrate a containerized/stateless app).
+    Move {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] target: String,
+        #[arg(long)] address: String,
+        #[arg(long)] dry_run: bool,
+    },
+    /// Run the Phosh on-screen keyboard inside the expanded dock (layer surface rewritten to the dock's rect).
+    Osk {
+        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)] width: u32,
+        #[arg(long)] height: Option<u32>,
+        #[arg(long)] bottom: i32,
+        #[arg(long)] force_show: bool,
+        #[arg(long)] private_bus: bool,
     },
 }
 
@@ -1220,8 +1366,46 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Commands::Sync { root, plan } => {
+        Commands::EnvSnapshot { root, vendor, out, check } => {
             let root = resolve_root(root);
+            return match env_snapshot::run(&root, vendor.as_deref(), out.as_deref(), check.as_deref()) {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("[mios-gen env-snapshot] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::AiMetadata { root, export, check_fresh } => {
+            let root = resolve_root(root);
+            return match ai_metadata::run(&root, export.as_deref(), check_fresh) {
+                Ok(text) => {
+                    print!("{text}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprint!("{error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::Sync { root, plan, check_copies } => {
+            let root = resolve_root(root);
+            if check_copies {
+                return match sync::check_copies(&root) {
+                    Ok(msg) => {
+                        println!("[mios-gen sync] {msg}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("[mios-gen sync] check-copies failed: {e}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
             return match sync::run(&root, plan) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -1543,6 +1727,14 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::BuildHyprland { root, srpm, out, check } => {
+            let r = resolve_root(root);
+            (
+                "build-hyprland",
+                "usr/share/mios/hyprland/patches",
+                hyprland_build::run(&r, srpm.as_deref(), &out, check).map(|msg| { if cli.format != "json" { print!("{msg}"); } }).map_err(|e| (e, 1)),
+            )
+        }
         Commands::BuildHyprlandPlugin { name, root, srpm } => {
             let r = resolve_root(root);
             (
@@ -1575,6 +1767,14 @@ fn main() -> ExitCode {
                 },
             )
         }
+        Commands::Dock { action } => (
+            "dock", "desktop",
+            match action {
+                DockAction::Targets { root, address } => dock::targets(&root.unwrap_or_else(|| PathBuf::from("/")), address.as_deref()).map(|v| println!("{v}")),
+                DockAction::Move { root, target, address, dry_run } => dock::move_window(&root.unwrap_or_else(|| PathBuf::from("/")), &target, &address, dry_run).map(|v| println!("{v}")),
+                DockAction::Osk { root, width, height, bottom, force_show, private_bus } => dock::osk(&root.unwrap_or_else(|| PathBuf::from("/")), &dock::OskOptions { width, height, bottom, force_show, private_bus }),
+            }.map_err(|e| (e, 1)),
+        ),
         #[cfg(unix)]
         Commands::AppPreflight {root,desktop,flatpak,all,portal_only} => (
             "app-preflight", "desktop",
@@ -1587,6 +1787,10 @@ fn main() -> ExitCode {
         Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
             "nested-session", "desktop",
             nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
+        ),
+        Commands::DeviceForwarding {root,action,session,target,runtime_dir,sys,no_libvirt} => (
+            "device-forwarding", "remote",
+            device_forwarding::run(&root.unwrap_or_else(||PathBuf::from("/")),&action,session.as_deref(),target.as_deref(),runtime_dir,sys,no_libvirt).map_err(|e|(e,1)),
         ),
         Commands::KeymapOverlay {root,from_json} => (
             "keymap-overlay", "desktop",
@@ -1618,10 +1822,34 @@ fn main() -> ExitCode {
             "hyprland-3d-toggle", "desktop",
             render::render_hyprland::toggle_3d(Path::new("/")).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
         ),
-        Commands::HyprlandGreeter { kind, dry_run } => (
-            "hyprland-greeter", "desktop",
-            greeter::runtime(kind.as_deref(), dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
-        ),
+        Commands::HyprlandGreeter { kind, dry_run, root, hardware_profile, hosted, command } => {
+            if hosted {
+                // The launcher reads the status file; the exit code is the hosted greeter's.
+                return match greeter::hosted(&command) {
+                    Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                    Err(e) => { eprintln!("mios-gen hyprland-greeter --hosted: {e}"); ExitCode::from(1) }
+                };
+            }
+            (
+                "hyprland-greeter", "desktop",
+                greeter::runtime(&root.unwrap_or_else(|| PathBuf::from("/")), kind.as_deref(), hardware_profile.as_deref(), dry_run)
+                    .map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+            )
+        }
+        Commands::BootDisplayReport { root, kmsg, cmdline, sysfs_drm, dri, vtconsole } => {
+            let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            let cmd = fs::read_to_string(&cmdline).unwrap_or_default();
+            let doc = mios_resolver::resolve_projection(&root).ok();
+            let profile = doc.as_ref().and_then(|d| render::desktop_boot::boot_profile(d, &cmd).ok());
+            let pci = match (&doc, &profile) {
+                (Some(d), Some(p)) => gpu_topology::profile_pci(&root, d, p),
+                _ => None,
+            };
+            let log = gpu_topology::kmsg(&kmsg);
+            let report = gpu_topology::boot_display_report(&gpu_topology::Host { dri: &dri, sys: &sysfs_drm }, &vtconsole, &cmd, &log, profile.as_deref(), pci.as_deref());
+            println!("{report}");
+            return ExitCode::SUCCESS;
+        }
         Commands::HyprlandBootProfile { hardware_profile, prepare_only, dry_run } => (
             "hyprland-boot-profile", "desktop",
             desktop_boot::select(&hardware_profile, prepare_only, dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
@@ -1663,6 +1891,22 @@ fn main() -> ExitCode {
                     Ok((msg, _)) => {
                         if cli.format != "json" {
                             print!("{msg}");
+                        }
+                        Ok(())
+                    }
+                    Err((msg, code)) => Err((msg, code)),
+                },
+            )
+        }
+        Commands::RenderFlatpakOverrides { root, check } => {
+            let r = resolve_root(root);
+            (
+                "render-flatpak-overrides",
+                flatpak_overrides::OUTPUT,
+                match flatpak_overrides::run(&r, check) {
+                    Ok(msg) => {
+                        if cli.format != "json" {
+                            println!("{msg}");
                         }
                         Ok(())
                     }

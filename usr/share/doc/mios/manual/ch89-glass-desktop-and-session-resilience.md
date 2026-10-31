@@ -543,7 +543,7 @@ MiOS resolved this vulnerability at both the application and systemd architectur
    [`usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf`](file:///usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf) configures systemd to isolate OOM events:
    ```ini
    # AI-hint: Keeps a tmux pane (and the tmux session around it) alive when one process inside it is OOM-killed: only that process dies, not the whole pane scope.
-   # AI-related: usr/lib/systemd/user/vte-spawn-.scope.d/defaults.conf, usr/share/mios/mios.toml [terminal]
+   # AI-related: usr/share/mios/mios.toml [terminal]
    # A runaway tool once grew to 34 GB inside an agent pane; the default OOMPolicy=stop then tore down
    # the whole tmux pane scope and the operator lost every session in it.
    [Scope]

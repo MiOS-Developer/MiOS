@@ -2047,6 +2047,7 @@ dependencies = [
 name = "mios-controls"
 version = "0.3.0"
 dependencies = [
+ "mios-inputd",
  "mios-resolver",
  "ratatui",
  "rustix 0.38.44",
@@ -2099,6 +2100,7 @@ dependencies = [
  "mios-service-core",
  "mios-unit-gen",
  "regex",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2",
@@ -2233,6 +2235,9 @@ version = "0.3.0"
 [[package]]
 name = "mios-ssot-walk"
 version = "0.3.0"
+dependencies = [
+ "toml",
+]
 
 [[package]]
 name = "mios-task"

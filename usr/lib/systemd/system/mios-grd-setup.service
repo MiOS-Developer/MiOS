@@ -6,9 +6,11 @@ ConditionVirtualization=!container
 After=local-fs.target network-online.target gdm.service
 Wants=network-online.target
 ConditionPathExists=!/var/lib/mios/.grd-init-done
+
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/mios-grd-setup
 RemainAfterExit=yes
+
 [Install]
 WantedBy=multi-user.target

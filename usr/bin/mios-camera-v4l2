@@ -1,0 +1,120 @@
+#!/bin/bash
+# AI-hint: Per-application launcher that lets a V4L2-only program see MiOS RDP remote cameras (and every other PipeWire camera) as /dev/videoN through PipeWire's V4L2 compatibility library (pipewire-v4l2, LD_PRELOAD): no kernel module, no system-wide device. Reads [remote.rdp.redirect].camera, [remote.rdp.native].camera_v4l2 and camera_v4l2_library from the layered SSOT; when compatibility is off or the library is missing it starts the program unchanged and says why.
+# AI-related: /usr/share/mios/templates/bash-tool, /usr/share/mios/mios.toml, src/mios-rdp-server/crates/mios-rdp-server/src/remote_camera.rs, usr/share/doc/mios/remote-camera.md
+# AI-functions: main, parse_args, log_info, log_error, setting, resolve
+
+set -euo pipefail
+
+log_info() {
+    printf '[%s] INFO: %s\n' "mios-camera-v4l2" "$*" >&2
+}
+
+log_error() {
+    printf '[%s] ERROR: %s\n' "mios-camera-v4l2" "$*" >&2
+}
+
+CHECK=0
+PROGRAM=()
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --check)
+                CHECK=1
+                shift
+                ;;
+            --)
+                shift
+                PROGRAM=("$@")
+                return
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                exit 2
+                ;;
+            *)
+                PROGRAM=("$@")
+                return
+                ;;
+        esac
+    done
+}
+
+show_help() {
+    cat <<EOF
+Usage: mios-camera-v4l2 [options] <program> [arguments...]
+
+Runs <program> with PipeWire's V4L2 compatibility library preloaded, so a
+V4L2-only application can open MiOS RDP remote cameras as /dev/video0, ...
+PipeWire-native and camera-portal applications (browsers, Flatpak apps) do
+not need this launcher. Flatpak sandboxes do not inherit the preload.
+
+Options:
+  --check       Print whether V4L2 compatibility is active (exit 0) or why not (exit 3)
+  -h, --help    Show this help message
+
+SSOT keys: remote.rdp.redirect.camera, remote.rdp.native.camera_v4l2,
+remote.rdp.native.camera_v4l2_library.
+EOF
+}
+
+# One scalar from the layered SSOT; the default applies only when the key is absent.
+setting() {
+    mios-toml-get "$1" "$2" "$3" 2>/dev/null || printf '%s\n' "$3"
+}
+
+# Prints the library to preload, or fails with the reason compatibility is off.
+resolve() {
+    local camera compat library
+    camera=$(setting remote.rdp.redirect camera true)
+    compat=$(setting remote.rdp.native camera_v4l2 true)
+    library=$(setting remote.rdp.native camera_v4l2_library /usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so)
+    if [[ $camera != true ]]; then
+        printf 'remote cameras are disabled (remote.rdp.redirect.camera = %s)\n' "$camera"
+        return 1
+    fi
+    if [[ $compat != true ]]; then
+        printf 'V4L2 compatibility is disabled (remote.rdp.native.camera_v4l2 = %s)\n' "$compat"
+        return 1
+    fi
+    if [[ $library != /* ]]; then
+        printf "camera_v4l2_library must be an absolute path, not '%s'\n" "$library"
+        return 1
+    fi
+    if [[ ! -f $library ]]; then
+        printf '%s is not installed (package pipewire-v4l2)\n' "$library"
+        return 1
+    fi
+    printf '%s\n' "$library"
+}
+
+main() {
+    local result
+    if result=$(resolve); then
+        if (( CHECK )); then
+            printf 'mios-camera-v4l2: active (%s)\n' "$result"
+            exit 0
+        fi
+        export LD_PRELOAD="$result${LD_PRELOAD:+ $LD_PRELOAD}"
+        exec "${PROGRAM[@]}"
+    fi
+    if (( CHECK )); then
+        printf 'mios-camera-v4l2: inactive: %s\n' "$result"
+        exit 3
+    fi
+    log_info "starting ${PROGRAM[0]} without V4L2 camera compatibility: $result"
+    exec "${PROGRAM[@]}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    parse_args "$@"
+    if (( ! CHECK )) && (( ${#PROGRAM[@]} == 0 )); then
+        show_help >&2
+        exit 2
+    fi
+    main
+fi

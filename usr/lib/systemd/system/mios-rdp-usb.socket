@@ -1,0 +1,12 @@
+[Unit]
+Description=MiOS RDP USB helper socket (attach a redirected device to an already-loaded vhci_hcd port)
+Documentation=file:///usr/share/doc/mios/remote-usb.md
+
+[Socket]
+ListenSequentialPacket=/run/mios-rdp-usb.sock
+SocketMode=0666
+Accept=yes
+MaxConnections=16
+
+[Install]
+WantedBy=sockets.target

@@ -2653,6 +2653,22 @@ pub mod render_hyprland {
         lua(at(value, path)?)
     }
 
+    /// [desktop.hyprland.mios-appmenu]: the compositor side of the global application menus (the KDE appmenu
+    /// protocol, read by `miosd appmenu serve`). Its own section, so a plugin that fails to load costs only the
+    /// per-window binding (miosd falls back to bus discovery). Disabled or absent: nothing.
+    fn appmenu_lua(h: &Value) -> Result<String, String> {
+        let Some(p) = h.get("mios-appmenu").filter(|p| p.get("enabled").and_then(Value::as_bool) == Some(true)) else {
+            return Ok(String::new());
+        };
+        let path = p
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|s| Path::new(s).is_absolute() && !s.chars().any(char::is_control)
+                && !Path::new(s).components().any(|c| c == std::path::Component::ParentDir))
+            .ok_or("desktop.hyprland.mios-appmenu.path must be an absolute FHS path")?;
+        Ok(format!("mios_section(\"mios-appmenu\", function()\nhl.plugin.load({})\nend)\n", lua(&Value::String(path.into()))?))
+    }
+
     /// The design language ([theme.shell] comment block): the derived geometry every surface shares, from
     /// [theme.shell] top_height_px / inset_px / edge_margin_px / corner_power and decoration rounding (R).
     /// The Python twin is usr/libexec/mios/mios-sync-theme (the theme bridge's "design" table, read by Glass.qml);
@@ -3405,6 +3421,7 @@ end
         if let Some(policy) = &rate_policy {
             out += &framerate_lua(data, policy, login)?;
         }
+        out += &appmenu_lua(h)?;
         // Float-first placement ([desktop.hyprland.placement], miosd placement): emitted before
         // the SSOT window_rules so the PiP/dialog rules after it override its size and position.
         // `float = false` keeps windows Hyprland already floats (parented dialogs, fixed-size
@@ -5311,7 +5328,7 @@ report("again")
         let mut out = toml::map::Map::new();
         for (k, v) in cfg {
             let ok = match k.as_str() {
-                "enabled" | "require_vrr" => v.is_bool(),
+                "enabled" | "require_vrr" | "capture_guard" => v.is_bool(),
                 "slack_us" => v.as_integer().is_some_and(|n| (0..=20_000).contains(&n)),
                 "wallpaper_namespaces" => v.as_str().is_some_and(|s| {
                     s.split(',').map(str::trim).all(|n| n.is_empty() || n.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
@@ -5319,11 +5336,11 @@ report("again")
                 "max_fps" | "exclude_prefixes" | "wallpaper_fps" => {
                     return Err(format!("desktop.hyprland.{name}.config.{k} is the running tier's ([desktop.framerate], set by miosd framerate); remove it"))
                 }
-                _ => return Err(format!("desktop.hyprland.{name}.config.{k} is not a plugin option (enabled, require_vrr, slack_us, wallpaper_namespaces)")),
+                _ => return Err(format!("desktop.hyprland.{name}.config.{k} is not a plugin option (enabled, require_vrr, capture_guard, slack_us, wallpaper_namespaces)")),
             };
             if !ok {
                 return Err(format!(
-                    "desktop.hyprland.{name}.config.{k} is invalid (enabled/require_vrr: boolean; slack_us: 0..=20000; wallpaper_namespaces: comma-separated [A-Za-z0-9._-] layer namespaces)"
+                    "desktop.hyprland.{name}.config.{k} is invalid (enabled/require_vrr/capture_guard: boolean; slack_us: 0..=20000; wallpaper_namespaces: comma-separated [A-Za-z0-9._-] layer namespaces)"
                 ));
             }
             out.insert(k.clone(), v.clone());
@@ -5567,7 +5584,7 @@ report("again")
             .filter(|h| h.is_table()).ok_or_else(|| "Missing or invalid desktop.hyprland table".into())
     }
 
-    pub(super) fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
+    pub(crate) fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
         let h = hardware_profile_table(data)?;
         let name = requested.or_else(|| cmdline.split_whitespace()
             .find_map(|arg| arg.strip_prefix("mios.desktop.gpu=")))
@@ -5705,12 +5722,22 @@ report("again")
         let data = hardware_profile_data(root)?;
         let h = hardware_profile_table(&data)?;
         let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
-        let profile = profile_name(&data, hardware_profile, &cmdline)?;
+        let mut profile = profile_name(&data, hardware_profile, &cmdline)?;
+        // GPU hand-off: while the boot profile's GPU is with a VM, its handoff_fallback profile runs in place (its
+        // outputs relit, no reboot); the boot profile itself cannot start until the GPU is back.
+        let booted = super::desktop_boot::boot_profile(&data, &cmdline).ok();
+        let handoff = booted.as_deref().and_then(|b| crate::gpu_topology::handoff_profile(
+            &data, root, b, &crate::gpu_topology::inventory(&crate::gpu_topology::host())));
+        if let Some(fallback) = &handoff {
+            if hardware_profile.is_none() || booted.as_deref() == Some(profile.as_str()) {
+                profile = fallback.clone();
+            }
+        }
         if !dry_run && root == Path::new("/") && super::desktop_boot::enabled(&data)? {
             let current = super::desktop_boot::boot_profile(&data, &cmdline)?;
             // This operation only changes managed boot choices. Device ownership
             // changes at boot, before a compositor opens either DRM device.
-            if profile != current {
+            if profile != current && handoff.as_deref() != Some(profile.as_str()) {
                 let status = Command::new("/usr/bin/sudo")
                     .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
                         "--hardware-profile", &profile])
@@ -5750,8 +5777,15 @@ report("again")
         let selected = ordered[0].clone();
         let devices = ordered.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(":");
         if dry_run {
+            // Display = the cards the compositor lights; headless = the other cards (outputs left dark, render
+            // nodes still available, e.g. to nested sessions: [desktop.nested].render_node).
+            let gpus = crate::gpu_topology::inventory(&crate::gpu_topology::host());
+            let headless: Vec<&PathBuf> = cards.iter().map(|(p, _)| p).filter(|p| !ordered.contains(p)).collect();
+            let render = gpus.iter().find(|g| g.card == selected).and_then(|g| g.render.clone());
             return serde_json::to_string_pretty(&serde_json::json!({
                 "hardware_profile": profile, "devices": ordered,
+                "display_devices": ordered, "headless_devices": headless, "render_node": render, "handoff": handoff,
+                "include_other_devices": cfg.and_then(|c| c.get("include_other_devices")).and_then(Value::as_bool).unwrap_or(false),
                 "compositor": "start-hyprland", "config": "/usr/share/mios/hyprland/session.lua",
                 "desktop_target": "mios-desktop.target"
             })).map_err(|e| e.to_string());
@@ -6762,6 +6796,24 @@ for _, e in ipairs(MIOS_SESSION.errors or {}) do print("error " .. e) end
             assert!(output.contains("systemctl --user stop mios-desktop.target"));
             data["desktop"]["hyprland"]["startup"] = Value::Array(vec![Value::Boolean(true)]);
             assert!(project(&data).unwrap_err().contains("nonempty strings"));
+        }
+
+        #[test]
+        fn appmenu_plugin_loads_in_its_own_section_only_when_enabled() {
+            let mut d = real_ssot();
+            let out = project(&d).unwrap();
+            let want = "mios_section(\"mios-appmenu\", function()\nhl.plugin.load(\"/usr/lib64/mios/mios-appmenu.so\")\nend)\n";
+            assert!(out.contains(want), "the vendor SSOT enables the KDE appmenu protocol plugin");
+            // negative controls: disabled or absent -> no load; a relative or traversing path is refused
+            d["desktop"]["hyprland"]["mios-appmenu"]["enabled"] = Value::Boolean(false);
+            assert!(!project(&d).unwrap().contains("mios-appmenu"));
+            d["desktop"]["hyprland"].as_table_mut().unwrap().remove("mios-appmenu");
+            assert!(!project(&d).unwrap().contains("mios-appmenu"));
+            for bad in ["usr/lib64/mios/mios-appmenu.so", "/usr/lib64/../tmp/x.so", "/usr/lib64/mios/x\n.so"] {
+                let mut x = real_ssot();
+                x["desktop"]["hyprland"]["mios-appmenu"]["path"] = Value::String(bad.into());
+                assert!(project(&x).unwrap_err().contains("mios-appmenu.path"), "{bad}");
+            }
         }
 
         #[test]

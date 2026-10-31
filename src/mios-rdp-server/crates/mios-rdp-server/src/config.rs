@@ -49,7 +49,13 @@ pub struct Native {
     pub progressive_hz: u32,
     pub progressive_quant: u8,
     pub audio_control_program: String,
+    pub audio_server: String,
+    pub audio_recovery_attempts: u32,
+    pub audio_recovery_interval_ms: u64,
     pub microphone_queue_packets: usize,
+    pub speaker_packet_ms: u32,
+    pub speaker_max_latency_ms: u32,
+    pub speaker_idle_ms: u32,
     pub camera_video_program: String,
     pub camera_graph_program: String,
     pub camera_max_width: u32,
@@ -58,10 +64,24 @@ pub struct Native {
     pub camera_max_devices: usize,
     pub camera_poll_ms: u64,
     pub camera_timeout_ms: u64,
+    /// Bounded provider restarts after the native decoder process exits (a
+    /// consumer whose buffer negotiation fails ends it); 0 closes the camera.
+    pub camera_provider_restarts: u32,
+    /// Offer the (single-plane BGRA) source to V4L2-only applications through
+    /// PipeWire's V4L2 compatibility library and the mios-camera-v4l2 launcher.
+    pub camera_v4l2: bool,
+    pub camera_v4l2_library: String,
+    /// Empty = the operator's PipeWire runtime (/run/user/<operator_uid>); an absolute
+    /// path targets another PipeWire runtime (private synthetic labs).
+    pub camera_pipewire_runtime: String,
     pub drive_timeout_ms: u64,
     pub drive_max_devices: usize,
     pub drive_max_entries: usize,
     pub drive_io_kib: u32,
+    pub usb_helper_socket: PathBuf,
+    pub usb_attach_timeout_ms: u64,
+    pub usb_max_transfer_kib: u32,
+    pub usb_max_inflight: usize,
     pub bitmap_damage_threshold: u8,
     pub bitmap_slow_queue_ms: f64,
     pub bitmap_min_hz: u32,
@@ -107,7 +127,13 @@ impl Default for Native {
             progressive_hz: 0,
             progressive_quant: 8,
             audio_control_program: "pactl".into(),
+            audio_server: String::new(),
+            audio_recovery_attempts: 60,
+            audio_recovery_interval_ms: 500,
             microphone_queue_packets: 8,
+            speaker_packet_ms: 20,
+            speaker_max_latency_ms: 200,
+            speaker_idle_ms: 500,
             camera_video_program: "gst-launch-1.0".into(),
             camera_graph_program: "pw-dump".into(),
             camera_max_width: 1280,
@@ -116,10 +142,18 @@ impl Default for Native {
             camera_max_devices: 4,
             camera_poll_ms: 500,
             camera_timeout_ms: 10000,
+            camera_provider_restarts: 3,
+            camera_v4l2: true,
+            camera_v4l2_library: "/usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so".into(),
+            camera_pipewire_runtime: String::new(),
             drive_timeout_ms: 10000,
             drive_max_devices: 16,
             drive_max_entries: 4096,
             drive_io_kib: 256,
+            usb_helper_socket: PathBuf::from("/run/mios-rdp-usb.sock"),
+            usb_attach_timeout_ms: 5000,
+            usb_max_transfer_kib: 1024,
+            usb_max_inflight: 64,
             bitmap_damage_threshold: 3,
             bitmap_slow_queue_ms: 250.0,
             bitmap_min_hz: 2,
@@ -153,6 +187,7 @@ pub struct Redirect {
     pub location: bool,
     pub timezone: String,
     pub smartcard: bool,
+    pub usb: bool,
 }
 
 impl Default for Redirect {
@@ -162,13 +197,52 @@ impl Default for Redirect {
             clipboard_max_mb: 64,
             touch: true,
             pen: true,
-            audio_output: false,
+            audio_output: true,
             microphone: true,
             camera: true,
             drives: true,
             location: false,
             timezone: "report".into(),
             smartcard: false,
+            usb: false,
+        }
+    }
+}
+
+/// [remote.device_forwarding]: per-session target file and the generic USB policy shared with
+/// `mios-gen device-forwarding` (SPICE filter, report). Unknown keys (libvirt inventory) are ignored here.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct DeviceForwarding {
+    pub targets_file: String,
+    pub default_target: String,
+    pub usb: UsbForwarding,
+}
+
+impl Default for DeviceForwarding {
+    fn default() -> Self {
+        Self {
+            targets_file: "mios/device-forwarding/targets.json".into(),
+            default_target: "auto".into(),
+            usb: UsbForwarding::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct UsbForwarding {
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+    pub max_devices: usize,
+}
+
+impl Default for UsbForwarding {
+    fn default() -> Self {
+        Self {
+            allow: Vec::new(),
+            deny: vec!["class:09".into(), "class:03".into(), "class:e0".into()],
+            max_devices: 4,
         }
     }
 }
@@ -179,6 +253,7 @@ pub struct Naming {
     pub touch_device: String,
     pub pen_device: String,
     pub microphone_source_prefix: String,
+    pub speaker_sink_prefix: String,
     pub camera_source_prefix: String,
 }
 
@@ -188,6 +263,7 @@ impl Default for Naming {
             touch_device: "MiOS Remote Touch".into(),
             pen_device: "MiOS Remote Pen".into(),
             microphone_source_prefix: "mios-remote-microphone".into(),
+            speaker_sink_prefix: "mios-remote-speaker".into(),
             camera_source_prefix: "mios-remote-camera".into(),
         }
     }
@@ -232,6 +308,7 @@ pub struct Config {
     pub native: Native,
     pub redirect: Redirect,
     pub naming: Naming,
+    pub device_forwarding: DeviceForwarding,
 }
 
 impl Default for Config {
@@ -274,6 +351,7 @@ impl Default for Config {
             native: Native::default(),
             redirect: Redirect::default(),
             naming: Naming::default(),
+            device_forwarding: DeviceForwarding::default(),
         }
     }
 }
@@ -295,12 +373,42 @@ impl Config {
             || self.native.drive_io_kib % 4 != 0 {
             bail!("drive limits: timeout_ms 100..60000, devices 1..64, entries 64..65536, IO 4..1024 KiB aligned to 4 KiB");
         }
+        if !(1000..=30000).contains(&self.native.usb_attach_timeout_ms) || !(4..=16384).contains(&self.native.usb_max_transfer_kib)
+            || !(1..=1024).contains(&self.native.usb_max_inflight) || !(1..=16).contains(&self.device_forwarding.usb.max_devices)
+            || !self.native.usb_helper_socket.is_absolute() {
+            bail!("usb limits: attach_timeout_ms 1000..30000, max_transfer_kib 4..16384, max_inflight 1..1024, max_devices 1..16, absolute helper socket");
+        }
+        if !matches!(self.device_forwarding.default_target.as_str(), "auto" | "none") {
+            bail!("[remote.device_forwarding].default_target must be \"auto\" or \"none\"");
+        }
+        let targets = Path::new(&self.device_forwarding.targets_file);
+        if targets.is_absolute() || targets.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            bail!("[remote.device_forwarding].targets_file must be a relative path under the runtime directory");
+        }
+        crate::remote_usb::Policy::from_config(&self.device_forwarding.usb).map_err(|e| anyhow::anyhow!("[remote.device_forwarding.usb]: {e}"))?;
         let prefix = &self.naming.microphone_source_prefix;
-        if prefix.is_empty() || prefix.len() > 64 || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        if !node_prefix_ok(prefix) {
             bail!("microphone source prefix must contain 1..=64 ASCII letters, digits, hyphens or underscores");
+        }
+        if !node_prefix_ok(&self.naming.speaker_sink_prefix) {
+            bail!("speaker sink prefix must contain 1..=64 ASCII letters, digits, hyphens or underscores");
         }
         if self.native.audio_control_program.is_empty() || self.native.audio_control_program.contains('\0') || !(1..=128).contains(&self.native.microphone_queue_packets) {
             bail!("audio_control_program must be nonempty and microphone_queue_packets must be 1..=128");
+        }
+        let server = &self.native.audio_server;
+        if !server.is_empty()
+            && (!server.starts_with("unix:/") || server.len() > 512 || server.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control()))
+        {
+            bail!("audio_server must be empty (the operator's PipeWire-Pulse socket) or unix:/<absolute socket path>");
+        }
+        let n = &self.native;
+        if n.audio_recovery_attempts > 1000 || !(100..=10000).contains(&n.audio_recovery_interval_ms) {
+            bail!("audio_recovery_attempts must be 0..=1000 and audio_recovery_interval_ms 100..=10000");
+        }
+        if !(10..=100).contains(&n.speaker_packet_ms) || !(n.speaker_packet_ms..=2000).contains(&n.speaker_max_latency_ms)
+            || n.speaker_idle_ms > 10000 {
+            bail!("speaker_packet_ms must be 10..=100, speaker_max_latency_ms speaker_packet_ms..=2000 and speaker_idle_ms 0..=10000");
         }
         if !(1..=240).contains(&self.target_hz) {
             bail!("target_hz {} out of 1..240", self.target_hz);
@@ -328,8 +436,14 @@ impl Config {
         if !(16..=1920).contains(&n.camera_max_width) || !(16..=1080).contains(&n.camera_max_height)
             || !(1..=60).contains(&n.camera_max_fps) || !(1..=8).contains(&n.camera_max_devices)
             || !(250..=2000).contains(&n.camera_poll_ms) || !(2000..=30000).contains(&n.camera_timeout_ms)
+            || n.camera_provider_restarts > 8
             || n.camera_video_program.is_empty() || n.camera_graph_program.is_empty() {
             bail!("invalid native camera program, resolution, FPS, device or timing bounds");
+        }
+        let absolute = |p: &str| p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..");
+        if (n.camera_v4l2 && !absolute(&n.camera_v4l2_library))
+            || (!n.camera_pipewire_runtime.is_empty() && !absolute(&n.camera_pipewire_runtime)) {
+            bail!("camera_v4l2_library and a nonempty camera_pipewire_runtime must be absolute paths without '..'");
         }
         let prefix=&self.naming.camera_source_prefix;
         if prefix.is_empty() || prefix.len()>48 || !prefix.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_') {
@@ -364,6 +478,15 @@ impl Config {
 
     /// Source addresses admitted before a byte is parsed: tailnet, LAN when allow_lan, loopback for
     /// private test instances.
+    /// The PipeWire-Pulse server every session-owned audio node is created on.
+    pub fn pulse_server(&self) -> String {
+        if self.native.audio_server.is_empty() {
+            format!("unix:/run/user/{}/pulse/native", self.operator_uid)
+        } else {
+            self.native.audio_server.clone()
+        }
+    }
+
     pub fn peer_allowed(&self, ip: IpAddr) -> bool {
         let ip = match ip {
             IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
@@ -379,6 +502,10 @@ impl Config {
         };
         lists.into_iter().any(|c| cidr_contains(c, ip))
     }
+}
+
+fn node_prefix_ok(prefix: &str) -> bool {
+    !prefix.is_empty() && prefix.len() <= 64 && prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 pub fn cidr_contains(cidr: &str, ip: IpAddr) -> bool {
@@ -456,6 +583,35 @@ mod tests {
         assert!(cfg.validate().is_err());
     }
     #[test]
+    fn speaker_and_recovery_settings_are_bounded() {
+        let cfg = Config::default();
+        assert_eq!(cfg.pulse_server(), "unix:/run/user/1000/pulse/native");
+        let mut custom = Config::default();
+        custom.native.audio_server = "unix:/run/user/1000/mios-audio-lab/pulse/native".into();
+        custom.validate().unwrap();
+        assert_eq!(custom.pulse_server(), "unix:/run/user/1000/mios-audio-lab/pulse/native");
+        for server in ["tcp:127.0.0.1:4713", "unix:relative", "unix:/a b", "unix:/a\nb"] {
+            let mut c = Config::default(); c.native.audio_server = server.into();
+            assert!(c.validate().unwrap_err().to_string().contains("audio_server"), "{server}");
+        }
+        for name in ["", "../speaker", "speaker sink", "s\0"] {
+            let mut c = Config::default(); c.naming.speaker_sink_prefix = name.into();
+            assert!(c.validate().unwrap_err().to_string().contains("speaker sink prefix"), "{name:?}");
+        }
+        for (packet, latency, idle, ok) in [(20, 200, 500, true), (10, 10, 0, true), (100, 2000, 10000, true),
+            (9, 200, 500, false), (101, 200, 500, false), (20, 19, 500, false), (20, 2001, 500, false), (20, 200, 10001, false)] {
+            let mut c = Config::default();
+            (c.native.speaker_packet_ms, c.native.speaker_max_latency_ms, c.native.speaker_idle_ms) = (packet, latency, idle);
+            assert_eq!(c.validate().is_ok(), ok, "{packet} {latency} {idle}");
+        }
+        for (attempts, interval, ok) in [(0, 500, true), (1000, 100, true), (1001, 500, false), (60, 99, false), (60, 10001, false)] {
+            let mut c = Config::default();
+            (c.native.audio_recovery_attempts, c.native.audio_recovery_interval_ms) = (attempts, interval);
+            assert_eq!(c.validate().is_ok(), ok, "{attempts} {interval}");
+        }
+    }
+
+    #[test]
     fn native_drive_limits_reject_unbounded_or_unaligned_values() {
         let mut cfg=Config::default();cfg.validate().unwrap();
         cfg.native.drive_io_kib=17;assert!(cfg.validate().unwrap_err().to_string().contains("drive limits"));
@@ -487,6 +643,33 @@ mod tests {
             else { c.native.tcp_notsent_lowat_kib=4097; }
             assert!(c.validate().unwrap_err().to_string().contains("tcp_"));
         }
+    }
+
+    #[test]
+    fn camera_compatibility_paths_must_be_absolute() {
+        let mut c = Config::default();
+        c.validate().unwrap();
+        assert!(c.native.camera_v4l2 && c.native.camera_pipewire_runtime.is_empty());
+        for bad in ["libpw-v4l2.so", "/usr/lib64/../tmp/x.so", ""] {
+            let mut c = Config::default();
+            c.native.camera_v4l2_library = bad.into();
+            assert!(c.validate().unwrap_err().to_string().contains("camera_v4l2_library"));
+        }
+        let mut off = Config::default();
+        off.native.camera_v4l2 = false;
+        off.native.camera_v4l2_library.clear();
+        off.validate().unwrap();
+        let mut rt = Config::default();
+        rt.native.camera_pipewire_runtime = "relative/rt".into();
+        assert!(rt.validate().is_err());
+        rt.native.camera_pipewire_runtime = "/run/user/1000/mios-nested-desktop-1".into();
+        rt.validate().unwrap();
+        let mut restarts = Config::default();
+        assert_eq!(restarts.native.camera_provider_restarts, 3);
+        restarts.native.camera_provider_restarts = 0;
+        restarts.validate().unwrap();
+        restarts.native.camera_provider_restarts = 9;
+        assert!(restarts.validate().is_err());
     }
 
     #[test]

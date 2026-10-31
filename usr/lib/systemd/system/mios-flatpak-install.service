@@ -6,11 +6,13 @@ ConditionVirtualization=!container
 After=network-online.target
 Wants=network-online.target
 Before=display-manager.service
+
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/mios-flatpak-install
 TimeoutStartSec=600
 StandardOutput=journal+console
 StandardError=journal+console
+
 [Install]
 WantedBy=multi-user.target

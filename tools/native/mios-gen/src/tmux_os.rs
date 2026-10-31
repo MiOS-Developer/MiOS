@@ -1,5 +1,5 @@
 // AI-hint: MiOS-Tmux (tmux-os) executor behind mios-terminal --menu/--app/--float/--session-cycle/--new: the SSOT Apps and TUIs menu, TUI launch by mode, the per-session float shell (toggle, lift, dock, reap) and hidden-session-aware cycling. Every tmux call names its client and pane explicitly.
-// AI-related: usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs, tools/native/mios-unit-gen/src/tmux_os.rs, /usr/share/mios/mios.toml [keybindings.tmux.float] [terminal.tui_launcher] [[terminal.tuis]]
+// AI-related: usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs, tools/native/mios-unit-gen/src/tmux_os.rs, usr/share/mios/mios.toml [keybindings.tmux.float]
 // AI-functions: run, menu_argv, tui_spec, client_arg
 
 #![forbid(unsafe_code)]
@@ -184,6 +184,8 @@ pub fn menu_argv(
     if console {
         argv.extend(console_flags(merged, true)?);
     }
+    // End of flags: a disabled row ("-<label>") first would otherwise be parsed as a flag.
+    argv.push("--".into());
     for [label, key, command] in items {
         if label.is_empty() {
             argv.push(String::new());
@@ -219,10 +221,13 @@ struct Args {
     session: Option<String>,
     socket: Option<String>,
     id: Option<String>,
+    /// `app --mode popup|window|float`: open the TUI this way instead of its [[terminal.tuis]] mode (the launcher's
+    /// options).
+    mode: Option<Mode>,
 }
 
 fn parse(argv: &[String]) -> Result<Args, String> {
-    let mut a = Args { verb: String::new(), sub: None, client: None, console: false, rows: 24, section: None, session: None, socket: None, id: None };
+    let mut a = Args { verb: String::new(), sub: None, client: None, console: false, rows: 24, section: None, session: None, socket: None, id: None, mode: None };
     let mut it = argv.iter();
     a.verb = it.next().cloned().ok_or("tmux-os: missing verb")?;
     while let Some(arg) = it.next() {
@@ -240,6 +245,14 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--section" => a.section = Some(val()?),
             "--session" => a.session = Some(val()?),
             "--socket" => a.socket = Some(val()?),
+            "--mode" => {
+                a.mode = Some(match val()?.as_str() {
+                    "popup" => Mode::Popup,
+                    "window" => Mode::Window,
+                    "float" => Mode::Float,
+                    other => return Err(format!("--mode must be popup, window or float, not {other:?}")),
+                })
+            }
             s if !s.starts_with('-') && a.sub.is_none() => a.sub = Some(s.to_owned()),
             s if !s.starts_with('-') && a.id.is_none() => a.id = Some(s.to_owned()),
             other => return Err(format!("tmux-os: unexpected argument {other:?}")),
@@ -498,7 +511,7 @@ fn app(merged: &Value, a: &Args) -> Result<String, String> {
     };
     let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_else(|_| "/".into());
     let argv = t.argv_for(a.console).to_vec();
-    let mut mode = t.mode;
+    let mut mode = a.mode.unwrap_or(t.mode);
     if mode == Mode::Popup && !scope_works(&l.popup_scope) {
         mode = Mode::Window; // never run a popup TUI in the tmux server's own cgroup
     }
@@ -591,6 +604,8 @@ mod tests {
         let m = menu_argv(&d, false, 60, None, installed).unwrap().unwrap();
         assert_eq!(m[0], "display-menu");
         assert!(m.windows(2).any(|w| w[0] == "-C" && w[1] == "0") && !m.iter().any(|a| a == "-M"), "{m:?}");
+        let end = m.iter().position(|a| a == "--").expect("the flags end before the items");
+        assert!(end < m.iter().position(|a| a == "MiOS AI").unwrap(), "{m:?}");
         let ai = m.iter().position(|a| a == "MiOS AI").unwrap();
         let btop = m.iter().position(|a| a == "btop").unwrap();
         assert!(ai < btop);
@@ -643,5 +658,8 @@ mod tests {
         assert!(parse(&["menu".into(), "--console".into(), "2".into()]).is_err());
         assert!(parse(&["menu".into(), "--client".into(), "/etc/passwd".into()]).is_err());
         assert!(parse(&["menu".into(), "--rows".into(), "0".into()]).is_err());
+        let a = parse(&["app".into(), "btop".into(), "--mode".into(), "float".into()]).unwrap();
+        assert!(a.mode == Some(Mode::Float) && a.sub.as_deref() == Some("btop"));
+        assert!(parse(&["app".into(), "btop".into(), "--mode".into(), "desktop".into()]).is_err(), "desktop is the launcher's own pop-out");
     }
 }

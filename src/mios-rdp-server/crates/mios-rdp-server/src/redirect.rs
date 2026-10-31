@@ -10,127 +10,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ironrdp_rdpsnd::pdu::{AudioFormat, WaveFormat};
-use ironrdp_rdpsnd::server::{NegotiatedFormat, RdpsndError, RdpsndServerHandler};
-use ironrdp_server::{
-    RdpeaiServerBackend, RdpeaiServerFactory, ServerEventSender, SoundServerFactory,
-};
+use ironrdp_server::{RdpeaiServerBackend, RdpeaiServerFactory, ServerEventSender};
 use tracing::{debug, info, trace, warn};
 
 use crate::config::Config;
 use crate::pipeline::PipeStats;
+use crate::remote_audio::{OwnedPipe, Recovery, pipe_writer_lost};
 
 // ============================================================================
-// 1. Audio Output (RDPSND)
+// 1. Audio Output (RDPSND): remote_audio.rs (session-owned speaker sinks)
 // ============================================================================
-
-#[derive(Debug)]
-pub struct MiosSoundHandler {
-    formats: Vec<AudioFormat>,
-    streaming: Arc<AtomicBool>,
-    sender: Arc<
-        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
-    >,
-}
-
-impl MiosSoundHandler {
-    pub fn new(
-        sender: Arc<
-            std::sync::Mutex<
-                Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>,
-            >,
-        >,
-    ) -> Self {
-        Self {
-            formats: vec![
-                AudioFormat {
-                    format: WaveFormat::PCM,
-                    n_channels: 2,
-                    n_samples_per_sec: 48000,
-                    n_avg_bytes_per_sec: 192000,
-                    n_block_align: 4,
-                    bits_per_sample: 16,
-                    data: None,
-                },
-                AudioFormat {
-                    format: WaveFormat::PCM,
-                    n_channels: 2,
-                    n_samples_per_sec: 44100,
-                    n_avg_bytes_per_sec: 176400,
-                    n_block_align: 4,
-                    bits_per_sample: 16,
-                    data: None,
-                },
-            ],
-            streaming: Arc::new(AtomicBool::new(false)),
-            sender,
-        }
-    }
-}
-
-impl RdpsndServerHandler for MiosSoundHandler {
-    fn get_formats(&self) -> &[AudioFormat] {
-        &self.formats
-    }
-
-    fn choose_format<'a>(
-        &mut self,
-        common: &'a [NegotiatedFormat],
-    ) -> Option<&'a NegotiatedFormat> {
-        if let Some(f) = common.first() {
-            info!(format = ?f.format(), "negotiated audio output format (rdpsnd)");
-            Some(f)
-        } else {
-            warn!("no shared audio format with client (rdpsnd)");
-            None
-        }
-    }
-
-    fn start(&mut self, format: &NegotiatedFormat) -> Result<(), Box<dyn RdpsndError>> {
-        self.streaming.store(true, Ordering::SeqCst);
-        info!(format = ?format.format(), "started audio output streaming to remote client");
-        if let Some(ref tx) = *self.sender.lock().unwrap() {
-            let silence = vec![0u8; 1920];
-            let _ = tx.send(ironrdp_server::ServerEvent::Rdpsnd(
-                ironrdp_rdpsnd::server::RdpsndServerMessage::Wave(silence, 0),
-            ));
-        }
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        self.streaming.store(false, Ordering::SeqCst);
-        info!("stopped audio output streaming");
-    }
-}
-
-pub struct SoundFactory {
-    sender: Arc<
-        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>>>,
-    >,
-}
-
-impl SoundFactory {
-    pub fn new() -> Self {
-        Self {
-            sender: Arc::new(std::sync::Mutex::new(None)),
-        }
-    }
-}
-
-impl ServerEventSender for SoundFactory {
-    fn set_sender(
-        &mut self,
-        sender: tokio::sync::mpsc::UnboundedSender<ironrdp_server::ServerEvent>,
-    ) {
-        *self.sender.lock().unwrap() = Some(sender);
-    }
-}
-
-impl SoundServerFactory for SoundFactory {
-    fn build_backend(&self) -> Box<dyn RdpsndServerHandler> {
-        Box::new(MiosSoundHandler::new(Arc::clone(&self.sender)))
-    }
-}
 
 // ============================================================================
 // 2. Audio Input / Microphone (MS-RDPEAI)
@@ -388,90 +277,36 @@ impl Drop for MicrophonePipe {
     }
 }
 
-fn audio_control(cfg: &Config, args: &[String]) -> anyhow::Result<String> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-    let mut child = Command::new(&cfg.native.audio_control_program)
-        .args(args)
-        .env("XDG_RUNTIME_DIR", format!("/run/user/{}", cfg.operator_uid))
-        .env(
-            "PULSE_SERVER",
-            format!("unix:/run/user/{}/pulse/native", cfg.operator_uid),
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            anyhow::bail!("audio control timed out");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let mut output = String::new();
-    child
-        .stdout
-        .take()
-        .unwrap()
-        .take(8192)
-        .read_to_string(&mut output)?;
-    if !status.success() {
-        let mut error = String::new();
-        child
-            .stderr
-            .take()
-            .unwrap()
-            .take(2048)
-            .read_to_string(&mut error)?;
-        anyhow::bail!("audio control failed: {}", error.trim());
-    }
-    Ok(output)
+fn open_microphone<'a>(cfg: &'a Config, name: &str) -> anyhow::Result<(OwnedPipe<'a>, std::fs::File)> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let source = OwnedPipe::create(
+        cfg,
+        name,
+        "module-pipe-source",
+        &[
+            format!("source_name={name}"),
+            "format=s16le".into(),
+            "rate=48000".into(),
+            "channels=1".into(),
+            // Lowest session priority: WirePlumber never prefers this node over an
+            // existing device when it picks a default, so routing stays the operator's.
+            "source_properties=\"device.description=MiOS-Remote-Microphone priority.session=0\"".into(),
+        ],
+    )?;
+    let writer = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(source.fifo())?;
+    // Bound the native FIFO too: an idle consumer must not accumulate seconds of stale audio.
+    // SAFETY: fcntl receives a live fd and integer size; failure preserves the kernel default.
+    let _ = unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) };
+    Ok((source, writer))
 }
 
-struct MicrophoneSource<'a> {
-    cfg: &'a Config,
-    dir: PathBuf,
-    module: Option<u32>,
-}
-
-impl Drop for MicrophoneSource<'_> {
-    fn drop(&mut self) {
-        if let Some(module) = self.module {
-            // Module IDs can be reused after the audio daemon restarts. Never
-            // unload an unrelated source merely because its numeric ID matches.
-            if audio_control(self.cfg, &["list".into(), "short".into(), "modules".into()])
-                .is_ok_and(|modules| {
-                    microphone_module_owned(&modules, module, &self.dir.join("audio.fifo"))
-                })
-            {
-                let _ = audio_control(self.cfg, &["unload-module".into(), module.to_string()]);
-            }
-        }
-        let _ = std::fs::remove_file(self.dir.join("audio.fifo"));
-        let _ = std::fs::remove_dir(&self.dir);
-    }
-}
-
-fn microphone_module_owned(modules: &str, module: u32, fifo: &std::path::Path) -> bool {
-    let id = module.to_string();
-    let file = format!("file={}", fifo.display());
-    modules.lines().any(|line| {
-        let mut fields = line.split('\t');
-        fields.next() == Some(id.as_str())
-            && fields.next() == Some("module-pipe-source")
-            && fields
-                .next()
-                .is_some_and(|args| args.split_ascii_whitespace().any(|arg| arg == file))
-    })
-}
-
+/// Keeps one stable source name for the connection. When the audio server
+/// restarts (or drops the module) the source and FIFO are recreated under the
+/// same name, within the bounded [`Recovery`] budget.
 fn microphone_worker(
     cfg: &Config,
     stats: &PipeStats,
@@ -479,57 +314,72 @@ fn microphone_worker(
     stop: &AtomicBool,
     rx: std::sync::mpsc::Receiver<(std::time::Instant, Vec<u8>)>,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    use std::time::{Duration, Instant};
-    let parent = cfg.runtime_dir.join("mios-rdp");
-    std::fs::create_dir_all(&parent)?;
     let name = format!(
         "{}-{}-{generation}",
         cfg.naming.microphone_source_prefix,
         std::process::id()
     );
-    let dir = parent.join(&name);
-    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-    let mut owned = MicrophoneSource {
-        cfg,
-        dir,
-        module: None,
-    };
-    let fifo = owned.dir.join("audio.fifo");
-    let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes())?;
-    // SAFETY: path is NUL-terminated and mkfifo retains no pointer.
-    if unsafe { libc::mkfifo(path.as_ptr(), 0o600) } != 0 {
-        return Err(std::io::Error::last_os_error().into());
+    let current = || stats.microphone_generation.load(Ordering::Acquire) == generation;
+    let mut recovery = Recovery::new(cfg);
+    let mut lost = false;
+    while !stop.load(Ordering::Acquire) {
+        let (source, writer) = match open_microphone(cfg, &name) {
+            Ok(opened) => opened,
+            Err(e) => {
+                if current() {
+                    *stats.microphone_error.lock().unwrap() = Some(e.to_string());
+                }
+                if recovery.wait(stop) {
+                    continue;
+                }
+                return if stop.load(Ordering::Acquire) { Ok(()) } else { Err(e) };
+            }
+        };
+        recovery.reset();
+        if lost {
+            stats.microphone_recoveries.fetch_add(1, Ordering::Relaxed);
+            info!(source = %name, "remote microphone source recreated after the audio server restarted");
+        }
+        if current() {
+            *stats.microphone_source.lock().unwrap() = Some(name.clone());
+            *stats.microphone_error.lock().unwrap() = None;
+            stats.microphone_ready.store(true, Ordering::Release);
+        }
+        match microphone_pump(cfg, stats, stop, &rx, writer) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                warn!(error = %e, source = %name, "remote microphone source lost");
+                lost = true;
+                if current() {
+                    stats.microphone_ready.store(false, Ordering::Release);
+                    *stats.microphone_error.lock().unwrap() = Some(format!("audio server lost: {e}"));
+                }
+                drop(source);
+                if !recovery.wait(stop) {
+                    return if stop.load(Ordering::Acquire) { Ok(()) } else { Err(e) };
+                }
+            }
+        }
     }
-    let module = audio_control(
-        cfg,
-        &[
-            "load-module".into(),
-            "module-pipe-source".into(),
-            format!("source_name={name}"),
-            format!("file={}", fifo.display()),
-            "format=s16le".into(),
-            "rate=48000".into(),
-            "channels=1".into(),
-            "source_properties=device.description=MiOS-Remote-Microphone".into(),
-        ],
-    )?;
-    owned.module = Some(module.trim().parse::<u32>()?);
-    let mut writer = std::fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(&fifo)?;
-    use std::os::fd::AsRawFd;
-    // Bound the native FIFO too: an idle consumer must not accumulate seconds of stale audio.
-    // SAFETY: fcntl receives a live fd and integer size; failure preserves the kernel default.
-    let _ = unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) };
-    if stats.microphone_generation.load(Ordering::Acquire) == generation {
-        *stats.microphone_source.lock().unwrap() = Some(name);
-        stats.microphone_ready.store(true, Ordering::Release);
-    }
+    Ok(())
+}
+
+/// Writes queued packets into the source FIFO. Ok means the connection is
+/// closing; Err means the audio server dropped the source.
+fn microphone_pump(
+    cfg: &Config,
+    stats: &PipeStats,
+    stop: &AtomicBool,
+    rx: &std::sync::mpsc::Receiver<(std::time::Instant, Vec<u8>)>,
+    mut writer: std::fs::File,
+) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
     let max_age = Duration::from_millis((cfg.native.microphone_queue_packets as u64 * 10).max(10));
     while !stop.load(Ordering::Acquire) {
+        if pipe_writer_lost(&writer) {
+            anyhow::bail!("microphone source closed by the audio server");
+        }
         let (received, pcm) = match rx.recv_timeout(Duration::from_millis(20)) {
             Ok(packet) => packet,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -550,6 +400,9 @@ fn microphone_worker(
                         .fetch_add(n as u64, Ordering::Relaxed);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if pipe_writer_lost(&writer) {
+                        anyhow::bail!("microphone source closed by the audio server");
+                    }
                     std::thread::sleep(Duration::from_millis(1))
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -632,13 +485,16 @@ pub fn log_redirections(cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote_audio::audio_control;
 
     #[test]
     fn microphone_cleanup_checks_module_ownership_not_reused_id() {
+        use crate::remote_audio::module_owned;
         let path = std::path::Path::new("/run/user/1000/mios-test/audio.fifo");
-        assert!(microphone_module_owned(
+        assert!(module_owned(
             "42\tmodule-pipe-source\tfile=/run/user/1000/mios-test/audio.fifo rate=48000\t\n",
             42,
+            "module-pipe-source",
             path
         ));
         for modules in [
@@ -647,7 +503,7 @@ mod tests {
             "43\tmodule-pipe-source\tfile=/run/user/1000/mios-test/audio.fifo\n",
             "42\tmodule-pipe-source\tfile=/run/user/1000/mios-test/audio.fifo-extra\n",
         ] {
-            assert!(!microphone_module_owned(modules, 42, path));
+            assert!(!module_owned(modules, 42, "module-pipe-source", path));
         }
     }
 

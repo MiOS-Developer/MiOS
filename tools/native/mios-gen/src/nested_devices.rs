@@ -1,5 +1,5 @@
 // AI-hint: Nested-session device assignment ([desktop.nested.devices]): resolve CLI/SSOT device specs to evdev nodes, classify them from sysfs capabilities, apply the policy (kinds, virtual nodes, exclusivity across live sessions) and keep the per-session registry the input daemon reads.
-// AI-related: tools/native/mios-gen/src/nested_session.rs, usr/share/mios/mios.toml [desktop.nested.devices] [desktop.nested.seats], tests/test-nested-multiuse.py, tests/test-nested-multiuse-live.py
+// AI-related: tools/native/mios-gen/src/nested_session.rs, usr/share/mios/mios.toml [desktop.nested.devices], tests/test-nested-multiuse.py, tests/test-nested-multiuse-live.py
 // AI-functions: resolve, classify, Claim, live_sessions, bind_args
 //! A session's /dev/input is an empty directory unless devices are assigned. Each assigned node (and, by policy, its
 //! legacy joystick sibling) is bind-mounted into the session's namespace at its own path, so applications and an

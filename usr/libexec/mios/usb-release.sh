@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI-hint: Decouples physical boot USB media post-boot in copytoram RAM hypervisor mode.
-# AI-related: usb-release.service, RAM-Resident-SystemRescue-Hypervisor-Blueprint.md
+# AI-related: usb-release.service, docs/design/mios-field-hypervisor.md
 set -euo pipefail
 
 BOOTMNT="/run/archiso/bootmnt"

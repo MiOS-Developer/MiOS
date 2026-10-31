@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Regression test verifying Hypr3D CRT barrel curvature, physical-pixel scanlines shader patch, per-window toggle, PiP window alignment fix, SSOT configuration, and mathematical model.
-# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d], /usr/lib64/mios/hypr3d.so, /usr/bin/mios-shaderglass
+# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d], src/mios-rs/miosd/src/shaderglass.rs, usr/bin/mios-shaderglass
 # AI-doc: usr/share/doc/mios/manual/tests.md
 """Hypr3D CRT Curvature, Scanlines, Per-Window Toggle & PiP Glass Alignment regression test suite."""
 

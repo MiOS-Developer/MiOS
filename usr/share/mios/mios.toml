@@ -109,6 +109,16 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 55
+max_undeclared = 164
+max_undeclared_user = 19
+strict_no_write = [
+  "mios-boot-display-report.service",
+  "mios-embed-backfill.service",
+  "mios-node.service",
+  "mios-policy-arbiter.service",
+  "mios-rdp-usb@.service",
+]
+strict_no_write_user = []
 drift = [
   "hermes-worker-firstboot.service",
   "hermes-worker.path",
@@ -1201,10 +1211,10 @@ Environment = [
   # references each BARE, which the renderer leaves for systemd to expand.
   # Without a supply here systemd expanded all four to the empty string
   # (task_3362). `mios-gate protected-refs` fails the build on the general case.
-  "\"MIOS_FRONTIER_LANE_B_MODEL=${MIOS_FRONTIER_LANE_B_MODEL:-}\"",
-  "\"MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=${MIOS_FRONTIER_CLAUDE_EFFORT_FLAG:-}\"",
-  "\"MIOS_A2O_AGY_EFFORT_FLAG=${MIOS_A2O_AGY_EFFORT_FLAG:-}\"",
-  "\"MIOS_A2O_GEMINI_EFFORT_FLAG=${MIOS_A2O_GEMINI_EFFORT_FLAG:-}\"",
+  "\"MIOS_FRONTIER_LANE_B_MODEL=Gemini 3.5 Flash (High)\"",
+  "\"MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=--effort {e}\"",
+  "\"MIOS_A2O_AGY_EFFORT_FLAG=\"",
+  "\"MIOS_A2O_GEMINI_EFFORT_FLAG=\"",
 ]
 EnvironmentFile = "-/etc/mios/install.env"
 TimeoutStartSec = "1200s"
@@ -1458,7 +1468,7 @@ Wants = "network-online.target"
 Type = "simple"
 User = "mios"
 Group = "mios"
-Environment = ["HF_HOME=/var/home/mios/.cache/huggingface", "MIOS_FINETUNE_SERVE_PORT=${MIOS_PORT_FINETUNE_SERVE:-11438}"]
+Environment = ["HF_HOME=/var/home/mios/.cache/huggingface", "MIOS_FINETUNE_SERVE_PORT=11438"]
 ExecStart = "/var/lib/mios/finetune/venv/bin/python /usr/libexec/mios/mios-finetune-serve"
 Restart = "on-failure"
 RestartSec = "5"
@@ -2617,7 +2627,7 @@ surfaces = [
   { generator = "usr/libexec/mios/mios-manual", check = "check_docs_ratchet_monotone", output = "usr/share/mios/reference/doc-ratchet-floor.tsv" },
   { generator = "tools/native/mios-gen/src/render.rs", check = "check_desktop_launchers", output = "usr/share/applications/*.desktop" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_ai_manifests_fresh", output = "automation/manifest.json" },
-  { generator = "usr/libexec/mios/mios-ai-metadata.py", check = "check_ai_metadata_fresh", output = "usr/share/mios/ai/v1/metadata.json" },
+  { generator = "tools/native/mios-gen/src/ai_metadata.rs", check = "check_ai_metadata_fresh", output = "usr/share/mios/ai/v1/metadata.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_blade_dropins", output = "usr/share/mios/dropins/" },
   { generator = "tools/native/mios-gen/src/pod_quadlets.rs", check = "check_pod_quadlets", output = "usr/share/containers/systemd/" },
   { generator = "tools/native/mios-gen/src/render.rs", check = "check_globals_generated", output = "automation/lib/globals.sh, automation/lib/globals.ps1" },
@@ -2630,6 +2640,7 @@ surfaces = [
   { generator = "tools/native/mios-gen/src/image.rs", check = "check_cargo_manifest_generated", output = "tools/native/Cargo.toml" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_cockpit_projection", output = "etc/cockpit/cockpit.conf" },
   { generator = "tools/native/mios-gen/src/main.rs", check = "check_egress_firewall", output = "usr/share/mios/security/egress.nft" },
+  { generator = "tools/native/mios-gen/src/flatpak_overrides.rs", check = "check_flatpak_overrides", output = "var/lib/flatpak/overrides/global" },
   { generator = "tools/native/mios-gen/src/indexes.rs", check = "check_gate_index", output = "usr/share/mios/reference/drift-gate-index.tsv" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_pipe_boundaries", output = "usr/share/mios/pipe-boundaries.manifest.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_ipa_enroll_projection", output = "etc/mios/ipa-enroll.env" },
@@ -2659,7 +2670,7 @@ surfaces = [
   { generator = "tools/native/mios-gen/src/docs.rs", check = "check_standardize_docs", output = "specs/ (standardized header and footer of every spec page)" },
   { generator = "tools/native/mios-gen/src/docs.rs", check = "check_sync_wiki", output = "README.md, specs/Home.md, usr/share/mios/ai/INDEX.md and the specs/ pages that embed version metadata" },
   { generator = "tools/native/mios-gen/src/bootstrap_sync.rs", check = "check_bootstrap_sync", output = "the [bootstrap.sync] mirror files in mios-bootstrap" },
-  { generator = "tools/native/mios-gen/src/sync.rs", check = "check_resolved_env_lossless", output = "usr/share/mios/reference/env-baseline.txt" },
+  { generator = "tools/native/mios-gen/src/env_snapshot.rs", check = "check_resolved_env_lossless", output = "usr/share/mios/reference/env-baseline.txt" },
 ]
 
 # The scope this registry is measured against. `mios-gate projection-coverage`
@@ -4345,23 +4356,72 @@ lift_note      = "Float the pane, or dock a floating pane"
 single_pane_message = "Only one pane here: prefix * opens a new floating pane"
 origin_gone_message = "The original window is gone: the pane stays in the float shell"
 
+# The tmux-os launcher (miosd launcher): ONE organised, centred popup for everything -- running instances, AI and
+# agents, every installed TUI ([[terminal.tuis]]) and the pane, window and session actions of the menus below, in
+# grouped sections with headers, an aligned key column and two columns where the popup is wide enough. Opened by
+# prefix + menu_key and prefix + launcher_key (that one starts on the apps), by the controller's tmux:menu verb (the
+# same prefix key), and from anywhere on the desktop by CTRL+SUPER (the tmux-os-launcher row of [keybindings.global]).
+# Input: arrows (d-pad), the wheel (left stick), PgUp/PgDn/Home/End, the item's key, Enter or a click (A) opens,
+# Esc or Ctrl+C (B) backs out, Shift+Tab jumps to the next section; Tab, Shift+Enter (A held), Menu or a right-click opens
+# the selected row's options: instance management (go to, pop out to its own desktop window, float or tile, move to
+# a window or a session, close) or how to open an app (popup, window, floating pane, its own desktop window).
+# Prefix keys run as if typed on the launching client once the popup closes (send-keys -c CLIENT -K); menu rows run
+# through the generated mios-menu-ID key tables (switch-client -c CLIENT -T mios-menu-ID, then the row's key).
+[keybindings.tmux.launcher]
+enabled              = true        # false: prefix + menu_key and launcher_key open the display-menus again
+title                = "MiOS"
+popup_width          = "86%"       # of the launching client; never larger than the client, never smaller than min_*
+popup_height         = "84%"
+min_width            = 34          # below min_width x min_height the client gets menu_too_small_message instead
+min_height           = 10
+two_column_min_width = 92          # popup columns from which the sections flow into two columns
+column_gap           = 4
+key_width            = 3           # the key column: one key, right-aligned, padded to this many cells
+detail_min_width     = 64          # a column narrower than this hides the right-hand detail (session, mode)
+instance_limit       = 60          # running instances listed (windows and floating panes of visible sessions)
+start_section        = "running"   # where prefix + menu_key starts; prefix + launcher_key starts on the first app
+popout_session_prefix = "pop-"     # a popped-out instance moves into its own session: prefix + its name (-2, -3, ...)
+# A popped-out instance opens in a new desktop terminal: this argv plus ["--session", NAME]. Outside a desktop
+# (no WAYLAND_DISPLAY) the instance still moves into its own session and the client is told its name.
+desktop_terminal     = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal"]
+# Section groups in display order: running instances, [[keybindings.actions]], every [terminal.tui_launcher].sections
+# group that has an installed TUI, then one section per menu id listed in menu_sections.
+sections             = ["running", "ai", "apps", "menus"]
+menu_sections        = ["root", "pane", "window", "session"]
+section_titles       = { running = "Running", ai = "AI and agents", root = "Tmux-OS", pane = "Pane", window = "Window", session = "Session", mios = "MiOS", system = "System", files = "Files", dev = "Development", net = "Network", media = "Media", edit = "Editors" }
+# Rows of the menus that the launcher itself already is, or that only navigate between menus, are not repeated.
+skip_menu_keys       = ["e", "Space", "BSpace", "P", "W", "S"]
+empty_running        = "No running instance yet"
+help                 = "Enter open  Tab options  S-Tab section  Esc close"
+help_vt              = "Enter open - Tab options - S-Tab section - Esc close"
+options_title        = "Options"
+confirm_close        = "Close it?"
+move_window_title    = "Move the pane to window"
+move_session_title   = "Move the window to session"
+new_session_label    = "New session"
+labels = { go = "Go to", popout = "Pop out to its own window", float = "Float the pane", dock = "Tile the pane (dock it)", move_window = "Move to window...", move_session = "Move to session...", rename = "Rename...", close = "Close...", yes = "Yes, close it", no = "No", open = "Open", open_popup = "Open in a popup", open_window = "Open as a window", open_float = "Open as a floating pane", open_desktop = "Open in its own desktop window", new_window = "New window", run = "Run", cancel = "Cancel" }
+popped_message       = "Popped out to session"
+
 # Generated menus (command aliases mios-menu-ID and the Linux-console variant mios-menu-ID-vt). Every menu is
-# keyboard-driven (Up/Down, PgUp/PgDn, Home/End, Enter, Esc or q) and also takes mouse clicks.
+# keyboard-driven (Up/Down, PgUp/PgDn, Home/End, Enter, Esc or q) and also takes mouse clicks. Titles are centred and
+# { header = "TEXT" } rows group the items under a centred, disabled heading; the key column is right-aligned.
+# Each menu is also the key table mios-menu-ID (row key -> row command), the client-exact route of the launcher.
 # Item forms: { label, key } runs the prefix binding of that key; { label, key, command } runs command;
-# { label, key, menu = "ID" } opens another menu; { separator = true }. Optional: mode = "copy" (enabled only in
-# copy or view mode), managed = "disable" (disabled in managed AI workspace panes), platforms = ["linux"].
+# { label, key, menu = "ID" } opens another menu; { separator = true }; { header = "TEXT" }. Optional: mode = "copy"
+# (enabled only in copy or view mode), managed = "disable" (disabled in managed AI workspace panes), platforms = ["linux"].
 [[keybindings.tmux.menus]]
 id = "root"
 title = "MiOS"
 items = [
+  { header = "Launch" },
   { label = "Apps and TUIs...", key = "e" },
   { label = "Float shell", key = "`" },
   { label = "New floating pane", key = "*" },
-  { separator = true },
+  { header = "Manage" },
   { label = "Pane >", key = "P", menu = "pane" },
   { label = "Window >", key = "W", menu = "window" },
   { label = "Session >", key = "S", menu = "session" },
-  { separator = true },
+  { header = "Tmux" },
   { label = "Command prompt", key = ":" },
   { label = "Keys", key = "?" },
   { label = "Detach", key = "d" },
@@ -4371,6 +4431,7 @@ items = [
 id = "pane"
 title = "MiOS pane"
 items = [
+  { header = "View" },
   { label = "Next pane", key = "o" },
   { label = "Zoom", key = "z" },
   { label = "Compact / auto view", key = "f" },
@@ -4378,11 +4439,12 @@ items = [
   { label = "Go to top", key = "<", command = "send-keys -X history-top", mode = "copy" },
   { label = "Go to bottom", key = ">", command = "send-keys -X history-bottom", mode = "copy" },
   { label = "Paste", key = "]" },
+  { header = "Layout" },
   { label = "Split below", key = "s" },
   { label = "Split right", key = "v" },
   { label = "Float / dock", key = "F", managed = "disable" },
   { label = "Kill pane...", key = "x" },
-  { separator = true },
+  { header = "More" },
   { label = "New window", key = "t" },
   { label = "Detach", key = "d" },
   { label = "MiOS...", key = "Space", menu = "root" },
@@ -4399,7 +4461,7 @@ items = [
   { label = "Choose window", key = "w" },
   { label = "Break pane to window", key = "!", managed = "disable" },
   { label = "Kill window...", key = "&" },
-  { separator = true },
+  { header = "More" },
   { label = "< Back", key = "BSpace", menu = "root" },
 ]
 
@@ -4414,7 +4476,7 @@ items = [
   { label = "Next", key = ")" },
   { label = "Reload MiOS config", key = "R", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --reload\"", platforms = ["linux"] },
   { label = "Detach", key = "d" },
-  { separator = true },
+  { header = "More" },
   { label = "< Back", key = "BSpace", menu = "root" },
 ]
 
@@ -4483,6 +4545,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:session-scale-down" = ["/usr/bin/mios-gen", "session-scale", "down"]
 "mios:session-scale-reset" = ["/usr/bin/mios-gen", "session-scale", "reset"]
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
+"mios:tmux-os-launcher" = ["/usr/bin/miosd", "launcher", "desktop", "--root", "/"]   # the focused terminal's tmux-os client, else a new terminal
 "mios:volume up" = ["/usr/bin/wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]
 "mios:volume down" = ["/usr/bin/wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
 "mios:media previous" = ["/usr/bin/playerctl", "previous"]
@@ -4496,7 +4559,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 # console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
-terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]
+terminal = ["mios-terminal", "mios-nested-terminal", "Alacritty", "kitty", "foot"]   # mios-nested-terminal: a nested session's own terminal ([desktop.nested].terminal_argv)
 vm-passthrough = ["looking-glass-client", "xfreerdp", "wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
 game = ["steam_app_.*", "gamescope", "Waydroid"]
 
@@ -4566,6 +4629,20 @@ action = "quickshell:keymap-toggle"
 realized_by = "hyprland"
 passthrough = ["vm-passthrough"]
 note = "The bypass shows the bindings over a captured app or a VM."
+
+# The tmux-os launcher from anywhere ([keybindings.tmux.launcher]). A modifier-only chord: press CTRL and SUPER in
+# either order and release them with no other key between. trigger = "release" binds the chord's own modifier keys
+# (Super_L/R, Control_L/R) as release handles, so it fires on the release and every SUPER+CTRL+<key> binding (the
+# bypass chords, session scale, the VM keys) still works: the compositor drops a release bind once another key was
+# pressed. It is on bypass_mod, so it is an escape handle: it reaches the host over captured apps and VMs too.
+[[keybindings.global.bindings]]
+id = "tmux-os-launcher"
+tier = 1
+chord = "SUPER+CTRL+Super_L"
+trigger = "release"
+action = "mios:tmux-os-launcher"
+realized_by = "hyprland"
+note = "Hold CTRL+SUPER and let go: the tmux-os launcher (the focused terminal's client, else a new terminal)."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
 # On bypass_mod, so mios-gen marks their handles as escapes: they reach the host over captured apps and VMs (in
@@ -4818,6 +4895,7 @@ RS_DOWN = "tmux:focus down"
 BTN_TL2 = "tmux:key p"
 BTN_TR2 = "tmux:key n"
 BTN_SELECT = ["tmux:key w", "quickshell:keymap-toggle"]
+BTN_MODE = "tmux:menu"               # Guide tap: the tmux-os launcher on this client (as on the console); Guide held + button stays the system layer
 BTN_THUMBL = "tmux:key t"
 BTN_THUMBR = "tmux:key f"
 
@@ -7287,7 +7365,13 @@ progressive        = true          # EGFX RemoteFX Progressive for clients disab
 progressive_hz     = 0             # 0 inherits target_hz; nonzero is an explicit lower Progressive capture ceiling
 progressive_quant  = 8             # wavelet base quantization 6..15; 6 retains more detail, larger values reduce bandwidth
 audio_control_program = "pactl"    # native PipeWire-Pulse control executable; no shell expansion
+audio_server = ""                  # "" = the operator's PipeWire-Pulse socket (unix:/run/user/<operator_uid>/pulse/native); or unix:/<absolute socket> for an isolated audio server
+audio_recovery_attempts = 60       # per outage: recreate the session speaker sink / microphone source after PipeWire-Pulse restarts or drops them (0 = no recovery, 0..1000)
+audio_recovery_interval_ms = 500   # wait between recovery attempts, 100..10000 ms (60 x 500 ms = 30 s per outage)
 microphone_queue_packets = 8       # bounded 10ms remote microphone queue, drops stale audio
+speaker_packet_ms = 20             # RDPSND wave size read from the session speaker sink, 10..100 ms
+speaker_max_latency_ms = 200       # withhold new waves while more than this much sent audio is unconfirmed by the client (speaker_packet_ms..2000)
+speaker_idle_ms = 500              # stop sending after this much digital silence and resume on the first sound; 0 = always stream (0..10000)
 camera_video_program = "gst-launch-1.0" # native decoder and PipeWire video provider
 camera_graph_program = "pw-dump"   # inspect only the session-owned video node
 camera_max_width = 1280             # maximum negotiated camera dimensions (16..1920)
@@ -7296,10 +7380,18 @@ camera_max_fps = 30                 # negotiated source rate ceiling, 1..60
 camera_max_devices = 4              # bounded camera announcements per connection, 1..8
 camera_poll_ms = 500                # native consumer detection interval, 250..2000 ms
 camera_timeout_ms = 10000           # startup/active source frame timeout, 2000..30000 ms
+camera_provider_restarts = 3        # bounded native provider restarts after its decoder process exits (e.g. a consumer's failed buffer negotiation), 0..8; 0 closes the camera
+camera_v4l2 = true                  # also serve V4L2-only apps through PipeWire's V4L2 compatibility library: run them with `mios-camera-v4l2 <app>` (the BGRA source is single-plane; no kernel module)
+camera_v4l2_library = "/usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so" # pipewire-v4l2 compatibility library the launcher preloads; absolute path
+camera_pipewire_runtime = ""        # "" = the operator's PipeWire (/run/user/<uid>); an absolute runtime dir targets a private lab PipeWire instead
 drive_timeout_ms = 10000           # timeout poisons drive transport until reconnect, preventing late-response reuse
 drive_max_devices = 16             # total accepted/hot-removed file devices per connection, 1..64
 drive_max_entries = 4096           # bounded native inode and directory-entry caches, 64..65536
 drive_io_kib = 256                 # native file read/write chunk ceiling, 4..1024 in 4KiB multiples
+usb_helper_socket = "/run/mios-rdp-usb.sock" # root vhci attach helper (mios-rdp-usb.socket); it holds each port until the device closes
+usb_attach_timeout_ms = 5000       # descriptor preflight + vhci attach deadline per device, 1000..30000 ms
+usb_max_transfer_kib = 1024        # largest single URB buffer accepted from the kernel, 4..16384 KiB
+usb_max_inflight = 64              # in-flight URBs per redirected device, 1..1024; more are refused with -EAGAIN
 bitmap_slow_queue_ms = 250.0        # bitmap path: max(queue age, encoder/socket-write service time, pending write age); above this backs off 20 %/window, below half recovers +1 Hz
 bitmap_min_hz       = 2             # floor of the adaptive bitmap capture rate; the ceiling stays bitmap_hz
 egfx_wait_ms        = 3000          # after authentication, wait this long for EGFX before the bitmap path
@@ -7312,19 +7404,41 @@ clipboard           = "both"        # "both" | "to-client" | "to-host" | "off" (
 clipboard_max_mb    = 64            # larger clipboard data is refused in either direction
 touch               = true          # MS-RDPEI multi-touch -> uinput "MiOS Remote Touch", mapped to the remote output before it exists
 pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen" (pressure 0-1024, tilt, eraser, barrel)
-audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
+audio_output        = true          # MS-RDPEA (RDPSND) speaker: a per-connection PipeWire sink "MiOS-Remote-Speaker" streams negotiated PCM to the client; apps choose it, defaults never change; client permission still required
 microphone          = true          # negotiated MS-RDPEAI PCM -> per-session PipeWire microphone; client permission still required
 drives              = true          # negotiated client folders -> session-owned native FUSE mounts; client selects what to share
-camera              = true          # client-selected cameras become per-session native PipeWire video sources
+camera              = true          # client-selected cameras become per-session native PipeWire video sources (media.role=Camera: portal/browser pickers; V4L2 apps via mios-camera-v4l2)
 location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
 timezone            = "report"      # "report" | "follow" | "ignore" (Client Info TS_TIME_ZONE_INFORMATION)
 smartcard           = false         # MS-RDPESC smartcard redirection (off by default)
+usb                 = false         # MS-RDPEUSB generic USB -> USB/IP vhci port (only when vhci_hcd is already loaded; MiOS never loads it). Windows clients only; policy [remote.device_forwarding.usb]
 
 [remote.rdp.naming]                 # names of the virtual devices (test instances add " test")
 touch_device        = "MiOS Remote Touch"   # Hyprland device name mios-remote-touch
 pen_device          = "MiOS Remote Pen"     # Hyprland device name mios-remote-pen
 microphone_source_prefix = "mios-remote-microphone" # unique native source per connected microphone
+speaker_sink_prefix = "mios-remote-speaker" # unique native sink per connected RDP audio client
 camera_source_prefix = "mios-remote-camera" # unique Video/Source node per selected remote camera
+
+# ----------------------------------------------------------------------------
+# [remote.device_forwarding] -- one policy and one capability report for every
+# remote/VM generic-USB path on MiOS: RDP URBDRC (MS-RDPEUSB -> USB/IP vhci,
+# [remote.rdp.redirect].usb), SPICE usbredir (remote-viewer / QEMU usb-redir) and
+# USB/IP; nested sessions bind evdev input nodes only ([desktop.nested.devices]).
+# Consumer: `mios-gen device-forwarding report|select|spice-filter`, mios-rdp-server.
+# Nothing here loads a kernel module, claims a host device or touches a VM:
+# libvirt inventory reads only libvirt_uris and never inspects exclude_domains.
+# ----------------------------------------------------------------------------
+[remote.device_forwarding]
+targets_file    = "mios/device-forwarding/targets.json"   # per-session target selection, under $XDG_RUNTIME_DIR (written by `mios-gen device-forwarding select`)
+default_target  = "auto"            # "auto" = the session kind's own transport when available | "none" = forward nothing until selected
+libvirt_uris    = ["qemu:///session"]   # SPICE usbredir inventory; system VMs are never queried unless listed here
+exclude_domains = ["mios-xbox*"]    # glob; never inspected and never selectable as a target
+
+[remote.device_forwarding.usb]
+allow       = []                    # "VVVV:PPPP", "VVVV:*" or "class:CC" (hex); empty = nothing is forwarded
+deny        = ["class:09", "class:03", "class:e0"]   # hubs, HID (keyboards/mice/pads inject input), wireless controllers; deny wins over allow
+max_devices = 4                     # redirected devices per session, 1..16
 
 
 [flatpak]
@@ -7332,6 +7446,21 @@ prefer_beta      = true       # check flathub-beta first; fall back to flathub
 default_remote   = "flathub"  # tail-fallback remote when no beta available
 default_scope    = "system"   # system | user
 noninteractive   = true       # all install/update operations are headless
+
+# System-wide Flatpak override, projected to var/lib/flatpak/overrides/global by `mios-gen render-flatpak-overrides`
+# (never hand-edited). session_bus_talk: well-known names every sandboxed app may talk to. The global application menus
+# need com.canonical.AppMenu.Registrar: it is owned by `miosd appmenu serve`, and talking to it is what makes the
+# exporter's connection visible through the app's xdg-dbus-proxy, so the exporter can read and activate the app's
+# org.gtk.Menus / com.canonical.dbusmenu menus (Qt and Electron also only export a menubar when they can see it).
+# environment_from: override environment variable -> the SSOT key holding its value.
+[flatpak.overrides.global]
+filesystems = ["xdg-config/gtk-4.0:ro", "/etc/gtk-3.0:ro", "xdg-data/themes:ro", "xdg-data/icons:ro", "xdg-config/gtk-3.0:ro", "/etc/gtk-4.0:ro", "!/usr/share/icons", "!/usr/share/themes", "!/usr/share/fonts"]
+session_bus_talk = ["com.canonical.AppMenu.Registrar"]
+[flatpak.overrides.global.environment_from]
+GTK_THEME = "appearance.gtk_theme"
+ADW_DEBUG_COLOR_SCHEME = "appearance.adw_color_scheme"
+XCURSOR_SIZE = "appearance.cursor_size"
+XCURSOR_THEME = "appearance.cursor_theme"
 
 [appearance]
 gtk_theme        = "adw-gtk3-dark"              # GTK3 + libadwaita color-scheme target
@@ -8808,6 +8937,19 @@ windowshade_open = "none-open"              # open shader for lamp-launched wind
 hide_hyprbars = true
 remote = "same"                             # every output, local or remote/mobile, gets the same lamp (the only value)
 
+# MiOS patches to the compositor itself (operator decision "Patch Hyprland"): mios-gen build-hyprland rebuilds the
+# installed release's source RPM (hyprglass.hyprland_version, the compositor ABI hold) with these applied in order after
+# the spec's own patches -- a patch that no longer applies fails the build naming it -- and tags the Release with
+# release_tag (2.fc44 -> 2.mios1.fc44: the patched package upgrades the stock one and `rpm -q hyprland` shows it).
+# Bump release_tag whenever the series changes. A patched compositor takes effect at the next compositor start.
+#   hyprland-screenshare-no-monitor.patch: a toplevel capture (hyprland-toplevel-export: Quickshell ScreencopyView,
+#   xdg-desktop-portal-hyprland window share) of a window without a live monitor -- a pinned window whose output was
+#   removed keeps an expired m_monitor -- SEGVs in Screenshare::CScreenshareSession::init (nullptr->m_scale); a capture
+#   of a closed/unmapped window disconnected the capturing client. Both now answer the frame with `failed`.
+[desktop.hyprland.compositor]
+patches = ["usr/share/mios/hyprland/patches/hyprland-screenshare-no-monitor.patch"]
+release_tag = "mios1"
+
 # ABI held to the deployed Hyprland release; upgrade this pair together.
 [desktop.hyprland.hyprglass]
 enabled = true
@@ -8955,6 +9097,19 @@ path = "/usr/lib64/mios/mios-pacing.so"
 slack_us = 500                     # a frame due within this long counts as due (timer jitter)
 require_vrr = true                 # cap only outputs whose VRR is active (false: also fixed-refresh outputs, judders)
 wallpaper_namespaces = "mios-wallpaper"   # layer namespaces (exact) whose frame callbacks follow the wallpaper rate W
+capture_guard = true               # live stopgap until the patched compositor ([desktop.hyprland.compositor]) runs: refuse toplevel captures of closed, unmapped or monitor-less windows with `failed` (capture_guard.hpp); loading the plugin needs no compositor restart
+
+# Global application menus, compositor side (MiOS-original plugin in the tree): serves the KDE appmenu protocol
+# (org_kde_kwin_appmenu_manager v2). Wayland-native Qt 6, Gecko (Zen/Firefox global menu) and Chromium/Electron
+# windows then announce their com.canonical.dbusmenu menubar per surface (set_address), and `miosd appmenu serve`
+# ([user_units."mios-appmenu.service"]) reads the exact window -> menu binding from `hyprctl mios-appmenu` and the
+# `miosappmenu>>` IPC event instead of guessing it from bus objects. Chromium and Electron export a global menu on
+# Wayland only when this protocol is offered. false = no protocol (miosd falls back to bus discovery).
+[desktop.hyprland.mios-appmenu]
+enabled = true
+source_path = "usr/share/mios/hyprland/plugins/mios-appmenu"
+build_system = "make"
+path = "/usr/lib64/mios/mios-appmenu.so"
 
 # Catch-all monitor rule (output = "" matches every output); projected first.
 [desktop.hyprland.monitor]
@@ -9055,12 +9210,87 @@ bindings = [
   { key = "CTRL + Print", args = "all", label = "Screenshot: all outputs" },
 ]
 
-# mios-controls: the terminal binding editor for [keybindings.global] (usr/share/doc/mios/controls.md). It edits
-# only the user tier's [keybindings.global] bindings and controller.system_layer; these keys tune the editor itself.
+# mios-controls: the terminal binding editor (usr/share/doc/mios/controls.md). It draws keyboards, mice and
+# controllers, shows every action bound to an input (global map, compositor tables, tmux-os, Guide layer, Hypr3D room)
+# and edits ONLY the user-tier paths listed in `editable`; these keys tune the editor itself.
 [desktop.controls]
-input_cpu = -1                     # CPU the editor's input thread is pinned to; -1 = the last CPU it may use (others are kept off it)
+input_cpu = -1                     # CPU the editor's input threads are pinned to; -1 = the last CPU it may use (others are kept off it)
 backup_suffix = "controls-backup"  # apply keeps the previous user tier as mios.toml.<suffix> (0600)
-mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session for validation (stdout only, never written); mios-sync-theme runs its keymap-overlay
+mios_gen = "/usr/bin/mios-gen"     # renders the draft's compositor session and tmux-os keys for validation (stdout/private dir only, never installed); mios-sync-theme runs its keymap-overlay
+glyphs = "auto"                    # auto | unicode | ascii. auto = box drawing, but plain lines and ASCII labels on TERM=linux
+capture_timeout_ms = 10000         # capture-to-bind waits this long for the input you press, then gives up
+stick_threshold = 0.5              # stick deflection (0..1) that counts as a direction (editor navigation and capture)
+trigger_threshold = 0.3            # analog trigger travel (0..1) that counts as a press when capturing
+nav_repeat_delay_ms = 400          # a held d-pad or stick direction repeats after this long...
+nav_repeat_ms = 120                # ...every this many ms (the pad thread wakes only while a direction is held)
+undo_depth = 64                    # draft edits kept for undo (u) and redo (U)
+# The user-tier paths the editor may write. Arrays are written whole (tiers replace arrays), maps per key. apply
+# refuses a draft that changes anything else in the user tier.
+editable = [
+  "keybindings.global.bindings",
+  "keybindings.global.controller.system_layer",
+  "keybindings.global.controller.room",
+  "keybindings.tmux.bindings",
+  "desktop.hyprland.bindings",
+  "desktop.screenshot.bindings",
+  "desktop.shaderglass.bindings",
+]
+
+# Controller navigation of the editor itself: the pad is read from mios-inputd's virtual pad (inputd keeps Guide,
+# Start, the bumpers and North in uncaptured contexts) or from a pad nobody grabs. Only while the editor's terminal
+# has focus. Verbs: enter back menu capture focus help layer-prev layer-next view-prev view-next page-up page-down none.
+# D-pad and left stick move; the right stick pages. Everything is also in the action menu (menu).
+[desktop.controls.pad_nav]
+BTN_SOUTH = "enter"
+BTN_EAST = "back"
+BTN_WEST = "menu"
+BTN_NORTH = "capture"
+BTN_SELECT = "focus"
+BTN_START = "help"
+BTN_TL = "layer-prev"
+BTN_TR = "layer-next"
+BTN_TL2 = "view-prev"
+BTN_TR2 = "view-next"
+
+# Controller families for the drawing. Labels follow the button POSITION (BTN_NORTH is the top face button, as in
+# the kernel's gamepad spec). layout: offset = left stick above the d-pad (Xbox, Switch Pro); symmetric = d-pad above
+# both sticks (PlayStation). vt_labels replace labels on TERM=linux or glyphs = "ascii" (the VT font has no PlayStation
+# shapes). A pad matches by USB vendor id, then by a name hint; anything else is "generic".
+[[desktop.controls.pad_families]]
+id = "xbox"
+title = "Xbox"
+vendors = ["045e"]
+name_hints = ["xbox", "x-box"]
+layout = "offset"
+labels = { BTN_SOUTH = "A", BTN_EAST = "B", BTN_WEST = "X", BTN_NORTH = "Y", BTN_TL = "LB", BTN_TR = "RB", BTN_TL2 = "LT", BTN_TR2 = "RT", BTN_SELECT = "View", BTN_START = "Menu", BTN_MODE = "Xbox", BTN_THUMBL = "LS", BTN_THUMBR = "RS" }
+vt_labels = {}
+
+[[desktop.controls.pad_families]]
+id = "playstation"
+title = "PlayStation"
+vendors = ["054c"]
+name_hints = ["dualsense", "dualshock", "playstation"]
+layout = "symmetric"
+labels = { BTN_SOUTH = "\u2715", BTN_EAST = "\u25cb", BTN_WEST = "\u25a1", BTN_NORTH = "\u25b3", BTN_TL = "L1", BTN_TR = "R1", BTN_TL2 = "L2", BTN_TR2 = "R2", BTN_SELECT = "Create", BTN_START = "Options", BTN_MODE = "PS", BTN_THUMBL = "L3", BTN_THUMBR = "R3" }
+vt_labels = { BTN_SOUTH = "X", BTN_EAST = "O", BTN_WEST = "Sq", BTN_NORTH = "Tri" }
+
+[[desktop.controls.pad_families]]
+id = "nintendo"
+title = "Nintendo"
+vendors = ["057e"]
+name_hints = ["nintendo", "pro controller", "joy-con"]
+layout = "offset"
+labels = { BTN_SOUTH = "B", BTN_EAST = "A", BTN_WEST = "Y", BTN_NORTH = "X", BTN_TL = "L", BTN_TR = "R", BTN_TL2 = "ZL", BTN_TR2 = "ZR", BTN_SELECT = "-", BTN_START = "+", BTN_MODE = "Home", BTN_THUMBL = "LS", BTN_THUMBR = "RS" }
+vt_labels = {}
+
+[[desktop.controls.pad_families]]
+id = "generic"
+title = "Generic"
+vendors = []
+name_hints = []
+layout = "offset"
+labels = { BTN_SOUTH = "S", BTN_EAST = "E", BTN_WEST = "W", BTN_NORTH = "N", BTN_TL = "L1", BTN_TR = "R1", BTN_TL2 = "L2", BTN_TR2 = "R2", BTN_SELECT = "Select", BTN_START = "Start", BTN_MODE = "Guide", BTN_THUMBL = "L3", BTN_THUMBR = "R3" }
+vt_labels = {}
 
 # ShaderGlass overlay pane: ShaderGlass (mausimus/ShaderGlass, GPL-3.0; RetroArch slang shaders) under Wine as a
 # shaded live clone of ONE target window, pinned over it and decorated by Hyprglass like every other window.
@@ -9402,6 +9632,12 @@ device = "/dev/dri/igpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/igpu-pci"
 include_other_devices = false
+greeter_display = "vt"             # the login greeter on the kernel console (VT 1), which is this GPU's display in iGPU boots
+# Nested sessions (mios-gen nested-session) in an iGPU boot: [desktop.nested].render_node = "auto" reads this.
+# "igpu" = the iGPU's render node (the dGPU is bound to vfio-pci in this boot, so it is not available). "software"
+# (llvmpipe) stays an explicit override only: Hyprland 0.56's Wayland backend needs GBM/EGL on the main device it
+# opens, and Mesa's software paths need dumb buffers a render node lacks (usr/share/doc/mios/desktop-gpu-routing.md).
+nested_render = "igpu"
 # Hypr3D supersampling for this GPU. It replaces [desktop.hyprland.hypr3d.config.render].scale (1..4) while
 # this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+F12) finds the running profile in
 # MIOS_DESKTOP_HARDWARE_PROFILE (exported to the compositor by `hyprland-session`), then in the kernel's
@@ -9415,13 +9651,36 @@ hypr3d_render_scale = 1.5
 name = "MiOS dGPU"
 session_file = "mios-desktop-dgpu.desktop"
 boot_title = "MiOS dGPU"
-boot_remove = ["mios.desktop.gpu=", "rd.driver.pre=vfio-pci", "vfio-pci.ids="]
+boot_remove = ["mios.desktop.gpu=", "rd.driver.pre=vfio-pci", "vfio-pci.ids=", "fbcon="]
 # The empty ids override also clears a reservation embedded in an older initramfs.
-boot_append = ["mios.desktop.gpu=dgpu", "vfio-pci.ids=", "rd.driver.blacklist=vfio-pci", "rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"]
+# fbcon=map:10 puts the kernel console -- boot text, VT 1 and the VT greeter -- on the dGPU's display. The firmware boot
+# VGA is the iGPU, so fbcon otherwise follows it (CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY). The digits map tty1 -> fb1,
+# tty2 -> fb0, tty3 -> fb1, ... and fb1 is nvidia-drm's fbdev on this machine: amdgpu is in the initramfs and
+# registers fb0 first, nvidia loads from the root filesystem. If fb1 never registers (nvidia fbdev off or failed),
+# every console stays on fb0 (the iGPU), as before -- never a blank console. `mios-gen boot-display-report`
+# (mios-boot-display-report.service) records the real fb order and the recommended map each boot.
+# Opt-in, not default: "video=HDMI-A-1:d" (the iGPU's connector; connector names are global and probe-ordered) forces
+# the iGPU output dark at the kernel level, so a monitor wired to both GPUs switches to the dGPU input by itself --
+# but it also removes the iGPU console fallback if the NVIDIA driver fails to load.
+boot_append = ["mios.desktop.gpu=dgpu", "vfio-pci.ids=", "rd.driver.blacklist=vfio-pci", "rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-drm.modeset=1", "nvidia-drm.fbdev=1", "fbcon=map:10"]
 device = "/dev/dri/dgpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/dgpu-pci"
-include_other_devices = true
+# Display vs render: the dGPU session lights ONLY the dGPU's connectors (AQ_DRM_DEVICES = the dGPU card). The iGPU
+# stays headless -- Hyprland never opens its KMS card, so no output of it is lit -- but its render node stays
+# available (nested sessions render there, below). true = the explicit opt-in to light the iGPU's outputs too
+# (the dGPU renders, Aquamarine copies frames to the iGPU's connectors).
+include_other_devices = false
+# The login greeter on this GPU's display: tuigreet (same flags, palette and keys) in cage + a terminal restricted
+# to the dGPU card ([desktop.greeter.display_host]); any failure falls back to the VT greeter (never a dead end).
+greeter_display = "compositor"
+# Nested sessions in a dGPU boot: the headless iGPU's render node ("auto" in [desktop.nested].render_node), subject to
+# [desktop.nested].cross_vendor_present. The session records the node it opened in session.json ("render").
+nested_render = "igpu"
+# GPU hand-off (Looking Glass): while this GPU is bound to vfio-pci for a VM, the desktop runs this profile in place
+# -- its outputs relit, no reboot -- and the greeter defaults to it; the dGPU session returns once nvidia owns the GPU
+# again. Sequence: usr/share/doc/mios/desktop-gpu-routing.md "GPU hand-off". "" = no hand-off fallback.
+handoff_fallback = "igpu"
 # Hypr3D supersampling on the RTX 4090; see hardware_profiles.igpu.hypr3d_render_scale.
 hypr3d_render_scale = 2.0
 
@@ -11658,6 +11917,16 @@ container_padding   = 2                                     # tuigreet --contain
 prompt_padding      = 1                                     # tuigreet --prompt-padding
 greet_align         = "center"                              # tuigreet --greet-align
 time_format         = "%a %d %b  %H:%M"                     # tuigreet --time-format (shown with --time)
+
+# The text greeter hosted on a GPU's own display (hardware profiles with greeter_display = "compositor"):
+# `mios-gen hyprland-greeter` runs launcher --client terminal: cage (WLR_DRM_DEVICES = that GPU's card only) runs this
+# terminal, which runs the same tuigreet argv as the VT greeter. The launcher falls back to the VT greeter when cage,
+# the terminal or tuigreet fails, or no "ready" arrives within start_timeout_s / heartbeat_timeout_s.
+[desktop.greeter.display_host]
+terminal    = "/usr/bin/alacritty"   # Wayland terminal (alacritty TOML config generated from [colors].ansi_* at greeter start)
+font_family = ""                     # "" = [theme.font].family
+font_size   = 16                     # points; the VT greeter's console font is about this size at 1080p
+padding     = 0                      # terminal padding in pixels
 
 # tuigreet --theme: ANSI colour names resolved through the console palette (console_palette = true):
 # black = ansi_0 (indigo), gray = ansi_7 (cream), yellow = ansi_3 (sunset), cyan = ansi_6, lightblue = ansi_12.
@@ -16255,6 +16524,8 @@ exempt = [
   "check_drift_projection",
   # Egress firewall: requires nftables egress rule generator context.
   "check_egress_firewall",
+  # Flatpak overrides: requires the native mios-gen render-flatpak-overrides projection.
+  "check_flatpak_overrides",
   # ETC duplicates: requires system configuration file deduplication scanner.
   "check_etc_duplicates",
   # Fluff tokens: requires token hygiene scanner.
@@ -17230,6 +17501,9 @@ phase_script = "67-bake-portal.sh"     # the image phase that installs the artif
 home_url     = "http://localhost:${MIOS_PORTS_AGENT_PIPE}/"
 newtab_url   = "http://localhost:${MIOS_PORTS_AGENT_PIPE}/"
 chat_url     = "http://127.0.0.1:${MIOS_PORTS_AGENT_PIPE}/v1"
+# WebRTC camera pickers enumerate PipeWire cameras (camera portal), which includes MiOS RDP remote
+# cameras (media.role=Camera); false keeps Gecko's direct /dev/video* enumeration only.
+pipewire_camera = true                 # media.webrtc.camera.allow-pipewire
 
 # Sketch layout (MP-5): left vertical tab sidebar, collapsible, with the apps/tools footer; web content
 # edge to edge; right chat panel that auto-hides to a peek strip; compact density; no window controls.
@@ -17435,7 +17709,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 661
+max_tracked_mb    = 663
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -17991,6 +18265,26 @@ unit = [
     "tests/test-shell-appmenu-live.py",
     "tests/test-shell-hud-contract.py",
     "tests/test-shell-hud-live.py",
+    "tests/test-ai-metadata-native-parity.py",
+    "tests/test-appmenu-global.py",
+    "tests/test-camera-v4l2-launcher.py",
+    "tests/test-design-language-live.py",
+    "tests/test-design-language.py",
+    "tests/test-device-forwarding.py",
+    "tests/test-dock-hud.py",
+    "tests/test-gpu-display-routing.py",
+    "tests/test-hyprland-capture-patch-live.py",
+    "tests/test-inputd-console-live.py",
+    "tests/test-inputd-console.py",
+    "tests/test-inputd-nav-live.py",
+    "tests/test-inputd-nav.py",
+    "tests/test-inputd-ownership-live.py",
+    "tests/test-inputd-ownership.py",
+    "tests/test-inputd-platform.py",
+    "tests/test-inputd-vpad-live.py",
+    "tests/test-mios-controls-visual-live.py",
+    "tests/test-resolver-dropin-parity.py",
+    "tests/test-tmuxos-launcher-live.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [
@@ -18548,6 +18842,29 @@ replaces = []
 crates = []
 scope = ["tests/**", "tools/test_*.py"]
 
+# The SSOT walk every MIOS_* export projection applies: mios-resolver (and so
+# userenv.sh and globals.{sh,ps1}) and mios_toml.py read these lists from the
+# tree they project, so the resolver twins (Law 13) share one copy of the rules.
+[generation.walk]
+# Sections a renderer or a direct TOML reader owns; never exported as variables.
+# ci/tests: the suite registry reader parses the TOML itself. units: mios-unit-gen
+# renders unit files from mios.toml and never reads globals.
+excluded_sections = ["containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation"]
+# Sections whose canonical names are suppressed, except the emit_keep names below.
+# Their legacy aliases still emit.
+mostly_dead_sections = ["ai", "image", "bootstrap", "profile", "sandbox", "security"]
+emit_keep = [
+  "MIOS_AI_BAKE_MODELS", "MIOS_AI_DIR", "MIOS_AI_EMBED_MODEL", "MIOS_AI_ENDPOINT",
+  "MIOS_AI_JOURNAL", "MIOS_AI_MCP_DIR", "MIOS_AI_MEMORY_DIR", "MIOS_AI_MODEL", "MIOS_AI_AGENT_MODEL",
+  "MIOS_AI_MODELS_DIR", "MIOS_AI_RAM_FLOOR_GB", "MIOS_AI_SCRATCH_DIR",
+  "MIOS_IMAGE_NAME", "MIOS_IMAGE_REF", "MIOS_IMAGE_TAG",
+  "MIOS_BOOTSTRAP_MODE",
+  "MIOS_SANDBOX_ENABLE", "MIOS_SECURITY_ALLOWLIST_HOSTS", "MIOS_SECURITY_PROBE_VERIFY_TLS",
+  "MIOS_SECURITY_PROVENANCE_TAINT",
+  "MIOS_SECURITY_SIGSTORE_COSIGN_VERSION", "MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL",
+  "MIOS_HEADLESS", "MIOS_MONITOR_RUNNING", "MIOS_NO_COLOR", "MIOS_NO_MONITOR",
+]
+
 # One ordered projection plan for native mios-gen sync on Linux and Windows.
 # Remaining Python/Bash adapters stay declared until their native ports prove parity.
 [generation.sync]
@@ -18572,6 +18889,9 @@ calls = [{ tool = "mios-gen", args = ["render-agent-interaction", "--root", "{ro
 [[generation.sync.steps]]
 id = "host-tuning.projection"
 calls = [{ tool = "mios-gen", args = ["render-tuned", "--root", "{root}"] }]
+[[generation.sync.steps]]
+id = "flatpak-overrides.projection"
+calls = [{ tool = "mios-gen", args = ["render-flatpak-overrides", "--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "hyprland.projection"
 calls = [{ tool = "mios-gen", args = ["render-hyprland", "--root", "{root}"] }]
@@ -18648,7 +18968,7 @@ id = "ai.config"
 calls = [{ tool = "mios-ai-config", args = ["--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "env.baseline"
-snapshot = ["usr/libexec/mios/mios-env-snapshot", "usr/share/mios/reference/env-baseline.txt"]
+calls = [{ tool = "mios-gen", args = ["env-snapshot", "--root", "{root}", "--out", "{root}/usr/share/mios/reference/env-baseline.txt"] }]
 [[generation.sync.steps]]
 id = "ai.manifests"
 calls = [{ tool = "mios-gen", args = ["ai-manifest", "--root", "{root}"] }]
@@ -18682,6 +19002,27 @@ RemainAfterExit = "yes"
 [units."mios-console-theme.service".Install]
 WantedBy = "getty-pre.target"
 
+# Read-only boot display record: DRM cards/connectors, fb registration order from the kernel log, fbcon's console map
+# and whether tty1 reached the booted profile's GPU -- one JSON line per boot in the journal (the kernel log itself
+# is not stored: journald ReadKMsg=no). `journalctl -b -u mios-boot-display-report` reads it.
+[units."mios-boot-display-report.service".Unit]
+comment = "# AI-hint: Oneshot, read-only: records this boot's fbcon / framebuffer / DRM driver order and the console-map verdict as one JSON line in the journal.\n# AI-related: tools/native/mios-gen/src/gpu_topology.rs (boot-display-report), usr/share/mios/mios.toml [desktop.hyprland.hardware_profiles], usr/share/doc/mios/desktop-gpu-routing.md"
+Description = "MiOS boot display report (fbcon, framebuffers, DRM order)"
+After = "systemd-udev-settle.service systemd-modules-load.service greetd.service"
+[units."mios-boot-display-report.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/bin/mios-gen boot-display-report --root /"
+StandardOutput = "journal"
+CapabilityBoundingSet = "CAP_SYSLOG CAP_DAC_READ_SEARCH"
+NoNewPrivileges = "yes"
+PrivateNetwork = "yes"
+ProtectSystem = "strict"
+ProtectHome = "yes"
+DevicePolicy = "closed"
+DeviceAllow = "/dev/kmsg r"
+[units."mios-boot-display-report.service".Install]
+WantedBy = "multi-user.target"
+
 [packages.console-pointer]
 enable = true
 pkgs = ["gpm"]
@@ -18689,7 +19030,7 @@ pkgs = ["gpm"]
 # RDP front-end + wlroots VNC capture for [remote.rdp] (live-session remote desktop).
 [packages.remote-desktop]
 enable = true
-pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils", "fuse3", "pipewire-utils", "pipewire-gstreamer", "gstreamer1", "gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-openh264"] # native remote audio, files and camera decoding
+pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils", "fuse3", "pipewire-utils", "pipewire-gstreamer", "gstreamer1", "gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-openh264", "pipewire-v4l2"] # native remote audio, files and camera decoding; pipewire-v4l2 = V4L2 compatibility for remote cameras
 
 # Build deps of automation/70-bake-wayvnc-upstream.sh (wayvnc + neatvnc + aml from upstream HEAD,
 # neatvnc/aml static; preferred by the RDP bridge over the distro wayvnc).
@@ -18986,6 +19327,44 @@ SystemCallArchitectures = "native"
 SystemCallFilter = ["@system-service", "~process_vm_readv process_vm_writev"]
 CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_AUDIT_WRITE CAP_SETUID CAP_SETGID CAP_SYS_PTRACE"
 
+[units."mios-rdp-usb.socket".Unit]
+Description = "MiOS RDP USB helper socket (attach a redirected device to an already-loaded vhci_hcd port)"
+Documentation = "file:///usr/share/doc/mios/remote-usb.md"
+[units."mios-rdp-usb.socket".Socket]
+ListenSequentialPacket = "/run/mios-rdp-usb.sock"
+SocketMode = "0666"
+Accept = "yes"
+MaxConnections = 16
+[units."mios-rdp-usb.socket".Install]
+WantedBy = "sockets.target"
+
+[units."mios-rdp-usb@.service".Unit]
+Description = "MiOS RDP USB helper (holds one vhci port for one redirected device)"
+Documentation = "file:///usr/share/doc/mios/remote-usb.md"
+[units."mios-rdp-usb@.service".Service]
+comment = """# One connection = one redirected device: the helper attaches the server's socket to a free vhci port
+# and detaches exactly that port when the connection closes (device close, disconnect or server exit).
+# /sys must stay writable for vhci attach/detach (no ProtectKernelTunables); ProtectKernelModules keeps
+# module loading impossible: an absent vhci_hcd is reported unsupported, never loaded."""
+Type = "simple"
+ExecStart = "/usr/libexec/mios/rdp-native/mios-rdp-priv --usb"
+StandardOutput = "journal"
+StandardError = "journal"
+PrivateNetwork = "yes"
+PrivateTmp = "yes"
+ProtectSystem = "strict"
+ProtectHome = "read-only"
+ProtectKernelModules = "yes"
+ProtectControlGroups = "yes"
+NoNewPrivileges = "yes"
+RestrictAddressFamilies = "AF_UNIX"
+RestrictNamespaces = "yes"
+LockPersonality = "yes"
+MemoryDenyWriteExecute = "yes"
+SystemCallArchitectures = "native"
+SystemCallFilter = ["@system-service", "~process_vm_readv process_vm_writev"]
+CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_SYS_PTRACE"
+
 [theme.windows]
 opacity_pct = 85
 
@@ -19026,7 +19405,7 @@ WantedBy = "default.target"
 
 
 # AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom, packed across both rails before squeezing), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware with minimum/launch/maximum size magnets, stay on top through Hyprland's native pinned layer, and settle with a spring. Spotify's mini-player, Discord call/stream/video popouts and browser PiP windows are adopted automatically on map. Maximize/fullscreen (any window) and Theatre/Hypr3D never move them. Consumed by tools/native/mios-pip-gravity. Hypr3D: flat placement pauses there (PiP are freely resizable in the room); adoption continues.
-# AI-related: tools/native/mios-pip-gravity/src/{main.rs,gravity.rs,matrix.rs,window.rs}, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip, usr/share/doc/mios/desktop-pip.md
+# AI-related: tools/native/mios-pip-gravity/src/main.rs, tools/native/mios-pip-gravity/src/gravity.rs, tools/native/mios-pip-gravity/src/matrix.rs, tools/native/mios-pip-gravity/src/window.rs, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip, usr/share/doc/mios/desktop-pip.md
 [desktop.pip_gravity]
 enabled = true
 rails = ["left", "right"]            # flank columns; one entry pins every PiP to that side
@@ -19062,6 +19441,44 @@ match = [
   { class = "^(chromium-browser|Chromium-browser|chromium)$", sibling_class = "(?i)^(spotify|com\\.spotify\\.client)$" },
 ]
 
+# The dock: the localhost/sessions half of the HUD (apps, windows, sessions, VMs and moving windows between them);
+# the topbar is the other half (inbound, external, notifications, systems). usr/share/doc/mios/guides/hud.md.
+# Read live by usr/share/mios/quickshell/DockConfig.qml (mios-toml-get --section desktop.dock) and tools/native/mios-gen/src/dock.rs.
+[desktop.dock]
+expand_height_fraction = 0.62     # the expanded dock grows UPWARD from its bar to this fraction of the output height...
+expand_min_height_px = 260        # ...never below this...
+expand_max_height_px = 760        # ...nor above this, and never past the top bar: it never takes the whole display
+expand_min_width_px = 0           # the expanded dock keeps the bar's width; a floor for a dock with very few apps (0 = the bar's width exactly)
+expand_ms = 220                   # expand / collapse animation
+label_lines = 2                   # app names wrap to this many lines...
+label_min_font_px = 9             # ...and shrink down to this size before anything is cut; the tooltip shows the full name
+tooltip_delay_ms = 450            # hover or controller/keyboard focus this long shows the full app name
+
+[desktop.dock.previews]
+enabled = true                    # previews of the session's windows (open and minimized) in the expanded dock and the hover popup
+include = "all"                   # all | minimized
+height_px = 96                    # preview strip height in the expanded dock
+live = true                       # live frames; false = one frame each time the dock opens (cheaper)
+max = 16                          # previews shown at most
+
+[desktop.dock.osk]
+enabled = true                    # the Phosh on-screen keyboard (stevia) nested at the bottom of the expanded dock, behind a toggle
+show = "expanded+touch"           # default of the toggle per output until the user flips it (remembered per output in $XDG_STATE_HOME/mios/dock-state.json): expanded | touch | expanded+touch
+height_px = 220                   # keyboard height inside the dock
+command = ["/usr/bin/phosh-osk-stevia", "--replace"]   # run through `mios-gen dock osk`, which places its layer surface inside the dock
+layer = "overlay"                 # the dock's layer
+namespace = "mios-dock"           # the dock's layer namespace: the dock's glass and yield rules apply to the keyboard too
+
+[desktop.dock.targets]
+enabled = true                    # the window-portability targets row (mios-gen dock targets)
+poll_ms = 3000                    # refresh while the dock is expanded
+local_label = "This desktop"
+verify_ms = 2000                  # a live move (to an output) must be visible in Hyprland within this long
+close_timeout_ms = 5000           # migrate: wait this long for the source app to exit (it saves its state) before relaunching
+relaunch_timeout_ms = 15000       # migrate: the app must map in the target session within this long, else the move is reported failed
+stateless_apps = []               # window classes that migrate by relaunch even though they are not containerized (Flatpak / podman apps always do)
+waypipe_hosts = []                # remote hosts offered as waypipe targets (only when waypipe is installed)
+
 # AI-hint: Nested MiOS desktop sessions (mios-gen nested-session): own compositor, runtime, HUD, Tmux-OS namespace and input
 # namespace, launched as a parent PiP/window, a whole attached output (second local user), the parent's remote display
 # output (served by the existing RDP/VNC path) or a Hypr3D room window; seat/user identity and assigned input devices.
@@ -19082,10 +19499,25 @@ scale_mode = "fit"                    # fit: the session keeps width x height lo
 scale_min = 0.25
 scale_max = 2.0
 shell_entry = "/usr/share/mios/quickshell/Nested.qml"
+compositor = "/usr/bin/Hyprland"             # the session's compositor binary; a patched candidate (mios-gen build-hyprland) is tested here before it is installed
+# Render node of a nested session's compositor and clients: "auto" = the running hardware profile's nested_render
+# ([desktop.hyprland.hardware_profiles.<p>]; dGPU boots -> the headless iGPU, iGPU boots -> the iGPU); or an explicit
+# override: "inherit" (the parent's main device, the pre-routing behaviour), "software" (llvmpipe), a profile id
+# ("igpu" | "dgpu") or "/dev/dri/renderD<N>". Recorded in the session's session.json "render".
+render_node = "auto"
+# Whether "auto" may steer a nested session to a GPU of another driver family than the parent's. false (measured):
+# an NVIDIA parent (Hyprland 0.56) lists no LINEAR modifier and shows nothing for iGPU-rendered buffers, so in a dGPU
+# boot "auto" degrades to the parent's GPU and session.json says why. true = always the profile's nested_render
+# (the iGPU in dGPU boots) -- only useful once the parent can import it (a copy path or a LINEAR-capable driver).
+cross_vendor_present = false
 launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
 tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"
-terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal", "--new"]
+terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal"]
+# The session's terminal drops to the TUI session selector (miosd sessions: its instances, TUIs and apps, a new
+# Tmux-OS session), never straight into a tmux-os session. false = attach terminal_session directly (the old entry).
+selector = true
+selector_tailnet = false              # the selector lists this session's own tmux namespace only, no tailnet nodes
 seat = ""                             # default seat label (--seat); "" = an unlabelled session (several may run at once); a label is unique among live sessions
 user_label = ""                       # display name of the session's user (--user; exported to the session); "" = the seat label
 registry_dir = "mios/nested-sessions" # under the parent XDG_RUNTIME_DIR: one JSON entry per live session (seat, compositor socket, assigned devices) -- the mios-inputd contract

@@ -1,5 +1,5 @@
 // AI-hint: The nested-session device contract on the inputd side (I4): read mios-gen's live registry ([desktop.nested].registry_dir) so the host bridge never owns a node assigned to a nested session, and so `bridge --nested <seat>` follows exactly that session (its compositor, its private room packet, its assigned controller nodes).
-// AI-related: tools/native/mios-gen/src/nested_devices.rs (Claim, live_sessions), tools/native/mios-gen/src/nested_session.rs (session.json, pad_state), usr/share/mios/mios.toml [desktop.nested]
+// AI-related: tools/native/mios-gen/src/nested_devices.rs (Claim/live_sessions), tools/native/mios-gen/src/nested_session.rs (session.json/pad_state), usr/share/mios/mios.toml [desktop.nested]
 // AI-functions: start_time, live_sessions, assigned_nodes, session, host_service_env, seat_pad_name_matches
 use serde_json::Value as Json;
 use std::collections::BTreeMap;

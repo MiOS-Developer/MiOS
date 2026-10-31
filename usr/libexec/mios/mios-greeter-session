@@ -3,7 +3,9 @@
 # fullscreen inside cage and FALLS BACK to the tuigreet command given after "--" whenever the glass
 # greeter cannot start (missing cage/qs/greeter/GREETD_SOCK), is not "ready" within --start-timeout,
 # stops heart-beating for --heartbeat-timeout, crashes, exits without greetd launching a session, or
-# the operator presses F10 ("Text login"). Thin POSIX glue only (no bashisms, no shared state) so the
+# the operator presses F10 ("Text login"). --client terminal hosts the text greeter (the fallback argv itself) in a
+# terminal inside cage instead, so tuigreet appears on the GPU named by --drm-device (dGPU boots: the dGPU's display);
+# the same fallback rules apply. Thin POSIX glue only (no bashisms, no shared state) so the
 # fallback still works when most of the system is broken. The greetd config that calls this is
 # projected by `mios-gen render-greetd` from mios.toml [desktop.greeter].
 # AI-related: usr/share/mios/greeter/shell.qml, tools/native/mios-gen/src/greeter.rs,
@@ -11,10 +13,13 @@
 #
 # Usage: mios-greeter-session [--greeter-dir DIR] [--sessions D1:D2] [--default-session ID]
 #          [--start-timeout SEC] [--heartbeat-timeout SEC] [--outputs extend|last]
-#          [--wallpaper FILE] -- FALLBACK_COMMAND [ARGS...]
+#          [--wallpaper FILE] [--drm-device /dev/dri/cardN] [--client glass|terminal]
+#          [--terminal BIN --terminal-config FILE] -- FALLBACK_COMMAND [ARGS...]
 # Status protocol (file in a private temp dir, path exported as MIOS_GREETER_STATUS):
 #   "ready" (rewritten every few seconds = heartbeat) | "launched" | "fallback".
-# Test overrides (never set by the projected greetd config): MIOS_GREETER_CAGE, MIOS_GREETER_QS,
+# --client terminal: the terminal runs `mios-gen hyprland-greeter --hosted -- FALLBACK_COMMAND...`, which writes
+#   "ready" while tuigreet runs, then "launched" (exit 0) or "exit N".
+# Test overrides (never set by the projected greetd config): MIOS_GREETER_CAGE, MIOS_GREETER_QS, MIOS_GREETER_HOST_CHILD,
 #   MIOS_GREETER_DRY_RUN=1 (power actions only print), MIOS_GREETER_STATE.
 
 greeter_dir=/usr/share/mios/greeter
@@ -24,6 +29,10 @@ start_timeout=20
 heartbeat_timeout=30
 outputs=extend
 wallpaper=
+client=glass
+terminal=
+terminal_config=
+drm_device=
 
 log() {
     printf 'mios-greeter-session: %s\n' "$*" >&2
@@ -36,7 +45,7 @@ is_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --) shift; break ;;
-        --greeter-dir|--sessions|--default-session|--start-timeout|--heartbeat-timeout|--outputs|--wallpaper)
+        --greeter-dir|--sessions|--default-session|--start-timeout|--heartbeat-timeout|--outputs|--wallpaper|--client|--terminal|--terminal-config|--drm-device)
             if [ $# -lt 2 ]; then log "option $1 has no value"; shift; continue; fi
             case "$1" in
                 --greeter-dir) greeter_dir=$2 ;;
@@ -46,6 +55,10 @@ while [ $# -gt 0 ]; do
                 --heartbeat-timeout) heartbeat_timeout=$2 ;;
                 --outputs) outputs=$2 ;;
                 --wallpaper) wallpaper=$2 ;;
+                --client) client=$2 ;;
+                --terminal) terminal=$2 ;;
+                --terminal-config) terminal_config=$2 ;;
+                --drm-device) drm_device=$2 ;;
             esac
             shift 2 ;;
         *) log "ignoring unknown option $1"; shift ;;
@@ -85,7 +98,7 @@ stop_greeter() {
 trap 'stop_greeter; exit 143' TERM INT HUP
 
 fallback_now() {
-    log "glass greeter unavailable ($reason); starting text greeter: $*"
+    log "$client greeter unavailable ($reason); starting text greeter: $*"
     stop_greeter
     trap - TERM INT HUP
     # A failed exec ends a POSIX shell, so check first: a missing fallback becomes stock tuigreet.
@@ -99,17 +112,30 @@ fallback_now() {
 cage=${MIOS_GREETER_CAGE:-/usr/bin/cage}
 qs=${MIOS_GREETER_QS:-/usr/bin/qs}
 
+host_child=${MIOS_GREETER_HOST_CHILD:-/usr/bin/mios-gen}
+
+case "$client" in glass|terminal) ;; *) reason="unknown client $client"; client=glass; fallback_now "$@" ;; esac
 if [ ! -x "$cage" ]; then reason="compositor $cage missing"; fallback_now "$@"; fi
-if [ ! -x "$qs" ]; then reason="quickshell $qs missing"; fallback_now "$@"; fi
-if [ ! -r "$greeter_dir/shell.qml" ]; then reason="$greeter_dir/shell.qml missing"; fallback_now "$@"; fi
+if [ "$client" = glass ]; then
+    if [ ! -x "$qs" ]; then reason="quickshell $qs missing"; fallback_now "$@"; fi
+    if [ ! -r "$greeter_dir/shell.qml" ]; then reason="$greeter_dir/shell.qml missing"; fallback_now "$@"; fi
+else
+    if [ -z "$terminal" ] || [ ! -x "$terminal" ]; then reason="terminal ${terminal:-(none)} missing"; fallback_now "$@"; fi
+    if [ -z "$terminal_config" ] || [ ! -r "$terminal_config" ]; then reason="terminal config ${terminal_config:-(none)} missing"; fallback_now "$@"; fi
+    if [ ! -x "$host_child" ]; then reason="host child $host_child missing"; fallback_now "$@"; fi
+fi
 if [ -z "${GREETD_SOCK:-}" ] || [ ! -S "$GREETD_SOCK" ]; then reason="GREETD_SOCK not a socket"; fallback_now "$@"; fi
 
 workdir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/mios-greeter.XXXXXX" 2>/dev/null) || workdir=
 if [ -z "$workdir" ]; then reason="cannot create status dir"; fallback_now "$@"; fi
 status="$workdir/status"
 
-# Same GPU the desktop uses: the host's iGPU identity first (etc/mios/hyprland/igpu-pci), then the
-# udev /dev/dri/igpu alias; otherwise wlroots picks.
+# Same GPU the desktop uses: --drm-device (the boot profile's card, from mios-gen hyprland-greeter), else the host's
+# iGPU identity (etc/mios/hyprland/igpu-pci), then the udev /dev/dri/igpu alias; otherwise wlroots picks.
+if [ -n "$drm_device" ]; then
+    if [ ! -c "$drm_device" ]; then reason="DRM device $drm_device is not a character device"; fallback_now "$@"; fi
+    export WLR_DRM_DEVICES="$drm_device"
+fi
 if [ -z "${WLR_DRM_DEVICES:-}" ]; then
     card=
     if [ -r /etc/mios/hyprland/igpu-pci ]; then
@@ -132,10 +158,17 @@ unset DISPLAY
 
 cage_mode=
 [ "$outputs" = last ] && cage_mode="-m last"
-# shellcheck disable=SC2086 # cage_mode is intentionally word-split ("" or "-m last")
-"$cage" -s -d $cage_mode -- "$qs" -p "$greeter_dir" &
-pid=$!
-log "started glass greeter (pid $pid, cage $cage, greeter $greeter_dir)"
+if [ "$client" = glass ]; then
+    # shellcheck disable=SC2086 # cage_mode is intentionally word-split ("" or "-m last")
+    "$cage" -s -d $cage_mode -- "$qs" -p "$greeter_dir" &
+    pid=$!
+    log "started glass greeter (pid $pid, cage $cage, greeter $greeter_dir, DRM ${WLR_DRM_DEVICES:-auto})"
+else
+    # shellcheck disable=SC2086
+    "$cage" -s -d $cage_mode -- "$terminal" --config-file "$terminal_config" -e "$host_child" hyprland-greeter --hosted -- "$@" &
+    pid=$!
+    log "started terminal greeter (pid $pid, cage $cage, terminal $terminal, DRM ${WLR_DRM_DEVICES:-auto})"
+fi
 
 now() { date +%s; }
 state() { [ -r "$status" ] && head -n 1 "$status" 2>/dev/null; }

@@ -1,7 +1,7 @@
 // AI-hint: Glass overlay popups for the MiOS Dock & App Drawer (Sidebar.qml):
 //   1. Live Window Preview Popup (previewWindow): triggered on long-highlight (~400ms hover) over any dock icon
-//      that has open or minimized windows. Renders real-time live window views via Quickshell.Wayland ScreencopyView
-//      (including minimized windows on special:minimized), with window title, Open/Minimized status pill,
+//      that has open or minimized windows. Renders each window flat and edge to edge through DockPreview.qml (capture-safe:
+//      only mapped windows on a live output; minimized windows on special:minimized included), with window title, Open/Minimized status pill,
 //      click-to-activate/restore, minimize/restore button, and close button.
 //   2. Right-Click Context Menu Popup (menuWindow): triggered on right-click on any dock icon, minimized tile,
 //      starred/favourite app, or app drawer entry. Provides options to Pin/Remove Pin from Dock, Star/Favourite or
@@ -325,21 +325,16 @@ QS.Scope {
                                 required property int index
                                 width: popups.cardWidth
                                 height: popups.cardHeight
-                                // concentric inside the preview panel: its radius minus the panel padding
+                                // Flat (dock-hud): no frame, border or inset -- the window fills its card; hover is a fill.
                                 radius: Glass.inner(Glass.panelRadius(popups.previewW, popups.previewH), Glass.panelPad)
                                 color: cardMouse.containsMouse
                                     ? popups.theme.withAlpha(popups.theme.accent, popups.theme.hoverOpacity)
-                                    : popups.theme.withAlpha(popups.theme.bg, popups.theme.panelOpacity)
-                                hairline: true
-                                borderColor: modelData.activated
-                                    ? popups.theme.cursor
-                                    : popups.theme.outlineColor
+                                    : "transparent"
                                 clip: true
 
                                 Column {
                                     anchors.fill: parent
-                                    anchors.margins: Glass.inset
-                                    spacing: Glass.inset
+                                    spacing: 0
 
                                     // Card title bar: status dot + title + minimize/restore + close
                                     Item {
@@ -456,45 +451,27 @@ QS.Scope {
                                         }
                                     }
 
-                                    // Live ScreencopyView of the open or minimized Wayland toplevel
-                                    GlassSurface {
+                                    // The window's rendered output, capture-safe and edge to edge (DockPreview.qml).
+                                    // The phone card shows the remote display output (an output capture, not a window).
+                                    ScreencopyView {
+                                        visible: popups.phonePreview
                                         width: parent.width
-                                        height: parent.height - Glass.control - Glass.inset
-                                        radius: Glass.inner(winCard.radius, Glass.inset)
-                                        color: popups.theme.withAlpha(popups.theme.bg, popups.theme.panelOpacity)
-                                        clip: true
-
-                                        ScreencopyView {
-                                            id: liveView
-                                            anchors.centerIn: parent
-                                            captureSource: popups.previewOpen && winCard.modelData.toplevel ? winCard.modelData.toplevel : null
-                                            live: popups.previewOpen && captureSource !== null
-                                            paintCursor: false
-                                            constraintSize: Qt.size(parent.width, parent.height)
-                                            visible: captureSource !== null && hasContent
-                                        }
-
-                                        // Fallback icon+title when screencopy is warming up or fixture-only
-                                        Column {
-                                            anchors.centerIn: parent
-                                            spacing: Glass.inset
-                                            visible: !liveView.visible
-                                            Image {
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                                width: popups.theme.appIcon
-                                                height: popups.theme.appIcon
-                                                visible: popups.previewIcon !== ""
-                                                source: popups.previewIcon ? QS.Quickshell.iconPath(popups.previewIcon, true) : ""
-                                                fillMode: Image.PreserveAspectFit
-                                            }
-                                            Text {
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                                text: winCard.modelData.minimized ? "Minimized Window" : "Live Window"
-                                                color: popups.theme.muted
-                                                font.family: popups.theme.fontFamily
-                                                font.pixelSize: popups.theme.smallFontSize
-                                            }
-                                        }
+                                        height: visible ? parent.height - Glass.control : 0
+                                        captureSource: popups.phonePreview && popups.previewOpen && winCard.modelData.toplevel ? winCard.modelData.toplevel : null
+                                        live: captureSource !== null
+                                        paintCursor: false
+                                        constraintSize: Qt.size(width, height)
+                                    }
+                                    DockPreview {
+                                        visible: !popups.phonePreview
+                                        width: parent.width
+                                        height: visible ? parent.height - Glass.control : 0
+                                        win: winCard.modelData
+                                        theme: popups.theme
+                                        icon: popups.previewIcon
+                                        active: popups.previewOpen && !popups.phonePreview
+                                        focused: winCard.modelData.activated === true
+                                        showTitle: false
                                     }
                                 }
 

@@ -10,11 +10,17 @@ source "${SCRIPT_DIR}/lib/packages.sh"
 
 mios_log "Installing Hyprland compositor & tools"
 install_packages_strict "hyprland"
+# MiOS compositor patch series ([desktop.hyprland.compositor]): rebuild the installed release with it and replace the
+# stock package (Release tagged, e.g. 2.mios1) before any plugin is built against it.
+_hl_rpms="$(mktemp -d)"
+/usr/libexec/mios/mios-gen build-hyprland --root / --out "$_hl_rpms"
+dnf -y install "$_hl_rpms"/hyprland-[0-9]*.rpm
+rm -rf -- "$_hl_rpms"
 install_packages_strict "console-pointer"
 # ShaderGlass overlay pane ([desktop.shaderglass]): Wine + DXVK only. The GPL-3 release itself is fetched and
 # verified on the host by `miosd shaderglass install`, never baked into the image.
 install_packages "shaderglass"
-systemctl enable gpm.service mios-console-theme.service
+systemctl enable gpm.service mios-console-theme.service mios-boot-display-report.service
 
 # Render each imperative generator's installed surface from the merged build SSOT (MIOS_VENDOR_TOML), so operator edits ship.
 for _gen in ux/wm_config_gen.py desktop/gpu_terminal.py win/wt_profile_inject.py; do
@@ -23,6 +29,7 @@ done
 /usr/libexec/mios/mios-gen build-hyprglass --root /
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name hypr3d
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-pacing
+/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-appmenu
 /usr/libexec/mios/mios-gen render-hyprland --root /
 # Project the user session from the same SSOT before registering the login entry.
 while IFS= read -r _unit; do

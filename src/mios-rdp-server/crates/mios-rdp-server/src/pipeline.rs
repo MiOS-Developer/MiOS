@@ -115,12 +115,13 @@ impl ServerEventSender for GfxFactory {
 }
 
 impl GfxServerFactory for GfxFactory {
-    fn build_gfx_handler(&self) -> Box<dyn GraphicsPipelineHandler> {
+    // Upstream passes per-connection auto-detect handles (GfxContext); our pacing uses its own ack statistics.
+    fn build_gfx_handler(&self, _ctx: ironrdp_server::GfxContext) -> Box<dyn GraphicsPipelineHandler> {
         Box::new(Handler { gfx: Arc::clone(&self.gfx), max_in_flight: self.max_in_flight })
     }
-    fn build_server_with_handle(&self) -> Option<(GfxDvcBridge, GfxServerHandle)> {
+    fn build_server_with_handle(&self, ctx: ironrdp_server::GfxContext) -> Option<(GfxDvcBridge, GfxServerHandle)> {
         // Built per connection before authentication: nothing here may have side effects.
-        let server = GraphicsPipelineServer::new(self.build_gfx_handler());
+        let server = GraphicsPipelineServer::new(self.build_gfx_handler(ctx));
         let handle: GfxServerHandle = Arc::new(Mutex::new(server));
         *self.gfx.handle.lock().expect("gfx") = Some(Arc::clone(&handle));
         Some((GfxDvcBridge::new(Arc::clone(&handle)), handle))
@@ -234,17 +235,44 @@ pub struct PipeStats {
     pub camera_workers: AtomicU64,
     pub camera_frames: AtomicU64,
     pub camera_bytes: AtomicU64,
+    pub camera_restarts: AtomicU64,
     pub camera_sources: Mutex<Vec<serde_json::Value>>,
     pub camera_error: Mutex<Option<String>>,
     pub drive_generation: AtomicU64,
     pub drive_workers: AtomicU64,
     pub drive_mounts: Mutex<Vec<serde_json::Value>>,
     pub drive_error: Mutex<Option<String>>,
+    /// Incremented once per established connection (ConnectionHandler::on_connection_info);
+    /// remote USB claims are scoped to it.
+    pub connection_serial: AtomicU64,
+    pub usb_workers: AtomicU64,
+    pub usb_urbs: AtomicU64,
+    /// (connection serial, devices the client announced on it)
+    pub usb_announced: Mutex<(u64, u64)>,
+    pub usb_devices: Mutex<Vec<serde_json::Value>>,
     pub microphone_ready: AtomicBool,
     pub microphone_bytes: AtomicU64,
     pub microphone_dropped: AtomicU64,
     pub microphone_source: Mutex<Option<String>>,
     pub microphone_error: Mutex<Option<String>>,
+    /// Session-owned microphone sources recreated after the audio server restarted.
+    pub microphone_recoveries: AtomicU64,
+    pub speaker_generation: AtomicU64,
+    pub speaker_workers: AtomicU64,
+    pub speaker_ready: AtomicBool,
+    pub speaker_sink: Mutex<Option<String>>,
+    pub speaker_format: Mutex<Option<String>>,
+    pub speaker_error: Mutex<Option<String>>,
+    pub speaker_waves: AtomicU64,
+    pub speaker_bytes: AtomicU64,
+    /// Waves withheld because the client had not confirmed audio within speaker_max_latency_ms.
+    pub speaker_dropped: AtomicU64,
+    /// Digital-silence packets not sent after speaker_idle_ms of silence.
+    pub speaker_idle_packets: AtomicU64,
+    /// Times the sink stopped delivering samples mid-stream (suspended or starved).
+    pub speaker_gaps: AtomicU64,
+    pub speaker_backlog_ms: AtomicU32,
+    pub speaker_recoveries: AtomicU64,
     pub bitrate_bps: AtomicU64,
     pub frames_in_flight: AtomicU32,
     pub samples: Mutex<Samples>,

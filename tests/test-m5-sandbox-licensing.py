@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Automated two-sided verification test suite for Milestone M5 (4-Tier Sandbox Execution Ladder & Permissive Licensing).
-# AI-related: usr/libexec/mios/mios-sandbox-exec, etc/cdi/nvidia.json, usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf, usr/share/containers/systemd/users/mios-microvm-krun@.container, usr/lib/mios/agent-pipe/mios_isolation.py, usr/share/mios/mios.toml, etc/fapolicyd/fapolicyd.rules
+# AI-related: usr/libexec/mios/mios-sandbox-exec, /etc/cdi/nvidia.json, usr/share/containers/containers.conf.d/10-mios-pasta.conf, usr/share/containers/systemd/users/mios-microvm-krun@.container, usr/lib/mios/agent-pipe/mios_isolation.py, usr/share/mios/mios.toml, /etc/fapolicyd/fapolicyd.rules
 """Automated Two-Sided Verification Test Suite for Milestone M5.
 
 Milestone M5: 4-Tier Sandbox Execution Ladder & Permissive Licensing (R5)

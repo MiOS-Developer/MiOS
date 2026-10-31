@@ -802,8 +802,12 @@ def process_val(dotted, v, stack_offset=0):
         # of check_resolver_differential_parity, sitting exactly at its ceiling
         # of 12 with no headroom (task_3361). TOML wins because it is a real
         # format and because Rust is the destination tier.
+                #
+        # A boolean member renders as TOML spells it (`true`), never Python's
+        # `True`: mios-resolver joined `["ai", 7, true]` as `ai,7,true` while this
+        # twin printed `ai,7,True` (Law 13; tests/test-resolver-dropin-parity.py).
         return ",".join(
-            _toml_inline(x) if isinstance(x, (dict, list)) else str(x) for x in v
+            _toml_inline(x) if isinstance(x, (dict, list, bool)) else str(x) for x in v
         )
     return v
 
@@ -838,22 +842,24 @@ def _toml_inline(v):
         return "{ " + ", ".join(parts) + " }"
     return str(v)
 
-# The CI suite registry is read from the TOML directly by its own reader.
-# Projecting it produced two dozen shell constants no consumer reads,
-# including whole comma-joined suite lists, in both generated resolvers.
-EXCLUDED_SECTIONS = {"containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation"}
-WALK_MOSTLY_DEAD = {"ai", "image", "bootstrap", "profile", "sandbox", "security"}
-WALK_EMIT_KEEP = {
-    "MIOS_AI_BAKE_MODELS", "MIOS_AI_DIR", "MIOS_AI_EMBED_MODEL", "MIOS_AI_ENDPOINT",
-    "MIOS_AI_JOURNAL", "MIOS_AI_MCP_DIR", "MIOS_AI_MEMORY_DIR", "MIOS_AI_MODEL", "MIOS_AI_AGENT_MODEL",
-    "MIOS_AI_MODELS_DIR", "MIOS_AI_RAM_FLOOR_GB", "MIOS_AI_SCRATCH_DIR",
-    "MIOS_IMAGE_NAME", "MIOS_IMAGE_REF", "MIOS_IMAGE_TAG",
-    "MIOS_BOOTSTRAP_MODE",
-    "MIOS_SANDBOX_ENABLE", "MIOS_SECURITY_ALLOWLIST_HOSTS", "MIOS_SECURITY_PROBE_VERIFY_TLS",
-    "MIOS_SECURITY_PROVENANCE_TAINT",
-    "MIOS_SECURITY_SIGSTORE_COSIGN_VERSION", "MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL",
-    "MIOS_HEADLESS", "MIOS_MONITOR_RUNNING", "MIOS_NO_COLOR", "MIOS_NO_MONITOR",
-}
+def walk_rules(data):
+    """The SSOT walk rules ([generation.walk]) of the tree being projected:
+    (excluded_sections, mostly_dead_sections, emit_keep) as frozensets.
+
+    The lists live in mios.toml and nowhere else; mios-ssot-walk reads the same
+    table for mios-resolver, so the twins share one copy (Law 13). Malformed
+    shapes read exactly as WalkRules::from_ssot reads them: a value that is not a
+    table or not an array contributes nothing, and a non-string member is skipped.
+    A tree without the table has no rules -- nothing excluded, nothing suppressed."""
+    gen = data.get("generation") if isinstance(data, dict) else None
+    tbl = gen.get("walk") if isinstance(gen, dict) else None
+    tbl = tbl if isinstance(tbl, dict) else {}
+
+    def _strings(key):
+        v = tbl.get(key)
+        return frozenset(x for x in v if isinstance(x, str)) if isinstance(v, list) else frozenset()
+
+    return _strings("excluded_sections"), _strings("mostly_dead_sections"), _strings("emit_keep")
 
 def emit_exports(data=None) -> dict[str, str]:
     """Emit all derived MIOS_* environment variables from SSOT layers (or from `data`, a merged table)."""
@@ -866,17 +872,18 @@ def emit_exports(data=None) -> dict[str, str]:
     except (TypeError, ValueError):
         stack_offset = 0
 
+    excluded_sections, mostly_dead, emit_keep = walk_rules(data)
     exports: dict[str, str] = {}
     legacy: dict[str, str] = {}
     for dotted, val in walk(data):
         sec_name = dotted.split(".")[0]
-        if sec_name in EXCLUDED_SECTIONS:
+        if sec_name in excluded_sections:
             continue
         processed = process_val(dotted, val, stack_offset)
         if processed == "":
             continue
         canonical = canonical_name(dotted)
-        if not (sec_name in WALK_MOSTLY_DEAD and canonical not in WALK_EMIT_KEEP):
+        if not (sec_name in mostly_dead and canonical not in emit_keep):
             exports[canonical] = str(processed)
         for alias in get_aliases(dotted):
             # image.sidecars.* emits BOTH MIOS_<X>_IMAGE and MIOS_<X>_VERSION

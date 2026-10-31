@@ -1,82 +1,34 @@
 #!/usr/bin/env bash
-# AI-hint: Captures a clean-environment snapshot of resolved MIOS_* environment variables for lossless diffing.
-# AI-related: /usr/share/mios/mios.toml, /usr/lib/mios/userenv.sh, /tools/lib/userenv.sh
+# AI-hint: Thin glue for the env-baseline projection: prints the sealed snapshot of the resolved MIOS_* environment (one escaped KEY=value per line) by exec'ing the native `mios-gen env-snapshot`, which owns every rule the former bash body applied.
+# AI-related: tools/native/mios-gen/src/env_snapshot.rs, /usr/share/mios/mios.toml, /usr/lib/mios/userenv.sh, /usr/share/mios/reference/env-baseline.txt
 # AI-functions: main
+#
+# Kept as an entry point because drift checks and tools/drift-checks.py run it
+# by path. The logic is native (Law 14): the snapshot is rendered in process
+# from the same resolver library userenv.sh executes, so it no longer depends on
+# which mios-resolver is first on PATH, and only the tree's VENDOR tiers are
+# read -- never the host's /etc/mios when the tree is `/`.
 set -euo pipefail
-
-export LC_ALL=C LANG=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-
-USERENV_SH="${ROOT_DIR}/tools/lib/userenv.sh"
-if [[ ! -f "${USERENV_SH}" ]]; then
-    USERENV_SH="${ROOT_DIR}/usr/lib/mios/userenv.sh"
-fi
-
-if [[ ! -f "${USERENV_SH}" ]]; then
-    echo "[mios-env-snapshot] ERROR: Cannot locate userenv.sh resolver" >&2
-    exit 1
-fi
-
 VENDOR_TOML="${MIOS_VENDOR_TOML:-${ROOT_DIR}/usr/share/mios/mios.toml}"
 
-# Vars whose VALUE is derived from where the repo happens to sit, or which name
-# the resolver's own inputs. They differ between a contributor checkout and a CI
-# runner, so a baseline containing them can never match anywhere but the machine
-# that wrote it.
-_MIOS_ENV_SNAPSHOT_EXCLUDE='^(MIOS_ROOT|MIOS_TOML_ROOT|MIOS_VENDOR_TOML|MIOS_CONFIG_DIR|MIOS_USER_TOML|MIOS_USER_TOML_D|MIOS_HOST_TOML_D|MIOS_REPO_URL|MIOS_REPO_ROOT|MIOS_REPO_DIR)='
-
-# This file says "lossless" at the top, and it was not. `env` prints a
-# multi-line value across several lines, and the old `grep '^MIOS_'` kept only
-# the FIRST of them -- continuation lines do not start with MIOS_, so the rest
-# was dropped without a word. Measured: MIOS_OWUI_SYSTEM_PROMPT_TEMPLATE is 2633
-# characters over 42 lines and reached the baseline as the nine characters
-# "# MiOS AI"; MIOS_DOCS_BOILERPLATE_WHAT_MIOS_IS lost 214 of its 288 (task_3364).
-# check_value_aliases trusts this output, so a gate was comparing mutilated
-# values confidently.
-#
-# Refusing to emit a multi-line value was the other option and is worse here:
-# two of them exist, so the baseline could never be generated at all. The value
-# is escaped onto one line instead, which keeps every consumer's KEY=value parse
-# working and puts the whole value in the committed baseline's diff. Backslash
-# is escaped first, so the transform is reversible.
-#
-# `read -d ''` over `env -0` is the only way to read a value whose own content
-# contains newlines. An awk with RS="\0" is not portable across awk
-# implementations, and this script must not grow a python dependency.
-_mios_escape_pairs() {
-    local kv
-    while IFS= read -r -d '' kv; do
-        case "$kv" in
-            MIOS_*) ;;
-            *) continue ;;
-        esac
-        kv="${kv//\\/\\\\}"
-        kv="${kv//$'\n'/\\n}"
-        printf '%s\n' "$kv"
+gen=""
+if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then
+    gen="${MIOS_NATIVE_BIN_DIR}/mios-gen"
+elif [[ -n "${MIOS_GEN_BIN:-}" ]]; then
+    gen="${MIOS_GEN_BIN}"
+else
+    for candidate in "${ROOT_DIR}/tools/native/target/release/mios-gen" \
+        "${ROOT_DIR}/tools/native/target/debug/mios-gen" \
+        /usr/libexec/mios/mios-gen /usr/bin/mios-gen; do
+        [[ -x "$candidate" ]] && { gen="$candidate"; break; }
     done
-}
+fi
+if [[ -z "$gen" || ! -x "$gen" ]]; then
+    echo "[mios-env-snapshot] ERROR: native mios-gen not found (build tools/native or set MIOS_GEN_BIN)" >&2
+    exit 2
+fi
 
-# ONE resolver, always the shell twin. This snapshot is a committed BASELINE that
-# CI re-derives and diffs, so it must depend on the tree alone. Preferring the
-# native mios-resolver when tools/native/target/debug happened to be built made
-# the output depend on BUILD STATE: the Rust path emits shell-QUOTED values
-# (MIOS_X='a b') while the shell path emits raw ones (MIOS_X=a b), so the same
-# commit produced two different baselines and whichever machine regenerated last
-# broke the gate for the other. The twins are proven equivalent by
-# check_resolver_twin_parity / check_resolver_twin_equivalence; this file just
-# needs the reproducible one.
-env -i \
-    PATH="${PATH}:/usr/bin:/bin" \
-    HOME=/nonexistent \
-    XDG_CONFIG_HOME=/nonexistent/.config \
-    MIOS_ROOT="${ROOT_DIR}" \
-    MIOS_TOML_ROOT="${ROOT_DIR}" \
-    MIOS_VENDOR_TOML="${VENDOR_TOML}" \
-    MIOS_USER_TOML=/nonexistent/user.toml \
-    MIOS_USER_TOML_D=/nonexistent/user.d \
-    bash -c "source \"${USERENV_SH}\" >/dev/null 2>&1 && env -0" \
-    | _mios_escape_pairs \
-    | grep -vE "${_MIOS_ENV_SNAPSHOT_EXCLUDE}" \
-    | sort
+exec env -i PATH=/usr/bin:/bin "$gen" env-snapshot --root "${ROOT_DIR}" --vendor "${VENDOR_TOML}"

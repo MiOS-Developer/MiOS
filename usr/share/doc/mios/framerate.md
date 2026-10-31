@@ -1,5 +1,5 @@
 <!-- AI-hint: Desktop frame-rate policy: tiers, VRR cap, extended-vblank display modes (DP-3 90 Hz) and the confirm-or-revert guard; plus how Hypr3D windows open at Retina size. -->
-<!-- AI-related: /usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.mios-pacing] [desktop.hyprland.hypr3d.spawn], src/mios-rs/miosd/src/framerate.rs, src/mios-rs/miosd/src/framerate/plan.rs, tools/native/mios-resolver/src/framerate.rs, tools/native/mios-resolver/src/edid_timing.rs, tools/native/mios-gen/src/hypr3d_spawn.rs, tests/test-framerate.py, tests/test-hypr3d-retina-spawn.py, tests/test-framerate-retina-nested-live.py -->
+<!-- AI-related: usr/share/mios/mios.toml [desktop.framerate], src/mios-rs/miosd/src/framerate.rs, src/mios-rs/miosd/src/framerate/plan.rs, tools/native/mios-resolver/src/framerate.rs, tools/native/mios-resolver/src/edid_timing.rs, tools/native/mios-gen/src/hypr3d_spawn.rs, tests/test-framerate.py, tests/test-hypr3d-retina-spawn.py, tests/test-framerate-retina-nested-live.py -->
 # Desktop frame rate and Retina window opening
 
 ## Frame-rate tiers

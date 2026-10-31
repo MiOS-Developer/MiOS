@@ -23,7 +23,7 @@ use tracing::{info, warn};
 /// The peer of the connection being negotiated (set by the accept loop).
 pub type CurrentPeer = Arc<Mutex<Option<IpAddr>>>;
 
-fn seqpacket_connect(path: &Path) -> Result<OwnedFd> {
+pub(crate) fn seqpacket_connect(path: &Path) -> Result<OwnedFd> {
     // SAFETY: plain socket/connect with a sockaddr_un built from the path bytes.
     unsafe {
         let fd = libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC, 0);
@@ -60,7 +60,7 @@ fn send(fd: RawFd, msg: &[u8]) -> Result<()> {
 }
 
 /// One reply message plus any passed descriptors.
-fn recv(fd: RawFd) -> Result<(Vec<u8>, Vec<OwnedFd>)> {
+pub(crate) fn recv(fd: RawFd) -> Result<(Vec<u8>, Vec<OwnedFd>)> {
     let mut buf = vec![0u8; 4096];
     let mut cbuf = vec![0u8; 256];
     // SAFETY: recvmsg with buffers owned here; SCM_RIGHTS descriptors are taken over as OwnedFd.

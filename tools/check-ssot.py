@@ -391,13 +391,17 @@ def up_binary_path(root: str, build: bool = True):
 def up_run_binary(path: str, root: str):
     """(ok, output). The binary owns the rendering comparison; we only relay it."""
     env = dict(os.environ, MIOS_ROOT=os.path.abspath(root))
-    try:
-        proc = subprocess.run([path, "--check"], env=env, capture_output=True,
-                              text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return False, "mios-unit-gen --check could not run: %s" % exc
-    out = (proc.stdout + proc.stderr).strip()
-    return proc.returncode == 0, out
+    ok, outs = True, []
+    # System units AND session units: [user_units.*] has its own ceiling.
+    for extra in ([], ["--user"]):
+        try:
+            proc = subprocess.run([path, "--check", "--root", os.path.abspath(root)] + extra,
+                                  env=env, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, "mios-unit-gen --check %s could not run: %s" % (" ".join(extra), exc)
+        ok = ok and proc.returncode == 0
+        outs.append((proc.stdout + proc.stderr).strip())
+    return ok, "\n".join(outs)
 
 def up_main() -> int:
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.environ.get("MIOS_ROOT") or "."
@@ -930,7 +934,9 @@ except ModuleNotFoundError:  # pragma: no cover -- py<3.11
 rs_TOML = "usr/share/mios/mios.toml"
 rs_UNIT_DIR = "usr/lib/systemd/system"
 
-# Both halves of the resolver twin. Neither may keep the retired names alive.
+# The walk keep-list is [generation.walk].emit_keep in the SSOT; both halves of
+# the resolver twin read it from there. The twin sources are still scanned so a
+# re-introduced private copy cannot resurrect the retired names either.
 rs_KEEP_LISTS = ("usr/lib/mios/mios_toml.py",
               "tools/native/mios-ssot-walk/src/lib.rs")
 rs_RETIRED_NAMES = ("MIOS_PROFILE_ROLE", "MIOS_PROFILE_FEATURES")
@@ -1087,6 +1093,12 @@ def rs_check_profile_retired(data: dict, root: str) -> list:
                 viol.append("[profile].%s is retired -- blade capabilities are a "
                             "closed set; grant one with `mios blade "
                             "add-capability`" % key)
+    walk = (data.get("generation") or {}).get("walk") if isinstance(data.get("generation"), dict) else None
+    keep = walk.get("emit_keep") if isinstance(walk, dict) else None
+    for name in rs_RETIRED_NAMES:
+        if isinstance(keep, list) and name in keep:
+            viol.append("[generation.walk].emit_keep still lists %s -- the retired "
+                        "[profile] keys must not be resurrected by a keep-list" % name)
     for rel in rs_KEEP_LISTS:
         path = os.path.join(root, rel)
         try:
