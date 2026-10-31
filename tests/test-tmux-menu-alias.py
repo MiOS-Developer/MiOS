@@ -89,7 +89,7 @@ def main():
     os.chmod(tmp, 0o700)
     old = os.environ.get('MIOS_TMUX_CONF_OLD')
     if not old:
-        r = subprocess.run(['git', '-C', str(ROOT), 'show', 'main:usr/share/mios/tmux/mios-keys.tmux.conf'], capture_output=True, text=True)
+        r = subprocess.run(['git', '-C', str(ROOT), 'show', 'bcd6b3f22:usr/share/mios/tmux/mios-keys.tmux.conf'], capture_output=True, text=True)
         if r.returncode == 0:
             old = str(Path(tmp) / 'old.conf')
             Path(old).write_text(r.stdout)
