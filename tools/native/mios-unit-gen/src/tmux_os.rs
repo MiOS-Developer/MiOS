@@ -1012,8 +1012,8 @@ pub(crate) fn render_tmux_keys(
         }
     }
 
-    // ---- root table: only the right-click menus and the agent accept chord ----
-    out += "unbind-key -T root MouseDown3Pane\nunbind-key -T root MouseDown3Status\n";
+    // ---- root table: launcher, right-click menus, M-Space, and the agent accept chord ----
+    out += "unbind-key -T root MouseDown3Pane\nunbind-key -T root MouseDown3Status\nunbind-key -T root MouseDown1StatusLeft\n";
     let mouse_opener = |id: &str| -> Result<String, UnitGenError> {
         let rows = menu_rows.get(id).ok_or_else(|| gm(format!("menu {id:?} is not declared in [[keybindings.tmux.menus]]")))?;
         Ok(menu_opener_for(id, *rows, &too_small, "-mouse"))
@@ -1030,6 +1030,21 @@ pub(crate) fn render_tmux_keys(
             "bind-key -N {} -T root MouseDown3Status {}\n",
             quote(&req_text(tmux, sec, "menu_note")?),
             quote(&mouse_opener("root")?)
+        );
+        let status_left_cmd = if launcher_on { launcher_opener("") } else { quote(&mouse_opener("root")?) };
+        out += &format!(
+            "bind-key -N {} -T root MouseDown1StatusLeft {}\n",
+            quote(&req_text(tmux, sec, "menu_note")?),
+            status_left_cmd
+        );
+    }
+    if linux {
+        out += "unbind-key -T root M-Space\n";
+        let m_space_cmd = if launcher_on { launcher_opener("") } else { quote(&opener("root")?) };
+        out += &format!(
+            "bind-key -N {} -n M-Space {}\n",
+            quote(&req_text(tmux, sec, "menu_note")?),
+            m_space_cmd
         );
     }
     // One accept chord for every agent CLI (mobile-safe, no Ctrl-K): tmux receives it (extended keys) and
@@ -1376,6 +1391,8 @@ mod tests {
         assert!(space.contains("TMUX_PANE=#{pane_id} /usr/bin/miosd launcher open --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}\""), "{space}");
         let e = conf.lines().find(|l| l.contains("\" e run-shell")).unwrap();
         assert!(e.ends_with("--start apps\""), "{e}");
+        assert!(conf.lines().any(|l| l.contains("-T root MouseDown1StatusLeft") && l.contains("miosd launcher open")));
+        assert!(conf.lines().any(|l| l.contains("-n M-Space") && l.contains("miosd launcher open")));
         // Negative control: with the launcher off both keys open the generated menus, as before.
         let mut d = ssot();
         d["keybindings"]["tmux"]["launcher"]["enabled"] = false.into();
@@ -1383,6 +1400,8 @@ mod tests {
         assert!(!off.contains("miosd launcher open --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}\""), "no launcher binding");
         assert!(off.lines().any(|l| l.contains("\" Space if-shell -F '#{e|<:#{client_height},") && l.contains("'mios-menu-root'")));
         assert!(off.lines().any(|l| l.contains("--menu apps --client #{q:client_name}")));
+        assert!(!off.contains("MouseDown1StatusLeft run-shell"));
+        assert!(!off.contains("-n M-Space run-shell"));
         // Off Linux there is no launcher either.
         let mut w = ssot();
         for b in w["keybindings"]["tmux"]["bindings"].as_array_mut().unwrap() {
