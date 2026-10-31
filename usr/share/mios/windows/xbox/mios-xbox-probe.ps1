@@ -1,5 +1,5 @@
 # AI-hint: MiOS-Xbox in-guest conformance probe (xb-18, XB-6): READ-ONLY. Given the item list derived from the resolved xbox-spec.json (passed as base64 JSON by usr/libexec/mios/win/xbox/probe.py over WinRM), reports what the running guest actually has -- desktop-user hive values (taskbar, Start, Xbox, settings), machine registry, optional features, capabilities, third-party drivers, display adapters, guest-tool services, MiOS component files/tasks/services, Appx packages, local users/autologon/RID-500, computer name, the GPU post-setup record -- as one JSON document. It never changes the guest and never returns a credential (Winlogon DefaultPassword is reported only as a sha256 digest).
-# AI-related: usr/libexec/mios/win/xbox/probe.py, usr/libexec/mios/win/xbox/spec_items.py, tests/test-mios-xbox-probe.py, usr/share/mios/windows/mios-gpu-driver.ps1
+# AI-related: usr/libexec/mios/win/xbox/probe.py, usr/libexec/mios/win/xbox/spec_items.py, tests/test-mios-xbox-probe.py, usr/share/mios/windows/xbox/mios-gpu-driver.ps1
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
