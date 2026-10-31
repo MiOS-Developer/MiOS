@@ -918,7 +918,11 @@ pub(crate) fn render_tmux_keys(
             // shown (probed: a 19-row menu from a click on row 12 of a 30-row client). Below the pointer when it
             // fits (#{popup_mouse_top} = -y M), else above it with its bottom border over the pointer row
             // (#{popup_mouse_y}), so the release still lands outside the items.
-            let mouse_y = format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{}}},#{{client_height}}}},#{{popup_mouse_top}},#{{popup_mouse_y}}}}", menu.rows);
+            let mouse_y = format!(
+                "#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{0}}},#{{client_height}}}},#{{popup_mouse_top}},#{{?#{{e|>=:#{{mouse_y}},{0}}},#{{popup_mouse_y}},#{{popup_centre_y}}}}}}",
+                menu.rows
+            );
+
             let (x, y) = if mouse { ("M", mouse_y.as_str()) } else { (MENU_X, MENU_Y) };
             let title = format!("#[align=centre]{}", menu.title);
             let mut args: Vec<String> = vec!["display-menu".into(), "-T".into(), title, "-x".into(), x.into(), "-y".into(), y.into()];
@@ -1279,7 +1283,8 @@ mod tests {
         assert!(mouse.contains(" -x M -y ") && mouse.contains(" -O ") && !mouse.contains(" -C "), "{mouse}");
         // Below the pointer when the menu fits there, else above it (tmux 3.7c never moves a menu back on screen).
         let rows = launcher_menus(&ssot(), "linux").unwrap().into_iter().find(|m| m.id == "pane").unwrap().rows;
-        assert!(mouse.contains(&format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{rows}}},#{{client_height}}}},#{{popup_mouse_top}},#{{popup_mouse_y}}}}")), "{mouse}");
+        assert!(mouse.contains(&format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{rows}}},#{{client_height}}}},#{{popup_mouse_top}},#{{?#{{e|>=:#{{mouse_y}},{rows}}},#{{popup_mouse_y}},#{{popup_centre_y}}}}}}")), "{mouse}");
+
         assert!(aliases.iter().any(|l| l.contains("\"mios-menu-root-vt-mouse=") && l.contains("-b single")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Pane") && l.contains("'mios-menu-pane-mouse'")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Status") && l.contains("'mios-menu-root-vt-mouse'")));

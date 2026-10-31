@@ -601,16 +601,19 @@ enabled = false
         h.start(80, 30)
         h.view("view", w=80, h=30)
         rows = {}
-        for y in (2, 26):
+        for y in (2, 15, 26):
             h.raw("view", f"\x1b[<2;10;{y}M")
-            h.raw("view", f"\x1b[<2;10;{y}m")
-            shot = h.shot(delay=0.6)
+            shot = h.shot(delay=0.4)
             rows[y] = next((n for n, l in enumerate(shot.splitlines()) if "MiOS pane" in l), None)
+            h.raw("view", f"\x1b[<2;0;{y}m")
             h.keys("view", "Escape")
+
             time.sleep(0.3)
         self.assertEqual(rows[2], 1, f"a high click opens the menu below the pointer: {rows}")
+        self.assertIsNotNone(rows[15], f"a dead-zone click centers the menu: {rows}")
         self.assertIsNotNone(rows[26], f"a low click opens the menu above the pointer: {rows}")
         self.assertLess(rows[26], 26 - 1, "above the pointer, so the release lands outside the items")
+
 
     # ---- T10: the tmux-os launcher (miosd launcher): organised popup, keyboard/controller/mouse, instance options ----
     @unittest.skipUnless(MIOSD.is_file(), "the lane's built miosd is required")
