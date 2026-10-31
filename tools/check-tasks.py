@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Task-plane drift gates in one module: the retired TASKS.md table-vs-section parity, AGY task schema, and task id/dependency resolution, over the frozen lists tasks.jsonl keeps (ADR-0028).
 # AI-doc: usr/share/doc/mios/manual/tools.md
-# AI-functions: main, status_parity_main, schema_main, agy_main
+# AI-functions: main, status_parity_main, schema_main, agy_main, integrity_main
 """Task-plane drift gates. One module, one subcommand per gate.
 
 The frozen lists name every task by its typed id, task_<number> (ADR-0028: migrate-ids rewrote the old ids).
@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import tomllib
 
 
 TASKS = "TASKS.md"
@@ -292,7 +293,68 @@ def agy_main() -> int:
     return 0
 
 
-_GATES = {"status-parity": status_parity_main, "schema": schema_main, "agy": agy_main}
+_DONE_RE = re.compile(r"\bDONE\b")
+
+
+def find_contradictions(records: list) -> list:
+    """Detect records with status != 'completed' whose title claims DONE."""
+    errs = []
+    for r in records:
+        status = r.get("status", "")
+        title = r.get("title", "")
+        if status != "completed" and _DONE_RE.search(title):
+            num = r.get("number")
+            tid = f"task_{num}" if num else r.get("id", "unknown")
+            errs.append(
+                f"VIOLATION: {tid}: title/status contradiction: status is '{status}' but title claims 'DONE' ({title!r})"
+            )
+    return errs
+
+
+def integrity_main() -> int:
+    """Gate: tasks.jsonl contains no title/status contradictions."""
+    root = os.environ.get("MIOS_DRIFT_ROOT", os.environ.get("MIOS_TOML_ROOT", "."))
+    store = store_path(root)
+    if not store or not os.path.isfile(store):
+        candidate = os.path.join(root, "tasks.jsonl")
+        if os.path.isfile(candidate):
+            store = candidate
+        else:
+            print(f"VIOLATION: tasks.jsonl not found under {root}")
+            return 1
+
+    records = []
+    with open(store, encoding="utf-8") as fh:
+        for line_idx, line in enumerate(fh, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"VIOLATION: {store}:{line_idx} invalid JSON: {e}")
+                return 1
+            if "_dialect" in rec and len(rec) == 1:
+                continue
+            records.append(rec)
+
+    problems = find_contradictions(records)
+    if problems:
+        for p in problems:
+            print(p)
+        print(f"tasks.jsonl integrity check failed: {len(problems)} contradiction(s)")
+        return 1
+
+    print(f"tasks.jsonl integrity check passed ({len(records)} record(s) verified, 0 contradictions)")
+    return 0
+
+
+_GATES = {
+    "status-parity": status_parity_main,
+    "schema": schema_main,
+    "agy": agy_main,
+    "integrity": integrity_main,
+}
 
 
 def main() -> int:

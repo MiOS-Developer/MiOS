@@ -408,6 +408,15 @@ fn write_doc(
     .map_err(|e| Fail::Bad(e.join("\n")))?;
     let idx = Index::new(records, state.purged.then_some(&state.ids));
     let eff = overrides::apply(records, &lines, &idx);
+    let contradictions = overrides::find_contradictions(&eff.records, &idx);
+    if !contradictions.is_empty() {
+        return Err(Fail::Bad(format!(
+            "refusing to render {}: {} title/status contradiction(s):\n{}",
+            st.doc,
+            contradictions.len(),
+            contradictions.join("\n")
+        )));
+    }
     write_atomic(
         &st.doc_file(),
         &overrides::render(&st.path, &eff, &inner, &idx),

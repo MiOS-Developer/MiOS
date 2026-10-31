@@ -16,9 +16,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1759 |
+| pending | 1744 |
 | in_progress | 65 |
-| completed | 1827 |
+| completed | 1842 |
 | incomplete | 20 |
 | cancelled | 21 |
 | total | 3692 |
@@ -4522,12 +4522,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3191` `[build.bake]` core allow-list + `generate-bake-plan.py` projection + drift-check + `.image` whales -- pending · P1
 - `task_3192` `[blade]` archetypes + capability→unit map + declarative `Condition*` activation + deploy-time selection -- pending · P1 · depends_on task_259
 - `task_3193` Two shared-base images (`mios-sys` + `mios-cuda`) collapse ~18 sidecars via Model A -- pending · P1
-- `task_3194` Extend build-time provenance beyond images (model checksums, package version-hashes) **[P2] ✅ DONE -- pending
-- `task_3195` ADR system (`usr/share/doc/mios/adr/`) **✅ DONE this session -- pending
-- `task_3196` WS metadata schema + `roadmap-index.py` generator + drift-check **✅ DONE this session -- pending
-- `task_3197` Lean thematic `ROADMAP.md`; archive Parts 1–20 losslessly **✅ DONE this session -- pending
-- `task_3198` Status-lifecycle retag (honest done-vs-gated) + cross-ref backfill **✅ DONE this session -- pending
-- `task_3199` Diátaxis reorg of `/usr/share/doc/mios` + `CHANGELOG.md` + agent-context refresh **✅ DONE this session -- pending
+- `task_3194` Extend build-time provenance beyond images (model checksums, package version-hashes) -- pending
+- `task_3195` ADR system (`usr/share/doc/mios/adr/`) -- completed
+- `task_3196` WS metadata schema + `roadmap-index.py` generator + drift-check -- completed
+- `task_3197` Lean thematic `ROADMAP.md`; archive Parts 1–20 losslessly -- pending
+- `task_3198` Status-lifecycle retag (honest done-vs-gated) + cross-ref backfill -- pending
+- `task_3199` Diátaxis reorg of `/usr/share/doc/mios` + `CHANGELOG.md` + agent-context refresh -- pending
 - `task_3200` Stand up the Rust workspace + port the first fragile bash tool (drift-runner or verb dispatcher) **[P1]** (→ task_250) -- pending
 - `task_3201` Workspace foundation: one `src/mios-rs/`, vendored deps, a builder stage, cross-compiled targets **[P1]** (→ task_951) -- pending
 - `task_3202` Make `mios-resolver` the ONE Rust reader of `mios.toml` **[P1]** (→ task_952) -- pending
@@ -4559,7 +4559,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3228` Boot the universal image as a Hyper-V Gen 2 VM off `M:\MiOS-images\` with sovereign Ceph storage -- pending · P1
 - `task_3229` Flatten + single-owner · verb dispatch + tri-launcher parity · `[cat]` SSOT + dangling-read fix · fold the web one-liners **[P1]** (→ task_234..task_237) -- pending
 - `task_3230` Small MiOS-Repo shadow-config partition (always) + degrade-open fallback **[P1]** (→ task_238) -- pending
-- `task_3231` harden+complete the RAG-artifact bootstrap logger **[P2] ✅ DONE** (→ task_3319) -- pending
+- `task_3231` harden+complete the RAG-artifact bootstrap logger (→ task_3319) -- completed
 - `task_3232` repos wrongly staged onto MiOS-Data instead of MiOS-Repo **[P1]** (→ task_3320) -- pending
 - `task_3233` Separate MiOS-Data bulk store (512GB+) + model embedding + `cat provision` (Law 12) + offline mirrors **[P1]** (→ task_239..task_241) -- pending
 - `task_3234` Dead-weight purge + leave-nothing-behind · ADR root breadcrumb · seed-copy consolidation **[P2]** (→ task_242..task_244) -- pending
@@ -4567,28 +4567,28 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3236` Authority Inversion: PostgreSQL+pgvector as Live SSOT -- pending · P1
 - `task_3237` Automated PostgreSQL+pgvector Backup & zstd Snapshot Timer -- pending · P1
 - `task_3238` Multi-tenant CephFS User Directory & CephX Auto-Provisioning -- pending · P2
-- `task_3239` float the last hand-pinned image refs **[P1] ✅ DONE** (→ task_3343) -- pending
-- `task_3240` derive `mios-resolve-latest` refs from SSOT **[P1] ✅ DONE** (→ task_3344) -- pending
-- `task_3241` Renovate manager for the exact-pinned sidecar entries **[P2] ✅ DONE** (→ task_3345) -- pending
-- `task_3242` runtime kernel-lockdown boot probe **[P2] ✅ DONE** (→ task_3346) -- pending
-- `task_3243` PG-major migration for mios-pgvector **[P2] ✅ DONE** (→ task_3347) -- pending
+- `task_3239` float the last hand-pinned image refs (→ task_3343) -- completed
+- `task_3240` derive `mios-resolve-latest` refs from SSOT (→ task_3344) -- completed
+- `task_3241` Renovate manager for the exact-pinned sidecar entries (→ task_3345) -- completed
+- `task_3242` runtime kernel-lockdown boot probe (→ task_3346) -- completed
+- `task_3243` PG-major migration for mios-pgvector (→ task_3347) -- completed
 - `task_3244` re-render the stale doc port/lane tables from SSOT **[P2]** (→ task_3348) -- pending
 - `task_3245` UKI and fs-verity Boot Chain End-to-End Verification -- pending · P1
 - `task_3246` Full-Device Discrete GPU Passthrough & Looking Glass B6 Inter-VM Framebuffer -- pending · P1
 - `task_3247` Quadlet Credential Hardening & 0600 secrets.env Rotation Service -- pending · P1
 - `task_3248` `[dotfiles.registry.*]` map + `mios-dotfiles-render` (arbitrary-key, format-aware merge, live-HOME `apply`) + both-sides gate **[P1]** (→ task_248) -- pending
-- `task_3249` Wire "default-to-GHCR-if-creds-else-local/Forgejo" registry selection into the build driver **✅ DONE this session -- pending
+- `task_3249` Wire "default-to-GHCR-if-creds-else-local/Forgejo" registry selection into the build driver -- pending
 - `task_3250` 16-Byte Fixed Binary Wire Protocol Implementation in mios-node -- pending · P1
 - `task_3251` Tier-1 Wasm Sandbox Runtime with mios_sys_* Host Imports -- pending · P1
 - `task_3252` LWW-Element-Set and Vector Clock CRDT Engine for Edge Nodes -- pending · P1
 - `task_3253` Avahi/mDNS Zero-Conf Mesh Discovery and Handshake -- pending · P2
-- `task_3254` Gate the corpus ledger and repair the landing predicate **[P1] ✅ DONE** (→ task_3333) -- pending
-- `task_3255` Durable ratchet floor **[P2] ✅ DONE** (→ task_3337) -- pending
-- `task_3256` `mios-manual harvest` — the missing link **[P1] ✅ DONE** (→ task_3338) -- pending
-- `task_3257` `check_comment_landing` + `mios-manual prune` **[P1] ✅ DONE** (→ task_3339) -- pending
-- `task_3258` Widen render scope and add the remaining deriver families **[P2] ✅ DONE** (→ task_3340) -- pending
-- `task_3259` Reproducible manual and machine-facing surfaces **[P2] ✅ DONE** (→ task_3341) -- pending
-- `task_3260` Cross-repo participation for mios-bootstrap **[P2] ✅ DONE** (→ task_3342) -- pending
+- `task_3254` Gate the corpus ledger and repair the landing predicate (→ task_3333) -- completed
+- `task_3255` Durable ratchet floor (→ task_3337) -- completed
+- `task_3256` `mios-manual harvest` — the missing link (→ task_3338) -- completed
+- `task_3257` `check_comment_landing` + `mios-manual prune` (→ task_3339) -- completed
+- `task_3258` Widen render scope and add the remaining deriver families (→ task_3340) -- completed
+- `task_3259` Reproducible manual and machine-facing surfaces (→ task_3341) -- completed
+- `task_3260` Cross-repo participation for mios-bootstrap (→ task_3342) -- completed
 - `task_3261` Seven lanes, each with a stated target shape at 2-6 nodes **[P0]** (→ task_277, split into task_929..task_935) -- pending
 - `task_3262` CDC-NCM gadget orchestration and host link bring-up **[P2]** (→ task_920) -- pending
 - `task_3263` AArch64 target for mios-node **[P2]** (→ task_921) -- pending
@@ -4668,7 +4668,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3351` task_3351 -- de-rot the documentation long tail: 74 files, 310 verified edits across ADRs, concepts, guides, upstream notes, reference docs and distilled manual pages (388 sites in, 38 out). `[docs].port_clean` grows 39 -> 107 files. The verifiers rejected 10 proposals, among them a rewrite that would have made an engine claim wrong, a mis-mapped key (8642 read as `llm_light`), a runnable `export` that would have stopped running, and two edits inside `mios-src` anchored passages. Historical archives (knowledge/, archive/, audits/, roadmap/history/, upstream-gaps) stay verbatim by design. **Done-when (met):** gate green over 107 files. -- completed · P2
 - `task_3352` task_3352 -- de-rot the AI-hint headers the generated indexes read from: 35 source files (headers only, bodies untouched) plus four systemd units fixed at their source under `usr/lib/systemd/system` with golden-master snapshots refreshed (`cargo test --test golden_master` green). After re-render `tool-index.md` and `README.md` carry ZERO retired ports -- they healed from the corrected hints, which is the generative pipeline working as designed. Two enumerated port lists (`mios-firewall-ports`, `service-health.sh`) now name `[ports]` categories instead of literal lists that drift; the latter's hint was also truncated mid-word and is repaired. **Done-when (met):** generated indexes clean, gate green. -- completed · P2
 - `task_3353` GATECAT-01 -- collapse 209 drift checks and 337 test files into categorised binaries, auditable by hand -- pending · P1
-- `task_3354` QUEUE-01 -- two backlogs, ~40k lines, no machine-selectable next task; one queue + a DONE archive -- pending · P1
+- `task_3354` QUEUE-01 -- two backlogs, ~40k lines, no machine-selectable next task; one queue + an archive for completed tasks -- pending · P1
 - `task_3355` LAYOUT-01 -- survey field/ config/ images/ installation/ specs/ and collapse them where they belong -- pending · P2
 - `task_3356` ROLLBACK-01 -- bootc rollback has never been exercised; the recovery story is unproven -- completed · P1
 - `task_3357` SERVERPY-01 -- decompose the 8,961-line server.py while nothing uses the plane -- pending · P2

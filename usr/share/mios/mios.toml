@@ -17435,7 +17435,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 658
+max_tracked_mb    = 661
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -17977,6 +17977,20 @@ unit = [
     "tests/test-mios-xbox-provisioning.py",
     "tests/test-adversarial-r7-desktop-resilience.py",
     "tests/test-adversarial-r8-dock-drawer.py",
+    "tests/test-tasks-integrity.py",
+    "tests/test-app-launch-health.py",
+    "tests/test-app-launch-qml.py",
+    "tests/test-framerate-retina-nested-live.py",
+    "tests/test-game-placement.py",
+    "tests/test-hypr3d-input-transitions-live.py",
+    "tests/test-hypr3d-input-transitions.py",
+    "tests/test-pip-behaviours-live.py",
+    "tests/test-quickshell-candidate-install.py",
+    "tests/test-quickshell-candidate-live.py",
+    "tests/test-shaderglass-state.py",
+    "tests/test-shell-appmenu-live.py",
+    "tests/test-shell-hud-contract.py",
+    "tests/test-shell-hud-live.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [
