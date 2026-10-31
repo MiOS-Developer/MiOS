@@ -152,6 +152,42 @@ def tagged(case):
     return out
 
 
+def a11y_buttons(address, pid):
+    """Diagnostic: the push/toggle/menu buttons and menu bars the app with `pid` exposes on the accessibility bus
+    (role, name, description, has-popup), so a case without pills shows what the app actually offers."""
+    try:
+        import gi
+        gi.require_version('Gio', '2.0')
+        from gi.repository import Gio, GLib
+        c = Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT |
+                                                    Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+
+        def call(dest, path, iface, method, args=None, rtype=None):
+            return c.call_sync(dest, path, iface, method, args, rtype, Gio.DBusCallFlags.NONE, 1500, None).unpack()
+        apps = call('org.a11y.atspi.Registry', '/org/a11y/atspi/accessible/root', 'org.a11y.atspi.Accessible', 'GetChildren')[0]
+        out = []
+        for name, _root in apps:
+            try:
+                p = call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetConnectionUnixProcessID',
+                         GLib.Variant('(s)', (name,)))[0]
+            except GLib.Error:
+                continue
+            if p != pid:
+                continue
+            try:
+                rows = call(name, '/org/a11y/atspi/cache', 'org.a11y.atspi.Cache', 'GetItems')[0]
+            except GLib.Error as e:
+                return [f'cache: {e.message}']
+            for r in rows:
+                role, label, states = r[-3], r[-4], r[-1]
+                if role in (34, 43, 62, 129):
+                    popup = len(states) > 1 and bool(states[1] & (1 << 10))
+                    out.append((role, label, popup))
+        return out[:40]
+    except Exception as e:  # noqa: BLE001 - diagnostic only
+        return [repr(e)[:200]]
+
+
 def cases(fixtures, tmp):
     """(name, kind, argv, class regex, extra env, activation (label path, expect)) -- expect: 'marker:<text>',
     'new-client' or 'pressed'. kind is the matrix row."""
@@ -188,12 +224,16 @@ def cases(fixtures, tmp):
          ['flatpak', 'run', 'com.google.ChromeDev', f'--user-data-dir={chrome_dir}', '--no-first-run',
           '--no-default-browser-check', '--ozone-platform=wayland'],
          r'^(google-chrome-unstable|com\.google\.ChromeDev|google-chrome|chrome)', {}, (['File', 'New Window'], 'new-client')),
+        ('chrome-dev-x11', 'Chrome Dev (Chromium, Flatpak, ozone X11 -> XWayland, registrar)',
+         ['flatpak', 'run', 'com.google.ChromeDev', f'--user-data-dir={chrome_dir}-x11', '--no-first-run',
+          '--no-default-browser-check', '--ozone-platform=x11'],
+         r'^(google-chrome-unstable|com\.google\.ChromeDev|google-chrome|chrome|Google-chrome-unstable)', {}, (['File', 'New Window'], 'new-client')),
         ('vscode', 'VS Code (Electron, RPM, Wayland, default custom title bar)',
          ['code', f'--user-data-dir={code_dir}', f'--extensions-dir={code_dir}/ext', '--disable-extensions',
-          '--new-window', '--ozone-platform=wayland', '--disable-gpu'], r'^(code|Code|code-url-handler)$', {}, (['File', 'New Window'], 'new-client')),
+          '--new-window', '--ozone-platform=wayland', '--disable-gpu', '--verbose'], r'^(code|Code|code-url-handler)$', {}, (['File', 'New Window'], 'new-client')),
         ('vscode-native', 'VS Code (Electron, RPM, Wayland, window.titleBarStyle=native)',
          ['code', f'--user-data-dir={code_native}', f'--extensions-dir={code_native}/ext', '--disable-extensions',
-          '--new-window', '--ozone-platform=wayland', '--disable-gpu'], r'^(code|Code|code-url-handler)$', {}, (['File', 'New Window'], 'new-client')),
+          '--new-window', '--ozone-platform=wayland', '--disable-gpu', '--verbose'], r'^(code|Code|code-url-handler)$', {}, (['File', 'New Window'], 'new-client')),
         ('virt-manager', 'virt-manager (GTK 3 GtkMenuBar, Flatpak, Wayland)',
          ['flatpak', 'run', 'org.virt_manager.virt-manager', '--no-fork'], r'^(org\.virt_manager\.virt-manager|virt-manager)$',
          {}, (['Help', 'About'], 'new-client')),
@@ -317,6 +357,7 @@ def live_tier():
                                             stdout=open(out / 'a11y-registry.log', 'w'), stderr=subprocess.STDOUT))
             time.sleep(1.0)
         check('private accessibility bus (AT-SPI) for the private session', a11y.returncode == 0, (a11y.stdout + a11y.stderr).strip()[:200])
+        a11y_addr = (re.search(r"'([^']+)'", a11y.stdout) or [None, None])[1]
 
         def hc(*a):
             return sh(['hyprctl', *a], env=env).stdout
@@ -333,10 +374,20 @@ def live_tier():
                           if l.startswith('DISPLAY=')), None)
         except OSError:
             xdisp = None
-        if not xdisp:
-            for x in sorted(Path('/tmp/.X11-unix').glob('X*'), key=lambda p: p.stat().st_mtime, reverse=True):
-                xdisp = ':' + x.name[1:]
-                break
+        if not xdisp:   # the nested compositor hands its Xwayland DISPLAY to the clients it starts (its terminal)
+            for _ in range(50):
+                for pid in in_runtime(str(d)):
+                    try:
+                        e = dict(l.split('=', 1) for l in Path(f'/proc/{pid}/environ').read_bytes().decode(errors='replace').split('\0') if '=' in l)
+                    except OSError:
+                        continue
+                    if e.get('DISPLAY') and e.get('WAYLAND_DISPLAY') == env['WAYLAND_DISPLAY']:
+                        xdisp = e['DISPLAY']
+                        break
+                if xdisp:
+                    break
+                time.sleep(0.2)
+        check('nested Xwayland display found for XWayland apps', bool(xdisp), xdisp)
         if plugin != 'none':
             r = sh(['hyprctl', 'plugin', 'load', plugin], env=env)
             table = hc('-j', 'mios-appmenu')
@@ -439,10 +490,13 @@ def live_tier():
                 if mine:
                     time.sleep(1.5 if name.startswith('fixture') else 4)   # let the app finish its main window
                     mine = [x for x in clients() if x['address'] not in before and re.search(cls, x.get('class', ''))]
-                    c = max(mine, key=lambda x: x['size'][0] * x['size'][1])
+                    mine.sort(key=lambda x: -x['size'][0] * x['size'][1])
+                    c = mine[0]
+                    others = mine[1:4]
                     break
                 time.sleep(0.2)
             row['mapped'] = bool(c)
+            others = others if c else []
             if not c:
                 matrix.append(row | {'error': 'no window mapped', 'exit': p.poll()})
                 check(f'[{name}] window mapped in the nested session', False, f'{kind}: no window (exit {p.poll()})')
@@ -467,6 +521,19 @@ def live_tier():
                     focus(c)
                 time.sleep(0.5)
             menus = snap.get('menus') or [] if snap.get('address') == c['address'] else []
+            # An app with several toplevels (a first-run wizard beside the main window): the window that has menus.
+            for o in others:
+                if menus:
+                    break
+                focus(o)
+                for _ in range(30):
+                    s2 = snapshot()
+                    if s2.get('address') == o['address'] and s2.get('menus'):
+                        time.sleep(1.0)
+                        snap, c, menus = snapshot(), o, snapshot().get('menus') or []
+                        break
+                    time.sleep(0.3)
+            row.update(address=c['address'], title=c.get('title', '')[:60], windows=1 + len(others))
             row.update(source=snap.get('source') if menus else 'none', binding=snap.get('binding'), **summarize(menus))
             try:
                 kde = [m for m in json.loads(hc('-j', 'mios-appmenu') or '{}').get('menus', []) if m.get('address') == c['address']]
@@ -474,6 +541,8 @@ def live_tier():
                 kde = []
             row['kde_appmenu'] = kde[0] if kde else None
             (out / f'snapshot-{name}.json').write_text(json.dumps(snap, indent=1))
+            if not menus and a11y_addr:
+                row['a11y_buttons'] = a11y_buttons(a11y_addr, c.get('pid', 0))
             # Activation of one real item through the exporter's own activation path.
             if act and menus:
                 path, how = act
@@ -613,7 +682,8 @@ def live_tier():
         if (d / 'doc').is_dir():
             sh(['fusermount3', '-u', '-z', str(d / 'doc')])
         shutil.rmtree(tmp, ignore_errors=True)
-        for p in (HOME / '.var/app/app.zen_browser.zen/cache/mios-appmenu-test', HOME / '.var/app/com.google.ChromeDev/cache/mios-appmenu-test'):
+        for p in (HOME / '.var/app/app.zen_browser.zen/cache/mios-appmenu-test', HOME / '.var/app/com.google.ChromeDev/cache/mios-appmenu-test',
+                  HOME / '.var/app/com.google.ChromeDev/cache/mios-appmenu-test-x11'):
             shutil.rmtree(p, ignore_errors=True)
         (out / 'result.json').write_text(json.dumps([{'name': n, 'ok': o, 'detail': t} for n, o, t in results], indent=1))
         print(f'evidence: {out}')
@@ -658,7 +728,7 @@ def judge(matrix, expect):
         check('Electron/Chromium-shaped KDE-appmenu exporter: bound by the compositor, toggles, shortcuts, submenu, activation',
               el.get('binding') == 'kde-appmenu' and el.get('menus') == ['File', 'View'] and el.get('toggles', 0) >= 5
               and el.get('shortcuts', 0) >= 3 and el.get('submenus', 0) >= 1 and (el.get('activate') or {}).get('observed'), el)
-    else:
+    elif expect == 'before':
         el = row('fixture-electron-like')
         check('NEGATIVE CONTROL (main): the Electron-shaped exporter offers no menu without the compositor protocol',
               el.get('mapped') and not el.get('menus'), el)
