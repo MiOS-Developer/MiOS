@@ -289,6 +289,22 @@ mios_section("global-input", function()
  policies["SUPER+f12"]={contexts={},passthrough={"vm-passthrough"}}
  policies["SUPER+escape"]={contexts={},passthrough={"vm-passthrough"}}
  escapes["SUPER+escape"]="SUPER+CTRL+escape"
+ policies["SUPER+CTRL+super_l"]={contexts={},passthrough={}}
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:tmux-os-launcher'")
+ local b=mios_native_hl.bind("SUPER+CTRL+Super_L",d,{release=true,dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+Super_L",dispatcher=d,escape=true}) end end
+ policies["SUPER+CTRL+super_r"]=policies["SUPER+CTRL+super_l"]
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:tmux-os-launcher'")
+ local b=mios_native_hl.bind("SUPER+CTRL+Super_R",d,{release=true,dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+Super_R",dispatcher=d,escape=true}) end end
+ policies["SUPER+CTRL+control_l"]=policies["SUPER+CTRL+super_l"]
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:tmux-os-launcher'")
+ local b=mios_native_hl.bind("SUPER+CTRL+Control_L",d,{release=true,dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+Control_L",dispatcher=d,escape=true}) end end
+ policies["SUPER+CTRL+control_r"]=policies["SUPER+CTRL+super_l"]
+ do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:tmux-os-launcher'")
+ local b=mios_native_hl.bind("SUPER+CTRL+Control_R",d,{release=true,dont_inhibit=true,submap_universal=true})
+ if b then table.insert(mios_input_handles,{handle=b,key="SUPER+CTRL+Control_R",dispatcher=d,escape=true}) end end
  policies["SUPER+CTRL+equal"]={contexts={},passthrough={}}
  do local d=mios_native_hl.dsp.exec_cmd("/usr/libexec/mios/mios-inputd dispatch 'mios:session-scale-up'")
  local b=mios_native_hl.bind("SUPER+CTRL+equal",d,{dont_inhibit=true,submap_universal=true})
@@ -345,7 +361,7 @@ mios_section("global-input", function()
  if down then table.insert(mios_input_handles,{handle=down,key="SUPER+CTRL+m",escape=true}) end
  hl.window_rule({name="mios-input-vm-passthrough",match={class="^(looking-glass-client|xfreerdp|wlfreerdp|sdl-freerdp|winapps|virt-manager|remote-viewer|qemu-system-x86_64)$"},tag="+mios-input-vm-passthrough"})
  hl.window_rule({name="mios-input-game",match={class="^(steam_app_.*|gamescope|Waydroid)$"},tag="+mios-input-game"})
- hl.window_rule({name="mios-input-terminal",match={class="^(mios-terminal|Alacritty|kitty|foot)$"},tag="+mios-input-terminal"})
+ hl.window_rule({name="mios-input-terminal",match={class="^(mios-terminal|mios-nested-terminal|Alacritty|kitty|foot)$"},tag="+mios-input-terminal"})
  local canonical=mios_input_canonical
  local function contains(list,value) for _,v in pairs(list or {}) do if type(v)=='string' and v:gsub('%*$','')==value then return true end end return false end
  -- THE capture predicate (C-35): fullscreen==2, capture_tag or the room's input_owner capture a window; release_tag

@@ -4345,23 +4345,72 @@ lift_note      = "Float the pane, or dock a floating pane"
 single_pane_message = "Only one pane here: prefix * opens a new floating pane"
 origin_gone_message = "The original window is gone: the pane stays in the float shell"
 
+# The tmux-os launcher (miosd launcher): ONE organised, centred popup for everything -- running instances, AI and
+# agents, every installed TUI ([[terminal.tuis]]) and the pane, window and session actions of the menus below, in
+# grouped sections with headers, an aligned key column and two columns where the popup is wide enough. Opened by
+# prefix + menu_key and prefix + launcher_key (that one starts on the apps), by the controller's tmux:menu verb (the
+# same prefix key), and from anywhere on the desktop by CTRL+SUPER (the tmux-os-launcher row of [keybindings.global]).
+# Input: arrows (d-pad), the wheel (left stick), PgUp/PgDn/Home/End, the item's key, Enter or a click (A) opens,
+# Esc or Ctrl+C (B) backs out, Shift+Tab jumps to the next section; Tab, Shift+Enter (A held), Menu or a right-click opens
+# the selected row's options: instance management (go to, pop out to its own desktop window, float or tile, move to
+# a window or a session, close) or how to open an app (popup, window, floating pane, its own desktop window).
+# Prefix keys run as if typed on the launching client once the popup closes (send-keys -c CLIENT -K); menu rows run
+# through the generated mios-menu-ID key tables (switch-client -c CLIENT -T mios-menu-ID, then the row's key).
+[keybindings.tmux.launcher]
+enabled              = true        # false: prefix + menu_key and launcher_key open the display-menus again
+title                = "MiOS"
+popup_width          = "86%"       # of the launching client; never larger than the client, never smaller than min_*
+popup_height         = "84%"
+min_width            = 34          # below min_width x min_height the client gets menu_too_small_message instead
+min_height           = 10
+two_column_min_width = 92          # popup columns from which the sections flow into two columns
+column_gap           = 4
+key_width            = 3           # the key column: one key, right-aligned, padded to this many cells
+detail_min_width     = 64          # a column narrower than this hides the right-hand detail (session, mode)
+instance_limit       = 60          # running instances listed (windows and floating panes of visible sessions)
+start_section        = "running"   # where prefix + menu_key starts; prefix + launcher_key starts on the first app
+popout_session_prefix = "pop-"     # a popped-out instance moves into its own session: prefix + its name (-2, -3, ...)
+# A popped-out instance opens in a new desktop terminal: this argv plus ["--session", NAME]. Outside a desktop
+# (no WAYLAND_DISPLAY) the instance still moves into its own session and the client is told its name.
+desktop_terminal     = ["alacritty", "-e", "env", "-u", "TMUX", "-u", "TMUX_PANE", "-u", "TMUX_TMPDIR", "/usr/libexec/mios/mios-terminal"]
+# Section groups in display order: running instances, [[keybindings.actions]], every [terminal.tui_launcher].sections
+# group that has an installed TUI, then one section per menu id listed in menu_sections.
+sections             = ["running", "ai", "apps", "menus"]
+menu_sections        = ["root", "pane", "window", "session"]
+section_titles       = { running = "Running", ai = "AI and agents", root = "Tmux-OS", pane = "Pane", window = "Window", session = "Session", mios = "MiOS", system = "System", files = "Files", dev = "Development", net = "Network", media = "Media", edit = "Editors" }
+# Rows of the menus that the launcher itself already is, or that only navigate between menus, are not repeated.
+skip_menu_keys       = ["e", "Space", "BSpace", "P", "W", "S"]
+empty_running        = "No running instance yet"
+help                 = "Enter open  Tab options  S-Tab section  Esc close"
+help_vt              = "Enter open - Tab options - S-Tab section - Esc close"
+options_title        = "Options"
+confirm_close        = "Close it?"
+move_window_title    = "Move the pane to window"
+move_session_title   = "Move the window to session"
+new_session_label    = "New session"
+labels = { go = "Go to", popout = "Pop out to its own window", float = "Float the pane", dock = "Tile the pane (dock it)", move_window = "Move to window...", move_session = "Move to session...", rename = "Rename...", close = "Close...", yes = "Yes, close it", no = "No", open = "Open", open_popup = "Open in a popup", open_window = "Open as a window", open_float = "Open as a floating pane", open_desktop = "Open in its own desktop window", new_window = "New window", run = "Run", cancel = "Cancel" }
+popped_message       = "Popped out to session"
+
 # Generated menus (command aliases mios-menu-ID and the Linux-console variant mios-menu-ID-vt). Every menu is
-# keyboard-driven (Up/Down, PgUp/PgDn, Home/End, Enter, Esc or q) and also takes mouse clicks.
+# keyboard-driven (Up/Down, PgUp/PgDn, Home/End, Enter, Esc or q) and also takes mouse clicks. Titles are centred and
+# { header = "TEXT" } rows group the items under a centred, disabled heading; the key column is right-aligned.
+# Each menu is also the key table mios-menu-ID (row key -> row command), the client-exact route of the launcher.
 # Item forms: { label, key } runs the prefix binding of that key; { label, key, command } runs command;
-# { label, key, menu = "ID" } opens another menu; { separator = true }. Optional: mode = "copy" (enabled only in
-# copy or view mode), managed = "disable" (disabled in managed AI workspace panes), platforms = ["linux"].
+# { label, key, menu = "ID" } opens another menu; { separator = true }; { header = "TEXT" }. Optional: mode = "copy"
+# (enabled only in copy or view mode), managed = "disable" (disabled in managed AI workspace panes), platforms = ["linux"].
 [[keybindings.tmux.menus]]
 id = "root"
 title = "MiOS"
 items = [
+  { header = "Launch" },
   { label = "Apps and TUIs...", key = "e" },
   { label = "Float shell", key = "`" },
   { label = "New floating pane", key = "*" },
-  { separator = true },
+  { header = "Manage" },
   { label = "Pane >", key = "P", menu = "pane" },
   { label = "Window >", key = "W", menu = "window" },
   { label = "Session >", key = "S", menu = "session" },
-  { separator = true },
+  { header = "Tmux" },
   { label = "Command prompt", key = ":" },
   { label = "Keys", key = "?" },
   { label = "Detach", key = "d" },
@@ -4371,6 +4420,7 @@ items = [
 id = "pane"
 title = "MiOS pane"
 items = [
+  { header = "View" },
   { label = "Next pane", key = "o" },
   { label = "Zoom", key = "z" },
   { label = "Compact / auto view", key = "f" },
@@ -4378,11 +4428,12 @@ items = [
   { label = "Go to top", key = "<", command = "send-keys -X history-top", mode = "copy" },
   { label = "Go to bottom", key = ">", command = "send-keys -X history-bottom", mode = "copy" },
   { label = "Paste", key = "]" },
+  { header = "Layout" },
   { label = "Split below", key = "s" },
   { label = "Split right", key = "v" },
   { label = "Float / dock", key = "F", managed = "disable" },
   { label = "Kill pane...", key = "x" },
-  { separator = true },
+  { header = "More" },
   { label = "New window", key = "t" },
   { label = "Detach", key = "d" },
   { label = "MiOS...", key = "Space", menu = "root" },
@@ -4399,7 +4450,7 @@ items = [
   { label = "Choose window", key = "w" },
   { label = "Break pane to window", key = "!", managed = "disable" },
   { label = "Kill window...", key = "&" },
-  { separator = true },
+  { header = "More" },
   { label = "< Back", key = "BSpace", menu = "root" },
 ]
 
@@ -4414,7 +4465,7 @@ items = [
   { label = "Next", key = ")" },
   { label = "Reload MiOS config", key = "R", command = "run-shell -b -c '#{pane_current_path}' \"TMUX_PANE=#{pane_id} /usr/libexec/mios/mios-terminal --reload\"", platforms = ["linux"] },
   { label = "Detach", key = "d" },
-  { separator = true },
+  { header = "More" },
   { label = "< Back", key = "BSpace", menu = "root" },
 ]
 
@@ -4483,6 +4534,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 "mios:session-scale-down" = ["/usr/bin/mios-gen", "session-scale", "down"]
 "mios:session-scale-reset" = ["/usr/bin/mios-gen", "session-scale", "reset"]
 "quickshell:lock" = ["/usr/bin/hyprlock"]   # same locker as [desktop.launchers].lock
+"mios:tmux-os-launcher" = ["/usr/bin/miosd", "launcher", "desktop", "--root", "/"]   # the focused terminal's tmux-os client, else a new terminal
 "mios:volume up" = ["/usr/bin/wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]
 "mios:volume down" = ["/usr/bin/wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
 "mios:media previous" = ["/usr/bin/playerctl", "previous"]
@@ -4496,7 +4548,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 # console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
-terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]
+terminal = ["mios-terminal", "mios-nested-terminal", "Alacritty", "kitty", "foot"]   # mios-nested-terminal: a nested session's own terminal ([desktop.nested].terminal_argv)
 vm-passthrough = ["looking-glass-client", "xfreerdp", "wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
 game = ["steam_app_.*", "gamescope", "Waydroid"]
 
@@ -4566,6 +4618,20 @@ action = "quickshell:keymap-toggle"
 realized_by = "hyprland"
 passthrough = ["vm-passthrough"]
 note = "The bypass shows the bindings over a captured app or a VM."
+
+# The tmux-os launcher from anywhere ([keybindings.tmux.launcher]). A modifier-only chord: press CTRL and SUPER in
+# either order and release them with no other key between. trigger = "release" binds the chord's own modifier keys
+# (Super_L/R, Control_L/R) as release handles, so it fires on the release and every SUPER+CTRL+<key> binding (the
+# bypass chords, session scale, the VM keys) still works: the compositor drops a release bind once another key was
+# pressed. It is on bypass_mod, so it is an escape handle: it reaches the host over captured apps and VMs too.
+[[keybindings.global.bindings]]
+id = "tmux-os-launcher"
+tier = 1
+chord = "SUPER+CTRL+Super_L"
+trigger = "release"
+action = "mios:tmux-os-launcher"
+realized_by = "hyprland"
+note = "Hold CTRL+SUPER and let go: the tmux-os launcher (the focused terminal's client, else a new terminal)."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.
 # On bypass_mod, so mios-gen marks their handles as escapes: they reach the host over captured apps and VMs (in
@@ -4818,6 +4884,7 @@ RS_DOWN = "tmux:focus down"
 BTN_TL2 = "tmux:key p"
 BTN_TR2 = "tmux:key n"
 BTN_SELECT = ["tmux:key w", "quickshell:keymap-toggle"]
+BTN_MODE = "tmux:menu"               # Guide tap: the tmux-os launcher on this client (as on the console); Guide held + button stays the system layer
 BTN_THUMBL = "tmux:key t"
 BTN_THUMBR = "tmux:key f"
 
@@ -19408,7 +19475,11 @@ cross_vendor_present = false
 launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
 tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"
-terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal", "--new"]
+terminal_argv = ["alacritty", "--class", "mios-nested-terminal", "--title", "MiOS development desktop", "-e", "/usr/libexec/mios/mios-terminal"]
+# The session's terminal drops to the TUI session selector (miosd sessions: its instances, TUIs and apps, a new
+# Tmux-OS session), never straight into a tmux-os session. false = attach terminal_session directly (the old entry).
+selector = true
+selector_tailnet = false              # the selector lists this session's own tmux namespace only, no tailnet nodes
 seat = ""                             # default seat label (--seat); "" = an unlabelled session (several may run at once); a label is unique among live sessions
 user_label = ""                       # display name of the session's user (--user; exported to the session); "" = the seat label
 registry_dir = "mios/nested-sessions" # under the parent XDG_RUNTIME_DIR: one JSON entry per live session (seat, compositor socket, assigned devices) -- the mios-inputd contract

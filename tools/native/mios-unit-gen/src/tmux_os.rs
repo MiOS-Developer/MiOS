@@ -328,27 +328,58 @@ pub fn same_chord(tmux_key: &str, global: &str) -> bool {
     tm == gm && tk == key
 }
 
-struct Item {
-    label: String,
-    key: String,
-    target: ItemTarget,
-    copy_only: bool,
-    managed_disable: bool,
+/// One row of a generated menu, as the renderer and the launcher (miosd launcher) both read it.
+#[derive(Clone, Debug)]
+pub struct Item {
+    pub label: String,
+    pub key: String,
+    pub target: ItemTarget,
+    /// Enabled only in copy or view mode (`mode = "copy"`).
+    pub copy_only: bool,
+    /// Disabled in managed AI workspace panes (`managed = "disable"`).
+    pub managed_disable: bool,
 }
 
-enum ItemTarget {
+#[derive(Clone, Debug, PartialEq)]
+pub enum ItemTarget {
     Separator,
+    /// A centred, disabled heading over the rows that follow it.
+    Header,
+    /// Runs the prefix binding of the item's key.
     Bound,
     Command(String),
+    /// Opens the menu with this id.
     Menu(String),
 }
 
-struct Menu {
-    id: String,
-    title: String,
-    start: Option<i64>,
-    items: Vec<Item>,
-    rows: i64,
+/// A generated menu after platform filtering (rows of unbound keys and other platforms dropped, separators and
+/// headers that would lead, trail, repeat or head nothing removed).
+#[derive(Clone, Debug)]
+pub struct Menu {
+    pub id: String,
+    pub title: String,
+    pub start: Option<i64>,
+    pub items: Vec<Item>,
+    pub rows: i64,
+}
+
+/// tmux's -C index of a menu's starting row: `start` counts selectable rows only (the first by default), while tmux
+/// counts every line, headers and separators included. Starting on a disabled header would select nothing.
+pub fn start_choice(menu: &Menu) -> usize {
+    let want = menu.start.unwrap_or(0) as usize;
+    menu.items
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| !matches!(i.target, ItemTarget::Separator | ItemTarget::Header))
+        .nth(want)
+        .map(|(n, _)| n)
+        .unwrap_or(0)
+}
+
+/// Key table that maps each row key of menu `id` to the row's command: the client-exact route the launcher uses
+/// (`switch-client -c CLIENT -T TABLE`, then `send-keys -c CLIENT -K KEY`).
+pub fn menu_table(id: &str) -> String {
+    format!("mios-menu-{id}")
 }
 
 struct Bind {
@@ -360,6 +391,10 @@ struct Bind {
 }
 
 fn with_label(item: &Item) -> String {
+    if item.target == ItemTarget::Header {
+        // A leading '-' disables the row (never chosen, skipped by the arrows); the heading is centred.
+        return format!("-#[align=centre]{}", item.label);
+    }
     // Labels are formats; a comma inside a #{?...} branch must be escaped as #, (plain_text has no #).
     let esc = item.label.replace(',', "#,");
     let mut label = item.label.clone();
@@ -391,6 +426,44 @@ fn helper(args: &str) -> String {
     format!("run-shell -b -c '#{{pane_current_path}}' \"TMUX_PANE=#{{pane_id}} {TERMINAL} {args}\"")
 }
 
+/// The launcher executor (`miosd launcher`): the popup opener runs it with the launching pane and client.
+const MIOSD: &str = "/usr/bin/miosd";
+
+/// `[keybindings.tmux.launcher].enabled` (a missing table means the launcher is off).
+fn launcher_enabled(tmux: &toml::Value) -> Result<bool, UnitGenError> {
+    match tmux.get("launcher") {
+        None => Ok(false),
+        Some(l) => req(l, "keybindings.tmux.launcher", "enabled")?
+            .as_bool()
+            .ok_or_else(|| gm("[keybindings.tmux.launcher].enabled must be a boolean".into())),
+    }
+}
+
+/// Opens the launcher popup on the client that pressed the key, for the pane it was pressed in.
+fn launcher_opener(extra: &str) -> String {
+    format!(
+        "run-shell -b -c '#{{pane_current_path}}' \"TMUX_PANE=#{{pane_id}} {MIOSD} launcher open --client #{{q:client_name}} --console #{{?#{{E:@mios-console-client}},1,0}}{extra}\""
+    )
+}
+
+/// The generated menus as the launcher shows them: exactly the rows the renderer puts into each `mios-menu-ID` key
+/// table on `platform`, in SSOT order with their headers.
+pub fn launcher_menus(doc: &toml::Value, platform: &str) -> Result<Vec<Menu>, UnitGenError> {
+    let config = req(doc, "root", "keybindings")?;
+    let tmux = req(config, "keybindings", "tmux")?;
+    let max_rows = req_int(tmux, "keybindings.tmux", "menu_min_client_rows", 8..=200)? - 1;
+    let action_keys = config
+        .get("actions")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.get("key").and_then(toml::Value::as_str).map(str::to_owned))
+        .collect::<Vec<_>>();
+    let mut keys: BTreeSet<String> = action_keys.iter().cloned().collect();
+    let layout = prefix_layout(config, platform, &action_keys, &mut keys)?;
+    parse_menus(tmux, platform, &layout.bound, max_rows)
+}
+
 fn refuse_if_managed(command: &str, message: &str) -> String {
     format!("if-shell -F '{MANAGED_PANE}' \"display-message '{message}'\" {}", quote(command))
 }
@@ -418,57 +491,28 @@ fn accept_chain(agent: &toml::Value, fallback: String) -> Result<String, UnitGen
     Ok(command)
 }
 
-/// The tmux half of `render_keybindings`: everything after the prefix header in mios-keys.tmux.conf.
-/// `actions` are the validated `[[keybindings.actions]]` rows as (key, tmux_command, label).
-pub(crate) fn render_tmux_keys(
-    doc: &toml::Value,
-    config: &toml::Value,
-    platform: &str,
-    keys: &mut BTreeSet<String>,
-    actions: &[(String, String, String)],
-) -> Result<String, UnitGenError> {
+/// The prefix keys of one platform: `bound` holds every key that platform binds (menus drop rows of the others);
+/// `keys` collects every declared key so that a duplicate anywhere fails.
+struct PrefixLayout {
+    bound: BTreeSet<String>,
+    new_key: String,
+    toggle_key: String,
+    lift_key: String,
+    accept_key: Option<String>,
+}
+
+fn prefix_layout(config: &toml::Value, platform: &str, action_keys: &[String], keys: &mut BTreeSet<String>) -> Result<PrefixLayout, UnitGenError> {
     let linux = platform == "linux";
     let sec = "keybindings.tmux";
+    let fsec = "keybindings.tmux.float";
     let tmux = req(config, "keybindings", "tmux")?;
-    let console = doc
-        .get("theme")
-        .and_then(|t| t.get("tmux"))
-        .and_then(|t| t.get("console"))
-        .ok_or_else(|| gm("[theme.tmux.console] is missing from SSOT".into()))?;
-    let csec = "theme.tmux.console";
-    let mut out = String::new();
     let mut add_key = |k: &str, what: &str| -> Result<(), UnitGenError> {
         if !valid_key(k) || !keys.insert(k.to_owned()) {
             return Err(gm(format!("[keybindings.tmux] {what}: duplicate or invalid key {k:?}")));
         }
         Ok(())
     };
-    // Actions were validated (and their keys reserved) by the caller.
-    let mut binds: Vec<Bind> = actions
-        .iter()
-        .map(|(key, command, label)| Bind { key: key.clone(), command: command.clone(), note: label.clone(), repeat: false, gate: None })
-        .collect();
-    for (_, command, label) in actions {
-        if alias_in_block(command) {
-            return Err(gm(format!("[keybindings.actions] {label}: menu alias inside a {{ }} block")));
-        }
-    }
-
-    // ---- menus (structure first: openers need their row counts) ----
-    let too_small = req_text(tmux, sec, "menu_too_small_message")?;
-    let max_rows = req_int(tmux, sec, "menu_min_client_rows", 8..=200)? - 1; // one status line
-    let managed_msg = req_text(tmux, sec, "managed_refusal_message")?;
-    let menu_key = req_str(tmux, sec, "menu_key")?;
-    let launcher_key = req_str(tmux, sec, "launcher_key")?;
-    let float = tmux.get("float");
-    let float_on = match float {
-        Some(f) => req(f, "keybindings.tmux.float", "enabled")?.as_bool().ok_or_else(|| gm("[keybindings.tmux.float].enabled must be a boolean".into()))?,
-        None => false,
-    };
-    let fsec = "keybindings.tmux.float";
-
-    // Every prefix key this platform binds, before any command is rendered (menus drop items of unbound keys).
-    let mut bound_keys: BTreeSet<String> = actions.iter().map(|a| a.0.clone()).collect();
+    let mut bound: BTreeSet<String> = action_keys.iter().cloned().collect();
     let rows_cfg = req(tmux, sec, "bindings")?
         .as_array()
         .ok_or_else(|| gm("[keybindings.tmux].bindings must be an array".into()))?;
@@ -476,25 +520,32 @@ pub(crate) fn render_tmux_keys(
         let key = req_str(row, "keybindings.tmux.bindings", "key")?;
         add_key(&key, "bindings")?;
         if on_platform(row, "keybindings.tmux.bindings", platform)? {
-            bound_keys.insert(key);
+            bound.insert(key);
         }
     }
+    let menu_key = req_str(tmux, sec, "menu_key")?;
+    let launcher_key = req_str(tmux, sec, "launcher_key")?;
     add_key(&menu_key, "menu_key")?;
-    bound_keys.insert(menu_key.clone());
+    bound.insert(menu_key);
     add_key(&launcher_key, "launcher_key")?;
     if linux {
-        bound_keys.insert(launcher_key.clone());
+        bound.insert(launcher_key);
     }
+    let float = tmux.get("float");
+    let float_on = match float {
+        Some(f) => req(f, fsec, "enabled")?.as_bool().ok_or_else(|| gm("[keybindings.tmux.float].enabled must be a boolean".into()))?,
+        None => false,
+    };
     let (new_key, toggle_key, lift_key) = if let Some(f) = float {
         let (n, t, l) = (req_str(f, fsec, "new_key")?, req_str(f, fsec, "toggle_key")?, req_str(f, fsec, "lift_key")?);
         add_key(&n, "float.new_key")?;
         add_key(&t, "float.toggle_key")?;
         add_key(&l, "float.lift_key")?;
         if float_on {
-            bound_keys.insert(n.clone());
+            bound.insert(n.clone());
             if linux {
-                bound_keys.insert(t.clone());
-                bound_keys.insert(l.clone());
+                bound.insert(t.clone());
+                bound.insert(l.clone());
             }
         }
         (n, t, l)
@@ -505,9 +556,15 @@ pub(crate) fn render_tmux_keys(
     let accept_key = agent.get("accept_key").and_then(toml::Value::as_str).map(str::to_owned);
     if let Some(k) = &accept_key {
         add_key(k, "[keybindings.agent].accept_key")?;
-        bound_keys.insert(k.clone());
+        bound.insert(k.clone());
     }
+    Ok(PrefixLayout { bound, new_key, toggle_key, lift_key, accept_key })
+}
 
+/// `[[keybindings.tmux.menus]]` for one platform, validated: rows whose key `bound` lacks (and that set no command
+/// or menu) and rows of other platforms are dropped; separators and headers never lead, trail, repeat or head nothing.
+fn parse_menus(tmux: &toml::Value, platform: &str, bound_keys: &BTreeSet<String>, max_rows: i64) -> Result<Vec<Menu>, UnitGenError> {
+    let sec = "keybindings.tmux";
     let menus_cfg = req(tmux, sec, "menus")?
         .as_array()
         .ok_or_else(|| gm("[[keybindings.tmux.menus]] must be an array of tables".into()))?;
@@ -527,6 +584,11 @@ pub(crate) fn render_tmux_keys(
         for it in req(m, msec, "items")?.as_array().ok_or_else(|| gm(format!("menu {id}: items must be an array")))? {
             if it.get("separator").and_then(toml::Value::as_bool) == Some(true) {
                 items.push(Item { label: String::new(), key: String::new(), target: ItemTarget::Separator, copy_only: false, managed_disable: false });
+                continue;
+            }
+            if it.get("header").is_some() {
+                let label = req_text(it, msec, "header")?;
+                items.push(Item { label, key: String::new(), target: ItemTarget::Header, copy_only: false, managed_disable: false });
                 continue;
             }
             if !on_platform(it, msec, platform)? {
@@ -565,16 +627,22 @@ pub(crate) fn render_tmux_keys(
             };
             items.push(Item { label, key, target, copy_only, managed_disable });
         }
-        // Separators never lead, trail or repeat once platform items are dropped.
+        // Separators and headers never lead, trail or repeat once platform items are dropped, and a header that heads
+        // no row is dropped too. A header already separates, so a separator next to one is dropped.
+        let divider = |i: &Item| matches!(i.target, ItemTarget::Separator | ItemTarget::Header);
         let mut clean: Vec<Item> = Vec::new();
         for item in items {
-            let sep = matches!(item.target, ItemTarget::Separator);
-            if sep && clean.last().is_none_or(|l| matches!(l.target, ItemTarget::Separator)) {
-                continue;
+            if divider(&item) {
+                if item.target == ItemTarget::Separator && clean.last().is_none_or(&divider) {
+                    continue;
+                }
+                while clean.last().is_some_and(&divider) {
+                    clean.pop();
+                }
             }
             clean.push(item);
         }
-        if clean.last().is_some_and(|l| matches!(l.target, ItemTarget::Separator)) {
+        while clean.last().is_some_and(&divider) {
             clean.pop();
         }
         if clean.is_empty() {
@@ -582,7 +650,10 @@ pub(crate) fn render_tmux_keys(
         }
         let start = match m.get("start") {
             None => None,
-            Some(v) => Some(v.as_integer().filter(|n| (0..clean.len() as i64).contains(n)).ok_or_else(|| gm(format!("menu {id}: start must index an item")))?),
+            Some(v) => {
+                let selectable = clean.iter().filter(|i| !matches!(i.target, ItemTarget::Separator | ItemTarget::Header)).count() as i64;
+                Some(v.as_integer().filter(|n| (0..selectable).contains(n)).ok_or_else(|| gm(format!("menu {id}: start must index a selectable item")))?)
+            }
         };
         let rows = clean.len() as i64 + 2;
         if rows > max_rows {
@@ -592,6 +663,60 @@ pub(crate) fn render_tmux_keys(
         }
         menus.push(Menu { id, title, start, items: clean, rows });
     }
+    Ok(menus)
+}
+
+/// The tmux half of `render_keybindings`: everything after the prefix header in mios-keys.tmux.conf.
+/// `actions` are the validated `[[keybindings.actions]]` rows as (key, tmux_command, label).
+pub(crate) fn render_tmux_keys(
+    doc: &toml::Value,
+    config: &toml::Value,
+    platform: &str,
+    keys: &mut BTreeSet<String>,
+    actions: &[(String, String, String)],
+) -> Result<String, UnitGenError> {
+    let linux = platform == "linux";
+    let sec = "keybindings.tmux";
+    let tmux = req(config, "keybindings", "tmux")?;
+    let console = doc
+        .get("theme")
+        .and_then(|t| t.get("tmux"))
+        .and_then(|t| t.get("console"))
+        .ok_or_else(|| gm("[theme.tmux.console] is missing from SSOT".into()))?;
+    let csec = "theme.tmux.console";
+    let mut out = String::new();
+    // Actions were validated (and their keys reserved) by the caller.
+    let mut binds: Vec<Bind> = actions
+        .iter()
+        .map(|(key, command, label)| Bind { key: key.clone(), command: command.clone(), note: label.clone(), repeat: false, gate: None })
+        .collect();
+    for (_, command, label) in actions {
+        if alias_in_block(command) {
+            return Err(gm(format!("[keybindings.actions] {label}: menu alias inside a {{ }} block")));
+        }
+    }
+
+    // ---- menus (structure first: openers need their row counts) ----
+    let too_small = req_text(tmux, sec, "menu_too_small_message")?;
+    let max_rows = req_int(tmux, sec, "menu_min_client_rows", 8..=200)? - 1; // one status line
+    let managed_msg = req_text(tmux, sec, "managed_refusal_message")?;
+    let menu_key = req_str(tmux, sec, "menu_key")?;
+    let launcher_key = req_str(tmux, sec, "launcher_key")?;
+    let float = tmux.get("float");
+    let float_on = match float {
+        Some(f) => req(f, "keybindings.tmux.float", "enabled")?.as_bool().ok_or_else(|| gm("[keybindings.tmux.float].enabled must be a boolean".into()))?,
+        None => false,
+    };
+    let fsec = "keybindings.tmux.float";
+
+    let action_keys: Vec<String> = actions.iter().map(|a| a.0.clone()).collect();
+    let PrefixLayout { bound: bound_keys, new_key, toggle_key, lift_key, accept_key } =
+        prefix_layout(config, platform, &action_keys, keys)?;
+    let rows_cfg = req(tmux, sec, "bindings")?
+        .as_array()
+        .ok_or_else(|| gm("[keybindings.tmux].bindings must be an array".into()))?;
+    let agent = req(config, "keybindings", "agent")?;
+    let menus = parse_menus(tmux, platform, &bound_keys, max_rows)?;
     let menu_rows: BTreeMap<String, i64> = menus.iter().map(|m| (m.id.clone(), m.rows)).collect();
     let opener = |id: &str| -> Result<String, UnitGenError> {
         let rows = menu_rows.get(id).ok_or_else(|| gm(format!("menu {id:?} is not declared in [[keybindings.tmux.menus]]")))?;
@@ -628,11 +753,19 @@ pub(crate) fn render_tmux_keys(
         }
         binds.push(Bind { key, command, note, repeat, gate: None });
     }
-    binds.push(Bind { key: menu_key.clone(), command: opener("root")?, note: req_text(tmux, sec, "menu_note")?, repeat: false, gate: None });
+    // The launcher (miosd launcher) replaces the root display-menu on the menu key and the apps menu on the launcher
+    // key; without it (or off Linux) both keys open the generated menus as before.
+    let launcher_on = linux && launcher_enabled(tmux)?;
+    let menu_command = if launcher_on { launcher_opener("") } else { opener("root")? };
+    binds.push(Bind { key: menu_key.clone(), command: menu_command, note: req_text(tmux, sec, "menu_note")?, repeat: false, gate: None });
     if linux {
         binds.push(Bind {
             key: launcher_key.clone(),
-            command: helper("--menu apps --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0} --rows #{client_height}"),
+            command: if launcher_on {
+                launcher_opener(" --start apps")
+            } else {
+                helper("--menu apps --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0} --rows #{client_height}")
+            },
             note: req_text(tmux, sec, "launcher_note")?,
             repeat: false,
             gate: None,
@@ -782,23 +915,31 @@ pub(crate) fn render_tmux_keys(
             // A right-click menu opens with its top-left corner at the pointer (stock tmux -x M -y M): releasing
             // the button over an item would choose it, so a quick click or tap must land on the border instead.
             let (x, y) = if mouse { ("M", "M") } else { (MENU_X, MENU_Y) };
-            let mut args: Vec<String> = vec!["display-menu".into(), "-T".into(), menu.title.clone(), "-x".into(), x.into(), "-y".into(), y.into()];
+            let title = format!("#[align=centre]{}", menu.title);
+            let mut args: Vec<String> = vec!["display-menu".into(), "-T".into(), title, "-x".into(), x.into(), "-y".into(), y.into()];
             if mouse {
                 args.push("-O".into());
             } else {
                 // Start on an item (the first unless the SSOT says otherwise): Enter alone then chooses, which the
                 // controller vocabulary needs.
-                args.extend(["-C".into(), menu.start.unwrap_or(0).to_string()]);
+                args.extend(["-C".into(), start_choice(menu).to_string()]);
             }
             if vt {
                 for (flag, value) in &console_style {
                     args.extend([flag.to_string(), value.clone()]);
                 }
             }
+            // End of flags: a { header } row is a disabled item, "-<label>", which tmux would otherwise parse as a
+            // flag when it is the first item ("display-menu: invalid flag -#").
+            args.push("--".into());
             for item in &menu.items {
                 let command = match &item.target {
                     ItemTarget::Separator => {
                         args.push(String::new());
+                        continue;
+                    }
+                    ItemTarget::Header => {
+                        args.extend([with_label(item), String::new(), String::new()]);
                         continue;
                     }
                     ItemTarget::Bound => commands.get(&item.key).cloned().ok_or_else(|| gm(format!("menu {}: key {:?} is not bound", menu.id, item.key)))?,
@@ -831,6 +972,25 @@ pub(crate) fn render_tmux_keys(
     }
     // Two argv words (split on the space, no shell): send-keys -c <client> -K <prefix> <menu_key>.
     out += &format!("set -s @mios-menu-keys {}\n", quote(&format!("{prefix} {menu_key}")));
+
+    // ---- one key table per menu: row key -> row command (the launcher's client-exact route) ----
+    // Cleared first, so a reload drops rows the SSOT no longer has. A row whose command is empty binds nothing.
+    // -q: on the first load the table does not exist yet, and a plain unbind-key -a is an error there (the server
+    // would show "table mios-menu-ID doesn't exist" for every menu on every fresh start).
+    for menu in &menus {
+        let table = menu_table(&menu.id);
+        out += &format!("unbind-key -q -a -T {table}\n");
+        for item in &menu.items {
+            let command = match &item.target {
+                ItemTarget::Separator | ItemTarget::Header => continue,
+                ItemTarget::Bound => commands.get(&item.key).cloned().ok_or_else(|| gm(format!("menu {}: key {:?} is not bound", menu.id, item.key)))?,
+                ItemTarget::Command(c) if c.is_empty() => continue,
+                ItemTarget::Command(c) => c.clone(),
+                ItemTarget::Menu(id) => opener(id)?,
+            };
+            out += &format!("bind-key -N {} -T {table} {} {command}\n", quote(&item.label), tmux_key(&item.key));
+        }
+    }
 
     for b in &binds {
         if let Some(v) = &b.gate {
@@ -1051,8 +1211,11 @@ mod tests {
         push_row(&mut d, r);
         assert!(render(&d).unwrap_err().contains("printable ASCII"));
         let mut d = ssot();
-        d["keybindings"]["tmux"]["menus"][0]["items"][0]["label"] = "#{evil}".into();
+        d["keybindings"]["tmux"]["menus"][0]["items"][1]["label"] = "#{evil}".into();
         assert!(render(&d).is_err());
+        let mut d = ssot();
+        d["keybindings"]["tmux"]["menus"][0]["items"][0]["header"] = "#{evil}".into();
+        assert!(render(&d).unwrap_err().contains("printable ASCII"), "headers are shown text too");
     }
 
     #[test]
@@ -1120,11 +1283,104 @@ mod tests {
         assert!(!vt.contains("#2") && !vt.contains("#F"), "console variant must not carry hex colours");
         let normal = aliases.iter().find(|l| l.contains("\"mios-menu-root=")).unwrap();
         assert!(normal.contains("'mios-menu-pane'") && !normal.contains("-b single"));
-        assert!(normal.contains(" -C 0 "), "menus start on their first item: {normal}");
+        assert!(normal.contains(" -C 1 "), "menus start on their first item, after the leading header: {normal}");
         assert!(!normal.contains(" -M "), "-M would discard -C (no starting item for the controller): {normal}");
         assert!(aliases.iter().any(|l| l.contains("\"mios-menu-kill-pane=") && l.contains(" -C 1 ")), "kill confirmation starts on No");
         // Reloads clear the whole alias range first.
         assert_eq!(conf.matches("set -su command-alias[").count(), 32);
+    }
+
+    #[test]
+    fn menus_are_organised_with_centred_titles_and_headers() {
+        let conf = render(&ssot()).unwrap();
+        let root = conf.lines().find(|l| l.contains("\"mios-menu-root=")).unwrap();
+        assert!(root.contains("-T \\\"#[align=centre]MiOS\\\""), "centred title: {root}");
+        assert!(root.contains("\\\"-#[align=centre]Launch\\\" \\\"\\\" \\\"\\\""), "a disabled, centred header row: {root}");
+        // tmux parses a leading "-<label>" item as a flag unless the flags end first (live: "invalid flag -#").
+        for line in conf.lines().filter(|l| l.contains("=display-menu ")) {
+            assert!(line.contains(" -- "), "every generated menu ends its flags before the items: {line}");
+            let (flags, _) = line.split_once(" -- ").unwrap();
+            assert!(!flags.contains("align=centre]Launch"), "no item before the end of flags: {line}");
+        }
+        let pane = conf.lines().find(|l| l.contains("\"mios-menu-pane=")).unwrap();
+        for h in ["View", "Layout", "More"] {
+            assert!(pane.contains(&format!("-#[align=centre]{h}")), "{h}: {pane}");
+        }
+        // The kill confirmations have no header: their start (No) is still row 1.
+        assert!(conf.lines().any(|l| l.contains("\"mios-menu-kill-window=") && l.contains(" -C 1 ")));
+    }
+
+    #[test]
+    fn headers_heading_nothing_and_separators_beside_them_are_dropped() {
+        let mut d = ssot();
+        let menus = d["keybindings"]["tmux"]["menus"].as_array_mut().unwrap();
+        let mut m = toml::map::Map::new();
+        m.insert("id".into(), "probe".into());
+        m.insert("title".into(), "Probe".into());
+        let items: toml::Value = toml::from_str(
+            "items = [{ header = \"Linux only\" }, { label = \"Reload\", key = \"R\", command = \"display-message r\", platforms = [\"linux\"] }, { separator = true }, { header = \"Both\" }, { label = \"Zoom\", key = \"z\" }]",
+        )
+        .unwrap();
+        m.insert("items".into(), items["items"].clone());
+        menus.push(toml::Value::Table(m));
+        let linux = launcher_menus(&d, "linux").unwrap();
+        let probe = linux.iter().find(|m| m.id == "probe").unwrap();
+        let kinds: Vec<String> = probe.items.iter().map(|i| format!("{:?}:{}", i.target, i.label)).collect();
+        assert_eq!(kinds, ["Header:Linux only", "Command(\"display-message r\"):Reload", "Header:Both", "Bound:Zoom"], "the separator next to a header goes");
+        let windows = launcher_menus(&d, "windows").unwrap();
+        let probe = windows.iter().find(|m| m.id == "probe").unwrap();
+        assert_eq!(probe.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["Both", "Zoom"], "a header that heads no row is dropped");
+        assert_eq!(start_choice(probe), 1, "the start skips the header");
+    }
+
+    #[test]
+    fn every_menu_is_also_a_key_table_of_its_row_commands() {
+        let conf = render(&ssot()).unwrap();
+        let menus = launcher_menus(&ssot(), "linux").unwrap();
+        for m in &menus {
+            let table = menu_table(&m.id);
+            let unbind = format!("unbind-key -q -a -T {table}");
+            // Negative control: the unquiet form errors on a fresh server, where the table does not exist yet.
+            assert!(!conf.lines().any(|l| l == format!("unbind-key -a -T {table}")), "{table}: unbind without -q");
+            let at = conf.lines().position(|l| l == unbind).unwrap_or_else(|| panic!("{unbind} missing"));
+            for it in m.items.iter().filter(|i| !matches!(i.target, ItemTarget::Separator | ItemTarget::Header)) {
+                let needle = format!("-T {table} {} ", tmux_key(&it.key));
+                let empty = matches!(&it.target, ItemTarget::Command(c) if c.is_empty());
+                let line = conf.lines().skip(at).find(|l| l.contains(&needle));
+                assert_eq!(line.is_some(), !empty, "{table} {}: {line:?}", it.key);
+            }
+        }
+        // The rows run what the menus run: a bound row its prefix command, a submenu row its opener.
+        assert!(conf.contains("-T mios-menu-pane v split-window -h -c '#{pane_current_path}'\n"));
+        assert!(conf.lines().any(|l| l.contains("-T mios-menu-root P if-shell -F '#{e|<:#{client_height},") && l.contains("'mios-menu-pane'")));
+        assert!(!conf.lines().any(|l| l.contains("-T mios-menu-kill-pane n ")), "the empty No row binds nothing");
+    }
+
+    #[test]
+    fn the_menu_and_launcher_keys_open_the_launcher_popup() {
+        let conf = render(&ssot()).unwrap();
+        let space = conf.lines().find(|l| l.contains("\" Space run-shell")).unwrap();
+        assert!(space.contains("TMUX_PANE=#{pane_id} /usr/bin/miosd launcher open --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}\""), "{space}");
+        let e = conf.lines().find(|l| l.contains("\" e run-shell")).unwrap();
+        assert!(e.ends_with("--start apps\""), "{e}");
+        // Negative control: with the launcher off both keys open the generated menus, as before.
+        let mut d = ssot();
+        d["keybindings"]["tmux"]["launcher"]["enabled"] = false.into();
+        let off = render(&d).unwrap();
+        assert!(!off.contains("miosd launcher open --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}\""), "no launcher binding");
+        assert!(off.lines().any(|l| l.contains("\" Space if-shell -F '#{e|<:#{client_height},") && l.contains("'mios-menu-root'")));
+        assert!(off.lines().any(|l| l.contains("--menu apps --client #{q:client_name}")));
+        // Off Linux there is no launcher either.
+        let mut w = ssot();
+        for b in w["keybindings"]["tmux"]["bindings"].as_array_mut().unwrap() {
+            if let Some(c) = b.get("command_windows").cloned() {
+                b["command"] = c;
+            }
+        }
+        for a in w["keybindings"]["actions"].as_array_mut().unwrap() {
+            a["tmux_command"] = a["tmux_command_windows"].clone();
+        }
+        assert!(!render_for(&w, "windows").contains("miosd launcher"));
     }
 
     #[test]

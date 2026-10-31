@@ -1151,7 +1151,7 @@ mod tests {
         assert!(tmux.contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
         assert!(tmux.contains("'send-keys -M' \"if-shell -F '#{e|<:#{client_height},"));
         assert!(tmux.contains("mios-menu-pane=display-menu"));
-        assert!(tmux.contains("\"mios-menu-root=display-menu -T MiOS -x "));
+        assert!(tmux.contains("\"mios-menu-root=display-menu -T \\\"#[align=centre]MiOS\\\" -x "));
         // The master toggle must disable menu interception as well as mouse capture.
         let mut doc: toml::Value = toml::from_str(ssot).unwrap();
         doc["keybindings"]["mouse"] = toml::Value::Boolean(false);
