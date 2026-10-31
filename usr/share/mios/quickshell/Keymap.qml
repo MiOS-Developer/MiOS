@@ -28,14 +28,13 @@ QS.PanelWindow {
         function close(): void { keymap.open = false }
     }
 
-    Rectangle {
+    GlassSurface {
         id: card
         // Two columns, plus one per 24 rows, so the generated map (keyboard + controller) fits the output height.
         readonly property int columns: Math.max(2, Math.ceil((keymap.theme.keymap || []).length / 24))
-        implicitWidth: grid.implicitWidth + 4 * keymap.theme.edgeMargin
-        implicitHeight: title.implicitHeight + grid.implicitHeight + 6 * keymap.theme.edgeMargin
-        // the island's glass (Glass.qml) at the notification legibility alpha; no outline (hyprglass draws the rim)
-        radius: Glass.cornerFor(height)
+        implicitWidth: grid.implicitWidth + 2 * Glass.panelPad
+        implicitHeight: title.implicitHeight + grid.implicitHeight + 2 * Glass.panelPad + Glass.gap
+        // the island's glass (GlassSurface) at the notification legibility alpha; no outline (hyprglass draws the rim)
         color: keymap.theme.withAlpha(Glass.fillHex, keymap.theme.notificationOpacity)
         focus: keymap.open
         Keys.onEscapePressed: keymap.open = false
@@ -43,7 +42,7 @@ QS.PanelWindow {
         Text {
             id: title
             anchors.top: parent.top
-            anchors.topMargin: 2 * keymap.theme.edgeMargin
+            anchors.topMargin: Glass.panelPad
             anchors.horizontalCenter: parent.horizontalCenter
             text: "Keybinds"
             color: keymap.theme.fg
@@ -54,11 +53,11 @@ QS.PanelWindow {
         Grid {
             id: grid
             anchors.top: title.bottom
-            anchors.topMargin: 2 * keymap.theme.edgeMargin
+            anchors.topMargin: Glass.gap
             anchors.horizontalCenter: parent.horizontalCenter
             columns: card.columns * 2
-            columnSpacing: 2 * keymap.theme.edgeMargin
-            rowSpacing: keymap.theme.edgeMargin
+            columnSpacing: 2 * Glass.gap
+            rowSpacing: Glass.inset
             // Column-major halves so the list reads top-to-bottom in each column.
             readonly property var rows: {
                 const k = keymap.theme.keymap || []

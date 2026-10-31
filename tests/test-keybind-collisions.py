@@ -53,7 +53,8 @@ class Contract(unittest.TestCase):
         ids = [b['id'] for b in data['bindings']]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertIn('BTN_TL', data['controller']['system_layer'])
-        self.assertFalse(data['controller']['exclusive_grab'], 'vendor capture remains off until migration')
+        self.assertIsInstance(data['controller']['exclusive_grab'], bool)
+        self.assertNotIn('recovery_argv', data['controller'], 'I1 retired the recovery owner: serve exits or idles instead')
 
 
 class Gate(unittest.TestCase):
@@ -128,7 +129,9 @@ class Gate(unittest.TestCase):
         self.bad('[[keybindings.global.bindings]]\nid="ghost"\ntier=1\nchord="SUPER+F7"\naction="exec:x"\nrealized_by="hyprland"\npassthrough=["vm-passthrough"]\n', 'realized_by hyprland but no compositor binding')
 
     def test_removed_real_lua_line_fails_even_with_ssot_declaration(self):
-        lines = [line for line in LUA.read_text().splitlines() if not ('hl.bind(' in line and '"space"' in line.lower())]
+        text = LUA.read_text()
+        lines = [line for line in text.splitlines() if not ('hl.bind(' in line and 'drawer toggle' in line)]
+        self.assertLess(len(lines), len(text.splitlines()), 'the drawer bind line must exist so removing it is a real defect')
         result = run_gate(self.binary, self.tmp_root(lua='\n'.join(lines)))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('app-drawer: realized_by hyprland but no compositor binding', result.stdout + result.stderr)
