@@ -10,7 +10,7 @@ MiOS boots one of two desktop hardware profiles, chosen in the GRUB menu (`mios.
 | dGPU driver | `vfio-pci` (reserved for VMs) | `nvidia` (`nvidia-drm.modeset=1 nvidia-drm.fbdev=1`) |
 | Compositor lights | the iGPU's outputs | **only the dGPU's outputs**. The iGPU is headless. |
 | Compositor renders on | iGPU | dGPU (`DRI_PRIME` = dGPU) |
-| Nested sessions render on | iGPU (`nested_render = "igpu"`) | **the headless iGPU** (`nested_render = "igpu"`) |
+| Nested sessions render on | iGPU (`nested_render = "igpu"`) | rule: the headless iGPU (`nested_render = "igpu"`); by default degraded to the dGPU until the NVIDIA parent can show iGPU buffers (`cross_vendor_present`, below) |
 | Login greeter | tuigreet on VT 1 (kernel console) | **tuigreet hosted on the dGPU's display** (cage + terminal on the dGPU card). The VT greeter is the fallback. |
 | Kernel console / boot text | iGPU (boot VGA) | **dGPU** (`fbcon=map:10`) |
 | GRUB / firmware screens | firmware primary display | firmware primary display (see the last section) |
@@ -60,6 +60,22 @@ scanning `/dev/dri` for a node with that `st_rdev` (`drmGetDeviceFromDevId faile
 Every other byte and fd is forwarded unchanged. The nested compositor's own clients follow its own main device, so
 they also render on the iGPU (and get `DRI_PRIME` = the iGPU).
 
+**Measured limit: an NVIDIA parent cannot show iGPU buffers.** In a dGPU boot the nested compositor does render on
+`renderD128` (the amdgpu fdinfo shows `drm-pdev: 0000:7a:00.0`, and no process of the session opens `renderD129`).
+The parent Hyprland on the RTX 4090 does not show those buffers, though, for two reasons:
+
+* Its linux-dmabuf table lists no LINEAR modifier, only NVIDIA block-linear, INVALID, and AMD-tiled entries from the
+  iGPU scanout tranche.
+* AMD-tiled buffers fail `eglCreateImageKHR` ("requested buffer attributes are not supported"), and LINEAR buffers
+  offered through the proxy are not displayed.
+
+So `[desktop.nested].cross_vendor_present = false` (the default) makes `"auto"` keep a nested session on a GPU of
+the parent's driver family. The session stays visible, and `session.json` `render.degraded` says why.
+`cross_vendor_present = true`, or an explicit `render_node = "igpu"`, forces the iGPU anyway: the pipeline is in
+place, but the PiP shows black. A visible iGPU nested session on an NVIDIA parent needs a copy path (CPU or GPU)
+in the proxy, which is follow-up work. During a GPU hand-off (below) the parent itself runs on the iGPU, so `"auto"`
+puts nested sessions on the iGPU and they are visible.
+
 `session.json` records the choice:
 `"render": {"policy", "profile", "rule", "mode", "node", "pci", "driver", "degraded", "parent_proxy"}`. To see the
 node that the compositor actually opened:
@@ -69,8 +85,10 @@ pid=$(jq .instance.pid "$XDG_RUNTIME_DIR"/mios-nested-desktop-*/session.json)
 for f in /proc/$pid/fd/*; do case $(readlink $f) in /dev/dri/*) echo "$(readlink $f) $(grep -h drm-pdev /proc/$pid/fdinfo/${f##*/})";; esac; done
 ```
 
-**iGPU boots.** `"software"` was measured as not viable for a nested Hyprland 0.56 compositor (see the lane report
-`gpu-display-routing.md`), so the iGPU profile uses `"igpu"`.
+**iGPU boots.** The iGPU profile uses `"igpu"`. `"software"` is offered as an explicit override, but it is not the
+default: Hyprland 0.56 needs a GBM/EGL device on the main device its Wayland backend opens, and Mesa's software
+paths need a KMS node with dumb buffers, which a render node lacks. It has not been measured live; see the lane
+report.
 
 ## The login greeter on the dGPU's display
 
@@ -111,11 +129,51 @@ own. It is not the default, for two reasons:
 * Connector names are global and depend on probe order: amdgpu probes first, so its connectors are DP-1, DP-2 and
   HDMI-A-1, and NVIDIA's are DP-3 to DP-5 and HDMI-A-2.
 
+## One monitor, two inputs
+
+This machine has one physical monitor wired to both GPUs: DP-3 on the RTX 4090 and HDMI-A-1 on the iGPU. In a dGPU
+boot, everything after the kernel takes over moves to DP:
+
+* the boot text and the VT console (`fbcon=map:10`)
+* the greeter (hosted on the dGPU card)
+* the desktop (`AQ_DRM_DEVICES` = the dGPU card only)
+
+The HDMI input keeps only the firmware/GRUB picture and the last fbcon frame of tty2, so the monitor can stay on DP.
+
+## GPU hand-off to a VM (Looking Glass) and back
+
+In a dGPU boot the RTX 4090 can be handed to a VM on demand. Hyprland cannot drop its primary GPU while it runs:
+the DRM fd keeps the nvidia module busy, so `vfio-pci` cannot take the device. The hand-off is therefore a session
+switch, not a live re-plug. The SSOT key is `handoff_fallback = "igpu"` in `[desktop.hyprland.hardware_profiles.dgpu]`.
+
+**Hand-off:**
+
+1. Log out of the dGPU session. Every process that holds `/dev/dri/card0` or `renderD129` must end, including
+   nested sessions that run on the dGPU.
+2. A privileged step, outside this lane and run by the VM tooling, unbinds `nvidia` and binds `vfio-pci`, then
+   starts the VM.
+3. fbcon loses fb1 and moves every console back to fb0 (the iGPU). The greeter's `display_plan` finds no dGPU card
+   and uses the VT greeter on the iGPU (HDMI), and it makes the fallback profile the login default.
+4. Log in: `hyprland-session` sees that the boot profile's GPU is unbound and that `handoff_fallback` names a bound
+   GPU. It starts the `igpu` profile **in place**, with no reboot (`--dry-run` prints `"handoff": "igpu"`), and it
+   lights the iGPU outputs. Choosing the dGPU session in this state also starts the fallback.
+
+**Return:**
+
+1. Stop the VM and log out of the fallback session.
+2. A privileged step unbinds `vfio-pci` and binds `nvidia` again.
+3. nvidia-drm registers its fb again, and fbcon moves tty1 back to the dGPU through the boot map. The greeter is
+   again hosted on the dGPU.
+4. Log in: the dGPU profile runs again.
+
+None of this changes `vfio-pci.ids=` or the boot entries. The iGPU boot entry, which reserves the dGPU for VMs at
+boot, is unchanged.
+
 ## GRUB and firmware screens
 
 GRUB, the firmware logo and the firmware setup draw on the firmware's primary display: its EFI GOP, the boot VGA.
-On this machine that is the iGPU (`boot_vga=1` on `0000:7a:00.0`). No kernel argument or MiOS setting can move
-them, because they run before Linux. Only the firmware setting can: the BIOS "Primary display" / "Initiate graphic
+On this machine that is the iGPU (`boot_vga=1` on `0000:7a:00.0`), and the BIOS keeps it that way, so **GRUB stays on
+HDMI**. No kernel argument or MiOS setting can move it, because it runs before Linux. Only the firmware setting can: the BIOS "Primary display" / "Initiate graphic
 adapter" option set to PEG/dGPU. Only the operator can change it. If the firmware primary becomes the dGPU, the
 iGPU entry still works: its console then follows whichever fb is primary, and the compositor follows
 `AQ_DRM_DEVICES` as before.
@@ -131,8 +189,9 @@ iGPU entry still works: its console then follows whichever fb is primary, and th
    `starting text greeter`.
 4. After login: `tr '\0' '\n' </proc/$(pgrep -o -x Hyprland)/environ | grep AQ_DRM` lists only the dGPU card, and
    the HDMI (iGPU) output is not lit by Hyprland.
-5. `mios-gen nested-session --layout pip`: `session.json` shows `render.node = /dev/dri/renderD128` and
-   `render.pci = 0000:7a:00.0`, and the fd check above shows `drm-pdev: 0000:7a:00.0` (amdgpu).
+5. `mios-gen nested-session --layout pip`: `session.json` `render` shows the rule `igpu` and, with the default
+   `cross_vendor_present = false`, `degraded` naming the NVIDIA parent. With `render_node = "igpu"` the fd check
+   above shows `drm-pdev: 0000:7a:00.0` (amdgpu) only.
 
 The `MiOS iGPU` entry and `MiOS Recovery` are unchanged. Both stay available in GRUB, which is shown on the
 firmware display.

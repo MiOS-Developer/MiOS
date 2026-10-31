@@ -116,6 +116,16 @@ pub fn profile_gpu(gpus: &[Gpu], root: &Path, data: &Value, profile: &str) -> Op
     gpus.iter().find(|g| g.pci == pci).cloned()
 }
 
+/// GPU hand-off: the boot profile's GPU is not bound to a DRM driver right now (handed to a VM) and the profile names
+/// `handoff_fallback`; the desktop then runs that fallback profile in place, without a reboot.
+pub fn handoff_profile(data: &Value, root: &Path, booted: &str, gpus: &[Gpu]) -> Option<String> {
+    let fallback = profiles(data)?.get(booted)?.get("handoff_fallback")?.as_str()?;
+    if fallback == booted || !profiles(data)?.contains_key(fallback) || profile_pci(root, data, booted).is_none() {
+        return None;
+    }
+    (profile_gpu(gpus, root, data, booted).is_none() && profile_gpu(gpus, root, data, fallback).is_some()).then(|| fallback.to_string())
+}
+
 /// The hardware profile the running desktop uses: the parent session's MIOS_DESKTOP_HARDWARE_PROFILE export,
 /// then the boot entry's mios.desktop.gpu=, then [desktop.hyprland].hardware_profile.
 pub fn running_profile(data: &Value, exported: Option<&str>, cmdline: &str) -> Result<String, String> {
@@ -195,6 +205,21 @@ pub fn nested_render(data: &Value, root: &Path, profile: &str, gpus: &[Gpu]) -> 
             Some(g) => Err(format!("the {id} GPU {} has no render node", g.pci)),
             None => Err(format!("the {id} GPU is not bound to a DRM driver this boot (assigned to a VM, or its PCI identity is unset)")),
         },
+    };
+    // The parent composites the nested session's buffers with its own GPU's driver. Measured on Hyprland 0.56 with an
+    // NVIDIA parent: it lists no LINEAR modifier and shows nothing for iGPU-rendered buffers (tiled ones fail
+    // eglCreateImageKHR), so "auto" only steers to a GPU of the parent's driver family unless
+    // [desktop.nested].cross_vendor_present = true. An explicit override is honoured as given.
+    let cross_ok = match data.get("desktop").and_then(|d| d.get("nested")).and_then(|n| n.get("cross_vendor_present")) {
+        None => false,
+        Some(v) => v.as_bool().ok_or("desktop.nested.cross_vendor_present must be a boolean")?,
+    };
+    let found = match (found, profile_gpu(gpus, root, data, profile)) {
+        (Ok(g), Some(parent)) if auto && !cross_ok && (g.driver == "nvidia") != (parent.driver == "nvidia") => Err(format!(
+            "the parent session renders on {} ({}); it cannot show buffers rendered on {} ({}) -- set desktop.nested.cross_vendor_present = true to force it",
+            parent.pci, parent.driver, g.pci, g.driver
+        )),
+        (f, _) => f,
     };
     match found {
         Ok(g) => {
@@ -448,8 +473,14 @@ mod tests {
         let f = fixture();
         let (dri, sys) = fixture_host(f.path());
         let gpus = inventory(&Host { dri: &dri, sys: &sys });
-        let d = ssot();
-        // dGPU boot: the iGPU's render node (renderD128), never the dGPU's (renderD129).
+        let mut d = ssot();
+        // dGPU boot, vendor default: the NVIDIA parent cannot show iGPU buffers (measured), so "auto" degrades and
+        // says why -- the session stays visible on the parent's GPU.
+        let c = nested_render(&d, f.path(), "dgpu", &gpus).unwrap();
+        assert_eq!((c.rule.as_str(), c.mode), ("igpu", RenderMode::Inherit));
+        assert!(c.degraded.as_deref().unwrap().contains("cross_vendor_present"), "{:?}", c.degraded);
+        // With cross-vendor presentation allowed: the iGPU's render node (renderD128), never the dGPU's (renderD129).
+        d["desktop"]["nested"]["cross_vendor_present"] = Value::Boolean(true);
         let c = nested_render(&d, f.path(), "dgpu", &gpus).unwrap();
         assert_eq!((c.policy.as_str(), c.rule.as_str(), c.mode), ("auto", "igpu", RenderMode::Device));
         assert_eq!(c.gpu.as_ref().unwrap().render, Some(dri.join("renderD128")));
@@ -500,6 +531,12 @@ mod tests {
         }
         d["desktop"]["nested"]["render_node"] = Value::Integer(1);
         assert!(nested_render(&d, f.path(), "dgpu", &gpus).is_err());
+        // An explicit iGPU override is honoured even across vendors.
+        let mut x = ssot();
+        x["desktop"]["nested"]["render_node"] = Value::String("igpu".into());
+        assert_eq!(nested_render(&x, f.path(), "dgpu", &gpus).unwrap().gpu.unwrap().pci, "0000:7a:00.0");
+        x["desktop"]["nested"]["cross_vendor_present"] = Value::String("yes".into());
+        assert!(nested_render(&x, f.path(), "dgpu", &gpus).is_err());
         // auto with the iGPU gone (VM-bound): degraded to inherit, recorded; an explicit igpu override is an error.
         let only_dgpu: Vec<Gpu> = gpus.iter().filter(|g| g.pci == "0000:01:00.0").cloned().collect();
         let d = ssot();
@@ -513,6 +550,26 @@ mod tests {
         let mut b = ssot();
         b["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["nested_render"] = Value::String("auto".into());
         assert!(nested_render(&b, f.path(), "dgpu", &gpus).is_err());
+    }
+
+    #[test]
+    fn handoff_runs_the_fallback_profile_only_while_the_dgpu_is_away() {
+        let f = fixture();
+        let (dri, sys) = fixture_host(f.path());
+        let gpus = inventory(&Host { dri: &dri, sys: &sys });
+        let d = ssot();
+        assert_eq!(handoff_profile(&d, f.path(), "dgpu", &gpus), None, "dGPU bound to nvidia: no hand-off");
+        let away: Vec<Gpu> = gpus.iter().filter(|g| g.driver != "nvidia").cloned().collect();
+        assert_eq!(handoff_profile(&d, f.path(), "dgpu", &away).as_deref(), Some("igpu"));
+        assert_eq!(handoff_profile(&d, f.path(), "igpu", &away), None, "the iGPU profile has no fallback");
+        // Nested sessions during the hand-off: the running profile is igpu, same driver family -> the iGPU node.
+        let c = nested_render(&d, f.path(), "igpu", &away).unwrap();
+        assert_eq!((c.mode, c.gpu.unwrap().pci.as_str()), (RenderMode::Device, "0000:7a:00.0"));
+        // Negative: an unknown fallback or a missing identity never triggers a hand-off.
+        let mut b = ssot();
+        b["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["handoff_fallback"] = Value::String("nope".into());
+        assert_eq!(handoff_profile(&b, f.path(), "dgpu", &away), None);
+        assert_eq!(handoff_profile(&d, Path::new("/nonexistent"), "dgpu", &away), None);
     }
 
     #[test]

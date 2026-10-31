@@ -489,14 +489,18 @@ pub fn display_plan(g: &Greeter, doc: &Value, kind: &str, display: &str, card: O
 pub fn runtime(root: &Path, kind: Option<&str>, profile: Option<&str>, dry_run: bool) -> Result<String, String> {
     use std::os::unix::process::CommandExt;
     let doc = mios_resolver::resolve_projection(root).map_err(|e| e.to_string())?;
-    let (g, profile, argv) = boot_settings(&doc,
-        &fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?, kind, profile)?;
+    let cmdline = fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?;
+    // GPU hand-off: the boot profile's GPU is with a VM, so its fallback profile is the login default.
+    let gpus = crate::gpu_topology::inventory(&crate::gpu_topology::host());
+    let handoff = match profile {
+        Some(_) => None,
+        None => crate::render::desktop_boot::boot_profile(&doc, &cmdline).ok()
+            .and_then(|b| crate::gpu_topology::handoff_profile(&doc, root, &b, &gpus)),
+    };
+    let (g, profile, argv) = boot_settings(&doc, &cmdline, kind, profile.or(handoff.as_deref()))?;
     let file = format!("{}.desktop",g.default_session);
     let display = greeter_display(&doc, &profile)?;
-    let card = (display == "compositor").then(|| {
-        let gpus = crate::gpu_topology::inventory(&crate::gpu_topology::host());
-        crate::gpu_topology::profile_gpu(&gpus, root, &doc, &profile).map(|g| g.card)
-    }).flatten();
+    let card = (display == "compositor").then(|| crate::gpu_topology::profile_gpu(&gpus, root, &doc, &profile).map(|g| g.card)).flatten();
     let cfg = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir).join("mios-greeter-terminal.toml");
     let plan = display_plan(&g, &doc, kind.unwrap_or(&g.kind), &display, card.as_deref(), root, &cfg, argv)?;

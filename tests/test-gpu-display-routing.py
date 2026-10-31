@@ -132,12 +132,19 @@ class NestedRender(unittest.TestCase):
         return json.loads(run(binary, "nested-session", "--root", root, "--layout", "pip", "--no-devices", "--plan",
                               env={"XDG_RUNTIME_DIR": rt, "MIOS_DESKTOP_HARDWARE_PROFILE": profile}).stdout)
 
-    def test_dgpu_boot_nested_session_renders_on_the_headless_igpu(self):
+    def test_dgpu_boot_auto_degrades_visibly_while_the_nvidia_parent_cannot_show_igpu_buffers(self):
         r = self.plan(GEN, NEW_SSOT, "dgpu")["render"]
-        self.assertEqual((r["policy"], r["rule"], r["mode"]), ("auto", "igpu", "device"))
-        self.assertEqual(r["node"], GPUS[IDS["igpu"]][1])
-        self.assertNotEqual(r["node"], GPUS[IDS["dgpu"]][1])
-        self.assertEqual(r["pci"], IDS["igpu"])
+        self.assertEqual((r["policy"], r["rule"], r["mode"]), ("auto", "igpu", "inherit"))
+        self.assertIn("cross_vendor_present", r["degraded"])
+
+    def test_dgpu_boot_nested_session_renders_on_the_headless_igpu(self):
+        for ssot in (NEW_SSOT.replace("cross_vendor_present = false", "cross_vendor_present = true", 1),
+                     NEW_SSOT.replace('\nrender_node = "auto"', '\nrender_node = "igpu"', 1)):
+            r = self.plan(GEN, ssot, "dgpu")["render"]
+            self.assertEqual(r["mode"], "device")
+            self.assertEqual(r["node"], GPUS[IDS["igpu"]][1])
+            self.assertNotEqual(r["node"], GPUS[IDS["dgpu"]][1])
+            self.assertEqual(r["pci"], IDS["igpu"])
 
     def test_igpu_boot_nested_session_follows_its_profile_rule(self):
         r = self.plan(GEN, NEW_SSOT, "igpu")["render"]

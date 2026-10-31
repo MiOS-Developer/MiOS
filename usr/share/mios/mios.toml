@@ -9219,8 +9219,8 @@ include_other_devices = false
 greeter_display = "vt"             # the login greeter on the kernel console (VT 1), which is this GPU's display in iGPU boots
 # Nested sessions (mios-gen nested-session) in an iGPU boot: [desktop.nested].render_node = "auto" reads this.
 # "igpu" = the iGPU's render node (the dGPU is bound to vfio-pci in this boot, so it is not available). "software"
-# (llvmpipe, no GPU) is not viable on Hyprland 0.56: its Wayland backend needs a hardware render node for GBM/EGL --
-# see usr/share/doc/mios/desktop-gpu-routing.md for the measured result.
+# (llvmpipe) stays an explicit override only: Hyprland 0.56's Wayland backend needs GBM/EGL on the main device it
+# opens, and Mesa's software paths need dumb buffers a render node lacks (usr/share/doc/mios/desktop-gpu-routing.md).
 nested_render = "igpu"
 # Hypr3D supersampling for this GPU. It replaces [desktop.hyprland.hypr3d.config.render].scale (1..4) while
 # this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+F12) finds the running profile in
@@ -9258,9 +9258,13 @@ include_other_devices = false
 # The login greeter on this GPU's display: tuigreet (same flags, palette and keys) in cage + a terminal restricted
 # to the dGPU card ([desktop.greeter.display_host]); any failure falls back to the VT greeter (never a dead end).
 greeter_display = "compositor"
-# Nested sessions in a dGPU boot render on the headless iGPU's render node, never on the dGPU ("auto" in
-# [desktop.nested].render_node). The session records the node it opened in session.json ("render").
+# Nested sessions in a dGPU boot: the headless iGPU's render node ("auto" in [desktop.nested].render_node), subject to
+# [desktop.nested].cross_vendor_present. The session records the node it opened in session.json ("render").
 nested_render = "igpu"
+# GPU hand-off (Looking Glass): while this GPU is bound to vfio-pci for a VM, the desktop runs this profile in place
+# -- its outputs relit, no reboot -- and the greeter defaults to it; the dGPU session returns once nvidia owns the GPU
+# again. Sequence: usr/share/doc/mios/desktop-gpu-routing.md "GPU hand-off". "" = no hand-off fallback.
+handoff_fallback = "igpu"
 # Hypr3D supersampling on the RTX 4090; see hardware_profiles.igpu.hypr3d_render_scale.
 hypr3d_render_scale = 2.0
 
@@ -18807,6 +18811,11 @@ shell_entry = "/usr/share/mios/quickshell/Nested.qml"
 # override: "inherit" (the parent's main device, the pre-routing behaviour), "software" (llvmpipe), a profile id
 # ("igpu" | "dgpu") or "/dev/dri/renderD<N>". Recorded in the session's session.json "render".
 render_node = "auto"
+# Whether "auto" may steer a nested session to a GPU of another driver family than the parent's. false (measured):
+# an NVIDIA parent (Hyprland 0.56) lists no LINEAR modifier and shows nothing for iGPU-rendered buffers, so in a dGPU
+# boot "auto" degrades to the parent's GPU and session.json says why. true = always the profile's nested_render
+# (the iGPU in dGPU boots) -- only useful once the parent can import it (a copy path or a LINEAR-capable driver).
+cross_vendor_present = false
 launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
 tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"

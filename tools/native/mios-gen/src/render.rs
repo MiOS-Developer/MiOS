@@ -5633,12 +5633,22 @@ report("again")
         let data = hardware_profile_data(root)?;
         let h = hardware_profile_table(&data)?;
         let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
-        let profile = profile_name(&data, hardware_profile, &cmdline)?;
+        let mut profile = profile_name(&data, hardware_profile, &cmdline)?;
+        // GPU hand-off: while the boot profile's GPU is with a VM, its handoff_fallback profile runs in place (its
+        // outputs relit, no reboot); the boot profile itself cannot start until the GPU is back.
+        let booted = super::desktop_boot::boot_profile(&data, &cmdline).ok();
+        let handoff = booted.as_deref().and_then(|b| crate::gpu_topology::handoff_profile(
+            &data, root, b, &crate::gpu_topology::inventory(&crate::gpu_topology::host())));
+        if let Some(fallback) = &handoff {
+            if hardware_profile.is_none() || booted.as_deref() == Some(profile.as_str()) {
+                profile = fallback.clone();
+            }
+        }
         if !dry_run && root == Path::new("/") && super::desktop_boot::enabled(&data)? {
             let current = super::desktop_boot::boot_profile(&data, &cmdline)?;
             // This operation only changes managed boot choices. Device ownership
             // changes at boot, before a compositor opens either DRM device.
-            if profile != current {
+            if profile != current && handoff.as_deref() != Some(profile.as_str()) {
                 let status = Command::new("/usr/bin/sudo")
                     .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
                         "--hardware-profile", &profile])
@@ -5685,7 +5695,7 @@ report("again")
             let render = gpus.iter().find(|g| g.card == selected).and_then(|g| g.render.clone());
             return serde_json::to_string_pretty(&serde_json::json!({
                 "hardware_profile": profile, "devices": ordered,
-                "display_devices": ordered, "headless_devices": headless, "render_node": render,
+                "display_devices": ordered, "headless_devices": headless, "render_node": render, "handoff": handoff,
                 "include_other_devices": cfg.and_then(|c| c.get("include_other_devices")).and_then(Value::as_bool).unwrap_or(false),
                 "compositor": "start-hyprland", "config": "/usr/share/mios/hyprland/session.lua",
                 "desktop_target": "mios-desktop.target"

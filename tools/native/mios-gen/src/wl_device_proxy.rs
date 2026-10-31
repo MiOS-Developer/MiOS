@@ -130,7 +130,26 @@ fn filter_table(fd: &OwnedFd, size: u32) -> Option<(OwnedFd, u32, Vec<Option<u16
         }
     }
     if kept.is_empty() {
-        return None;
+        // The parent lists no LINEAR modifier at all (NVIDIA's Hyprland table: block-linear + INVALID only). Offer
+        // LINEAR for every format it lists: the nested GPU can render it and the parent's driver may import it.
+        let mut formats: Vec<u32> = Vec::new();
+        map.clear();
+        for e in table.chunks_exact(16) {
+            let f = u32::from_ne_bytes(e[0..4].try_into().unwrap());
+            let i = formats.iter().position(|x| *x == f).unwrap_or_else(|| {
+                formats.push(f);
+                formats.len() - 1
+            });
+            map.push(u16::try_from(i).ok());
+        }
+        for f in &formats {
+            kept.extend_from_slice(&f.to_ne_bytes());
+            kept.extend_from_slice(&[0; 4]);
+            kept.extend_from_slice(&LINEAR.to_ne_bytes());
+        }
+        if kept.is_empty() {
+            return None;
+        }
     }
     let memfd = rustix::fs::memfd_create("mios-dmabuf-linear-table", rustix::fs::MemfdFlags::CLOEXEC).ok()?;
     let mut out = std::fs::File::from(memfd);
@@ -169,9 +188,11 @@ fn rewrite_event(objs: &mut Objects, rw: &Rewrite, id: u32, op: u16, args: &[u8]
         (_, Some(Kind::Feedback), 5) => {
             if let (Some(map), Some(len)) = (objs.remap.get(&id), u32_at(args, 0)) {
                 let idx = args.get(4..4 + len as usize).unwrap_or_default();
+                let mut seen = std::collections::HashSet::new();
                 let kept: Vec<u8> = idx
                     .chunks_exact(2)
                     .filter_map(|c| map.get(u16::from_ne_bytes([c[0], c[1]]) as usize).copied().flatten())
+                    .filter(|i| seen.insert(*i))
                     .flat_map(u16::to_ne_bytes)
                     .collect();
                 return message(id, op, &array_arg(&kept));
@@ -422,6 +443,25 @@ mod tests {
         assert_eq!((msgs[4].0, body(4)), (9, &arg_u32(42)[..]), "unrelated events unchanged");
         assert_eq!(rw.devices_rewritten.load(Ordering::Relaxed), 1);
         assert_eq!(rw.tables_filtered.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_table_without_linear_gets_linear_per_format() {
+        let table = rustix::fs::memfd_create("t", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
+        let mut t = Vec::new();
+        for (fmt, m) in [(1u32, 0x0300_0000_0000_0011u64), (2, 0x0300_0000_0000_0011), (1, 0x00ff_ffff_ffff_ffff)] {
+            t.extend_from_slice(&fmt.to_ne_bytes());
+            t.extend_from_slice(&[0; 4]);
+            t.extend_from_slice(&m.to_ne_bytes());
+        }
+        std::fs::File::from(table.try_clone().unwrap()).write_all(&t).unwrap();
+        let (fd, size, map) = filter_table(&table, 48).unwrap();
+        assert_eq!(size, 32, "two formats, one LINEAR entry each");
+        assert_eq!(map, vec![Some(0), Some(1), Some(0)]);
+        let mut nt = [0u8; 32];
+        std::fs::File::from(fd).read_exact_at(&mut nt, 0).unwrap();
+        assert_eq!(u64::from_ne_bytes(nt[8..16].try_into().unwrap()), LINEAR);
+        assert_eq!(u32::from_ne_bytes(nt[16..20].try_into().unwrap()), 2);
     }
 
     #[test]
