@@ -18285,6 +18285,7 @@ unit = [
     "tests/test-mios-controls-visual-live.py",
     "tests/test-resolver-dropin-parity.py",
     "tests/test-tmuxos-launcher-live.py",
+    "tests/test-ui-margin-unify-live.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [

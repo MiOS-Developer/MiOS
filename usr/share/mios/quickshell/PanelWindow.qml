@@ -378,14 +378,14 @@ QS.PanelWindow {
     // reserved). The mode stays Normal: Quickshell sets it to Normal whenever exclusiveZone is written, so a second
     // binding switching it to Ignore races that write and could leave the zone ignored. EdgeReveal's guard re-asserts
     // the zone (reserveNudge, reserveRebuild) when the compositor lost it.
-    exclusiveZone: zoneFor(overFullscreen, rowHeight, 0, ui) + (overFullscreen ? 0 : reserveNudge)
+    exclusiveZone: zoneFor(overFullscreen, rowHeight, Glass.gap, ui) + (overFullscreen ? 0 : reserveNudge)
     exclusionMode: QS.ExclusionMode.Normal
     function zoneFor(fs, row, margin, scale) { return fs ? 0 : Math.round((row + margin) * scale) }
     property int reserveNudge: 0
     property bool reserveRebuild: false
     // What the compositor then reserves on the top edge (the zone plus margins.top), from the current inputs.
     function reserveExpectedNow() {
-        const z = zoneFor(overFullscreen, rowHeight, 0, ui)
+        const z = zoneFor(overFullscreen, rowHeight, Glass.gap, ui)
         return z > 0 ? z + Math.round(Glass.gap * ui) : 0
     }
     function reserveDiag() {

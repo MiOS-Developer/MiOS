@@ -356,6 +356,20 @@ def expected_rows() -> tuple[int, int]:
     return int(sh["top_height_px"]) + 2 * m, int(sh["dock_height_px"]) + 2 * m
 
 
+class TestMarginUnification(unittest.TestCase):
+    def test_expected_rows_unify_top_and_dock_gaps(self):
+        top, bottom = expected_rows()
+        self.assertEqual(top, 44, f"Top reservation must be 44px, got {top}")
+        self.assertEqual(bottom, 72, f"Bottom reservation must be 72px, got {bottom}")
+        # Top gap: top reservation (44) - (margins.top (8) + rowHeight (28)) = 44 - 36 = 8px
+        top_gap = top - (8 + 28)
+        # Dock gap on 1080p: dock_top (1016) - window_bottom (1080 - 72 = 1008) = 8px
+        bottom_gap = (1080 - 64) - (1080 - bottom)
+        self.assertEqual(top_gap, 8, f"TopBar gap must be 8px, got {top_gap}")
+        self.assertEqual(bottom_gap, 8, f"Dock gap must be 8px, got {bottom_gap}")
+        self.assertEqual(top_gap, bottom_gap)
+
+
 @unittest.skipUnless(NEST_SIG and NEST_XDG and NEST_WL,
                      "nested compositor (MIOS_RESERVE_NEST_SIG + MIOS_RESERVE_NEST_XDG + MIOS_RESERVE_NEST_WL; never the live desktop)")
 class Nested(unittest.TestCase):

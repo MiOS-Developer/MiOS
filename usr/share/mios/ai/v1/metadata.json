@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4101,
-  "total_metadata_entries": 3372,
-  "total_hints": 3366,
+  "total_files_scanned": 4102,
+  "total_metadata_entries": 3373,
+  "total_hints": 3367,
   "total_functions_indexed": 2076,
-  "total_related_links": 6577,
+  "total_related_links": 6579,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -10505,6 +10505,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch17-defense-in-depth-hardening.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-ui-margin-unify-live.py",
+      "hint": "Automated E2E verification test suite for TopBar, Dock, and Window Margin & Glass Unification across MiOS.",
+      "related": [
+        "usr/share/mios/quickshell/PanelWindow.qml",
+        "usr/share/mios/quickshell/Sidebar.qml"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
