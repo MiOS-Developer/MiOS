@@ -1,5 +1,5 @@
 # AI-hint: Upstream ventulusd (MIT, github.com/Plan-B-Development/ventulusd v5.1.0 @ b7a72ab7) fan-control daemon unit, shipped verbatim; MiOS policy lives in ventulusd.service.d/10-mios.conf (alias mios-fan-control.service).
-# AI-related: /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/bin/ventulusd, /usr/bin/ventulus-restore-auto, /usr/bin/mios-fanctl, /usr/share/mios/fan-control/daemon.toml
+# AI-related: usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, tools/native/mios-fanctl/Cargo.toml, usr/share/mios/fan-control/daemon.toml
 [Unit]
 Description=Ventulus Fan Control Daemon
 After=local-fs.target

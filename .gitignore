@@ -563,6 +563,9 @@ usr/share/flatpak/*
 usr/share/flatpak/overrides/*
 !/usr/share/flatpak/overrides/global
 
+!/usr/share/git-core/
+!/usr/share/git-core/**
+
 usr/libexec/*
 !/usr/libexec/mios/
 !/usr/libexec/mios/**

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of nested-session fit scaling, HUD scaling and the global session-scale binds (SUPER+CTRL +/-/0/wheel) in an owned nested MiOS PiP session: real key events, dispatcher, zoom, parent routing and the output path with a scratch user tier.
-# AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/session_scale.rs, usr/share/mios/mios.toml [desktop.nested] [desktop.scaling] [keybindings.global]
+# AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/session_scale.rs, usr/share/mios/mios.toml [desktop.nested]
 # Live test of nested fit scaling and the global session-scale binds, in an owned nested MiOS session (PiP).
 # Primary compositor: only the stock launcher's PiP adoption and key events sent to OUR nested window. No primary
 # output is rescaled; the primary user tier is hash-checked; the verb's own persistence is exercised on a scratch tier.

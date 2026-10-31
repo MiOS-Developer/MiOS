@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: LIVE opt-in (MIOS_LIVE_NESTED=1): the agent virtual controller drives Hypr3D smoothly inside an owned nested PiP session: `vpad create` (fixture-named), `mios-gen nested-session --layout pip --seat <s> --device <pad node>` binds it, `vpad assign` runs the session's `bridge --nested`, and eased stick ramps walk and turn the session's room camera with a gradual speed profile; a raw fixture-pad step and the unassigned pad are the contrast and negative controls.
-# AI-related: tools/native/mios-inputd/src/vpad.rs, tools/native/mios-inputd/src/nested.rs, tools/native/mios-gen/src/nested_session.rs, usr/share/mios/mios.toml [keybindings.global.controller.agent_pad] [desktop.nested]
+# AI-related: tools/native/mios-inputd/src/vpad.rs, tools/native/mios-inputd/src/nested.rs, tools/native/mios-gen/src/nested_session.rs, usr/share/mios/mios.toml [keybindings.global.controller.agent_pad]
 # AI-functions: Session, speeds, profile, main
 # The only primary-compositor calls are reads (pgrep). Every pad is fixture-named (no live bridge opens one) and is held
 # by an exclusive grab of this test or of the session's bridge whenever it moves, so no other reader on the host sees it.

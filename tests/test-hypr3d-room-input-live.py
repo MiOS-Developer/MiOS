@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: LIVE opt-in (MIOS_LIVE_NESTED=1): Hypr3D room verbs (cancel/sprint/recenter, via mios-inputd dispatch) and PiP face-the-viewer (2 m room / 4 m Theatre, eased follow, eased return, SSOT face_distance honoured) in an owned nested PiP session; the installed plugin (MIOS_HYPR3D_OLD) is the negative control.
-# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d.config.windows] [keybindings.global.controller.room], tools/native/mios-inputd
+# AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch, usr/share/mios/mios.toml [desktop.hyprland.hypr3d], tools/native/mios-inputd
 # AI-functions: run_pass, main
 # Runs in an owned nested MiOS PiP session (mios-gen nested-session --layout pip). The camera is moved by real key
 # events (W/A/S/D held as send_key_state events to the nested parent window); every measurement is the PiP plane

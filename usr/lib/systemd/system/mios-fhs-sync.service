@@ -1,5 +1,5 @@
 # AI-hint: Systemd service unit executing miosd fhs-sync in daemon mode to maintain continuous Linux FHS root overlay and host-guest topology parity at runtime.
-# AI-related: usr/bin/miosd, /run/mios/fhs-sync.json, multi-user.target
+# AI-related: src/mios-rs/miosd/Cargo.toml, /run/mios/fhs-sync.json, multi-user.target
 
 [Unit]
 Description='MiOS' FHS root overlay & host-guest topology runtime sync daemon

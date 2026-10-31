@@ -1,5 +1,5 @@
 // AI-hint: Settled HUD rectangles for PiP gravity: a HUD layer (topbar, dock, app menu) counts only once it has held the same rect for hud_settle_ms and is bar-sized (height <= hud_max_height_frac of its output); while it morphs or opens into a full pane (the dock becoming the app drawer) the last settled rect stays, so PiPs never move or shrink for a transient overlay.
-// AI-related: tools/native/mios-pip-gravity/src/main.rs, usr/share/mios/quickshell/Sidebar.qml (dock -> drawer morph), usr/share/mios/mios.toml [desktop.pip_gravity] hud_settle_ms hud_max_height_frac
+// AI-related: tools/native/mios-pip-gravity/src/main.rs, usr/share/mios/quickshell/Sidebar.qml (dock -> drawer morph), usr/share/mios/mios.toml [desktop.pip_gravity]
 // AI-functions: HudTracker::update, HudTracker::rects
 use crate::gravity::Rect;
 use std::collections::HashMap;

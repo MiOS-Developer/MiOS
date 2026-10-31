@@ -11,7 +11,7 @@
 #   4. upstream (network; MIOS_TEST_OFFLINE=1 skips): the WineCap patch applies to ShaderGlass HEAD and its newest
 #      release tag; hyprglass HEAD and the commit pinned for [desktop.hyprland.hyprglass].hyprland_version register
 #      windows/layers live_resample_fps with 0 = uncapped and map hg.config's nested tables onto those option paths.
-# AI-related: usr/share/mios/mios.toml [desktop.shaderglass] [desktop.hyprland.xdph] [desktop.hyprland.hyprglass.config],
+# AI-related: usr/share/mios/mios.toml [desktop.shaderglass],
 # src/mios-rs/miosd/src/shaderglass.rs, src/mios-rs/miosd/src/shaderglass/, tools/native/mios-gen/src/render.rs (shaderglass_lua),
 # usr/share/mios/shaderglass/, usr/bin/mios-shaderglass, usr/libexec/mios/mios-share-picker, usr/libexec/mios/mios-sync-theme
 """ShaderGlass overlay pane and Hyprglass live re-sample rate tests."""

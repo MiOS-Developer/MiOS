@@ -1,5 +1,5 @@
 // AI-hint: The agent virtual controller (I4): a per-session uinput gamepad held by one `mios-inputd vpad hold` process and driven over a private control socket with eased analog ramps (sticks/triggers never jump), button taps, the HAT d-pad, release-to-rest, and assignment to a nested session (it then runs that session's `bridge --nested <seat>`).
-// AI-related: usr/share/mios/mios.toml [keybindings.global.controller.agent_pad] [desktop.nested.devices] [verbs.virtual_controller], tools/native/mios-inputd/src/nested.rs, tools/native/mios-gen/src/nested_devices.rs (virtual-pad), tests/test-inputd-platform.py, tests/test-inputd-vpad-live.py
+// AI-related: usr/share/mios/mios.toml [keybindings.global.controller.agent_pad], tools/native/mios-inputd/src/nested.rs, tools/native/mios-gen/src/nested_devices.rs (virtual-pad), tests/test-inputd-platform.py, tests/test-inputd-vpad-live.py
 // AI-functions: Ease::at, Channel::step, Model::command, Model::tick, hold, create, request, list
 use crate::config::{button_code, AgentPadConfig, GlobalConfig, EASES};
 use crate::router::{Event, EV_ABS, EV_KEY, EV_SYN, SYN_REPORT};

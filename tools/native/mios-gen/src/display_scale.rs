@@ -1,5 +1,5 @@
 // AI-hint: One global display scale policy ([desktop.scaling]) for every output, local and remote: density (client DPI hint > EDID mm > resolution fallback) x viewing-distance class (handheld..desktop by diagonal) x orientation -> a scale Hyprland accepts (1/120 grid, integer logical size) + logical size + mobile flag (logical short side). Rust `compute` and the Lua twin `LUA` (compiled into the Hyprland projection's [desktop.mobile] handler) implement the same arithmetic; a parity test runs both. CLI: mios-gen display-scale.
-// AI-related: usr/share/mios/mios.toml [desktop.scaling] [desktop.mobile] [remote.rdp], tools/native/mios-gen/src/render.rs (mobile_profile), usr/share/mios/quickshell/Mobile.qml, usr/libexec/mios/mios-rdp-rfb-bridge
+// AI-related: usr/share/mios/mios.toml [desktop.scaling], tools/native/mios-gen/src/render.rs (mobile_profile), usr/share/mios/quickshell/Mobile.qml, usr/libexec/mios/mios-rdp-rfb-bridge
 //! Global display scale policy.
 //!
 //! Inputs per output: mode pixels, transform, physical size (EDID mm; 0 = unknown), an optional
