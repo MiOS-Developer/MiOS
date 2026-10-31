@@ -322,8 +322,10 @@ enabled = false
     def test_t3_menus_are_keyboard_controller_mouse_and_console_driven(self):
         # The generated display-menus themselves: with the launcher on, prefix Space opens the launcher instead (T10).
         h = self.harness("t3", LAUNCHER_OFF)
-        h.start(80, 20)
-        c = h.view("view", w=80, h=20)
+        # 24 rows: the organised pane menu (section headers) is 19 rows tall, and tmux 3.7c only shows a menu
+        # whose box fits on screen at the pointer.
+        h.start(80, 24)
+        c = h.view("view", w=80, h=24)
         h.keys("view", "C-b", "Space")
         shot = h.shot()
         self.assertIn("MiOS", shot)
@@ -591,6 +593,25 @@ enabled = false
         run_snippet()
         self.assertTrue(canary(), "an unchanged digest is never re-sourced")
 
+    def test_t3b_right_click_menus_open_wherever_they_fit(self):
+        # tmux 3.7c never moves a menu back on screen: a right-click menu placed with its top at the pointer
+        # (-y M) is silently dropped when it would run off the bottom. The generated right-click menus open above
+        # the pointer there. Negative control: the pre-fix projection (-y M) shows nothing for the low click.
+        h = self.harness("t3b", LAUNCHER_OFF)
+        h.start(80, 30)
+        h.view("view", w=80, h=30)
+        rows = {}
+        for y in (2, 26):
+            h.raw("view", f"\x1b[<2;10;{y}M")
+            h.raw("view", f"\x1b[<2;10;{y}m")
+            shot = h.shot(delay=0.6)
+            rows[y] = next((n for n, l in enumerate(shot.splitlines()) if "MiOS pane" in l), None)
+            h.keys("view", "Escape")
+            time.sleep(0.3)
+        self.assertEqual(rows[2], 1, f"a high click opens the menu below the pointer: {rows}")
+        self.assertIsNotNone(rows[26], f"a low click opens the menu above the pointer: {rows}")
+        self.assertLess(rows[26], 26 - 1, "above the pointer, so the release lands outside the items")
+
     # ---- T10: the tmux-os launcher (miosd launcher): organised popup, keyboard/controller/mouse, instance options ----
     @unittest.skipUnless(MIOSD.is_file(), "the lane's built miosd is required")
     def test_t10_launcher_is_organised_and_driven_by_keys_controller_and_mouse(self):
@@ -603,9 +624,10 @@ enabled = false
             h.keys("view", "C-b", "Space")
             return h.shot(delay=delay)
         def row(shot, text):
+            # Rows of the popup only: the status line names the current window too.
             for y, line in enumerate(shot.splitlines()):
                 x = line.find(text)
-                if x >= 0:
+                if x >= 0 and "│" in line[:x]:
                     return x, y
             raise AssertionError(f"{text!r} not on screen:\n{shot}")
         def click(x, y, button=0):
@@ -624,7 +646,11 @@ enabled = false
         self.assertLessEqual(abs(left - right), 2, f"centred popup: {left} vs {right}")
         # Controller vocabulary (the nav projection = keys sent as the client's own): d-pad Down, A = Enter.
         self.assertEqual(h.I("display", "-p", "-c", c, "#{window_name}"), "bash")
-        h.I("send-keys", "-c", c, "-K", "Down", "Enter")
+        # The nav projection types d-pad and stick moves on the virtual keyboard (key:DOWN), so they are typed
+        # into the terminal here too: tmux 3.7c drops cursor keys that send-keys -K aims at a popup (probed:
+        # Down and Up never reach the popup's tty, Enter and letters do).
+        h.keys("view", "Down")
+        h.I("send-keys", "-c", c, "-K", "Enter")
         self.assertTrue(wait(lambda: h.I("display", "-p", "-c", c, "#{window_name}") == "editor"), "A on a running instance goes to it")
         self.assertNotIn("Running ─", h.shot(delay=0.3), "the popup closed")
         # B backs out: Esc closes the launcher, nothing changes.
@@ -640,7 +666,14 @@ enabled = false
             self.assertIn(label, shot, f"instance option {label}")
         x, y = row(shot, "Float the pane")
         click(x, y)
-        self.assertTrue(wait(lambda: "1" in h.I("list-panes", "-t", "main:editor", "-F", "#{pane_floating_flag}").split()), "floated")
+        # Float the pane is prefix F: the pane is lifted into the session's float shell (its own floating popup,
+        # [keybindings.tmux.float]); it docks back from there.
+        fprefix = SSOT["keybindings"]["tmux"]["float"]["session_prefix"]
+        floated = lambda: any(l.startswith(fprefix) for l in h.I("list-panes", "-a", "-F", "#{session_name} #{window_name}").splitlines() if l.endswith(" sleep"))
+        self.assertTrue(wait(floated), "floated: " + h.I("list-panes", "-a", "-F", "#{session_name}:#{window_name} #{pane_id}"))
+        h.shot(delay=0.6)
+        h.keys("view", "C-b", "`")                   # hide the float shell again (prefix `)
+        self.assertTrue(wait(lambda: "─ float ─" not in h.shot(delay=0.2)), "float shell hidden")
         # Pop out (no desktop here): the instance moves into its own session pop-editor.
         opened()
         h.I("send-keys", "-c", c, "-K", "Tab")
@@ -648,20 +681,24 @@ enabled = false
         x, y = row(shot, "Pop out to its own window")
         click(x, y)
         self.assertTrue(wait(lambda: "pop-" in h.I("list-sessions", "-F", "#{session_name}")), "popped out into its own session")
-        # Close asks first and starts on No: A keeps it, Up A closes it.
+        # Close asks first and starts on No: A keeps it, Down A (Yes is below No) closes it.
         before = h.I("list-panes", "-a", "-F", "#{pane_id}").split()
         opened()
-        h.I("send-keys", "-c", c, "-K", "Tab", "End", "Enter")
+        h.keys("view", "Tab", "End", "Enter")
         self.assertIn("Close it?", h.shot(delay=0.5))
         h.I("send-keys", "-c", c, "-K", "Enter")
         time.sleep(0.5)
         self.assertEqual(h.I("list-panes", "-a", "-F", "#{pane_id}").split(), before, "No keeps the instance")
-        h.I("send-keys", "-c", c, "-K", "Escape", "Escape")
-        time.sleep(0.3)
-        opened()
-        h.I("send-keys", "-c", c, "-K", "Tab", "End", "Enter")
-        h.shot(delay=0.5)
-        h.I("send-keys", "-c", c, "-K", "Up", "Enter")
+        # Two separate presses: one write of ESC ESC reads as a single Alt+Esc.
+        for _ in range(2):
+            h.I("send-keys", "-c", c, "-K", "Escape")
+            time.sleep(0.3)
+        self.assertTrue(wait(lambda: "Running ─" not in h.shot(delay=0.2)), "B twice backs out of options and the launcher")
+        time.sleep(0.5)
+        self.assertIn("Running ─", opened())
+        h.keys("view", "Tab", "End", "Enter")
+        self.assertIn("Close it?", h.shot(delay=0.5))
+        h.keys("view", "Down", "Enter")
         self.assertTrue(wait(lambda: len(h.I("list-panes", "-a", "-F", "#{pane_id}").split()) < len(before)), "Yes closes it")
 
     def test_t10_negative_control_launcher_off_is_the_single_column_menu(self):

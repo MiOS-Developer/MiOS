@@ -914,7 +914,12 @@ pub(crate) fn render_tmux_keys(
             // use them.
             // A right-click menu opens with its top-left corner at the pointer (stock tmux -x M -y M): releasing
             // the button over an item would choose it, so a quick click or tap must land on the border instead.
-            let (x, y) = if mouse { ("M", "M") } else { (MENU_X, MENU_Y) };
+            // tmux 3.7c never moves a menu back on screen: one that does not fit below the pointer is silently not
+            // shown (probed: a 19-row menu from a click on row 12 of a 30-row client). Below the pointer when it
+            // fits (#{popup_mouse_top} = -y M), else above it with its bottom border over the pointer row
+            // (#{popup_mouse_y}), so the release still lands outside the items.
+            let mouse_y = format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{}}},#{{client_height}}}},#{{popup_mouse_top}},#{{popup_mouse_y}}}}", menu.rows);
+            let (x, y) = if mouse { ("M", mouse_y.as_str()) } else { (MENU_X, MENU_Y) };
             let title = format!("#[align=centre]{}", menu.title);
             let mut args: Vec<String> = vec!["display-menu".into(), "-T".into(), title, "-x".into(), x.into(), "-y".into(), y.into()];
             if mouse {
@@ -1271,7 +1276,10 @@ mod tests {
         assert_eq!(aliases.len(), 2 * ssot()["keybindings"]["tmux"]["menus"].as_array().unwrap().len() + 2 * MOUSE_MENUS.len() + 1);
         // Right-click variants stay open on release (-O) and carry no -C; key variants start on an item.
         let mouse = aliases.iter().find(|l| l.contains("\"mios-menu-pane-mouse=")).unwrap();
-        assert!(mouse.contains(" -x M -y M -O ") && !mouse.contains(" -C "), "{mouse}");
+        assert!(mouse.contains(" -x M -y ") && mouse.contains(" -O ") && !mouse.contains(" -C "), "{mouse}");
+        // Below the pointer when the menu fits there, else above it (tmux 3.7c never moves a menu back on screen).
+        let rows = launcher_menus(&ssot(), "linux").unwrap().into_iter().find(|m| m.id == "pane").unwrap().rows;
+        assert!(mouse.contains(&format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{rows}}},#{{client_height}}}},#{{popup_mouse_top}},#{{popup_mouse_y}}}}")), "{mouse}");
         assert!(aliases.iter().any(|l| l.contains("\"mios-menu-root-vt-mouse=") && l.contains("-b single")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Pane") && l.contains("'mios-menu-pane-mouse'")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Status") && l.contains("'mios-menu-root-vt-mouse'")));
