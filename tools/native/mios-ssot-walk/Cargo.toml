@@ -1,7 +1,8 @@
-# AI-hint: Single-sourced mios.toml SSOT-walk library Cargo manifest.
+# AI-hint: Cargo manifest of the SSOT-walk rules reader shared by every MIOS_* export projection.
 [package]
 name = "mios-ssot-walk"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
+toml.workspace = true

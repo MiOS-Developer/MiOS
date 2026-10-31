@@ -18573,6 +18573,29 @@ replaces = []
 crates = []
 scope = ["tests/**", "tools/test_*.py"]
 
+# The SSOT walk every MIOS_* export projection applies: mios-resolver (and so
+# userenv.sh and globals.{sh,ps1}) and mios_toml.py read these lists from the
+# tree they project, so the resolver twins (Law 13) share one copy of the rules.
+[generation.walk]
+# Sections a renderer or a direct TOML reader owns; never exported as variables.
+# ci/tests: the suite registry reader parses the TOML itself. units: mios-unit-gen
+# renders unit files from mios.toml and never reads globals.
+excluded_sections = ["containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation"]
+# Sections whose canonical names are suppressed, except the emit_keep names below.
+# Their legacy aliases still emit.
+mostly_dead_sections = ["ai", "image", "bootstrap", "profile", "sandbox", "security"]
+emit_keep = [
+  "MIOS_AI_BAKE_MODELS", "MIOS_AI_DIR", "MIOS_AI_EMBED_MODEL", "MIOS_AI_ENDPOINT",
+  "MIOS_AI_JOURNAL", "MIOS_AI_MCP_DIR", "MIOS_AI_MEMORY_DIR", "MIOS_AI_MODEL", "MIOS_AI_AGENT_MODEL",
+  "MIOS_AI_MODELS_DIR", "MIOS_AI_RAM_FLOOR_GB", "MIOS_AI_SCRATCH_DIR",
+  "MIOS_IMAGE_NAME", "MIOS_IMAGE_REF", "MIOS_IMAGE_TAG",
+  "MIOS_BOOTSTRAP_MODE",
+  "MIOS_SANDBOX_ENABLE", "MIOS_SECURITY_ALLOWLIST_HOSTS", "MIOS_SECURITY_PROBE_VERIFY_TLS",
+  "MIOS_SECURITY_PROVENANCE_TAINT",
+  "MIOS_SECURITY_SIGSTORE_COSIGN_VERSION", "MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL",
+  "MIOS_HEADLESS", "MIOS_MONITOR_RUNNING", "MIOS_NO_COLOR", "MIOS_NO_MONITOR",
+]
+
 # One ordered projection plan for native mios-gen sync on Linux and Windows.
 # Remaining Python/Bash adapters stay declared until their native ports prove parity.
 [generation.sync]
