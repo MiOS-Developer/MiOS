@@ -60,6 +60,9 @@ Singleton {
     readonly property bool targetsEnabled: bool(targets, "enabled", true)
     readonly property int targetsPollMs: num(targets, "poll_ms", 3000)
 
+    // The dock backend (tools/native/mios-gen/src/dock.rs); MIOS_DOCK_BACKEND points a test session at a candidate build.
+    readonly property string backend: Quickshell.env("MIOS_DOCK_BACKEND") || "/usr/bin/mios-gen"
+
     // ---- loading ----------------------------------------------------------------------------------------------------
     property string resolver: Quickshell.env("MIOS_TOML_GET") || "/usr/bin/mios-toml-get"
     property Process reader: Process {

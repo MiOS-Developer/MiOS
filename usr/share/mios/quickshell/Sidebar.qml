@@ -225,7 +225,7 @@ QS.Scope {
     Process {
         id: oskProc
         running: DockConfig.oskEnabled && root.oskWanted && dock.expanded && dock.drawerProgress >= 1
-        command: ["/usr/bin/mios-gen", "dock", "osk",
+        command: [DockConfig.backend, "dock", "osk",
                   "--width", String(Math.round(dock.width)),
                   "--height", String(Math.round(DockConfig.oskHeight * dock.ui)),
                   "--bottom", String(Math.round((theme.edgeMargin + theme.dockHeight) * dock.ui))]
@@ -453,7 +453,8 @@ QS.Scope {
         // once the morph finishes: armed mid-resize it cleared at once and the drawer never opened.
         HyprlandFocusGrab {
             windows: [dock]
-            active: dock.expanded && dock.drawerProgress >= 1
+            // While the nested keyboard is up its taps land on another client (stevia): they must not close the dock.
+            active: dock.expanded && dock.drawerProgress >= 1 && !oskProc.running
             onCleared: root.shellState.drawerOpen = false
         }
 

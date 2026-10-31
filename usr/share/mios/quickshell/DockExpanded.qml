@@ -36,6 +36,7 @@ FocusScope {
     property int section: 0                 // 0 search, 1 targets, 2 windows, 3 apps
     property var selectedWindow: null
     property string status: ""
+    property bool dragging: false            // a preview is being dragged onto a target chip
 
     // ---- windows: every Hyprland window of this session, minimized (special workspaces) included ---------------------
     readonly property var windows: {
@@ -65,7 +66,7 @@ FocusScope {
     property var methods: ({})
     Process {
         id: targetsProc
-        command: ["/usr/bin/mios-gen", "dock", "targets"]
+        command: [DockConfig.backend, "dock", "targets"]
         function refresh() { if (DockConfig.targetsEnabled && !running) running = true }
         stdout: StdioCollector {
             onStreamFinished: {
@@ -97,7 +98,7 @@ FocusScope {
         if (!t.move || t.move.method === "none" || t.available === false) { ex.status = t.label + ": " + ((t.move && t.move.note) || "cannot receive windows"); return }
         moveProc.label = t.label
         ex.status = "Moving to " + t.label + "…"
-        moveProc.command = ["/usr/bin/mios-gen", "dock", "move", "--target", String(t.id), "--address", String(ex.selectedWindow.address)]
+        moveProc.command = [DockConfig.backend, "dock", "move", "--target", String(t.id), "--address", String(ex.selectedWindow.address)]
         moveProc.running = true
     }
 
@@ -220,9 +221,10 @@ FocusScope {
             height: visible ? DockConfig.previewHeight : 0
             orientation: ListView.Horizontal
             spacing: ex.gap
-            clip: true
+            clip: !ex.dragging
             model: ex.windows
             keyNavigationEnabled: true
+            interactive: !ex.dragging
             onCurrentIndexChanged: if (activeFocus) ex.selectedWindow = ex.windows[currentIndex] || null
             onActiveFocusChanged: if (activeFocus) ex.selectedWindow = ex.windows[currentIndex] || null
             Keys.onReturnPressed: activateWindow(ex.windows[currentIndex])
@@ -246,7 +248,9 @@ FocusScope {
                 readonly property bool selected: ex.selectedWindow && ex.selectedWindow.address === modelData.address
                 DockPreview {
                     id: pv
-                    anchors.fill: parent
+                    width: wtile.width          // not anchored: the drag moves it onto a target chip
+                    height: wtile.height
+                    z: drag.active ? 5 : 0
                     win: wtile.modelData
                     theme: ex.theme
                     icon: ex.iconFor(wtile.modelData.appId)
@@ -261,6 +265,7 @@ FocusScope {
                     id: drag
                     target: pv
                     onActiveChanged: {
+                        ex.dragging = active
                         if (active) ex.selectedWindow = wtile.modelData
                         else { pv.Drag.drop(); pv.x = 0; pv.y = 0 }
                     }
