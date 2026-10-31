@@ -1,7 +1,7 @@
 // AI-hint: CLI driver for mios-unit-gen rendering systemd unit files from SSOT.
 use mios_unit_gen::{
-    drift_register, project, project_deployment, project_user, render_keybindings, render_units,
-    render_user_units, DeploymentKind,
+    drift_register, project, project_deployment, project_user, projection_ceiling,
+    render_keybindings, render_units, render_user_units, write_projection, DeploymentKind,
 };
 use std::env;
 use std::fs;
@@ -132,6 +132,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // The generator half: write [units.*] (or [user_units.*] with --user) onto
+    // the tree. `--check` is the gate that proves nobody edited the output.
+    if args.iter().any(|a| a == "--write") {
+        let user = args.iter().any(|a| a == "--user");
+        let changed = write_projection(&root, user)?;
+        for name in &changed {
+            println!("  wrote {name}");
+        }
+        println!(
+            "[mios-unit-gen] {} unit(s) written from [{}units.*]",
+            changed.len(),
+            if user { "user_" } else { "" }
+        );
+        return Ok(());
+    }
+
     // A drift check must COMPARE. This one used to render into memory and
     // return; --selftest diffed the tree against a copy of itself.
     if args.iter().any(|a| a == "--check" || a == "--selftest") {
@@ -167,7 +183,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             p.undeclared.len()
         );
 
-        if unexpected.is_empty() && stale.is_empty() && p.missing.is_empty() {
+        // Coverage ratchet: a shipped unit or drop-in the SSOT does not declare
+        // is outside the projection entirely. The ceiling only comes down, so a
+        // hand-authored unit fails here instead of widening the hole.
+        let ceiling_key = if args.iter().any(|a| a == "--user") {
+            "max_undeclared_user"
+        } else {
+            "max_undeclared"
+        };
+        let mut coverage_failed = false;
+        match projection_ceiling(&read_ssot(&root), ceiling_key)? {
+            None => {
+                eprintln!("  UNBOUNDED  [unit_projection].{ceiling_key} is unset -- nothing stops an undeclared unit");
+                coverage_failed = true;
+            }
+            Some(max) if p.undeclared.len() > max => {
+                for f in &p.undeclared {
+                    eprintln!("  UNDECLARED {f}  (ships without a [units.*] declaration)");
+                }
+                eprintln!(
+                    "  CEILING    {} undeclared > [unit_projection].{ceiling_key} = {max}: declare the unit, do not raise the ceiling",
+                    p.undeclared.len()
+                );
+                coverage_failed = true;
+            }
+            Some(max) if p.undeclared.len() < max => {
+                eprintln!(
+                    "  CEILING    {} undeclared < [unit_projection].{ceiling_key} = {max}: lower the ceiling so the ground is held",
+                    p.undeclared.len()
+                );
+                coverage_failed = true;
+            }
+            Some(_) => {}
+        }
+
+        if unexpected.is_empty() && stale.is_empty() && p.missing.is_empty() && !coverage_failed {
             return Ok(());
         }
         for f in &unexpected {
@@ -182,6 +232,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    println!("mios-unit-gen: --check | --list | --render <unit> | blade-dropins | blade-karg | uki-cmdline | cockpit | ipa-enroll | bootc-install [--root DIR] [--toml FILE] [--check]");
+    println!("mios-unit-gen: --check | --write | --list | --render <unit> [--user] | blade-dropins | blade-karg | uki-cmdline | cockpit | ipa-enroll | bootc-install [--root DIR] [--toml FILE] [--check]");
     Ok(())
 }

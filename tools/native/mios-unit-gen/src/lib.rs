@@ -779,6 +779,21 @@ fn resolve_port_placeholders(key: &str, value: &str, ports: Option<&toml::Value>
     out
 }
 
+/// `comment_<anything>` inside a section table: an interior comment block.
+/// The bare `comment` key is the block ABOVE the section header.
+fn is_inline_comment(key: &str) -> bool {
+    key != "comment" && key.starts_with("comment")
+}
+
+/// `Environment#2` -> `Environment`. Only a purely numeric suffix is stripped:
+/// `#` is not legal in a systemd directive name, so nothing real is shadowed.
+fn directive_name(key: &str) -> &str {
+    match key.rsplit_once('#') {
+        Some((name, n)) if !name.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => key,
+    }
+}
+
 /// Render units from SSOT TOML string. Returns map of relative path -> rendered content.
 /// Render unprivileged session units through the same canonical systemd renderer.
 pub fn render_user_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGenError> {
@@ -856,7 +871,22 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
                             if k == "comment" {
                                 continue;
                             }
-                            existing_keys.insert(k.as_str(), v);
+                            // `comment_<n>` is a comment block INSIDE the
+                            // section, emitted where the table places it, so
+                            // a directive keeps the prose that explains it.
+                            if let (true, Some(c)) = (is_inline_comment(k), v.as_str()) {
+                                out.push_str(c);
+                                if !c.ends_with('\n') {
+                                    out.push('\n');
+                                }
+                                continue;
+                            }
+                            // `Key#<n>`: the n-th run of a directive the unit
+                            // repeats after something else (another key or a
+                            // comment). TOML forbids a duplicate key; systemd
+                            // keeps the order, so the run is its own entry.
+                            let k = directive_name(k);
+                            existing_keys.insert(k, v);
                             match v {
                                 toml::Value::String(s) => {
                                     let s = resolve_port_placeholders(k, s, ports);
@@ -950,23 +980,98 @@ pub fn drift_register(ssot_toml: &str) -> Result<Vec<String>, UnitGenError> {
         .unwrap_or_default())
 }
 
+fn is_unit_name(name: &str) -> bool {
+    UNIT_SUFFIXES.iter().any(|sfx| name.ends_with(sfx))
+}
+
+/// Top-level units plus their drop-ins (`<unit>.d/<name>.conf`): a drop-in
+/// changes what boots exactly as much as the unit it extends, so leaving it out
+/// of the inventory would let one be hand-authored outside the projection.
 fn shipped_units(unit_dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
     if let Ok(entries) = fs::read_dir(unit_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if path.is_file() {
+                if is_unit_name(name) {
+                    out.push(name.to_string());
+                }
                 continue;
             }
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if UNIT_SUFFIXES.iter().any(|sfx| name.ends_with(sfx)) {
-                    out.push(name.to_string());
+            let Some(unit) = name.strip_suffix(".d") else {
+                continue;
+            };
+            if !path.is_dir() || !is_unit_name(unit) {
+                continue;
+            }
+            if let Ok(dropins) = fs::read_dir(&path) {
+                for d in dropins.flatten() {
+                    let dp = d.path();
+                    if let Some(conf) = dp.file_name().and_then(|n| n.to_str()) {
+                        if dp.is_file() && conf.ends_with(".conf") {
+                            out.push(format!("{name}/{conf}"));
+                        }
+                    }
                 }
             }
         }
     }
     out.sort();
     out
+}
+
+/// A `[unit_projection]` ceiling (`max_drift`, `max_undeclared`, ...), when set.
+pub fn projection_ceiling(ssot_toml: &str, key: &str) -> Result<Option<usize>, UnitGenError> {
+    let root: toml::Value = toml::from_str(ssot_toml)?;
+    Ok(root
+        .get("unit_projection")
+        .and_then(|t| t.get(key))
+        .and_then(toml::Value::as_integer)
+        .and_then(|n| usize::try_from(n).ok()))
+}
+
+/// Write every declared unit the drift register does not exempt, so the tree
+/// IS the projection rather than a copy someone keeps in step by hand. Returns
+/// the paths whose content changed. A registered (drifting) unit is left alone:
+/// its declaration is the stale side, and the file on disk is what boots.
+pub fn write_projection(root: &Path, user: bool) -> Result<Vec<String>, UnitGenError> {
+    let ssot = fs::read_to_string(root.join("usr/share/mios/mios.toml"))?;
+    let rendered = if user {
+        render_user_units(&ssot)?
+    } else {
+        render_units(&ssot)?
+    };
+    let register = if user { Vec::new() } else { drift_register(&ssot)? };
+    let unit_dir = root.join(if user {
+        "usr/lib/systemd/user"
+    } else {
+        "usr/lib/systemd/system"
+    });
+    let mut changed = Vec::new();
+    for (name, body) in &rendered {
+        if register.contains(name) || name.contains("..") || name.starts_with('/') {
+            continue;
+        }
+        let path = unit_dir.join(name);
+        let mut body = body.clone();
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        if fs::read_to_string(&path).is_ok_and(|cur| cur == body) {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = path.with_extension("mios-unit-gen.tmp");
+        fs::write(&tmp, &body)?;
+        fs::rename(&tmp, &path)?;
+        changed.push(name.clone());
+    }
+    Ok(changed)
 }
 
 /// Render `[units.*]` from the SSOT at `root` and compare it to the shipped tree.
