@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Real-binary controls for the Hypr3D room table (spec P1, C-14a/b): mios-inputd replay, resolve-action and check over the SSOT [keybindings.global.controller.room]; the candidate passes, the installed (pre-P1) binary is the negative control.
-# AI-related: tools/native/mios-inputd/src/router.rs, tools/native/mios-inputd/src/config.rs, usr/share/mios/mios.toml [keybindings.global.controller.room], docs/design/mios-global-bindings-tests.md C-14a/b
+# AI-related: tools/native/mios-inputd/src/router.rs, tools/native/mios-inputd/src/config.rs, usr/share/mios/mios.toml, docs/design/mios-global-bindings-tests.md
 # AI-functions: RoomTable
 # MIOS_INPUTD_BIN = the candidate (default: the installed binary); MIOS_INPUTD_OLD = a pre-P1 binary for the negative
 # controls (skipped when unset). Runs against a private copy of the SSOT; no device, no compositor.

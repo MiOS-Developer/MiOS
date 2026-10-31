@@ -33,3 +33,12 @@ Computes cursor coordinate transformation and boundary crossing between monitors
         - Returns transformed target head and target (x, y) coordinates.
 
 <!-- mios-src:4e3aaffe24be from usr/libexec/mios/display/multimonitor_sync.py:191-198 -->
+### Builds Looking Glass client launch command argument list....
+
+Builds Looking Glass client launch command argument list.
+
+        resolve_fallback=True is for an immediate launch on this host: it applies
+        the /dev/shm fallback when /dev/kvmfr0 is missing. Leave it False when
+        the arguments are stored (scripts, rules) for a later boot.
+
+<!-- mios-src:daa1ab6794de from usr/libexec/mios/display/looking_glass.py:274-279 -->

@@ -249,3 +249,20 @@ the reader reads through -- no reliance on umask/world bits. Only populated when
 [frontier].stream_to_reasoning is on; empty otherwise (OFF-by-default preserved).
 
 <!-- mios-src:77da582bd347 from usr/lib/tmpfiles.d/mios.conf:88-97 -->
+### Looking Glass IVSHMEM framebuffer
+
+Looking Glass IVSHMEM framebuffer: libvirt <shmem name="looking-glass"> (usr/libexec/mios/Xbox-Final-NoAutoSelect.xml),
+mios.toml [vm.looking_glass] shm_path. QEMU runs as svirt_t and may only map it as svirt_tmpfs_t:
+the fcontext comes from automation/38-selinux.sh (build) and setup-looking-glass.py --ensure-selinux
+(mios-vfio-setup.service); `f` creates it with that default label and `z` restores the label and
+mode on a file that already existed with plain tmpfs_t (QEMU then fails with EACCES).
+
+<!-- mios-src:752f479ad80b from usr/lib/tmpfiles.d/50-mios.conf:211-215 -->
+
+### swtpm_setup (run as libvirt's swtpm_user tss) writes the...
+
+swtpm_setup (run as libvirt's swtpm_user tss) writes the local CA here for every NEW vTPM; swtpm-tools ships it
+tss:root 0750. Forcing root:root 0755 made swtpm_setup fail "Need read/write rights on statedir ... for user tss"
+for any newly created vTPM domain (MiOS-Xbox debug VM, 2026-10-23). Existing TPM state is not touched.
+
+<!-- mios-src:1c4d3dfa9acf from usr/lib/tmpfiles.d/50-mios.conf:257-259 -->

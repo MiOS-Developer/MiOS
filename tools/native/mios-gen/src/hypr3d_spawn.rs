@@ -5,7 +5,7 @@
 // output from `hyprctl -j monitors` (mode, scale, transform, reserved bars) and its [desktop.mobile] verdict
 // ($XDG_RUNTIME_DIR/mios-mobile-outputs.json, else display_scale::compute). Mirrors Hypr3D's kFovDeg (65) and
 // LOGICAL_PX_PER_UNIT (100); hypr3d-mios-retina-spawn.patch static_asserts both. CLI: mios-gen hyprland-3d-spawn.
-// AI-related: usr/share/mios/mios.toml [desktop.hyprland.hypr3d.spawn], usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch, usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch (rotated outputs: the room upright, so the same numbers hold), tools/native/mios-gen/src/render.rs (toggle_3d), tools/native/mios-gen/src/display_scale.rs, tests/test-hypr3d-retina-spawn.py
+// AI-related: usr/share/mios/mios.toml, usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch, usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch, tools/native/mios-gen/src/render.rs, tools/native/mios-gen/src/display_scale.rs, tests/test-hypr3d-retina-spawn.py
 //! Hypr3D Retina window opening.
 //!
 //! For a camera-facing window in the room, M (on-screen size / 2D size) = window_scale x d1 / distance, where

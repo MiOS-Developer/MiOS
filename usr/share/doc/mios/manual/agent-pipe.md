@@ -1797,3 +1797,77 @@ Verifies:
 7. Server integration: is_inference_throttled and _signal_inference_throttling.
 
 <!-- mios-src:bc539b73dcc4 from usr/lib/mios/agent-pipe/test_mios_psi.py:5-15 -->
+### MiOS 4-Tier Sandbox Execution Ladder & Tetragon eBPF...
+
+MiOS 4-Tier Sandbox Execution Ladder & Tetragon eBPF Enforcement Engine.
+
+Milestone M4 (WS-SEC):
+1. Tier 1: Bubblewrap (bwrap <1ms) with --ro-bind / /, --unshare-all, --cap-drop ALL, seccomp filter on fd 9.
+2. Tier 2: Rootless OCI (crun ~15ms) with CDI (/etc/cdi/nvidia.json) allocating GPU without --privileged.
+3. Tier 3: gVisor (runsc ~40ms) user-space kernel Sentry/Gofer sandboxed syscall virtualization.
+4. Tier 4: MicroVMs (libkrun ~150ms) with /dev/kvm hardware acceleration and virtio-net namespace isolation.
+
+Tetragon eBPF Enforcement Plane:
+- Out-of-process Cilium Tetragon eBPF syscall probe attaching kprobe to sys_enter_connect.
+- Enforces network egress isolation with in-kernel SIGKILL and <65ms quarantine SLA.
+- Enforces Architectural Law 5 (UNIFIED-AI-REDIRECTS) with Ed25519-signed Merkle-tree cryptographic audit logging in audit_chain.py.
+
+<!-- mios-src:7e4da2f0c562 from usr/lib/mios/agent-pipe/mios_isolation.py:4-16 -->
+
+### Selects the appropriate sandbox tier based on progressive...
+
+Selects the appropriate sandbox tier based on progressive risk or taint level.
+
+    Progression ladder:
+      - 0, 'none', 'untainted', 'clean': Tier 1: Bubblewrap (<1ms)
+      - 1, 'low', 'cdi', 'gpu': Tier 2: Rootless Podman/crun (~15ms with CDI)
+      - 2, 'medium', 'tainted', 'gvisor': Tier 3: gVisor runsc (~40ms)
+      - 3+, 'high', 'critical', 'microvm': Tier 4: libkrun MicroVM (~150ms)
+
+<!-- mios-src:46cb25d1451c from usr/lib/mios/agent-pipe/mios_isolation.py:130-137 -->
+
+### Resolves the effective sandbox tier based on taint state...
+
+Resolves the effective sandbox tier based on taint state and hardware availability.
+
+        Implements task_170 ISOL-01 & M4 WS-SEC:
+        - Untainted execution remains in requested tier without event.
+        - Tainted high-risk execution promotes progressively:
+          - High-risk execution verbs (shell, codegen, compile) promote to Tier 4 (MicroVM).
+          - Moderate taint verbs promote to Tier 3 (gVisor runsc).
+          - Explicit taint_level scales progressively across Tiers 1-4.
+        - Emits a 'firewall_promote' event on promotion.
+        - Degrades CLOSED to 'firewall_block' if promoted tier requires /dev/kvm and it is absent.
+
+<!-- mios-src:c47bc44c5eab from usr/lib/mios/agent-pipe/mios_isolation.py:187-197 -->
+
+### Out-of-Process Tetragon Quarantine Monitor & Law 5 Audit...
+
+-----------------------------------------------------------------------------
+Out-of-Process Tetragon Quarantine Monitor & Law 5 Audit Bridge
+-----------------------------------------------------------------------------
+
+<!-- mios-src:26de3590efcb from usr/lib/mios/agent-pipe/mios_isolation.py:653-655 -->
+
+### Intercepts socket connect attempt and enforces in-kernel...
+
+Intercepts socket connect attempt and enforces in-kernel SIGKILL & quarantine on unauthorized egress.
+
+        SLA requirements:
+        - In-kernel Sigkill latency <= 2.0ms.
+        - Container isolation & quarantine SLA < 65.0ms.
+        - Cryptographic Ed25519 Merkle-tree audit logging enforcing Law 5.
+
+<!-- mios-src:cf39cb5835a9 from usr/lib/mios/agent-pipe/mios_isolation.py:730-736 -->
+
+### Sequential AST use-before-def boundary verification....
+
+Sequential AST use-before-def boundary verification.
+
+    Simulates module-level sequential execution order to detect when module-level
+    functions, variables, or imports are used before they are defined (catching the
+    4c7bcfa7 symbol relocation and import ordering defect class).
+
+    Returns a list of tuples: (symbol_name, line_number, filename).
+
+<!-- mios-src:91f2e09fcc51 from usr/lib/mios/agent-pipe/test_server_import.py:252-259 -->

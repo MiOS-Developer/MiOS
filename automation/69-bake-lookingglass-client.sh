@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=bake-only
 # AI-hint: Builds the Looking Glass client from upstream gnif/LookingGlass and installs it to /usr/bin/looking-glass-client. mios.toml [build.bake_refs].lookingglass = "latest" means the tip of the upstream default branch (the IDD era: the Windows guest runs the Looking Glass IDD of the same commit); the resolved commit is only logged and recorded as build output in /usr/share/mios/looking-glass/build.json, never written back to the SSOT.
-# AI-related: usr/libexec/mios/vfio/setup-looking-glass.py (--write-client-ini; --provision-guest installs the IDD of the recorded commit in the MiOS-Xbox guest), usr/share/mios/windows/mios-looking-glass-idd.ps1, usr/share/mios/mios.toml [build.bake_refs] [vm.looking_glass] [packages.looking-glass-build]
+# AI-related: usr/libexec/mios/vfio/setup-looking-glass.py (--write-client-ini; --provision-guest installs the IDD of the recorded commit in the MiOS-Xbox guest), usr/share/mios/windows/mios-looking-glass-idd.ps1, usr/share/mios/mios.toml
 set -euo pipefail
 # shellcheck source=/dev/null
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done

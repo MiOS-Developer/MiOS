@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Real tmux binary test of the tmux:menu route and the U1 mouse feature in a private server with two pty clients: the controller's client-exact route (send-keys -c <client> -K, key words from the generated @mios-menu-keys) opens the MiOS menu on exactly that client and acts; the bare `mios-menu` alias cannot be aimed (negative control: the tmux-os verify defect); `linux:mouse` makes tmux enable mouse reporting on a TERM=linux client and, through the generator, on a vt220 client; main's generated conf is the negative control.
-# AI-related: tools/native/mios-unit-gen/src/tmux_os.rs (render_tmux_keys), usr/share/mios/tmux/mios-keys.tmux.conf, usr/share/mios/mios.toml [keybindings.tmux], docs/design/mios-global-bindings-final.md 3.3, usr/share/doc/mios/keybinds.md
+# AI-related: tools/native/mios-unit-gen/src/tmux_os.rs, usr/share/mios/tmux/mios-keys.tmux.conf, usr/share/mios/mios.toml, docs/design/mios-global-bindings-final.md, usr/share/doc/mios/keybinds.md
 # MIOS_TMUX_CONF overrides the conf under test (default: the worktree's generated mios-keys.tmux.conf); MIOS_TMUX_CONF_OLD
 # the negative control (default: the conf at git main); MIOS_UNIT_GEN a candidate mios-unit-gen for the mouse_terms
 # mechanism check. Never touches the operator's tmux servers (private -L sockets under a 0700 scratch TMUX_TMPDIR,

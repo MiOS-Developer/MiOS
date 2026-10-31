@@ -194,3 +194,13 @@ multi-turn reasoning and domain-specific Q&A pairs for `mios-opencode` fine-tuni
 enforces secret/token redaction (Rule 14), and emits JSONL datasets to `/var/lib/mios/ai/dataset/`.
 
 <!-- mios-src:27a8e4e1bc88 from usr/libexec/mios/ai/synthetic_qa.py:4-11 -->
+### Ed25519 signer bound to ONE persisted node key...
+
+Ed25519 signer bound to ONE persisted node key (``key_path``, raw 32-byte seed, 0600).
+
+    The key is generated on first sign and must be persisted before it is used:
+    a key that is not on disk can never be re-verified by a later run, so a
+    block signed with it would silently break the chain. ``mock`` is a test seam
+    only; it is honoured solely when the caller passes ``mock=True``.
+
+<!-- mios-src:1b6b1ee6096e from usr/libexec/mios/ai/audit_chain.py:48-54 -->

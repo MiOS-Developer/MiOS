@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=bake-only
 # AI-hint: Builds wayvnc + neatvnc + aml from the latest upstream default-branch HEADs (no pins; the resolved commits are recorded in build output /usr/libexec/mios/wayvnc/build.json) and installs a self-contained wayvnc (neatvnc/aml linked statically) to /usr/libexec/mios/wayvnc/wayvnc. The RDP bridge prefers it over Fedora's /usr/bin/wayvnc: the Fedora-packaged release exits on any cursor-capture failure ("Fatal error while capturing", main.c:1591), which Hyprland 0.56 produces when the pointer is on a scaled output; upstream keeps running without the cursor image.
-# AI-related: /usr/libexec/mios/mios-rdp-rfb-bridge, /usr/libexec/mios/mios-rdp, /usr/share/mios/mios.toml [remote.rdp].wayvnc_binary [packages.wayvnc-build]
+# AI-related: /usr/libexec/mios/mios-rdp-rfb-bridge, /usr/libexec/mios/mios-rdp, /usr/share/mios/mios.toml
 set -euo pipefail
 # shellcheck source=/dev/null
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done

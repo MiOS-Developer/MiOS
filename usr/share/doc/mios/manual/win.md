@@ -66,3 +66,16 @@ color schemes extracted from mios.toml [colors].
 Preserves existing user profiles, custom keybindings, and global terminal preferences.
 
 <!-- mios-src:31d37bab18ca from usr/libexec/mios/win/wt_profile_inject.py:5-13 -->
+### MiOS Windows 11 Unattended Answer File (autounattend.xml)...
+
+MiOS Windows 11 Unattended Answer File (autounattend.xml) Generator.
+
+Synthesizes complete, schema-compliant autounattend.xml answer files for Windows 11:
+- windowsPE: TPM 2.0, SecureBoot, RAM & CPU hardware check bypasses, display settings.
+- offlineServicing: Driver search path injection for Wi-Fi and storage controllers.
+- specialize: Telemetry disabling, OEM branding, Developer Mode, and Long Paths enablement.
+- oobeSystem: local accounts + persistent AutoLogon resolved from the LAYERED SSOT
+  (usr/lib/mios/mios_credentials.py -- fails closed, no literal account/password),
+  OOBE screen bypass, and FirstLogonCommands for WSL2/Hyper-V platform initialization.
+
+<!-- mios-src:857643408b79 from usr/libexec/mios/win/unattend_gen.py:5-15 -->

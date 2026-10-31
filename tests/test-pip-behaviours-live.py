@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of PiP behaviours in an owned nested MiOS PiP session with stand-in clients: automatic Spotify/Discord/browser PiP adoption, collision packing on both rails, minimum/launch/maximum size magnets, native stay-on-top (pinned layer, lost-pin repair, no z-order churn) and the fullscreen/maximize/Theatre matrix. Runs the OLD daemon+SSOT first (negative controls), then the candidate.
-# AI-related: tools/native/mios-pip-gravity/src/{main.rs,gravity.rs,matrix.rs,window.rs}, usr/share/mios/mios.toml [desktop.pip_gravity], usr/share/doc/mios/desktop-pip.md, tests/test-pip-gravity-drawer-live.py
+# AI-related: tools/native/mios-pip-gravity/src/main.rs, tools/native/mios-pip-gravity/src/gravity.rs, tools/native/mios-pip-gravity/src/matrix.rs, tools/native/mios-pip-gravity/src/window.rs, usr/share/mios/mios.toml, usr/share/doc/mios/desktop-pip.md, tests/test-pip-gravity-drawer-live.py
 # AI-functions: Nest, run_label, main
 #
 # Usage (inside a MiOS desktop session; the primary compositor is only read, never dispatched to):

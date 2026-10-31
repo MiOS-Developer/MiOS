@@ -37,7 +37,7 @@ controller reach every action without a mouse. Ctrl+B, then E opens the Apps
 and TUIs launcher ([[terminal.tuis]]: installed programs only, and only those
 that work on the console when you are on one). Ctrl+B, then Enter accepts an
 agent prompt without extended keys. Ctrl+B, then ? lists every key. The full
-table is in [keybinds.md](../keybinds.md#mios-tmux-tier-3-terminal-context).
+table is in [keybinds.md](../keybinds.md#41-mios-tmux-tier-3-terminal-context).
 
 Ctrl+B, then G selects the existing **MiOS Agents** monitor pane in an AI
 workspace, without creating another tab. Its compact view uses short agent
