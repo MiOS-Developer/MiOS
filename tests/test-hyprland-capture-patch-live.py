@@ -167,6 +167,7 @@ def main():
     ap.add_argument("--logdir", default=tempfile.mkdtemp(prefix="capguard-"))
     a = ap.parse_args()
     n = Nest(session(a.seat))
+    os.makedirs(a.logdir, exist_ok=True)
     qml = os.path.join(a.logdir, "harness.qml")
     with open(qml, "w") as f:
         f.write(HARNESS)
