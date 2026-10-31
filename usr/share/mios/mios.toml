@@ -19124,6 +19124,44 @@ match = [
   { class = "^(chromium-browser|Chromium-browser|chromium)$", sibling_class = "(?i)^(spotify|com\\.spotify\\.client)$" },
 ]
 
+# The dock: the localhost/sessions half of the HUD (apps, windows, sessions, VMs and moving windows between them);
+# the topbar is the other half (inbound, external, notifications, systems). usr/share/doc/mios/guides/hud.md.
+# Read live by usr/share/mios/quickshell/DockConfig.qml (mios-toml-get --section desktop.dock) and tools/native/mios-gen/src/dock.rs.
+[desktop.dock]
+expand_height_fraction = 0.62     # the expanded dock grows UPWARD from its bar to this fraction of the output height...
+expand_min_height_px = 260        # ...never below this...
+expand_max_height_px = 760        # ...nor above this, and never past the top bar: it never takes the whole display
+expand_min_width_px = 0           # the expanded dock keeps the bar's width; a floor for a dock with very few apps (0 = the bar's width exactly)
+expand_ms = 220                   # expand / collapse animation
+label_lines = 2                   # app names wrap to this many lines...
+label_min_font_px = 9             # ...and shrink down to this size before anything is cut; the tooltip shows the full name
+tooltip_delay_ms = 450            # hover or controller/keyboard focus this long shows the full app name
+
+[desktop.dock.previews]
+enabled = true                    # previews of the session's windows (open and minimized) in the expanded dock and the hover popup
+include = "all"                   # all | minimized
+height_px = 96                    # preview strip height in the expanded dock
+live = true                       # live frames; false = one frame each time the dock opens (cheaper)
+max = 16                          # previews shown at most
+
+[desktop.dock.osk]
+enabled = true                    # the Phosh on-screen keyboard (stevia) nested at the bottom of the expanded dock, behind a toggle
+show = "expanded+touch"           # default of the toggle per output until the user flips it (remembered per output in $XDG_STATE_HOME/mios/dock-state.json): expanded | touch | expanded+touch
+height_px = 220                   # keyboard height inside the dock
+command = ["/usr/bin/phosh-osk-stevia", "--replace"]   # run through `mios-gen dock osk`, which places its layer surface inside the dock
+layer = "overlay"                 # the dock's layer
+namespace = "mios-dock"           # the dock's layer namespace: the dock's glass and yield rules apply to the keyboard too
+
+[desktop.dock.targets]
+enabled = true                    # the window-portability targets row (mios-gen dock targets)
+poll_ms = 3000                    # refresh while the dock is expanded
+local_label = "This desktop"
+verify_ms = 2000                  # a live move (to an output) must be visible in Hyprland within this long
+close_timeout_ms = 5000           # migrate: wait this long for the source app to exit (it saves its state) before relaunching
+relaunch_timeout_ms = 15000       # migrate: the app must map in the target session within this long, else the move is reported failed
+stateless_apps = []               # window classes that migrate by relaunch even though they are not containerized (Flatpak / podman apps always do)
+waypipe_hosts = []                # remote hosts offered as waypipe targets (only when waypipe is installed)
+
 # AI-hint: Nested MiOS desktop sessions (mios-gen nested-session): own compositor, runtime, HUD, Tmux-OS namespace and input
 # namespace, launched as a parent PiP/window, a whole attached output (second local user), the parent's remote display
 # output (served by the existing RDP/VNC path) or a Hypr3D room window; seat/user identity and assigned input devices.

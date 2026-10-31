@@ -3628,6 +3628,29 @@
         <label>Wobble glass pane alpha while bending (1 keeps full-strength glass; 0.4 hides the rigid pane) <input data-key="desktop.hyprland.mios-wobbly.config.pane_fade" data-type="float" type="number" min="0.05" max="1" step="0.05"></label>
         <label>Magic lamp restores a tiled window into its exact recorded split layout (structure and ratios) <input type="text" data-key="desktop.hyprland.lamp.restore_tree" data-type="bool"></label>
         <label>Dock height (pixels) <input data-key="theme.shell.dock_height_px" data-type="int" type="number" min="1"></label>
+        <p>The expanded dock grows upward out of the dock bar at the bar's width; it never takes the whole display.</p>
+        <label>Expanded dock height (output fraction) <input data-key="desktop.dock.expand_height_fraction" data-type="float" type="number" min="0.1" max="1" step="0.01"></label>
+        <label>Expanded dock minimum height (pixels) <input data-key="desktop.dock.expand_min_height_px" data-type="int" type="number" min="0"></label>
+        <label>Expanded dock maximum height (pixels) <input data-key="desktop.dock.expand_max_height_px" data-type="int" type="number" min="0"></label>
+        <label>Expanded dock minimum width (pixels; 0 = the bar's width) <input data-key="desktop.dock.expand_min_width_px" data-type="int" type="number" min="0"></label>
+        <label>Dock expand animation (ms) <input data-key="desktop.dock.expand_ms" data-type="int" type="number" min="0" max="2000"></label>
+        <label>App name lines <input data-key="desktop.dock.label_lines" data-type="int" type="number" min="1" max="4"></label>
+        <label>App name smallest font (pixels) <input data-key="desktop.dock.label_min_font_px" data-type="int" type="number" min="1" max="32"></label>
+        <label>Full app name tooltip delay (ms) <input data-key="desktop.dock.tooltip_delay_ms" data-type="int" type="number" min="0"></label>
+        <label>Window previews in the dock <input type="text" data-key="desktop.dock.previews.enabled" data-type="bool"></label>
+        <label>Window previews show <select data-key="desktop.dock.previews.include"><option>all</option><option>minimized</option></select></label>
+        <label>Window preview height (pixels) <input data-key="desktop.dock.previews.height_px" data-type="int" type="number" min="32"></label>
+        <label>Live window previews (off: last frame) <input type="text" data-key="desktop.dock.previews.live" data-type="bool"></label>
+        <label>Window previews at most <input data-key="desktop.dock.previews.max" data-type="int" type="number" min="1"></label>
+        <label>On-screen keyboard in the expanded dock <input type="text" data-key="desktop.dock.osk.enabled" data-type="bool"></label>
+        <label>On-screen keyboard default <select data-key="desktop.dock.osk.show"><option>expanded+touch</option><option>expanded</option><option>touch</option></select></label>
+        <label>On-screen keyboard height (pixels) <input data-key="desktop.dock.osk.height_px" data-type="int" type="number" min="80"></label>
+        <label>Window move targets in the dock <input type="text" data-key="desktop.dock.targets.enabled" data-type="bool"></label>
+        <label>Move targets refresh (ms) <input data-key="desktop.dock.targets.poll_ms" data-type="int" type="number" min="500"></label>
+        <label>This desktop's label <input type="text" data-key="desktop.dock.targets.local_label"></label>
+        <label>Live move verification (ms) <input data-key="desktop.dock.targets.verify_ms" data-type="int" type="number" min="100"></label>
+        <label>Migrate: wait for the app to close (ms) <input data-key="desktop.dock.targets.close_timeout_ms" data-type="int" type="number" min="0"></label>
+        <label>Migrate: wait for the app in the target (ms) <input data-key="desktop.dock.targets.relaunch_timeout_ms" data-type="int" type="number" min="1000"></label>
         <p>The dock stays visible and hides only for fullscreen applications, where the bottom edge reveals it as an overlay above the window (optional auto-hide keeps it hidden until the pointer touches the bottom edge everywhere). The app drawer grows out of the dock and shrinks back into it.</p>
         <label>Dock reveals over fullscreen windows (bottom-edge hot zone) <input type="text" data-key="theme.shell.dock_fullscreen_reveal" data-type="bool"></label>
         <label>Auto-hide dock <input type="text" data-key="theme.shell.dock_autohide" data-type="bool"></label>
