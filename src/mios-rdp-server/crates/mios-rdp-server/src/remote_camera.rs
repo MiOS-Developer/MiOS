@@ -876,7 +876,7 @@ fn pipeline_args(media: MediaType, name: &str, display_name: &str) -> Vec<String
 // client may encode a larger camera frame than the negotiated media type.
 fn output_caps(media: MediaType) -> String {
     format!(
-        "video/x-raw,format=NV12,width={},height={}",
+        "video/x-raw,format=BGRA,width={},height={}",
         media.width, media.height
     )
 }
@@ -952,7 +952,7 @@ mod tests {
         let media = MediaType::new(MediaFormat::H264, 720, 1280, 30, 1, 1, 1, 1).unwrap();
         assert_eq!(
             output_caps(media),
-            "video/x-raw,format=NV12,width=720,height=1280"
+            "video/x-raw,format=BGRA,width=720,height=1280"
         );
         let raw = MediaType::new(MediaFormat::I420, 720, 1280, 30, 1, 1, 1, 0).unwrap();
         assert!(!output_caps(raw).contains(';'));
@@ -1393,7 +1393,7 @@ mod tests {
         let graph = Command::new("pw-dump").args(["-N",node["name"].as_str().unwrap()]).output().unwrap();
         assert!(graph.status.success());
         let graph: serde_json::Value = serde_json::from_slice(&graph.stdout).unwrap();
-        assert!(graph.as_array().unwrap().iter().any(|n| n["info"]["props"]["node.name"] == node["name"] && n["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["format"] == "NV12"))), "Camera must advertise an OBS-compatible native NV12 format");
+        assert!(graph.as_array().unwrap().iter().any(|n| n["info"]["props"]["node.name"] == node["name"] && n["info"]["params"]["EnumFormat"].as_array().is_some_and(|formats| formats.iter().any(|f| f["mediaType"] == "video" && f["format"] == "BGRA"))), "Camera must advertise the packed BGRA format used by OBS's safe single-plane path");
         assert!(!output.exists());
         let mut consumer = Command::new("gst-launch-1.0")
             .args([
@@ -1497,6 +1497,25 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        let mut obs_verified = false;
+        if let Some(script) = std::env::var_os("MIOS_RDP_CAMERA_OBS_FIXTURE") {
+            let (w,h) = dimensions();
+            let mut obs = Command::new("python3").arg(script).args(["--consume",node["name"].as_str().unwrap(),"--format","BGRA","--width",&w.to_string(),"--height",&h.to_string()]).spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                wire.pump();
+                if let Some(status) = obs.try_wait().unwrap() {
+                    assert!(status.success(),"Installed OBS camera consumer failed: {status}");
+                    obs_verified = true;
+                    break;
+                }
+                if Instant::now() > deadline {
+                    let _ = obs.kill();let _ = obs.wait();
+                    panic!("Installed OBS camera consumer timed out");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
         let hot_remove = std::env::var("MIOS_RDP_CAMERA_TEST_REMOVE").as_deref() == Ok("1");
         if hot_remove {
             let messages = wire
@@ -1554,7 +1573,7 @@ mod tests {
         }
         println!(
             "MIOS_CAMERA_NATIVE_PROOF {}",
-            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"advertised_video_format":true,"native_format":"NV12","consumer_dimensions_forced":false,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
+            json!({"frames":12,"bytes":bytes.len(),"luma_means":means,"source":node,"output":output,"advertised_video_format":true,"native_format":"BGRA","installed_obs_consumer":obs_verified,"consumer_dimensions_forced":false,"permission_controls":true,"consumer_idle_deactivates":true,"consumer_reopen_resumes":true,"hot_remove":hot_remove,"enumeration_close":enumeration_close,"disconnect_cleanup":true})
         );
     }
     fn jpeg_frames() -> Vec<Vec<u8>> {
