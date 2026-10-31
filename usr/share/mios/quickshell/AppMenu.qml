@@ -83,7 +83,9 @@ QS.PanelWindow {
         for (const k in tabs) {
             const t = tabs[k]
             const r = { left: t.x - m.x, right: t.x + t.w - m.x, top: t.y - m.y }
-            if (r.top >= theme.edgeMargin + theme.topHeight || r.top + t.h <= 0 || r.right <= 0 || r.left >= m.width) continue
+            if (r.top >= Glass.gap + Glass.bar || r.top + t.h <= 0 || r.right <= 0 || r.left >= m.width) continue
+            // the tab's body (its fillets flare out at the window edge below the row): the pill keeps one gap from it
+            r.body = r.right - Glass.tabFillet(Glass.bar, Glass.rounding)
             out.push(r)
         }
         return out.sort((a, b) => a.left - b.left)
@@ -91,16 +93,16 @@ QS.PanelWindow {
     // The row starts at the left margin and steps right past every raised tab that would sit under it;
     // tabs further right leave the row alone.
     readonly property real rowLeft: {
-        let left = theme.edgeMargin
+        let left = Glass.gap
         for (const r of tabRects) {
             if (r.left > left + pills.implicitWidth) break
-            if (r.right >= left) left = Math.ceil(r.right + theme.edgeMargin / 2)
+            if (r.body + Glass.gap > left) left = Math.ceil(r.body + Glass.gap)   // design language: one gap between groups
         }
         return left
     }
     // rowLeft animated with the tab (hyprbars rises/melts on Hyprland's fadeIn: speed x 100 ms)
     property bool menuHovered: false
-    property real shownLeft: theme.edgeMargin
+    property real shownLeft: Glass.gap
     function updateRowPosition() {
         // Keep the target beneath the pointer while a tab appears/melts,
         // and keep an open dropdown attached to the pill that opened it.
@@ -128,7 +130,7 @@ QS.PanelWindow {
     WlrLayershell.layer: WlrLayer.Overlay
     anchors.top: true
     anchors.left: true
-    margins.top: theme.edgeMargin
+    margins.top: overFullscreen ? 0 : Glass.gap   // the island's row: flush over a fullscreen window (its inset tab)
     margins.left: shownLeft
     exclusiveZone: 0
     exclusionMode: QS.ExclusionMode.Ignore   // the true top edge, same row as the status island
@@ -136,25 +138,23 @@ QS.PanelWindow {
     visible: appName !== "" && bar.app_menu !== false && (typeof shellState.topbarShown !== "function" || shellState.topbarShown("app_menu")) && !(screen && Mobile.isMobile(screen.name)) && (!overFullscreen || reveal.topShown)
     // Never runs under the island: what does not fit before it is clipped.
     readonly property var island: ShellGeometry.islands[screen ? screen.name : ""] || null
-    readonly property real maxWidth: Math.max(1, island ? island.x - rowLeft - theme.edgeMargin : screen.width / 2 - rowLeft)
+    readonly property real maxWidth: Math.max(1, island ? island.x - rowLeft - Glass.gap : screen.width / 2 - rowLeft)
     implicitWidth: Math.max(1, Math.min(Math.ceil(pills.implicitWidth), Math.floor(maxWidth)))
-    implicitHeight: theme.topHeight
+    implicitHeight: Glass.bar
     color: "transparent"
 
-    component Pill: Rectangle {
+    component Pill: GlassSurface {
         id: pillBox
         property alias text: label.text
         property bool strong: false
         property bool active: false
         signal activated()
         signal hovered()
-        implicitWidth: label.implicitWidth + 2 * menus.theme.edgeMargin + 4
-        implicitHeight: menus.theme.topHeight
-        radius: Glass.cornerFor(height)
+        implicitWidth: label.implicitWidth + Glass.bar   // half a bar each side: the capsule ends (as the island)
+        implicitHeight: Glass.bar
         color: active ? menus.theme.withAlpha(menus.theme.accent, menus.theme.selectionOpacity)
              : hit.containsMouse && !strong ? menus.theme.withAlpha(menus.theme.accent, menus.theme.hoverOpacity)
              : Glass.fill
-        border.width: 0
         Text {
             id: label
             anchors.centerIn: parent
@@ -196,7 +196,7 @@ QS.PanelWindow {
         }
         Row {
             id: pills
-            spacing: menus.theme.edgeMargin / 2
+            spacing: Glass.gap
             HoverHandler {
                 onHoveredChanged: {
                     const h = hovered
@@ -255,14 +255,14 @@ QS.PanelWindow {
         open: menus.openMenuData !== null
         duration: menus.bar.popup_ms !== undefined ? menus.bar.popup_ms : 200
         hostScreenX: menus.margins.left
-        panelWidth: Math.max(180, menuColumn.widest + 2 * menus.theme.edgeMargin)
+        panelWidth: Math.max(180, menuColumn.widest + 2 * Glass.panelPad)
         panelHeight: Math.max(menuColumn.implicitHeight,
-                              menus.rows.reduce((h, r) => h + (r.item.separator_before ? 9 : 0) + (menus.theme.searchRowHeight - 12), 0)) + 2 * menus.theme.edgeMargin
+                              menus.rows.reduce((h, r) => h + (r.item.separator_before ? Glass.gap : 0) + Glass.bar, 0)) + 2 * Glass.panelPad
         Column {
             id: menuColumn
-            x: menus.theme.edgeMargin
-            y: menus.theme.edgeMargin
-            width: dropdown.panelWidth - 2 * menus.theme.edgeMargin
+            x: Glass.panelPad
+            y: Glass.panelPad
+            width: dropdown.panelWidth - 2 * Glass.panelPad
             readonly property real widest: {
                 let w = 0
                 for (let i = 0; i < children.length; i++) if (children[i].labelWidth) w = Math.max(w, children[i].labelWidth)
@@ -275,23 +275,22 @@ QS.PanelWindow {
                     required property var modelData
                     readonly property var it: modelData.item
                     readonly property bool hasSub: !!(it.submenu && it.submenu.length)
-                    readonly property real labelWidth: itemLabel.implicitWidth + modelData.depth * 14 + 2 * menus.theme.edgeMargin + (hasSub ? 24 : 0)
+                    readonly property real labelWidth: itemLabel.implicitWidth + modelData.depth * Glass.panelPad + 2 * Glass.gap + (hasSub ? Glass.bar : 0)
                     width: menuColumn.width
                     Item {
                         visible: !!rowBox.it.separator_before
                         width: parent.width
-                        height: visible ? 9 : 0
-                        Rectangle { anchors.centerIn: parent; width: parent.width - 16; height: 1; color: menus.theme.outlineColor }
+                        height: visible ? Glass.gap : 0
+                        Rectangle { anchors.centerIn: parent; width: parent.width - 2 * Glass.gap; height: Glass.hairline; color: menus.theme.outlineColor }
                     }
-                    Rectangle {
+                    GlassSurface {
                         width: parent.width
-                        height: menus.theme.searchRowHeight - 12
-                        radius: height / 2
+                        height: Glass.bar
                         color: itemHit.containsMouse && rowBox.it.enabled !== false
                                ? menus.theme.withAlpha(menus.theme.accent, menus.theme.hoverOpacity) : "transparent"
                         Text {
                             id: itemLabel
-                            x: menus.theme.edgeMargin + rowBox.modelData.depth * 14
+                            x: Glass.gap + rowBox.modelData.depth * Glass.panelPad
                             anchors.verticalCenter: parent.verticalCenter
                             text: rowBox.it.label
                             textFormat: Text.PlainText // app-supplied label: no rich-text injection
@@ -302,7 +301,7 @@ QS.PanelWindow {
                         Text {
                             visible: rowBox.hasSub
                             anchors.right: parent.right
-                            anchors.rightMargin: menus.theme.edgeMargin
+                            anchors.rightMargin: Glass.gap
                             anchors.verticalCenter: parent.verticalCenter
                             text: menus.expanded[rowBox.it.id] ? "\u{f0140}" : "\u{f0142}"
                             textFormat: Text.PlainText

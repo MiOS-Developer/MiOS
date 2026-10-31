@@ -1,5 +1,5 @@
 <!-- AI-hint: Per-window Picture-in-Picture on the MiOS desktop: any Hyprland window can be PiP-ified from the dock preview settings, reversibly, with the original geometry stored on the window itself; mios-pip-gravity owns the magnetic layout. -->
-<!-- AI-related: tools/native/mios-pip-gravity/src/{main.rs,window.rs,gravity.rs,matrix.rs}, tests/test-pip-behaviours-live.py, usr/share/mios/quickshell/DockPopup.qml, usr/share/mios/mios.toml [desktop.pip_gravity], usr/share/doc/mios/README.md -->
+<!-- AI-related: tools/native/mios-pip-gravity/src/main.rs, tools/native/mios-pip-gravity/src/window.rs, tools/native/mios-pip-gravity/src/gravity.rs, tools/native/mios-pip-gravity/src/matrix.rs, tests/test-pip-behaviours-live.py, usr/share/mios/quickshell/DockPopup.qml, usr/share/mios/mios.toml, usr/share/doc/mios/README.md -->
 
 # Desktop Picture-in-Picture (any window)
 

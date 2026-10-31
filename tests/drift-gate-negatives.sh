@@ -756,16 +756,28 @@ test_size_ceiling() {
 
 test_curl_retry() {
     log "Testing check_curl_retry"
-    local temp_script="${ROOT}/automation/temp_curl_test.sh"
-    cat << 'EOF' > "$temp_script"
-curl https://example.com/unretried_file.tar.gz -o /tmp/file.tar.gz
-EOF
-    chmod +x "$temp_script"
+    local target="${ROOT}/usr/libexec/mios/57-mios-sys-build.sh"
+    local bak; bak="$(mktemp)"; cp -p "$target" "$bak"
+    _curl_fail() { cp -p "$bak" "$target"; rm -f "$bak"; unset -f _curl_fail; die "$1"; }
 
-    MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_curl_retry >/dev/null 2>&1 && die "Check_curl_retry passed despite unretried curl fetch"
+    # Plant an unretried network fetch into a real tracked build script
+    printf '\ncurl https://example.com/unretried_probe.tar.gz -o /tmp/probe.tar.gz\n' >> "$target"
 
-    rm -f "$temp_script"
-    _neg_gate check_curl_retry || die "Check_curl_retry failed after restoration"
+    if _neg_gate check_curl_retry; then
+        _curl_fail "check_curl_retry passed despite unretried curl fetch in 57-mios-sys-build.sh"
+    fi
+
+    # Assert diagnostic in $_NEG_GATE_OUT specifically identifies the unretried fetch in 57-mios-sys-build.sh
+    if [[ "$_NEG_GATE_OUT" != *"57-mios-sys-build.sh"* ]] || [[ "$_NEG_GATE_OUT" != *"unretried network fetch"* ]]; then
+        _curl_fail "check_curl_retry failed without identifying unretried fetch in 57-mios-sys-build.sh: ${_NEG_GATE_OUT}"
+    fi
+
+    # Atomically restore the fixture
+    cp -p "$bak" "$target"
+    rm -f "$bak"; unset -f _curl_fail
+
+    # Assert _neg_gate check_curl_retry exits 0 on restored HEAD
+    _neg_gate check_curl_retry || die "check_curl_retry failed after restoration: ${_NEG_GATE_OUT}"
     log "Check_curl_retry negative test passed"
 }
 
@@ -785,51 +797,89 @@ test_resolver_ssot_refs() {
 
 test_nested_podman_caps() {
     log "Testing check_nested_podman_caps"
-    local doc_file="${ROOT}/usr/share/doc/mios/reference/nested-podman-caps.md"
-    local orig_val
-    orig_val="$(cat "$doc_file")"
-    rm -f "$doc_file"
+    local gha="${ROOT}/.github/workflows/mios-ci.yml"
+    local sys="${ROOT}/usr/libexec/mios/57-mios-sys-build.sh"
+    local doc="${ROOT}/usr/share/doc/mios/reference/nested-podman-caps.md"
 
-    if MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_nested_podman_caps >/dev/null 2>&1; then
-        rm -f "$doc_file"
-        echo "$orig_val" > "$doc_file"
-        die "Check_nested_podman_caps passed despite missing reference doc"
+    # Defect a: Missing --device /dev/fuse in .github/workflows/mios-ci.yml
+    local gha_bak; gha_bak="$(mktemp)"; cp -p "$gha" "$gha_bak"
+    _gha_fail() { cp -p "$gha_bak" "$gha"; rm -f "$gha_bak"; unset -f _gha_fail; die "$1"; }
+
+    sed -i 's|--device /dev/fuse||g' "$gha"
+    if _neg_gate check_nested_podman_caps; then
+        _gha_fail "check_nested_podman_caps passed with --device /dev/fuse stripped from mios-ci.yml"
     fi
+    if [[ "$_NEG_GATE_OUT" != *".github/workflows/mios-ci.yml is missing required nested podman flags"* ]]; then
+        _gha_fail "check_nested_podman_caps failed without identifying missing flags in mios-ci.yml: ${_NEG_GATE_OUT}"
+    fi
+    cp -p "$gha_bak" "$gha"
+    rm -f "$gha_bak"; unset -f _gha_fail
 
-    rm -f "$doc_file"
-    echo "$orig_val" > "$doc_file"
-    _neg_gate check_nested_podman_caps || die "Check_nested_podman_caps failed after restoration"
+    # Defect b: Missing build_image_with_retry in usr/libexec/mios/57-mios-sys-build.sh
+    local sys_bak; sys_bak="$(mktemp)"; cp -p "$sys" "$sys_bak"
+    _sys_fail() { cp -p "$sys_bak" "$sys"; rm -f "$sys_bak"; unset -f _sys_fail; die "$1"; }
+
+    sed -i 's|build_image_with_retry|dummy_unretried_build|g' "$sys"
+    if _neg_gate check_nested_podman_caps; then
+        _sys_fail "check_nested_podman_caps passed with build_image_with_retry stripped from 57-mios-sys-build.sh"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"57-mios-sys-build.sh is missing build_image_with_retry"* ]]; then
+        _sys_fail "check_nested_podman_caps failed without identifying missing build_image_with_retry: ${_NEG_GATE_OUT}"
+    fi
+    cp -p "$sys_bak" "$sys"
+    rm -f "$sys_bak"; unset -f _sys_fail
+
+    # Defect c: Missing reference doc usr/share/doc/mios/reference/nested-podman-caps.md
+    local doc_bak; doc_bak="$(mktemp)"; cp -p "$doc" "$doc_bak"
+    _doc_fail() { cp -p "$doc_bak" "$doc"; rm -f "$doc_bak"; unset -f _doc_fail; die "$1"; }
+
+    rm -f "$doc"
+    if _neg_gate check_nested_podman_caps; then
+        _doc_fail "check_nested_podman_caps passed with reference doc absent"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"missing reference doc: usr/share/doc/mios/reference/nested-podman-caps.md"* ]]; then
+        _doc_fail "check_nested_podman_caps failed without identifying missing reference doc: ${_NEG_GATE_OUT}"
+    fi
+    cp -p "$doc_bak" "$doc"
+    rm -f "$doc_bak"; unset -f _doc_fail
+
+    # Positive control: Assert _neg_gate check_nested_podman_caps exits 0 on restored HEAD
+    _neg_gate check_nested_podman_caps || die "check_nested_podman_caps failed after restoration: ${_NEG_GATE_OUT}"
     log "Check_nested_podman_caps negative test passed"
 }
 
 test_bake_budget() {
     log "Testing check_bake_budget"
     local sbom_tsv="${ROOT}/usr/share/mios/artifacts/sbom/bound-images.tsv"
-    local orig_val=""
-    if [[ -f "$sbom_tsv" ]]; then
-        orig_val="$(cat "$sbom_tsv")"
-        echo "$orig_val" > "$sbom_tsv"
-    else
-        mkdir -p "$(dirname "$sbom_tsv")"
+    local bak; bak="$(mktemp)"; cp -p "$sbom_tsv" "$bak"
+    _budget_fail() { unset -f set 2>/dev/null || true; cp -p "$bak" "$sbom_tsv"; rm -f "$bak"; unset -f _budget_fail; die "$1"; }
+
+    # Current Day-0 total in bound-images.tsv is ~34.0 GB against 40 GB budget.
+    # Inject valid 4-column TSV row (image, digest, group, size_gb) with numeric size exceeding budget:
+    # Adding a 10.0 GB image yields 44.0 GB > 40 GB runner_disk_budget_gb.
+    printf 'localhost/fake-oversize-layer:latest\tlocal\tsys\t10.0\n' >> "$sbom_tsv"
+
+    set() { if [[ "$*" == *"-euo pipefail"* ]]; then command set -uo pipefail; else command set "$@"; fi; }
+    export -f set
+
+    if _neg_gate check_bake_budget; then
+        unset -f set
+        _budget_fail "check_bake_budget passed despite exceeding runner_disk_budget_gb"
     fi
 
-    rm -f "$sbom_tsv"
-    {
-        echo "$orig_val"
-        for i in $(seq 1 35); do
-            echo "Image_${i}	quay.io/mios/fake_${i}:latest	1.0GB"
-        done
-    } > "$sbom_tsv"
+    unset -f set
 
-    if MIOS_THEME_ROOT="$ROOT" MIOS_TOML_ROOT="$ROOT" MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_bake_budget >/dev/null 2>&1; then
-        rm -f "$sbom_tsv"
-    echo "$orig_val" > "$sbom_tsv"
-        die "Check_bake_budget passed despite exceeding sidecar threshold"
+    # Assert diagnostic specifically contains 'exceeds SSOT budget' proving the disk budget logic failed
+    if [[ "$_NEG_GATE_OUT" != *"exceeds SSOT budget"* ]]; then
+        _budget_fail "check_bake_budget failed for reason other than budget overflow: ${_NEG_GATE_OUT}"
     fi
 
-    rm -f "$sbom_tsv"
-    echo "$orig_val" > "$sbom_tsv"
-    _neg_gate check_bake_budget || die "Check_bake_budget failed after restoration"
+    # Atomically restore bound-images.tsv
+    cp -p "$bak" "$sbom_tsv"
+    rm -f "$bak"; unset -f _budget_fail
+
+    # Assert _neg_gate check_bake_budget exits 0 on restored HEAD
+    _neg_gate check_bake_budget || die "check_bake_budget failed after restoration: ${_NEG_GATE_OUT}"
     log "Check_bake_budget negative test passed"
 }
 

@@ -7621,3 +7621,13 @@ WT writes JSONC; ConvertFrom-Json on PS5.1 chokes on it, so strip
 comments + trailing commas before parsing.
 
 <!-- mios-src:720d88370c85 from Get-MiOS.ps1:1758-1762 -->
+### 2. systemd up. Retried with backoff: Phase 3's wsl...
+
+2. systemd up. Retried with backoff: Phase 3's wsl --terminate
+restarts the distro right before this smoke check runs, so systemd
+is warming up. Without retry, `systemctl is-system-running` returns
+'offline' or 'starting' before pid1 has reached steady state.
+Acceptance Criterion: WHEN smoke 2/4 checks systemd THE SYSTEM SHALL only accept state running|degraded (not starting).
+SSOT: attempts + interval resolve through mios.toml [smoke_tests].
+
+<!-- mios-src:17dea9d9a959 from build-mios.ps1:4015-4020 -->

@@ -75,16 +75,15 @@ QS.Scope {
                      centerX: rect[0] - dockRoot.monX + rect[2] / 2, sourceKind: "phone", pinned: pinned})
     }
 
-    component PreviewAction: Rectangle {
+    component PreviewAction: GlassSurface {
         id: action
         property string label: ""
         signal triggered()
         width: parent.width
-        height: popups.theme.searchRowHeight - 8
-        radius: height / 2
-        color: actionHit.containsMouse ? popups.theme.withAlpha(popups.theme.accent, popups.theme.hoverOpacity) : Glass.fill
+        height: Glass.bar
+        color: actionHit.containsMouse ? popups.theme.withAlpha(popups.theme.accent, popups.theme.hoverOpacity) : "transparent"
         Text {
-            anchors.fill: parent; anchors.margins: popups.theme.edgeMargin
+            anchors.fill: parent; anchors.leftMargin: Glass.gap; anchors.rightMargin: Glass.gap
             text: action.label; textFormat: Text.PlainText; elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
             font.family: popups.theme.fontFamily; font.pixelSize: popups.theme.smallFontSize
@@ -94,9 +93,9 @@ QS.Scope {
     }
 
     readonly property real ui: screen ? Mobile.uiScale(screen.name) : 1
-    readonly property real screenW: screen ? screen.width : 1920
-    readonly property real screenH: screen ? screen.height : 1080
-    readonly property real dockTotalH: Math.round((theme.dockHeight + 2 * theme.edgeMargin) * ui)
+    readonly property real screenW: screen ? screen.width : 0
+    readonly property real screenH: screen ? screen.height : 0
+    readonly property real dockTotalH: Math.round((theme.dockHeight + 2 * Glass.gap) * ui)
 
     // ---- Live Window Preview state (long-highlight on dock icon with open/minimized windows) -----------------------
     property bool previewOpen: false
@@ -110,11 +109,12 @@ QS.Scope {
     property string previewSourceKind: "icon"
 
     readonly property int cardWidth: 236
-    readonly property int cardHeight: 172
-    readonly property int previewW: Math.max(cardWidth + 2 * theme.edgeMargin,
-        Math.min(Math.round(screenW / ui) - 2 * theme.edgeMargin,
-                 Math.max(1, previewWindows.length) * (cardWidth + theme.edgeMargin) + theme.edgeMargin))
-    readonly property int previewH: cardHeight + 36 + 2 * theme.edgeMargin + ((phonePreview || previewSettingsAddress !== "") ? previewSettingsColumn.implicitHeight + theme.edgeMargin : 0)
+    // a 16:10 live view under a control-tall title bar (design-exempt: aspect ratio, not a design token)
+    readonly property int cardHeight: Math.round(cardWidth * 10 / 16) + Glass.control + 2 * Glass.inset
+    readonly property int previewW: Math.max(cardWidth + 2 * Glass.gap,
+        Math.min(Math.round(screenW / ui) - 2 * Glass.gap,
+                 Math.max(1, previewWindows.length) * (cardWidth + Glass.gap) + Glass.gap))
+    readonly property int previewH: cardHeight + Glass.bar + Glass.inset + 2 * Glass.panelPad + ((phonePreview || previewSettingsAddress !== "") ? previewSettingsColumn.implicitHeight + Glass.inset : 0)
 
     function showPreview(opts) {
         if (!opts || !Array.isArray(opts.windows) || opts.windows.length === 0) {
@@ -202,12 +202,12 @@ QS.Scope {
         menuRect = Array.isArray(opts.rect) && opts.rect.length === 4 ? opts.rect : [0, 0, 48, 48]
         menuSourceKind = String(opts.sourceKind || "icon")
         const mw = Math.round(268 * ui)
-        const mh = Math.round(menuContentCol.implicitHeight * ui) + Math.round(2 * theme.edgeMargin * ui)
+        const mh = Math.round(menuContentCol.implicitHeight * ui) + Math.round(2 * Glass.gap * ui)
         const reqX = (typeof opts.screenX === "number" && isFinite(opts.screenX)) ? opts.screenX : (screenW / 2)
         const reqY = (typeof opts.screenY === "number" && isFinite(opts.screenY)) ? opts.screenY : (screenH - dockTotalH - mh - 8)
-        menuX = Math.max(Math.round(theme.edgeMargin * ui), Math.min(screenW - mw - Math.round(theme.edgeMargin * ui), Math.round(reqX - mw / 2)))
+        menuX = Math.max(Math.round(theme.edgeMargin * ui), Math.min(screenW - mw - Math.round(Glass.gap * ui), Math.round(reqX - mw / 2)))
         menuY = Math.max(Math.round((theme.topHeight + 2 * theme.edgeMargin) * ui),
-                         Math.min(screenH - dockTotalH - Math.max(220, mh) - Math.round(theme.edgeMargin * ui), Math.round(reqY)))
+                         Math.min(screenH - dockTotalH - Math.max(220, mh) - Math.round(Glass.gap * ui), Math.round(reqY)))
         menuOpen = true
     }
 
@@ -230,11 +230,11 @@ QS.Scope {
 
         readonly property int winW: Math.round(popups.previewW * popups.ui)
         readonly property int winH: Math.round(popups.previewH * popups.ui)
-        readonly property real targetX: Math.max(Math.round(popups.theme.edgeMargin * popups.ui),
-                               Math.min(Math.round(popups.screenW - winW - popups.theme.edgeMargin * popups.ui),
+        readonly property real targetX: Math.max(Math.round(Glass.gap * popups.ui),
+                               Math.min(Math.round(popups.screenW - winW - Glass.gap * popups.ui),
                                         Math.round(popups.previewCenterX - winW / 2)))
-        readonly property real targetY: Math.max(Math.round((popups.theme.topHeight + 2 * popups.theme.edgeMargin) * popups.ui),
-                              Math.round(popups.screenH - popups.dockTotalH - winH - (popups.theme.edgeMargin / 2) * popups.ui))
+        readonly property real targetY: Math.max(Math.round((Glass.bar + 2 * Glass.gap) * popups.ui),
+                              Math.round(popups.screenH - popups.dockTotalH - winH - (Glass.gap / 2) * popups.ui))
         readonly property rect fromRect: Qt.rect(popups.previewTargetRect[0] - popups.dockRoot.monX,
             popups.previewTargetRect[1] - popups.dockRoot.monY, popups.previewTargetRect[2], popups.previewTargetRect[3])
         readonly property rect unionRect: Qt.rect(Math.min(fromRect.x, targetX), Math.min(fromRect.y, targetY),
@@ -258,8 +258,8 @@ QS.Scope {
             fromRect: Qt.rect(previewWin.fromRect.x - previewWin.activeRect.x, previewWin.fromRect.y - previewWin.activeRect.y,
                               previewWin.fromRect.width, previewWin.fromRect.height)
             toRect: Qt.rect(previewWin.targetX - previewWin.activeRect.x, previewWin.targetY - previewWin.activeRect.y, previewWin.winW, previewWin.winH)
-            fromRadius: Glass.cornerFor(previewWin.fromRect.height)
-            toRadius: Glass.rounding
+            fromRadius: Glass.corner(Math.min(previewWin.fromRect.width, previewWin.fromRect.height))
+            toRadius: Glass.panelRadius(toRect.width, toRect.height)
             fill: Glass.fill
             fromFill: Glass.fill
         Item {
@@ -283,18 +283,18 @@ QS.Scope {
 
                 Column {
                     anchors.fill: parent
-                    anchors.margins: popups.theme.edgeMargin
-                    spacing: popups.theme.edgeMargin / 2
+                    anchors.margins: Glass.panelPad
+                    spacing: Glass.inset
 
                     // Header row: App icon + App title + window count badge
                     Row {
                         width: parent.width
-                        height: 24
-                        spacing: popups.theme.edgeMargin
+                        height: Glass.bar
+                        spacing: Glass.gap
 
                         Image {
-                            width: 18
-                            height: 18
+                            width: Glass.control
+                            height: Glass.control
                             anchors.verticalCenter: parent.verticalCenter
                             visible: popups.previewIcon !== ""
                             source: popups.previewIcon ? QS.Quickshell.iconPath(popups.previewIcon, true) : ""
@@ -315,61 +315,61 @@ QS.Scope {
                     Row {
                         id: previewCardsRow
                         height: popups.cardHeight
-                        spacing: popups.theme.edgeMargin
+                        spacing: Glass.gap
 
                         Repeater {
                             model: popups.previewWindows
-                            delegate: Rectangle {
+                            delegate: GlassSurface {
                                 id: winCard
                                 required property var modelData
                                 required property int index
                                 width: popups.cardWidth
                                 height: popups.cardHeight
-                                radius: popups.theme.radius / 2
+                                // concentric inside the preview panel: its radius minus the panel padding
+                                radius: Glass.inner(Glass.panelRadius(popups.previewW, popups.previewH), Glass.panelPad)
                                 color: cardMouse.containsMouse
                                     ? popups.theme.withAlpha(popups.theme.accent, popups.theme.hoverOpacity)
                                     : popups.theme.withAlpha(popups.theme.bg, popups.theme.panelOpacity)
-                                border.width: 1
-                                border.color: modelData.activated
+                                hairline: true
+                                borderColor: modelData.activated
                                     ? popups.theme.cursor
                                     : popups.theme.outlineColor
                                 clip: true
 
                                 Column {
                                     anchors.fill: parent
-                                    anchors.margins: 6
-                                    spacing: 4
+                                    anchors.margins: Glass.inset
+                                    spacing: Glass.inset
 
                                     // Card title bar: status dot + title + minimize/restore + close
                                     Item {
                                         width: parent.width
-                                        height: 22
+                                        height: Glass.control
 
-                                        Rectangle {
+                                        GlassSurface {
                                             id: stateBadge
                                             anchors.left: parent.left
                                             anchors.verticalCenter: parent.verticalCenter
-                                            width: badgeLabel.implicitWidth + 10
-                                            height: 18
-                                            radius: 9
+                                            width: badgeLabel.implicitWidth + Glass.gap
+                                            height: Glass.control
                                             color: winCard.modelData.minimized
-                                                ? popups.theme.withAlpha(popups.theme.warning, 0.35)
-                                                : popups.theme.withAlpha(popups.theme.success, 0.35)
+                                                ? popups.theme.withAlpha(popups.theme.warning, popups.theme.hoverOpacity)
+                                                : popups.theme.withAlpha(popups.theme.success, popups.theme.hoverOpacity)
                                             Text {
                                                 id: badgeLabel
                                                 anchors.centerIn: parent
                                                 text: popups.phonePreview ? (popups.remoteAttached ? "Connected" : "Offline") : (winCard.modelData.minimized ? "Minimized" : "Live")
                                                 color: popups.theme.fg
                                                 font.family: popups.theme.fontFamily
-                                                font.pixelSize: Math.max(9, popups.theme.smallFontSize - 1)
+                                                font.pixelSize: popups.theme.smallFontSize
                                             }
                                         }
 
                                         Text {
                                             anchors.left: stateBadge.right
-                                            anchors.leftMargin: 6
+                                            anchors.leftMargin: Glass.inset
                                             anchors.right: cardActions.left
-                                            anchors.rightMargin: 4
+                                            anchors.rightMargin: Glass.inset
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: winCard.modelData.title || popups.previewTitle
                                             color: popups.theme.fg
@@ -382,14 +382,14 @@ QS.Scope {
                                             id: cardActions
                                             anchors.right: parent.right
                                             anchors.verticalCenter: parent.verticalCenter
-                                            spacing: 4
+                                            spacing: Glass.inset
                                             z: 3
 
-                                            Rectangle {
+                                            GlassSurface {
                                                 visible: !popups.phonePreview
-                                                width: 18; height: 18; radius: 9
+                                                width: Glass.control; height: Glass.control
                                                 color: Glass.fill
-                                                Text { anchors.centerIn: parent; text: "⚙"; color: popups.theme.fg; font.pixelSize: 12 }
+                                                Text { anchors.centerIn: parent; text: "⚙"; color: popups.theme.fg; font.pixelSize: popups.theme.smallFontSize }
                                                 MouseArea {
                                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
@@ -398,18 +398,17 @@ QS.Scope {
                                                     }
                                                 }
                                             }
-                                            Rectangle {
+                                            GlassSurface {
                                                 visible: !popups.phonePreview
-                                                width: 18
-                                                height: 18
-                                                radius: 9
-                                                color: minBtnMouse.containsMouse ? popups.theme.warning : popups.theme.withAlpha(popups.theme.subtle, 0.25)
+                                                width: Glass.control
+                                                height: Glass.control
+                                                color: minBtnMouse.containsMouse ? popups.theme.warning : popups.theme.withAlpha(popups.theme.subtle, popups.theme.outlineOpacity)
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: winCard.modelData.minimized ? "▴" : "▾"
                                                     color: popups.theme.fg
                                                     font.family: popups.theme.fontFamily
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: popups.theme.smallFontSize
                                                 }
                                                 MouseArea {
                                                     id: minBtnMouse
@@ -427,18 +426,17 @@ QS.Scope {
                                                 }
                                             }
 
-                                            Rectangle {
-                                                width: 18
-                                                height: 18
-                                                radius: 9
+                                            GlassSurface {
+                                                width: Glass.control
+                                                height: Glass.control
                                                 visible: !popups.phonePreview
-                                                color: closeBtnMouse.containsMouse ? popups.theme.error : popups.theme.withAlpha(popups.theme.subtle, 0.25)
+                                                color: closeBtnMouse.containsMouse ? popups.theme.error : popups.theme.withAlpha(popups.theme.subtle, popups.theme.outlineOpacity)
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "×"
                                                     color: popups.theme.fg
                                                     font.family: popups.theme.fontFamily
-                                                    font.pixelSize: 11
+                                                    font.pixelSize: popups.theme.smallFontSize
                                                 }
                                                 MouseArea {
                                                     id: closeBtnMouse
@@ -459,11 +457,11 @@ QS.Scope {
                                     }
 
                                     // Live ScreencopyView of the open or minimized Wayland toplevel
-                                    Rectangle {
+                                    GlassSurface {
                                         width: parent.width
-                                        height: parent.height - 26
-                                        radius: popups.theme.radius / 3
-                                        color: popups.theme.withAlpha(popups.theme.bg, 0.55)
+                                        height: parent.height - Glass.control - Glass.inset
+                                        radius: Glass.inner(winCard.radius, Glass.inset)
+                                        color: popups.theme.withAlpha(popups.theme.bg, popups.theme.panelOpacity)
                                         clip: true
 
                                         ScreencopyView {
@@ -472,19 +470,19 @@ QS.Scope {
                                             captureSource: popups.previewOpen && winCard.modelData.toplevel ? winCard.modelData.toplevel : null
                                             live: popups.previewOpen && captureSource !== null
                                             paintCursor: false
-                                            constraintSize: Qt.size(popups.cardWidth - 16, popups.cardHeight - 42)
+                                            constraintSize: Qt.size(parent.width, parent.height)
                                             visible: captureSource !== null && hasContent
                                         }
 
                                         // Fallback icon+title when screencopy is warming up or fixture-only
                                         Column {
                                             anchors.centerIn: parent
-                                            spacing: 4
+                                            spacing: Glass.inset
                                             visible: !liveView.visible
                                             Image {
                                                 anchors.horizontalCenter: parent.horizontalCenter
-                                                width: 36
-                                                height: 36
+                                                width: popups.theme.appIcon
+                                                height: popups.theme.appIcon
                                                 visible: popups.previewIcon !== ""
                                                 source: popups.previewIcon ? QS.Quickshell.iconPath(popups.previewIcon, true) : ""
                                                 fillMode: Image.PreserveAspectFit
@@ -503,7 +501,7 @@ QS.Scope {
                                 MouseArea {
                                     id: cardMouse
                                     anchors.fill: parent
-                                    anchors.topMargin: 24
+                                    anchors.topMargin: Glass.control + Glass.inset
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
@@ -525,7 +523,7 @@ QS.Scope {
                     Column {
                         id: previewSettingsColumn
                         width: parent.width
-                        spacing: popups.theme.edgeMargin / 2
+                        spacing: Glass.gap / 2
                         visible: popups.phonePreview || popups.previewSettingsAddress !== ""
                         Text {
                             width: parent.width; wrapMode: Text.Wrap; textFormat: Text.PlainText
@@ -594,12 +592,12 @@ QS.Scope {
         color: "transparent"
 
         readonly property int boxW: Math.round(268 * popups.ui)
-        readonly property int boxH: Math.round((menuContentCol.implicitHeight + 2 * popups.theme.edgeMargin) * popups.ui)
-        readonly property real targetX: Math.max(Math.round(popups.theme.edgeMargin * popups.ui),
-                               Math.min(Math.round(popups.screenW - boxW - popups.theme.edgeMargin * popups.ui),
+        readonly property int boxH: Math.round((menuContentCol.implicitHeight + 2 * Glass.gap) * popups.ui)
+        readonly property real targetX: Math.max(Math.round(Glass.gap * popups.ui),
+                               Math.min(Math.round(popups.screenW - boxW - Glass.gap * popups.ui),
                                         Math.round(popups.menuX)))
-        readonly property real targetY: Math.max(Math.round((popups.theme.topHeight + 2 * popups.theme.edgeMargin) * popups.ui),
-                              Math.min(Math.round(popups.screenH - popups.dockTotalH - boxH - (popups.theme.edgeMargin / 2) * popups.ui),
+        readonly property real targetY: Math.max(Math.round((Glass.bar + 2 * Glass.gap) * popups.ui),
+                              Math.min(Math.round(popups.screenH - popups.dockTotalH - boxH - (Glass.gap / 2) * popups.ui),
                                        Math.round(popups.menuY)))
         readonly property rect fromRect: Qt.rect(popups.menuRect[0] - popups.dockRoot.monX,
                                                   popups.menuRect[1] - popups.dockRoot.monY,
@@ -628,13 +626,13 @@ QS.Scope {
             fromRect: Qt.rect(menuWin.fromRect.x - menuWin.activeRect.x, menuWin.fromRect.y - menuWin.activeRect.y,
                               menuWin.fromRect.width, menuWin.fromRect.height)
             toRect: Qt.rect(menuWin.targetX - menuWin.activeRect.x, menuWin.targetY - menuWin.activeRect.y, menuWin.boxW, menuWin.boxH)
-            fromRadius: Glass.cornerFor(menuWin.fromRect.height)
-            toRadius: Glass.rounding
+            fromRadius: Glass.corner(Math.min(menuWin.fromRect.width, menuWin.fromRect.height))
+            toRadius: Glass.panelRadius(toRect.width, toRect.height)
             fill: Glass.fill
             fromFill: Glass.fill
         Item {
             width: 268
-            height: menuContentCol.implicitHeight + 2 * popups.theme.edgeMargin
+            height: menuContentCol.implicitHeight + 2 * Glass.panelPad
             scale: popups.ui
             transformOrigin: Item.TopLeft
             focus: popups.menuOpen
@@ -649,25 +647,25 @@ QS.Scope {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.margins: popups.theme.edgeMargin
-                    spacing: 4
+                    anchors.margins: Glass.panelPad
+                    spacing: 0
 
                     // Header row: App icon + App name + Star/Pin badges
                     Row {
                         width: parent.width
-                        height: 28
-                        spacing: popups.theme.edgeMargin
+                        height: Glass.bar
+                        spacing: Glass.gap
 
                         Image {
-                            width: 20
-                            height: 20
+                            width: Glass.control
+                            height: Glass.control
                             anchors.verticalCenter: parent.verticalCenter
                             visible: popups.menuIcon !== ""
                             source: popups.menuIcon ? QS.Quickshell.iconPath(popups.menuIcon, true) : ""
                             fillMode: Image.PreserveAspectFit
                         }
                         Text {
-                            width: parent.width - 68
+                            width: parent.width - Glass.control - 2 * Glass.bar
                             anchors.verticalCenter: parent.verticalCenter
                             text: popups.menuTitle
                             color: popups.theme.fg
@@ -687,12 +685,12 @@ QS.Scope {
 
                     Rectangle {
                         width: parent.width
-                        height: 1
+                        height: Glass.hairline
                         color: popups.theme.outlineColor
                     }
 
                     // Menu Item helper component
-                    component MenuRow: Rectangle {
+                    component MenuRow: GlassSurface {
                         id: mrow
                         property string iconText: ""
                         property string label: ""
@@ -702,20 +700,19 @@ QS.Scope {
 
                         visible: visibleItem
                         width: menuContentCol.width
-                        height: visibleItem ? 28 : 0
-                        radius: height / 2
+                        height: visibleItem ? Glass.bar : 0
                         color: rowMouse.containsMouse
                             ? popups.theme.withAlpha(destructive ? popups.theme.error : popups.theme.accent, popups.theme.hoverOpacity)
-                            : Glass.fill
+                            : "transparent"
 
                         Row {
                             anchors.fill: parent
-                            anchors.leftMargin: popups.theme.edgeMargin
-                            anchors.rightMargin: popups.theme.edgeMargin
-                            spacing: popups.theme.edgeMargin
+                            anchors.leftMargin: Glass.gap
+                            anchors.rightMargin: Glass.gap
+                            spacing: Glass.gap
 
                             Text {
-                                width: 18
+                                width: Glass.control
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: mrow.iconText
                                 color: mrow.destructive ? popups.theme.error : popups.theme.cursor
@@ -763,7 +760,7 @@ QS.Scope {
 
                     Rectangle {
                         width: parent.width
-                        height: 1
+                        height: Glass.hairline
                         color: popups.theme.outlineColor
                     }
 

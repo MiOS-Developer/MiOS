@@ -205,7 +205,7 @@ QS.Scope {
                         return { x: shot.hoverWin.x - ox, y: shot.hoverWin.y - oy, w: shot.hoverWin.w, h: shot.hoverWin.h }
                     return null
                 }
-                readonly property color scrim: shot.theme.withAlpha("#000000", 0.38)
+                readonly property color scrim: shot.theme.withAlpha("#000000", 0.38)   // design-exempt: capture dimming, not a glass surface
 
                 Item {
                     id: keys
@@ -267,20 +267,19 @@ QS.Scope {
                     width: overlay.hi ? overlay.hi.w + 2 : 0
                     height: overlay.hi ? overlay.hi.h + 2 : 0
                     color: "transparent"
-                    border.width: 2
+                    border.width: 2   // design-exempt: the capture selection outline (2 px marching edge), not a surface border
                     border.color: shot.theme.cursor
                 }
                 // Size label under (or inside) the selection.
-                Rectangle {
+                GlassSurface {
                     visible: shot.hasSel && shot.mode === "region" && overlay.hi !== null
                              && perScreen.modelData.name === (shot.outputAt(shot.selX, shot.selY) || shot.focusOutput)
-                    readonly property real below: overlay.hi ? overlay.hi.y + overlay.hi.h + 6 : 0
-                    x: overlay.hi ? Math.max(4, Math.min(parent.width - width - 4, overlay.hi.x)) : 0
-                    y: below + height > parent.height - 4 ? (overlay.hi ? overlay.hi.y + 6 : 0) : below
-                    width: sizeText.implicitWidth + 2 * shot.theme.edgeMargin
-                    height: sizeText.implicitHeight + shot.theme.edgeMargin
-                    radius: height / 2
-                    color: shot.theme.withAlpha(shot.theme.bg, 0.85)
+                    readonly property real below: overlay.hi ? overlay.hi.y + overlay.hi.h + Glass.inset : 0
+                    x: overlay.hi ? Math.max(Glass.inset, Math.min(parent.width - width - Glass.inset, overlay.hi.x)) : 0
+                    y: below + height > parent.height - Glass.inset ? (overlay.hi ? overlay.hi.y + Glass.inset : 0) : below
+                    width: sizeText.implicitWidth + Glass.bar
+                    height: Glass.bar
+                    color: shot.theme.withAlpha(shot.theme.bg, shot.theme.notificationOpacity)
                     Text {
                         id: sizeText
                         anchors.centerIn: parent
@@ -351,22 +350,24 @@ QS.Scope {
                 color: "transparent"
                 anchors.top: true
                 // Below the top bar row (its edge margin + height) with one more edge margin of air.
-                margins.top: Math.round((shot.theme.topHeight + 2 * shot.theme.edgeMargin) * perScreen.ui)
+                margins.top: Math.round((Glass.bar + 2 * Glass.gap) * perScreen.ui)
                 exclusionMode: QS.ExclusionMode.Ignore
                 WlrLayershell.layer: WlrLayer.Overlay
                 // The shell's glass namespace rule (Mobile.layerNamespace): same material as the top bar on this output.
                 WlrLayershell.namespace: Mobile.layerNamespace("mios-shot-bar", perScreen.modelData.name)
                 WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-                implicitWidth: Math.ceil((tools.implicitWidth + 2 * shot.theme.edgeMargin) * perScreen.ui)
+                implicitWidth: Math.ceil((tools.implicitWidth + 2 * Glass.inset) * perScreen.ui)
                 implicitHeight: Math.ceil(row.height * perScreen.ui)
 
-                readonly property real rowH: Math.max(Glass.barHeight + shot.theme.edgeMargin, Glass.touchTarget)
+                // bar-tall tools inset in the toolbar (concentric); a touch target tall only on mobile outputs
+                readonly property real rowH: Mobile.isMobile(perScreen.modelData.name) ? Math.max(Glass.bar + 2 * Glass.inset, Glass.touchTarget)
+                                                                                     : Glass.bar + 2 * Glass.inset
                 // Glyphs only when the labelled toolbar would not fit the output (phones, the remote display).
-                readonly property bool compact: (measure.implicitWidth + 4 * shot.theme.edgeMargin) * perScreen.ui > perScreen.geom.w
+                readonly property bool compact: (measure.implicitWidth + 4 * Glass.gap) * perScreen.ui > perScreen.geom.w
                 Row {
                     id: measure
                     visible: false
-                    spacing: Math.round(shot.theme.edgeMargin / 2)
+                    spacing: 0
                     Repeater {
                         model: shot.tools
                         delegate: Text {
@@ -374,42 +375,39 @@ QS.Scope {
                             text: (modelData.glyph || "") + (modelData.label ? "  " + modelData.label : "")
                             font.family: shot.theme.fontFamily
                             font.pixelSize: shot.theme.fontSize
-                            width: modelData.group === "gap" ? shot.theme.edgeMargin : implicitWidth + 2 * shot.theme.edgeMargin
+                            width: modelData.group === "gap" ? Glass.gap : implicitWidth + 2 * Glass.gap
                         }
                     }
                 }
 
-                Rectangle {
+                GlassSurface {
                     id: row
-                    width: tools.implicitWidth + 2 * shot.theme.edgeMargin
+                    width: tools.implicitWidth + 2 * Glass.inset
                     height: bar.rowH
                     scale: perScreen.ui
                     transformOrigin: Item.TopLeft
-                    // The window-control tab's material and corner rule (Glass.qml); hyprglass draws the glass behind it.
-                    radius: Glass.cornerFor(height)
-                    color: Glass.fill
+                    // The shell's one glass body (GlassSurface); hyprglass draws the glass behind it.
 
                     Row {
                         id: tools
                         anchors.centerIn: parent
-                        spacing: Math.round(shot.theme.edgeMargin / 2)
+                        spacing: 0
                         Repeater {
                             // group: mode (what a click/drag picks), action (what happens to the image), do (buttons)
                             model: shot.tools
-                            delegate: Rectangle {
+                            delegate: GlassSurface {
                                 id: tool
                                 required property var modelData
                                 readonly property bool on: (modelData.group === "mode" && shot.mode === modelData.key)
                                                            || (modelData.group === "action" && shot.action === modelData.key)
                                 visible: modelData.key === "commit" ? (shot.hasSel || shot.mode === "output" || shot.confirm)
                                          : modelData.key === "edit" ? shot.session.editor === true : true
-                                width: modelData.group === "gap" ? (bar.compact ? 0 : shot.theme.edgeMargin)
-                                       : Math.max(bar.rowH - shot.theme.edgeMargin, txt.implicitWidth + 2 * shot.theme.edgeMargin)
-                                height: bar.rowH - shot.theme.edgeMargin
-                                radius: height / 2
+                                width: modelData.group === "gap" ? (bar.compact ? 0 : Glass.gap)
+                                       : Math.max(bar.rowH - 2 * Glass.inset, txt.implicitWidth + Glass.bar)
+                                height: bar.rowH - 2 * Glass.inset
                                 color: modelData.group === "gap" ? "transparent"
                                        : on ? shot.theme.withAlpha(shot.theme.accent, shot.theme.selectionOpacity)
-                                       : (ma.containsMouse ? shot.theme.withAlpha(shot.theme.subtle, shot.theme.hoverOpacity * 0.5) : "transparent")
+                                       : (ma.containsMouse ? shot.theme.withAlpha(shot.theme.accent, shot.theme.hoverOpacity) : "transparent")
                                 Text {
                                     id: txt
                                     visible: tool.modelData.group !== "gap"
