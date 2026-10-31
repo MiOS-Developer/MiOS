@@ -615,6 +615,43 @@ mios_os_release_kind() {
     echo "unsupported"
 }
 
+# mios_apply_unit_presets <root> -- apply the MiOS preset roster
+# (usr/lib/systemd/{system,user}-preset/*mios*.preset) to every unit it names
+# that is installed under <root>. The image gets this from 88-finalize's
+# preset-all at bake time; an FHS host has no bake, so without this step every
+# MiOS unit stays disabled. Only roster units are preset: preset-all on a live
+# host would also reset the operator's own units. Units the roster names but
+# the host lacks (Quadlet-generated, substrate- or package-specific) are listed,
+# not preset; a failing preset fails the install.
+mios_apply_unit_presets() {
+    local root="${1:-/}" scope unit n=0
+    local -a flag units installed absent
+    local -A known
+    for scope in system user; do
+        flag=()
+        [[ "$scope" == user ]] && flag=(--global)
+        mapfile -t units < <(cat "${root%/}/usr/lib/systemd/${scope}-preset/"*mios*.preset 2>/dev/null \
+            | awk '$1 == "enable" || $1 == "disable" { print $2 }' | sort -u)
+        known=()
+        while read -r unit _; do
+            [[ -n "$unit" ]] && known["$unit"]=1
+        done < <(systemctl --root="$root" "${flag[@]}" list-unit-files --no-legend --no-pager 2>/dev/null)
+        installed=() absent=()
+        for unit in "${units[@]}"; do
+            if [[ -n "${known[$unit]:-}" ]]; then installed+=("$unit"); else absent+=("$unit"); fi
+        done
+        (( ${#absent[@]} )) && log_info "Preset roster units not installed (${scope}): ${absent[*]}"
+        (( ${#installed[@]} )) || continue
+        if ! systemctl --root="$root" "${flag[@]}" preset -- "${installed[@]}"; then
+            log_err "Applying the MiOS ${scope} unit presets failed"
+            return 1
+        fi
+        n=$(( n + ${#installed[@]} ))
+    done
+    (( n )) || { log_err "No MiOS preset roster units are installed under ${root}"; return 1; }
+    log_ok "MiOS unit presets applied to ${n} installed units"
+}
+
 check_network() {
     local host
     for host in github.com ghcr.io; do
@@ -1481,6 +1518,11 @@ trigger_mios_install() {
             done
             if ! /usr/libexec/mios/miosd native-runtime-check --root /; then
                 log_err "Native runtime catalog is incomplete (miosd native-runtime-check)"
+                return 1
+            fi
+            # 6. Enable the SSOT-selected MiOS units (the bake's preset-all).
+            if ! mios_apply_unit_presets /; then
+                log_err "MiOS unit enablement failed"
                 return 1
             fi
             if systemctl is-system-running --quiet 2>/dev/null; then

@@ -150,6 +150,10 @@ git() {
     printf 'git %s\n' "$*" >> "$MIOS_TEST_TRACE"
     [[ "$*" != *ls-files* || "$MIOS_TEST_FAIL" != ssot-untracked ]]
 }
+mios_apply_unit_presets() {
+    printf 'presets %s\n' "$*" >> "$MIOS_TEST_TRACE"
+    [[ "$MIOS_TEST_FAIL" != presets ]] || return 50
+}
 mios_root_merge() {
     printf 'root-merge %s\n' "$*" >> "$MIOS_TEST_TRACE"
     [[ "$MIOS_TEST_FAIL" != merge ]] || return 49
@@ -218,6 +222,7 @@ MIOS_FHS_TOTAL_ROOT_MERGE=1
         "quadlet": "stage 34-render-quadlets.sh failed",
         "runtime": "Native runtime catalog is incomplete",
         "stage-missing": "lacks /automation/34-render-quadlets.sh",
+        "presets": "MiOS unit enablement failed",
     }
     with tempfile.TemporaryDirectory(prefix="mios-install-failures-") as tmp:
         root = pathlib.Path(tmp)
@@ -270,11 +275,125 @@ MIOS_FHS_TOTAL_ROOT_MERGE=1
                     "root-merge", "dnf install -y --best", "tmpfiles",
                     "automation/55-native-build.sh", "automation/33-generate-quadlets.sh",
                     "automation/34-render-quadlets.sh",
-                    "usr/libexec/mios/miosd native-runtime-check --root /")]
+                    "usr/libexec/mios/miosd native-runtime-check --root /",
+                    "presets /")]
                 assert order == sorted(order), recorded
                 for name, mode in (("config.toml", 0o644), ("fixture-tool", 0o755)):
                     assert (root / "usr/libexec/mios" / name).stat().st_mode & 0o777 == mode
         print(f"PASS fixture merge/overlay/package/init/native path and {len(failures)} injected failures; modes preserved")
+
+
+def _roster(scope):
+    units = {}
+    for preset in sorted(pathlib.Path(_ROOT, f"usr/lib/systemd/{scope}-preset").glob("*mios*.preset")):
+        for line in preset.read_text().splitlines():
+            words = line.split()
+            if len(words) >= 2 and words[0] in ("enable", "disable"):
+                units.setdefault(words[1], words[0])
+    return units
+
+
+def test_unit_presets_enable_the_roster():
+    """mios_apply_unit_presets enables the real preset roster in a hermetic root (real systemctl --root)."""
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    harness = ("set -euo pipefail\nlog_info() { echo \"[INFO] $*\"; }\n"
+               "log_ok() { echo \"[ OK ] $*\"; }\nlog_err() { echo \"[FAIL] $*\" >&2; }\n"
+               + _function(source, "mios_apply_unit_presets") + "\nmios_apply_unit_presets \"$1\"\n")
+    with tempfile.TemporaryDirectory(prefix="mios-unit-presets-") as tmp:
+        root = pathlib.Path(tmp, "root")
+        (root / "usr/lib/systemd").mkdir(parents=True)
+        (root / "etc").mkdir()
+        for sub in ("system", "user", "system-preset", "user-preset"):
+            subprocess.run(["cp", "-a", os.path.join(_ROOT, "usr/lib/systemd", sub),
+                            str(root / "usr/lib/systemd" / sub)], check=True)
+
+        def states(scope, units):
+            flag = ["--global"] if scope == "user" else []
+            out = subprocess.run(["systemctl", f"--root={root}", *flag, "is-enabled", "--", *units],
+                                 capture_output=True, text=True).stdout.split()
+            return dict(zip(units, out))
+
+        checked = {}
+        for scope in ("system", "user"):
+            roster = _roster(scope)
+            present = [u for u in roster if (root / f"usr/lib/systemd/{scope}" / u).exists()]
+            before = states(scope, present)
+            # A template without DefaultInstance= has nothing to enable.
+            checked[scope] = [u for u in present if before[u] in ("enabled", "disabled")
+                              and "@." not in u]
+            # Pre-fix control: a merged root with no preset step leaves every
+            # roster unit disabled (the observed "MiOS services remain disabled").
+            assert any(roster[u] == "enable" for u in checked[scope]), (scope, checked)
+            assert all(before[u] == "disabled" for u in checked[scope]), (scope, before)
+        result = subprocess.run(["bash", "-c", harness, "presets", str(root)],
+                                capture_output=True, text=True, timeout=300)
+        assert result.returncode == 0, result
+        assert "MiOS unit presets applied" in result.stdout, result
+        assert "Preset roster units not installed (system)" in result.stdout, result
+        for scope in ("system", "user"):
+            roster, after = _roster(scope), states(scope, checked[scope])
+            wrong = {u: after[u] for u in checked[scope] if after[u] != roster[u] + "d"}
+            assert not wrong, (scope, wrong)
+        # Negative controls: a failing preset fails, and a root without any
+        # roster unit is an error rather than an empty success.
+        shims = pathlib.Path(tmp, "shims")
+        shims.mkdir()
+        (shims / "systemctl").write_text(
+            '#!/usr/bin/bash\nfor a; do [ "$a" = preset ] && exit 1; done\nexec /usr/bin/systemctl "$@"\n')
+        (shims / "systemctl").chmod(0o755)
+        failed = subprocess.run(["bash", "-c", harness, "presets", str(root)], capture_output=True, text=True,
+                                env=dict(os.environ, PATH=f"{shims}:{os.environ['PATH']}"), timeout=300)
+        assert failed.returncode == 1 and "unit presets failed" in failed.stderr, failed
+        assert "presets applied" not in failed.stdout, failed
+        empty = pathlib.Path(tmp, "empty")
+        (empty / "usr/lib/systemd/system-preset").mkdir(parents=True)
+        (empty / "usr/lib/systemd/system-preset/90-mios.preset").write_text("enable mios-absent.service\n")
+        none = subprocess.run(["bash", "-c", harness, "presets", str(empty)], capture_output=True, text=True)
+        assert none.returncode == 1 and "No MiOS preset roster units" in none.stderr, none
+    print(f"PASS unit presets: {len(checked['system'])} system + {len(checked['user'])} user roster units "
+          "disabled before, at their preset after; failing preset and empty roster fail")
+
+
+def test_native_runtime_check_rejects_dynamic_or_missing():
+    """The installer's last native gate: miosd native-runtime-check over a disposable root.
+
+    Every catalog path of the tree's SSOT points at one static miosd; then one
+    entry becomes a dynamic ELF, then disappears. Both must fail the check.
+    """
+    import tomllib
+    miosd = os.environ.get("MIOS_MIOSD_BIN") or "/usr/libexec/mios/miosd"
+    assert os.access(miosd, os.X_OK), f"native miosd required ({miosd}); absence is not a skipped test"
+    dynamic = next(p for p in ("/usr/bin/ls", "/bin/ls") if os.path.exists(p))
+    ssot = pathlib.Path(_ROOT, "usr/share/mios/mios.toml")
+    categories = tomllib.loads(ssot.read_text())["build"]["native"]["categories"]
+    env = {k: v for k, v in os.environ.items() if k not in ("MIOS_TOML", "MIOS_VENDOR_TOML")}
+    with tempfile.TemporaryDirectory(prefix="mios-native-runtime-") as tmp:
+        root = pathlib.Path(tmp)
+        (root / "usr/share/mios").mkdir(parents=True)
+        (root / "usr/share/mios/mios.toml").write_bytes(ssot.read_bytes())
+        paths = []
+        for category in categories.values():
+            directory = root / category["install_dir"].lstrip("/")
+            directory.mkdir(parents=True, exist_ok=True)
+            for binary in category["binaries"]:
+                (directory / binary).symlink_to(miosd)
+                paths.append(directory / binary)
+
+        def check():
+            return subprocess.run([miosd, "native-runtime-check", "--root", str(root)],
+                                  env=env, capture_output=True, text=True, timeout=60)
+        result = check()
+        assert result.returncode == 0 and "native artifacts verified" in result.stdout, result
+        victim = root / "usr/bin/mios-gen"
+        assert victim in paths
+        victim.unlink()
+        victim.symlink_to(dynamic)
+        result = check()
+        assert result.returncode == 1 and "mios-gen" in result.stderr, result
+        victim.unlink()
+        result = check()
+        assert result.returncode == 1 and "mios-gen" in result.stderr, result
+    print(f"PASS native runtime check: {len(paths)} catalog paths verified; dynamic and missing artifacts fail")
 
 
 def test_target_prerequisite_failures_stop_the_target():
@@ -489,6 +608,8 @@ def main() -> int:
     test_linux_core_dispatch()
     test_linux_install_failure_propagation()
     test_unsupported_host_rejected_before_mutation()
+    test_unit_presets_enable_the_roster()
+    test_native_runtime_check_rejects_dynamic_or_missing()
     test_target_prerequisite_failures_stop_the_target()
     test_bootstrap_launchers_reach_the_installer()
     test_legacy_bootstrap_failures()
