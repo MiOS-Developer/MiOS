@@ -146,7 +146,7 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 width: visible ? height : 0
                 height: parent.height
-                Rectangle {
+                GlassSurface {
                     anchors.fill: parent
                     radius: Glass.cornerFor(height)
                     color: ex.oskShown ? ex.theme.withAlpha(ex.theme.accent, ex.theme.selectionOpacity)
@@ -185,7 +185,7 @@ FocusScope {
                 width: chipCol.implicitWidth + 2 * ex.gap
                 height: targetRow.height
                 readonly property bool usable: modelData.available !== false && modelData.move && modelData.move.method !== "none"
-                Rectangle {
+                GlassSurface {
                     anchors.fill: parent
                     radius: Glass.cornerFor(height)
                     color: (targetRow.activeFocus && targetRow.currentIndex === chip.index) || chipDrop.containsDrag
@@ -323,7 +323,7 @@ FocusScope {
                 readonly property bool labelTruncated: label.truncated
                 readonly property real labelPixelSize: label.fontInfo.pixelSize
                 readonly property int labelLines: label.lineCount
-                Rectangle {
+                GlassSurface {
                     anchors.fill: parent
                     radius: Glass.cornerFor(Math.min(width, height))
                     color: tile.focused ? ex.theme.withAlpha(ex.theme.accent, ex.theme.selectionOpacity)
@@ -355,8 +355,8 @@ FocusScope {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    anchors.leftMargin: 2
-                    anchors.rightMargin: 2
+                    anchors.leftMargin: Glass.hairline * 2
+                    anchors.rightMargin: Glass.hairline * 2
                     text: tile.modelData.name
                     textFormat: Text.PlainText
                     horizontalAlignment: Text.AlignHCenter
@@ -389,7 +389,7 @@ FocusScope {
     }
 
     // One tooltip for the grid: the full app name above the hovered or focused tile, kept inside the panel.
-    Rectangle {
+    GlassSurface {
         id: tip
         property var owner: null
         visible: owner !== null

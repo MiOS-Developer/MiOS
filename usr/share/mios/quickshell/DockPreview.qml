@@ -54,14 +54,14 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: titleText.implicitHeight + 4
+        height: titleText.implicitHeight + Glass.gap / 2
         color: preview.focused ? preview.theme.withAlpha(preview.theme.accent, preview.theme.selectionOpacity)
                                : preview.theme.withAlpha(preview.theme.bg, preview.theme.scrimOpacity)
         Text {
             id: titleText
             anchors.fill: parent
-            anchors.leftMargin: 4
-            anchors.rightMargin: 4
+            anchors.leftMargin: Glass.gap / 2
+            anchors.rightMargin: Glass.gap / 2
             verticalAlignment: Text.AlignVCenter
             text: preview.win ? String(preview.win.title || preview.win.appId || "") : ""
             textFormat: Text.PlainText
