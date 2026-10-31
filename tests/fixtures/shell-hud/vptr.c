@@ -1,6 +1,6 @@
-/* Test fixture for tests/test-shell-hud-live.py and tests/test-shell-appmenu-live.py: a real pointer on ONE output of
+/* Test fixture for tests/test-shell-hud-live.py, tests/test-shell-appmenu-live.py and tests/test-tmuxos-launcher-live.py: a real pointer on ONE output of
    an owned nested Wayland compositor through zwlr_virtual_pointer_v1. Never point it at the live session.
-     vptr <output> <x> <y> [hover|click|scroll:N]   output-local logical coordinates; N wheel notches, + = wheel up
+     vptr <output> <x> <y> [hover|click|rclick|scroll:N]   output-local logical coordinates; N wheel notches, + = wheel up
    VPTR_W / VPTR_H give the output's logical size (the extent of motion_absolute). Built by the tests with
    wayland-scanner + gcc from wlr-virtual-pointer-unstable-v1.xml next to this file. */
 #include <stdio.h>
@@ -67,13 +67,14 @@ int main(int argc, char **argv) {
     zwlr_virtual_pointer_v1_motion_absolute(p, now(), atoi(argv[2]), atoi(argv[3]), lw, lh);
     zwlr_virtual_pointer_v1_frame(p);
     wl_display_roundtrip(dpy);
-    if (!strcmp(mode, "click")) {
+    if (!strcmp(mode, "click") || !strcmp(mode, "rclick")) {
+        uint32_t button = mode[0] == 'r' ? 0x111 : 0x110;   /* BTN_RIGHT : BTN_LEFT */
         usleep(60000);
-        zwlr_virtual_pointer_v1_button(p, now(), 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+        zwlr_virtual_pointer_v1_button(p, now(), button, WL_POINTER_BUTTON_STATE_PRESSED);
         zwlr_virtual_pointer_v1_frame(p);
         wl_display_roundtrip(dpy);
         usleep(40000);
-        zwlr_virtual_pointer_v1_button(p, now(), 0x110, WL_POINTER_BUTTON_STATE_RELEASED);
+        zwlr_virtual_pointer_v1_button(p, now(), button, WL_POINTER_BUTTON_STATE_RELEASED);
         zwlr_virtual_pointer_v1_frame(p);
         wl_display_roundtrip(dpy);
     } else if (!strncmp(mode, "scroll:", 7)) {

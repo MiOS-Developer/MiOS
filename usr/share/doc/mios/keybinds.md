@@ -118,7 +118,7 @@ The same control means the same thing everywhere MiOS owns input:
 | LB / RB | ShaderGlass cycle / toggle (CRT in the room) | |
 | Select | context menu or tree | bindings overlay |
 | Start | cursor mode: the sticks and triggers become a mouse, buttons keep their meaning | |
-| Guide | app drawer (VT: MiOS menu) | modifier for the system layer |
+| Guide | app drawer (in tmux-os and on a VT: the tmux-os launcher) | modifier for the system layer |
 | L3 / R3 | new tab or window / reset view | |
 | L3+R3 | enter or leave the room (VT: back to the desktop) | release capture |
 
@@ -148,7 +148,7 @@ MiOS tmux client runs in that terminal (a server listed in `nav.tmux_sockets`).
 | RB | ShaderGlass toggle (shipped) | same | same | same | CRT toggle |
 | Select | context menu · overlay | session tree · overlay | none · overlay | as the context | camera view · bindings overlay |
 | Start | cursor on (shipped) | cursor on | cursor on | cursor off | room cursor/camera |
-| Guide tap | app drawer | app drawer | app drawer | app drawer | app drawer |
+| Guide tap | app drawer | the tmux-os launcher (`tmux:menu`) | app drawer | app drawer | app drawer |
 | L3 | new tab (Ctrl+T) | new tmux window | new terminal window | as the context | sprint toggle |
 | R3 | zoom reset (Ctrl+0) | compact/auto view | font size reset | as the context | recenter the camera |
 | L3+R3 tap | enter the room (shipped) | same | same | same | leave the room |
@@ -411,7 +411,8 @@ key column, and two columns once the popup is `two_column_min_width` wide.
 | Tmux-OS, Pane, Window, Session | the rows of the generated menus named in `menu_sections` |
 
 It opens from `Ctrl-b Space`, `Ctrl-b e` (on the first app), the controller's
-`tmux:menu` verb (it sends `Ctrl-b Space`), `mios-terminal --launcher`, and from
+Guide tap in a tmux-os terminal or on a VT (the `tmux:menu` verb of `terminal_tmux`
+and `console_tmux`; it sends `Ctrl-b Space` to that client), `mios-terminal --launcher`, and from
 anywhere on the desktop with **Ctrl+Super**: press both, in either order, and
 release them with no other key between. The `tmux-os-launcher` row of
 `[keybindings.global]` has `trigger = "release"`, so the generator binds all four
@@ -430,11 +431,16 @@ Otherwise a new terminal enters the bare Tmux-OS session and opens it there.
 | Open | Enter, Space, the row's key | left click | South (A) |
 | Options | Tab, Shift+Enter, Menu, Shift+F10 | right click | West (X), South held |
 | Back / close | Esc, `q`, Ctrl+C | click outside | East (B), East held |
+| Open the launcher | `Ctrl-b Space`, Ctrl+Super | | Guide tap |
 
 The controller column is what the mios-inputd nav projection (`terminal_tmux`,
 `console_tmux`) delivers: plain keys, wheel events and `tmux:` verbs. The
 launcher reads nothing from the pad itself, so every row also works from a
 keyboard, a mouse or `send-keys -c CLIENT -K`.
+Start and the bumpers keep their contract meaning everywhere (cursor mode,
+ShaderGlass; section 3), so the launcher pages with the triggers and opens from
+the Guide tap; on a VT, where no compositor owns them, the console profile keeps
+its own Start (copy mode, held: cursor mode) and bumpers (previous/next session).
 
 **Options** of a running instance: go to it; pop it out to its own desktop window
 (it moves into a new session `popout_session_prefix` + its name and a new

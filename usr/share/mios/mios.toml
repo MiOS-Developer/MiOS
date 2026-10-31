@@ -4548,7 +4548,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 # console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
-terminal = ["mios-terminal", "Alacritty", "kitty", "foot"]
+terminal = ["mios-terminal", "mios-nested-terminal", "Alacritty", "kitty", "foot"]   # mios-nested-terminal: a nested session's own terminal ([desktop.nested].terminal_argv)
 vm-passthrough = ["looking-glass-client", "xfreerdp", "wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
 game = ["steam_app_.*", "gamescope", "Waydroid"]
 
@@ -4883,6 +4883,7 @@ RS_DOWN = "tmux:focus down"
 BTN_TL2 = "tmux:key p"
 BTN_TR2 = "tmux:key n"
 BTN_SELECT = ["tmux:key w", "quickshell:keymap-toggle"]
+BTN_MODE = "tmux:menu"               # Guide tap: the tmux-os launcher on this client (as on the console); Guide held + button stays the system layer
 BTN_THUMBL = "tmux:key t"
 BTN_THUMBR = "tmux:key f"
 
