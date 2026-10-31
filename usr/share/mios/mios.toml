@@ -9491,6 +9491,12 @@ device = "/dev/dri/igpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/igpu-pci"
 include_other_devices = false
+greeter_display = "vt"             # the login greeter on the kernel console (VT 1), which is this GPU's display in iGPU boots
+# Nested sessions (mios-gen nested-session) in an iGPU boot: [desktop.nested].render_node = "auto" reads this.
+# "igpu" = the iGPU's render node (the dGPU is bound to vfio-pci in this boot, so it is not available). "software"
+# (llvmpipe) stays an explicit override only: Hyprland 0.56's Wayland backend needs GBM/EGL on the main device it
+# opens, and Mesa's software paths need dumb buffers a render node lacks (usr/share/doc/mios/desktop-gpu-routing.md).
+nested_render = "igpu"
 # Hypr3D supersampling for this GPU. It replaces [desktop.hyprland.hypr3d.config.render].scale (1..4) while
 # this profile runs the session. `mios-gen hyprland-3d-toggle` (SUPER+F12) finds the running profile in
 # MIOS_DESKTOP_HARDWARE_PROFILE (exported to the compositor by `hyprland-session`), then in the kernel's
@@ -9504,13 +9510,36 @@ hypr3d_render_scale = 1.5
 name = "MiOS dGPU"
 session_file = "mios-desktop-dgpu.desktop"
 boot_title = "MiOS dGPU"
-boot_remove = ["mios.desktop.gpu=", "rd.driver.pre=vfio-pci", "vfio-pci.ids="]
+boot_remove = ["mios.desktop.gpu=", "rd.driver.pre=vfio-pci", "vfio-pci.ids=", "fbcon="]
 # The empty ids override also clears a reservation embedded in an older initramfs.
-boot_append = ["mios.desktop.gpu=dgpu", "vfio-pci.ids=", "rd.driver.blacklist=vfio-pci", "rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-drm.modeset=1", "nvidia-drm.fbdev=1"]
+# fbcon=map:10 puts the kernel console -- boot text, VT 1 and the VT greeter -- on the dGPU's display. The firmware boot
+# VGA is the iGPU, so fbcon otherwise follows it (CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY). The digits map tty1 -> fb1,
+# tty2 -> fb0, tty3 -> fb1, ... and fb1 is nvidia-drm's fbdev on this machine: amdgpu is in the initramfs and
+# registers fb0 first, nvidia loads from the root filesystem. If fb1 never registers (nvidia fbdev off or failed),
+# every console stays on fb0 (the iGPU), as before -- never a blank console. `mios-gen boot-display-report`
+# (mios-boot-display-report.service) records the real fb order and the recommended map each boot.
+# Opt-in, not default: "video=HDMI-A-1:d" (the iGPU's connector; connector names are global and probe-ordered) forces
+# the iGPU output dark at the kernel level, so a monitor wired to both GPUs switches to the dGPU input by itself --
+# but it also removes the iGPU console fallback if the NVIDIA driver fails to load.
+boot_append = ["mios.desktop.gpu=dgpu", "vfio-pci.ids=", "rd.driver.blacklist=vfio-pci", "rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-drm.modeset=1", "nvidia-drm.fbdev=1", "fbcon=map:10"]
 device = "/dev/dri/dgpu"
 pci = ""
 pci_file = "/etc/mios/hyprland/dgpu-pci"
-include_other_devices = true
+# Display vs render: the dGPU session lights ONLY the dGPU's connectors (AQ_DRM_DEVICES = the dGPU card). The iGPU
+# stays headless -- Hyprland never opens its KMS card, so no output of it is lit -- but its render node stays
+# available (nested sessions render there, below). true = the explicit opt-in to light the iGPU's outputs too
+# (the dGPU renders, Aquamarine copies frames to the iGPU's connectors).
+include_other_devices = false
+# The login greeter on this GPU's display: tuigreet (same flags, palette and keys) in cage + a terminal restricted
+# to the dGPU card ([desktop.greeter.display_host]); any failure falls back to the VT greeter (never a dead end).
+greeter_display = "compositor"
+# Nested sessions in a dGPU boot: the headless iGPU's render node ("auto" in [desktop.nested].render_node), subject to
+# [desktop.nested].cross_vendor_present. The session records the node it opened in session.json ("render").
+nested_render = "igpu"
+# GPU hand-off (Looking Glass): while this GPU is bound to vfio-pci for a VM, the desktop runs this profile in place
+# -- its outputs relit, no reboot -- and the greeter defaults to it; the dGPU session returns once nvidia owns the GPU
+# again. Sequence: usr/share/doc/mios/desktop-gpu-routing.md "GPU hand-off". "" = no hand-off fallback.
+handoff_fallback = "igpu"
 # Hypr3D supersampling on the RTX 4090; see hardware_profiles.igpu.hypr3d_render_scale.
 hypr3d_render_scale = 2.0
 
@@ -11747,6 +11776,16 @@ container_padding   = 2                                     # tuigreet --contain
 prompt_padding      = 1                                     # tuigreet --prompt-padding
 greet_align         = "center"                              # tuigreet --greet-align
 time_format         = "%a %d %b  %H:%M"                     # tuigreet --time-format (shown with --time)
+
+# The text greeter hosted on a GPU's own display (hardware profiles with greeter_display = "compositor"):
+# `mios-gen hyprland-greeter` runs launcher --client terminal: cage (WLR_DRM_DEVICES = that GPU's card only) runs this
+# terminal, which runs the same tuigreet argv as the VT greeter. The launcher falls back to the VT greeter when cage,
+# the terminal or tuigreet fails, or no "ready" arrives within start_timeout_s / heartbeat_timeout_s.
+[desktop.greeter.display_host]
+terminal    = "/usr/bin/alacritty"   # Wayland terminal (alacritty TOML config generated from [colors].ansi_* at greeter start)
+font_family = ""                     # "" = [theme.font].family
+font_size   = 16                     # points; the VT greeter's console font is about this size at 1080p
+padding     = 0                      # terminal padding in pixels
 
 # tuigreet --theme: ANSI colour names resolved through the console palette (console_palette = true):
 # black = ansi_0 (indigo), gray = ansi_7 (cream), yellow = ansi_3 (sunset), cyan = ansi_6, lightblue = ansi_12.
@@ -18819,6 +18858,27 @@ RemainAfterExit = "yes"
 [units."mios-console-theme.service".Install]
 WantedBy = "getty-pre.target"
 
+# Read-only boot display record: DRM cards/connectors, fb registration order from the kernel log, fbcon's console map
+# and whether tty1 reached the booted profile's GPU -- one JSON line per boot in the journal (the kernel log itself
+# is not stored: journald ReadKMsg=no). `journalctl -b -u mios-boot-display-report` reads it.
+[units."mios-boot-display-report.service".Unit]
+comment = "# AI-hint: Oneshot, read-only: records this boot's fbcon / framebuffer / DRM driver order and the console-map verdict as one JSON line in the journal.\n# AI-related: tools/native/mios-gen/src/gpu_topology.rs (boot-display-report), usr/share/mios/mios.toml [desktop.hyprland.hardware_profiles], usr/share/doc/mios/desktop-gpu-routing.md"
+Description = "MiOS boot display report (fbcon, framebuffers, DRM order)"
+After = "systemd-udev-settle.service systemd-modules-load.service greetd.service"
+[units."mios-boot-display-report.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/bin/mios-gen boot-display-report --root /"
+StandardOutput = "journal"
+CapabilityBoundingSet = "CAP_SYSLOG CAP_DAC_READ_SEARCH"
+NoNewPrivileges = "yes"
+PrivateNetwork = "yes"
+ProtectSystem = "strict"
+ProtectHome = "yes"
+DevicePolicy = "closed"
+DeviceAllow = "/dev/kmsg r"
+[units."mios-boot-display-report.service".Install]
+WantedBy = "multi-user.target"
+
 [packages.console-pointer]
 enable = true
 pkgs = ["gpm"]
@@ -19258,6 +19318,16 @@ scale_min = 0.25
 scale_max = 2.0
 shell_entry = "/usr/share/mios/quickshell/Nested.qml"
 compositor = "/usr/bin/Hyprland"             # the session's compositor binary; a patched candidate (mios-gen build-hyprland) is tested here before it is installed
+# Render node of a nested session's compositor and clients: "auto" = the running hardware profile's nested_render
+# ([desktop.hyprland.hardware_profiles.<p>]; dGPU boots -> the headless iGPU, iGPU boots -> the iGPU); or an explicit
+# override: "inherit" (the parent's main device, the pre-routing behaviour), "software" (llvmpipe), a profile id
+# ("igpu" | "dgpu") or "/dev/dri/renderD<N>". Recorded in the session's session.json "render".
+render_node = "auto"
+# Whether "auto" may steer a nested session to a GPU of another driver family than the parent's. false (measured):
+# an NVIDIA parent (Hyprland 0.56) lists no LINEAR modifier and shows nothing for iGPU-rendered buffers, so in a dGPU
+# boot "auto" degrades to the parent's GPU and session.json says why. true = always the profile's nested_render
+# (the iGPU in dGPU boots) -- only useful once the parent can import it (a copy path or a LINEAR-capable driver).
+cross_vendor_present = false
 launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
 tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"

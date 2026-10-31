@@ -5567,7 +5567,7 @@ report("again")
             .filter(|h| h.is_table()).ok_or_else(|| "Missing or invalid desktop.hyprland table".into())
     }
 
-    pub(super) fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
+    pub(crate) fn profile_name(data: &Value, requested: Option<&str>, cmdline: &str) -> Result<String, String> {
         let h = hardware_profile_table(data)?;
         let name = requested.or_else(|| cmdline.split_whitespace()
             .find_map(|arg| arg.strip_prefix("mios.desktop.gpu=")))
@@ -5705,12 +5705,22 @@ report("again")
         let data = hardware_profile_data(root)?;
         let h = hardware_profile_table(&data)?;
         let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
-        let profile = profile_name(&data, hardware_profile, &cmdline)?;
+        let mut profile = profile_name(&data, hardware_profile, &cmdline)?;
+        // GPU hand-off: while the boot profile's GPU is with a VM, its handoff_fallback profile runs in place (its
+        // outputs relit, no reboot); the boot profile itself cannot start until the GPU is back.
+        let booted = super::desktop_boot::boot_profile(&data, &cmdline).ok();
+        let handoff = booted.as_deref().and_then(|b| crate::gpu_topology::handoff_profile(
+            &data, root, b, &crate::gpu_topology::inventory(&crate::gpu_topology::host())));
+        if let Some(fallback) = &handoff {
+            if hardware_profile.is_none() || booted.as_deref() == Some(profile.as_str()) {
+                profile = fallback.clone();
+            }
+        }
         if !dry_run && root == Path::new("/") && super::desktop_boot::enabled(&data)? {
             let current = super::desktop_boot::boot_profile(&data, &cmdline)?;
             // This operation only changes managed boot choices. Device ownership
             // changes at boot, before a compositor opens either DRM device.
-            if profile != current {
+            if profile != current && handoff.as_deref() != Some(profile.as_str()) {
                 let status = Command::new("/usr/bin/sudo")
                     .args(["-n", "--", "/usr/bin/mios-gen", "hyprland-boot-profile",
                         "--hardware-profile", &profile])
@@ -5750,8 +5760,15 @@ report("again")
         let selected = ordered[0].clone();
         let devices = ordered.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(":");
         if dry_run {
+            // Display = the cards the compositor lights; headless = the other cards (outputs left dark, render
+            // nodes still available, e.g. to nested sessions: [desktop.nested].render_node).
+            let gpus = crate::gpu_topology::inventory(&crate::gpu_topology::host());
+            let headless: Vec<&PathBuf> = cards.iter().map(|(p, _)| p).filter(|p| !ordered.contains(p)).collect();
+            let render = gpus.iter().find(|g| g.card == selected).and_then(|g| g.render.clone());
             return serde_json::to_string_pretty(&serde_json::json!({
                 "hardware_profile": profile, "devices": ordered,
+                "display_devices": ordered, "headless_devices": headless, "render_node": render, "handoff": handoff,
+                "include_other_devices": cfg.and_then(|c| c.get("include_other_devices")).and_then(Value::as_bool).unwrap_or(false),
                 "compositor": "start-hyprland", "config": "/usr/share/mios/hyprland/session.lua",
                 "desktop_target": "mios-desktop.target"
             })).map_err(|e| e.to_string());

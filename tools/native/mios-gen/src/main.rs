@@ -19,6 +19,7 @@ mod hypr3d_spawn;
 mod hyprland_build;
 mod docs;
 mod dock;
+mod gpu_topology;
 mod greeter;
 mod grub;
 use render::desktop_boot;
@@ -35,6 +36,7 @@ mod render;
 mod sync;
 mod terminal;
 mod tmux_os;
+mod wl_device_proxy;
 
 use ai::{ai_manifest, pipe_boundaries};
 use docs::{standardize_docs, sync_wiki};
@@ -478,13 +480,45 @@ enum Commands {
         window: Vec<String>,
     },
 
-    /// Run the login chooser with the GPU profile selected at boot.
+    /// Run the login chooser with the GPU profile selected at boot, on that profile's display
+    /// ([desktop.hyprland.hardware_profiles.<p>].greeter_display).
     #[command(name = "hyprland-greeter")]
     HyprlandGreeter {
         #[arg(long, value_parser = ["glass", "tuigreet"])]
         kind: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// Root whose layered SSOT is read (default: the live system)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Plan for this hardware profile instead of the booted one (with --dry-run)
+        #[arg(long, requires = "dry_run")]
+        hardware_profile: Option<String>,
+        /// Terminal client of the hosted text greeter (run by mios-greeter-session --client terminal)
+        #[arg(long, conflicts_with_all = ["dry_run", "hardware_profile"])]
+        hosted: bool,
+        /// The hosted greeter command (after --)
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+
+    /// Read-only boot display report: DRM cards, connectors, fb registrations from the kernel log, fbcon's console
+    /// map and whether tty1 reached the booted profile's GPU, as one JSON line (journald keeps it per boot).
+    #[command(name = "boot-display-report")]
+    BootDisplayReport {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Kernel log: /dev/kmsg (needs CAP_SYSLOG) or a saved log file
+        #[arg(long, default_value = "/dev/kmsg")]
+        kmsg: PathBuf,
+        #[arg(long, default_value = "/proc/cmdline")]
+        cmdline: PathBuf,
+        #[arg(long, default_value = "/sys/class/drm")]
+        sysfs_drm: PathBuf,
+        #[arg(long, default_value = "/dev/dri")]
+        dri: PathBuf,
+        #[arg(long, default_value = "/sys/class/vtconsole")]
+        vtconsole: PathBuf,
     },
 
     /// Select the matching managed GRUB entry; reboot when GPU ownership changes.
@@ -1683,10 +1717,34 @@ fn main() -> ExitCode {
             "hyprland-3d-toggle", "desktop",
             render::render_hyprland::toggle_3d(Path::new("/")).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
         ),
-        Commands::HyprlandGreeter { kind, dry_run } => (
-            "hyprland-greeter", "desktop",
-            greeter::runtime(kind.as_deref(), dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
-        ),
+        Commands::HyprlandGreeter { kind, dry_run, root, hardware_profile, hosted, command } => {
+            if hosted {
+                // The launcher reads the status file; the exit code is the hosted greeter's.
+                return match greeter::hosted(&command) {
+                    Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                    Err(e) => { eprintln!("mios-gen hyprland-greeter --hosted: {e}"); ExitCode::from(1) }
+                };
+            }
+            (
+                "hyprland-greeter", "desktop",
+                greeter::runtime(&root.unwrap_or_else(|| PathBuf::from("/")), kind.as_deref(), hardware_profile.as_deref(), dry_run)
+                    .map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+            )
+        }
+        Commands::BootDisplayReport { root, kmsg, cmdline, sysfs_drm, dri, vtconsole } => {
+            let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            let cmd = fs::read_to_string(&cmdline).unwrap_or_default();
+            let doc = mios_resolver::resolve_projection(&root).ok();
+            let profile = doc.as_ref().and_then(|d| render::desktop_boot::boot_profile(d, &cmd).ok());
+            let pci = match (&doc, &profile) {
+                (Some(d), Some(p)) => gpu_topology::profile_pci(&root, d, p),
+                _ => None,
+            };
+            let log = gpu_topology::kmsg(&kmsg);
+            let report = gpu_topology::boot_display_report(&gpu_topology::Host { dri: &dri, sys: &sysfs_drm }, &vtconsole, &cmd, &log, profile.as_deref(), pci.as_deref());
+            println!("{report}");
+            return ExitCode::SUCCESS;
+        }
         Commands::HyprlandBootProfile { hardware_profile, prepare_only, dry_run } => (
             "hyprland-boot-profile", "desktop",
             desktop_boot::select(&hardware_profile, prepare_only, dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),

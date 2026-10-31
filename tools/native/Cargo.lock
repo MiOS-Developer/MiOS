@@ -2100,6 +2100,7 @@ dependencies = [
  "mios-service-core",
  "mios-unit-gen",
  "regex",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2",
