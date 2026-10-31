@@ -1,6 +1,6 @@
-// AI-hint: mios-controls input: one dedicated OS thread owns terminal input -- a blocking crossterm read, pinned to its own CPU ([desktop.controls].input_cpu, default the last online CPU) while every other thread of the app is kept off that CPU -- so input is never delayed by drawing, validation subprocesses or file IO.
+// AI-hint: mios-controls input: dedicated OS threads own input -- a blocking crossterm read for the terminal (keys, mouse, focus) and the evdev pad thread (pads.rs) -- both pinned to one CPU ([desktop.controls].input_cpu, default the last online CPU) while every other thread of the app is kept off it, so input is never delayed by drawing, validation subprocesses or file IO.
 // AI-related: tools/native/mios-controls/src/tui.rs, usr/share/mios/mios.toml [desktop.controls]
-// AI-functions: spawn, choose_cpu, unpin_others
+// AI-functions: spawn, choose_cpu, unpin_others, pin_current
 use crate::tui::Msg;
 use ratatui::crossterm::event;
 use rustix::process::{sched_getaffinity, sched_setaffinity, CpuSet};
@@ -34,6 +34,11 @@ fn set(cpus: impl IntoIterator<Item = usize>) -> CpuSet {
     s
 }
 
+/// Pin the calling thread to `cpu` (the pad thread joins the terminal input thread there).
+pub fn pin_current(cpu: usize) {
+    let _ = sched_setaffinity(None, &set([cpu]));
+}
+
 /// Keep the calling thread (render/validation/IO) off the input CPU.
 pub fn unpin_others(input_cpu: usize, allowed: &[usize]) -> Result<(), String> {
     sched_setaffinity(None, &set(allowed.iter().copied().filter(|c| *c != input_cpu))).map_err(|e| e.to_string())
@@ -42,8 +47,8 @@ pub fn unpin_others(input_cpu: usize, allowed: &[usize]) -> Result<(), String> {
 /// Start the input thread. It does nothing but block in event::read and forward every event; it is the only
 /// caller of crossterm's reader. The calling thread is moved off the input CPU afterwards, and threads it spawns
 /// later inherit that affinity.
-/// Returns a one-line description of where the input thread runs (for --help diagnostics, not the UI).
-pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> String {
+/// Returns a one-line description of where the input thread runs and the input CPU (shared with the pad thread).
+pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> (String, Option<usize>) {
     let allowed = allowed();
     let cpu = choose_cpu(configured_cpu, &allowed);
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -79,7 +84,7 @@ pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> String {
         (Some(c), Err(e)) => format!("input thread not pinned to CPU {c}: {e}"),
         (None, _) => "input thread unpinned (single-CPU affinity)".into(),
     };
-    note
+    (note, cpu)
 }
 
 #[cfg(test)]

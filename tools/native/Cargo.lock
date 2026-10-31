@@ -2047,6 +2047,7 @@ dependencies = [
 name = "mios-controls"
 version = "0.3.0"
 dependencies = [
+ "mios-inputd",
  "mios-resolver",
  "ratatui",
  "rustix 0.38.44",
