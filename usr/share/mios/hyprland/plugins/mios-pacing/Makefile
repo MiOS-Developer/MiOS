@@ -1,7 +1,7 @@
 # AI-hint: Build mios-pacing.so. `mios-gen build-hyprland-plugin --name mios-pacing` (inside podman-MiOS-DEV) passes
 # the compositor SDK include path as INCLUDES and the GL/wayland link line as LIBS, matching the mios-wobbly and
 # hyprbars Makefile contract; a hand build can use pkg-config. `make test` builds and runs the host tests of the
-# frame gate (pacing.hpp; no compositor SDK needed).
+# frame gate (pacing.hpp) and the capture guard's decision (capture_guard.hpp; no compositor SDK needed).
 # AI-related: usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp, usr/share/mios/hyprland/plugins/mios-pacing/tests/pacing_test.cpp, usr/share/mios/mios.toml
 
 ifeq ($(CXX),g++)
@@ -16,10 +16,11 @@ INCLUDES ?= `pkg-config --cflags pixman-1 libdrm hyprland libinput libudev wayla
 LIBS     ?= `pkg-config --libs egl glesv2`
 
 SRC    = main.cpp
-HDR    = pacing.hpp
+HDR    = pacing.hpp capture_guard.hpp
 TARGET = mios-pacing.so
 # the test binary goes outside the tree, so a later plugin build never copies it in
 TEST  ?= $(or $(TMPDIR),/tmp)/mios-pacing-test
+GUARD_TEST ?= $(or $(TMPDIR),/tmp)/mios-capture-guard-test
 
 all: $(TARGET)
 
@@ -29,10 +30,14 @@ $(TARGET): $(SRC) $(HDR)
 $(TEST): tests/pacing_test.cpp pacing.hpp
 	$(CXX) -O2 -std=c++2b -Wall -Wextra tests/pacing_test.cpp -o $@
 
-test: $(TEST)
+$(GUARD_TEST): tests/capture_guard_test.cpp capture_guard.hpp
+	$(CXX) -O2 -std=c++2b -Wall -Wextra tests/capture_guard_test.cpp -o $@
+
+test: $(TEST) $(GUARD_TEST)
 	$(TEST)
+	$(GUARD_TEST)
 
 clean:
-	rm -f ./$(TARGET) $(TEST)
+	rm -f ./$(TARGET) $(TEST) $(GUARD_TEST)
 
 .PHONY: all clean test

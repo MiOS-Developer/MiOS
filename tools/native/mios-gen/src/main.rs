@@ -16,6 +16,7 @@ mod ai;
 mod btop_theme;
 mod display_scale;
 mod hypr3d_spawn;
+mod hyprland_build;
 mod docs;
 mod dock;
 mod greeter;
@@ -339,6 +340,21 @@ enum Commands {
         root: Option<PathBuf>,
         #[arg(long)]
         srpm: Option<PathBuf>,
+    },
+
+    /// Rebuild the installed Hyprland release's SRPM with the MiOS compositor patch series ([desktop.hyprland.compositor]).
+    #[command(name = "build-hyprland")]
+    BuildHyprland {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        srpm: Option<PathBuf>,
+        /// Directory the patched RPMs are copied to.
+        #[arg(long)]
+        out: PathBuf,
+        /// Only check that every patch applies to the pristine release.
+        #[arg(long)]
+        check: bool,
     },
 
     /// Build the compositor plugin [desktop.hyprland.<name>] with the same SDK and ABI hold.
@@ -1574,6 +1590,14 @@ fn main() -> ExitCode {
                     }
                     Err(msg) => Err((msg, 1)),
                 },
+            )
+        }
+        Commands::BuildHyprland { root, srpm, out, check } => {
+            let r = resolve_root(root);
+            (
+                "build-hyprland",
+                "usr/share/mios/hyprland/patches",
+                hyprland_build::run(&r, srpm.as_deref(), &out, check).map(|msg| { if cli.format != "json" { print!("{msg}"); } }).map_err(|e| (e, 1)),
             )
         }
         Commands::BuildHyprlandPlugin { name, root, srpm } => {

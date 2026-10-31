@@ -1,0 +1,54 @@
+--- a/src/managers/screenshare/ScreenshareSession.cpp
++++ b/src/managers/screenshare/ScreenshareSession.cpp
+@@ -66,6 +66,14 @@
+ }
+ 
+ void CScreenshareSession::init() {
++    // MiOS: a window session whose window has no live monitor (m_window->m_monitor expired) has nothing to share and
++    // no scale to size the capture box with; mark it stopped instead of dereferencing the null monitor below.
++    if UNLIKELY (!monitor()) {
++        LOGM(Log::ERR, "Screenshare session for ({}) has no monitor; not sharing", m_type);
++        m_stopped = true;
++        return;
++    }
++
+     uintptr_t ptr = m_type == SHARE_WINDOW && !m_window.expired() ? (uintptr_t)m_window.get() : (m_monitor.expired() ? (uintptr_t)nullptr : (uintptr_t)m_monitor.get());
+     LOGM(Log::TRACE, "Created screenshare session for ({}): {}, {:x}", m_type, m_name, ptr);
+ 
+--- a/src/protocols/ToplevelExport.cpp
++++ b/src/protocols/ToplevelExport.cpp
+@@ -28,12 +28,15 @@
+ }
+ 
+ void CToplevelExportClient::captureToplevel(uint32_t frame, int32_t overlayCursor_, PHLWINDOW handle) {
+-    if UNLIKELY (!handle) {
+-        LOGM(Log::ERR, "Couldn't capture (window doesn't exist)");
+-        return;
+-    }
+-
+-    auto session = Screenshare::mgr()->getManagedSession(m_resource->client(), handle);
++    // MiOS: a window that is gone, unmapped or without a live monitor (a pinned window whose output was removed keeps
++    // an expired m_monitor) cannot be shared: building a session for it dereferences a null monitor in
++    // CScreenshareSession::init. Answer with a frame that fails instead, so the client's frame id always exists
++    // (returning without one made the client's next request a protocol error that disconnected it).
++    WP<Screenshare::CScreenshareSession> session;
++    if UNLIKELY (!handle || !handle->m_isMapped || !handle->m_monitor)
++        LOGM(Log::ERR, "Couldn't capture (window {})", !handle ? "doesn't exist" : !handle->m_isMapped ? "is not mapped" : "has no monitor");
++    else
++        session = Screenshare::mgr()->getManagedSession(m_resource->client(), handle);
+ 
+     // create a frame
+     const auto FRAME = PROTO::toplevelExport->m_frames.emplace_back(
+@@ -63,6 +66,12 @@
+     m_resource->setDestroy([this](CHyprlandToplevelExportFrameV1* pFrame) { PROTO::toplevelExport->destroyResource(this); });
+     m_resource->setCopy([this](CHyprlandToplevelExportFrameV1* pFrame, wl_resource* res, int32_t ignoreDamage) { shareFrame(res, !!ignoreDamage); });
+ 
++    // MiOS: no session (the window could not be shared, see captureToplevel): fail the frame; copy fails it again.
++    if UNLIKELY (m_session.expired() || !m_session->isActive()) {
++        m_resource->sendFailed();
++        return;
++    }
++
+     m_frame = m_session->nextFrame(overlayCursor);
+ 
+     auto formats = m_session->allowedFormats();
