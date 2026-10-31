@@ -16,7 +16,7 @@
 # tests/test-design-language-live.py
 # AI-functions: qml_errors, toml_errors, bridge_errors, projection_errors, tree_errors, main_tree
 """Usage: python3 tests/test-design-language.py   (MIOS_GEN=<mios-gen built from this tree> adds the projection check;
-MIOS_DESIGN_BASE=<git rev> picks the negative-control revision, default main)."""
+MIOS_DESIGN_BASE=<git rev> picks the negative-control revision, default fb5fb4183, the last pre-lane main)."""
 import json
 import os
 import re
@@ -226,7 +226,7 @@ def tree_errors(root: Path) -> list[str]:
 
 
 def main_tree(dest: Path) -> Path:
-    rev = os.environ.get("MIOS_DESIGN_BASE", "main")
+    rev = os.environ.get("MIOS_DESIGN_BASE", "fb5fb4183")
     paths = ["usr/share/mios/quickshell", "usr/share/mios/mios.toml", "usr/libexec/mios/mios-sync-theme",
              "usr/share/mios/hyprland/patches", "tools/native/mios-gen/src/render.rs"]
     arch = subprocess.run(["git", "-C", str(TREE), "archive", rev, *paths], capture_output=True, check=True)
@@ -245,7 +245,7 @@ class TestDesignLanguage(unittest.TestCase):
             e = qml_errors(root)
             d = tomllib.loads((root / "usr/share/mios/mios.toml").read_text())
             te = toml_errors(d, root)
-            print(f"\nNEGATIVE CONTROL ({os.environ.get('MIOS_DESIGN_BASE', 'main')}): {len(e)} QML offences, {len(te)} SSOT offences; e.g.",
+            print(f"\nNEGATIVE CONTROL ({os.environ.get('MIOS_DESIGN_BASE', 'fb5fb4183')}): {len(e)} QML offences, {len(te)} SSOT offences; e.g.",
                   *(e[:6] + te[:4]), sep="\n  ")
             self.assertTrue(e, "main's QML must fail the gate (hard-coded radii / heights)")
             self.assertTrue(te, "main's SSOT must fail the gate (literal hyprbars geometry)")
