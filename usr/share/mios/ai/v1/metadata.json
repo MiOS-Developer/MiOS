@@ -7432,7 +7432,7 @@
       "functions": [
         "FlatpakAppsLaunchSuite"
       ],
-      "doc": "usr/share/doc/mios/manual/desktop.md",
+      "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -12326,7 +12326,7 @@
         "usr/libexec/mios/mios-ai-metadata.py",
         "usr/lib/mios/mios_comments.py (tracked_file_modes)",
         "usr/share/mios/ai/v1/metadata.json",
-        "usr/share/mios/mios.toml [generation.sync] ai.metadata",
+        "usr/share/mios/mios.toml [generation.sync]",
         "automation/98-drift-checks.sh (check_ai_metadata_fresh)",
         "tests/test-ai-metadata-native-parity.py",
         "tests/golden/README.md"
@@ -12463,7 +12463,7 @@
         "usr/libexec/mios/mios-env-snapshot",
         "usr/lib/mios/userenv.sh",
         "tools/native/mios-resolver/src/emit.rs (emit_shell::shell_exports)",
-        "usr/share/mios/mios.toml [generation.sync] env.baseline",
+        "usr/share/mios/mios.toml [generation.sync]",
         "automation/98-drift-checks.sh (check_resolved_env_lossless)",
         "tests/golden/README.md"
       ],
@@ -26046,7 +26046,7 @@
         "usr/libexec/mios/mios-flatpak-run"
       ],
       "functions": [],
-      "doc": "usr/share/doc/mios/manual/desktop.md",
+      "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -33433,7 +33433,7 @@
         "tools/native/mios-controls/src/tui.rs",
         "tools/native/mios-controls/src/layout.rs",
         "tools/native/mios-controls/src/pads.rs",
-        "usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux] [desktop.controls]",
+        "usr/share/mios/mios.toml [desktop.controls]",
         "usr/share/doc/mios/keybinds.md",
         "tests/test-mios-controls.py",
         "tests/test-mios-controls-visual-live.py"

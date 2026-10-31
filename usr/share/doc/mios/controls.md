@@ -1,5 +1,5 @@
 <!-- AI-hint: Operator guide to mios-controls, the terminal binding editor over the layered binding map: keyboard, mouse and controller drawings (VT-safe), every use of an input across the global map, compositor tables, tmux-os, the Guide layer and the Hypr3D room, rebind / capture-to-bind / search / conflicts / undo, keyboard + mouse + controller navigation, the draft -> validate -> apply workflow and its headless verbs. -->
-<!-- AI-related: tools/native/mios-controls/src/main.rs, tools/native/mios-controls/src/tui.rs, tools/native/mios-controls/src/layout.rs, tools/native/mios-controls/src/pads.rs, usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux] [desktop.controls], usr/share/doc/mios/keybinds.md, tests/test-mios-controls.py, tests/test-mios-controls-visual-live.py -->
+<!-- AI-related: tools/native/mios-controls/src/main.rs, tools/native/mios-controls/src/tui.rs, tools/native/mios-controls/src/layout.rs, tools/native/mios-controls/src/pads.rs, usr/share/mios/mios.toml [desktop.controls], usr/share/doc/mios/keybinds.md, tests/test-mios-controls.py, tests/test-mios-controls-visual-live.py -->
 
 # MiOS Controls
 

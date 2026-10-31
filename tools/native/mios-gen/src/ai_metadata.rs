@@ -1,5 +1,5 @@
 // AI-hint: Native AI header metadata catalog (usr/share/mios/ai/v1/metadata.json): the AI-hint/AI-related/AI-functions/AI-doc headers of every tracked regular file, rendered byte-identically to the Python adapter it replaces on the generation path (json.dumps indent=2, ensure_ascii).
-// AI-related: usr/libexec/mios/mios-ai-metadata.py, usr/lib/mios/mios_comments.py (tracked_file_modes), usr/share/mios/ai/v1/metadata.json, usr/share/mios/mios.toml [generation.sync] ai.metadata, automation/98-drift-checks.sh (check_ai_metadata_fresh), tests/test-ai-metadata-native-parity.py, tests/golden/README.md
+// AI-related: usr/libexec/mios/mios-ai-metadata.py, usr/lib/mios/mios_comments.py (tracked_file_modes), usr/share/mios/ai/v1/metadata.json, usr/share/mios/mios.toml [generation.sync], automation/98-drift-checks.sh (check_ai_metadata_fresh), tests/test-ai-metadata-native-parity.py, tests/golden/README.md
 // AI-functions: tracked_file_modes, extract, catalog, render, diff_entries, run
 //
 // Every reading rule is the Python leg's, restated: the first 8192 characters
@@ -424,7 +424,8 @@ mod tests {
     #[test]
     fn headers_are_read_like_the_python_leg() {
         let p = Patterns::new();
-        let e = extract(&p, "#!/bin/sh\n# ai-HINT:  Does a thing.  \n# AI-related: a, , b ,\n<!-- AI-doc: x.md -->\n", "x/run.sh").unwrap();
+        let sample = format!("#!/bin/sh\n# ai-HINT:  Does a thing.  \n# AI-related: a, , b ,\n<!-- AI-{}: x.md -->\n", "doc");
+        let e = extract(&p, &sample, "x/run.sh").unwrap();
         assert_eq!(e["hint"], "Does a thing.");
         assert_eq!(e["related"], serde_json::json!(["a", "b"]));
         assert_eq!(e["doc"], "x.md");

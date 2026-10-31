@@ -18273,6 +18273,7 @@ unit = [
     "tests/test-shell-hud-contract.py",
     "tests/test-shell-hud-live.py",
     "tests/test-ai-metadata-native-parity.py",
+    "tests/test-env-snapshot-native-parity.py",
     "tests/test-appmenu-global.py",
     "tests/test-camera-v4l2-launcher.py",
     "tests/test-design-language-live.py",
