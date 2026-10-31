@@ -18,8 +18,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 |---|---|
 | pending | 1744 |
 | in_progress | 65 |
-| completed | 1842 |
-| incomplete | 20 |
+| completed | 1843 |
+| incomplete | 19 |
 | cancelled | 21 |
 | total | 3692 |
 
