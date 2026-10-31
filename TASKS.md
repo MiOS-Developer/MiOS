@@ -3884,7 +3884,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 - `task_1154` Negative-tests that prove drift-checks 64/65/66 can actually FAIL -- completed · P2 · size M · depends_on task_1082
 - `task_1155` Run the build-URL liveness probe as a scheduled, non-blocking CI job -- completed · P2 · size S · depends_on task_1135
-- `task_1171` Rewrite the 64/65/66 negative-tests to inject into real fixtures and call the real checks -- incomplete · P1 · size M · depends_on task_1082
+- `task_1171` Rewrite the 64/65/66 negative-tests to inject into real fixtures and call the real checks -- completed · P1 · size M · depends_on task_1082
 - `task_1176` Extend the check-11 coverage gate to mios_pipe submodules and cover identity/principal.py -- completed · P1 · size M
 - `task_1182` Add the recursion/width bounds to the budget gate + negative-test every new check in this batch -- completed · P2 · size S · depends_on task_1178, task_1179, task_1181
 - `task_1191` Hermetic mios-bake-group unit test (group assignment, firstboot skip) + fix the stale retry-count message -- completed · P2 · size M
