@@ -5,8 +5,7 @@
 #   replacement for the spec lane's table (same ids, same entry shape). Loaded through mios_toml.load_merged on a
 #   temp layer stack (live vendor SSOT + fragment). Negative controls plant a dropped id, a duplicate, a disabled
 #   shipped id, a blank description, an unknown source and a lost spec-lane id.
-# AI-related: /home/mios/mios-desktop-work-1/staged-ssot/xbox-features.toml, /home/mios/mios-desktop-work-1/staged-ssot/xbox-spec.toml,
-#   /var/lib/mios-build/repos/mios-bootstrap-build/field/autounattend/mios-xbox-features.txt, usr/lib/mios/mios_toml.py
+# AI-related: usr/lib/mios/mios_toml.py, usr/share/mios/mios.toml
 """Run: python3 -I tests/test-mios-xbox-features-fragment.py -v"""
 from __future__ import annotations
 

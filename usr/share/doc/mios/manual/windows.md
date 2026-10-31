@@ -344,3 +344,37 @@ Start-Process appear at default Win32 placement (often top-
 left or last-position). This puts them in the screen center.
 
 <!-- mios-src:ab8c3383025b from usr/share/mios/windows/mios-pc-control.ps1:336-341 -->
+### Operator decision 2026-10-16
+
+Operator decision 2026-10-16: trust exactly this upstream publisher certificate (CN=HostFission, Sectigo-issued,
+valid to 2027-08-23) in LocalMachine\TrustedPublisher so the IDD's Authenticode-signed (not Microsoft-attested)
+driver catalogs install silently -- the same as clicking "Always trust" once. A different thumbprint (upstream
+certificate rotation) stops provisioning and needs a new operator decision. Root store, test-signing and driver
+signature enforcement are never touched.
+
+<!-- mios-src:20d1fed2faa2 from usr/share/mios/windows/mios-looking-glass-idd.ps1:13-17 -->
+
+### BEGIN Protect-MiOSDir (setup-looking-glass.py also sends...
+
+BEGIN Protect-MiOSDir (setup-looking-glass.py also sends this function ahead of the staged .b64 chunks)
+A directory only SYSTEM and Administrators can write (UsersRead adds BUILTIN\Users read/execute). %ProgramData% lets a
+standard user pre-create folders and keep owner rights in them, so an existing directory that is a reparse point,
+not owned by SYSTEM/Administrators, or grants anyone else access is moved aside and recreated (Quarantine) or taken over in place.
+
+<!-- mios-src:6a1de12de186 from usr/share/mios/windows/mios-looking-glass-idd.ps1:23-26 -->
+
+### The driver catalogs are Authenticode-signed by the upstream...
+
+The driver catalogs are Authenticode-signed by the upstream publisher (not Microsoft-attested); PnP asks
+the user to trust that publisher, which a silent install cannot answer. Trusting it is the operator's call.
+
+<!-- mios-src:e8f42c5ac57e from usr/share/mios/windows/mios-looking-glass-idd.ps1:179-180 -->
+
+### Console status lines are best effort. The logon task starts...
+
+Console status lines are best effort. The logon task starts Windows PowerShell hidden, and at sign-in its console
+can be invalid (Windows 11 console handoff): Write-Host then fails with "The handle is invalid" (0x6), which
+$ErrorActionPreference = 'Stop' made fatal -- the server exited 1 at every logon (MiOS-Xbox round-1 boot).
+A failed console write is dropped; it never stops the executor.
+
+<!-- mios-src:922d0c8932c1 from usr/share/mios/windows/mios-oscontrol-server.ps1:97-100 -->

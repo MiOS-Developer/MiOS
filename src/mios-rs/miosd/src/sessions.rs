@@ -1,5 +1,5 @@
 // AI-hint: miosd sessions: global tmux session selector, the default entry of every interactive MiOS login (local and tailnet nodes), with the shared Apps and TUIs launcher section; keyboard, controller vocabulary and mouse driven, Linux-console safe.
-// AI-related: usr/share/mios/mios.toml [terminal.sessions] [terminal.tui_launcher] [[terminal.tuis]] [keybindings] [theme.tmux.console], usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs
+// AI-related: usr/share/mios/mios.toml, usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs
 //! Global tmux session selector (`miosd sessions`): the default entry of every interactive
 //! MiOS login. Lists [keybindings].socket_name sessions on this node and on tailnet MiOS
 //! nodes ([terminal.sessions]), starts new bare Tmux-OS sessions, opens the MiOS AI workspace

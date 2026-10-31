@@ -18,7 +18,7 @@
 //!
 //! Never dispatch a resize from a Lua `window.open_early` handler: the window has no layout
 //! target yet and Hyprland 0.56.2 segfaults in Layout::CSpace::resizeTarget.
-// AI-related: usr/share/mios/mios.toml [desktop.hyprland.placement] [desktop.hyprland].window_rules,
+// AI-related: usr/share/mios/mios.toml,
 // AI-related: tools/native/mios-gen/src/render.rs, usr/lib/systemd/user/mios-placement.service
 
 use std::collections::HashMap;

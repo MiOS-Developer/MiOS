@@ -1941,3 +1941,39 @@ fn a_record_added_in_the_old_shape_after_the_migration_is_migrated_by_a_second_r
     );
     assert_eq!(bytes(&p), before);
 }
+
+#[test]
+fn render_and_check_refuse_title_status_contradiction() {
+    let d = sandbox("render-contradiction");
+    let first_id = records(&d)[0]["id"].as_str().unwrap().to_string();
+
+    // Plant a contradiction: status is pending but title claims DONE
+    plant_line(&d, &first_id, |v| {
+        v["status"] = json!("pending");
+        v["title"] = json!("Planted contradiction task **[P1] ✅ DONE**");
+    });
+
+    // Negative control 1: render must fail with exit code 1
+    let o = run(&d, &["render"]);
+    assert_eq!(o.code, 1, "render must exit 1 on title/status contradiction: {}", o.text);
+    assert!(o.text.contains("title/status contradiction"), "{}", o.text);
+    assert!(o.text.contains("status is 'pending' but title claims 'DONE'"), "{}", o.text);
+
+    // Negative control 2: check must fail with exit code 1
+    let c = run(&d, &["check"]);
+    assert_eq!(c.code, 1, "check must exit 1 on title/status contradiction: {}", c.text);
+    assert!(c.text.contains("title/status contradiction"), "{}", c.text);
+
+    // Positive control: mark completed with verification_evidence
+    plant_line(&d, &first_id, |v| {
+        v["status"] = json!("completed");
+        v["title"] = json!("Reconciled clean task title");
+        v["verification_evidence"] = json!("verified by test");
+    });
+
+    let o2 = run(&d, &["render"]);
+    assert_eq!(o2.code, 0, "render must succeed once reconciled: {}", o2.text);
+    let c2 = run(&d, &["check"]);
+    assert_eq!(c2.code, 0, "check must succeed once reconciled: {}", c2.text);
+}
+
