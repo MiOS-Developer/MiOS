@@ -4013,7 +4013,7 @@ import sys
 p = sys.argv[1]
 with open(p, "r", encoding="utf-8", newline="") as fh:
     t = fh.read()
-anchor = '"path": "usr/libexec/mios/mios-ai-metadata.py",\n      "hint": "'
+anchor = '"path": "tools/native/mios-gen/src/ai_metadata.rs",\n      "hint": "'
 out = t.replace(anchor, anchor + "planted ", 1)
 assert out != t, "the plant did not land -- the exporter has no entry of its own"
 with open(p, "w", encoding="utf-8", newline="") as fh:
@@ -4024,7 +4024,7 @@ PYEOF
         cp "$bak" "$md"; rm -f "$bak"
         die "check_ai_metadata_fresh passed with a hand-edited metadata.json entry"
     fi
-    if [[ "$_NEG_GATE_OUT" != *"entry usr/libexec/mios/mios-ai-metadata.py: differs in hint"* ]]; then
+    if [[ "$_NEG_GATE_OUT" != *"entry tools/native/mios-gen/src/ai_metadata.rs: differs in hint"* ]]; then
         cp "$bak" "$md"; rm -f "$bak"
         printf '%s\n' "$_NEG_GATE_OUT" >&2
         die "check_ai_metadata_fresh failed but did not name the planted entry"
@@ -4033,6 +4033,27 @@ PYEOF
     cp "$bak" "$md"; rm -f "$bak"
     _neg_gate check_ai_metadata_fresh || { printf '%s\n' "$_NEG_GATE_OUT" >&2; die "check_ai_metadata_fresh failed after restoration"; }
     log "check_ai_metadata_fresh negative test passed"
+}
+
+test_sync_copies() {
+    log "Testing check_sync_copies"
+    # The defect: sync.rs writes the [generation.sync] copy stages itself, and no
+    # gate compared a target with its source, so a hand edit to the copy shipped.
+    local target="${ROOT}/usr/lib/wsl.conf"
+    local bak; bak="$(mktemp)"; cp "$target" "$bak"
+    printf '# planted\n' >> "$target"
+    if _neg_gate check_sync_copies; then
+        cp "$bak" "$target"; rm -f "$bak"
+        die "check_sync_copies passed with a hand-edited copy stage target"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"usr/lib/wsl.conf is not a copy of etc/wsl.conf"* ]]; then
+        cp "$bak" "$target"; rm -f "$bak"
+        printf '%s\n' "$_NEG_GATE_OUT" >&2
+        die "check_sync_copies failed but did not name the planted copy"
+    fi
+    cp "$bak" "$target"; rm -f "$bak"
+    _neg_gate check_sync_copies || { printf '%s\n' "$_NEG_GATE_OUT" >&2; die "check_sync_copies failed after restoration"; }
+    log "check_sync_copies negative test passed"
 }
 
 test_tracked_readable() {
@@ -5922,6 +5943,7 @@ main() {
 _run_test test_ci_suite_coverage
 _run_test test_cargo_manifest_generated
 _run_test test_ai_metadata_fresh
+_run_test test_sync_copies
 _run_test test_tracked_readable
 _run_test test_leaked_fixtures
     _run_test test_fleet_safety

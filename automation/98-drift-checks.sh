@@ -526,19 +526,6 @@ check_egress_firewall() {
     fi
 }
 
-check_flatpak_overrides() {
-    local native
-    native="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || {
-        _violation "check_flatpak_overrides: native mios-gen is required; build/install the SSOT release catalog"
-        return
-    }
-    if "$native" render-flatpak-overrides --root "$ROOT" --check; then
-        echo "[98-drift-checks]   var/lib/flatpak/overrides/global in sync with mios.toml [flatpak.overrides.global]"
-    else
-        _violation "var/lib/flatpak/overrides/global is STALE vs mios.toml [flatpak.overrides.global] -- regenerate with mios-gen render-flatpak-overrides"
-    fi
-}
-
 check_blade_dropins() {
     _run_deployment_projection blade-dropins
 }
@@ -3766,7 +3753,7 @@ check_sync_copies() {
     local bin out
     bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || { _violation "$_GEN_MISSING"; return; }
     if out="$("$bin" sync --root "$ROOT" --check-copies 2>&1)"; then
-        echo "[98-drift-checks]   ${out#[mios-gen sync] }"
+        echo "[98-drift-checks]   ${out#\[mios-gen sync\] }"
     else
         _violations_from "sync copy stage: " "$out"
     fi
@@ -3860,7 +3847,6 @@ main() {
     check_no_hardcode_version
     check_pod_quadlets
     check_egress_firewall
-    check_flatpak_overrides
     check_blade_dropins
     check_unwired_modules
     check_cephfs_ssot

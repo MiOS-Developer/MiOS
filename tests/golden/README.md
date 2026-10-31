@@ -160,7 +160,7 @@ $ mios-gen egress-firewall --check
 
 ### env-snapshot
 
-Port of the bash body of `usr/libexec/mios/mios-env-snapshot` (the `env.baseline` sync stage; the script is now a shim onto this verb). The baseline reads the vendor tiers only: the bash body also read `<root>/etc/mios`, which on a deployed host is the live admin tier (unit test `only_the_vendor_tiers_are_read`). The second case is a planted defect: a file that is not the snapshot.
+Port of the bash body of `usr/libexec/mios/mios-env-snapshot` (the `env.baseline` sync stage; the script is now a shim onto this verb). The baseline reads the vendor tiers only: the bash body also read `<root>/etc/mios`, which on a deployed host is the live admin tier (unit test `only_the_vendor_tiers_are_read`). `tests/test-env-snapshot-native-parity.py` replays the retired bash body, frozen in the test, against this verb over the real SSOT and seeded layered vendor fixtures (byte parity), plants an admin tier to show the one deliberate difference, and proves a mutated legacy leg goes red. The second case is a planted defect: a file that is not the snapshot.
 
 ```console
 $ mios-gen env-snapshot --root [CWD]/nonexistent
