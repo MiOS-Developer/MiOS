@@ -177,9 +177,18 @@ pub fn parse(text: &str) -> Vec<Device> {
     for block in text.split("\n\n") {
         let (mut name, mut handlers, mut keys, mut abs, mut rel) = (String::new(), String::new(), String::new(), String::new(), String::new());
         let (mut vendor, mut product) = (0u16, 0u16);
+        // A device name may carry a newline (USB product strings such as "OBINS OBINS\nAnnePro2 Keyboard"): the
+        // quoted value then continues on the next lines until its closing quote; they join with a space.
+        let mut open_name = false;
         for line in block.lines() {
-            if let Some(n) = line.strip_prefix("N: Name=") {
-                name = n.trim().trim_matches('"').to_owned();
+            if open_name {
+                let part = line.trim();
+                open_name = !part.ends_with('"');
+                name = format!("{name} {}", part.trim_end_matches('"')).trim().to_owned();
+            } else if let Some(n) = line.strip_prefix("N: Name=") {
+                let n = n.trim();
+                open_name = n.starts_with('"') && (n.len() == 1 || !n.ends_with('"'));
+                name = n.trim_matches('"').to_owned();
             } else if let Some(h) = line.strip_prefix("H: Handlers=") {
                 handlers = h.trim().to_owned();
             } else if let Some(k) = line.strip_prefix("B: KEY=") {
@@ -254,6 +263,16 @@ mod tests {
         assert!(!bits("1 0").contains(&0));
         assert!(bits("0 1").contains(&0));
         assert!(bits("1").contains(&0) && !bits("1").contains(&64));
+    }
+
+    #[test]
+    fn a_name_with_a_newline_keeps_its_second_line() {
+        let text = "I: Bus=0003 Vendor=04d9 Product=a293\nN: Name=\"OBINS OBINS\nAnnePro2 Keyboard\"\nH: Handlers=kbd event11\nB: KEY=1000000000007 ff980000000007ff febeffdfffefffff fffffffffffffffe\n\nI: Bus=0011\nN: Name=\"AT Translated Set 2 keyboard\"\nH: Handlers=sysrq kbd event3 leds\nB: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe\n";
+        let d = parse(text);
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert_eq!(d[0].name, "OBINS OBINS AnnePro2 Keyboard");
+        assert_eq!(d[0].kind, Kind::Keyboard);
+        assert_eq!(d[1].name, "AT Translated Set 2 keyboard", "a one-line name is unchanged");
     }
 
     #[test]

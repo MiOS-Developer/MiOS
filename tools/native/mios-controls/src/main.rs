@@ -370,6 +370,9 @@ fn run(a: Args) -> Result<ExitCode, String> {
                 _ => flagged.iter().copied().collect(),
             };
             print_uses(&uses, &idx, &flagged, a.json);
+            if idx.is_empty() && !a.json {
+                eprintln!("mios-controls: {}", if verb == "conflicts" { "no conflicts".to_owned() } else { format!("nothing bound to {}", a.pos.join(" ")) });
+            }
             Ok(if verb == "conflicts" && !idx.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS })
         }
         Some("layout") => {
@@ -394,9 +397,16 @@ fn run(a: Args) -> Result<ExitCode, String> {
             let lua = session_lua(&layers, &merged);
             let uses = bindmap::collect(&merged, &draft, lua.as_deref());
             let flagged = bindmap::conflicts(&uses);
-            let idx: Vec<usize> = (0..uses.len()).filter(|i| uses[*i].kind() == kind).collect();
+            // The device's profile: what is bound on the inputs it has, and (apart) what is bound on inputs it lacks.
+            let absent = tui::absent_inputs(d);
+            let (idx, missing): (Vec<usize>, Vec<usize>) = (0..uses.len()).filter(|i| uses[*i].kind() == kind).partition(|i| !absent.contains(&uses[*i].input));
             if a.json {
-                println!("{}", serde_json::json!({"device": device_json(d, &fams), "uses": idx.iter().map(|i| use_json(&uses[*i], flagged.contains(i))).collect::<Vec<_>>()}));
+                let mut dj = device_json(d, &fams);
+                dj["absent"] = serde_json::json!(absent);
+                println!(
+                    "{}",
+                    serde_json::json!({"device": dj, "uses": idx.iter().map(|i| use_json(&uses[*i], flagged.contains(i))).collect::<Vec<_>>(), "unreachable": missing.iter().map(|i| use_json(&uses[*i], flagged.contains(i))).collect::<Vec<_>>()})
+                );
             } else {
                 println!("{} ({}, {:04x}:{:04x}, {})", d.name, d.kind.word(), d.vendor, d.product, d.event().unwrap_or("-"));
                 if d.kind == devices::Kind::Controller {
@@ -404,6 +414,10 @@ fn run(a: Args) -> Result<ExitCode, String> {
                     println!("family {} ({} layout)", f.title, f.layout);
                 }
                 print_uses(&uses, &idx, &flagged, false);
+                if !missing.is_empty() {
+                    println!("not on this device ({} input(s) it lacks):", absent.len());
+                    print_uses(&uses, &missing, &flagged, false);
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -483,7 +497,21 @@ fn run(a: Args) -> Result<ExitCode, String> {
     }
 }
 
+/// `mios-controls uses x | head`: a closed stdout ends the program quietly (exit 141, as a SIGPIPE death would) instead
+/// of a println! panic; every other panic keeps the default report.
+fn quiet_broken_pipe() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info.payload().downcast_ref::<String>().map(String::as_str).or_else(|| info.payload().downcast_ref::<&str>().copied()).unwrap_or("");
+        if msg.starts_with("failed printing to stdout") && msg.contains("Broken pipe") {
+            std::process::exit(141);
+        }
+        default(info);
+    }));
+}
+
 fn main() -> ExitCode {
+    quiet_broken_pipe();
     let args = match parse_args(std::env::args().skip(1).collect()) {
         Ok(a) => a,
         Err(e) if e.is_empty() => {

@@ -2087,45 +2087,12 @@ impl App {
 
     /// Inputs the selected device lacks (mouse buttons, pad buttons without a HAT or key).
     fn absent(&self) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        match self.view {
-            View::Mouse => {
-                if let Some(d) = self.mouse_dev.and_then(|i| self.devices.get(i)) {
-                    for (code, _, _) in layout::MOUSE_BUTTONS {
-                        if !d.has(*code) {
-                            out.insert(format!("mouse:{code}"));
-                        }
-                    }
-                    if !d.rel.contains(&8) {
-                        out.insert("mouse:wheel_up".into());
-                        out.insert("mouse:wheel_down".into());
-                    }
-                    if !d.rel.contains(&6) {
-                        out.insert("mouse:wheel_left".into());
-                        out.insert("mouse:wheel_right".into());
-                    }
-                }
-            }
-            View::Controller => {
-                if let Some(d) = self.pad_dev.and_then(|i| self.devices.get(i)) {
-                    for id in layout::PAD_INPUTS {
-                        let present = match *id {
-                            b if b.starts_with("BTN_DPAD_") => d.has(mios_resolver::keybindings::button_code(b).unwrap_or(0)) || d.abs.contains(&16),
-                            "BTN_TL2" => d.has(0x138) || d.abs.contains(&2),
-                            "BTN_TR2" => d.has(0x139) || d.abs.contains(&5),
-                            b if b.starts_with("LS_") => d.abs.contains(&0),
-                            b if b.starts_with("RS_") => d.abs.contains(&3) || d.abs.contains(&5),
-                            b => d.has(mios_resolver::keybindings::button_code(b).unwrap_or(0)),
-                        };
-                        if !present {
-                            out.insert(format!("pad:{id}"));
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        out
+        let dev = match self.view {
+            View::Mouse => self.mouse_dev,
+            View::Controller => self.pad_dev,
+            _ => None,
+        };
+        dev.and_then(|i| self.devices.get(i)).map(absent_inputs).unwrap_or_default()
     }
 
     fn draw_device(&mut self, fr: &mut Frame, area: Rect) {
@@ -2140,6 +2107,9 @@ impl App {
         fr.render_widget(block, area);
         let g = self.glyphs;
         let legend_rows = if inner.height >= 18 { 2 } else { 0 };
+        // The controller drawing's notes (touchpad, motion, d-pad) go under it when the panel has the rows to spare.
+        let notes = if self.view == View::Controller && legend_rows > 0 && inner.height >= layout::PAD_H + legend_rows + PAD_NOTES.len() as u16 { PAD_NOTES.len() as u16 } else { 0 };
+        let legend_rows = legend_rows + notes;
         let draw_area = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(legend_rows));
         let (els, boxed): (Vec<El>, bool) = match self.view {
             View::Keyboard => match layout::keyboard_elements(draw_area.width, draw_area.height, g) {
@@ -2185,6 +2155,8 @@ impl App {
             }
         };
         drop(look);
+        // The legend's "also bound here" reads the caps this frame drew, not the previous frame's.
+        self.els = els;
         if legend_rows > 0 {
             let y = inner.y + inner.height - legend_rows;
             let legend = Line::from(vec![
@@ -2206,8 +2178,10 @@ impl App {
                 }
             };
             fr.render_widget(Paragraph::new(Line::styled(hint, Style::new().fg(t.muted))), Rect::new(inner.x, y + 1, inner.width, 1));
+            for (i, note) in PAD_NOTES.iter().take(notes as usize).enumerate() {
+                fr.render_widget(Paragraph::new(Line::styled(*note, Style::new().fg(t.muted).add_modifier(Modifier::DIM))), Rect::new(inner.x, y + 2 + i as u16, inner.width, 1));
+            }
         }
-        self.els = els;
         for (r, id) in hits {
             self.hits.push((r, Hit::Input(id)));
         }
@@ -2525,6 +2499,46 @@ const ASCII_BORDER: ratatui::symbols::border::Set = ratatui::symbols::border::Se
     horizontal_bottom: "-",
 };
 
+/// The drawing's inputs a device does not have: mouse buttons and wheel axes it never reports, controller buttons,
+/// triggers, d-pad and stick directions without a key or axis. A keyboard lacks nothing (every layout key is drawn).
+pub fn absent_inputs(d: &Device) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    match d.kind {
+        Kind::Mouse => {
+            for (code, _, _) in layout::MOUSE_BUTTONS {
+                if !d.has(*code) {
+                    out.insert(format!("mouse:{code}"));
+                }
+            }
+            if !d.rel.contains(&8) {
+                out.insert("mouse:wheel_up".into());
+                out.insert("mouse:wheel_down".into());
+            }
+            if !d.rel.contains(&6) {
+                out.insert("mouse:wheel_left".into());
+                out.insert("mouse:wheel_right".into());
+            }
+        }
+        Kind::Controller => {
+            for id in layout::PAD_INPUTS {
+                let present = match *id {
+                    b if b.starts_with("BTN_DPAD_") => d.has(mios_resolver::keybindings::button_code(b).unwrap_or(0)) || d.abs.contains(&16),
+                    "BTN_TL2" => d.has(0x138) || d.abs.contains(&2),
+                    "BTN_TR2" => d.has(0x139) || d.abs.contains(&5),
+                    b if b.starts_with("LS_") => d.abs.contains(&0),
+                    b if b.starts_with("RS_") => d.abs.contains(&3) || d.abs.contains(&5),
+                    b => d.has(mios_resolver::keybindings::button_code(b).unwrap_or(0)),
+                };
+                if !present {
+                    out.insert(format!("pad:{id}"));
+                }
+            }
+        }
+        Kind::Keyboard => {}
+    }
+    out
+}
+
 fn verb(v: &str) -> Option<Act> {
     Some(match v {
         "enter" => Act::Enter,
@@ -2758,7 +2772,11 @@ pub fn render_drawing(layers: Layers, view: &str, width: u16, height: u16, famil
         v => return Err(format!("unknown view {v} (keyboard, mouse, controller, bindings, devices)")),
     };
     if let Some(f) = family {
-        app.family_override = Some(app.families.iter().position(|x| x.id == f).ok_or_else(|| format!("unknown family {f}"))?);
+        // an id (xbox), a title (PlayStation) or a name hint (dualsense, dualshock, joy-con), any case
+        let want = f.to_lowercase();
+        let pos = app.families.iter().position(|x| x.id == want || x.title.to_lowercase() == want).or_else(|| app.families.iter().position(|x| x.name_hints.iter().any(|h| h.to_lowercase() == want)));
+        let ids: Vec<&str> = app.families.iter().map(|x| x.id.as_str()).collect();
+        app.family_override = Some(pos.ok_or_else(|| format!("unknown family {f} ({})", ids.join(", ")))?);
     }
     if let Some(l) = layer {
         let kind = app.kind();
@@ -2839,6 +2857,16 @@ mod tests {
             let s = render(&mut a, w, h);
             assert!(s.contains("Search"), "menu at {w}x{h}:\n{s}");
         }
+    }
+
+    #[test]
+    fn controller_notes_show_under_a_tall_drawing_only() {
+        let mut a = app();
+        a.set_view(View::Controller);
+        let tall = render(&mut a, 170, 60);
+        assert!(tall.contains("[Touchpad]") && tall.contains("[Motion]"), "tall controller view lists the notes:\n{tall}");
+        let short = render(&mut a, 80, 24);
+        assert!(!short.contains("[Motion]"), "an 80x24 console keeps the rows for the drawing:\n{short}");
     }
 
     #[test]
