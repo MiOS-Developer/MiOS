@@ -184,6 +184,8 @@ pub fn menu_argv(
     if console {
         argv.extend(console_flags(merged, true)?);
     }
+    // End of flags: a disabled row ("-<label>") first would otherwise be parsed as a flag.
+    argv.push("--".into());
     for [label, key, command] in items {
         if label.is_empty() {
             argv.push(String::new());
@@ -602,6 +604,8 @@ mod tests {
         let m = menu_argv(&d, false, 60, None, installed).unwrap().unwrap();
         assert_eq!(m[0], "display-menu");
         assert!(m.windows(2).any(|w| w[0] == "-C" && w[1] == "0") && !m.iter().any(|a| a == "-M"), "{m:?}");
+        let end = m.iter().position(|a| a == "--").expect("the flags end before the items");
+        assert!(end < m.iter().position(|a| a == "MiOS AI").unwrap(), "{m:?}");
         let ai = m.iter().position(|a| a == "MiOS AI").unwrap();
         let btop = m.iter().position(|a| a == "btop").unwrap();
         assert!(ai < btop);

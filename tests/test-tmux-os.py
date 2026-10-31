@@ -619,7 +619,8 @@ enabled = false
         self.assertIn("Fake OK", shot, "installed apps are listed")
         self.assertNotIn("Fake Missing", shot, "missing apps are not")
         top = next(l for l in shot.splitlines() if "╭" in l)
-        left, right = top.index("╭"), len(top) - 1 - top.rindex("╮")
+        # capture-pane drops trailing blanks, so the right margin is measured against the client width (120).
+        left, right = top.index("╭"), 120 - 1 - top.rindex("╮")
         self.assertLessEqual(abs(left - right), 2, f"centred popup: {left} vs {right}")
         # Controller vocabulary (the nav projection = keys sent as the client's own): d-pad Down, A = Enter.
         self.assertEqual(h.I("display", "-p", "-c", c, "#{window_name}"), "bash")

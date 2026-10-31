@@ -929,6 +929,9 @@ pub(crate) fn render_tmux_keys(
                     args.extend([flag.to_string(), value.clone()]);
                 }
             }
+            // End of flags: a { header } row is a disabled item, "-<label>", which tmux would otherwise parse as a
+            // flag when it is the first item ("display-menu: invalid flag -#").
+            args.push("--".into());
             for item in &menu.items {
                 let command = match &item.target {
                     ItemTarget::Separator => {
@@ -1293,6 +1296,12 @@ mod tests {
         let root = conf.lines().find(|l| l.contains("\"mios-menu-root=")).unwrap();
         assert!(root.contains("-T \\\"#[align=centre]MiOS\\\""), "centred title: {root}");
         assert!(root.contains("\\\"-#[align=centre]Launch\\\" \\\"\\\" \\\"\\\""), "a disabled, centred header row: {root}");
+        // tmux parses a leading "-<label>" item as a flag unless the flags end first (live: "invalid flag -#").
+        for line in conf.lines().filter(|l| l.contains("=display-menu ")) {
+            assert!(line.contains(" -- "), "every generated menu ends its flags before the items: {line}");
+            let (flags, _) = line.split_once(" -- ").unwrap();
+            assert!(!flags.contains("align=centre]Launch"), "no item before the end of flags: {line}");
+        }
         let pane = conf.lines().find(|l| l.contains("\"mios-menu-pane=")).unwrap();
         for h in ["View", "Layout", "More"] {
             assert!(pane.contains(&format!("-#[align=centre]{h}")), "{h}: {pane}");

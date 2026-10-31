@@ -333,18 +333,13 @@ try:
         time.sleep(0.15)
         return ptr(c[0] + 1, c[1], mode)
 
-    def options_screen(row_text):
-        """What pick draws after options on `row_text`: the same list call cannot show it, so read the labels."""
-        return [l for l in screen]
-
     click('editor', 'rclick')
     time.sleep(0.8)
     n.shot('2-rightclick-options')
     # The options screen replaces the list inside the same popup: its rows start at the popup's first content row.
     check('(2) the right-click left the launcher open (options, not activation)', picks() and win() != 'editor', win())
-    # Options of a running instance, in launcher order (labels from the SSOT): find "Float the pane" by keys instead
-    # of guessing its pixel row, then confirm the result.
-    labels = ['Go to', 'Pop out to its own window', 'Float the pane']
+    # Options of a running instance, in launcher order (Go to, Pop out, Float, Move to window, Move to session,
+    # Rename, Close): reach "Float the pane" by keys rather than guessing its pixel row, then confirm the result.
     n.tap('Down'); n.tap('Down')                    # Go to -> Pop out -> Float the pane
     n.tap('Return')
     floated = wait(lambda: '1' in n.tmux('list-panes', '-t', f'={sess}:editor', '-F', '#{pane_floating_flag}').stdout.split(), 4)
@@ -370,12 +365,11 @@ try:
     # Move to session: the editor window into a new session.
     chord(); wait(picks, 6); time.sleep(0.5)
     click('editor', 'rclick'); time.sleep(0.6)
-    opts = ['Go to', 'Pop out to its own window', 'Tile the pane (dock it)', 'Move to window...', 'Move to session...']
     for _ in range(4):
         n.tap('Down')
     n.tap('Return'); time.sleep(0.5)
     n.shot('2-move-to-session')
-    n.tap('End'); n.tap('Return')                   # "New session" is the last row
+    n.tap('End'); n.tap('Up'); n.tap('Return')      # "New session" is the row above Cancel
     moved = wait(lambda: 'editor' not in n.tmux('list-windows', '-t', f'={sess}', '-F', '#{window_name}').stdout.split(), 5)
     check('(2) Move to session... moves the window to another session', moved, n.tmux('list-windows', '-a').stdout)
     close_all()
@@ -386,7 +380,7 @@ try:
     click('victim', 'rclick'); time.sleep(0.6)
     n.tap('End'); n.tap('Return'); time.sleep(0.4)
     n.shot('2-close-confirm')
-    n.tap('Up'); n.tap('Return')
+    n.tap('Down'); n.tap('Return')                  # the confirmation starts on No; Yes is below it
     gone = wait(lambda: 'victim' not in n.tmux('list-windows', '-a', '-F', '#{window_name}').stdout.split(), 5)
     check('(2) Close... (after confirmation) closes the instance', gone)
     close_all()
