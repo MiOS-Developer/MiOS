@@ -126,6 +126,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | `mios viking_find` |  |  |
 | `mios viking_ls` |  |  |
 | `mios virt` | dev_vm | Apply optimized VM config + CPU pinning |
+| `mios virtual_controller` |  |  |
 | `mios web_extract` |  |  |
 | `mios web_scrape` |  |  |
 | `mios web_search` |  |  |
@@ -140,5 +141,5 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | `mios winget_upgrade` |  |  |
 | `mios xbox` | dev_vm | Xbox VM Secure Boot / XML repair |
 
-<!-- derived from usr/share/mios/mios.toml [verbs] (132 verb(s)) -->
+<!-- derived from usr/share/mios/mios.toml [verbs] (133 verb(s)) -->
 <!-- /MIOS-GEN:verbs -->

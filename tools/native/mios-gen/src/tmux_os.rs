@@ -1,5 +1,5 @@
 // AI-hint: MiOS-Tmux (tmux-os) executor behind mios-terminal --menu/--app/--float/--session-cycle/--new: the SSOT Apps and TUIs menu, TUI launch by mode, the per-session float shell (toggle, lift, dock, reap) and hidden-session-aware cycling. Every tmux call names its client and pane explicitly.
-// AI-related: usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs, tools/native/mios-unit-gen/src/tmux_os.rs, /usr/share/mios/mios.toml [keybindings.tmux.float] [terminal.tui_launcher] [[terminal.tuis]]
+// AI-related: usr/libexec/mios/mios-terminal, tools/native/mios-resolver/src/terminal_tuis.rs, tools/native/mios-unit-gen/src/tmux_os.rs, usr/share/mios/mios.toml [keybindings.tmux.float]
 // AI-functions: run, menu_argv, tui_spec, client_arg
 
 #![forbid(unsafe_code)]

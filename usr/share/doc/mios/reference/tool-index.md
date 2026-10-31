@@ -507,6 +507,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/mios_pipe/memory/memory.py` | WS-A15 pluggable MemoryProvider seam for the agent-pipe. Wraps the pgvector recall/store path behind a small MemoryProvider interface (retri... |
 | `usr/lib/mios/agent-pipe/mios_pipe/memory/pg.py` | Provides a PostgreSQL and pgvector client for the agent plane (WS-9), offering a standalone, SQL-injection-safe datastore client using parameter... |
 | `usr/lib/mios/agent-pipe/mios_pipe/memory/worker_tools.py` | BM25/RRF/MMR tool reranker + tool-priority ranking helpers extracted verbatim from server.py (refactor R4 worker-tools wave). |
+| `usr/lib/mios/agent-pipe/mios_pipe/mockname.py` | Mock helper module for agent-pipe testing and drift verification. |
 | `usr/lib/mios/agent-pipe/mios_pipe/observability/__init__.py` | observability manager package |
 | `usr/lib/mios/agent-pipe/mios_pipe/observability/audit.py` | SEC-03 tamper-evident SHA-256 hash chain over the agent-plane `event` stream. |
 | `usr/lib/mios/agent-pipe/mios_pipe/observability/cost.py` | WS-RES-GOV cost/energy accounting core (the PURE half, CLASSic "Cost" axis). |
@@ -713,6 +714,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/test_mios_mcp_transport.py` | Checks the SDK-backed MCP transport adapters and secret-safe header rendering. |
 | `usr/lib/mios/agent-pipe/test_mios_memguard.py` | Standalone assert-script unit test for mios_memguard (WS-MEM-VALIDATE / OWASP ASI08 write-time memory-poisoning guard, de-h... |
 | `usr/lib/mios/agent-pipe/test_mios_memory.py` | Standalone assert-script unit test for mios_memory (WS-A15 MemoryProvider seam). |
+| `usr/lib/mios/agent-pipe/test_mios_mockname.py` | Unit test for mockname module ensuring compliance with drift-check 11. |
 | `usr/lib/mios/agent-pipe/test_mios_native_loop.py` | stdlib assert-script for mios_native_loop -- exercises the NATIVE |
 | `usr/lib/mios/agent-pipe/test_mios_ocr_mask.py` | CI agent-pipe unit test runner for mios_ocr_mask (task_484, task_2717). |
 | `usr/lib/mios/agent-pipe/test_mios_oscontrol.py` | Offline stdlib test for mios_oscontrol (refactor R9): stubs every sibling (fastapi.responses + mios_sse/mios_jsonsalvage/m... |
@@ -817,7 +819,7 @@ is generated, its generator is here.
 | `usr/lib/mios/mios_translate.py` | Pure Python translation engine for loop.v1 events, Responses items, and cross-harness frame normalization. |
 | `usr/lib/mios/test_mios_comments.py` | Unit tests for the comment lexer and classifier -- one fixture per classifier rule so every rule is proven to fire, plus lexer tests f... |
 
-<!-- derived from the AI-hint headers of 448 file(s) matching usr/lib/mios/*.py -->
+<!-- derived from the AI-hint headers of 450 file(s) matching usr/lib/mios/*.py -->
 <!-- /MIOS-GEN:index:usr/lib/mios/*.py -->
 
 ## Cross-refs

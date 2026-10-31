@@ -1,5 +1,5 @@
 # AI-hint: MiOS vendor config for mios-fanctl (ventulusd client): socket, refresh, client-side override floor, default profile, and header roles applied at service start (ExecStartPost=mios-fanctl apply-roles).
-# AI-related: /usr/bin/mios-fanctl, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/share/mios/mios.toml [hardware.fan_control]
+# AI-related: tools/native/mios-fanctl/Cargo.toml, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/share/mios/mios.toml [hardware.fan_control]
 # Override per key in /etc/mios/fan-control/mios-fanctl.toml.
 
 [client]

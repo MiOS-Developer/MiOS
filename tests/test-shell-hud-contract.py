@@ -6,7 +6,7 @@
 # control); battery rows show a device glyph and a level glyph; the carried Quickshell patches are well-formed, the
 # bake step applies the event-socket reconnect, and (with MIOS_QUICKSHELL_SRC, an upstream checkout) the patch applies
 # and the update-group gate passes. Nothing here touches the live desktop.
-# AI-related: usr/share/mios/quickshell/PanelWindow.qml, usr/share/mios/quickshell/AppDrawer.qml,
+# AI-related: usr/share/mios/quickshell/PanelWindow.qml, usr/share/mios/quickshell/AppMenu.qml,
 # usr/share/mios/quickshell/Search.qml, usr/share/mios/quickshell/Keymap.qml, usr/share/mios/mios.toml [desktop.topbar],
 # src/quickshell/patches/hyprland-event-socket-reconnect.patch, automation/66-bake-quickshell.sh,
 # tests/test-shell-hud-live.py, tests/test-quickshell-candidate-live.py

@@ -1,5 +1,5 @@
 // AI-hint: Shared MiOS-Tmux (tmux-os) policy read from SSOT: hidden internal session prefixes, Linux-console client detection, tmux key grammar and quoting, and the tmux formats the theme, keys, selector and executor all use.
-// AI-related: /usr/share/mios/mios.toml [terminal.sessions] [keybindings.tmux.float] [theme.tmux.console], tools/native/mios-service-core/src/tmux_theme.rs, src/mios-rs/miosd/src/sessions.rs, tools/native/mios-gen/src/tmux_os.rs
+// AI-related: usr/share/mios/mios.toml [terminal.sessions], tools/native/mios-service-core/src/tmux_theme.rs, src/mios-rs/miosd/src/sessions.rs, tools/native/mios-gen/src/tmux_os.rs
 // AI-functions: hidden_session_prefixes, visible_session_format, console_terms, console_client, console_client_format, term_glob, valid_key, tmux_key, quote, plain_text
 
 /// Agent worker parking sessions (`mios-workspace-<head>`) are named by the relay and the MCP server, not by

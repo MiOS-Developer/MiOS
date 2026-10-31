@@ -1,5 +1,5 @@
 // AI-hint: Main entrypoint for mios-controls: with no verb (on a terminal) the binding-editor TUI; verbs list/check/set/add/remove/pad/restore-defaults/export/import/devices drive the same draft -> validate -> apply pipeline headlessly (dry-run unless --apply).
-// AI-related: usr/share/mios/mios.toml [keybindings.global] [desktop.controls], tools/native/Cargo.toml, src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py
+// AI-related: usr/share/mios/mios.toml [keybindings.global], tools/native/Cargo.toml, src/mios-rs/mios-gate/src/keybinds.rs, tests/test-mios-controls.py
 
 #![forbid(unsafe_code)]
 

@@ -10,7 +10,7 @@ or second system identity.
 The external research and engineering report contract is:
 
 - [`.mios/system-prompt.md`](../.mios/system-prompt.md)
-- [`.prompt.MD`](../.prompt.MD) - root-level shortcut to the contract
+- [`system-prompt.md`](../system-prompt.md) - root-level shortcut to the contract
 
 It covers FOSS and generative patterns across OCI, CI/CD, supply chain,
 immutable operating systems, and local AIOS architecture. It also defines the

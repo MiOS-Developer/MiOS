@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4019,
-  "total_metadata_entries": 3293,
-  "total_hints": 3287,
-  "total_functions_indexed": 1882,
-  "total_related_links": 6269,
+  "total_files_scanned": 4047,
+  "total_metadata_entries": 3321,
+  "total_hints": 3315,
+  "total_functions_indexed": 1964,
+  "total_related_links": 6359,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -2867,7 +2867,7 @@
     },
     {
       "path": "docs/design/mios-global-bindings-final.md",
-      "hint": "Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 and P1 landed; G1 U1 I1-I4 GT M1 pending).",
+      "hint": "Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0, I1, I2, I3, P1 and I4 landed; G1 U1 GT M1 pending).",
       "related": [
         "usr/share/mios/mios.toml [keybindings.*]",
         "docs/design/mios-global-bindings-staged.patch.toml",
@@ -2882,7 +2882,7 @@
     },
     {
       "path": "docs/design/mios-global-bindings-staged.patch.toml",
-      "hint": "Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, P1, G1, U1 and GT (landed), \"#@<STEP>\" lines are uncommented by the step that ships the code reading them.",
+      "hint": "Staged replacement text for the [keybindings.*] and [desktop.hyprland.hypr3d.controller] SSOT tables; active lines are steps S0, I1, I2, I3, I4, P1, G1, U1 and GT (landed), \"#@<STEP>\" lines are uncommented by the step that ships the code reading them.",
       "related": [
         "usr/share/mios/mios.toml",
         "docs/design/mios-global-bindings-final.md"
@@ -2898,6 +2898,19 @@
       "related": [
         "docs/design/mios-global-bindings-final.md",
         "tests/test-keybind-collisions.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "docs/design/mios-lead-handoff.md",
+      "hint": "Lead-agent handoff for the MiOS desktop/RDP/roadmap lanes: live state of main, every lane's branch and gate status, the integration procedure, safety rules learned from incidents, and the operator's standing decisions.",
+      "related": [
+        "docs/design/mios-desktop-continuation-handoff.md",
+        "usr/share/mios/mios.toml",
+        "tools/native/mios-gen/src/mem_admit.rs"
       ],
       "functions": [],
       "doc": null,
@@ -5400,7 +5413,7 @@
       "related": [
         "src/mios-rs/miosd/src/shaderglass.rs",
         "usr/libexec/mios/mios-share-picker",
-        "usr/share/mios/mios.toml [desktop.hyprland.xdph] [desktop.shaderglass.capture]"
+        "usr/share/mios/mios.toml [desktop.hyprland.xdph]"
       ],
       "functions": [],
       "doc": null,
@@ -5454,7 +5467,7 @@
       "hint": "miosd shaderglass wine: the per-user Wine prefix (created headless), the environment ShaderGlass runs with (driver, DXVK/wined3d and the GPU DXVK renders on, WineCap portal options) and the seeded default profile.",
       "related": [
         "src/mios-rs/miosd/src/shaderglass.rs",
-        "usr/share/mios/mios.toml [desktop.shaderglass.wine] [desktop.shaderglass.profile] [desktop.shaderglass.capture]"
+        "usr/share/mios/mios.toml [desktop.shaderglass.wine]"
       ],
       "functions": [],
       "doc": null,
@@ -6728,12 +6741,7 @@
       "related": [
         "usr/lib/mios/mios_credentials.py",
         "usr/libexec/mios/mios-credential",
-        "usr/libexec/mios/win/unattend_gen.py",
-        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1",
-        "field/autounattend/New-MiOSAutounattend.ps1",
-        "field/autounattend/ConvertTo-MiOSPreset.ps1",
-        "field/autounattend/New-MiOSISO.ps1",
-        "field/resources/ventoy/Render-Sysrescue.ps1"
+        "usr/libexec/mios/win/unattend_gen.py"
       ],
       "functions": [],
       "doc": null,
@@ -6779,6 +6787,46 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": false
+    },
+    {
+      "path": "tests/test-design-language-live.py",
+      "hint": "LIVE opt-in (MIOS_LIVE_NESTED=1) design-language capture and bar-row alignment gate in an OWNED nested PiP",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/GlassSurface.qml"
+      ],
+      "functions": [
+        "main",
+        "check",
+        "sh",
+        "shells_in",
+        "build_vptr",
+        "blobs",
+        "measure_row"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-design-language.py",
+      "hint": "Gate for the ONE design language (mios.toml [theme.shell] comment block): fails when a Quickshell surface or a",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/GlassSurface.qml",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [
+        "qml_errors",
+        "toml_errors",
+        "bridge_errors",
+        "projection_errors",
+        "tree_errors",
+        "main_tree"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "tests/test-dgm-loop.py",
@@ -7117,7 +7165,7 @@
       "path": "tests/test-framerate.py",
       "hint": "Desktop frame-rate policy ([desktop.framerate]; the operator's table: performance 90, balanced / power-saver /",
       "related": [
-        "usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.mios-pacing]",
+        "usr/share/mios/mios.toml [desktop.framerate]",
         "tools/native/mios-resolver/src/framerate.rs"
       ],
       "functions": [],
@@ -7152,7 +7200,7 @@
         "tools/native/mios-gen/src/global_bindings.rs",
         "tools/native/mios-gen/src/render.rs",
         "tools/native/mios-unit-gen/src/lib.rs",
-        "usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux]",
+        "usr/share/mios/mios.toml [keybindings.global]",
         "tests/test-global-bindings-s0-live.py"
       ],
       "functions": [],
@@ -7328,8 +7376,8 @@
       "related": [
         "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch",
         "usr/share/mios/mios.toml [desktop.hyprland.hypr3d]",
-        "/usr/lib64/mios/hypr3d.so",
-        "/usr/bin/mios-shaderglass"
+        "src/mios-rs/miosd/src/shaderglass.rs",
+        "usr/bin/mios-shaderglass"
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
@@ -7382,7 +7430,7 @@
       "related": [
         "usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch",
         "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch",
-        "usr/share/mios/mios.toml [desktop.hyprland.hypr3d].patches",
+        "usr/share/mios/mios.toml [desktop.hyprland.hypr3d]",
         "tests/test-hypr3d-input-transitions-live.py"
       ],
       "functions": [
@@ -7422,7 +7470,7 @@
       "hint": "LIVE opt-in (MIOS_LIVE_NESTED=1): Hypr3D room verbs (cancel/sprint/recenter, via mios-inputd dispatch) and PiP face-the-viewer (2 m room / 4 m Theatre, eased follow, eased return, SSOT face_distance honoured) in an owned nested PiP session; the installed plugin (MIOS_HYPR3D_OLD) is the negative control.",
       "related": [
         "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch",
-        "usr/share/mios/mios.toml [desktop.hyprland.hypr3d.config.windows] [keybindings.global.controller.room]",
+        "usr/share/mios/mios.toml [desktop.hyprland.hypr3d]",
         "tools/native/mios-inputd"
       ],
       "functions": [
@@ -7553,6 +7601,171 @@
         "tests/bake-smoke.sh"
       ],
       "functions": [
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-console-live.py",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of mios-inputd step I3 in an owned nested MiOS PiP session: one fixture bridge follows the nested compositor AND a private logind state, so the same pad press lands in the nested window while this user's graphical session is active, in a pty standing in for the VT while the tty session is active (console bytes, O-6 West hold, C-17 VT switch instead of the room), nowhere (and ungrabbed) while the greeter owns the seat, and in the nested window again after; then a VT tmux client behind the C-18 console bridge gets tmux verbs and an evdev-pointer click as an SGR report. The pre-I3 binary is the negative control.",
+      "related": [
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tools/native/mios-inputd/src/console.rs",
+        "tests/test-inputd-console.py",
+        "tests/test-inputd-nav-live.py",
+        "docs/design/mios-global-bindings-tests.md (I3)"
+      ],
+      "functions": [
+        "check",
+        "Nested",
+        "Pad",
+        "Bridge",
+        "Probe",
+        "Vt"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-console.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I3 (the Linux console): console_tmux/console_plain profiles, O-6 West hold, C-23 console row validation, R-08 Guide, map --text, tmux:keymap; the C-18 console bridge (pty + private tmux server + a fixture gpm socket or evdev FIFO) turning pointer events into SGR 1006 reports only while tmux has mouse mode on; and (private uinput pad) the fixture bridge on a private logind state: console bytes into a pty that stands in for the VT, tmux verbs against the VT client, the graphical-VT switch, INV-8 release, and C-16 compositor rediscovery.",
+      "related": [
+        "tools/native/mios-inputd/src/console.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tools/native/mios-inputd/src/nav.rs",
+        "docs/design/mios-global-bindings-tests.md (I3)",
+        "usr/libexec/mios/mios-terminal"
+      ],
+      "functions": [
+        "Base",
+        "Grammar",
+        "ConsoleBridge",
+        "GpmFixture",
+        "FixtureBridge",
+        "FakeCompositor"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-nav-live.py",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of mios-inputd step I2 in an owned nested MiOS PiP session: a private uinput pad (xpad = analog-only triggers, then DualSense) drives the candidate fixture bridge, which projects nav output into the nested compositor; raw bytes reaching nested Alacritty probes prove key:, a right-stick flick moves nested focus, a private tmux server proves tmux discovery/verbs, the capture OSD fires once per capture/release; the I1 binary is the negative control.",
+      "related": [
+        "tools/native/mios-inputd/src/nav.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tests/test-inputd-nav.py",
+        "tests/test-inputd-ownership-live.py",
+        "docs/design/mios-global-bindings-tests.md (I2)"
+      ],
+      "functions": [
+        "check",
+        "Nested",
+        "Pad",
+        "Bridge",
+        "Probe"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-nav.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I2 (the nav grammar): uncaptured windows of every kind navigate (key:/pointer:/hypr:/tmux:), tap/hold/repeat/flick timing, thumb and Guide disambiguation, cursor mode keeps button meanings, grammar validation, the uinput virtual keyboard, and (fake compositor + private tmux server) tmux discovery, tmux verbs and the capture OSD.",
+      "related": [
+        "tools/native/mios-inputd/src/nav.rs",
+        "tools/native/mios-inputd/src/router.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "docs/design/mios-global-bindings-tests.md (I2)",
+        "usr/lib/udev/rules.d/70-mios-input.rules"
+      ],
+      "functions": [
+        "Base",
+        "Grammar",
+        "Timing",
+        "Projection",
+        "FakeCompositor",
+        "Bridge"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-ownership-live.py",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of mios-inputd step I1 in an owned nested MiOS PiP session: a private uinput pad (xpad and DualSense layouts) drives the candidate bridge; capture/release (North tap, North hold, held L3+R3) are identical for every window kind, half-capture keeps RB/Guide/North with the app, release unsets only a bridge fullscreen, Super+C works again after release, the room stick has one sink; old binary as negative control.",
+      "related": [
+        "tools/native/mios-inputd",
+        "docs/design/mios-global-bindings-tests.md (I1)",
+        "tests/test-inputd-ownership.py",
+        "tests/test-global-bindings-s0-live.py"
+      ],
+      "functions": [
+        "check",
+        "Nested",
+        "Pad",
+        "Bridge"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-ownership.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I1: capture/release identical for every window kind, half-capture keeps every button with the app, release/fullscreen tags (Lua, run against a mock compositor), serve exits/idles instead of exec'ing a recovery owner, unit start limit.",
+      "related": [
+        "tools/native/mios-inputd",
+        "docs/design/mios-global-bindings-tests.md (I1)",
+        "usr/lib/systemd/user/mios-inputd.service"
+      ],
+      "functions": [
+        "Ownership",
+        "Serve"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-platform.py",
+      "hint": "Real-binary two-sided tests for mios-inputd step I4 (the universal input platform): the Guide layer on every pad shape (HAT d-pad, LS_*/RS_* flicks, analog-only triggers, hypr:movewindow, volume/media), the C-19 system-monitor rename, the O-7 per-driver quirk table proven with uinput fixtures that emulate xpad (face order, dpad_to_buttons) and DualSense code layouts, the agent virtual controller (`vpad`: eased evdev stream, taps, idle exit, the MCP verb argv), and the nested-session contract (the host bridge never owns an assigned node or a seat pad; `bridge --nested` / `vpad assign` follow the session, ease its room packet, project keys into it and pass a captured pad through).",
+      "related": [
+        "tools/native/mios-inputd/src/router.rs",
+        "tools/native/mios-inputd/src/vpad.rs",
+        "tools/native/mios-inputd/src/nested.rs",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "tools/native/mios-inputd/src/linux.rs",
+        "tools/native/mios-inputd/src/config.rs",
+        "usr/share/mios/mios.toml [keybindings.global]",
+        "docs/design/mios-global-bindings-tests.md (I4)"
+      ],
+      "functions": [
+        "Base",
+        "Grammar",
+        "Vpad",
+        "FakeCompositor",
+        "Fixture"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-inputd-vpad-live.py",
+      "hint": "LIVE opt-in (MIOS_LIVE_NESTED=1): the agent virtual controller drives Hypr3D smoothly inside an owned nested PiP session: `vpad create` (fixture-named), `mios-gen nested-session --layout pip --seat <s> --device <pad node>` binds it, `vpad assign` runs the session's `bridge --nested`, and eased stick ramps walk and turn the session's room camera with a gradual speed profile; a raw fixture-pad step and the unassigned pad are the contrast and negative controls.",
+      "related": [
+        "tools/native/mios-inputd/src/vpad.rs",
+        "tools/native/mios-inputd/src/nested.rs",
+        "tools/native/mios-gen/src/nested_session.rs",
+        "usr/share/mios/mios.toml [keybindings.global.controller.agent_pad]"
+      ],
+      "functions": [
+        "Session",
+        "speeds",
+        "profile",
         "main"
       ],
       "doc": null,
@@ -7855,12 +8068,12 @@
       "hint": "Automated two-sided verification test suite for Milestone M5 (4-Tier Sandbox Execution Ladder & Permissive Licensing).",
       "related": [
         "usr/libexec/mios/mios-sandbox-exec",
-        "etc/cdi/nvidia.json",
-        "usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf",
+        "/etc/cdi/nvidia.json",
+        "usr/share/containers/containers.conf.d/10-mios-pasta.conf",
         "usr/share/containers/systemd/users/mios-microvm-krun@.container",
         "usr/lib/mios/agent-pipe/mios_isolation.py",
         "usr/share/mios/mios.toml",
-        "etc/fapolicyd/fapolicyd.rules"
+        "/etc/fapolicyd/fapolicyd.rules"
       ],
       "functions": [],
       "doc": null,
@@ -8096,7 +8309,7 @@
       "path": "tests/test-mios-lamp.py",
       "hint": "Magic lamp ([desktop.hyprland.lamp], mios-wobbly.so lamp.cpp/lampmath.hpp, and Quickshell DockLamp.qml +",
       "related": [
-        "usr/share/mios/mios.toml [desktop.hyprland.lamp] [desktop.hyprland.hyprbars] [desktop.mobile]"
+        "usr/share/mios/mios.toml [desktop.hyprland.lamp]"
       ],
       "functions": [],
       "doc": null,
@@ -8151,7 +8364,7 @@
         "usr/libexec/mios/mios-rdp",
         "usr/libexec/mios/mios-rdp-rfb-bridge",
         "src/mios-rdp-server/",
-        "usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [remote.rdp.redirect] [remote.rdp.naming]",
+        "usr/share/mios/mios.toml [remote.rdp]",
         "tests/fixtures/mios-rdp/"
       ],
       "functions": [],
@@ -8473,7 +8686,7 @@
       "hint": "Hermetic two-sided tests for mios-models-firstboot floating Hugging Face sources: with a mocked hub (fake curl on PATH, no network) a `resolve/main` entry with no SSOT sha256 is resolved to the current commit + upstream LFS sha256, fetched from that immutable commit, verified and recorded in models.tsv; a mismatching file and an entry with no provable digest are never installed.",
       "related": [
         "usr/libexec/mios/mios-models-firstboot",
-        "usr/share/mios/mios.toml [[ai.firstboot_models]]"
+        "usr/share/mios/mios.toml [ai.firstboot_models]"
       ],
       "functions": [],
       "doc": null,
@@ -8568,7 +8781,7 @@
       "related": [
         "tools/native/mios-gen/src/nested_session.rs",
         "tools/native/mios-gen/src/session_scale.rs",
-        "usr/share/mios/mios.toml [desktop.nested] [desktop.scaling] [keybindings.global]"
+        "usr/share/mios/mios.toml [desktop.nested]"
       ],
       "functions": [],
       "doc": null,
@@ -9304,7 +9517,7 @@
       "hint": "Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server under bwrap with a fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.",
       "related": [
         "src/mios-rs/miosd/src/sessions.rs",
-        "usr/share/mios/mios.toml [terminal.sessions] [keybindings]",
+        "usr/share/mios/mios.toml [terminal.sessions]",
         "usr/share/doc/mios/keybinds.md",
         "docs/design/mios-global-bindings-final.md"
       ],
@@ -9351,7 +9564,7 @@
       "path": "tests/test-shaderglass.py",
       "hint": "ShaderGlass overlay pane ([desktop.shaderglass]: miosd shaderglass, mios-gen shaderglass_lua, mios-share-picker) and the Hyprglass frame-rate knob, in four tiers:",
       "related": [
-        "usr/share/mios/mios.toml [desktop.shaderglass] [desktop.hyprland.xdph] [desktop.hyprland.hyprglass.config]"
+        "usr/share/mios/mios.toml [desktop.shaderglass]"
       ],
       "functions": [],
       "doc": null,
@@ -9388,7 +9601,7 @@
       "hint": "Offline contract of the shell/HUD lane: the [desktop.topbar] scroll-volume keys and the pinned",
       "related": [
         "usr/share/mios/quickshell/PanelWindow.qml",
-        "usr/share/mios/quickshell/AppDrawer.qml"
+        "usr/share/mios/quickshell/AppMenu.qml"
       ],
       "functions": [
         "topbar_errors",
@@ -9668,6 +9881,20 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch83-task-failover-resilience.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-tasks-integrity.py",
+      "hint": "Regression and integrity gate test for tasks.jsonl title/status contradiction rejection (ADR-0028).",
+      "related": [
+        "tasks.jsonl",
+        "TASKS.md",
+        "tools/check-tasks.py",
+        "tools/native/mios-task/"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -10503,7 +10730,8 @@
         "main",
         "status_parity_main",
         "schema_main",
-        "agy_main"
+        "agy_main",
+        "integrity_main"
       ],
       "doc": "usr/share/doc/mios/manual/tools.md",
       "comment_style": "hash",
@@ -11219,7 +11447,7 @@
       "path": "tools/native/mios-controls/src/main.rs",
       "hint": "Main entrypoint for mios-controls: with no verb (on a terminal) the binding-editor TUI; verbs list/check/set/add/remove/pad/restore-defaults/export/import/devices drive the same draft -> validate -> apply pipeline headlessly (dry-run unless --apply).",
       "related": [
-        "usr/share/mios/mios.toml [keybindings.global] [desktop.controls]",
+        "usr/share/mios/mios.toml [keybindings.global]",
         "tools/native/Cargo.toml",
         "src/mios-rs/mios-gate/src/keybinds.rs",
         "tests/test-mios-controls.py"
@@ -11282,6 +11510,8 @@
         "Validator::run",
         "render_lua",
         "controller_findings",
+        "controller_role_findings",
+        "quirk_findings",
         "Outcome::new_findings"
       ],
       "doc": null,
@@ -11307,7 +11537,7 @@
       "related": [
         "tools/native/mios-displays/src/model.rs",
         "usr/share/mios/displays/Displays.qml",
-        "usr/share/mios/mios.toml [desktop.displays] [desktop.hyprland.monitors]",
+        "usr/share/mios/mios.toml [desktop.displays]",
         "tools/native/mios-gen/src/render.rs",
         "usr/share/applications/mios-displays.desktop"
       ],
@@ -11416,7 +11646,7 @@
       "path": "tools/native/mios-fanctl/Cargo.toml",
       "hint": "Native static CLI + ratatui TUI client for the ventulusd fan-control daemon's HTTP-over-Unix-socket API (MiOS fan control).",
       "related": [
-        "/usr/bin/mios-fanctl",
+        "src/main.rs",
         "/usr/share/mios/fan-control/mios-fanctl.toml",
         "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf"
       ],
@@ -11611,7 +11841,7 @@
       "path": "tools/native/mios-gen/src/display_scale.rs",
       "hint": "One global display scale policy ([desktop.scaling]) for every output, local and remote: density (client DPI hint > EDID mm > resolution fallback) x viewing-distance class (handheld..desktop by diagonal) x orientation -> a scale Hyprland accepts (1/120 grid, integer logical size) + logical size + mobile flag (logical short side). Rust `compute` and the Lua twin `LUA` (compiled into the Hyprland projection's [desktop.mobile] handler) implement the same arithmetic; a parity test runs both. CLI: mios-gen display-scale.",
       "related": [
-        "usr/share/mios/mios.toml [desktop.scaling] [desktop.mobile] [remote.rdp]",
+        "usr/share/mios/mios.toml [desktop.scaling]",
         "tools/native/mios-gen/src/render.rs (mobile_profile)",
         "usr/share/mios/quickshell/Mobile.qml",
         "usr/libexec/mios/mios-rdp-rfb-bridge"
@@ -11751,6 +11981,19 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-gen/src/mem_admit.rs",
+      "hint": "Memory admission for heavy work (`mios-gen mem-admit`, nested-session launches): refuse, or wait, while /proc/meminfo MemAvailable is below [system.memory_admission].min_available_mb, so agent builds and nested sessions cannot drive the operator's host into the OOM killer.",
+      "related": [
+        "usr/share/mios/mios.toml [system.memory_admission]",
+        "tools/native/mios-gen/src/nested_session.rs",
+        "usr/lib/systemd/system/user-.slice.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-gen/src/metal_vs_hosted.rs",
       "hint": "SSOT projector and verifier for metal-vs-hosted.md (ADR-0021 gen category).",
       "related": [
@@ -11768,7 +12011,7 @@
       "hint": "Nested-session device assignment ([desktop.nested.devices]): resolve CLI/SSOT device specs to evdev nodes, classify them from sysfs capabilities, apply the policy (kinds, virtual nodes, exclusivity across live sessions) and keep the per-session registry the input daemon reads.",
       "related": [
         "tools/native/mios-gen/src/nested_session.rs",
-        "usr/share/mios/mios.toml [desktop.nested.devices] [desktop.nested.seats]",
+        "usr/share/mios/mios.toml [desktop.nested.devices]",
         "tests/test-nested-multiuse.py",
         "tests/test-nested-multiuse-live.py"
       ],
@@ -11829,7 +12072,7 @@
       "related": [
         "tools/native/mios-gen/src/display_scale.rs",
         "tools/native/mios-gen/src/nested_session.rs (mios_nested_zoom)",
-        "usr/share/mios/mios.toml [desktop.scaling] session_step/session_min/session_max",
+        "usr/share/mios/mios.toml [desktop.scaling]",
         "[keybindings.global] session-scale bindings"
       ],
       "functions": [
@@ -11874,7 +12117,7 @@
         "usr/libexec/mios/mios-terminal",
         "tools/native/mios-resolver/src/terminal_tuis.rs",
         "tools/native/mios-unit-gen/src/tmux_os.rs",
-        "/usr/share/mios/mios.toml [keybindings.tmux.float] [terminal.tui_launcher] [[terminal.tuis]]"
+        "usr/share/mios/mios.toml [keybindings.tmux.float]"
       ],
       "functions": [
         "run",
@@ -12044,6 +12287,26 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-inputd/src/console.rs",
+      "hint": "Linux console (VT) pty bridge for tmux-os (I3, C-18): wraps a VT tmux client in a pty, owns the mouse modes the client asks the terminal for, and turns gpm (or evdev pointer) events into SGR 1006 / legacy mouse reports only while the client has mouse mode on.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.console]",
+        "usr/libexec/mios/mios-terminal",
+        "tools/native/mios-inputd/src/runtime.rs",
+        "docs/design/mios-global-bindings-final.md (I3)"
+      ],
+      "functions": [
+        "MouseModes::filter",
+        "MouseModes::report",
+        "Pointer::gpm",
+        "Pointer::evdev",
+        "run"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-inputd/src/lib.rs",
       "hint": "Shared global binding policy used by the input daemon and collision gate.",
       "related": [
@@ -12057,7 +12320,7 @@
     },
     {
       "path": "tools/native/mios-inputd/src/linux.rs",
-      "hint": "Linux evdev/uinput file-descriptor ownership, capability cloning and private fixture gate.",
+      "hint": "Linux evdev/uinput file-descriptor ownership, capability cloning, the virtual pointer and keyboard, and private fixture gates.",
       "related": [
         "https://docs.kernel.org/input/uinput.html",
         "https://docs.kernel.org/input/event-codes.html"
@@ -12080,8 +12343,50 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-inputd/src/nav.rs",
+      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules and the Linux console byte translation of a key: stroke.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.nav]",
+        "tools/native/mios-inputd/src/router.rs",
+        "docs/design/mios-global-bindings-final.md (section 3)"
+      ],
+      "functions": [
+        "NavConfig::from_value",
+        "NavConfig::profile_name",
+        "NavConfig::text",
+        "parse_key_chord",
+        "stroke",
+        "keysym",
+        "vt_bytes",
+        "validate_tmux"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/nested.rs",
+      "hint": "The nested-session device contract on the inputd side (I4): read mios-gen's live registry ([desktop.nested].registry_dir) so the host bridge never owns a node assigned to a nested session, and so `bridge --nested <seat>` follows exactly that session (its compositor, its private room packet, its assigned controller nodes).",
+      "related": [
+        "tools/native/mios-gen/src/nested_devices.rs (Claim/live_sessions)",
+        "tools/native/mios-gen/src/nested_session.rs (session.json/pad_state)",
+        "usr/share/mios/mios.toml [desktop.nested]"
+      ],
+      "functions": [
+        "start_time",
+        "live_sessions",
+        "assigned_nodes",
+        "session",
+        "host_service_env",
+        "seat_pad_name_matches"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-inputd/src/router.rs",
-      "hint": "Per-controller input state machine; system actions never enter app replay.",
+      "hint": "Per-controller input state machine: ownership contract first, then the nav projection of uncaptured windows (tap/hold, repeat, flicks, HAT fold, thumb/Guide disambiguation); system actions never enter app replay.",
       "related": [
         "usr/libexec/mios/mios-gamepad-hypr3d",
         "keybindings.global.controller"
@@ -12093,7 +12398,7 @@
     },
     {
       "path": "tools/native/mios-inputd/src/runtime.rs",
-      "hint": "Native controller service, bounded compositor IPC and named action dispatch.",
+      "hint": "Native controller service, bounded compositor IPC with live socket rediscovery, the logind seat view (graphical / console / another session), named action dispatch, the virtual keyboard/tmux/OSD/VT projections and /proc tmux client discovery (focused terminal or active VT).",
       "related": [
         "keybindings.global",
         "desktop.hyprland.hypr3d.controller",
@@ -12112,6 +12417,30 @@
         "mios-gen/src/global_bindings.rs"
       ],
       "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/vpad.rs",
+      "hint": "The agent virtual controller (I4): a per-session uinput gamepad held by one `mios-inputd vpad hold` process and driven over a private control socket with eased analog ramps (sticks/triggers never jump), button taps, the HAT d-pad, release-to-rest, and assignment to a nested session (it then runs that session's `bridge --nested <seat>`).",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.agent_pad]",
+        "tools/native/mios-inputd/src/nested.rs",
+        "tools/native/mios-gen/src/nested_devices.rs (virtual-pad)",
+        "tests/test-inputd-platform.py",
+        "tests/test-inputd-vpad-live.py"
+      ],
+      "functions": [
+        "Ease::at",
+        "Channel::step",
+        "Model::command",
+        "Model::tick",
+        "hold",
+        "create",
+        "request",
+        "list"
+      ],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false
@@ -12235,7 +12564,7 @@
       "related": [
         "tools/native/mios-pip-gravity/src/main.rs",
         "usr/share/mios/quickshell/Sidebar.qml (dock -> drawer morph)",
-        "usr/share/mios/mios.toml [desktop.pip_gravity] hud_settle_ms hud_max_height_frac"
+        "usr/share/mios/mios.toml [desktop.pip_gravity]"
       ],
       "functions": [
         "HudTracker::update",
@@ -12270,7 +12599,7 @@
       "related": [
         "tools/native/mios-pip-gravity/src/main.rs",
         "tools/native/mios-pip-gravity/src/gravity.rs",
-        "usr/share/mios/mios.toml [desktop.pip_gravity] fullscreen_release_ms",
+        "usr/share/mios/mios.toml [desktop.pip_gravity]",
         "usr/share/doc/mios/desktop-pip.md"
       ],
       "functions": [
@@ -12523,7 +12852,7 @@
       "path": "tools/native/mios-resolver/src/terminal_tuis.rs",
       "hint": "The one Apps and TUIs catalogue ([terminal.tui_launcher] + [[terminal.tuis]]) shared by the tmux-os launcher (mios-gen tmux-menu / tui-spec) and the miosd sessions selector: strict validation, console variants and the installed-only filter.",
       "related": [
-        "/usr/share/mios/mios.toml [terminal.tui_launcher] [[terminal.tuis]]",
+        "usr/share/mios/mios.toml [terminal.tui_launcher]",
         "tools/native/mios-gen/src/tmux_os.rs",
         "src/mios-rs/miosd/src/sessions.rs",
         "usr/libexec/mios/mios-terminal"
@@ -13114,7 +13443,7 @@
       "path": "tools/native/mios-unit-gen/src/tmux_os.rs",
       "hint": "Shared MiOS-Tmux (tmux-os) policy read from SSOT: hidden internal session prefixes, Linux-console client detection, tmux key grammar and quoting, and the tmux formats the theme, keys, selector and executor all use.",
       "related": [
-        "/usr/share/mios/mios.toml [terminal.sessions] [keybindings.tmux.float] [theme.tmux.console]",
+        "usr/share/mios/mios.toml [terminal.sessions]",
         "tools/native/mios-service-core/src/tmux_theme.rs",
         "src/mios-rs/miosd/src/sessions.rs",
         "tools/native/mios-gen/src/tmux_os.rs"
@@ -15051,9 +15380,9 @@
       "hint": "4-Tier Sandbox Execution Ladder, Tetragon eBPF Enforcement Plane & Law 5 Cryptographic Audit Engine (WS-SEC / Milestone M4).",
       "related": [
         "usr/libexec/mios/mios-sandbox-exec",
-        "usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf",
-        "etc/cdi/nvidia.json",
-        "etc/fapolicyd/fapolicyd.rules",
+        "usr/share/containers/containers.conf.d/10-mios-pasta.conf",
+        "/etc/cdi/nvidia.json",
+        "/etc/fapolicyd/fapolicyd.rules",
         "usr/share/containers/systemd/mios-enforcer.container",
         "usr/libexec/mios/ai/audit_chain.py"
       ],
@@ -15879,6 +16208,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/memory.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/agent-pipe/mios_pipe/mockname.py",
+      "hint": "Mock helper module for agent-pipe testing and drift verification.",
+      "related": [
+        "usr/lib/mios/agent-pipe/test_mios_mockname.py",
+        "usr/lib/mios/agent-pipe/test_mios_test_zcode_bundle.py"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -17978,6 +18319,20 @@
       "has_shebang": true
     },
     {
+      "path": "usr/lib/mios/agent-pipe/test_mios_mockname.py",
+      "hint": "Unit test for mockname module ensuring compliance with drift-check 11.",
+      "related": [
+        "usr/lib/mios/agent-pipe/mios_pipe/mockname.py",
+        "usr/lib/mios/agent-pipe/test_mios_test_zcode_bundle.py"
+      ],
+      "functions": [
+        "TestMiosMockname"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/mios/agent-pipe/test_mios_native_loop.py",
       "hint": "stdlib assert-script for mios_native_loop -- exercises the NATIVE",
       "related": [
@@ -19080,8 +19435,7 @@
       "related": [
         "usr/lib/mios/mios_toml.py",
         "usr/libexec/mios/mios-credential",
-        "usr/libexec/mios/win/unattend_gen.py",
-        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1 (Resolve-MiOSCredentials -- the PowerShell twin; keep the rules identical)"
+        "usr/libexec/mios/win/unattend_gen.py"
       ],
       "functions": [
         "CredentialError",
@@ -20280,7 +20634,7 @@
       "path": "usr/lib/systemd/system/mios-fhs-sync.service",
       "hint": "Systemd service unit executing miosd fhs-sync in daemon mode to maintain continuous Linux FHS root overlay and host-guest topology parity at runtime.",
       "related": [
-        "usr/bin/miosd",
+        "src/mios-rs/miosd/Cargo.toml",
         "/run/mios/fhs-sync.json",
         "multi-user.target"
       ],
@@ -21482,6 +21836,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/session-.scope.d/10-mios-memory.conf",
+      "hint": "Memory floor for the login session scope that holds the primary compositor (Hyprland via greetd).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "user-.slice.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/sshd-keygen@.service.d/disable-sshd-keygen-if-cloud-init-active.conf",
       "hint": "Configuration profile for disable-sshd-keygen-if-cloud-init-active.conf in the MiOS operating system.",
       "related": [
@@ -21685,6 +22051,31 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/user-.slice.d/10-mios-memory.conf",
+      "hint": "Memory floor for every user slice, so the kernel reclaims system services and agent work before the operator's session.",
+      "related": [
+        "usr/share/mios/mios.toml [system.memory_admission]",
+        "session-.scope.d/10-mios-memory.conf",
+        "user@.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/user@.service.d/10-mios-memory.conf",
+      "hint": "Memory floor for the user manager (shell, portals, apps); its children share it through memory_recursiveprot.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/systemd/user/mios-shell.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/user@.service.d/10-mios-wsl-runtime.conf",
       "hint": "Configures the XDG_RUNTIME_DIR environment variable for user instances to ensure systemd user managers start correctly in WSL2 environments where pam_systemd cannot provide the session path.",
       "related": [],
@@ -21750,11 +22141,9 @@
       "path": "usr/lib/systemd/system/ventulusd.service",
       "hint": "Upstream ventulusd (MIT, github.com/Plan-B-Development/ventulusd v5.1.0 @ b7a72ab7) fan-control daemon unit, shipped verbatim; MiOS policy lives in ventulusd.service.d/10-mios.conf (alias mios-fan-control.service).",
       "related": [
-        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
-        "/usr/bin/ventulusd",
-        "/usr/bin/ventulus-restore-auto",
-        "/usr/bin/mios-fanctl",
-        "/usr/share/mios/fan-control/daemon.toml"
+        "usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
+        "tools/native/mios-fanctl/Cargo.toml",
+        "usr/share/mios/fan-control/daemon.toml"
       ],
       "functions": [],
       "doc": null,
@@ -21765,12 +22154,12 @@
       "path": "usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
       "hint": "MiOS policy for the upstream ventulusd fan daemon: vendor config + profile from /usr/share/mios/fan-control, socket reachable by root and wheel only (POSIX ACL), pump roles applied by mios-fanctl after READY, bare metal only.",
       "related": [
-        "/usr/lib/systemd/system/ventulusd.service",
-        "/usr/share/mios/fan-control/daemon.toml",
-        "/usr/share/mios/fan-control/profiles/mios-default.json",
-        "/usr/share/mios/fan-control/mios-fanctl.toml",
-        "/usr/bin/mios-fanctl",
-        "/usr/lib/modules-load.d/mios-fan-control.conf"
+        "usr/lib/systemd/system/ventulusd.service",
+        "usr/share/mios/fan-control/daemon.toml",
+        "usr/share/mios/fan-control/profiles/mios-default.json",
+        "usr/share/mios/fan-control/mios-fanctl.toml",
+        "tools/native/mios-fanctl/Cargo.toml",
+        "usr/lib/modules-load.d/mios-fan-control.conf"
       ],
       "functions": [],
       "doc": null,
@@ -21870,6 +22259,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/user/mios-shell.service.d/10-mios-memory.conf",
+      "hint": "Memory floor for the desktop shell so agent processes in app.slice cannot claim its share of the user manager's protection.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/systemd/system/user@.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/user/mios-wakeword.service",
       "hint": "Systemd user service running the Three-Stage Acoustic Wake-Word filter chain (RNNoise, Silero VAD, OpenWakeWord) for hands-free system activation.",
       "related": [],
@@ -21939,7 +22340,6 @@
       "path": "usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf",
       "hint": "Keeps a tmux pane (and the tmux session around it) alive when one process inside it is OOM-killed: only that process dies, not the whole pane scope.",
       "related": [
-        "usr/lib/systemd/user/vte-spawn-.scope.d/defaults.conf",
         "usr/share/mios/mios.toml [terminal]"
       ],
       "functions": [],
@@ -22069,7 +22469,7 @@
     },
     {
       "path": "usr/lib/udev/rules.d/70-mios-input.rules",
-      "hint": "Classify the native input bridge outputs without hiding its desktop pointer.",
+      "hint": "Classify the native input bridge outputs: the virtual pointer and keyboard stay visible, the virtual pads are hidden from libinput.",
       "related": [
         "tools/native/mios-inputd/src/linux.rs",
         "keybindings.global.controller"
@@ -29421,7 +29821,7 @@
       "hint": "Decouples physical boot USB media post-boot in copytoram RAM hypervisor mode.",
       "related": [
         "usb-release.service",
-        "RAM-Resident-SystemRescue-Hypervisor-Blueprint.md"
+        "docs/design/mios-field-hypervisor.md"
       ],
       "functions": [],
       "doc": null,
@@ -29822,7 +30222,7 @@
       "hint": "Looking Glass IVSHMEM setup, the SSOT [vm.looking_glass] domain profile (SPICE on a fixed port, one spicevmc channel, SPICE audio, SMT topology + topoext, localtime RTC, ivshmem), the client config/args (guest resolution follows the client window via the IDD), IVSHMEM sizing for the largest host mode, the /dev/shm SELinux label, the one-action VM + client launcher, and guest provisioning of the upstream Looking Glass IDD built from the same commit as the client.",
       "related": [
         "tests/test-looking-glass.py",
-        "usr/share/mios/mios.toml [vm.looking_glass] [vm.win11]",
+        "usr/share/mios/mios.toml [vm.looking_glass]",
         "usr/libexec/mios/Xbox-Final-NoAutoSelect.xml",
         "usr/libexec/mios/Xbox-AutoEnroll.xml",
         "usr/libexec/mios/virt-apply.sh",
@@ -30139,8 +30539,7 @@
         "usr/libexec/mios/win/xbox/worker.py",
         "usr/libexec/mios/win/xbox/build.py",
         "usr/libexec/mios/win/xbox/spec_items.py",
-        "usr/share/mios/mios.toml ([windows.xbox.start.layout_assets.*]",
-        "[windows.xbox.start.capture])",
+        "usr/share/mios/mios.toml [windows.xbox.start]",
         "tests/test-mios-xbox-build.py"
       ],
       "functions": [
@@ -32354,7 +32753,7 @@
       "path": "usr/share/doc/mios/framerate.md",
       "hint": "Desktop frame-rate policy: tiers, VRR cap, extended-vblank display modes (DP-3 90 Hz) and the confirm-or-revert guard; plus how Hypr3D windows open at Retina size.",
       "related": [
-        "/usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.mios-pacing] [desktop.hyprland.hypr3d.spawn]",
+        "usr/share/mios/mios.toml [desktop.framerate]",
         "src/mios-rs/miosd/src/framerate.rs",
         "src/mios-rs/miosd/src/framerate/plan.rs",
         "tools/native/mios-resolver/src/framerate.rs",
@@ -32391,7 +32790,7 @@
       "path": "usr/share/doc/mios/guides/blink-tmux-mobile-keys.md",
       "hint": "Guide to configuring Blink Shell on iOS (iPhone/iPad) and tmux for Shift+Tab and mobile terminal shortcut combos.",
       "related": [
-        "/usr/share/mios/mios.toml [keybindings.tmux] [keybindings.agent]",
+        "usr/share/mios/mios.toml [keybindings.tmux]",
         "/usr/share/mios/tmux/mios-keys.tmux.conf",
         "/usr/share/mios/tmux/blink-mobile-keys.tmux.conf",
         "tools/native/mios-unit-gen/src/tmux_os.rs",
@@ -34240,6 +34639,21 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/doc/mios/manual/fhs-sync.md",
+      "hint": "Runtime FHS Root Overlay and host-guest topology synchronization engine manual: 18 required FHS directories, Windows host namespace exclusions, inotify/ReadDirectoryChangesW event loops, and mios-fhs-sync.service.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/systemd/system/mios-fhs-sync.service",
+        "src/mios-rs/miosd/src/fhs_sync.rs",
+        "tests/test-fhs-sync-e2e.py",
+        "/run/mios/fhs-sync.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/doc/mios/manual/firstboot.md",
       "hint": "Manual page for firstboot subsystem",
       "related": [
@@ -34283,6 +34697,20 @@
       "path": "usr/share/doc/mios/manual/git.md",
       "hint": "Manual pages distilled from the source comments of git, sanitized, each passage anchored to the comment it came from.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/manual/gpu-arbiter.md",
+      "hint": "Dynamic GPU Arbiter manual: state machine, vLLM sleep mode coordination, sysfs driver binding, and QMP device hotplug between AI workloads and gaming guest.",
+      "related": [
+        "usr/libexec/mios/gpu_arbiter.py",
+        "usr/share/containers/systemd/mios-llm-heavy.container",
+        "usr/share/mios/mios.toml",
+        "/run/mios/gpu-state"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "xml",
@@ -34557,6 +34985,20 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/doc/mios/manual/rde.md",
+      "hint": "Decentralized Remote Development Environment (RDE) platform engine manual: DevPod orchestration, OpenTofu infrastructure provisioning, code-server IDE, zero-AGPL copyleft taint gating, and Blade targeting.",
+      "related": [
+        "usr/share/mios/mios.toml [rde]",
+        "src/mios-rs/miosd/src/rde.rs",
+        "tests/test-rde-engine.py",
+        ".devcontainer/devcontainer.json"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/doc/mios/manual/root.md",
       "hint": "Manual pages distilled from the source comments of root, sanitized, each passage anchored to the comment it came from.",
       "related": [],
@@ -34605,6 +35047,20 @@
       "path": "usr/share/doc/mios/manual/shaderglass.md",
       "hint": "Manual pages distilled from the source comments of shaderglass, sanitized, each passage anchored to the comment it came from.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/manual/sovereign-hypervisor.md",
+      "hint": "Sovereign Hypervisor supervisor manual: KVMFR shared memory verification, modular virtqemud sockets, and sibling domain orchestration for management seat and gaming guest.",
+      "related": [
+        "usr/libexec/mios/launch-sovereign-hypervisor.sh",
+        "usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md",
+        "usr/libexec/mios/Xbox-Final-NoAutoSelect.xml",
+        "usr/share/mios/mios.toml"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "xml",
@@ -35061,7 +35517,6 @@
         "docs/design/doc-mios-metal.md",
         "usr/lib/bootc/kargs.d/01-mios-vfio.toml",
         "usr/lib/bootc/kargs.d/20-vfio.toml",
-        "usr/lib/bootc/kargs.d/13-rtx50-vfio-workaround.toml",
         "automation/75-kargs-render.sh",
         "usr/share/mios/mios.toml",
         "usr/libexec/mios/Xbox-Final-NoAutoSelect.xml",
@@ -36021,6 +36476,19 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/git-core/templates/hooks/pre-commit.d/10-dgm-bench.sh",
+      "hint": "Git pre-commit hook script integrating Darwin G\u00f6del Machine (DGM) capability regression gates.",
+      "related": [
+        "usr/libexec/mios/mios-bench",
+        "usr/lib/mios/agent-pipe/mios_pipe/scheduler/bench.py",
+        "tests/test-dgm-loop.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/share/mios/agents/ACTIVATION.md",
       "hint": "MiOS architectural documentation: mios-agents \u2014 Architect\u2192Operator (A2O) super-container.",
       "related": [
@@ -36941,7 +37409,7 @@
       "path": "usr/share/mios/fan-control/mios-fanctl.toml",
       "hint": "MiOS vendor config for mios-fanctl (ventulusd client): socket, refresh, client-side override floor, default profile, and header roles applied at service start (ExecStartPost=mios-fanctl apply-roles).",
       "related": [
-        "/usr/bin/mios-fanctl",
+        "tools/native/mios-fanctl/Cargo.toml",
         "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
         "/usr/share/mios/mios.toml [hardware.fan_control]"
       ],
@@ -38243,24 +38711,11 @@
       "has_shebang": false
     },
     {
-      "path": "usr/share/mios/quickshell/AppDrawer.qml",
-      "hint": "Full-pane glass app drawer: search field, running windows and the installed-app grid.",
-      "related": [
-        "usr/share/mios/quickshell/Sidebar.qml",
-        "usr/share/mios/mios.toml [theme.shell].drawer_*"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
       "path": "usr/share/mios/quickshell/AppLaunch.qml",
       "hint": "Shared desktop entry launcher. Rust preflight recovers missing portal mounts and bounds sandbox probes; GIO handles desktop activation, while the configured terminal opens TUIs. Checks time out with visible failure.",
       "related": [
         "tools/native/mios-gen/src/app_preflight.rs",
         "Sidebar.qml",
-        "AppDrawer.qml",
         "Search.qml",
         "usr/share/mios/mios.toml [desktop.launch]"
       ],
@@ -38379,6 +38834,19 @@
       "hint": "The window-control glass for the shell, resolved from the SAME SSOT keys the desktop window controls",
       "related": [
         "usr/share/mios/mios.toml [desktop.hyprland.hyprbars] [desktop.hyprland.hyprglass] [colors]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/GlassSurface.qml",
+      "hint": "THE one glass shape of the shell (operator rule: ONE QML glass component for every surface). Every body",
+      "related": [
+        "usr/share/mios/quickshell/Glass.qml",
+        "usr/share/mios/quickshell/Theme.qml",
+        "usr/share/mios/mios.toml"
       ],
       "functions": [],
       "doc": null,
@@ -39618,8 +40086,7 @@
         "usr/libexec/mios/win/xbox/capture.py",
         "usr/libexec/mios/win/xbox/worker.py",
         "usr/libexec/mios/win/xbox/build.py",
-        "usr/share/mios/mios.toml ([windows.xbox.start]",
-        "[windows.xbox.start.capture])"
+        "usr/share/mios/mios.toml [windows.xbox.start]"
       ],
       "functions": [],
       "doc": null,

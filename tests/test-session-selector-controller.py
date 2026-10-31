@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server under bwrap with a fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.
-# AI-related: src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions] [keybindings], usr/share/doc/mios/keybinds.md, docs/design/mios-global-bindings-final.md
+# AI-related: src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions], usr/share/doc/mios/keybinds.md, docs/design/mios-global-bindings-final.md
 # Env: MIOSD = the candidate miosd (required); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
 # deployed miosd already carries C-33 from main, so it is no control any more).
 import os, shutil, subprocess, sys, tempfile, time

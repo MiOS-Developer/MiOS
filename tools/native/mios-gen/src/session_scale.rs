@@ -1,5 +1,5 @@
 // AI-hint: mios-gen session-scale up|down|reset: scales the whole session (apps, HUD, shell) on the focused output by stepping its Hyprland scale along the valid 1/120 grid, live and saved to the user tier as [desktop.hyprland.monitors.<output>].scale; when the focused window is a nested MiOS session it zooms that session instead.
-// AI-related: tools/native/mios-gen/src/display_scale.rs, tools/native/mios-gen/src/nested_session.rs (mios_nested_zoom), usr/share/mios/mios.toml [desktop.scaling] session_step/session_min/session_max, [keybindings.global] session-scale bindings
+// AI-related: tools/native/mios-gen/src/display_scale.rs, tools/native/mios-gen/src/nested_session.rs (mios_nested_zoom), usr/share/mios/mios.toml [desktop.scaling], [keybindings.global] session-scale bindings
 // AI-functions: run, step_scale, user_tier_with_scale, nested_target
 use serde_json::Value as Json;
 use std::fs::{File, OpenOptions};

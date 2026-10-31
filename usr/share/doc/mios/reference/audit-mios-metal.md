@@ -1,5 +1,5 @@
 <!-- AI-hint: Concrete host definition for the MiOS-Metal split-plane: bootc hypervisor-router image contents, SSOT-driven vfio-pci bind, hand-authored `table inet mios-router` nft ruleset, headscale mesh join, swtpm vTPM wiring, and a guest domain XML skeleton -- with drop-in artifacts (vfio bind projector + guest XML) and file:line evidence against the current tree. -->
-<!-- AI-related: docs/design/doc-mios-metal.md, usr/lib/bootc/kargs.d/01-mios-vfio.toml, usr/lib/bootc/kargs.d/20-vfio.toml, usr/lib/bootc/kargs.d/13-rtx50-vfio-workaround.toml, automation/75-kargs-render.sh, usr/share/mios/mios.toml, usr/libexec/mios/Xbox-Final-NoAutoSelect.xml, usr/libexec/mios/vfio-check.sh, usr/libexec/mios/virt-apply.sh, usr/share/mios/security/egress.nft, automation/45-firewall.sh, automation/98-drift-checks.sh -->
+<!-- AI-related: docs/design/doc-mios-metal.md, usr/lib/bootc/kargs.d/01-mios-vfio.toml, usr/lib/bootc/kargs.d/20-vfio.toml, automation/75-kargs-render.sh, usr/share/mios/mios.toml, usr/libexec/mios/Xbox-Final-NoAutoSelect.xml, usr/libexec/mios/vfio-check.sh, usr/libexec/mios/virt-apply.sh, usr/share/mios/security/egress.nft, automation/45-firewall.sh, automation/98-drift-checks.sh -->
 
 # MiOS-Metal — Concrete Host Definition (refinement audit)
 

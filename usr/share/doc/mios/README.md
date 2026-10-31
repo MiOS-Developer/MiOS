@@ -399,11 +399,13 @@ passage carries an anchor back to the comment it came from.
 | `usr/share/doc/mios/manual/embeddings.md` | Manual pages distilled from the source comments of embeddings, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/evals.md` | Manual pages distilled from the source comments of evals, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/federation.md` | Manual pages distilled from the source comments of federation, sanitized, each passage anchored to the comment it came from. |
+| `usr/share/doc/mios/manual/fhs-sync.md` | Runtime FHS Root Overlay and host-guest topology synchronization engine manual: 18 required FHS directories, Windows host namespace exclusions, inotify/ReadDirectoryChangesW event loops, and... |
 | `usr/share/doc/mios/manual/firstboot.md` | Manual page for firstboot subsystem |
 | `usr/share/doc/mios/manual/framerate.md` | Manual pages distilled from the source comments of framerate, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/game-clients.md` | Manual pages distilled from the source comments of game-clients, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/gateway-agent.md` | Manual pages distilled from the source comments of gateway-agent, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/git.md` | Manual pages distilled from the source comments of git, sanitized, each passage anchored to the comment it came from. |
+| `usr/share/doc/mios/manual/gpu-arbiter.md` | Dynamic GPU Arbiter manual: state machine, vLLM sleep mode coordination, sysfs driver binding, and QMP device hotplug between AI workloads and gaming guest. |
 | `usr/share/doc/mios/manual/graph.md` | Manual pages distilled from the source comments of graph, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/harness.md` | Manual pages distilled from the source comments of harness, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/hermes.md` | Manual pages distilled from the source comments of hermes, sanitized, each passage anchored to the comment it came from. |
@@ -433,12 +435,14 @@ passage carries an anchor back to the comment it came from.
 | `usr/share/doc/mios/manual/profile.d.md` | Manual pages distilled from the source comments of profile.d, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/prompt.md` | Manual pages distilled from the source comments of prompt, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/quickshell.md` | Manual pages distilled from the source comments of quickshell, sanitized, each passage anchored to the comment it came from. |
+| `usr/share/doc/mios/manual/rde.md` | Decentralized Remote Development Environment (RDE) platform engine manual: DevPod orchestration, OpenTofu infrastructure provisioning, code-server IDE, zero-AGPL copyleft taint gating, and Blade... |
 | `usr/share/doc/mios/manual/root.md` | Manual pages distilled from the source comments of root, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/routing.md` | Manual pages distilled from the source comments of routing, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/scheduler.md` | Manual pages distilled from the source comments of scheduler, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/searxng.md` | Manual pages distilled from the source comments of searxng, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/sec.md` | Manual pages distilled from the source comments of sec, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/shaderglass.md` | Manual pages distilled from the source comments of shaderglass, sanitized, each passage anchored to the comment it came from. |
+| `usr/share/doc/mios/manual/sovereign-hypervisor.md` | Sovereign Hypervisor supervisor manual: KVMFR shared memory verification, modular virtqemud sockets, and sibling domain orchestration for management seat and gaming guest. |
 | `usr/share/doc/mios/manual/src.md` | Manual pages distilled from the source comments of src, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/ssot.md` | Prose harvested out of source comments by `mios-manual harvest`; each passage carries the mios-src anchor that proves which comment it came from. |
 | `usr/share/doc/mios/manual/storage.md` | Manual pages distilled from the source comments of storage, sanitized, each passage anchored to the comment it came from. |
@@ -470,5 +474,5 @@ passage carries an anchor back to the comment it came from.
 | `usr/share/doc/mios/manual/xbox.md` | Manual pages distilled from the source comments of xbox, sanitized, each passage anchored to the comment it came from. |
 | `usr/share/doc/mios/manual/xdg-desktop-portal.md` | Manual pages distilled from the source comments of xdg-desktop-portal, sanitized, each passage anchored to the comment it came from. |
 
-<!-- derived from the AI-hint headers of 222 file(s) matching usr/share/doc/mios/manual/*.md -->
+<!-- derived from the AI-hint headers of 226 file(s) matching usr/share/doc/mios/manual/*.md -->
 <!-- /MIOS-GEN:index:usr/share/doc/mios/manual/*.md -->

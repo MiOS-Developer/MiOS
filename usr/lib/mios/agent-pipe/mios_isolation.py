@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: 4-Tier Sandbox Execution Ladder, Tetragon eBPF Enforcement Plane & Law 5 Cryptographic Audit Engine (WS-SEC / Milestone M4).
-# AI-related: usr/libexec/mios/mios-sandbox-exec, usr/share/containers/containers.conf.d/20-mios-krun-runtime.conf, etc/cdi/nvidia.json, etc/fapolicyd/fapolicyd.rules, usr/share/containers/systemd/mios-enforcer.container, usr/libexec/mios/ai/audit_chain.py
+# AI-related: usr/libexec/mios/mios-sandbox-exec, usr/share/containers/containers.conf.d/10-mios-pasta.conf, /etc/cdi/nvidia.json, /etc/fapolicyd/fapolicyd.rules, usr/share/containers/systemd/mios-enforcer.container, usr/libexec/mios/ai/audit_chain.py
 """MiOS 4-Tier Sandbox Execution Ladder & Tetragon eBPF Enforcement Engine.
 
 Milestone M4 (WS-SEC):

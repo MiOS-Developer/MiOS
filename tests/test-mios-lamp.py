@@ -7,7 +7,7 @@
 # phone output at scale 2.5 (432x936 at monX=2000) and remote phone (ui=2.5), minimized window tracking on
 # special:minimized, atomic dock-icons/launch JSON publication, 10 s launch pruning, and stale/malformed fallbacks.
 # Never touches the live compositor or operator windows.
-# AI-related: usr/share/mios/mios.toml [desktop.hyprland.lamp] [desktop.hyprland.hyprbars] [desktop.mobile],
+# AI-related: usr/share/mios/mios.toml [desktop.hyprland.lamp],
 # tools/native/mios-gen/src/render.rs (lamp_profile), usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp,
 # usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp, usr/share/mios/hyprland/plugins/mios-wobbly/wobble_model.hpp,
 # usr/share/mios/hyprland/plugins/mios-wobbly/tests/lamp_test.cpp, usr/share/mios/hyprland/plugins/mios-wobbly/tests/model_test.cpp,

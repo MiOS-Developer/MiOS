@@ -1,5 +1,5 @@
 # AI-hint: The ONE fail-closed credential resolution over the layered mios.toml SSOT (vendor < host < user + mios.d) -- account names, passwords, service account and persistent AutoLogon for every MiOS image pipeline (Windows answer files/DISM/UUP/ISO via the JSON projection, Linux image/installer/firstboot via the CLI).
-# AI-related: usr/lib/mios/mios_toml.py, usr/libexec/mios/mios-credential, usr/libexec/mios/win/unattend_gen.py, mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1 (Resolve-MiOSCredentials -- the PowerShell twin; keep the rules identical)
+# AI-related: usr/lib/mios/mios_toml.py, usr/libexec/mios/mios-credential, usr/libexec/mios/win/unattend_gen.py
 # AI-functions: CredentialError, resolve, windows_projection, identity_field, sysrescue, password_hash
 """Layered SSOT credential resolver. There is NO built-in credential default:
 a missing or empty key raises CredentialError naming the key.
