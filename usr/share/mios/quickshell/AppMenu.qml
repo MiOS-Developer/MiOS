@@ -140,7 +140,9 @@ QS.PanelWindow {
     onVisibleChanged: if (!visible && reveal && reveal.menuHovered) Qt.callLater(() => { if (!menus.visible && menus.reveal) menus.reveal.menuHovered = false })
     WlrLayershell.namespace: "mios-appmenu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: openMenu >= 0 ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    // OnDemand (constant: a changed layer focus mode remaps the surface): the open dropdown's focus grab hands the bar
+    // the keyboard, so the keys below reach it; with no dropdown the bar never takes focus from the app.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
     anchors.top: true
     anchors.left: true
     margins.top: overFullscreen ? 0 : Glass.gap   // the island's row: flush over a fullscreen window (its inset tab)

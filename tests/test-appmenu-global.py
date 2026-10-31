@@ -263,6 +263,11 @@ def live_tier():
     parent = primary_signature()
     if parent:
         launch_env['HYPRLAND_INSTANCE_SIGNATURE'] = parent
+        try:   # hyprland.lock: "<pid>\n<wayland socket>"
+            sock = (Path(UID_RUNTIME) / 'hypr' / parent / 'hyprland.lock').read_text().split()[1]
+            launch_env.setdefault('WAYLAND_DISPLAY', sock) if launch_env.get('WAYLAND_DISPLAY') else launch_env.update(WAYLAND_DISPLAY=sock)
+        except (OSError, IndexError):
+            pass
     launcher = subprocess.Popen(['/usr/bin/mios-gen', 'nested-session', '--layout', 'pip'], env=launch_env,
                                 stdout=open(out / 'launcher.log', 'w'), stderr=subprocess.STDOUT, start_new_session=True)
     d = Path(UID_RUNTIME) / f'mios-nested-desktop-{launcher.pid}'
