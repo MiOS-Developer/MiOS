@@ -26,9 +26,16 @@ VENDOR = ROOT / "usr/share/mios/mios.toml"
 TERMINAL = ROOT / "usr/libexec/mios/mios-terminal"
 BIN = Path(os.environ.get("MIOS_TMUX_OS_BIN", "/var/lib/mios-build/tmp/mios-tmux-os/target/x86_64-unknown-linux-musl/release"))
 GEN, UNITGEN, RELAY = BIN / "mios-gen", BIN / "mios-unit-gen", BIN / "mios-agent-relay"
+# miosd (the tmux-os launcher, `miosd launcher`) lives in the src/mios-rs workspace, so it has its own build dir.
+MIOSD = Path(os.environ.get("MIOS_TMUX_OS_MIOSD", str(BIN / "miosd")))
 SSOT = tomllib.loads(VENDOR.read_text())
 OPERATOR_SOCKET = SSOT["keybindings"]["socket_name"]
 PREFIX = "mios-tmuxos-test-"
+
+LAUNCHER_OFF = """
+[keybindings.tmux.launcher]
+enabled = false
+"""
 
 BASE_HOST = """
 [mcp.tmux.workspace]
@@ -118,7 +125,8 @@ class Harness:
         stub.chmod(0o755)
         self.host = self.dir / "host.toml"
         self.host.write_text(BASE_HOST + host_extra)
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("TMUX", "MIOS_", "SSH_"))}
+        # No desktop variables: a launcher pop-out must never open a window on the operator's desktop.
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("TMUX", "MIOS_", "SSH_", "WAYLAND_", "HYPRLAND_")) and k != "DISPLAY"}
         env.update({
             "TMUX_TMPDIR": str(self.dir),
             "MIOS_VENDOR_TOML": str(VENDOR),
@@ -133,6 +141,7 @@ class Harness:
             "MIOS_TERMINAL_TEST_SOCKET_DIR": str(self.dir),
             "MIOS_TERMINAL_TEST_SOCKET": self.inner,
             "MIOS_TERMINAL_TEST_GEN": str(GEN),
+            "MIOS_TERMINAL_TEST_MIOSD": str(MIOSD),
             "MIOS_TMUX_HELPER": "1",  # any workspace-ensure path returns early
             "PATH": f"{self.dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             "LANG": "C.UTF-8",
@@ -147,7 +156,7 @@ class Harness:
         text = (out / "tmux.conf").read_text()
         assert "set-hook -g client-attached" not in text, "workspace hooks must be off in tests"
         conf = out / "test.conf"
-        conf.write_text(text.replace("/usr/libexec/mios/mios-terminal", str(TERMINAL)))
+        conf.write_text(text.replace("/usr/libexec/mios/mios-terminal", str(TERMINAL)).replace("/usr/bin/miosd ", f"{MIOSD} "))
         return conf
 
     def I(self, *args, check=True, timeout=5):
@@ -311,7 +320,8 @@ enabled = false
 
     # ---- T3: menus by keyboard, controller vocabulary, mouse, console, size ----
     def test_t3_menus_are_keyboard_controller_mouse_and_console_driven(self):
-        h = self.harness("t3")
+        # The generated display-menus themselves: with the launcher on, prefix Space opens the launcher instead (T10).
+        h = self.harness("t3", LAUNCHER_OFF)
         h.start(80, 20)
         c = h.view("view", w=80, h=20)
         h.keys("view", "C-b", "Space")
@@ -580,6 +590,89 @@ enabled = false
         h.I("bind-key", "Z", "display-message mios-canary")
         run_snippet()
         self.assertTrue(canary(), "an unchanged digest is never re-sourced")
+
+    # ---- T10: the tmux-os launcher (miosd launcher): organised popup, keyboard/controller/mouse, instance options ----
+    @unittest.skipUnless(MIOSD.is_file(), "the lane's built miosd is required")
+    def test_t10_launcher_is_organised_and_driven_by_keys_controller_and_mouse(self):
+        h = self.harness("t10", CATALOGUE.replace("{scope}", '["env", "--"]').replace("{tag}", "t10"))
+        h.start(120, 36)
+        h.I("new-window", "-d", "-t", "main:", "-n", "editor", "sleep 300")
+        h.I("split-window", "-d", "-t", "main:editor", "sleep 300")
+        c = h.view(w=120, h=36)
+        def opened(delay=1.0):
+            h.keys("view", "C-b", "Space")
+            return h.shot(delay=delay)
+        def row(shot, text):
+            for y, line in enumerate(shot.splitlines()):
+                x = line.find(text)
+                if x >= 0:
+                    return x, y
+            raise AssertionError(f"{text!r} not on screen:\n{shot}")
+        def click(x, y, button=0):
+            h.raw("view", f"\x1b[<{button};{x + 1};{y + 1}M")
+            h.raw("view", f"\x1b[<{button};{x + 1};{y + 1}m")
+        shot = opened()
+        # Organised: grouped sections under headers, two columns at this width, a centred popup.
+        for header in ("Running", "AI and agents", "Tmux-OS", "Pane", "Window", "Session"):
+            self.assertRegex(shot, rf"{re.escape(header)} ─{{5,}}", f"section header {header}")
+        self.assertTrue(any(re.search(r"\S ─{5,}.*\S ─{5,}", l) for l in shot.splitlines()), f"two columns of sections:\n{shot}")
+        self.assertIn("Fake OK", shot, "installed apps are listed")
+        self.assertNotIn("Fake Missing", shot, "missing apps are not")
+        top = next(l for l in shot.splitlines() if "╭" in l)
+        left, right = top.index("╭"), len(top) - 1 - top.rindex("╮")
+        self.assertLessEqual(abs(left - right), 2, f"centred popup: {left} vs {right}")
+        # Controller vocabulary (the nav projection = keys sent as the client's own): d-pad Down, A = Enter.
+        self.assertEqual(h.I("display", "-p", "-c", c, "#{window_name}"), "bash")
+        h.I("send-keys", "-c", c, "-K", "Down", "Enter")
+        self.assertTrue(wait(lambda: h.I("display", "-p", "-c", c, "#{window_name}") == "editor"), "A on a running instance goes to it")
+        self.assertNotIn("Running ─", h.shot(delay=0.3), "the popup closed")
+        # B backs out: Esc closes the launcher, nothing changes.
+        opened()
+        h.I("send-keys", "-c", c, "-K", "Escape")
+        self.assertNotIn("Running ─", h.shot(delay=0.4))
+        # Right-click on an instance opens its options; Float the pane (left click on the row) floats the window's pane.
+        shot = opened()
+        x, y = row(shot, "editor")
+        click(x, y, button=2)
+        shot = h.shot(delay=0.6)
+        for label in ("Options", "Pop out to its own window", "Float the pane", "Move to window...", "Move to session...", "Close..."):
+            self.assertIn(label, shot, f"instance option {label}")
+        x, y = row(shot, "Float the pane")
+        click(x, y)
+        self.assertTrue(wait(lambda: "1" in h.I("list-panes", "-t", "main:editor", "-F", "#{pane_floating_flag}").split()), "floated")
+        # Pop out (no desktop here): the instance moves into its own session pop-editor.
+        opened()
+        h.I("send-keys", "-c", c, "-K", "Tab")
+        shot = h.shot(delay=0.5)
+        x, y = row(shot, "Pop out to its own window")
+        click(x, y)
+        self.assertTrue(wait(lambda: "pop-" in h.I("list-sessions", "-F", "#{session_name}")), "popped out into its own session")
+        # Close asks first and starts on No: A keeps it, Up A closes it.
+        before = h.I("list-panes", "-a", "-F", "#{pane_id}").split()
+        opened()
+        h.I("send-keys", "-c", c, "-K", "Tab", "End", "Enter")
+        self.assertIn("Close it?", h.shot(delay=0.5))
+        h.I("send-keys", "-c", c, "-K", "Enter")
+        time.sleep(0.5)
+        self.assertEqual(h.I("list-panes", "-a", "-F", "#{pane_id}").split(), before, "No keeps the instance")
+        h.I("send-keys", "-c", c, "-K", "Escape", "Escape")
+        time.sleep(0.3)
+        opened()
+        h.I("send-keys", "-c", c, "-K", "Tab", "End", "Enter")
+        h.shot(delay=0.5)
+        h.I("send-keys", "-c", c, "-K", "Up", "Enter")
+        self.assertTrue(wait(lambda: len(h.I("list-panes", "-a", "-F", "#{pane_id}").split()) < len(before)), "Yes closes it")
+
+    def test_t10_negative_control_launcher_off_is_the_single_column_menu(self):
+        # The pre-launcher entry: prefix Space opens the one-column display-menu, with none of the launcher's sections.
+        h = self.harness("t10n", LAUNCHER_OFF)
+        h.start(120, 36)
+        h.view(w=120, h=36)
+        h.keys("view", "C-b", "Space")
+        shot = h.shot(delay=0.8)
+        self.assertIn("Detach", shot)
+        self.assertNotRegex(shot, r"Running ─{5,}")
+        self.assertFalse(any(re.search(r"\S ─{5,}.*\S ─{5,}", l) for l in shot.splitlines()))
 
 
 if __name__ == "__main__":

@@ -972,9 +972,11 @@ pub(crate) fn render_tmux_keys(
 
     // ---- one key table per menu: row key -> row command (the launcher's client-exact route) ----
     // Cleared first, so a reload drops rows the SSOT no longer has. A row whose command is empty binds nothing.
+    // -q: on the first load the table does not exist yet, and a plain unbind-key -a is an error there (the server
+    // would show "table mios-menu-ID doesn't exist" for every menu on every fresh start).
     for menu in &menus {
         let table = menu_table(&menu.id);
-        out += &format!("unbind-key -a -T {table}\n");
+        out += &format!("unbind-key -q -a -T {table}\n");
         for item in &menu.items {
             let command = match &item.target {
                 ItemTarget::Separator | ItemTarget::Header => continue,
@@ -1328,7 +1330,9 @@ mod tests {
         let menus = launcher_menus(&ssot(), "linux").unwrap();
         for m in &menus {
             let table = menu_table(&m.id);
-            let unbind = format!("unbind-key -a -T {table}");
+            let unbind = format!("unbind-key -q -a -T {table}");
+            // Negative control: the unquiet form errors on a fresh server, where the table does not exist yet.
+            assert!(!conf.lines().any(|l| l == format!("unbind-key -a -T {table}")), "{table}: unbind without -q");
             let at = conf.lines().position(|l| l == unbind).unwrap_or_else(|| panic!("{unbind} missing"));
             for it in m.items.iter().filter(|i| !matches!(i.target, ItemTarget::Separator | ItemTarget::Header)) {
                 let needle = format!("-T {table} {} ", tmux_key(&it.key));

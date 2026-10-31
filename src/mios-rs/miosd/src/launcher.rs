@@ -1662,10 +1662,13 @@ pub fn tmux_client_under(proc_root: &Path, pid: u32, socket: &str, socket_root: 
         if args.first().and_then(|a| Path::new(a).file_name()).and_then(|n| n.to_str()) == Some("tmux") {
             let named = args.windows(2).any(|w| w[0] == "-L" && w[1] == socket);
             let attach = args.iter().any(|a| matches!(a.as_str(), "attach" | "attach-session" | "a" | "new" | "new-session"));
-            if named && attach {
+            // A detached `new-session -d` is the server being started, never a client of a terminal.
+            let detached = args.iter().any(|a| a == "-d" || (a.starts_with('-') && !a.starts_with("--") && a.len() > 2 && a[1..].contains('d') && a[1..].bytes().all(|b| b.is_ascii_alphabetic())));
+            if named && attach && !detached {
                 let env = std::fs::read(dir.join("environ")).unwrap_or_default();
                 let tmpdir = env.split(|b| *b == 0).filter_map(|kv| std::str::from_utf8(kv).ok()).find_map(|kv| kv.strip_prefix("TMUX_TMPDIR=")).unwrap_or(socket_root).to_owned();
-                let tty = std::fs::read_link(dir.join("fd/0")).ok().map(|t| t.display().to_string()).filter(|t| client_ok(t));
+                // A client's stdin is its terminal: a pty or a VT, never /dev/null or a file.
+                let tty = std::fs::read_link(dir.join("fd/0")).ok().map(|t| t.display().to_string()).filter(|t| client_ok(t) && (t.starts_with("/dev/pts/") || t.starts_with("/dev/tty")));
                 if let Some(tty) = tty {
                     return Some((format!("{}/tmux-{uid}/{socket}", tmpdir.trim_end_matches('/')), tty));
                 }
@@ -2166,6 +2169,11 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         assert_eq!(tmux_client_under(p, 100, "mios-human", "/tmp"), Some((format!("/tmp/tmux-{uid}/mios-human"), "/dev/pts/9".into())));
         assert_eq!(tmux_client_under(p, 100, "other", "/tmp"), None, "another server is not tmux-os");
         assert_eq!(tmux_client_under(p, 200, "mios-human", "/tmp"), None, "the server process is no client");
+        // A client whose stdin is no terminal (redirected) is not the focused window's client either.
+        mk(300, 1, &["tmux", "-L", "mios-human", "attach"], "", Some(Path::new("/dev/null")));
+        assert_eq!(tmux_client_under(p, 300, "mios-human", "/tmp"), None, "stdin /dev/null is no client terminal");
+        mk(400, 1, &["tmux", "-L", "mios-human", "new-session", "-As", "x"], "", Some(Path::new("/dev/tty3")));
+        assert_eq!(tmux_client_under(p, 400, "mios-human", "/tmp"), Some((format!("/tmp/tmux-{uid}/mios-human"), "/dev/tty3".into())), "a VT client");
     }
 
     #[test]

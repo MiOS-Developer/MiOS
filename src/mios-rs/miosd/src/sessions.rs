@@ -68,7 +68,7 @@ pub struct App {
     mode: String,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Session {
     name: String,
     windows: u32,
@@ -85,10 +85,22 @@ pub struct Node {
     sessions: Vec<Session>,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct NestedSession {
+    pub seat: String,
+    pub user: String,
+    pub target: String,
+    pub tmux_socket: String,
+    pub tmux_root: Option<String>,
+    pub sessions: Vec<Session>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Choice {
     Attach { node: usize, session: String },
+    AttachNested { socket: String, session: String, tmux_root: Option<String> },
     New { node: usize },
+    NewNested { socket: String, tmux_root: Option<String> },
     /// The MiOS AI workspace ([keybindings].terminal_session) when it is not running yet.
     Workspace,
     App { id: String },
@@ -317,6 +329,107 @@ fn local_node(c: &Config) -> Node {
     Node { name: host, address: String::new(), local: true, online: true, error, sessions }
 }
 
+fn nested_sessions_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("MIOS_NESTED_SESSIONS_DIR") {
+        std::path::PathBuf::from(d)
+    } else if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
+        std::path::PathBuf::from(rt).join("mios/nested-sessions")
+    } else {
+        std::path::PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })).join("mios/nested-sessions")
+    }
+}
+
+fn launcher_pid_alive(entry: &serde_json::Value) -> bool {
+    let Some(pid) = entry.get("launcher_pid").and_then(|v| v.as_u64()).map(|p| p as u32) else {
+        return false;
+    };
+    if pid == 0 {
+        return false;
+    }
+    if let Some(expected_start) = entry.get("launcher_start").and_then(|v| v.as_u64()) {
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            if let Some((_, rest)) = stat.rsplit_once(')') {
+                let actual_start = rest.split_whitespace().nth(19).and_then(|f| f.parse::<u64>().ok());
+                return actual_start == Some(expected_start);
+            }
+        }
+        false
+    } else {
+        Path::new(&format!("/proc/{pid}")).exists()
+    }
+}
+
+fn discover_nested(c: &Config) -> Vec<NestedSession> {
+    let dir = nested_sessions_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let data = match std::fs::read_to_string(&p) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let val: serde_json::Value = match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !launcher_pid_alive(&val) {
+            continue;
+        }
+        let seat = val.get("seat").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+        let user = val.get("user").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+        let target = val.get("target")
+            .or_else(|| val.get("layout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned();
+        let tmux_socket = if let Some(sock) = val.get("tmux_socket").and_then(|v| v.as_str()) {
+            sock.to_owned()
+        } else if let Some(desc_path) = val.get("descriptor").and_then(|v| v.as_str()) {
+            std::fs::read_to_string(desc_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|d| d.get("tmux_socket").and_then(|v| v.as_str()).map(str::to_owned))
+                .unwrap_or_else(|| if !seat.is_empty() { format!("mios-nested-{seat}") } else { "mios-nested".to_owned() })
+        } else if !seat.is_empty() {
+            format!("mios-nested-{seat}")
+        } else {
+            "mios-nested".to_owned()
+        };
+        let tmux_root = val.get("runtime")
+            .and_then(|v| v.as_str())
+            .map(|r| format!("{r}/tmux"))
+            .filter(|p| std::path::Path::new(p).exists())
+            .or_else(|| val.get("tmux_root").and_then(|v| v.as_str()).map(str::to_owned));
+
+        let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
+        let mut cmd = Command::new("tmux");
+        cmd.env("TMUX_TMPDIR", root)
+           .args(["-L", &tmux_socket, "list-sessions", "-F", FORMAT]);
+        let sessions = match run_bounded(&mut cmd, Instant::now() + LOCAL_DEADLINE) {
+            Ok(output) => visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&output.stdout))),
+            Err(_) => Vec::new(),
+        };
+
+        out.push(NestedSession {
+            seat,
+            user,
+            target,
+            tmux_socket,
+            tmux_root,
+            sessions,
+        });
+    }
+    out.sort_by(|a, b| a.seat.cmp(&b.seat).then(a.tmux_socket.cmp(&b.tmux_socket)));
+    out
+}
+
 /// This node first, then tailnet MiOS nodes queried in parallel (bounded by peer_deadline).
 fn discover(c: &Config) -> Vec<Node> {
     let mut nodes = vec![local_node(c)];
@@ -446,7 +559,7 @@ impl Drop for TermGuard {
     }
 }
 
-fn rows(nodes: &[Node], querying: bool, apps: &[App], workspace: Option<&str>, g: &Glyphs) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+fn rows(nodes: &[Node], querying: bool, apps: &[App], nested: &[NestedSession], workspace: Option<&str>, g: &Glyphs) -> Vec<(Option<Choice>, Line<'static>, Style)> {
     let mut out = Vec::new();
     for (i, n) in nodes.iter().enumerate() {
         let state = if n.local {
@@ -485,6 +598,37 @@ fn rows(nodes: &[Node], querying: bool, apps: &[App], workspace: Option<&str>, g
                     Style::default(),
                 ));
             }
+        }
+    }
+    if !nested.is_empty() {
+        out.push((None, Line::from(format!("Nested sessions{}this node", g.sep)), Style::default().add_modifier(Modifier::BOLD)));
+        for n in nested {
+            let label = if !n.seat.is_empty() { format!("seat {}", n.seat) } else { format!("socket {}", n.tmux_socket) };
+            let mut meta = Vec::new();
+            if !n.target.is_empty() { meta.push(n.target.clone()); }
+            if !n.user.is_empty() { meta.push(format!("user:{}", n.user)); }
+            let info = if meta.is_empty() { label } else { format!("{label} ({})", meta.join(", ")) };
+            out.push((None, Line::from(format!("    {info}")), Style::default().add_modifier(Modifier::DIM)));
+            for s in &n.sessions {
+                let mark = if s.attached { "attached" } else { "detached" };
+                out.push((
+                    Some(Choice::AttachNested {
+                        socket: n.tmux_socket.clone(),
+                        session: s.name.clone(),
+                        tmux_root: n.tmux_root.clone(),
+                    }),
+                    Line::from(format!("        {}   {} window(s), {mark}", s.name, s.windows)),
+                    Style::default(),
+                ));
+            }
+            out.push((
+                Some(Choice::NewNested {
+                    socket: n.tmux_socket.clone(),
+                    tmux_root: n.tmux_root.clone(),
+                }),
+                Line::from("        + new bare Tmux-OS session"),
+                Style::default(),
+            ));
         }
     }
     if querying {
@@ -537,6 +681,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     // This node renders immediately; tailnet peers arrive from a worker when they answer
     // (or time out), so a slow peer never holds the raw-mode terminal.
     let mut nodes = vec![local_node(c)];
+    let mut nested = discover_nested(c);
     let mut pending = Some(spawn_remote(c));
     let mut state = ListState::default();
     let mut remembered: Option<Choice> = None;
@@ -555,7 +700,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        let table = rows(&nodes, pending.is_some(), &c.apps, Some(&c.default_session), g);
+        let table = rows(&nodes, pending.is_some(), &c.apps, &nested, Some(&c.default_session), g);
         state.select(select_index(&table, remembered.as_ref(), &c.default_session));
         let items: Vec<ListItem> = table
             .iter()
@@ -598,6 +743,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 KeyCode::Char('n') | KeyCode::Tab => break Ok(Choice::New { node: 0 }),
                 KeyCode::Char('r') => {
                     nodes[0] = local_node(c);
+                    nested = discover_nested(c);
                     if pending.is_none() {
                         pending = Some(spawn_remote(c));
                     }
@@ -639,9 +785,19 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
 fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
     let err = match choice {
         Choice::Attach { node, session } if nodes[node].local => Command::new(TERMINAL).args(["--session", &session]).exec(),
+        Choice::AttachNested { socket, session, tmux_root } => {
+            let mut cmd = Command::new("tmux");
+            let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
+            cmd.env("TMUX_TMPDIR", root).args(["-L", &socket, "attach-session", "-t", &session]).exec()
+        }
         Choice::Workspace => Command::new(TERMINAL).args(["--action", "ai"]).exec(),
         Choice::App { id } => Command::new(TERMINAL).args(["--app", &id, "--console", if c.console { "1" } else { "0" }]).exec(),
         Choice::New { node } if nodes[node].local => Command::new(TERMINAL).arg("--new").exec(),
+        Choice::NewNested { socket, tmux_root } => {
+            let mut cmd = Command::new("tmux");
+            let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
+            cmd.env("TMUX_TMPDIR", root).args(["-L", &socket, "new-session"]).exec()
+        }
         Choice::Attach { node, session } => Command::new("ssh")
             .arg("-t")
             .args(ssh_args(c, &nodes[node].address))
@@ -664,7 +820,8 @@ fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
 pub fn run(root: &Path, list: bool) -> Result<(), String> {
     let c = config(root)?;
     if list {
-        let out = serde_json::json!({ "nodes": discover(&c), "apps": c.apps });
+        let nested = discover_nested(&c);
+        let out = serde_json::json!({ "nodes": discover(&c), "nested": nested, "apps": c.apps });
         println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
         return Ok(());
     }
@@ -790,8 +947,8 @@ mod tests {
     #[test]
     fn rows_show_a_querying_marker_while_peers_are_pending() {
         let local = Node { name: "here".into(), address: String::new(), local: true, online: true, error: None, sessions: vec![] };
-        assert!(rows(std::slice::from_ref(&local), true, &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
-        assert!(!rows(&[local], false, &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
+        assert!(rows(std::slice::from_ref(&local), true, &[], &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
+        assert!(!rows(&[local], false, &[], &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
     }
 
     #[test]
@@ -799,7 +956,7 @@ mod tests {
         let node = |online: bool, error: Option<String>| Node {
             name: "n".into(), address: "n.ts".into(), local: false, online, error, sessions: vec![],
         };
-        let table = rows(&[node(true, None), node(false, None), node(true, Some("denied".into()))], false, &[], None, &UNICODE);
+        let table = rows(&[node(true, None), node(false, None), node(true, Some("denied".into()))], false, &[], &[], None, &UNICODE);
         let news = table.iter().filter(|r| matches!(r.0, Some(Choice::New { .. }))).count();
         assert_eq!(news, 1);
         assert!(matches!(table.last().unwrap().0, Some(Choice::Shell)));
@@ -827,8 +984,8 @@ mod tests {
     #[test]
     fn app_rows_follow_this_node_and_never_move_when_peers_arrive() {
         let apps = [app("btop"), app("top")];
-        let before = rows(&[local(&["mios"])], true, &apps, Some("mios"), &UNICODE);
-        let after = rows(&[local(&["mios"]), peer("a"), peer("b")], false, &apps, Some("mios"), &UNICODE);
+        let before = rows(&[local(&["mios"])], true, &apps, &[], Some("mios"), &UNICODE);
+        let after = rows(&[local(&["mios"]), peer("a"), peer("b")], false, &apps, &[], Some("mios"), &UNICODE);
         let pos = |t: &[(Option<Choice>, Line<'static>, Style)], id: &str| t.iter().position(|r| r.0 == Some(Choice::App { id: id.into() })).unwrap();
         assert_eq!(pos(&before, "btop"), pos(&after, "btop"));
         assert!(pos(&after, "top") < after.iter().position(|r| matches!(r.0, Some(Choice::New { node: 1 }))).unwrap());
@@ -838,9 +995,9 @@ mod tests {
     #[test]
     fn selection_identity_survives_a_row_shift() {
         let apps = [app("btop")];
-        let before = rows(&[local(&[])], true, &apps, None, &UNICODE);
+        let before = rows(&[local(&[])], true, &apps, &[], None, &UNICODE);
         let shell = Choice::Shell;
-        let after = rows(&[local(&[]), peer("a"), peer("b")], false, &apps, None, &UNICODE);
+        let after = rows(&[local(&[]), peer("a"), peer("b")], false, &apps, &[], None, &UNICODE);
         let i = select_index(&after, Some(&shell), "mios").unwrap();
         assert_eq!(after[i].0, Some(Choice::Shell));
         assert_ne!(select_index(&before, Some(&shell), "mios"), Some(i), "the row index did shift");
@@ -851,16 +1008,16 @@ mod tests {
         let c = cfg(3);
         let visible = visible_sessions(&c, parse_sessions("mios\t2\t1\nmios-float-3\t1\t0\nmios-workspace-4\t1\t0\ntmux-os\t1\t0\n"));
         assert_eq!(visible.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["mios", "tmux-os"]);
-        let without = rows(&[local(&["tmux-os"])], false, &[], Some("mios"), &UNICODE);
+        let without = rows(&[local(&["tmux-os"])], false, &[], &[], Some("mios"), &UNICODE);
         assert!(without.iter().any(|r| r.0 == Some(Choice::Workspace)));
-        let with = rows(&[local(&["mios"])], false, &[], Some("mios"), &UNICODE);
+        let with = rows(&[local(&["mios"])], false, &[], &[], Some("mios"), &UNICODE);
         assert!(!with.iter().any(|r| r.0 == Some(Choice::Workspace)));
     }
 
     #[test]
     fn controller_vocabulary_navigates_rows_and_sections() {
         let apps = [app("btop"), app("top"), app("vim")];
-        let t = rows(&[local(&["mios", "tmux-os"])], false, &apps, Some("mios"), &UNICODE);
+        let t = rows(&[local(&["mios", "tmux-os"])], false, &apps, &[], Some("mios"), &UNICODE);
         let at = |c: Choice| t.iter().position(|r| r.0.as_ref() == Some(&c)).unwrap();
         let mios = at(Choice::Attach { node: 0, session: "mios".into() });
         assert_eq!(navigate(&t, mios, KeyCode::Down, 5), at(Choice::Attach { node: 0, session: "tmux-os".into() }));
@@ -881,11 +1038,65 @@ mod tests {
 
     #[test]
     fn console_rows_and_help_are_ascii() {
-        let t = rows(&[local(&["mios"]), peer("a")], true, &[app("btop")], Some("mios"), &ASCII);
+        let t = rows(&[local(&["mios"]), peer("a")], true, &[app("btop")], &[], Some("mios"), &ASCII);
         for r in &t {
             assert!(r.1.to_string().is_ascii(), "{}", r.1);
         }
         assert!(ASCII.help.is_ascii() && ASCII.pick.is_ascii());
         assert!(!UNICODE.help.is_ascii());
     }
+
+    #[test]
+    fn discover_nested_parses_attributes_and_filters_dead_pids() {
+        let dir = std::env::temp_dir().join(format!("mios-nested-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let my_pid = std::process::id();
+        let live_json = serde_json::json!({
+            "seat": "seat-1",
+            "user": "mios",
+            "target": "pip",
+            "tmux_socket": "mios-nested-seat-1",
+            "launcher_pid": my_pid,
+        });
+        std::fs::write(dir.join("seat-1.json"), serde_json::to_string(&live_json).unwrap()).unwrap();
+        let dead_json = serde_json::json!({
+            "seat": "seat-dead",
+            "user": "mios",
+            "target": "output",
+            "tmux_socket": "mios-nested-seat-dead",
+            "launcher_pid": 99999999,
+        });
+        std::fs::write(dir.join("seat-dead.json"), serde_json::to_string(&dead_json).unwrap()).unwrap();
+
+        std::env::set_var("MIOS_NESTED_SESSIONS_DIR", dir.to_str().unwrap());
+        let c = cfg(3);
+        let nested = discover_nested(&c);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::remove_var("MIOS_NESTED_SESSIONS_DIR");
+
+        assert_eq!(nested.len(), 1, "only live launcher pid is discovered");
+        assert_eq!(nested[0].seat, "seat-1");
+        assert_eq!(nested[0].user, "mios");
+        assert_eq!(nested[0].target, "pip");
+        assert_eq!(nested[0].tmux_socket, "mios-nested-seat-1");
+    }
+
+    #[test]
+    fn rows_shows_nested_sessions_section_with_attach_and_new() {
+        let nested = [NestedSession {
+            seat: "p1".into(),
+            user: "mios".into(),
+            target: "pip".into(),
+            tmux_socket: "mios-nested-p1".into(),
+            tmux_root: None,
+            sessions: vec![Session { name: "main".into(), windows: 1, attached: true }],
+        }];
+        let t = rows(&[local(&["mios"])], false, &[], &nested, Some("mios"), &UNICODE);
+        assert!(t.iter().any(|r| r.1.to_string().contains("Nested sessions")), "Nested sessions header present");
+        assert!(t.iter().any(|r| r.1.to_string().contains("seat p1")), "seat p1 metadata present");
+        assert!(t.iter().any(|r| matches!(&r.0, Some(Choice::AttachNested { socket, session, .. }) if socket == "mios-nested-p1" && session == "main")));
+        assert!(t.iter().any(|r| matches!(&r.0, Some(Choice::NewNested { socket, .. }) if socket == "mios-nested-p1")));
+    }
 }
+
