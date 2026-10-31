@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4102,
-  "total_metadata_entries": 3373,
-  "total_hints": 3367,
-  "total_functions_indexed": 2076,
-  "total_related_links": 6579,
+  "total_files_scanned": 4105,
+  "total_metadata_entries": 3376,
+  "total_hints": 3370,
+  "total_functions_indexed": 2082,
+  "total_related_links": 6600,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7330,6 +7330,28 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-env-snapshot-native-parity.py",
+      "hint": "Golden-master gate for the env.baseline sync stage: `mios-gen env-snapshot` must print byte-identically to the retired bash body of usr/libexec/mios/mios-env-snapshot (frozen below as LEGACY_BODY) over the real vendor SSOT and seeded layered vendor fixtures (escapes, CR, non-ASCII, ${MIOS_*} references, pgvector bind derivation, lexical and decoy fragments); the one deliberate difference (a <root>/etc/mios admin tier) and a mutated legacy leg must both be seen.",
+      "related": [
+        "tools/native/mios-gen/src/env_snapshot.rs",
+        "usr/libexec/mios/mios-env-snapshot",
+        "usr/lib/mios/userenv.sh",
+        "tools/native/mios-resolver/src/emit.rs",
+        "usr/share/mios/reference/env-baseline.txt",
+        "tests/golden/README.md (env-snapshot)"
+      ],
+      "functions": [
+        "native_bin",
+        "legacy_leg",
+        "native_leg",
+        "Tree",
+        "TestEnvSnapshotNativeParity"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-events-websocket.py",
       "hint": "Automated unit test suite for authenticated WebSocket real-time agent execution token stream (task_462).",
       "related": [],
@@ -7395,6 +7417,22 @@
       "related": [],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-flatpak-apps-launch.py",
+      "hint": "Two-sided automated test suite verifying desktop application launch reliability, EPIPE/SIGPIPE immunity across pipe closures, 10,000 stdout/stderr writes, and mios-shell restart resilience.",
+      "related": [
+        "usr/libexec/mios/mios-desktop-launch",
+        "usr/share/mios/quickshell/AppLaunch.qml",
+        "usr/share/mios/mios.toml",
+        "usr/libexec/mios/mios-flatpak-run"
+      ],
+      "functions": [
+        "FlatpakAppsLaunchSuite"
+      ],
+      "doc": "usr/share/doc/mios/manual/desktop.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -8566,17 +8604,19 @@
     },
     {
       "path": "tests/test-mios-controls-visual-live.py",
-      "hint": "Live visual device views and TUI verification for mios-controls: keyboard, mouse, pad per family with rebind. Uses FixturePad for gamepad injection.",
+      "hint": "LIVE opt-in test (MIOS_LIVE_NESTED=1) of the mios-controls device views inside an owned nested MiOS PiP session: keyboard, mouse, controller (Xbox / PlayStation / generic glyphs), bindings and devices drawings (a screenshot of each, plus TERM=linux), and a private grabbed uinput fixture pad driving the editor (d-pad, triggers, South) and capture-to-bind (grab proven by a second reader), a pad rebind with undo/redo, a refused colliding rebind and an apply to a scratch user tier.",
       "related": [
-        "tools/native/mios-controls/src/main.rs",
         "tools/native/mios-controls/src/tui.rs",
         "tools/native/mios-controls/src/pads.rs",
-        "tests/fixtures/mios-controls/fixture_pad.py"
+        "tools/native/mios-controls/src/layout.rs",
+        "tests/fixtures/mios-controls/fixture_pad.py",
+        "tools/native/mios-gen/src/nested_session.rs",
+        "tests/test-mios-controls.py"
       ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
-      "has_shebang": false
+      "has_shebang": true
     },
     {
       "path": "tests/test-mios-controls.py",
@@ -12284,10 +12324,10 @@
       "hint": "Native AI header metadata catalog (usr/share/mios/ai/v1/metadata.json): the AI-hint/AI-related/AI-functions/AI-doc headers of every tracked regular file, rendered byte-identically to the Python adapter it replaces on the generation path (json.dumps indent=2, ensure_ascii).",
       "related": [
         "usr/libexec/mios/mios-ai-metadata.py",
-        "usr/lib/mios/mios_comments.py",
+        "usr/lib/mios/mios_comments.py (tracked_file_modes)",
         "usr/share/mios/ai/v1/metadata.json",
-        "usr/share/mios/mios.toml",
-        "automation/98-drift-checks.sh",
+        "usr/share/mios/mios.toml [generation.sync] ai.metadata",
+        "automation/98-drift-checks.sh (check_ai_metadata_fresh)",
         "tests/test-ai-metadata-native-parity.py",
         "tests/golden/README.md"
       ],
@@ -12422,9 +12462,9 @@
       "related": [
         "usr/libexec/mios/mios-env-snapshot",
         "usr/lib/mios/userenv.sh",
-        "tools/native/mios-resolver/src/emit.rs",
-        "usr/share/mios/mios.toml",
-        "automation/98-drift-checks.sh",
+        "tools/native/mios-resolver/src/emit.rs (emit_shell::shell_exports)",
+        "usr/share/mios/mios.toml [generation.sync] env.baseline",
+        "automation/98-drift-checks.sh (check_resolved_env_lossless)",
         "tests/golden/README.md"
       ],
       "functions": [
@@ -25998,6 +26038,19 @@
       "has_shebang": true
     },
     {
+      "path": "usr/libexec/mios/mios-desktop-launch",
+      "hint": "Dedicated desktop application launcher. Decouples GUI apps from caller stdio pipes, strips MIOS_* environment variables to prevent bubblewrap argument overflow, detaches session, and encapsulates execution in a transient systemd user scope while propagating dispatch status.",
+      "related": [
+        "usr/share/mios/quickshell/AppLaunch.qml",
+        "usr/share/mios/mios.toml [desktop.launch]",
+        "usr/libexec/mios/mios-flatpak-run"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/desktop.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "usr/libexec/mios/mios-directory-lookup",
       "hint": "Provides high-speed (<100ms) retrieval of the pgvector-cached directory map (parameterized pg via mios-db --pg-json) to allow agents to perform rapid file/directory lookups and navigation instead of slow filesystem crawls.",
       "related": [
@@ -26449,11 +26502,12 @@
     },
     {
       "path": "usr/libexec/mios/mios-flatpak-run",
-      "hint": "Runs a Flatpak app without the session's MIOS_* exports. userenv.sh exports the whole",
+      "hint": "Runs a Flatpak app without the session's MIOS_* exports and with safe standard streams.",
       "related": [
         "/usr/lib/mios/userenv.sh",
         "/usr/share/applications/mios-zen.desktop",
-        "mios.toml [browser.zen]"
+        "mios.toml [browser.zen]",
+        "usr/libexec/mios/mios-desktop-launch"
       ],
       "functions": [],
       "doc": null,
@@ -33373,12 +33427,16 @@
     },
     {
       "path": "usr/share/doc/mios/controls.md",
-      "hint": "Operator guide to mios-controls, the terminal binding editor over the layered [keybindings.global] map: diagrams, contexts, collisions, the draft -> validate -> apply workflow and its headless verbs.",
+      "hint": "Operator guide to mios-controls, the terminal binding editor over the layered binding map: keyboard, mouse and controller drawings (VT-safe), every use of an input across the global map, compositor tables, tmux-os, the Guide layer and the Hypr3D room, rebind / capture-to-bind / search / conflicts / undo, keyboard + mouse + controller navigation, the draft -> validate -> apply workflow and its headless verbs.",
       "related": [
         "tools/native/mios-controls/src/main.rs",
-        "usr/share/mios/mios.toml [keybindings.global]",
+        "tools/native/mios-controls/src/tui.rs",
+        "tools/native/mios-controls/src/layout.rs",
+        "tools/native/mios-controls/src/pads.rs",
+        "usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux] [desktop.controls]",
         "usr/share/doc/mios/keybinds.md",
-        "tests/test-mios-controls.py"
+        "tests/test-mios-controls.py",
+        "tests/test-mios-controls-visual-live.py"
       ],
       "functions": [],
       "doc": null,
@@ -39541,12 +39599,13 @@
     },
     {
       "path": "usr/share/mios/quickshell/AppLaunch.qml",
-      "hint": "Shared desktop entry launcher. Rust preflight recovers missing portal mounts and bounds sandbox probes; GIO handles desktop activation, while the configured terminal opens TUIs. Checks time out with visible failure.",
+      "hint": "Shared desktop entry launcher. Rust preflight recovers missing portal mounts and bounds sandbox probes; desktop launcher decouples stdio and handles desktop activation, while configured terminal opens TUIs. Checks time out with visible failure.",
       "related": [
         "tools/native/mios-gen/src/app_preflight.rs",
         "Sidebar.qml",
         "Search.qml",
-        "usr/share/mios/mios.toml [desktop.launch]"
+        "usr/share/mios/mios.toml [desktop.launch]",
+        "usr/libexec/mios/mios-desktop-launch"
       ],
       "functions": [],
       "doc": null,
