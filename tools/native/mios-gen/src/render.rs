@@ -5239,7 +5239,7 @@ report("again")
         let mut out = toml::map::Map::new();
         for (k, v) in cfg {
             let ok = match k.as_str() {
-                "enabled" | "require_vrr" => v.is_bool(),
+                "enabled" | "require_vrr" | "capture_guard" => v.is_bool(),
                 "slack_us" => v.as_integer().is_some_and(|n| (0..=20_000).contains(&n)),
                 "wallpaper_namespaces" => v.as_str().is_some_and(|s| {
                     s.split(',').map(str::trim).all(|n| n.is_empty() || n.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
@@ -5247,11 +5247,11 @@ report("again")
                 "max_fps" | "exclude_prefixes" | "wallpaper_fps" => {
                     return Err(format!("desktop.hyprland.{name}.config.{k} is the running tier's ([desktop.framerate], set by miosd framerate); remove it"))
                 }
-                _ => return Err(format!("desktop.hyprland.{name}.config.{k} is not a plugin option (enabled, require_vrr, slack_us, wallpaper_namespaces)")),
+                _ => return Err(format!("desktop.hyprland.{name}.config.{k} is not a plugin option (enabled, require_vrr, capture_guard, slack_us, wallpaper_namespaces)")),
             };
             if !ok {
                 return Err(format!(
-                    "desktop.hyprland.{name}.config.{k} is invalid (enabled/require_vrr: boolean; slack_us: 0..=20000; wallpaper_namespaces: comma-separated [A-Za-z0-9._-] layer namespaces)"
+                    "desktop.hyprland.{name}.config.{k} is invalid (enabled/require_vrr/capture_guard: boolean; slack_us: 0..=20000; wallpaper_namespaces: comma-separated [A-Za-z0-9._-] layer namespaces)"
                 ));
             }
             out.insert(k.clone(), v.clone());

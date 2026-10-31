@@ -10,6 +10,12 @@ source "${SCRIPT_DIR}/lib/packages.sh"
 
 mios_log "Installing Hyprland compositor & tools"
 install_packages_strict "hyprland"
+# MiOS compositor patch series ([desktop.hyprland.compositor]): rebuild the installed release with it and replace the
+# stock package (Release tagged, e.g. 2.mios1) before any plugin is built against it.
+_hl_rpms="$(mktemp -d)"
+/usr/libexec/mios/mios-gen build-hyprland --root / --out "$_hl_rpms"
+dnf -y install "$_hl_rpms"/hyprland-[0-9]*.rpm
+rm -rf -- "$_hl_rpms"
 install_packages_strict "console-pointer"
 # ShaderGlass overlay pane ([desktop.shaderglass]): Wine + DXVK only. The GPL-3 release itself is fetched and
 # verified on the host by `miosd shaderglass install`, never baked into the image.

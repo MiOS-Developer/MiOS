@@ -8610,6 +8610,19 @@ windowshade_open = "none-open"              # open shader for lamp-launched wind
 hide_hyprbars = true
 remote = "same"                             # every output, local or remote/mobile, gets the same lamp (the only value)
 
+# MiOS patches to the compositor itself (operator decision "Patch Hyprland"): mios-gen build-hyprland rebuilds the
+# installed release's source RPM (hyprglass.hyprland_version, the compositor ABI hold) with these applied in order after
+# the spec's own patches -- a patch that no longer applies fails the build naming it -- and tags the Release with
+# release_tag (2.fc44 -> 2.mios1.fc44: the patched package upgrades the stock one and `rpm -q hyprland` shows it).
+# Bump release_tag whenever the series changes. A patched compositor takes effect at the next compositor start.
+#   hyprland-screenshare-no-monitor.patch: a toplevel capture (hyprland-toplevel-export: Quickshell ScreencopyView,
+#   xdg-desktop-portal-hyprland window share) of a window without a live monitor -- a pinned window whose output was
+#   removed keeps an expired m_monitor -- SEGVs in Screenshare::CScreenshareSession::init (nullptr->m_scale); a capture
+#   of a closed/unmapped window disconnected the capturing client. Both now answer the frame with `failed`.
+[desktop.hyprland.compositor]
+patches = ["usr/share/mios/hyprland/patches/hyprland-screenshare-no-monitor.patch"]
+release_tag = "mios1"
+
 # ABI held to the deployed Hyprland release; upgrade this pair together.
 [desktop.hyprland.hyprglass]
 enabled = true
@@ -8757,6 +8770,7 @@ path = "/usr/lib64/mios/mios-pacing.so"
 slack_us = 500                     # a frame due within this long counts as due (timer jitter)
 require_vrr = true                 # cap only outputs whose VRR is active (false: also fixed-refresh outputs, judders)
 wallpaper_namespaces = "mios-wallpaper"   # layer namespaces (exact) whose frame callbacks follow the wallpaper rate W
+capture_guard = true               # live stopgap until the patched compositor ([desktop.hyprland.compositor]) runs: refuse toplevel captures of closed, unmapped or monitor-less windows with `failed` (capture_guard.hpp); loading the plugin needs no compositor restart
 
 # Catch-all monitor rule (output = "" matches every output); projected first.
 [desktop.hyprland.monitor]
@@ -18746,6 +18760,7 @@ scale_mode = "fit"                    # fit: the session keeps width x height lo
 scale_min = 0.25
 scale_max = 2.0
 shell_entry = "/usr/share/mios/quickshell/Nested.qml"
+compositor = "/usr/bin/Hyprland"             # the session's compositor binary; a patched candidate (mios-gen build-hyprland) is tested here before it is installed
 launch_layout = "pip"                 # default target (--target): pip | window | side-by-side | output (fullscreen on an attached output) | remote (the remote display output) | hypr3d (a Hypr3D room window)
 tmux_socket_name = "mios-nested"      # a labelled seat uses "<name>-<seat>"; every session's tmux server lives in its own runtime directory
 terminal_session = "tmux-os"

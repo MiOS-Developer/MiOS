@@ -52,8 +52,15 @@
 #include <hyprland/src/protocols/core/Subcompositor.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/notification/NotificationOverlay.hpp>
+#include <hyprland/protocols/hyprland-toplevel-export-v1.hpp>
+// CToplevelExportClient keeps the manager resource private; the capture guard needs its client and version to answer a
+// refused capture with a frame object (capture_guard.hpp). Only this header is opened up.
+#define private public
+#include <hyprland/src/protocols/ToplevelExport.hpp>
+#undef private
 
 #include "pacing.hpp"
+#include "capture_guard.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -71,6 +78,7 @@ namespace {
     CFunctionHook* g_frameHook     = nullptr;
     CFunctionHook* g_notifHook     = nullptr;
     CFunctionHook* g_notifDrawHook = nullptr;
+    CFunctionHook* g_captureHook   = nullptr;
     bool           g_exiting       = false;
     using origOnFrame              = void (*)(void*);
     using origSurfaceFrame         = void (*)(void*, const Time::steady_tp&);
@@ -83,6 +91,7 @@ namespace {
         float
     );
     using origNotifDraw            = void (*)(Notification::CNotificationOverlay*, PHLMONITOR);
+    using origCaptureToplevel      = void (*)(CToplevelExportClient*, uint32_t, int32_t, PHLWINDOW);
 
     struct {
         SP<Config::Values::CBoolValue>   enabled;
@@ -92,7 +101,47 @@ namespace {
         SP<Config::Values::CBoolValue>   requireVrr;
         SP<Config::Values::CIntValue>    wallpaperFps;
         SP<Config::Values::CStringValue> wallpaperNamespaces;
+        SP<Config::Values::CBoolValue>   captureGuard;
     } g_cfg;
+
+    // ---- toplevel-capture guard (capture_guard.hpp) -------------------------------------------------------------------
+    // Refused captures by reason, for `hyprctl mios-pacing status` ("capture_guard") and the live tests.
+    struct {
+        uint64_t passed = 0, noWindow = 0, unmapped = 0, noOutput = 0;
+    } g_guard;
+    // Frame objects answered `failed`, alive until their client destroys them.
+    std::vector<SP<CHyprlandToplevelExportFrameV1>> g_refused;
+
+    void refuseCapture(CToplevelExportClient* client, uint32_t frame) {
+        if (!client || !client->m_resource || !client->m_resource->resource())
+            return;
+        auto res = makeShared<CHyprlandToplevelExportFrameV1>(client->m_resource->client(), client->m_resource->version(), frame);
+        if (!res->resource()) {
+            client->m_resource->noMemory();
+            return;
+        }
+        auto drop = [](CHyprlandToplevelExportFrameV1* f) { std::erase_if(g_refused, [f](const auto& r) { return r.get() == f; }); };
+        res->setOnDestroy(drop);
+        res->setDestroy(drop);
+        res->setCopy([](CHyprlandToplevelExportFrameV1* f, wl_resource*, int32_t) { f->sendFailed(); });
+        res->sendFailed();
+        g_refused.emplace_back(std::move(res));
+    }
+
+    void hkCaptureToplevel(CToplevelExportClient* self, uint32_t frame, int32_t overlayCursor, PHLWINDOW window) {
+        const MiosCaptureGuard::SWindowFacts FACTS{.exists = !!window, .mapped = window && window->m_isMapped, .hasMonitor = window && !!window->m_monitor.lock()};
+        const auto VERDICT = MiosCaptureGuard::verdict(FACTS, !g_exiting && g_cfg.captureGuard && g_cfg.captureGuard->value());
+        switch (VERDICT) {
+            case MiosCaptureGuard::eVerdict::PASS:
+                g_guard.passed++;
+                reinterpret_cast<origCaptureToplevel>(g_captureHook->m_original)(self, frame, overlayCursor, window);
+                return;
+            case MiosCaptureGuard::eVerdict::FAIL_NONE: g_guard.noWindow++; break;
+            case MiosCaptureGuard::eVerdict::FAIL_UNMAPPED: g_guard.unmapped++; break;
+            case MiosCaptureGuard::eVerdict::FAIL_NO_OUTPUT: g_guard.noOutput++; break;
+        }
+        refuseCapture(self, frame);
+    }
 
     // One wallpaper layer surface whose frame callbacks are held to wallpaper_fps.
     struct SWallpaper {
@@ -538,7 +587,10 @@ namespace {
                                jsonEscape(w.ns), jsonEscape(w.output), w.sentMeter.fps(NOW), w.sent, w.held, w.released);
             first = false;
         }
-        return out + "],\"window\":" + windowJson() + "}";
+        out += std::format("],\"capture_guard\":{{\"enabled\":{},\"hooked\":{},\"passed\":{},\"refused\":{{\"no_window\":{},\"unmapped\":{},\"no_output\":{}}},\"pending\":{}}}",
+                           g_cfg.captureGuard->value() ? "true" : "false", g_captureHook ? "true" : "false", g_guard.passed, g_guard.noWindow, g_guard.unmapped,
+                           g_guard.noOutput, g_refused.size());
+        return out + ",\"window\":" + windowJson() + "}";
     }
 
     std::string hyprctl(eHyprCtlOutputFormat, std::string request) {
@@ -590,8 +642,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         makeShared<CIntValue>("plugin:mios_pacing:wallpaper_fps", "Frame callbacks per second for the wallpaper layer surfaces (0 = every output frame)", 0);
     g_cfg.wallpaperNamespaces =
         makeShared<CStringValue>("plugin:mios_pacing:wallpaper_namespaces", "Comma-separated layer namespaces wallpaper_fps applies to (exact names)", "mios-wallpaper");
+    g_cfg.captureGuard =
+        makeShared<CBoolValue>("plugin:mios_pacing:capture_guard", "Refuse toplevel captures of closed, unmapped or output-less windows (no compositor SEGV)", true);
     for (const SP<IValue>& v : std::initializer_list<SP<IValue>>{g_cfg.enabled, g_cfg.maxFps, g_cfg.exclude, g_cfg.slackUs, g_cfg.requireVrr, g_cfg.wallpaperFps,
-                                                                  g_cfg.wallpaperNamespaces})
+                                                                  g_cfg.wallpaperNamespaces, g_cfg.captureGuard})
         HyprlandAPI::addConfigValueV2(PHANDLE, v);
 
     // The one function the cap lives in. Loud failure when Hyprland renamed it: miosd then falls back to modes.
@@ -645,6 +699,22 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (Notification::overlay())
         Notification::overlay()->dismissNotifications(-1);
 
+    // The toplevel-capture guard (capture_guard.hpp). Loud when Hyprland renamed the function: previews then run unguarded,
+    // and the shell's own guard (DockPreview.qml never captures an output-less window) is the only line left.
+    for (const auto& match : HyprlandAPI::findFunctionsByName(PHANDLE, "captureToplevel")) {
+        if (match.demangled.find("CToplevelExportClient::captureToplevel(") == std::string::npos)
+            continue;
+        g_captureHook = HyprlandAPI::createFunctionHook(PHANDLE, match.address, reinterpret_cast<void*>(&hkCaptureToplevel));
+        break;
+    }
+    if (g_captureHook && !g_captureHook->hook()) {
+        HyprlandAPI::removeFunctionHook(PHANDLE, g_captureHook);
+        g_captureHook = nullptr;
+    }
+    if (!g_captureHook)
+        HyprlandAPI::addNotification(PHANDLE, "[mios-pacing] CToplevelExportClient::captureToplevel not found: window previews are unguarded",
+                                     CHyprColor{1.0, 0.6, 0.2, 1.0}, 8000);
+
     g_listeners.push_back(Event::bus()->m_events.render.pre.listen([](PHLMONITOR mon) {
         if (g_exiting || !mon)
             return;
@@ -669,6 +739,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     releaseWallpapers(); // the hooks are still installed here; with g_exiting they pass straight through
     g_listeners.clear();
     g_focused.listeners.clear();
+    g_refused.clear(); // refused frame objects: their handlers live in this plugin, so they go before it unloads
     if (g_cmd)
         HyprlandAPI::unregisterHyprCtlCommand(PHANDLE, g_cmd);
     for (auto& [name, o] : g_outputs)
