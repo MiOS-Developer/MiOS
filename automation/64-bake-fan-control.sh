@@ -1,7 +1,7 @@
 #!/bin/bash
 # MIOS_APPLY_CLASS=universal
 # AI-hint: Bakes the ventulusd fan-control daemon (MIT, Plan-B-Development) from the newest upstream release (or an explicit [build.bake_refs].ventulusd ref) as a static musl binary with the SSOT Rust toolchain, applies MiOS patches from usr/share/mios/fan-control/patches/, and installs /usr/bin/ventulusd, /usr/bin/ventulus-restore-auto and the system-sleep hook.
-# AI-related: /usr/lib/systemd/system/ventulusd.service, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/share/mios/fan-control/, /usr/share/mios/mios.toml [hardware.fan_control] [build.bake_refs]
+# AI-related: /usr/lib/systemd/system/ventulusd.service, /usr/lib/systemd/system/ventulusd.service.d/10-mios.conf, /usr/share/mios/fan-control/, /usr/share/mios/mios.toml
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 # shellcheck disable=SC1090

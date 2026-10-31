@@ -31,7 +31,7 @@ FocusScope {
     signal oskToggled()
     signal closeRequested()
 
-    readonly property real gap: theme.edgeMargin
+    readonly property real gap: Glass.gap          // the design language gap (Glass.qml)
     readonly property string query: search.text.trim().toLowerCase()
     property int section: 0                 // 0 search, 1 targets, 2 windows, 3 apps
     property var selectedWindow: null

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Regenerates the recorded in-guest probe outputs (probe-conforming.recorded.json, probe-legacy.recorded.json) from xbox-spec.fixture.json; run after the fixture spec is re-rendered. The legacy recording encodes the documented state of the legacy VM mios-xbox-current (left taskbar TaskbarAl=0, search box shown, Start_Show* folders, no QEMU-GA/virtio/guest tools, no MiOS components, legacy 'user' autologon, RID-500 enabled, no GPU step record, Insider 29683 rs_prerelease).
-# AI-related: tests/_mios_xbox_fixtures.py, tests/test-mios-xbox-probe.py, /home/mios/.claude memory mios-xbox-guest-access
+# AI-related: tests/_mios_xbox_fixtures.py, tests/test-mios-xbox-probe.py
 """python3 tests/fixtures/mios-xbox/regen-recorded.py  -> rewrites the two recorded probe outputs."""
 import copy
 import json
