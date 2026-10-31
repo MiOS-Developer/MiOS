@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Looking Glass IVSHMEM setup, the SSOT [vm.looking_glass] domain profile (SPICE on a fixed port, one spicevmc channel, SPICE audio, SMT topology + topoext, localtime RTC, ivshmem), the client config/args (guest resolution follows the client window via the IDD), IVSHMEM sizing for the largest host mode, the /dev/shm SELinux label, the one-action VM + client launcher, and guest provisioning of the upstream Looking Glass IDD built from the same commit as the client.
-# AI-related: tests/test-looking-glass.py, usr/share/mios/mios.toml [vm.looking_glass] [vm.win11], usr/libexec/mios/Xbox-Final-NoAutoSelect.xml, usr/libexec/mios/Xbox-AutoEnroll.xml, usr/libexec/mios/virt-apply.sh, usr/libexec/mios/xbox-repair.sh, usr/lib/tmpfiles.d/50-mios.conf, automation/38-selinux.sh, automation/69-bake-lookingglass-client.sh, usr/share/mios/windows/mios-looking-glass-idd.ps1, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
+# AI-related: tests/test-looking-glass.py, usr/share/mios/mios.toml [vm.looking_glass], usr/libexec/mios/Xbox-Final-NoAutoSelect.xml, usr/libexec/mios/Xbox-AutoEnroll.xml, usr/libexec/mios/virt-apply.sh, usr/libexec/mios/xbox-repair.sh, usr/lib/tmpfiles.d/50-mios.conf, automation/38-selinux.sh, automation/69-bake-lookingglass-client.sh, usr/share/mios/windows/mios-looking-glass-idd.ps1, usr/share/doc/mios/manual/ch21-looking-glass-b7-and-kvmfr.md
 """
 MiOS Looking Glass shared memory, domain profile and launcher.
 

@@ -425,7 +425,8 @@ fn apply(ipc:&Ipc,cfg:&Cfg,w:&Value,mode:&str)->Result<(),String> {
 }
 fn window_command()->Result<(),String> {
  let args:Vec<_>=std::env::args().skip(1).collect();
- let mode=args.first().ok_or("PiP command missing")?;
+ let raw_mode=args.first().ok_or("PiP command missing")?;
+ let mode=match raw_mode.as_str() {"pin"|"enable"=>"on",m=>m};
  let arg=|name:&str|args.windows(2).find(|v|v[0]==name).map(|v|v[1].as_str());
  let address=arg("--window").ok_or("--window required")?;
  let ipc=Ipc::new()?;let clients=ipc.json("clients").ok_or("native window list unavailable")?;
@@ -440,7 +441,7 @@ fn window_command()->Result<(),String> {
  let mut result=window::status(live);result["applied"]=serde_json::json!(true);println!("{result}");Ok(())
 }
 fn main() {
- if matches!(std::env::args().nth(1).as_deref(),Some("toggle"|"on"|"off"|"status")) {if let Err(e)=window_command() {eprintln!("mios-pip-gravity: {e}");std::process::exit(1);}return;}
+ if matches!(std::env::args().nth(1).as_deref(),Some("toggle"|"on"|"off"|"status"|"pin"|"enable")) {if let Err(e)=window_command() {eprintln!("mios-pip-gravity: {e}");std::process::exit(1);}return;}
 
     if std::env::args().nth(1).as_deref() == Some("check") {
         match load_cfg() {

@@ -1,5 +1,5 @@
 // AI-hint: Session-owned native audio for RDP: per-connection MS-RDPEA speaker sinks (PipeWire-Pulse pipe-sink -> negotiated PCM RDPSND waves, latency-gated by client confirms, silence-idle, cleanup on disconnect) and the shared ownership-checked pipe module, audio control and audio-server restart recovery the microphone also uses.
-// AI-related: redirect.rs, config.rs, pipeline.rs, main.rs, usr/share/mios/mios.toml [remote.rdp.native] [remote.rdp.redirect] [remote.rdp.naming], tests/fixtures/mios-rdp/speaker.py, usr/share/doc/mios/remote-audio.md
+// AI-related: redirect.rs, config.rs, pipeline.rs, main.rs, usr/share/mios/mios.toml, tests/fixtures/mios-rdp/speaker.py, usr/share/doc/mios/remote-audio.md
 // AI-functions: SoundFactory, SpeakerHandler, StreamClock, OwnedPipe, Recovery, audio_control, module_owned, pipe_writer_lost, speaker_formats
 #![allow(unsafe_code)]
 

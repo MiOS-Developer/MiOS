@@ -33,26 +33,28 @@ impl Origin {
 fn tag_op(tag:&str,on:bool)->String {format!("dispatch(hl.dsp.window.tag({{window=target,tag={}}}));",q(&format!("{}{tag}",if on{"+"}else{"-"})))}
 pub fn plan(w:&Value,mode:&str,pip_width:f64)->Result<Option<String>,String> {
  let id=Identity::read(w)?;let managed=has_tag(w,MANAGED);
- let on=match mode {"on"=>true,"off"=>false,"toggle"=>!managed,_=>return Err("PiP mode must be on, off or toggle".into())};
+ let on=match mode {"on"|"pin"|"enable"=>true,"off"=>false,"toggle"=>!managed,_=>return Err("PiP mode must be on, off or toggle".into())};
  if managed==on {return Ok(None);}
  let mut lua=id.guard();
  if on {
   let origin=Origin::from_window(w)?;
   if !pip_width.is_finite() || pip_width<1.0 {return Err("invalid PiP size".into());}
   let width=pip_width.round() as i64;let height=(pip_width*origin.rect[3] as f64/origin.rect[2].max(1) as f64).round().max(1.0) as i64;
-  lua+=&tag_op(&origin.tag(),true);lua+=&tag_op(OPT_OUT,false);
-  lua+="dispatch(hl.dsp.window.fullscreen({window=target,mode='fullscreen',action='unset'}));dispatch(hl.dsp.window.float({window=target,action='enable'}));dispatch(hl.dsp.window.pin({window=target,action='enable'}));";
-  lua+=&format!("dispatch(hl.dsp.window.resize({{window=target,x={width},y={height},exact=true}}));");lua+=&tag_op(MANAGED,true);lua+="dispatch(hl.dsp.window.alter_zorder({window=target,mode='top'}));";
+  lua+=&tag_op(&origin.tag(),true);
+  lua+="dispatch(hl.dsp.window.fullscreen({window=target,mode='maximized',action='unset'}));dispatch(hl.dsp.window.fullscreen({window=target,mode='fullscreen',action='unset'}));dispatch(hl.dsp.window.float({window=target,action='enable'}));dispatch(hl.dsp.window.pin({window=target,action='enable'}));";
+  lua+=&format!("dispatch(hl.dsp.window.resize({{window=target,x={width},y={height},exact=true}}));");
+  lua+=&tag_op(MANAGED,true);lua+=&tag_op(OPT_OUT,false);
+  lua+="dispatch(hl.dsp.window.alter_zorder({window=target,mode='top'}));";
  } else {
   let tags=w["tags"].as_array().ok_or("native window tags missing")?;
   let tag=tags.iter().filter_map(Value::as_str).find(|v|v.starts_with(ORIGIN)).ok_or("PiP original state missing; refusing a guessed restore")?;
-  let origin=Origin::parse(tag)?;lua+=&tag_op(MANAGED,false);lua+=&tag_op(OPT_OUT,true);
+  let origin=Origin::parse(tag)?;
   lua+="dispatch(hl.dsp.window.pin({window=target,action='disable'}));";
   lua+=&format!("dispatch(hl.dsp.window.resize({{window=target,x={},y={},exact=true}}));dispatch(hl.dsp.window.move({{window=target,x={},y={}}}));",origin.rect[2],origin.rect[3],origin.rect[0],origin.rect[1]);
   if origin.pinned {lua+="dispatch(hl.dsp.window.pin({window=target,action='enable'}));";}
   if !origin.floating {lua+="dispatch(hl.dsp.window.float({window=target,action='disable'}));";}
   if origin.fullscreen!=0 {lua+=&format!("dispatch(hl.dsp.window.fullscreen({{window=target,mode='{}',action='set'}}));",if origin.fullscreen==1{"maximized"}else{"fullscreen"});}
-  lua+=&tag_op(tag,false);
+  lua+=&tag_op(tag,false);lua+=&tag_op(MANAGED,false);lua+=&tag_op(OPT_OUT,true);
  }
  lua+="error('MIOS_PIP_APPLIED',0)";Ok(Some(lua))
 }
@@ -99,4 +101,44 @@ mod tests {
   let l=json!([c("0x1",true,false,[0,0],[400,300]),fs,tiled,c("0x4",false,false,[0,0],[400,300])]);assert_eq!(stacking(&l),(vec![0],vec![]));
  }
  #[test] fn toggle_keeps_original_flags_and_geometry_on_the_window(){let mut w=win();let on=plan(&w,"on",460.0).unwrap().unwrap();assert!(on.contains("mios-pip-origin:1:0:0:120:180:960:692"));w["tags"]=json!([MANAGED,Origin::from_window(&w).unwrap().tag()]);let off=plan(&w,"off",460.0).unwrap().unwrap();assert!(off.contains("x=960,y=692"));assert!(off.contains("x=120,y=180"));assert!(plan(&w,"on",460.0).unwrap().is_none());}
+ #[test] fn any_window_maximized_tiled_and_floating_transition_cleanly() {
+  let mut max_tiled = json!({"address":"0x5590a3d0d680","pid":5112,"stableId":"18000001","at":[0,0],"size":[1920,1080],"floating":false,"pinned":false,"fullscreen":1,"tags":[]});
+  let on_max = plan(&max_tiled, "on", 460.0).unwrap().unwrap();
+  assert!(on_max.contains("mode='maximized',action='unset'"));
+  assert!(on_max.contains("mode='fullscreen',action='unset'"));
+  assert!(on_max.contains("float({window=target,action='enable'})"));
+  assert!(on_max.contains("pin({window=target,action='enable'})"));
+  assert!(on_max.contains("mios-pip-origin:0:0:1:0:0:1920:1080"));
+  assert!(on_max.contains("+mios-pip-managed"));
+  assert!(on_max.contains("-mios-pip-disabled"));
+  assert!(on_max.contains("alter_zorder({window=target,mode='top'})"));
+
+  max_tiled["tags"] = json!([MANAGED, "mios-pip-origin:0:0:1:0:0:1920:1080"]);
+  let off_max = plan(&max_tiled, "off", 460.0).unwrap().unwrap();
+  assert!(off_max.contains("pin({window=target,action='disable'})"));
+  assert!(off_max.contains("resize({window=target,x=1920,y=1080,exact=true})"));
+  assert!(off_max.contains("move({window=target,x=0,y=0})"));
+  assert!(off_max.contains("float({window=target,action='disable'})"));
+  assert!(off_max.contains("fullscreen({window=target,mode='maximized',action='set'})"));
+  assert!(off_max.contains("-mios-pip-origin:0:0:1:0:0:1920:1080"));
+  assert!(off_max.contains("-mios-pip-managed"));
+  assert!(off_max.contains("+mios-pip-disabled"));
+
+  let mut fs_win = json!({"address":"0x5590a3d0d680","pid":5112,"stableId":"18000001","at":[0,0],"size":[2560,1440],"floating":false,"pinned":false,"fullscreen":2,"tags":[]});
+  let on_fs = plan(&fs_win, "on", 460.0).unwrap().unwrap();
+  assert!(on_fs.contains("mode='maximized',action='unset'"));
+  assert!(on_fs.contains("mode='fullscreen',action='unset'"));
+  assert!(on_fs.contains("mios-pip-origin:0:0:2:0:0:2560:1440"));
+
+  fs_win["tags"] = json!([MANAGED, "mios-pip-origin:0:0:2:0:0:2560:1440"]);
+  let off_fs = plan(&fs_win, "off", 460.0).unwrap().unwrap();
+  assert!(off_fs.contains("fullscreen({window=target,mode='fullscreen',action='set'})"));
+  assert!(off_fs.contains("float({window=target,action='disable'})"));
+
+  let unmanaged = json!({"address":"0x5590a3d0d680","pid":5112,"stableId":"18000001","at":[0,0],"size":[1920,1080],"floating":false,"pinned":false,"fullscreen":1,"tags":[]});
+  let on_alias_pin = plan(&unmanaged, "pin", 460.0).unwrap().unwrap();
+  let on_alias_enable = plan(&unmanaged, "enable", 460.0).unwrap().unwrap();
+  assert_eq!(on_alias_pin, plan(&unmanaged, "on", 460.0).unwrap().unwrap());
+  assert_eq!(on_alias_enable, plan(&unmanaged, "on", 460.0).unwrap().unwrap());
+ }
 }

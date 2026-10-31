@@ -19406,7 +19406,7 @@ WantedBy = "default.target"
 
 
 # AI-hint: PiP gravity -- floating Picture-in-Picture windows hover on soft magnetic flank rails (left/right columns stacked top-to-bottom, packed across both rails before squeezing), are attracted to (never hide) the HUD topbar/dock, resize aspect-aware with minimum/launch/maximum size magnets, stay on top through Hyprland's native pinned layer, and settle with a spring. Spotify's mini-player, Discord call/stream/video popouts and browser PiP windows are adopted automatically on map. Maximize/fullscreen (any window) and Theatre/Hypr3D never move them. Consumed by tools/native/mios-pip-gravity. Hypr3D: flat placement pauses there (PiP are freely resizable in the room); adoption continues.
-# AI-related: tools/native/mios-pip-gravity/src/{main.rs,gravity.rs,matrix.rs,window.rs}, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip, usr/share/doc/mios/desktop-pip.md
+# AI-related: tools/native/mios-pip-gravity/src/main.rs, tools/native/mios-pip-gravity/src/gravity.rs, tools/native/mios-pip-gravity/src/matrix.rs, tools/native/mios-pip-gravity/src/window.rs, usr/lib/systemd/user/mios-pip-gravity.service, [desktop.hyprland].window_rules mios-browser-pip, usr/share/doc/mios/desktop-pip.md
 [desktop.pip_gravity]
 enabled = true
 rails = ["left", "right"]            # flank columns; one entry pins every PiP to that side

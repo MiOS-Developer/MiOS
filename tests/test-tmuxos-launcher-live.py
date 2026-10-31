@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of the tmux-os launcher (miosd launcher) in ONE owned nested MiOS PiP session: the session's terminal drops to the TUI session selector (not tmux-os), CTRL+SUPER released alone opens the launcher on the focused tmux-os client while CTRL+SUPER+= still scales, a real right-click (virtual pointer) opens instance management (float, pop out to its own window, move to a session, close), and a private uinput pad through the candidate fixture bridge drives every launcher move (Guide opens, d-pad/left stick move, A selects, B backs out, triggers page, X options). Screenshots of the nested output only.
-# AI-related: src/mios-rs/miosd/src/launcher.rs, src/mios-rs/miosd/src/sessions.rs, tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-gen/src/nested_session.rs, usr/share/mios/mios.toml [keybindings.tmux.launcher] [desktop.nested] [keybindings.global.controller.nav.terminal_tmux], tests/fixtures/shell-hud/vptr.c, tests/test-tmux-os.py (T10)
+# AI-related: src/mios-rs/miosd/src/launcher.rs, src/mios-rs/miosd/src/sessions.rs, tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-gen/src/nested_session.rs, usr/share/mios/mios.toml, tests/fixtures/shell-hud/vptr.c, tests/test-tmux-os.py
 # AI-functions: check, sh, wait, Nested, Pad, Bridge
 # Environment: MIOS_LIVE_NESTED=1 (else skip). MIOS_TMUXOS_CAND = a directory with the candidate miosd, mios-gen and
 # mios-inputd (built from this tree); they are bind-mounted over /usr/bin/miosd, /usr/bin/mios-gen and

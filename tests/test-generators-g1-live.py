@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: LIVE opt-in test (MIOS_LIVE_NESTED=1) of the G1/U1 generator outputs in owned nested MiOS PiP sessions, candidate launcher vs the installed one (negative control): bypass_mod escapes act over a captured fullscreen app (session scale), Super+C stays with the app, exactly one Print handle plus the Super+Ctrl+Print escape, literal workspace binds, the capture predicate and the virtual-keyboard layout rule; the MiOS tmux menu opens and acts in a private tmux server inside the session, by real prefix keys and by the controller's client-exact route (@mios-menu-keys). Real key events; primary untouched.
-# AI-related: tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-gen/src/render.rs, tools/native/mios-unit-gen/src/lib.rs, usr/share/mios/mios.toml [keybindings.global] [keybindings.tmux], tests/test-global-bindings-s0-live.py
+# AI-related: tools/native/mios-gen/src/global_bindings.rs, tools/native/mios-gen/src/render.rs, tools/native/mios-unit-gen/src/lib.rs, usr/share/mios/mios.toml [keybindings.global], tests/test-global-bindings-s0-live.py
 # Env: MIOS_GEN = candidate mios-gen (the launcher whose projection is under test), MIOS_GEN_OLD = negative control
 # launcher (default /usr/bin/mios-gen), MIOS_VENDOR_TOML = SSOT (default: this tree's), MIOS_TMUX_CONF = generated
 # tmux conf (default: this tree's), MIOS_LIVE_OUT = evidence directory. The primary compositor only receives

@@ -1,5 +1,5 @@
 // AI-hint: [remote.device_forwarding] consumer: one capability report for every generic-USB forwarding path MiOS has (RDP URBDRC -> USB/IP vhci, USB/IP, SPICE usbredir, nested-session evdev binding), per-session target selection (targets.json under $XDG_RUNTIME_DIR, read by mios-rdp-server) and the SPICE usbredir filter rendered from the shared allow/deny policy. Read-only probes: never loads a module, claims a device or inspects an excluded VM.
-// AI-related: usr/share/mios/mios.toml [remote.device_forwarding] [remote.rdp.redirect].usb [desktop.nested.devices], src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs, tools/native/mios-gen/src/nested_devices.rs, tests/test-device-forwarding.py, usr/share/doc/mios/remote-usb.md
+// AI-related: usr/share/mios/mios.toml, src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs, tools/native/mios-gen/src/nested_devices.rs, tests/test-device-forwarding.py, usr/share/doc/mios/remote-usb.md
 // AI-functions: run_report, run_select, spice_filter, Policy, probe_vhci, session_targets
 //! `mios-gen device-forwarding report|select|spice-filter`.
 //!

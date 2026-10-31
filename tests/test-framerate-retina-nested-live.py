@@ -6,7 +6,7 @@
 #          then the Hypr3D Retina spawn numbers at the nested output's scale, landscape and portrait
 #          (tests/test-hypr3d-retina-spawn.py tiers). Positive and negative controls throughout.
 # AI-related: src/mios-rs/miosd/src/framerate.rs, src/mios-rs/miosd/src/framerate/plan.rs, tools/native/mios-resolver/src/edid_timing.rs,
-# AI-related: usr/share/mios/hyprland/plugins/mios-pacing, usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.hypr3d.spawn],
+# AI-related: usr/share/mios/hyprland/plugins/mios-pacing, usr/share/mios/mios.toml [desktop.framerate],
 # AI-related: tests/test-framerate.py, tests/test-hypr3d-retina-spawn.py, tools/native/mios-gen/src/nested_session.rs
 # AI-functions: Nest, Bus, Daemon, synth_edid, tier_checks, room_checks, modeline_for, modeset_checks, baseline_checks, apply_script_checks, retina_checks
 """Live frame-rate + Retina checks in an owned nested PiP session.

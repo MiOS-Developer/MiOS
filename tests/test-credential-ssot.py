@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Positive + negative controls for the ONE fail-closed layered-SSOT credential resolution across every MiOS image pipeline (Python/CLI resolver, unattend_gen, the PowerShell answer-file/NTLite/mios-provision/specialize renderers, Render-Sysrescue, the SystemRescue autorun, the kickstart template and the Linux user-creation hash).
-# AI-related: usr/lib/mios/mios_credentials.py, usr/libexec/mios/mios-credential, usr/libexec/mios/win/unattend_gen.py, mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1, field/autounattend/New-MiOSAutounattend.ps1, field/autounattend/ConvertTo-MiOSPreset.ps1, field/autounattend/New-MiOSISO.ps1, field/resources/ventoy/Render-Sysrescue.ps1
+# AI-related: usr/lib/mios/mios_credentials.py, usr/libexec/mios/mios-credential, usr/libexec/mios/win/unattend_gen.py
 """Every renderer takes the account name, password and AutoLogon settings from the
 LAYERED SSOT (vendor < host /etc/mios/mios.d < user ~/.config/mios), and fails closed
 (non-zero, naming the key) when a credential is missing. Fixture values only -- no

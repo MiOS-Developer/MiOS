@@ -1,5 +1,5 @@
 // AI-hint: mios-controls bindmap: one index of every action bound to every input -- global bindings (and their bypass escapes), compositor binding tables and the rendered session's own hl.bind lines (workspace loop expanded), tmux-os prefix/root keys and pane mouse menus, reserved terminal chords, the Guide layer, the Hypr3D room table and room/legacy pad roles, and the capture contract -- grouped by input and layer, with local conflict detection (the gate's same-physical rule) and the gate's findings mapped back onto chords.
-// AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-inputd/src/router.rs, tools/native/mios-controls/src/layout.rs, usr/share/mios/mios.toml [keybindings] [desktop.hyprland.hypr3d.controller]
+// AI-related: src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-inputd/src/router.rs, tools/native/mios-controls/src/layout.rs, usr/share/mios/mios.toml
 // AI-functions: collect, lua_binds, conflicts, finding_chords, layers_of, layer_title, split_chord, Source::editable
 use crate::layout::{key_alias, mouse_input, tmux_to_key};
 use crate::model::{at, field, str_list, Draft, GLOBAL_BINDINGS, ROOM, SYSTEM_LAYER, TMUX_BINDINGS};

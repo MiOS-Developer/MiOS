@@ -2427,95 +2427,46 @@ docs/design/mios-global-bindings-staged.patch.toml	667	667	1	18	07d682a70690	STA
 docs/design/mios-global-bindings-staged.patch.toml	669	669	1	16	6430e4bae487	STAY	local-scoped		0				0
 docs/design/mios-global-bindings-staged.patch.toml	671	671	1	14	dd5607a6930c	STAY	local-scoped		0				0
 docs/design/mios-global-bindings-staged.patch.toml	673	673	1	14	e177a18b9676	STAY	local-scoped		0				0
-etc/btop/btop.conf	1	1	1	5	98493272fcd9	STAY	local-scoped		0				0
-etc/btop/btop.conf	3	4	2	25	30b768f08b31	STAY	local-scoped		0				0
-etc/btop/btop.conf	7	7	1	17	168b274ecb72	STAY	local-scoped		0				0
-etc/btop/btop.conf	10	10	1	19	d1b066dd3117	STAY	local-scoped		0				0
-etc/btop/btop.conf	13	14	2	38	d4c4f80ddfe9	STAY	midsize-why		0				0
-etc/btop/btop.conf	17	19	3	30	f33dfbde5935	STAY	midsize-why		0				0
-etc/btop/btop.conf	22	25	4	51	aea96030e1ec	STAY	midsize-why		0				0
+etc/btop/btop.conf	1	2	2	27	e2c7f0d1df81	STAY	ai-header		0				0
+etc/btop/btop.conf	4	4	1	9	13e95c9c6239	STAY	local-scoped		0				0
+etc/btop/btop.conf	7	7	1	8	175d3e820775	STAY	local-scoped		0				0
+etc/btop/btop.conf	10	10	1	7	e9bcdfa693ae	STAY	local-scoped		0				0
+etc/btop/btop.conf	13	13	1	9	d922b8555bdb	STAY	local-scoped		0				0
+etc/btop/btop.conf	18	18	1	11	c7917fcabefa	STAY	local-scoped		0				0
+etc/btop/btop.conf	21	21	1	8	76b6b2194ce6	STAY	local-scoped		0				0
 etc/btop/btop.conf	23	34	12	63	2add1ac7df9c	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/btop.md	mios-src:2add1ac7df9c	63	1
-etc/btop/btop.conf	28	29	2	30	671ed326c816	STAY	midsize-why		0				0
-etc/btop/btop.conf	32	32	1	4	bb2adf4eebab	STAY	local-scoped		0				0
-etc/btop/btop.conf	35	35	1	11	a14a88d71cd9	STAY	local-scoped		0				0
-etc/btop/btop.conf	38	38	1	11	b2db3e3ef92d	STAY	local-scoped		0				0
-etc/btop/btop.conf	41	45	5	75	1ada1c3d5b25	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/btop.md	mios-src:1ada1c3d5b25	75	0
-etc/btop/btop.conf	48	48	1	14	08a87fa7b4da	STAY	local-scoped		0				0
-etc/btop/btop.conf	51	51	1	14	7b63df4f2dfa	STAY	local-scoped		0				0
-etc/btop/btop.conf	54	54	1	14	08a87fa7b4da	STAY	local-scoped		0				0
-etc/btop/btop.conf	57	57	1	14	08a87fa7b4da	STAY	local-scoped		0				0
-etc/btop/btop.conf	60	60	1	14	08a87fa7b4da	STAY	local-scoped		0				0
-etc/btop/btop.conf	63	63	1	21	6e142d6d04de	STAY	local-scoped		0				0
-etc/btop/btop.conf	66	66	1	15	ca1c7030e4f2	STAY	local-scoped		0				0
-etc/btop/btop.conf	69	70	2	28	64f515a6f86c	STAY	midsize-why		0				0
-etc/btop/btop.conf	73	73	1	6	77f35ef68f5f	STAY	local-scoped		0				0
-etc/btop/btop.conf	76	76	1	5	bfd6565c25c8	STAY	local-scoped		0				0
-etc/btop/btop.conf	79	79	1	9	29a2843fbfac	STAY	local-scoped		0				0
-etc/btop/btop.conf	82	82	1	8	154a2848dcad	STAY	local-scoped		0				0
-etc/btop/btop.conf	85	85	1	21	d135c0bda997	STAY	local-scoped		0				0
-etc/btop/btop.conf	88	88	1	8	a5d76da5b4e0	STAY	local-scoped		0				0
-etc/btop/btop.conf	91	91	1	6	0a9334e7e36f	STAY	local-scoped		0				0
-etc/btop/btop.conf	94	94	1	17	754d42c102aa	STAY	local-scoped		0				0
-etc/btop/btop.conf	97	97	1	11	c9fb2a74250b	STAY	local-scoped		0				0
-etc/btop/btop.conf	100	100	1	12	120827b351e6	STAY	local-scoped		0				0
-etc/btop/btop.conf	103	103	1	13	9be85591dd6e	STAY	local-scoped		0				0
-etc/btop/btop.conf	106	106	1	11	4476444523c8	STAY	local-scoped		0				0
-etc/btop/btop.conf	109	109	1	13	43e6fa7dc004	STAY	local-scoped		0				0
-etc/btop/btop.conf	112	113	2	27	4e5cb8d6d6cf	STAY	midsize-why		0				0
-etc/btop/btop.conf	116	117	2	27	a885cdeefd1f	STAY	midsize-why		0				0
-etc/btop/btop.conf	120	120	1	16	2409664f1978	STAY	local-scoped		0				0
-etc/btop/btop.conf	123	123	1	9	be08d9e2ae8d	STAY	local-scoped		0				0
-etc/btop/btop.conf	126	126	1	10	c2573f11cf1a	STAY	local-scoped		0				0
-etc/btop/btop.conf	129	129	1	10	8fc2d1fbb424	STAY	local-scoped		0				0
-etc/btop/btop.conf	132	132	1	8	2954b7458a1e	STAY	local-scoped		0				0
-etc/btop/btop.conf	135	135	1	20	6a6a2ee1c401	STAY	local-scoped		0				0
-etc/btop/btop.conf	138	138	1	3	737f25c0bdf9	STAY	local-scoped		0				0
-etc/btop/btop.conf	141	141	1	17	ed151232c297	STAY	local-scoped		0				0
-etc/btop/btop.conf	144	144	1	15	97ad81fa2a2f	STAY	local-scoped		0				0
-etc/btop/btop.conf	147	150	4	58	505c5e808ab8	STAY	midsize-why		0				0
-etc/btop/btop.conf	153	153	1	12	172adb1d4f3f	STAY	local-scoped		0				0
-etc/btop/btop.conf	156	156	1	12	5f9d20495dfe	STAY	local-scoped		0				0
-etc/btop/btop.conf	159	159	1	3	63c93268d52d	STAY	local-scoped		0				0
-etc/btop/btop.conf	162	162	1	13	3c23b8087382	STAY	local-scoped		0				0
-etc/btop/btop.conf	165	166	2	24	1acf3defd83f	STAY	local-scoped		0				0
-etc/btop/btop.conf	169	169	1	22	1379da127ae1	STAY	local-scoped		0				0
-etc/btop/btop.conf	172	172	1	8	ddf339f33ba0	STAY	local-scoped		0				0
-etc/btop/btop.conf	175	176	2	43	eecadf0a8e06	STAY	midsize-why		0				0
-etc/btop/btop.conf	179	179	1	8	9d0872d62c7c	STAY	local-scoped		0				0
-etc/btop/btop.conf	182	182	1	9	fc7004de350a	STAY	local-scoped		0				0
-etc/btop/btop.conf	185	185	1	8	61fe02cd8936	STAY	local-scoped		0				0
-etc/btop/btop.conf	188	188	1	9	be7d93b29fa6	STAY	local-scoped		0				0
-etc/btop/btop.conf	191	191	1	14	39b511a553fc	STAY	local-scoped		0				0
-etc/btop/btop.conf	194	194	1	11	89cfb38459db	STAY	local-scoped		0				0
-etc/btop/btop.conf	197	197	1	17	672664364510	STAY	local-scoped		0				0
-etc/btop/btop.conf	200	200	1	9	f4640278d4ee	STAY	local-scoped		0				0
-etc/btop/btop.conf	203	203	1	19	1f0dffb59d10	STAY	local-scoped		0				0
-etc/btop/btop.conf	206	206	1	11	d3c8d819048a	STAY	local-scoped		0				0
-etc/btop/btop.conf	209	209	1	15	41828ae31910	STAY	local-scoped		0				0
-etc/btop/btop.conf	212	212	1	12	63e1b473dd2e	STAY	local-scoped		0				0
-etc/btop/btop.conf	215	215	1	12	e64f505cb7fc	STAY	local-scoped		0				0
-etc/btop/btop.conf	218	219	2	24	b68a690cba61	STAY	local-scoped		0				0
-etc/btop/btop.conf	222	222	1	17	b8e6c078f753	STAY	local-scoped		0				0
-etc/btop/btop.conf	225	225	1	18	ceab3eb0d3d5	STAY	local-scoped		0				0
-etc/btop/btop.conf	230	230	1	20	95d4c3a48d97	STAY	local-scoped		0				0
-etc/btop/btop.conf	233	233	1	15	e8bdd4e4109e	STAY	local-scoped		0				0
-etc/btop/btop.conf	236	236	1	7	54d7a30d7092	STAY	local-scoped		0				0
-etc/btop/btop.conf	239	239	1	20	a787002ec611	STAY	local-scoped		0				0
-etc/btop/btop.conf	242	242	1	10	c3d613615681	STAY	local-scoped		0				0
-etc/btop/btop.conf	245	245	1	12	b0fed53a6c74	STAY	local-scoped		0				0
-etc/btop/btop.conf	248	248	1	9	e428bd0dedfa	STAY	local-scoped		0				0
-etc/btop/btop.conf	251	252	2	24	bc31744b40c8	STAY	local-scoped		0				0
-etc/btop/btop.conf	255	255	1	9	7f677aff9214	STAY	local-scoped		0				0
-etc/btop/btop.conf	258	258	1	12	bf7067a36f5e	STAY	local-scoped		0				0
-etc/btop/btop.conf	261	261	1	12	243235506f9f	STAY	local-scoped		0				0
-etc/btop/btop.conf	264	264	1	5	1de51e11331d	STAY	local-scoped		0				0
-etc/btop/btop.conf	267	267	1	13	db4d951027bf	STAY	local-scoped		0				0
-etc/btop/btop.conf	270	270	1	8	09ddbcf1d2e8	STAY	local-scoped		0				0
-etc/btop/btop.conf	273	273	1	8	90c0e3b6a7bb	STAY	local-scoped		0				0
-etc/btop/btop.conf	276	276	1	8	a5d3cecb78d7	STAY	local-scoped		0				0
-etc/btop/btop.conf	279	279	1	8	0c519754884a	STAY	local-scoped		0				0
-etc/btop/btop.conf	282	282	1	8	16571b5330af	STAY	local-scoped		0				0
-etc/btop/btop.conf	285	285	1	8	578b19defe50	STAY	local-scoped		0				0
+etc/btop/btop.conf	24	24	1	7	d429a7dc5a37	STAY	local-scoped		0				0
+etc/btop/btop.conf	27	27	1	6	27f5b765e1a1	STAY	local-scoped		0				0
+etc/btop/btop.conf	34	36	3	22	abbc7ef8a3a1	MIGRATE	midsize-narrative		0				0
+etc/btop/btop.conf	39	41	3	30	77fe03ac20f8	MIGRATE	midsize-narrative		0				0
+etc/btop/btop.conf	44	44	1	7	8c2e7e020475	STAY	local-scoped		0				0
+etc/btop/btop.conf	47	47	1	2	9a518c8c2307	STAY	local-scoped		0				0
+etc/btop/btop.conf	50	50	1	5	0105fdf099de	STAY	local-scoped		0				0
+etc/btop/btop.conf	53	53	1	7	359506a70372	STAY	local-scoped		0				0
+etc/btop/btop.conf	56	56	1	8	8cc66a1a0a5c	STAY	local-scoped		0				0
+etc/btop/btop.conf	59	59	1	3	939272b70ebd	STAY	local-scoped		0				0
+etc/btop/btop.conf	62	62	1	4	1c054b1e2743	STAY	local-scoped		0				0
+etc/btop/btop.conf	65	65	1	5	8f70fc089f89	STAY	local-scoped		0				0
+etc/btop/btop.conf	68	68	1	6	b15ada29f380	STAY	local-scoped		0				0
+etc/btop/btop.conf	71	71	1	6	6835c8d6f177	STAY	local-scoped		0				0
+etc/btop/btop.conf	74	74	1	5	6f030d87fd77	STAY	local-scoped		0				0
+etc/btop/btop.conf	77	77	1	10	1d94f4afcbb7	STAY	local-scoped		0				0
+etc/btop/btop.conf	80	80	1	7	da8c6e56c1bb	STAY	local-scoped		0				0
+etc/btop/btop.conf	87	87	1	5	9c151eeef8c4	STAY	local-scoped		0				0
+etc/btop/btop.conf	90	90	1	6	35ae2e27d97e	STAY	local-scoped		0				0
+etc/btop/btop.conf	93	93	1	7	50d5168be1b7	STAY	local-scoped		0				0
+etc/btop/btop.conf	96	96	1	6	d0ccb0e60506	STAY	local-scoped		0				0
+etc/btop/btop.conf	99	99	1	5	869e128061b6	STAY	local-scoped		0				0
+etc/btop/btop.conf	102	102	1	8	5cc986b925d8	STAY	local-scoped		0				0
+etc/btop/btop.conf	105	105	1	4	36ad625e8c26	STAY	local-scoped		0				0
+etc/btop/btop.conf	108	108	1	9	611a0ea73227	STAY	local-scoped		0				0
+etc/btop/btop.conf	111	111	1	4	f3c5ebdcd5ff	STAY	local-scoped		0				0
+etc/btop/btop.conf	114	114	1	3	e05d67522e28	STAY	local-scoped		0				0
+etc/btop/btop.conf	117	117	1	3	612ac256743a	STAY	local-scoped		0				0
+etc/btop/btop.conf	125	125	1	8	055963219d78	STAY	local-scoped		0				0
+etc/btop/btop.conf	132	132	1	10	775150302175	STAY	local-scoped		0				0
+etc/btop/btop.conf	139	139	1	5	1b500827f210	STAY	local-scoped		0				0
+etc/btop/btop.conf	144	144	1	2	f98507f1af5c	STAY	local-scoped		0				0
 etc/chrony.conf	1	2	2	19	95e62a7a8127	STAY	ai-header		0				0
 etc/chrony.conf	9	9	1	10	d0bf551a7aee	STAY	local-scoped		0				0
 etc/chrony.conf	12	13	2	28	a45bb835736e	STAY	midsize-why		0				0
@@ -2583,7 +2534,7 @@ etc/profile.d/50-mios.sh	148	148	1	25	8d95b15a37bf	STAY	local-scoped		0				0
 etc/profile.d/50-mios.sh	158	160	3	2	ce771e763fad	STAY	midsize-why		0				0
 etc/profile.d/50-mios.sh	162	162	1	22	f43fafd81df1	STAY	local-scoped		0				0
 etc/profile.d/50-mios.sh	178	180	3	2	df013cc1f74e	STAY	midsize-why		0				0
-etc/profile.d/50-mios.sh	182	189	8	83	5ef41dcb9a80	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/_harvest/profile.d.md	mios-src:5ef41dcb9a80	83	0
+etc/profile.d/50-mios.sh	182	189	8	83	f978f8169e01	MIGRATE	narrative-rationale		0				0
 etc/profile.d/50-mios.sh	198	200	3	2	eeb3dd618874	STAY	midsize-why		0				0
 etc/profile.d/50-mios.sh	202	202	1	33	04f6e1125a0e	STAY	midsize-why		0				0
 etc/profile.d/50-mios.sh	211	213	3	2	a942bcd6f874	STAY	midsize-why		0				0
@@ -3282,7 +3233,7 @@ src/mios-rdp-server/crates/mios-rdp-server/src/redirect.rs	418	420	3	6	fc5a64e37
 src/mios-rdp-server/crates/mios-rdp-server/src/redirect.rs	464	466	3	3	ab2d87ccdc67	STAY	midsize-why		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/redirect.rs	468	470	3	4	a0a4d57fc789	STAY	midsize-why		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/redirect.rs	594	594	1	9	318d1483844f	STAY	local-scoped		0				0
-src/mios-rdp-server/crates/mios-rdp-server/src/remote_audio.rs	1	3	3	61	60907b0814be	MIGRATE_HEADER	overlong-hint		0				0
+src/mios-rdp-server/crates/mios-rdp-server/src/remote_audio.rs	1	3	3	58	5f8ae6384a88	MIGRATE_HEADER	overlong-hint		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_audio.rs	23	25	3	11	cb4d599c3bc5	STAY	midsize-why		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_audio.rs	27	28	2	23	a449bc6c298a	STAY	local-scoped		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_audio.rs	64	66	3	33	e54ae746aa87	STAY	midsize-why		0				0
@@ -3359,7 +3310,7 @@ src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs	1	3	3	32	b50244
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs	135	136	2	20	d0937239375c	STAY	local-scoped		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs	207	207	1	5	ff30da91e4d4	STAY	inline-scoped		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs	1161	1162	2	19	d484eecd9f2b	STAY	local-scoped		0				0
-src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs	1	17	17	199	eaecb9d56fef	MIGRATE_HEADER	overlong-hint		0				0
+src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs	1	17	17	196	c27f04240873	MIGRATE_HEADER	overlong-hint		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs	46	48	3	34	c20452221d3b	STAY	midsize-why		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs	51	53	3	1	28c283fa7c1b	DROP	banner		0				0
 src/mios-rdp-server/crates/mios-rdp-server/src/remote_usb.rs	90	91	2	27	e19a573e33ce	STAY	midsize-why		0				0
@@ -5318,7 +5269,7 @@ src/mios-rs/miosd/src/framerate/plan.rs	787	787	1	15	6be7e8378a0d	STAY	local-sco
 src/mios-rs/miosd/src/framerate/plan.rs	818	818	1	17	1aa6ab20f712	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/framerate/plan.rs	823	823	1	19	fdc815480827	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/framerate/plan.rs	904	904	1	12	f1d01b968cca	STAY	local-scoped		0				0
-src/mios-rs/miosd/src/launcher.rs	1	9	9	198	961cad5fbe8b	MIGRATE_HEADER	overlong-hint		0				0
+src/mios-rs/miosd/src/launcher.rs	1	9	9	190	88486fa37397	MIGRATE_HEADER	overlong-hint		0				0
 src/mios-rs/miosd/src/launcher.rs	33	33	1	12	83fbb957b5b0	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/launcher.rs	35	35	1	13	3e45adef6cec	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/launcher.rs	37	37	1	8	a7193e7b1db4	STAY	local-scoped		0				0
@@ -6017,7 +5968,7 @@ src/mios-rs/miosd/src/shaderglass/follow.rs	742	742	1	11	051890b21564	STAY	inlin
 src/mios-rs/miosd/src/shaderglass/follow.rs	797	797	1	12	d0ce2cf1134b	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/follow.rs	800	800	1	11	f1187f2118d8	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/follow.rs	802	802	1	16	64087582f5ba	STAY	local-scoped		0				0
-src/mios-rs/miosd/src/shaderglass/picker.rs	1	9	9	152	3c8d9505a549	MIGRATE_HEADER	overlong-hint		0				0
+src/mios-rs/miosd/src/shaderglass/picker.rs	1	9	9	151	71fb1e734be3	MIGRATE_HEADER	overlong-hint		0				0
 src/mios-rs/miosd/src/shaderglass/picker.rs	24	24	1	4	f6512901ec3a	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/picker.rs	30	30	1	10	af7d306e2dbd	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/picker.rs	50	50	1	16	795517f4fba1	STAY	local-scoped		0				0
@@ -6128,7 +6079,7 @@ src/mios-rs/miosd/src/shaderglass/state.rs	827	827	1	8	45be88166ce7	STAY	local-s
 src/mios-rs/miosd/src/shaderglass/state.rs	858	858	1	8	298d036c5041	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/state.rs	866	866	1	7	fb6260e88a1e	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/state.rs	879	879	1	10	714157a7f951	STAY	local-scoped		0				0
-src/mios-rs/miosd/src/shaderglass/wine.rs	1	2	2	37	e54716e7ec61	STAY	ai-header		0				0
+src/mios-rs/miosd/src/shaderglass/wine.rs	1	2	2	35	a8e580e97eab	STAY	ai-header		0				0
 src/mios-rs/miosd/src/shaderglass/wine.rs	9	9	1	8	a066b94edea8	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/wine.rs	23	23	1	11	194153fdf570	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/shaderglass/wine.rs	30	30	1	9	9dbfb63ed5d3	STAY	local-scoped		0				0
@@ -8436,7 +8387,7 @@ tests/test-crash-dedupe.py	40	40	1	11	de5941fd171f	STAY	local-scoped		0				0
 tests/test-crash-dedupe.py	49	49	1	10	899df5640468	STAY	local-scoped		0				0
 tests/test-crash-dedupe.py	70	70	1	10	0e34f962fb2d	STAY	local-scoped		0				0
 tests/test-crash-dedupe.py	88	88	1	7	37c2d09e265b	STAY	local-scoped		0				0
-tests/test-credential-ssot.py	1	3	3	47	44e0538598c8	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-credential-ssot.py	1	3	3	41	39482ea13626	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-credential-ssot.py	4	12	8	65	17961c93d0b6	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:17961c93d0b6	65	0
 tests/test-credential-ssot.py	39	39	1	5	9f96edf4dfc0	STAY	local-scoped		0				0
 tests/test-credential-ssot.py	41	41	1	3	38c9fe1279ce	STAY	inline-scoped		0				0
@@ -8786,7 +8737,7 @@ tests/test-flatpak-run-env-strip.py	37	37	1	5	6301d978f46e	STAY	local-scoped		0	
 tests/test-flatpak-run-env-strip.py	48	48	1	12	6c25dfe0b3f8	STAY	local-scoped		0				0
 tests/test-flatpak-run-env-strip.py	66	66	1	8	bf549a0c73e6	STAY	local-scoped		0				0
 tests/test-flatpak-run-env-strip.py	83	83	1	7	75da25080a9f	STAY	local-scoped		0				0
-tests/test-framerate-retina-nested-live.py	1	11	11	110	11124aad5a27	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-framerate-retina-nested-live.py	1	11	11	109	a6c9551ce1d3	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-framerate-retina-nested-live.py	12	25	13	152	1c7172627f8b	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:1c7172627f8b	152	0
 tests/test-framerate-retina-nested-live.py	43	43	1	3	06945c962afb	STAY	inline-scoped		0				0
 tests/test-framerate-retina-nested-live.py	74	75	2	30	ad451fcf8260	STAY	midsize-why		0				0
@@ -8820,7 +8771,7 @@ tests/test-framerate-retina-nested-live.py	638	643	6	100	2b153a90f7ca	MIGRATE	na
 tests/test-framerate-retina-nested-live.py	645	647	3	50	e5b5ee9e2020	STAY	midsize-why		0				0
 tests/test-framerate-retina-nested-live.py	689	689	1	10	d48456bbc3e5	STAY	inline-scoped		0				0
 tests/test-framerate-retina-nested-live.py	698	699	2	32	48ec20426b26	STAY	midsize-why		0				0
-tests/test-framerate.py	1	27	27	397	02ad7c43e26c	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-framerate.py	1	27	27	394	c37c0d047fb4	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-framerate.py	28	28	1	4	eedfee0a668c	STAY	local-scoped		0				0
 tests/test-framerate.py	51	51	1	6	14860aa6870d	STAY	inline-scoped		0				0
 tests/test-framerate.py	53	53	1	15	e2b99f9564b9	STAY	local-scoped		0				0
@@ -8926,7 +8877,7 @@ tests/test-game-placement.py	562	562	1	16	9cda62003bd2	STAY	local-scoped		0				0
 tests/test-game-placement.py	593	596	4	68	50308e196e43	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:50308e196e43	68	0
 tests/test-game-placement.py	611	611	1	11	f9d43850b578	STAY	inline-scoped		0				0
 tests/test-game-placement.py	635	636	2	37	6a902b96e730	STAY	midsize-why		0				0
-tests/test-generators-g1-live.py	1	7	7	158	87d9fe299e75	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-generators-g1-live.py	1	7	7	157	9da1012634ef	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-generators-g1-live.py	32	32	1	17	091bef3b8203	STAY	local-scoped		0				0
 tests/test-generators-g1-live.py	34	35	2	29	aeed3efed2d6	STAY	midsize-why		0				0
 tests/test-generators-g1-live.py	68	68	1	16	ca9744c15c70	STAY	local-scoped		0				0
@@ -8949,13 +8900,13 @@ tests/test-git-ops.py	87	87	1	4	ddb99b1dc1ee	STAY	local-scoped		0				0
 tests/test-git-ops.py	170	173	4	9	f316c9d99140	STAY	midsize-why		0				0
 tests/test-git-ops.py	176	176	1	9	dfbf13e7e9c5	STAY	local-scoped		0				0
 tests/test-global-bindings-s0-live.py	1	6	6	101	c07c8486953c	STAY	ai-header		0				0
-tests/test-gpu-display-routing.py	1	12	12	154	ea9236ba0b00	MIGRATE_HEADER	overlong-hint		0				0
-tests/test-gpu-display-routing.py	41	41	1	10	42d67bec4810	STAY	local-scoped		0				0
-tests/test-gpu-display-routing.py	211	211	1	17	499fef41c284	STAY	local-scoped		0				0
-tests/test-gpu-display-routing.py	323	323	1	14	c693084e5c51	STAY	local-scoped		0				0
-tests/test-gpu-display-routing.py	335	335	1	20	07e769ab38f1	STAY	local-scoped		0				0
-tests/test-gpu-display-routing.py	396	396	1	6	f63628003629	STAY	inline-scoped		0				0
-tests/test-gpu-display-routing.py	410	410	1	15	04a8f971f721	STAY	local-scoped		0				0
+tests/test-gpu-display-routing.py	1	11	11	151	41e234e22d14	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-gpu-display-routing.py	40	40	1	10	42d67bec4810	STAY	local-scoped		0				0
+tests/test-gpu-display-routing.py	210	210	1	17	499fef41c284	STAY	local-scoped		0				0
+tests/test-gpu-display-routing.py	322	322	1	14	c693084e5c51	STAY	local-scoped		0				0
+tests/test-gpu-display-routing.py	334	334	1	20	07e769ab38f1	STAY	local-scoped		0				0
+tests/test-gpu-display-routing.py	395	395	1	6	f63628003629	STAY	inline-scoped		0				0
+tests/test-gpu-display-routing.py	409	409	1	15	04a8f971f721	STAY	local-scoped		0				0
 tests/test-gpu-numa.py	1	3	3	19	7c11debceab9	STAY	ai-header		0				0
 tests/test-gpu-numa.py	26	26	1	13	f4a56f7495de	STAY	local-scoped		0				0
 tests/test-gpu-numa.py	45	45	1	7	5af702cd5a7a	STAY	local-scoped		0				0
@@ -9362,7 +9313,7 @@ tests/test-hypr3d-controller.py	963	963	1	15	27e574eb83f3	STAY	local-scoped		0		
 tests/test-hypr3d-controller.py	971	971	1	14	84852b7aeeb6	STAY	local-scoped		0				0
 tests/test-hypr3d-controller.py	982	982	1	10	6053757fcb3f	STAY	local-scoped		0				0
 tests/test-hypr3d-controller.py	1063	1063	1	9	505ed7ce2c2c	STAY	local-scoped		0				0
-tests/test-hypr3d-crt.py	1	4	4	33	86f68195718d	STAY	ai-header		0				0
+tests/test-hypr3d-crt.py	1	4	4	33	8cf4b1e280f1	STAY	ai-header		0				0
 tests/test-hypr3d-crt.py	5	5	1	12	98c8ee18abed	STAY	local-scoped		0				0
 tests/test-hypr3d-crt.py	34	34	1	9	550e91cc4ff2	STAY	local-scoped		0				0
 tests/test-hypr3d-crt.py	49	49	1	9	8fada56d63eb	STAY	local-scoped		0				0
@@ -9482,7 +9433,7 @@ tests/test-hypr3d-input-transitions-live.py	341	341	1	18	61ee49e13dd2	STAY	local
 tests/test-hypr3d-input-transitions-live.py	360	361	2	26	8cebd96de169	STAY	midsize-why		0				0
 tests/test-hypr3d-input-transitions-live.py	363	363	1	8	0bc0c0d8139d	STAY	inline-scoped		0				0
 tests/test-hypr3d-input-transitions-live.py	370	370	1	9	c5e5f620a8d6	STAY	local-scoped		0				0
-tests/test-hypr3d-input-transitions.py	1	6	6	108	82346d7c766c	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-hypr3d-input-transitions.py	1	6	6	107	58abac0c470b	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-hypr3d-input-transitions.py	19	19	1	11	59c13723e1a2	STAY	inline-scoped		0				0
 tests/test-hypr3d-input-transitions.py	43	43	1	15	26242ac40c75	STAY	local-scoped		0				0
 tests/test-hypr3d-input-transitions.py	87	87	1	12	5ba1936fcbc6	STAY	local-scoped		0				0
@@ -9609,7 +9560,7 @@ tests/test-hypr3d-retina-spawn.py	1479	1479	1	16	4cd2ae1b418e	STAY	local-scoped	
 tests/test-hypr3d-retina-spawn.py	1482	1482	1	13	4cbd3e17dfec	STAY	local-scoped		0				0
 tests/test-hypr3d-retina-spawn.py	1488	1489	2	38	85b8d32e4397	STAY	midsize-why		0				0
 tests/test-hypr3d-retina-spawn.py	1491	1491	1	12	9af991cf97a9	STAY	local-scoped		0				0
-tests/test-hypr3d-room-input-live.py	1	11	11	150	3f92c0c90a72	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-hypr3d-room-input-live.py	1	11	11	149	db1a6659159a	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-hypr3d-room-input-live.py	34	34	1	18	7bd2e2c95c20	STAY	local-scoped		0				0
 tests/test-hypr3d-room-input-live.py	47	47	1	11	c001725f3067	STAY	local-scoped		0				0
 tests/test-hypr3d-room-input-live.py	79	79	1	11	409ac75f8159	STAY	local-scoped		0				0
@@ -10041,7 +9992,7 @@ tests/test-inputd-ownership.py	251	251	1	17	8cb6047ce2b3	STAY	local-scoped		0			
 tests/test-inputd-ownership.py	322	323	2	28	c1110087657a	STAY	midsize-why		0				0
 tests/test-inputd-ownership.py	356	356	1	16	325acb603a3c	STAY	local-scoped		0				0
 tests/test-inputd-ownership.py	366	366	1	16	0e7a882a861f	STAY	local-scoped		0				0
-tests/test-inputd-platform.py	1	11	11	218	2540178e8fe9	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-inputd-platform.py	1	11	11	213	544e40332d71	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-inputd-platform.py	33	33	1	16	e48734104c85	STAY	local-scoped		0				0
 tests/test-inputd-platform.py	72	72	1	18	0b1e8d32f6e9	STAY	local-scoped		0				0
 tests/test-inputd-platform.py	94	94	1	15	12eae5e274ab	STAY	local-scoped		0				0
@@ -10060,7 +10011,7 @@ tests/test-inputd-platform.py	670	670	1	3	79e929f44614	STAY	local-scoped		0				0
 tests/test-inputd-platform.py	769	769	1	13	0c859eff7889	STAY	local-scoped		0				0
 tests/test-inputd-platform.py	775	775	1	19	fea444a963a3	STAY	local-scoped		0				0
 tests/test-inputd-platform.py	789	789	1	8	bf321309a1cf	STAY	local-scoped		0				0
-tests/test-inputd-vpad-live.py	1	8	8	145	b3d7a8a50378	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-inputd-vpad-live.py	1	8	8	144	ab7de0d2aab0	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-inputd-vpad-live.py	64	64	1	10	573222cc7b93	STAY	local-scoped		0				0
 tests/test-inputd-vpad-live.py	75	75	1	12	053f5ca11bb6	STAY	local-scoped		0				0
 tests/test-inputd-vpad-live.py	89	91	3	57	b10703337870	STAY	midsize-why		0				0
@@ -10410,7 +10361,7 @@ tests/test-m4-root-git-substrate.py	199	199	1	15	133509bcc203	STAY	local-scoped	
 tests/test-m4-root-git-substrate.py	207	207	1	9	50364e06050c	STAY	local-scoped		0				0
 tests/test-m4-root-git-substrate.py	210	210	1	10	5f063cfae7f6	STAY	local-scoped		0				0
 tests/test-m4-root-git-substrate.py	216	216	1	4	08678f9fb9a9	STAY	local-scoped		0				0
-tests/test-m5-sandbox-licensing.py	1	3	3	26	ae6b2e00a96f	STAY	ai-header		0				0
+tests/test-m5-sandbox-licensing.py	1	3	3	26	4d4dde428b93	STAY	ai-header		0				0
 tests/test-m5-sandbox-licensing.py	4	25	21	178	e09c9f4a6348	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:e09c9f4a6348	178	0
 tests/test-m5-sandbox-licensing.py	39	39	1	2	652a73c43ff5	STAY	inline-scoped		0				0
 tests/test-m5-sandbox-licensing.py	43	43	1	8	5f1b9e8c1728	STAY	local-scoped		0				0
@@ -10763,7 +10714,7 @@ tests/test-mios-lamp-live.py	428	430	3	45	1f19a5b8d12e	STAY	midsize-why		0				0
 tests/test-mios-lamp-live.py	450	450	1	9	687714926ac3	STAY	inline-scoped		0				0
 tests/test-mios-lamp-live.py	459	459	1	3	53cd397ef694	STAY	inline-scoped		0				0
 tests/test-mios-lamp-live.py	506	506	1	8	8ddbce727b1f	STAY	inline-scoped		0				0
-tests/test-mios-lamp.py	1	14	14	115	16624069f82f	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-mios-lamp.py	1	14	14	113	3dc5461d3690	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-mios-lamp.py	15	15	1	9	3d3208d3825a	STAY	local-scoped		0				0
 tests/test-mios-lamp.py	36	36	1	21	01f8bef2c615	STAY	local-scoped		0				0
 tests/test-mios-lamp.py	182	182	1	13	8c4df6f54ea0	STAY	local-scoped		0				0
@@ -10930,7 +10881,7 @@ tests/test-mios-rdp-bridge.py	1660	1660	1	8	f8ce3283b6e3	STAY	inline-scoped		0		
 tests/test-mios-rdp-bridge.py	1664	1665	2	28	a097776f37e1	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/tests.md	mios-src:a097776f37e1	28	0
 tests/test-mios-rdp-bridge.py	1689	1689	1	7	3f2e9ee51c1f	STAY	inline-scoped		0				0
 tests/test-mios-rdp-bridge.py	1712	1712	1	11	0dc6a3a8be20	STAY	inline-scoped		0				0
-tests/test-mios-rdp-native.py	1	3	3	173	877c65e8e2ef	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-mios-rdp-native.py	1	3	3	170	5be58dd2f79b	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-mios-rdp-native.py	38	38	1	10	499808806013	STAY	local-scoped		0				0
 tests/test-mios-rdp-native.py	153	153	1	6	0864acb892b4	STAY	inline-scoped		0				0
 tests/test-mios-rdp-native.py	161	161	1	5	2d7f079c740a	STAY	inline-scoped		0				0
@@ -11341,7 +11292,7 @@ tests/test-mobile-layout.py	233	233	1	11	88557b90275b	STAY	local-scoped		0				0
 tests/test-model-bake-ready.py	1	3	3	24	5a9a656ce952	STAY	ai-header		0				0
 tests/test-model-bake-ready.py	23	23	1	12	108da30aa562	STAY	local-scoped		0				0
 tests/test-model-bake-ready.py	31	31	1	6	389b72d0f18d	STAY	inline-scoped		0				0
-tests/test-models-firstboot-latest.py	1	3	3	65	579448113e91	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-models-firstboot-latest.py	1	3	3	65	3ad6ee07a10b	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-models-firstboot-latest.py	47	47	1	13	06bdd7c3a32c	STAY	local-scoped		0				0
 tests/test-models-firstboot-latest.py	91	91	1	4	e4a6e133a3e8	STAY	inline-scoped		0				0
 tests/test-multimodal-ws.py	1	3	3	18	98a6b0c733a5	STAY	ai-header		0				0
@@ -11388,7 +11339,7 @@ tests/test-nested-multiuse.py	13	13	1	2	ae9146f672ac	STAY	local-scoped		0				0
 tests/test-nested-multiuse.py	22	23	2	37	9348f93eefad	STAY	midsize-why		0				0
 tests/test-nested-multiuse.py	86	87	2	29	9b443bd67b2e	STAY	midsize-why		0				0
 tests/test-nested-multiuse.py	176	176	1	7	0c074b133f86	STAY	inline-scoped		0				0
-tests/test-nested-session-scaling.py	1	6	6	109	7ecdfa3d4664	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-nested-session-scaling.py	1	6	6	107	4baea801274c	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-nested-session-scaling.py	107	108	2	23	813828f69e22	STAY	local-scoped		0				0
 tests/test-nested-session-scaling.py	130	131	2	27	984b0236047f	STAY	midsize-why		0				0
 tests/test-nested-session-scaling.py	157	157	1	14	494744e89ec8	STAY	local-scoped		0				0
@@ -12663,7 +12614,7 @@ tests/test-session-migrate.py	119	119	1	2	7fbf28708a90	STAY	local-scoped		0				0
 tests/test-session-migrate.py	135	135	1	2	2f3a91efe992	DROP	banner		0				0
 tests/test-session-migrate.py	150	150	1	2	c2c01c042086	DROP	banner		0				0
 tests/test-session-migrate.py	164	164	1	2	3750b3e9435a	DROP	banner		0				0
-tests/test-session-selector-controller.py	1	5	5	101	308c07635b49	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-session-selector-controller.py	1	5	5	100	ce98e6a20296	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-session-selector-controller.py	33	34	2	28	33eb416528f6	STAY	midsize-why		0				0
 tests/test-session-selector-controller.py	41	41	1	8	4761925eeddd	STAY	inline-scoped		0				0
 tests/test-session-selector-controller.py	45	45	1	16	3de15668cc10	STAY	local-scoped		0				0
@@ -12747,7 +12698,7 @@ tests/test-shaderglass-state.py	996	996	1	7	390a178ae48b	STAY	local-scoped		0			
 tests/test-shaderglass-state.py	1005	1006	2	31	5508d39b3b8d	STAY	midsize-why		0				0
 tests/test-shaderglass-state.py	1022	1022	1	17	6ea41c2726ba	STAY	local-scoped		0				0
 tests/test-shaderglass-state.py	1058	1062	5	66	81f4f131fde0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:81f4f131fde0	66	0
-tests/test-shaderglass.py	1	16	16	199	b41ddbd10483	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-shaderglass.py	1	16	16	197	55c68f869ff6	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-shaderglass.py	17	17	1	9	c97b54944fa1	STAY	local-scoped		0				0
 tests/test-shaderglass.py	62	62	1	15	7845d8547579	STAY	local-scoped		0				0
 tests/test-shaderglass.py	72	72	1	14	3d2cd060ccf3	STAY	local-scoped		0				0
@@ -12806,7 +12757,7 @@ tests/test-shell-appmenu-live.py	365	365	1	9	be96d87f09b5	STAY	local-scoped		0		
 tests/test-shell-appmenu-live.py	371	371	1	15	fdbdad6213ba	STAY	local-scoped		0				0
 tests/test-shell-appmenu-live.py	378	378	1	10	79a7d2a690e6	STAY	local-scoped		0				0
 tests/test-shell-appmenu-live.py	386	386	1	7	04a06a8de3a7	STAY	inline-scoped		0				0
-tests/test-shell-hud-contract.py	1	13	13	128	b9eaba7745d3	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-shell-hud-contract.py	1	13	13	128	86a0a8de4d1a	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-shell-hud-contract.py	14	14	1	5	894758d14926	STAY	local-scoped		0				0
 tests/test-shell-hud-contract.py	74	74	1	15	8857fc01638b	STAY	inline-scoped		0				0
 tests/test-shell-hud-contract.py	96	96	1	17	5d6d4b79f28c	STAY	local-scoped		0				0
@@ -13719,7 +13670,7 @@ tests/test-tmux-os.py	668	668	1	16	7c5aeb2e5e47	STAY	local-scoped		0				0
 tests/test-tmux-workspace-hook-storm.py	1	4	4	79	63efc3d9db4d	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-tmux-workspace-hook-storm.py	69	69	1	9	4c09d8c5905a	STAY	local-scoped		0				0
 tests/test-tmux-workspace-hook-storm.py	94	94	1	6	8219d5afe9fd	STAY	inline-scoped		0				0
-tests/test-tmuxos-launcher-live.py	1	10	10	215	3b43717e2e50	MIGRATE_HEADER	overlong-hint		0				0
+tests/test-tmuxos-launcher-live.py	1	10	10	211	4eb2c61f1e8f	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-tmuxos-launcher-live.py	59	59	1	17	0d4b5161ead7	STAY	local-scoped		0				0
 tests/test-tmuxos-launcher-live.py	72	72	1	12	760318380c9b	STAY	local-scoped		0				0
 tests/test-tmuxos-launcher-live.py	130	130	1	18	7333db2cf98b	STAY	local-scoped		0				0
@@ -16114,14 +16065,14 @@ tools/native/mios-comment-lex/src/main.rs	537	537	1	8	f9bc437e54ca	STAY	local-sc
 tools/native/mios-comment-lex/src/main.rs	582	582	1	5	f942b5ef2bd8	STAY	inline-scoped		0				0
 tools/native/mios-comment-lex/src/main.rs	667	667	1	0	c7d465246c95	DROP	commented-out-code		0				0
 tools/native/mios-comment-lex/src/main.rs	674	674	1	4	70c7376c6074	STAY	inline-scoped		0				0
-tools/native/mios-controls/Cargo.toml	1	2	2	50	d9e6cc65ddb1	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-controls/Cargo.toml	1	2	2	44	52a86bd36abc	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/Cargo.toml	16	16	1	18	c0a5cf27e693	STAY	local-scoped		0				0
 tools/native/mios-controls/Cargo.toml	19	19	1	19	315dd1f8c1f0	STAY	local-scoped		0				0
 tools/native/mios-controls/src/apply.rs	1	3	3	62	fd120c82064c	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/src/apply.rs	22	22	1	15	d1fb1619e264	STAY	local-scoped		0				0
 tools/native/mios-controls/src/apply.rs	27	27	1	9	334bc6b3ac96	STAY	local-scoped		0				0
 tools/native/mios-controls/src/apply.rs	33	34	2	30	bf9bb4378ac4	MIGRATE	fat-inline-narrative	note	0				0
-tools/native/mios-controls/src/bindmap.rs	1	3	3	96	2969a1e20e5d	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-controls/src/bindmap.rs	1	3	3	94	f2ea36a81050	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/src/bindmap.rs	16	16	1	17	8cb2171dcdd1	STAY	local-scoped		0				0
 tools/native/mios-controls/src/bindmap.rs	24	24	1	13	73d0944861e1	STAY	local-scoped		0				0
 tools/native/mios-controls/src/bindmap.rs	26	26	1	10	82813d6874aa	STAY	local-scoped		0				0
@@ -16157,7 +16108,7 @@ tools/native/mios-controls/src/bindmap.rs	697	699	3	52	e092d504a5f8	STAY	midsize
 tools/native/mios-controls/src/bindmap.rs	717	718	2	32	cb021b5c40ae	STAY	midsize-why		0				0
 tools/native/mios-controls/src/bindmap.rs	733	733	1	15	e803d7f128e3	STAY	local-scoped		0				0
 tools/native/mios-controls/src/bindmap.rs	754	754	1	17	b72e5e09161d	STAY	local-scoped		0				0
-tools/native/mios-controls/src/devices.rs	1	3	3	51	a0444555044e	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-controls/src/devices.rs	1	3	3	47	2f840bba8ff4	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/src/devices.rs	32	32	1	6	269e03a3aef0	STAY	local-scoped		0				0
 tools/native/mios-controls/src/devices.rs	42	42	1	8	547e9aa84114	STAY	local-scoped		0				0
 tools/native/mios-controls/src/devices.rs	44	44	1	18	21d47a474358	STAY	local-scoped		0				0
@@ -16210,7 +16161,7 @@ tools/native/mios-controls/src/layout.rs	669	669	1	16	8274e5f18ab4	STAY	local-sc
 tools/native/mios-controls/src/layout.rs	683	685	3	56	e75f3c6f9f28	STAY	midsize-why		0				0
 tools/native/mios-controls/src/layout.rs	689	689	1	16	3df1bc54560e	STAY	local-scoped		0				0
 tools/native/mios-controls/src/layout.rs	802	802	1	22	584d09778b13	STAY	local-scoped		0				0
-tools/native/mios-controls/src/main.rs	1	2	2	49	d3ecc6c9d1d9	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-controls/src/main.rs	1	2	2	46	96183e8f55b6	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/src/main.rs	16	17	2	23	16794fa0642f	STAY	local-scoped		0				0
 tools/native/mios-controls/src/main.rs	29	29	1	10	ac79efefc112	STAY	local-scoped		0				0
 tools/native/mios-controls/src/main.rs	39	39	1	3	c6f5046b71db	STAY	local-scoped		0				0
@@ -16222,7 +16173,7 @@ tools/native/mios-controls/src/main.rs	173	173	1	12	ea63e58dc319	STAY	local-scop
 tools/native/mios-controls/src/main.rs	264	264	1	19	d9df6b6af8ca	STAY	local-scoped		0				0
 tools/native/mios-controls/src/main.rs	400	400	1	21	00fda8db5a11	STAY	local-scoped		0				0
 tools/native/mios-controls/src/main.rs	500	501	2	30	c0480b0bf217	STAY	midsize-why		0				0
-tools/native/mios-controls/src/model.rs	1	3	3	66	31df41012b16	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-controls/src/model.rs	1	3	3	63	9fb3edabcdfa	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/src/model.rs	8	9	2	39	e68562743470	STAY	midsize-why		0				0
 tools/native/mios-controls/src/model.rs	13	13	1	9	57ecb4b4fa71	STAY	local-scoped		0				0
 tools/native/mios-controls/src/model.rs	18	18	1	11	973d95483806	STAY	local-scoped		0				0
@@ -16259,7 +16210,7 @@ tools/native/mios-controls/src/pads.rs	182	182	1	11	d9a3247822f2	STAY	local-scop
 tools/native/mios-controls/src/pads.rs	220	221	2	31	7728438345fa	STAY	midsize-why		0				0
 tools/native/mios-controls/src/pads.rs	281	282	2	42	508691dadff1	STAY	midsize-why		0				0
 tools/native/mios-controls/src/pads.rs	305	305	1	5	8f0e890558e4	STAY	local-scoped		0				0
-tools/native/mios-controls/src/tui.rs	1	3	3	134	c7d58fca449a	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-controls/src/tui.rs	1	3	3	129	9aeaf47ad429	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-controls/src/tui.rs	103	103	1	10	3bc7ca9055a4	STAY	local-scoped		0				0
 tools/native/mios-controls/src/tui.rs	144	144	1	20	359b8887e7f9	STAY	local-scoped		0				0
 tools/native/mios-controls/src/tui.rs	176	176	1	20	676384148d0a	STAY	local-scoped		0				0
@@ -16322,7 +16273,7 @@ tools/native/mios-controls/src/validate.rs	347	347	1	20	22d1e982a3ca	STAY	local-
 tools/native/mios-controls/src/validate.rs	360	360	1	14	57fdf7ee1f17	STAY	local-scoped		0				0
 tools/native/mios-controls/src/validate.rs	363	363	1	6	adcf91db1d88	STAY	local-scoped		0				0
 tools/native/mios-displays/Cargo.toml	1	2	2	26	34c61fc4c26f	STAY	ai-header		0				0
-tools/native/mios-displays/src/main.rs	1	3	3	73	2e58deb53349	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-displays/src/main.rs	1	3	3	72	1b531227d6e0	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-displays/src/main.rs	102	102	1	1	7edb1f073cde	DROP	banner		0				0
 tools/native/mios-displays/src/main.rs	113	113	1	5	168143cc6182	STAY	local-scoped		0				0
 tools/native/mios-displays/src/main.rs	128	128	1	1	8952429c15ba	DROP	banner		0				0
@@ -16405,7 +16356,7 @@ tools/native/mios-edge-status/src/main.rs	624	627	4	41	ac3de4ddd7e4	STAY	midsize
 tools/native/mios-edge-status/src/main.rs	818	818	1	15	97dcd29bbab6	STAY	local-scoped		0				0
 tools/native/mios-edge-status/src/main.rs	922	923	2	14	2fb42d90ada4	STAY	local-scoped		0				0
 tools/native/mios-edge-status/src/main.rs	1102	1102	1	11	4a2fb8be1a49	STAY	local-scoped		0				0
-tools/native/mios-fanctl/Cargo.toml	1	2	2	22	5b70e4a2033b	STAY	ai-header		0				0
+tools/native/mios-fanctl/Cargo.toml	1	2	2	22	c880caa816b5	STAY	ai-header		0				0
 tools/native/mios-fanctl/src/api.rs	1	3	3	25	84737f5ce19c	STAY	ai-header		0				0
 tools/native/mios-fanctl/src/api.rs	85	85	1	10	5dd47a523c4d	STAY	local-scoped		0				0
 tools/native/mios-fanctl/src/config.rs	1	3	3	21	afba76565f1a	STAY	ai-header		0				0
@@ -16449,7 +16400,7 @@ tools/native/mios-gen/src/ai.rs	601	601	1	6	4a1b30258fd3	STAY	local-scoped		0			
 tools/native/mios-gen/src/ai.rs	630	630	1	5	91c9bf056ea9	STAY	local-scoped		0				0
 tools/native/mios-gen/src/ai.rs	763	763	1	4	60a6e721490b	STAY	local-scoped		0				0
 tools/native/mios-gen/src/ai.rs	812	812	1	10	f004bc30aafb	STAY	local-scoped		0				0
-tools/native/mios-gen/src/ai_metadata.rs	1	9	9	99	9153f232edc2	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/ai_metadata.rs	1	9	9	95	9580328f7cf6	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/ai_metadata.rs	20	20	1	7	d1bf95809855	STAY	local-scoped		0				0
 tools/native/mios-gen/src/ai_metadata.rs	23	23	1	9	1ed9c9935c59	STAY	local-scoped		0				0
 tools/native/mios-gen/src/ai_metadata.rs	32	32	1	11	20f9e5b35538	STAY	local-scoped		0				0
@@ -16481,7 +16432,7 @@ tools/native/mios-gen/src/bootstrap_sync.rs	501	501	1	1	011a474b6939	STAY	inline
 tools/native/mios-gen/src/btop_theme.rs	1	3	3	22	b9efe523ec84	STAY	ai-header		0				0
 tools/native/mios-gen/src/btop_theme.rs	47	47	1	3	c67110326bc6	STAY	local-scoped		0				0
 tools/native/mios-gen/src/btop_theme.rs	112	112	1	11	3d528be7d0bc	STAY	local-scoped		0				0
-tools/native/mios-gen/src/device_forwarding.rs	1	8	8	120	12f4e4c13038	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/device_forwarding.rs	1	8	8	116	87bd16dfe246	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/device_forwarding.rs	28	28	1	9	1d7402635714	STAY	local-scoped		0				0
 tools/native/mios-gen/src/device_forwarding.rs	68	70	3	33	ca53724fa345	STAY	midsize-why		0				0
 tools/native/mios-gen/src/device_forwarding.rs	108	108	1	10	ff469cd03e9b	STAY	local-scoped		0				0
@@ -16489,7 +16440,7 @@ tools/native/mios-gen/src/device_forwarding.rs	151	151	1	13	03694f40a998	STAY	lo
 tools/native/mios-gen/src/device_forwarding.rs	191	191	1	5	29637d69e759	STAY	inline-scoped		0				0
 tools/native/mios-gen/src/device_forwarding.rs	238	238	1	8	2be9fb55ed49	STAY	local-scoped		0				0
 tools/native/mios-gen/src/device_forwarding.rs	362	362	1	8	4770fda0fde3	STAY	local-scoped		0				0
-tools/native/mios-gen/src/display_scale.rs	1	9	9	146	3556d23c2349	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/display_scale.rs	1	9	9	144	ad2d4ef16b67	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/display_scale.rs	14	15	2	32	369b2d2a253c	STAY	midsize-why		0				0
 tools/native/mios-gen/src/display_scale.rs	45	45	1	13	2be030c71f21	STAY	local-scoped		0				0
 tools/native/mios-gen/src/display_scale.rs	47	47	1	12	885ff7e0f638	STAY	local-scoped		0				0
@@ -16522,7 +16473,7 @@ tools/native/mios-gen/src/display_scale.rs	589	590	2	24	1b741393cfbb	STAY	local-
 tools/native/mios-gen/src/display_scale.rs	638	638	1	6	f43bfb579fef	STAY	local-scoped		0				0
 tools/native/mios-gen/src/display_scale.rs	650	650	1	13	412a65df1ed9	STAY	local-scoped		0				0
 tools/native/mios-gen/src/display_scale.rs	722	722	1	12	6d86c151dd70	STAY	local-scoped		0				0
-tools/native/mios-gen/src/dock.rs	1	18	18	275	43f49bb2b9f6	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/dock.rs	1	18	18	270	bd344ac7e8a6	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/dock.rs	53	53	1	2	9e5450d0ce85	STAY	local-scoped		0				0
 tools/native/mios-gen/src/dock.rs	88	90	3	31	05fd71ad9027	STAY	midsize-why		0				0
 tools/native/mios-gen/src/dock.rs	185	185	1	20	edcf7df0ab64	STAY	local-scoped		0				0
@@ -16565,7 +16516,7 @@ tools/native/mios-gen/src/docs.rs	405	405	1	3	e3392e5135a0	STAY	local-scoped		0	
 tools/native/mios-gen/src/docs.rs	421	421	1	2	82f0bb5d27e2	STAY	local-scoped		0				0
 tools/native/mios-gen/src/docs.rs	430	430	1	2	d41665b70472	STAY	local-scoped		0				0
 tools/native/mios-gen/src/docs.rs	453	453	1	4	47c96493829b	STAY	local-scoped		0				0
-tools/native/mios-gen/src/env_snapshot.rs	1	18	18	191	1f7b05c23ee2	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/env_snapshot.rs	1	18	18	187	85d21d692005	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/env_snapshot.rs	24	25	2	26	47de321e6b81	STAY	midsize-why		0				0
 tools/native/mios-gen/src/env_snapshot.rs	39	40	2	19	877b045aaba8	STAY	local-scoped		0				0
 tools/native/mios-gen/src/env_snapshot.rs	54	54	1	7	2f877bf13986	STAY	local-scoped		0				0
@@ -17080,7 +17031,7 @@ tools/native/mios-gen/src/mem_admit.rs	35	35	1	7	9aa08c9c209c	STAY	local-scoped	
 tools/native/mios-gen/src/mem_admit.rs	54	55	2	28	f664c1b56401	STAY	midsize-why		0				0
 tools/native/mios-gen/src/mem_admit.rs	79	79	1	15	877e958f09ec	STAY	local-scoped		0				0
 tools/native/mios-gen/src/metal_vs_hosted.rs	1	2	2	14	39ac1281b70b	STAY	ai-header		0				0
-tools/native/mios-gen/src/nested_devices.rs	1	8	8	135	bdea7d574c6f	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/nested_devices.rs	1	8	8	134	3d18d9c0eb32	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/nested_devices.rs	20	20	1	5	76b1d712c6ba	STAY	local-scoped		0				0
 tools/native/mios-gen/src/nested_devices.rs	38	38	1	4	9c480cb74d78	STAY	local-scoped		0				0
 tools/native/mios-gen/src/nested_devices.rs	40	40	1	10	276d0a49e5f6	STAY	local-scoped		0				0
@@ -17438,7 +17389,7 @@ tools/native/mios-gen/src/render.rs	7622	7623	2	26	f348cd0bbca3	STAY	midsize-why
 tools/native/mios-gen/src/render.rs	7702	7702	1	14	facd883380f2	STAY	local-scoped		0				0
 tools/native/mios-gen/src/render.rs	7713	7714	2	20	17bad07e3955	STAY	local-scoped		0				0
 tools/native/mios-gen/src/render.rs	7732	7732	1	9	7387243e0c20	STAY	local-scoped		0				0
-tools/native/mios-gen/src/session_scale.rs	1	3	3	67	2a13b6e1831c	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/session_scale.rs	1	3	3	66	633c8d113948	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/session_scale.rs	39	40	2	14	b9ea4cc65f29	STAY	local-scoped		0				0
 tools/native/mios-gen/src/session_scale.rs	70	71	2	41	99913648a8fe	STAY	midsize-why		0				0
 tools/native/mios-gen/src/session_scale.rs	100	100	1	13	75fe3b01b99f	STAY	local-scoped		0				0
@@ -17473,7 +17424,7 @@ tools/native/mios-gen/src/terminal.rs	628	628	1	10	f3d8a1cefa76	STAY	local-scope
 tools/native/mios-gen/src/terminal.rs	690	692	3	29	71cc5e41ead9	STAY	midsize-why		0				0
 tools/native/mios-gen/src/terminal.rs	700	700	1	16	d41c1844b4cc	STAY	local-scoped		0				0
 tools/native/mios-gen/src/terminal.rs	739	739	1	10	41bfb2bf97ac	STAY	local-scoped		0				0
-tools/native/mios-gen/src/tmux_os.rs	1	3	3	50	591bc8af9818	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-gen/src/tmux_os.rs	1	3	3	48	c031dd2da75a	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/tmux_os.rs	14	14	1	13	f11a25026f4d	STAY	local-scoped		0				0
 tools/native/mios-gen/src/tmux_os.rs	17	17	1	15	c0cfe506e149	STAY	local-scoped		0				0
 tools/native/mios-gen/src/tmux_os.rs	40	40	1	16	3888bd5dec16	STAY	local-scoped		0				0
@@ -17881,7 +17832,7 @@ tools/native/mios-inputd/src/nav.rs	445	447	3	56	432982e6a6bb	STAY	midsize-why		
 tools/native/mios-inputd/src/nav.rs	461	461	1	7	0249275cb341	STAY	inline-scoped		0				0
 tools/native/mios-inputd/src/nav.rs	478	479	2	33	7e5d18212788	STAY	midsize-why		0				0
 tools/native/mios-inputd/src/nav.rs	488	489	2	31	ad7dac8cc994	STAY	midsize-why		0				0
-tools/native/mios-inputd/src/nested.rs	1	3	3	65	b1b23402cd80	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-inputd/src/nested.rs	1	3	3	63	8aa37ef39d86	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-inputd/src/nested.rs	8	8	1	21	ff4146062ee5	STAY	local-scoped		0				0
 tools/native/mios-inputd/src/nested.rs	14	14	1	18	23c28e0ffed8	STAY	local-scoped		0				0
 tools/native/mios-inputd/src/nested.rs	20	20	1	15	97f73f99bcf1	STAY	local-scoped		0				0
@@ -18116,7 +18067,7 @@ tools/native/mios-inputd/src/runtime.rs	1878	1878	1	15	e144d5d0dcd3	STAY	local-s
 tools/native/mios-inputd/src/runtime.rs	1941	1941	1	16	d626d6708ae5	STAY	local-scoped		0				0
 tools/native/mios-inputd/src/runtime.rs	1948	1948	1	8	a0f5b040f50b	STAY	local-scoped		0				0
 tools/native/mios-inputd/src/vm.rs	1	2	2	13	3f7e0b620e85	STAY	ai-header		0				0
-tools/native/mios-inputd/src/vpad.rs	1	3	3	71	76a8993edc64	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-inputd/src/vpad.rs	1	3	3	69	0bb296ca0385	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-inputd/src/vpad.rs	14	15	2	23	e5c8d9fadd5d	STAY	local-scoped		0				0
 tools/native/mios-inputd/src/vpad.rs	41	41	1	16	d3755a5b25cf	STAY	local-scoped		0				0
 tools/native/mios-inputd/src/vpad.rs	53	53	1	19	6c67a8e78fa4	STAY	local-scoped		0				0
@@ -18227,7 +18178,7 @@ tools/native/mios-pip-gravity/src/gravity.rs	410	411	2	37	188a403ce28f	STAY	mids
 tools/native/mios-pip-gravity/src/gravity.rs	422	422	1	18	8b18ae0f19e2	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/gravity.rs	424	424	1	15	d63fb912e2b1	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/gravity.rs	428	429	2	38	9e76f111dd86	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/hud.rs	1	3	3	76	58d18fa97716	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-pip-gravity/src/hud.rs	1	3	3	74	cfaa07e1f6d5	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-pip-gravity/src/hud.rs	12	12	1	14	737fa5e6b20c	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/hud.rs	28	28	1	11	316eafe8c189	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/hud.rs	66	66	1	12	02aea24604b4	STAY	local-scoped		0				0
@@ -18264,41 +18215,41 @@ tools/native/mios-pip-gravity/src/main.rs	389	389	1	13	dbe02acfc7a9	STAY	local-s
 tools/native/mios-pip-gravity/src/main.rs	391	393	3	56	7dbfd4cfb309	STAY	midsize-why		0				0
 tools/native/mios-pip-gravity/src/main.rs	400	400	1	12	a367836754d3	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/main.rs	405	407	3	46	951394e9c6c5	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	489	490	2	37	43901a88cf73	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	494	494	1	14	7f6d885242a4	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	503	503	1	17	64cc673f246b	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	508	509	2	26	ccfc3d5fe24d	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	531	532	2	30	aef311f1ce80	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	554	555	2	31	697df0dad0e2	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	559	559	1	17	f56918652226	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	561	561	1	13	6a8130d6ec40	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	589	590	2	33	3acc416e8dd4	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/src.md	mios-src:3acc416e8dd4	33	0
-tools/native/mios-pip-gravity/src/main.rs	596	596	1	15	5cbe25f76b06	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	605	605	1	17	6f91cc6413b7	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	638	638	1	19	c02234730ef2	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	650	650	1	5	ca208dcb63c2	STAY	inline-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	663	665	3	43	f40eaa4b1f09	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:f40eaa4b1f09	43	0
-tools/native/mios-pip-gravity/src/main.rs	678	678	1	18	27abb3692a09	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	684	684	1	16	4376a8cd4bcb	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	690	691	2	32	966bf65798af	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	702	702	1	16	25395f84e4c5	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	706	706	1	7	90edb7fb75e8	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	719	719	1	5	334a330af01d	STAY	inline-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	720	720	1	18	ba7c5869d0db	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	725	725	1	13	61e58a86b144	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	739	739	1	7	b847659aa48d	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	758	758	1	6	eebcd0e47718	STAY	inline-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	761	761	1	17	ee1753cbff99	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	773	773	1	9	c2be83733180	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	776	776	1	9	caa172785d5a	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	778	778	1	11	69c0e923f296	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	797	797	1	21	d2366875e29e	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	807	807	1	13	f7df2c4c5012	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	836	837	2	24	03e1d1c04923	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	850	850	1	18	db6dcb60e686	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/main.rs	879	880	2	27	0e597983a52b	STAY	midsize-why		0				0
-tools/native/mios-pip-gravity/src/main.rs	888	888	1	15	c8dbb9106b30	STAY	local-scoped		0				0
-tools/native/mios-pip-gravity/src/matrix.rs	1	3	3	85	110420eb4e70	MIGRATE_HEADER	overlong-hint		0				0
+tools/native/mios-pip-gravity/src/main.rs	490	491	2	37	43901a88cf73	STAY	midsize-why		0				0
+tools/native/mios-pip-gravity/src/main.rs	495	495	1	14	7f6d885242a4	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	504	504	1	17	64cc673f246b	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	509	510	2	26	ccfc3d5fe24d	STAY	midsize-why		0				0
+tools/native/mios-pip-gravity/src/main.rs	532	533	2	30	aef311f1ce80	STAY	midsize-why		0				0
+tools/native/mios-pip-gravity/src/main.rs	555	556	2	31	697df0dad0e2	STAY	midsize-why		0				0
+tools/native/mios-pip-gravity/src/main.rs	560	560	1	17	f56918652226	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	562	562	1	13	6a8130d6ec40	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	590	591	2	33	3acc416e8dd4	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/src.md	mios-src:3acc416e8dd4	33	0
+tools/native/mios-pip-gravity/src/main.rs	597	597	1	15	5cbe25f76b06	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	606	606	1	17	6f91cc6413b7	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	639	639	1	19	c02234730ef2	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	651	651	1	5	ca208dcb63c2	STAY	inline-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	664	666	3	43	f40eaa4b1f09	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:f40eaa4b1f09	43	0
+tools/native/mios-pip-gravity/src/main.rs	679	679	1	18	27abb3692a09	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	685	685	1	16	4376a8cd4bcb	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	691	692	2	32	966bf65798af	STAY	midsize-why		0				0
+tools/native/mios-pip-gravity/src/main.rs	703	703	1	16	25395f84e4c5	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	707	707	1	7	90edb7fb75e8	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	720	720	1	5	334a330af01d	STAY	inline-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	721	721	1	18	ba7c5869d0db	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	726	726	1	13	61e58a86b144	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	740	740	1	7	b847659aa48d	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	759	759	1	6	eebcd0e47718	STAY	inline-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	762	762	1	17	ee1753cbff99	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	774	774	1	9	c2be83733180	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	777	777	1	9	caa172785d5a	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	779	779	1	11	69c0e923f296	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	798	798	1	21	d2366875e29e	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	808	808	1	13	f7df2c4c5012	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	837	838	2	24	03e1d1c04923	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	851	851	1	18	db6dcb60e686	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/main.rs	880	881	2	27	0e597983a52b	STAY	midsize-why		0				0
+tools/native/mios-pip-gravity/src/main.rs	889	889	1	15	c8dbb9106b30	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/matrix.rs	1	3	3	84	b70f222d93ea	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-pip-gravity/src/matrix.rs	8	8	1	18	d4200667a7c1	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/matrix.rs	22	22	1	7	9a40af793070	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/matrix.rs	29	30	2	34	eeb4f7cc9d1a	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/src.md	mios-src:eeb4f7cc9d1a	34	0
@@ -18311,8 +18262,8 @@ tools/native/mios-pip-gravity/src/matrix.rs	125	125	1	8	aa59c350eb00	STAY	local-
 tools/native/mios-pip-gravity/src/matrix.rs	129	129	1	16	1003a15e7a03	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/matrix.rs	135	135	1	10	bddde5562d9c	STAY	local-scoped		0				0
 tools/native/mios-pip-gravity/src/window.rs	1	2	2	35	ca67651c50ef	STAY	ai-header		0				0
-tools/native/mios-pip-gravity/src/window.rs	62	66	5	88	8bf9dc32e490	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:8bf9dc32e490	88	0
-tools/native/mios-pip-gravity/src/window.rs	87	87	1	21	5735c1b737c2	STAY	local-scoped		0				0
+tools/native/mios-pip-gravity/src/window.rs	64	68	5	88	8bf9dc32e490	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:8bf9dc32e490	88	0
+tools/native/mios-pip-gravity/src/window.rs	89	89	1	21	5735c1b737c2	STAY	local-scoped		0				0
 tools/native/mios-render-quadlets/Cargo.toml	1	2	2	18	bd01c88bad05	STAY	ai-header		0				0
 tools/native/mios-render-quadlets/src/main.rs	1	2	2	20	ca7d4fcac369	STAY	ai-header		0				0
 tools/native/mios-render-quadlets/src/main.rs	21	23	3	29	836586fcb92a	STAY	midsize-why		0				0
@@ -18578,7 +18529,7 @@ tools/native/mios-resolver/src/lib.rs	390	390	1	15	f137873f3b95	STAY	local-scope
 tools/native/mios-resolver/src/lib.rs	397	397	1	7	9f60e939f77e	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/lib.rs	414	414	1	13	062caaac3954	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/lib.rs	418	418	1	14	ed7183df308a	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/lib.rs	423	424	2	14	f78098ce7c6b	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/lib.rs	423	424	2	14	8239a5e65977	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/lib.rs	456	457	2	19	77175618d10c	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/lib.rs	512	513	2	17	199846af1956	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/lib.rs	531	532	2	20	1a2cd66ca7df	STAY	local-scoped		0				0
@@ -18641,7 +18592,7 @@ tools/native/mios-resolver/src/sigstore.rs	150	153	4	37	8dde9d896e6c	STAY	midsiz
 tools/native/mios-resolver/src/sigstore.rs	192	194	3	29	46df6b6c2e3e	STAY	midsize-why		0				0
 tools/native/mios-resolver/src/sigstore.rs	278	278	1	15	31d6f024feae	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/sigstore.rs	348	348	1	15	be1bb1123538	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/terminal_tuis.rs	1	3	3	43	5dafbc94f932	STAY	ai-header		0				0
+tools/native/mios-resolver/src/terminal_tuis.rs	1	3	3	42	633e939e2f47	STAY	ai-header		0				0
 tools/native/mios-resolver/src/terminal_tuis.rs	7	7	1	6	2f18e59820dd	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/terminal_tuis.rs	10	10	1	10	a054485f4850	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/terminal_tuis.rs	12	12	1	11	cf20e8aabed7	STAY	local-scoped		0				0
@@ -19269,7 +19220,7 @@ tools/native/mios-unit-gen/src/main.rs	221	222	2	23	03468a39cdc0	STAY	local-scop
 tools/native/mios-unit-gen/src/main.rs	236	238	3	33	a7dfff702daa	MIGRATE	midsize-narrative		0				0
 tools/native/mios-unit-gen/src/main.rs	270	271	2	20	e44d68aa33c9	STAY	local-scoped		0				0
 tools/native/mios-unit-gen/src/main.rs	285	287	3	30	2d223ba1b87e	STAY	midsize-why		0				0
-tools/native/mios-unit-gen/src/tmux_os.rs	1	3	3	51	24a94d024941	STAY	ai-header		0				0
+tools/native/mios-unit-gen/src/tmux_os.rs	1	3	3	49	3914c1c6faa2	STAY	ai-header		0				0
 tools/native/mios-unit-gen/src/tmux_os.rs	5	6	2	36	1c66cd71c5b3	STAY	midsize-why		0				0
 tools/native/mios-unit-gen/src/tmux_os.rs	23	23	1	13	718c3fe7a0cd	STAY	local-scoped		0				0
 tools/native/mios-unit-gen/src/tmux_os.rs	28	29	2	25	b88cea32f652	STAY	local-scoped		0				0
@@ -20308,7 +20259,7 @@ usr/lib/mios/agent-pipe/mios_httpx.py	43	43	1	6	a9c653572658	STAY	local-scoped		
 usr/lib/mios/agent-pipe/mios_httpx.py	48	48	1	3	73ca2b94c516	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_httpx.py	69	69	1	8	656e953baed5	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_interop.py	1	1	1	5	dd9b8a73a28d	STAY	ai-header		0				0
-usr/lib/mios/agent-pipe/mios_isolation.py	1	3	3	26	fa1697c149bc	STAY	ai-header		0				0
+usr/lib/mios/agent-pipe/mios_isolation.py	1	3	3	26	8dc0adc58b8f	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_isolation.py	4	16	12	106	7e4da2f0c562	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/agent-pipe.md	mios-src:7e4da2f0c562	106	0
 usr/lib/mios/agent-pipe/mios_isolation.py	30	32	3	4	49885c593275	DROP	banner		0				0
 usr/lib/mios/agent-pipe/mios_isolation.py	39	39	1	2	debd6dfdca17	STAY	local-scoped		0				0
@@ -21389,6 +21340,7 @@ usr/lib/mios/agent-pipe/mios_pipe/memory/worker_tools.py	207	207	1	6	cf5566daab8
 usr/lib/mios/agent-pipe/mios_pipe/memory/worker_tools.py	220	220	1	8	4ac08bcc7e0c	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/memory/worker_tools.py	228	228	1	5	d6126ab4c460	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/memory/worker_tools.py	235	235	1	6	e010fbb1ccbd	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/mockname.py	1	2	2	13	f4d5bc3a1f14	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/observability/__init__.py	1	1	1	4	49cf2c0ecb21	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/observability/audit.py	1	2	2	13	bf870e48106e	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/observability/audit.py	3	44	41	362	67974cee6a6d	MIGRATE	narrative-history	adr-candidate	0	usr/share/doc/mios/manual/observability.md	mios-src:67974cee6a6d	362	1
@@ -23732,6 +23684,7 @@ usr/lib/mios/agent-pipe/test_mios_memory.py	88	88	1	8	4cb5f66242eb	STAY	local-sc
 usr/lib/mios/agent-pipe/test_mios_memory.py	93	93	1	6	8ab30525e81d	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_memory.py	98	98	1	10	61d537d07408	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_memory.py	128	131	4	14	1806b20d58a9	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/test_mios_mockname.py	1	3	3	16	ce46b928d7e2	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_native_loop.py	1	4	4	14	ede8d20bdd38	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_native_loop.py	5	5	1	6	2d500400f133	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_native_loop.py	29	30	2	20	fda9a0a40e8a	STAY	local-scoped		0				0
@@ -24547,7 +24500,7 @@ usr/lib/mios/mios_comments.py	575	575	1	6	0786321d45f1	STAY	local-scoped		0				0
 usr/lib/mios/mios_comments.py	578	583	6	32	1fe018524038	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/lib.md	mios-src:1fe018524038	32	1
 usr/lib/mios/mios_comments.py	793	799	7	68	91b1f37a187d	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/lib.md	mios-src:91b1f37a187d	68	1
 usr/lib/mios/mios_comments.py	811	819	9	81	f3e774fcaabb	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/lib.md	mios-src:f3e774fcaabb	81	1
-usr/lib/mios/mios_credentials.py	1	3	3	61	e915288e0aba	MIGRATE_HEADER	overlong-hint		0				0
+usr/lib/mios/mios_credentials.py	1	3	3	51	1f36d66c431d	MIGRATE_HEADER	overlong-hint		0				0
 usr/lib/mios/mios_credentials.py	4	20	16	95	5e968c26bc47	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/mios.md	mios-src:5e968c26bc47	95	0
 usr/lib/mios/mios_credentials.py	32	32	1	9	07c5aeb6a4dc	STAY	local-scoped		0				0
 usr/lib/mios/mios_credentials.py	68	68	1	9	2deee26ce307	STAY	local-scoped		0				0
@@ -24931,7 +24884,7 @@ usr/lib/systemd/system/mios-embed-backfill.service	6	7	2	18	d1311d020157	STAY	lo
 usr/lib/systemd/system/mios-embed-backfill.service	18	18	1	2	3f7ed4f2310f	STAY	local-scoped		0				0
 usr/lib/systemd/system/mios-embed-backfill.timer	1	2	2	21	61a292bb89cc	STAY	ai-header		0				0
 usr/lib/systemd/system/mios-endpoint.target	1	2	2	15	241112ca8b33	STAY	ai-header		0				0
-usr/lib/systemd/system/mios-fhs-sync.service	1	2	2	27	a8608d82a5ce	STAY	ai-header		0				0
+usr/lib/systemd/system/mios-fhs-sync.service	1	2	2	27	db9d97df60b3	STAY	ai-header		0				0
 usr/lib/systemd/system/mios-finetune-serve.service	1	2	2	34	d71cfaf17dc2	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/system.md	mios-src:d71cfaf17dc2	34	0
 usr/lib/systemd/system/mios-finetune-serve.service	20	20	1	11	0765b6335aee	STAY	local-scoped		0				0
 usr/lib/systemd/system/mios-firewall-ports.service	1	2	2	38	21bc62782206	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/system.md	mios-src:21bc62782206	38	0
@@ -25221,10 +25174,10 @@ usr/lib/systemd/system/ublue-nvctk-cdi.service.d/10-mios.conf	1	1	1	31	88bc31b44
 usr/lib/systemd/system/upower.service.d/10-mios-wsl2.conf	1	1	1	23	cfdacc65c271	STAY	ai-header		0				0
 usr/lib/systemd/system/upower.service.d/10-mios-wsl2.conf	3	4	2	20	4083ac15f74b	STAY	local-scoped		0				0
 usr/lib/systemd/system/user-.slice.d/10-mios-memory.conf	1	2	2	27	244a849be627	STAY	ai-header		0				0
-usr/lib/systemd/system/user@.service.d/10-mios-memory.conf	1	2	2	19	e37c0a516a92	STAY	ai-header		0				0
+usr/lib/systemd/system/user@.service.d/10-mios-memory.conf	1	2	2	19	46a7e6ce73a7	STAY	ai-header		0				0
 usr/lib/systemd/system/user@.service.d/10-mios-wsl-runtime.conf	1	1	1	26	ebda0c5320bf	STAY	ai-header		0				0
 usr/lib/systemd/system/user@.service.d/10-oom-kill.conf	1	2	2	15	c2bd3b6da6d1	STAY	ai-header		0				0
-usr/lib/systemd/system/ventulusd.service	1	2	2	25	518bf51267eb	STAY	ai-header		0				0
+usr/lib/systemd/system/ventulusd.service	1	2	2	23	daa0514844cb	STAY	ai-header		0				0
 usr/lib/systemd/system/ventulusd.service	6	10	5	52	e801242e4052	STAY	midsize-why		0				0
 usr/lib/systemd/system/ventulusd.service	14	20	7	89	04d7f08ae52f	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/system.md	mios-src:04d7f08ae52f	89	0
 usr/lib/systemd/system/ventulusd.service	24	27	4	49	a16e0a6b01cd	STAY	midsize-why		0				0
@@ -25251,7 +25204,7 @@ usr/lib/systemd/system/ventulusd.service	281	282	2	21	c3c24b4de845	STAY	local-sc
 usr/lib/systemd/system/ventulusd.service	284	284	1	9	f833c9a08c38	STAY	local-scoped		0				0
 usr/lib/systemd/system/ventulusd.service	288	293	6	65	f576d89fa850	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/system.md	mios-src:f576d89fa850	65	0
 usr/lib/systemd/system/ventulusd.service	297	300	4	34	e3d572f869e1	STAY	midsize-why		0				0
-usr/lib/systemd/system/ventulusd.service.d/10-mios.conf	1	4	4	50	bea5b380ded0	STAY	ai-header		0				0
+usr/lib/systemd/system/ventulusd.service.d/10-mios.conf	1	4	4	50	d6f44563fed9	STAY	ai-header		0				0
 usr/lib/systemd/system/ventulusd.service.d/10-mios.conf	8	9	2	20	dbcfac0e80f5	STAY	local-scoped		0				0
 usr/lib/systemd/system/ventulusd.service.d/10-mios.conf	11	11	1	5	befd6d7a293b	STAY	local-scoped		0				0
 usr/lib/systemd/system/ventulusd.service.d/10-mios.conf	18	22	5	60	ea9b7db89155	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/ventulusd.service.d.md	mios-src:ea9b7db89155	60	0
@@ -25274,7 +25227,7 @@ usr/lib/systemd/user/mios-launcher.service	1	2	2	35	ddda916972e2	STAY	ai-header	
 usr/lib/systemd/user/mios-launcher.service	4	23	20	133	cc8cbc40817f	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/user.md	mios-src:cc8cbc40817f	133	0
 usr/lib/systemd/user/mios-launcher.service	26	34	9	87	bdd0df1dee46	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/user.md	mios-src:bdd0df1dee46	87	0
 usr/lib/systemd/user/mios-launcher.service	39	42	4	47	09b634164cff	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/user.md	mios-src:09b634164cff	47	0
-usr/lib/systemd/user/mios-shell.service.d/10-mios-memory.conf	1	2	2	26	37d9e5f5a255	STAY	ai-header		0				0
+usr/lib/systemd/user/mios-shell.service.d/10-mios-memory.conf	1	2	2	26	95c195ac7787	STAY	ai-header		0				0
 usr/lib/systemd/user/mios-wakeword.service	1	1	1	19	612f0502690b	STAY	ai-header		0				0
 usr/lib/systemd/user/mios-wakeword.service	3	15	13	74	c3f267aca45a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/user.md	mios-src:c3f267aca45a	74	0
 usr/lib/systemd/user/mios-wakeword.service	27	30	4	13	3c6f72fca467	DROP	commented-out-code		0				0
@@ -25293,7 +25246,7 @@ usr/lib/systemd/user/mios-wsl-theme-bridge.service	18	20	3	29	49409beff03f	STAY	
 usr/lib/systemd/user/mios-wslg-env.service	1	2	2	31	aa4e8bf2d33b	STAY	ai-header		0				0
 usr/lib/systemd/user/mios-wslg-env.service	4	14	11	101	6baee29ec169	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/user.md	mios-src:6baee29ec169	101	0
 usr/lib/systemd/user/mios-wslg-env.service	24	25	2	28	297ff1272e81	STAY	midsize-why		0				0
-usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf	1	4	4	64	b6a2f2bb45cc	STAY	ai-header		0				0
+usr/lib/systemd/user/tmux-spawn-.scope.d/10-mios-oom.conf	1	4	4	63	884abcc19ced	STAY	ai-header		0				0
 usr/lib/systemd/user/xdg-desktop-portal-hyprland.service.d/10-mios.conf	1	2	2	25	8a0d6f956417	STAY	ai-header		0				0
 usr/lib/systemd/user/xdg-desktop-portal.service.d/10-mios.conf	1	2	2	24	0a26d2b9be96	STAY	ai-header		0				0
 usr/lib/systemd/user/xdg-document-portal.service.d/10-mios-restart.conf	1	5	5	67	71894c755969	MIGRATE_HEADER	overlong-hint		0				0
@@ -30972,7 +30925,7 @@ usr/libexec/mios/ui/webrtc_stream.py	171	171	1	8	1e88ff86dc5a	STAY	local-scoped	
 usr/libexec/mios/ui/webrtc_stream.py	193	193	1	7	6376f5293b61	STAY	local-scoped		0				0
 usr/libexec/mios/ui/webrtc_stream.py	199	199	1	8	ffd884ed7f60	STAY	local-scoped		0				0
 usr/libexec/mios/ui/webrtc_stream.py	214	214	1	6	6396e4ec4f08	STAY	local-scoped		0				0
-usr/libexec/mios/usb-release.sh	1	3	3	17	2bff9da15a15	STAY	ai-header		0				0
+usr/libexec/mios/usb-release.sh	1	3	3	17	d9f8ba8302a8	STAY	ai-header		0				0
 usr/libexec/mios/user-setup.sh	1	4	4	18	f6668f07fa28	STAY	ai-header		0				0
 usr/libexec/mios/user-setup.sh	49	49	1	1	810b9fff4f63	STAY	inline-scoped		0				0
 usr/libexec/mios/user-setup.sh	53	53	1	4	ddd650ee9954	STAY	inline-scoped		0				0
@@ -31324,7 +31277,7 @@ usr/libexec/mios/vfio-config.sh	729	729	1	2	0909aa44344d	DROP	banner		0				0
 usr/libexec/mios/vfio-config.sh	775	775	1	4	81a537342167	STAY	inline-scoped		0				0
 usr/libexec/mios/vfio-toggle.sh	1	3	3	16	d06a07b0aeda	STAY	ai-header		0				0
 usr/libexec/mios/vfio-toggle.sh	10	10	1	0	40a6ab89aa12	DROP	banner		0				0
-usr/libexec/mios/vfio/setup-looking-glass.py	1	3	3	87	85ca525ba6f2	MIGRATE_HEADER	overlong-hint		0				0
+usr/libexec/mios/vfio/setup-looking-glass.py	1	3	3	86	bc5d5a28660a	MIGRATE_HEADER	overlong-hint		0				0
 usr/libexec/mios/vfio/setup-looking-glass.py	4	30	26	232	9c367ea2f5b8	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/vfio.md	mios-src:9c367ea2f5b8	232	0
 usr/libexec/mios/vfio/setup-looking-glass.py	48	48	1	10	e824863b75d3	STAY	local-scoped		0				0
 usr/libexec/mios/vfio/setup-looking-glass.py	57	58	2	38	089f919a102f	STAY	midsize-why		0				0
@@ -31741,7 +31694,7 @@ usr/libexec/mios/win/xbox/build.py	545	545	1	6	f02a01389c94	STAY	inline-scoped		
 usr/libexec/mios/win/xbox/build.py	549	551	3	4	a2079ceeee60	STAY	midsize-why		0				0
 usr/libexec/mios/win/xbox/build.py	553	553	1	9	8463c43dcc69	STAY	inline-scoped		0				0
 usr/libexec/mios/win/xbox/build.py	557	558	2	33	1f0834561671	MIGRATE	fat-inline-narrative	note	0	usr/share/doc/mios/manual/xbox.md	mios-src:1f0834561671	33	0
-usr/libexec/mios/win/xbox/capture.py	1	4	4	131	0c2f94c6f65f	MIGRATE_HEADER	overlong-hint		0				0
+usr/libexec/mios/win/xbox/capture.py	1	4	4	130	ce5fbd2bf526	MIGRATE_HEADER	overlong-hint		0				0
 usr/libexec/mios/win/xbox/capture.py	5	5	1	12	39ed39ff49dc	STAY	local-scoped		0				0
 usr/libexec/mios/win/xbox/capture.py	18	18	1	2	8fd01c634ab8	STAY	inline-scoped		0				0
 usr/libexec/mios/win/xbox/capture.py	20	20	1	2	8fd01c634ab8	STAY	inline-scoped		0				0
@@ -32127,6 +32080,8 @@ usr/share/containers/systemd/users/mios-coderun-sandbox@.container	117	118	2	19	
 usr/share/containers/systemd/users/mios-coderun-sandbox@.container	121	121	1	12	a2fbefa500c6	STAY	local-scoped		0				0
 usr/share/containers/systemd/users/mios-microvm-krun@.container	1	2	2	20	85dc3f084b0e	STAY	ai-header		0				0
 usr/share/containers/systemd/users/mios-sunshine.container	1	3	3	17	6983649e6ddd	STAY	ai-header		0				0
+usr/share/git-core/templates/hooks/pre-commit.d/10-dgm-bench.sh	1	3	3	20	50b1a2ff7eca	STAY	ai-header		0				0
+usr/share/git-core/templates/hooks/pre-commit.d/10-dgm-bench.sh	11	11	1	3	1ce5f02a6f9f	STAY	inline-scoped		0				0
 usr/share/mios/agents/mios-a2o-golive.sh	1	2	2	29	201456dcc342	STAY	ai-header		0				0
 usr/share/mios/agents/mios-agents-dev.sh	1	2	2	21	fee0a3aa5d84	STAY	ai-header		0				0
 usr/share/mios/agents/mios-agents-dev.sh	4	4	1	1	1c3d1a72c976	STAY	inline-scoped		0				0
@@ -32159,7 +32114,7 @@ usr/share/mios/fan-control/daemon.toml	1	5	5	59	aee3cd0b171b	STAY	ai-header		0		
 usr/share/mios/fan-control/daemon.toml	11	13	3	24	0f343ba0d27f	STAY	midsize-why		0				0
 usr/share/mios/fan-control/daemon.toml	17	18	2	25	286f7e155fd1	STAY	local-scoped		0				0
 usr/share/mios/fan-control/daemon.toml	22	22	1	12	ee415f5e7f53	STAY	local-scoped		0				0
-usr/share/mios/fan-control/mios-fanctl.toml	1	3	3	35	5e0f0759cb94	STAY	ai-header		0				0
+usr/share/mios/fan-control/mios-fanctl.toml	1	3	3	35	7ccd019a0ab1	STAY	ai-header		0				0
 usr/share/mios/fan-control/mios-fanctl.toml	6	6	1	7	e34ef3a259d4	STAY	local-scoped		0				0
 usr/share/mios/fan-control/mios-fanctl.toml	10	10	1	13	1dc2e0b7cf08	STAY	local-scoped		0				0
 usr/share/mios/fan-control/mios-fanctl.toml	14	16	3	38	ecdbe2a37264	STAY	midsize-why		0				0
@@ -35288,7 +35243,7 @@ usr/share/mios/mios.toml	19306	19308	3	43	9f35234357aa	STAY	midsize-why		0				0
 usr/share/mios/mios.toml	19346	19346	1	17	82961e38acbf	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	19347	19349	3	37	a9d5e609da17	STAY	midsize-why		0				0
 usr/share/mios/mios.toml	19381	19384	4	79	8a514b201588	MIGRATE	narrative-rationale		0				0
-usr/share/mios/mios.toml	19408	19409	2	101	fbf3fad4c089	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/mios.md	mios-src:fbf3fad4c089	101	0
+usr/share/mios/mios.toml	19408	19409	2	100	f437a300a84e	MIGRATE	narrative-rationale		0				0
 usr/share/mios/mios.toml	19412	19412	1	10	0d2d71b39a0f	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	19413	19413	1	4	9c9b5659a11f	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	19416	19416	1	11	228bfbc9a455	STAY	inline-scoped		0				0
@@ -35703,7 +35658,7 @@ usr/share/mios/windows/Set-MiOSWallpaper.ps1	97	99	3	38	5b19d0777728	STAY	midsiz
 usr/share/mios/windows/Set-MiOSWallpaper.ps1	101	102	2	24	a4314b49b99f	STAY	local-scoped		0				0
 usr/share/mios/windows/Set-MiOSWallpaper.ps1	155	155	1	18	4754bd65ad0c	STAY	local-scoped		0				0
 usr/share/mios/windows/Setup-MiOSLanPortProxy.ps1	1	2	2	11	031b24ab0649	STAY	ai-header		0				0
-usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1	1	3	3	160	e86776684ef1	MIGRATE_HEADER	overlong-hint		0				0
+usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1	1	3	3	159	6b7332518874	MIGRATE_HEADER	overlong-hint		0				0
 usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1	7	7	1	5	4a65b910aa61	STAY	inline-scoped		0				0
 usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1	56	56	1	19	52ed53d72c7a	STAY	local-scoped		0				0
 usr/share/mios/windows/build/MiOS-Xbox-Capture.ps1	59	59	1	11	7ca93c6bb0c7	STAY	inline-scoped		0				0

@@ -13,7 +13,7 @@
 //            (width x height, bottom margin over the dock bar, centred like the dock, the dock's layer and namespace so
 //            the dock's glass and yield rules apply), so the keyboard sits INSIDE the expanded panel. The keyboard is
 //            the dock's child: SIGTERM (the dock collapsing) tears down both, and the keyboard dies with this process.
-// AI-related: usr/share/mios/mios.toml [desktop.dock] [desktop.dock.osk] [desktop.dock.targets] [remote.rdp] [vm.looking_glass],
+// AI-related: usr/share/mios/mios.toml,
 // usr/share/mios/quickshell/DockExpanded.qml, usr/share/mios/quickshell/DockConfig.qml, tools/native/mios-gen/src/nested_devices.rs,
 // usr/share/doc/mios/guides/hud.md, tests/test-dock-hud.py
 use serde_json::{json, Value as Json};

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Hermetic two-sided tests for mios-models-firstboot floating Hugging Face sources: with a mocked hub (fake curl on PATH, no network) a `resolve/main` entry with no SSOT sha256 is resolved to the current commit + upstream LFS sha256, fetched from that immutable commit, verified and recorded in models.tsv; a mismatching file and an entry with no provable digest are never installed.
-# AI-related: usr/libexec/mios/mios-models-firstboot, usr/share/mios/mios.toml [[ai.firstboot_models]]
+# AI-related: usr/libexec/mios/mios-models-firstboot, usr/share/mios/mios.toml [ai.firstboot_models]
 import hashlib
 import json
 import os

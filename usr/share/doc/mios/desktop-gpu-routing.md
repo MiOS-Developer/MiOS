@@ -1,5 +1,5 @@
 <!-- AI-hint: Per-boot-profile GPU display vs render routing: which GPU lights outputs (the dGPU session leaves the iGPU headless), which render node nested sessions use (dGPU boots -> the headless iGPU), where the login greeter and the kernel console appear, the boot display report, verification after a reboot and how to revert. -->
-<!-- AI-related: usr/share/mios/mios.toml [desktop.hyprland.hardware_profiles], [desktop.nested].render_node, [desktop.greeter.display_host], [units."mios-boot-display-report.service"], tools/native/mios-gen/src/{gpu_topology,wl_device_proxy,greeter,nested_session,render}.rs, usr/libexec/mios/mios-greeter-session, tests/test-gpu-display-routing.py -->
+<!-- AI-related: usr/share/mios/mios.toml, tools/native/mios-gen/src/gpu_topology.rs, tools/native/mios-gen/src/wl_device_proxy.rs, tools/native/mios-gen/src/greeter.rs, tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/render.rs, usr/libexec/mios/mios-greeter-session, tests/test-gpu-display-routing.py -->
 
 # Desktop GPU routing: display vs render per boot profile
 

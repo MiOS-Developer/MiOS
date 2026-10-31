@@ -1,5 +1,5 @@
 # AI-hint: Cargo manifest for mios-controls -- the ratatui TUI and CLI that draws keyboards, mice and controllers and edits the layered binding map (global bindings, Guide layer, Hypr3D room, tmux-os prefix keys, compositor tables) as a validated user-tier draft.
-# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml [keybindings.global] [desktop.controls], src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-inputd (config validator, evdev Device), tests/test-mios-controls.py
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml, src/mios-rs/mios-gate/src/keybinds.rs, tools/native/mios-inputd, tests/test-mios-controls.py
 
 [package]
 name = "mios-controls"

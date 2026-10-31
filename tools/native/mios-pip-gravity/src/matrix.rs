@@ -1,5 +1,5 @@
 // AI-hint: Fullscreen/Theatre matrix for PiP gravity (pure, no I/O). While any window on an output is maximized or fullscreen (the HUDs auto-hide and the reserved area collapses) and for fullscreen_release_ms afterwards, PiPs keep planning against the output's last ordinary bounds, so nothing jumps into the freed space and back. A fullscreen/maximized (or Theatre) PiP keeps its pre-fullscreen slot reserved in the plan, so its neighbours stay put and it restores into an empty slot.
-// AI-related: tools/native/mios-pip-gravity/src/main.rs, tools/native/mios-pip-gravity/src/gravity.rs, usr/share/mios/mios.toml [desktop.pip_gravity] fullscreen_release_ms, usr/share/doc/mios/desktop-pip.md
+// AI-related: tools/native/mios-pip-gravity/src/main.rs, tools/native/mios-pip-gravity/src/gravity.rs, usr/share/mios/mios.toml [desktop.pip_gravity], usr/share/doc/mios/desktop-pip.md
 // AI-functions: Latch::bounds, Latch::retain
 use crate::gravity::Rect;
 use std::collections::HashMap;

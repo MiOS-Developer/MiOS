@@ -1,5 +1,5 @@
 // AI-hint: mios-displays -- native backend of the MiOS Displays app. Lists Hyprland outputs, applies a validated monitor change live through `hyprctl eval` hl.monitor with a GNOME-style "keep these settings?" timed revert (detached watchdog), and saves the confirmed layout as a [desktop.hyprland.monitors] mios.d drop-in that mios-gen render-hyprland re-projects.
-// AI-related: tools/native/mios-displays/src/model.rs, usr/share/mios/displays/Displays.qml, usr/share/mios/mios.toml [desktop.displays] [desktop.hyprland.monitors], tools/native/mios-gen/src/render.rs, usr/share/applications/mios-displays.desktop
+// AI-related: tools/native/mios-displays/src/model.rs, usr/share/mios/displays/Displays.qml, usr/share/mios/mios.toml [desktop.displays], tools/native/mios-gen/src/render.rs, usr/share/applications/mios-displays.desktop
 // AI-functions: main, run, settings, hyprctl, monitors, cmd_list, cmd_apply, cmd_confirm, cmd_revert, cmd_save, cmd_gui, restore, write_fragment, projection_lines, saved_entries, merged_fragment, stage, save_to
 
 #![forbid(unsafe_code)]

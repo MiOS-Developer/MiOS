@@ -1,5 +1,5 @@
 // AI-hint: The one Apps and TUIs catalogue ([terminal.tui_launcher] + [[terminal.tuis]]) shared by the tmux-os launcher (mios-gen tmux-menu / tui-spec) and the miosd sessions selector: strict validation, console variants and the installed-only filter.
-// AI-related: /usr/share/mios/mios.toml [terminal.tui_launcher] [[terminal.tuis]], tools/native/mios-gen/src/tmux_os.rs, src/mios-rs/miosd/src/sessions.rs, usr/libexec/mios/mios-terminal
+// AI-related: usr/share/mios/mios.toml [terminal.tui_launcher], tools/native/mios-gen/src/tmux_os.rs, src/mios-rs/miosd/src/sessions.rs, usr/libexec/mios/mios-terminal
 // AI-functions: launcher, catalog, visible, is_installed, Tui::argv_for
 
 use toml::Value;

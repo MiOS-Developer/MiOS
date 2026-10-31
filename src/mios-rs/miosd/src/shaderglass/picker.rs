@@ -1,5 +1,5 @@
 // AI-hint: miosd shaderglass picker: the xdg-desktop-portal-hyprland custom picker (answers the supervisor's one-shot request with the target window, execs the stock picker for every other screencast), the one-shot request files, the per-class restore-token store and the xdph.conf projection.
-// AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/libexec/mios/mios-share-picker, usr/share/mios/mios.toml [desktop.hyprland.xdph] [desktop.shaderglass.capture]
+// AI-related: src/mios-rs/miosd/src/shaderglass.rs, usr/libexec/mios/mios-share-picker, usr/share/mios/mios.toml [desktop.hyprland.xdph]
 //! xdph runs `custom_picker_binary` for every ScreenCast SelectSources that has no valid restore data,
 //! with the window list in XDPH_WINDOW_SHARING_LIST (`<handle>[HC>]<class>[HT>]<title>[HE>]<hyprland
 //! window address, decimal>[HA>]` per window) and reads `[SELECTION]<flags>/window:<handle>` from stdout

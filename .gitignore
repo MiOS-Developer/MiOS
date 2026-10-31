@@ -563,6 +563,9 @@ usr/share/flatpak/*
 usr/share/flatpak/overrides/*
 !/usr/share/flatpak/overrides/global
 
+!/usr/share/git-core/
+!/usr/share/git-core/**
+
 usr/libexec/*
 !/usr/libexec/mios/
 !/usr/libexec/mios/**
@@ -1085,6 +1088,7 @@ usr/share/mios/virtio/*.iso
 !/src/mios-rdp-server/crates/mios-rdp-server/src/remote_storage.rs
 !/src/mios-rdp-server/crates/mios-rdp-server/src/remote_camera.rs
 !/tests/fixtures/mios-rdp/camera.py
+!/tests/fixtures/mios-rdp/obs.py
 !/usr/share/doc/mios/remote-camera.md
 
 !/tools/native/mios-gen/src/app_preflight.rs

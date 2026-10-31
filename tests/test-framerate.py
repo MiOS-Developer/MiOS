@@ -22,9 +22,9 @@
 #      half the desktop rate except unlocked; negative control: with the throttle off the wallpaper asks for about the
 #      desktop rate (Qt commits each step twice), and the daemon repairs it; a config reload is repaired;
 #      MIOS_FR_HYPR3D_SO adds the Hypr3D key parse (positive and negative).
-# AI-related: usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.mios-pacing], tools/native/mios-resolver/src/framerate.rs,
+# AI-related: usr/share/mios/mios.toml [desktop.framerate], tools/native/mios-resolver/src/framerate.rs,
 # tools/native/mios-gen/src/render.rs (framerate_lua), src/mios-rs/miosd/src/framerate.rs, usr/share/mios/hyprland/plugins/mios-pacing,
-# usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch, usr/share/mios/wallpaper/{Host,MeshGradient}.qml, tools/native/mios-wallpaperd
+# usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch, usr/share/mios/wallpaper/Host.qml, usr/share/mios/wallpaper/MeshGradient.qml, tools/native/mios-wallpaperd
 """Desktop frame-rate policy tests."""
 
 from __future__ import annotations
