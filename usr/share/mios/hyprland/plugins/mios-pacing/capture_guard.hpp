@@ -17,7 +17,7 @@
 // not touched (no rehoming: the guard changes no compositor state). Everything else passes through unchanged.
 // The decision is a pure function (verdict) so the host test checks it without a compositor.
 // AI-related: usr/share/mios/hyprland/plugins/mios-pacing/main.cpp, usr/share/mios/hyprland/plugins/mios-pacing/tests/capture_guard_test.cpp,
-// AI-related: usr/share/mios/mios.toml [desktop.hyprland.mios-pacing.config], usr/share/mios/quickshell/DockPreview.qml, tests/test-dock-hud.py
+// AI-related: usr/share/mios/mios.toml [desktop.hyprland.mios-pacing.config] [desktop.hyprland.compositor], tests/test-hyprland-capture-patch-live.py
 #pragma once
 
 namespace MiosCaptureGuard {
