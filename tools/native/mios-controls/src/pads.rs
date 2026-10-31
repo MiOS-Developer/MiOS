@@ -16,17 +16,33 @@ const EV_KEY: u16 = 1;
 const EV_REL: u16 = 2;
 const EV_ABS: u16 = 3;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PadConfig {
     pub stick_threshold: f64,
     pub trigger_threshold: f64,
     pub repeat_delay: Duration,
     pub repeat_every: Duration,
+    /// [desktop.controls].pad_names: read (and grab while capturing) only controllers whose name contains one of
+    /// these; empty = every controller
+    pub pad_names: Vec<String>,
+}
+
+impl PadConfig {
+    /// Whether the editor reads this controller.
+    pub fn wants(&self, d: &Info) -> bool {
+        wanted(&self.pad_names, &d.name)
+    }
+}
+
+/// A controller name passes the [desktop.controls].pad_names filter (empty = all; case-insensitive substring).
+pub fn wanted(names: &[String], name: &str) -> bool {
+    let n = name.to_lowercase();
+    names.is_empty() || names.iter().any(|w| !w.is_empty() && n.contains(&w.to_lowercase()))
 }
 
 impl Default for PadConfig {
     fn default() -> Self {
-        Self { stick_threshold: 0.5, trigger_threshold: 0.3, repeat_delay: Duration::from_millis(400), repeat_every: Duration::from_millis(120) }
+        Self { stick_threshold: 0.5, trigger_threshold: 0.3, repeat_delay: Duration::from_millis(400), repeat_every: Duration::from_millis(120), pad_names: Vec::new() }
     }
 }
 
@@ -219,10 +235,10 @@ fn dev_path(d: &Info) -> Option<PathBuf> {
 
 /// Open every controller: pads nobody else owns and private fixtures through mios-inputd's guarded Device, and
 /// mios-inputd's virtual pads read-only (their axis ranges come from the physical pad they clone).
-fn open_pads(infos: &[Info]) -> (Vec<Source>, Vec<String>) {
+fn open_pads(infos: &[Info], cfg: &PadConfig) -> (Vec<Source>, Vec<String>) {
     let mut out = Vec::new();
     let mut notes = Vec::new();
-    for d in infos.iter().filter(|d| d.kind == Kind::Controller) {
+    for d in infos.iter().filter(|d| d.kind == Kind::Controller && cfg.wants(d)) {
         let Some(path) = dev_path(d) else { continue };
         if d.is_virtual() {
             let physical = d.name.rsplit('-').next().map(|e| PathBuf::from("/dev/input").join(e));
@@ -298,7 +314,7 @@ pub fn spawn(tx: Sender<Msg>, cpu: Option<usize>, cfg: PadConfig) -> Option<PadH
 fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadConfig) {
     use rustix::event::{poll, PollFd, PollFlags};
     let mut infos = crate::devices::scan();
-    let (mut pads, notes) = open_pads(&infos);
+    let (mut pads, notes) = open_pads(&infos, &cfg);
     let _ = tx.send(Msg::PadStatus(if notes.is_empty() { "no controller".into() } else { format!("controllers: {}", notes.join("; ")) }));
     let mut mice: Vec<Source> = Vec::new();
     let mut capturing = false;
@@ -328,7 +344,7 @@ fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadCon
                     PadCmd::Quit => return,
                     PadCmd::Rescan => {
                         infos = crate::devices::scan();
-                        let (p, notes) = open_pads(&infos);
+                        let (p, notes) = open_pads(&infos, &cfg);
                         pads = p;
                         repeat.clear();
                         let _ = tx.send(Msg::PadStatus(if notes.is_empty() { "no controller".into() } else { format!("controllers: {}", notes.join("; ")) }));
@@ -454,6 +470,7 @@ mod tests {
         }
         let mut t = Translator::new(axes, &BTreeSet::new());
         assert_eq!(t.feed(1, 0x130, 1, &cfg), vec![("pad:BTN_SOUTH".into(), true)]);
+        assert!(wanted(&[], "anything") && wanted(&["Fixture".into()], "mios-input-fixture-a") && !wanted(&["fixture".into()], "OBINS AnnePro2"));
         assert!(t.feed(1, 0x130, 2, &cfg).is_empty(), "autorepeat value is not a press");
         assert_eq!(t.feed(1, 0x130, 0, &cfg), vec![("pad:BTN_SOUTH".into(), false)]);
         assert_eq!(t.feed(3, 16, 1, &cfg), vec![("pad:BTN_DPAD_RIGHT".into(), true)]);

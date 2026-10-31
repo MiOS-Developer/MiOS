@@ -9228,6 +9228,7 @@ trigger_threshold = 0.3            # analog trigger travel (0..1) that counts as
 nav_repeat_delay_ms = 400          # a held d-pad or stick direction repeats after this long...
 nav_repeat_ms = 120                # ...every this many ms (the pad thread wakes only while a direction is held)
 undo_depth = 64                    # draft edits kept for undo (u) and redo (U)
+pad_names = []                     # read (and grab while capturing) only controllers whose name contains one of these; [] = every controller
 # The user-tier paths the editor may write. Arrays are written whole (tiers replace arrays), maps per key. apply
 # refuses a draft that changes anything else in the user tier.
 editable = [

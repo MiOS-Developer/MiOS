@@ -3558,6 +3558,7 @@ desktop.controls.trigger_threshold  MIOS_DESKTOP_CONTROLS_TRIGGER_THRESHOLD
 desktop.controls.nav_repeat_delay_ms  MIOS_DESKTOP_CONTROLS_NAV_REPEAT_DELAY_MS
 desktop.controls.nav_repeat_ms  MIOS_DESKTOP_CONTROLS_NAV_REPEAT_MS
 desktop.controls.undo_depth  MIOS_DESKTOP_CONTROLS_UNDO_DEPTH
+desktop.controls.pad_names  MIOS_DESKTOP_CONTROLS_PAD_NAMES
 desktop.controls.editable  MIOS_DESKTOP_CONTROLS_EDITABLE
 desktop.controls.pad_nav.BTN_SOUTH  MIOS_DESKTOP_CONTROLS_PAD_NAV_BTN_SOUTH
 desktop.controls.pad_nav.BTN_EAST  MIOS_DESKTOP_CONTROLS_PAD_NAV_BTN_EAST
