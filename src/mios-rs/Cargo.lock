@@ -1296,6 +1296,9 @@ dependencies = [
 [[package]]
 name = "mios-ssot-walk"
 version = "0.3.0"
+dependencies = [
+ "toml",
+]
 
 [[package]]
 name = "mios-unit-gen"

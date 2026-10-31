@@ -783,7 +783,11 @@ pub mod emit_shell {
         format!("'{}'", s.replace('\'', "'\"'\"'"))
     }
 
-    pub fn emit_shell(merged: &Value, stack_offset: i64, ref_names_path: Option<&Path>) -> String {
+    /// The NAME -> value map `emit_shell` exports, values raw (unquoted): the
+    /// canonical exports, the MIOS_PG_BIND_ADDR derivation and every ${MIOS_*}
+    /// reference resolved. `mios-gen env-snapshot` renders this same map, so
+    /// the committed environment baseline and a login shell can never differ.
+    pub fn shell_exports(merged: &Value, stack_offset: i64) -> std::collections::BTreeMap<String, String> {
         let mut exports = build_exports_map(merged, stack_offset);
 
         if !exports.contains_key("MIOS_PG_BIND_ADDR") {
@@ -816,6 +820,11 @@ pub mod emit_shell {
         // Resolving here is what makes userenv.sh's native tier agree with its
         // Python fallback.
         resolve_cross_references(&mut exports);
+        exports
+    }
+
+    pub fn emit_shell(merged: &Value, stack_offset: i64, ref_names_path: Option<&Path>) -> String {
+        let exports = shell_exports(merged, stack_offset);
 
         let mut lines = Vec::new();
         for (k, v) in &exports {

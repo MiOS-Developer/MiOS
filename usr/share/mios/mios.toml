@@ -109,6 +109,16 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 55
+max_undeclared = 164
+max_undeclared_user = 19
+strict_no_write = [
+  "mios-boot-display-report.service",
+  "mios-embed-backfill.service",
+  "mios-node.service",
+  "mios-policy-arbiter.service",
+  "mios-rdp-usb@.service",
+]
+strict_no_write_user = []
 drift = [
   "hermes-worker-firstboot.service",
   "hermes-worker.path",
@@ -1201,10 +1211,10 @@ Environment = [
   # references each BARE, which the renderer leaves for systemd to expand.
   # Without a supply here systemd expanded all four to the empty string
   # (task_3362). `mios-gate protected-refs` fails the build on the general case.
-  "\"MIOS_FRONTIER_LANE_B_MODEL=${MIOS_FRONTIER_LANE_B_MODEL:-}\"",
-  "\"MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=${MIOS_FRONTIER_CLAUDE_EFFORT_FLAG:-}\"",
-  "\"MIOS_A2O_AGY_EFFORT_FLAG=${MIOS_A2O_AGY_EFFORT_FLAG:-}\"",
-  "\"MIOS_A2O_GEMINI_EFFORT_FLAG=${MIOS_A2O_GEMINI_EFFORT_FLAG:-}\"",
+  "\"MIOS_FRONTIER_LANE_B_MODEL=Gemini 3.5 Flash (High)\"",
+  "\"MIOS_FRONTIER_CLAUDE_EFFORT_FLAG=--effort {e}\"",
+  "\"MIOS_A2O_AGY_EFFORT_FLAG=\"",
+  "\"MIOS_A2O_GEMINI_EFFORT_FLAG=\"",
 ]
 EnvironmentFile = "-/etc/mios/install.env"
 TimeoutStartSec = "1200s"
@@ -1458,7 +1468,7 @@ Wants = "network-online.target"
 Type = "simple"
 User = "mios"
 Group = "mios"
-Environment = ["HF_HOME=/var/home/mios/.cache/huggingface", "MIOS_FINETUNE_SERVE_PORT=${MIOS_PORT_FINETUNE_SERVE:-11438}"]
+Environment = ["HF_HOME=/var/home/mios/.cache/huggingface", "MIOS_FINETUNE_SERVE_PORT=11438"]
 ExecStart = "/var/lib/mios/finetune/venv/bin/python /usr/libexec/mios/mios-finetune-serve"
 Restart = "on-failure"
 RestartSec = "5"
@@ -2617,7 +2627,7 @@ surfaces = [
   { generator = "usr/libexec/mios/mios-manual", check = "check_docs_ratchet_monotone", output = "usr/share/mios/reference/doc-ratchet-floor.tsv" },
   { generator = "tools/native/mios-gen/src/render.rs", check = "check_desktop_launchers", output = "usr/share/applications/*.desktop" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_ai_manifests_fresh", output = "automation/manifest.json" },
-  { generator = "usr/libexec/mios/mios-ai-metadata.py", check = "check_ai_metadata_fresh", output = "usr/share/mios/ai/v1/metadata.json" },
+  { generator = "tools/native/mios-gen/src/ai_metadata.rs", check = "check_ai_metadata_fresh", output = "usr/share/mios/ai/v1/metadata.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_blade_dropins", output = "usr/share/mios/dropins/" },
   { generator = "tools/native/mios-gen/src/pod_quadlets.rs", check = "check_pod_quadlets", output = "usr/share/containers/systemd/" },
   { generator = "tools/native/mios-gen/src/render.rs", check = "check_globals_generated", output = "automation/lib/globals.sh, automation/lib/globals.ps1" },
@@ -2660,7 +2670,7 @@ surfaces = [
   { generator = "tools/native/mios-gen/src/docs.rs", check = "check_standardize_docs", output = "specs/ (standardized header and footer of every spec page)" },
   { generator = "tools/native/mios-gen/src/docs.rs", check = "check_sync_wiki", output = "README.md, specs/Home.md, usr/share/mios/ai/INDEX.md and the specs/ pages that embed version metadata" },
   { generator = "tools/native/mios-gen/src/bootstrap_sync.rs", check = "check_bootstrap_sync", output = "the [bootstrap.sync] mirror files in mios-bootstrap" },
-  { generator = "tools/native/mios-gen/src/sync.rs", check = "check_resolved_env_lossless", output = "usr/share/mios/reference/env-baseline.txt" },
+  { generator = "tools/native/mios-gen/src/env_snapshot.rs", check = "check_resolved_env_lossless", output = "usr/share/mios/reference/env-baseline.txt" },
 ]
 
 # The scope this registry is measured against. `mios-gate projection-coverage`
@@ -17724,7 +17734,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 661
+max_tracked_mb    = 663
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -18963,7 +18973,7 @@ id = "ai.config"
 calls = [{ tool = "mios-ai-config", args = ["--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "env.baseline"
-snapshot = ["usr/libexec/mios/mios-env-snapshot", "usr/share/mios/reference/env-baseline.txt"]
+calls = [{ tool = "mios-gen", args = ["env-snapshot", "--root", "{root}", "--out", "{root}/usr/share/mios/reference/env-baseline.txt"] }]
 [[generation.sync.steps]]
 id = "ai.manifests"
 calls = [{ tool = "mios-gen", args = ["ai-manifest", "--root", "{root}"] }]

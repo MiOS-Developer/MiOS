@@ -34,6 +34,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-backup-remote.service` | `usr/lib/systemd/system` | MiOS Remote Delta Snapshot Backup Synchronization Service |
 | `mios-backup-remote.timer` | `usr/lib/systemd/system` | Daily Off-Site Remote Delta Snapshot Backup Timer |
 | `mios-boot-diag.service` | `usr/lib/systemd/system` | MiOS' Boot Diagnostic -- prints service status to console |
+| `mios-boot-display-report.service` | `usr/lib/systemd/system` | MiOS boot display report (fbcon, framebuffers, DRM order) |
 | `mios-bootc-switch.path` | `usr/lib/systemd/system` | MiOS' watch for Forgejo Runner build output -> bootc switch |
 | `mios-bootc-switch.service` | `usr/lib/systemd/system` | MiOS' bootc-switch from local build sentinel |
 | `mios-bound-images-firstboot.service` | `usr/lib/systemd/system` | First-boot Bound Images Provisioner |
@@ -229,5 +230,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (221 unit(s)) -->
+<!-- derived from tracked unit files (222 unit(s)) -->
 <!-- /MIOS-GEN:units -->

@@ -197,16 +197,13 @@ fn projection_of(root: &Path, tiers: &[(&str, &str)]) -> Result<Value, ResolverE
         }
         let directory = root.join(directory);
         if directory.exists() {
-            let mut paths = std::fs::read_dir(&directory)
-                .map_err(|e| ResolverError::TypeShape {
-                    msg: format!("{}: {e}", directory.display()),
-                })?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| ResolverError::TypeShape { msg: e.to_string() })?;
-            paths.retain(|path| path.is_file() && path.extension().is_some_and(|e| e == "toml"));
-            paths.sort();
-            layer_paths.extend(paths);
+            // An unreadable drop-in directory is an error here, never an empty tier.
+            std::fs::read_dir(&directory).map_err(|e| ResolverError::TypeShape {
+                msg: format!("{}: {e}", directory.display()),
+            })?;
+            // The resolver's own discovery: a private copy here layered hidden
+            // `.x.toml` leftovers into every generated projection (Law 13).
+            layer_paths.extend(layers::fragments(&directory));
         }
     }
     let mut merged = layers::merge_layer_files(&layer_paths)?;
@@ -402,10 +399,29 @@ mod projection_tests {
         assert_eq!(layered["a"]["v"].as_integer(), Some(2));
         assert!(layered.get("desktop").is_some());
     }
+
+    #[test]
+    fn projections_never_layer_hidden_or_foreign_fragments() {
+        let root = tempfile::tempdir().unwrap();
+        let p = |rel: &str, body: &str| {
+            let path = root.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        };
+        p("usr/share/mios/mios.toml", "[a]\nv = 1\n");
+        p("usr/lib/mios/mios.d/9-b.toml", "[a]\nv = 9\n");
+        p("usr/lib/mios/mios.d/10-a.toml", "[a]\nv = 10\n");
+        // An editor leftover sorts last and would win if it were a layer.
+        p("usr/lib/mios/mios.d/.zz-leftover.toml", "[a]\nv = 99\n");
+        p("usr/lib/mios/mios.d/zz.toml.bak", "[a]\nv = 98\n");
+        let merged = resolve_vendor_projection(root.path()).unwrap();
+        // Lexical by basename: 9-b sorts after 10-a, so it is the last real layer.
+        assert_eq!(merged["a"]["v"].as_integer(), Some(9), "{merged:?}");
+    }
 }
 
 // AI-hint: Shared output-aware opening geometry for native placement and the room.
-// AI-related: tools/native/mios-gen/src/hypr3d_spawn.rs, src/mios-rs/miosd/src/placement.rs
+// AI-related: mios-gen/src/hypr3d_spawn.rs, miosd/src/placement.rs
 pub mod window_opening {
     use toml::Value;
 

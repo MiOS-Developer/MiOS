@@ -2666,10 +2666,7 @@ pub mod render_hyprland {
             .filter(|s| Path::new(s).is_absolute() && !s.chars().any(char::is_control)
                 && !Path::new(s).components().any(|c| c == std::path::Component::ParentDir))
             .ok_or("desktop.hyprland.mios-appmenu.path must be an absolute FHS path")?;
-        Ok(format!("mios_section("mios-appmenu", function()
-hl.plugin.load({})
-end)
-", lua(&Value::String(path.into()))?))
+        Ok(format!("mios_section(\"mios-appmenu\", function()\nhl.plugin.load({})\nend)\n", lua(&Value::String(path.into()))?))
     }
 
     /// The design language ([theme.shell] comment block): the derived geometry every surface shares, from

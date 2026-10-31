@@ -769,3 +769,91 @@ fn shipped_user_session_units_match_ssot() {
     assert!(p.faithful.contains(&"mios-desktop.target".into()));
     assert!(p.faithful.contains(&"mios-wallpaper.service".into()));
 }
+
+/// Coverage ratchet: every shipped unit and drop-in is declared, or the count
+/// of those that are not sits exactly at its shrink-only ceiling.
+#[test]
+fn test_undeclared_units_sit_at_their_ceiling() {
+    let ssot = ssot();
+    for (user, key) in [(false, "max_undeclared"), (true, "max_undeclared_user")] {
+        let p = if user { mios_unit_gen::project_user(&root()) } else { project(&root()) }.unwrap();
+        let max = mios_unit_gen::projection_ceiling(&ssot, key).unwrap();
+        assert_eq!(
+            Some(p.undeclared.len()),
+            max,
+            "[unit_projection].{key} must equal the undeclared count (it only comes down): {:#?}",
+            p.undeclared
+        );
+        if user {
+            assert!(p.drifted.is_empty(), "[user_units.*] drifted: {:#?}", p.drifted);
+            assert!(p.missing.is_empty(), "[user_units.*] missing: {:#?}", p.missing);
+        }
+    }
+}
+
+/// XW51B8MG / 43B32AST: nothing the projection ships carries a placeholder
+/// systemd leaves unexpanded.
+#[test]
+fn test_projected_units_carry_no_unexpandable_placeholder() {
+    let ssot = ssot();
+    for rendered in [
+        mios_unit_gen::render_units(&ssot).unwrap(),
+        mios_unit_gen::render_user_units(&ssot).unwrap(),
+    ] {
+        for (name, body) in &rendered {
+            let found = mios_unit_gen::unexpandable_placeholders(body);
+            assert!(found.is_empty(), "{name}: {found:?}");
+        }
+    }
+}
+
+/// 6S2G69Q2: the strict-without-a-writable-path list is exactly the measured set.
+#[test]
+fn test_strict_no_write_list_is_exact() {
+    let ssot = ssot();
+    for (user, key) in [(false, "strict_no_write"), (true, "strict_no_write_user")] {
+        let rendered = if user {
+            mios_unit_gen::render_user_units(&ssot)
+        } else {
+            mios_unit_gen::render_units(&ssot)
+        }
+        .unwrap();
+        let mut listed = mios_unit_gen::projection_list(&ssot, key).unwrap();
+        listed.sort();
+        assert_eq!(mios_unit_gen::strict_without_write_grant(&rendered), listed, "[unit_projection].{key}");
+    }
+}
+
+/// The gate goes red on a hand-edited projected unit, and `--write` (the
+/// generator) is what puts it back. Run on a scratch copy of the real SSOT.
+#[test]
+fn test_hand_edited_projected_unit_is_drift_and_write_restores_it() {
+    let temp = tempfile::tempdir().unwrap();
+    write_fixture(temp.path(), "usr/share/mios/mios.toml", &ssot());
+    let written = mios_unit_gen::write_projection(temp.path(), false).unwrap();
+    assert!(!written.is_empty());
+    let p = project(temp.path()).unwrap();
+    assert!(p.drifted.iter().all(|d| drift_register(&ssot()).unwrap().contains(d)), "{:#?}", p.drifted);
+    let victim = p.faithful.first().expect("a faithful unit").clone();
+    let path = temp.path().join("usr/lib/systemd/system").join(&victim);
+    let mut body = fs::read_to_string(&path).unwrap();
+    body.push_str("# hand edit\n");
+    fs::write(&path, &body).unwrap();
+    let p = project(temp.path()).unwrap();
+    assert!(p.drifted.contains(&victim), "a hand edit of {victim} was not drift");
+    assert_eq!(mios_unit_gen::write_projection(temp.path(), false).unwrap(), vec![victim.clone()]);
+    assert!(project(temp.path()).unwrap().faithful.contains(&victim));
+}
+
+/// Every shipped unit's declaration is the importer's inverse: re-importing a
+/// faithful unit yields a declaration that renders the same file.
+#[test]
+fn test_reimport_of_every_faithful_unit_round_trips() {
+    let ssot = ssot();
+    let p = project(&root()).unwrap();
+    for name in &p.faithful {
+        let body = fs::read_to_string(root().join("usr/lib/systemd/system").join(name)).unwrap();
+        mios_unit_gen::import_unit(&ssot, "units", name, &body)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
+}

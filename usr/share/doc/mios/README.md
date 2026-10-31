@@ -151,6 +151,7 @@ they are correct by construction rather than by maintenance.
 | `usr/share/doc/mios/guides/deploy.md` | Documentation for deploying a built MiOS image -- the OCI artifact plus its RAW/ISO/QCOW2/VHDX/WSL2 disk forms -- onto bootc-managed or FHS Fedora hosts, and the Day-2 bootc lifecycle... |
 | `usr/share/doc/mios/guides/edge-node-join.md` | Operator guide for joining a Raspberry Pi / edge node to a MiOS council over the single outbound-dial port (agent-pipe, port key `agent_pipe`, MIOS_PORTS_AGENT_PIPE), using the three-layer mios.toml... |
 | `usr/share/doc/mios/guides/engineering.md` | Defines the MiOS engineering standards — the 5-phase deployment pipeline, the `automation/` build sub-phase execution order, the `mios.toml` package-management schema, and the build-time conventions... |
+| `usr/share/doc/mios/guides/hud.md` | The MiOS HUD's information architecture: the dock (localhost and sessions: apps, windows, sessions, VMs, moving windows between them) and the topbar (inbound, external, notifications, systems). What... |
 | `usr/share/doc/mios/guides/hummingbird-distroless.md` | MiOS architectural documentation: Hummingbird: Distroless Agent-Pipe Service. |
 | `usr/share/doc/mios/guides/inference-consolidation.md` | MiOS architectural documentation: Inference consolidation (WS-CONV-07). |
 | `usr/share/doc/mios/guides/install.md` | Documentation for ingesting the 'MiOS' knowledge base into any OpenAI-API-compatible runtime; procedures for local inference (mios-llm-light, port key `llm_light`), pgvector RAG ingestion, and evals... |
@@ -159,7 +160,7 @@ they are correct by construction rather than by maintenance.
 | `usr/share/doc/mios/guides/security.md` | Documentation of MiOS security hardening posture, mapping kernel boot parameters, sysctl values, SELinux modules/booleans, firewalld ports, and supply-chain controls to the exact files that enforce... |
 | `usr/share/doc/mios/guides/self-build.md` | Documentation for the MiOS self-build lifecycle, detailing the build chain, CI/CD workflows, and local build modes (Bootstrap, CI/CD, Windows, Linux/Justfile, in-place self-build, Ignition appliance)... |
 
-<!-- derived from the AI-hint headers of 14 file(s) matching usr/share/doc/mios/guides/*.md -->
+<!-- derived from the AI-hint headers of 15 file(s) matching usr/share/doc/mios/guides/*.md -->
 <!-- /MIOS-GEN:index:usr/share/doc/mios/guides/*.md -->
 
 ## upstream

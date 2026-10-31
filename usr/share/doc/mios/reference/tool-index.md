@@ -110,7 +110,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-egpu-hotplug` | Dynamic Thunderbolt/USB4 eGPU and PCIe accelerator hotplug handler and CDI refresher (task_439). |
 | `usr/libexec/mios/mios-enroll-secure-boot` | Enrolls the ublue/akmods Machine Owner Key (MOK) via mokutil to allow Secure Boot systems to load signed NVIDIA and ZFS kernel modules. |
 | `usr/libexec/mios/mios-env-probe` | Captures and formats the system's hardware, service status, and configuration facts into brief, full, or machine-readable formats to provide the Hermes agent with deterministic environmental context. |
-| `usr/libexec/mios/mios-env-snapshot` | Captures a clean-environment snapshot of resolved MIOS_* environment variables for lossless diffing. |
+| `usr/libexec/mios/mios-env-snapshot` | Thin glue for the env-baseline projection: prints the sealed snapshot of the resolved MIOS_* environment (one escaped KEY=value per line) by exec'ing the native `mios-gen env-snapshot`, which owns... |
 | `usr/libexec/mios/mios-everything` | A high-speed wrapper for the Voidtools Everything CLI that provides agents with sub-100ms access to the full Windows NTFS index for file discovery across all mounted drives. |
 | `usr/libexec/mios/mios-find` | Provides high-speed fuzzy lookup against the cached environment inventory to resolve "launch <app>" requests into executable commands in <100ms, bypassing slow filesystem crawls. |
 | `usr/libexec/mios/mios-finetune` | Python script for hardware-agnostic LoRA/SFT fine-tuning of the MiOS model; detects CUDA/ROCm/MPS/CPU to train a local adapter from the mios-finetune-dataset and exports it as a GGUF LoRA adapter for... |

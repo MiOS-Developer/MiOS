@@ -3761,10 +3761,21 @@ check_globals_generated() {
     fi
 }
 
+# --- the [generation.sync] copy stages hold their sources' bytes (sync.rs's own projection) ---
+check_sync_copies() {
+    local bin out
+    bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || { _violation "$_GEN_MISSING"; return; }
+    if out="$("$bin" sync --root "$ROOT" --check-copies 2>&1)"; then
+        echo "[98-drift-checks]   ${out#[mios-gen sync] }"
+    else
+        _violations_from "sync copy stage: " "$out"
+    fi
+}
+
 check_ai_metadata_fresh() {
-    _need_python || return 0
-    local out
-    if out="$(cd "$ROOT" && python3 usr/libexec/mios/mios-ai-metadata.py --root "$ROOT" --check-fresh 2>&1)"; then
+    local bin out
+    bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || { _violation "$_GEN_MISSING"; return; }
+    if out="$(cd "$ROOT" && "$bin" ai-metadata --root "$ROOT" --check-fresh 2>&1)"; then
         echo "[98-drift-checks]   usr/share/mios/ai/v1/metadata.json regenerates byte-identically from the tracked AI headers"
     else
         printf '%s\n' "$out" | head -n 48 >&2
@@ -4059,6 +4070,7 @@ main() {
     check_skip_list_covered
     check_ai_manifests_fresh
     check_ai_metadata_fresh
+    check_sync_copies
     check_ports_category_schema
     check_globals_generated
     check_ci_suite_coverage
