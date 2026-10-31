@@ -103,7 +103,7 @@ QS.PanelWindow {
     // window_rounding = false keeps mobile windows square. The tabs' corner/fillet rules follow it.
     readonly property real windowRadius: mobile && mobileCfg.window_rounding !== false ? Glass.rounding : 0
     // Mobile: the row is one touch target tall (the tabs' height); desktop: the bar height.
-    readonly property real rowHeight: theme.topHeight
+    readonly property real rowHeight: Glass.bar
     // Remote effects profile for this output (Glass.profileFor): "lite" where [desktop.mobile.remote_effects]
     // applies (the layer namespace below then selects the cheaper hyprglass preset), else "full". Published in
     // the "mobile" IPC state.
@@ -111,12 +111,14 @@ QS.PanelWindow {
     readonly property bool dotHover: leftTab.dot.hovered || rightTab.dot.hovered
     readonly property bool dotIcons: !Glass.iconOnHover || dotHover
     // The window's left/right inset on a mobile output (workspace gaps_out); the tabs line up with it.
-    readonly property int windowInset: mobileCfg.gaps_out_px !== undefined ? mobileCfg.gaps_out_px : theme.edgeMargin
+    readonly property int windowInset: mobileCfg.gaps_out_px !== undefined ? mobileCfg.gaps_out_px : Glass.gap
     readonly property var controls: Array.isArray(mobileCfg.window_controls) ? mobileCfg.window_controls : []
 
     // ---- mobile island geometry (output-local compositor px) -------------------------------------------------------
-    readonly property real islandMargin: theme.edgeMargin * ui         // the global edge margin, as everywhere
-    readonly property real islandTop: Math.round(theme.edgeMargin * ui) // margins.top
+    readonly property real islandMargin: Glass.gap * ui         // the global edge margin, as everywhere
+    // margins.top: one gap above a window's raised controls tab -- and flush with the top edge over a fullscreen window,
+    // whose controls tab hangs from the screen's top edge (hyprbars inset tab): the row keeps the tab's centre line.
+    readonly property real islandTop: Math.round((overFullscreen ? 0 : Glass.gap) * ui)
     readonly property real islandHeight: Math.round(rowHeight * ui)
     readonly property real tabBarHeight: Glass.barHeight
     // The controls-tab boxes (fillets excluded) of a window from its goal geometry, by the plugin's own rule
@@ -366,28 +368,29 @@ QS.PanelWindow {
     // fills the room between the window tabs (islandGoal); the rest of the surface is transparent and takes no input.
     anchors.left: mobile
     anchors.right: mobile
-    margins.top: Math.round(theme.edgeMargin * ui)
+    margins.top: islandTop
     implicitWidth: mobile ? outputWidth
-                          : Math.min(Math.ceil((row.implicitWidth + 2 * theme.edgeMargin) * ui), outputWidth - Math.round(2 * theme.edgeMargin * ui))
+                          : Math.min(Math.ceil((row.implicitWidth + Glass.bar) * ui), outputWidth - Math.round(2 * Glass.gap * ui))
     implicitHeight: Math.round(rowHeight * ui)
-    // Same rule as the dock: the compositor adds margins.top, so one edge margin separates bar and windows.
-    // 8 px clearance between pill and windows on mobile too. Under a fullscreen window the zone is 0 (nothing
+    // Design language ([theme.shell]): the zone is the bar row itself and the compositor adds margins.top, so a window
+    // under the row starts at edge margin + bar -- its controls tab (bar tall, hyprbars) rises exactly into the row and
+    // shares the island's and the app-menu pills' vertical centre (Glass.barCentre); desktop and mobile alike. Under a fullscreen window the zone is 0 (nothing
     // reserved). The mode stays Normal: Quickshell sets it to Normal whenever exclusiveZone is written, so a second
     // binding switching it to Ignore races that write and could leave the zone ignored. EdgeReveal's guard re-asserts
     // the zone (reserveNudge, reserveRebuild) when the compositor lost it.
-    exclusiveZone: zoneFor(overFullscreen, rowHeight, theme.edgeMargin, ui) + (overFullscreen ? 0 : reserveNudge)
+    exclusiveZone: zoneFor(overFullscreen, rowHeight, 0, ui) + (overFullscreen ? 0 : reserveNudge)
     exclusionMode: QS.ExclusionMode.Normal
     function zoneFor(fs, row, margin, scale) { return fs ? 0 : Math.round((row + margin) * scale) }
     property int reserveNudge: 0
     property bool reserveRebuild: false
     // What the compositor then reserves on the top edge (the zone plus margins.top), from the current inputs.
     function reserveExpectedNow() {
-        const z = zoneFor(overFullscreen, rowHeight, theme.edgeMargin, ui)
-        return z > 0 ? z + Math.round(theme.edgeMargin * ui) : 0
+        const z = zoneFor(overFullscreen, rowHeight, 0, ui)
+        return z > 0 ? z + Math.round(Glass.gap * ui) : 0
     }
     function reserveDiag() {
         return { zone: exclusiveZone, mode: exclusionMode, layer: WlrLayershell.layer, visible: visible,
-                 nudge: reserveNudge, over_fullscreen: overFullscreen, ui: ui, row: rowHeight, margin: theme.edgeMargin }
+                 nudge: reserveNudge, over_fullscreen: overFullscreen, ui: ui, row: rowHeight, margin: Glass.gap }
     }
     function nudgeReserve() { reserveNudge = 1; reserveNudgeBack.restart() }
     function recreateReserve() { reserveRebuild = true; Qt.callLater(() => { pill.reserveRebuild = false }) }
@@ -416,7 +419,7 @@ QS.PanelWindow {
         const h = Math.round(rowHeight * ui)
         const g = islandGoal
         if (mobile && g) ShellGeometry.setIsland(screen.name, Math.round(g.x), islandTop, Math.round(g.w), h)
-        else ShellGeometry.setIsland(screen.name, Math.round(hudScreenX), Math.round(theme.edgeMargin * ui), width, h)
+        else ShellGeometry.setIsland(screen.name, Math.round(hudScreenX), islandTop, width, h)
     }
     onIslandTargetChanged: publishIsland()
     onWidthChanged: publishIsland()
@@ -426,7 +429,7 @@ QS.PanelWindow {
     // The island as drawn now (mobile: animated between the tabs), its radius and whether it is mapped: the
     // notification blob (Notifications.qml) starts as this rectangle and melts back into it.
     readonly property var drawnIsland: !screen ? null : ({
-        x: mobile ? islandX : hudScreenX, y: Math.round(theme.edgeMargin * ui),
+        x: mobile ? islandX : hudScreenX, y: islandTop,
         width: mobile ? Math.max(0, islandW) : width, height: Math.round(rowHeight * ui),
         radius: island.radius * ui, shown: visible && backingWindowVisible })
     onDrawnIslandChanged: if (drawnIsland) ShellGeometry.setDrawnIsland(screen.name, drawnIsland)
@@ -560,7 +563,7 @@ QS.PanelWindow {
         font.family: pill.theme.fontFamily
         font.pixelSize: pill.theme.fontSize
         verticalAlignment: Text.AlignVCenter
-        height: pill.theme.topHeight
+        height: Glass.bar
     }
     component Hit: MouseArea {
         anchors.fill: parent
@@ -593,7 +596,7 @@ QS.PanelWindow {
         scale: pill.ui
         transformOrigin: Item.TopLeft
 
-        Rectangle {
+        GlassSurface {
             id: island
             // Desktop: the whole surface. Mobile: the room between the window tabs (islandX/islandW, animated).
             anchors.top: parent.top
@@ -603,8 +606,6 @@ QS.PanelWindow {
             clip: pill.mobile
             // The window-control tab's material and corner rule (Glass.qml); no outline: the tab has none,
             // its rim is the compositor's hyprglass fresnel.
-            radius: Glass.cornerFor(height)
-            color: Glass.fill
             HoverHandler { onHoveredChanged: if (pill.reveal) pill.reveal.islandHovered = hovered }
             // The wheel anywhere on the island steps the volume (items with their own wheel action keep it).
             WheelHandler {
@@ -616,7 +617,7 @@ QS.PanelWindow {
             Row {
                 id: row
                 anchors.centerIn: parent
-                spacing: pill.theme.edgeMargin + 4
+                spacing: Glass.gap
 
                 Glyph {
                     visible: !pill.mobile && pill.shown("workspaces")
@@ -628,7 +629,7 @@ QS.PanelWindow {
                     visible: pill.shown("network")
                     text: pill.online ? "\u{f06f3}" : "\u{f06f4}"
                     color: pill.online ? pill.theme.fg : pill.theme.muted
-                    Hit { onClicked: pill.run("network") }
+                    Hit { onClicked: pill.togglePopup("network", "network") }
                 }
                 Glyph {
                     id: soundGlyph
@@ -639,14 +640,14 @@ QS.PanelWindow {
                     Hit {
                         onClicked: mouse => {
                             if (mouse.button === Qt.RightButton && pill.sink.audio) pill.sink.audio.muted = !pill.sink.audio.muted
-                            else pill.run("sound")
+                            else pill.togglePopup("sound", "sound")
                         }
                         onWheel: wheel => pill.volumeWheel(wheel.angleDelta.y)
                     }
                 }
                 Row {
                     id: batteryItems
-                    spacing: pill.theme.edgeMargin
+                    spacing: Glass.gap
                     HoverHandler { id: batteryItemsHover }
                     Repeater {
                         model: pill.shown("batteries") ? pill.batteryDevices : []
@@ -667,7 +668,7 @@ QS.PanelWindow {
                     keys: pill.mobile ? Sysmon.mobileItems : Sysmon.items
                     compact: pill.mobile
                     // mobile: what is left of the island between the tabs after the other items
-                    maxWidth: pill.mobile ? Math.max(0, island.width - 2 * pill.theme.edgeMargin - pill.rowFixedWidth) : 1e6
+                    maxWidth: pill.mobile ? Math.max(0, island.width - 2 * Glass.gap - pill.rowFixedWidth) : 1e6
                     onTapped: pill.popup = pill.popup === "sysmon" ? "" : "sysmon"
                 }
                 Glyph {
@@ -679,7 +680,7 @@ QS.PanelWindow {
 
                 Rectangle {
                     visible: (dateGlyph.visible || timeGlyph.visible) && (netGlyph.visible || soundGlyph.visible || batteryItems.width > 0 || sysmonItems.visible || fpsGlyph.visible)
-                    width: 1; height: pill.theme.topHeight / 2; y: (pill.theme.topHeight - height) / 2
+                    width: Glass.hairline; height: Glass.control; y: (Glass.bar - height) / 2
                     color: pill.theme.outlineColor
                 }
                 Glyph {
@@ -698,7 +699,7 @@ QS.PanelWindow {
                 }
                 Rectangle {
                     visible: dateGlyph.visible || timeGlyph.visible || batteryItems.width > 0 || netGlyph.visible || soundGlyph.visible || sysmonItems.visible || fpsGlyph.visible
-                    width: 1; height: pill.theme.topHeight / 2; y: (pill.theme.topHeight - height) / 2
+                    width: Glass.hairline; height: Glass.control; y: (Glass.bar - height) / 2
                     color: pill.theme.outlineColor
                 }
                 Glyph {
@@ -723,13 +724,12 @@ QS.PanelWindow {
             // The scroll-volume percentage: a chip of the island's own glass centred over the row, shown for
             // volume_osd_ms after every volume or mute change while the sound item (which carries the level itself)
             // is hidden or the island is too narrow for it (mobile). Above the row so a crowded row never hides it.
-            Rectangle {
+            GlassSurface {
                 id: volumeChip
                 visible: pill.volumeOsd && pill.volumePct >= 0 && (!soundGlyph.visible || pill.mobile)
                 anchors.centerIn: parent
-                height: parent.height - 4
-                width: Math.min(parent.width - 4, volumeChipText.implicitWidth + 2 * pill.theme.edgeMargin + 8)
-                radius: Glass.cornerFor(height)
+                height: Glass.control   // a chip inside the bar: concentric with the island (inset all round)
+                width: Math.min(parent.width - 2 * Glass.inset, volumeChipText.implicitWidth + 2 * Glass.inset)
                 color: pill.theme.withAlpha(Glass.fillHex, pill.theme.notificationOpacity)
                 Glyph {
                     id: volumeChipText
@@ -739,7 +739,7 @@ QS.PanelWindow {
                     color: pill.theme.fg
                     Accessible.name: "Volume " + (pill.volumeMuted ? "muted" : pill.volumePct + "%")
                 }
-                Hit { onClicked: pill.run("sound") }
+                Hit { onClicked: pill.togglePopup("sound", "sound") }
             }
         }
         Tab {
@@ -771,25 +771,24 @@ QS.PanelWindow {
         duration: pill.popupMs
         panelWidth: 220
         panelHeight: Math.max(controlsColumn.implicitHeight,
-                              ((pill.mobileCfg.app_menu !== false && pill.appMenuRows.length > 0 ? 1 : 0) + pill.controls.length) * (pill.theme.searchRowHeight - 8)) + 2 * pill.theme.edgeMargin
+                              ((pill.mobileCfg.app_menu !== false && pill.appMenuRows.length > 0 ? 1 : 0) + pill.controls.length) * Glass.bar) + 2 * Glass.panelPad
         Item {
             anchors.fill: parent
             Column {
                 id: controlsColumn
-                x: pill.theme.edgeMargin
-                y: pill.theme.edgeMargin
-                width: parent.width - 2 * pill.theme.edgeMargin
-                Rectangle {
+                x: Glass.panelPad
+                y: Glass.panelPad
+                width: parent.width - 2 * Glass.panelPad
+                GlassSurface {
                     // Entry into the app's exported menu (appmenu.json), shown when it has one.
                     visible: pill.mobileCfg.app_menu !== false && pill.appMenuRows.length > 0
                     width: controlsColumn.width
-                    height: visible ? pill.theme.searchRowHeight - 8 : 0
-                    radius: height / 2
+                    height: visible ? Glass.bar : 0
                     color: appMenuHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
                     Row {
                         anchors.verticalCenter: parent.verticalCenter
-                        x: pill.theme.edgeMargin
-                        spacing: pill.theme.edgeMargin
+                        x: Glass.gap
+                        spacing: Glass.gap
                         Glyph { text: "\u2630"; textFormat: Text.PlainText; height: parent.parent.height }
                         Glyph { text: "App menu"; textFormat: Text.PlainText; height: parent.parent.height }
                     }
@@ -803,16 +802,15 @@ QS.PanelWindow {
                 }
                 Repeater {
                     model: pill.controls
-                    delegate: Rectangle {
+                    delegate: GlassSurface {
                         required property var modelData
                         width: controlsColumn.width
-                        height: pill.theme.searchRowHeight - 8
-                        radius: height / 2
+                        height: Glass.bar
                         color: controlHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
                         Row {
                             anchors.verticalCenter: parent.verticalCenter
-                            x: pill.theme.edgeMargin
-                            spacing: pill.theme.edgeMargin
+                            x: Glass.gap
+                            spacing: Glass.gap
                             Glyph { text: modelData.icon || ""; textFormat: Text.PlainText; height: parent.parent.height }
                             Glyph { text: modelData.label || ""; textFormat: Text.PlainText; height: parent.parent.height }
                         }
@@ -838,11 +836,11 @@ QS.PanelWindow {
         align: "left"
         open: pill.popup === "appmenu" && pill.shoulders
         duration: pill.popupMs
-        panelWidth: Math.min(280, pill.width - 2 * pill.theme.edgeMargin)
-        panelHeight: Math.min(appMenuColumn.implicitHeight, Math.round(pill.screen.height * 0.6)) + 2 * pill.theme.edgeMargin
+        panelWidth: Math.min(280, pill.width - 2 * Glass.gap)
+        panelHeight: Math.min(appMenuColumn.implicitHeight, Math.round(pill.screen.height * pill.theme.drawerHeightFraction)) + 2 * Glass.panelPad
         Flickable {
             anchors.fill: parent
-            anchors.margins: pill.theme.edgeMargin
+            anchors.margins: Glass.panelPad
             contentHeight: appMenuColumn.implicitHeight
             clip: true
             Column {
@@ -854,31 +852,30 @@ QS.PanelWindow {
                     textFormat: Text.PlainText // app-supplied: never markup
                     font.bold: true
                     elide: Text.ElideRight
-                    height: pill.theme.searchRowHeight - 8
-                    leftPadding: pill.theme.edgeMargin
+                    height: Glass.bar
+                    leftPadding: Glass.gap
                 }
                 Glyph {
                     visible: pill.appMenuRows.length === 0
                     text: "No app menu"
                     color: pill.theme.muted
-                    height: visible ? pill.theme.searchRowHeight - 8 : 0
-                    leftPadding: pill.theme.edgeMargin
+                    height: visible ? Glass.bar : 0
+                    leftPadding: Glass.gap
                 }
                 Repeater {
                     model: pill.appMenuRows
-                    delegate: Rectangle {
+                    delegate: GlassSurface {
                         id: menuRow
                         required property var modelData
                         readonly property var it: modelData.item
                         readonly property bool hasSub: !modelData.header && Array.isArray(it.submenu) && it.submenu.length > 0
                         readonly property bool active: !modelData.header && !hasSub && it.enabled !== false
                         width: appMenuColumn.width
-                        height: pill.theme.searchRowHeight - 12
-                        radius: height / 2
+                        height: Glass.bar
                         color: menuHit.containsMouse && active ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
                         Glyph {
-                            x: pill.theme.edgeMargin + Math.max(0, menuRow.modelData.depth - 1) * 14
-                            width: parent.width - x - pill.theme.edgeMargin
+                            x: Glass.gap + Math.max(0, menuRow.modelData.depth - 1) * Glass.panelPad
+                            width: parent.width - x - Glass.gap
                             height: parent.height
                             text: menuRow.it.label
                             textFormat: Text.PlainText // app-supplied: never markup
@@ -941,6 +938,8 @@ QS.PanelWindow {
         enabled: pill.onFocusedScreen
         function openCalendar(): void { pill.popup = "calendar" }
         function openPower(): void { pill.popup = "power" }
+        function openSound(): void { pill.popup = "sound" }
+        function openNetwork(): void { pill.popup = "network" }
         function openSysmon(): void { pill.popup = "sysmon" }
         function openSettings(): void { pill.popup = "settings" }
         function openBatteries(): void { pill.popup = "batteries" }
@@ -971,23 +970,22 @@ QS.PanelWindow {
     }
     // A click anywhere outside the island and its open popup dismisses the popup.
     HyprlandFocusGrab {
-        windows: [pill, calendarPanel, powerPanel, controlsPanel, appMenuPanel, sysmonPanel, settingsPanel, batteriesPanel]
+        windows: [pill, calendarPanel, powerPanel, soundPanel, networkPanel, controlsPanel, appMenuPanel, sysmonPanel, settingsPanel, batteriesPanel]
         active: pill.popup !== ""
         onCleared: pill.popup = ""
     }
 
-    component SettingsAction: Rectangle {
+    component SettingsAction: GlassSurface {
         id: action
         property string label: ""
         property bool selected: false
         signal triggered()
         width: parent.width
-        height: pill.theme.searchRowHeight - 8
-        radius: height / 2
-        color: actionHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : Glass.fill
+        height: Glass.bar
+        color: actionHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
         Text {
             anchors.fill: parent
-            anchors.margins: pill.theme.edgeMargin
+            anchors.margins: Glass.gap
             verticalAlignment: Text.AlignVCenter
             text: action.label
             textFormat: Text.PlainText
@@ -1006,12 +1004,12 @@ QS.PanelWindow {
         open: pill.popup === "settings"
         duration: pill.popupMs
         panelWidth: 280
-        panelHeight: settingsRows.implicitHeight + 2 * pill.theme.edgeMargin
+        panelHeight: settingsRows.implicitHeight + 2 * Glass.panelPad
         Column {
             id: settingsRows
-            x: pill.theme.edgeMargin; y: x
+            x: Glass.panelPad; y: x
             width: settingsPanel.panelWidth - 2 * x
-            spacing: pill.theme.edgeMargin / 2
+            spacing: 0
             Glyph { text: "HUD appearance · all outputs"; font.bold: true }
             Repeater {
                 model: pill.shellState.topbarOptions || []
@@ -1035,11 +1033,11 @@ QS.PanelWindow {
         trigger: batteryItems
         open: pill.popup === "batteries" || pill.batteryHoverOpen
         duration: pill.popupMs
-        panelWidth: Math.min(340, (pill.screen ? pill.screen.width : 1920) - 2 * pill.theme.edgeMargin)
-        panelHeight: batteryRows.implicitHeight + 2 * pill.theme.edgeMargin
+        panelWidth: Math.min(340, pill.outputWidth - 2 * Glass.gap)
+        panelHeight: batteryRows.implicitHeight + 2 * Glass.panelPad
         Column {
             id: batteryRows
-            x: pill.theme.edgeMargin; y: x; width: batteriesPanel.panelWidth - 2 * x
+            x: Glass.panelPad; y: x; width: batteriesPanel.panelWidth - 2 * x
             HoverHandler { onHoveredChanged: pill.batteryPanelHovered = hovered }
             Glyph { text: "Device batteries"; font.bold: true }
             Repeater {
@@ -1048,17 +1046,16 @@ QS.PanelWindow {
                     id: batteryRow
                     required property var modelData
                     width: batteryRows.width
-                    height: Math.max(pill.theme.searchRowHeight, batteryDetails.implicitHeight + 2 * pill.theme.edgeMargin)
-                    Rectangle {
+                    height: Math.max(Glass.bar, batteryDetails.implicitHeight + 2 * Glass.inset)
+                    GlassSurface {
                         anchors.fill: parent
-                        radius: pill.theme.radius
                         color: batteryHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
                     }
                     Glyph {
                         id: deviceIcon
-                        x: pill.theme.edgeMargin
+                        x: Glass.gap
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.max(pill.theme.topHeight, implicitWidth + pill.theme.edgeMargin)
+                        width: Math.max(Glass.bar, implicitWidth + Glass.gap)
                         text: pill.batteryGlyphs(batteryRow.modelData)
                         color: batteryRow.modelData.state === UPowerDeviceState.Charging ? pill.theme.success : pill.theme.fg
                     }
@@ -1066,7 +1063,7 @@ QS.PanelWindow {
                         id: batteryDetails
                         anchors.left: deviceIcon.right
                         anchors.right: parent.right
-                        anchors.rightMargin: pill.theme.edgeMargin
+                        anchors.rightMargin: Glass.gap
                         anchors.verticalCenter: parent.verticalCenter
                         Text {
                             width: parent.width
@@ -1111,8 +1108,8 @@ QS.PanelWindow {
         trigger: sysmonItems
         open: (pill.popup === "sysmon" || pill.sysmonHoverOpen) && sysmonItems.visible
         duration: pill.popupMs
-        panelWidth: Math.min(sysmonDetails.implicitWidth + 4 * pill.theme.edgeMargin, (pill.screen ? pill.screen.width : 1920) - 2 * pill.theme.edgeMargin)
-        panelHeight: sysmonDetails.implicitHeight + 4 * pill.theme.edgeMargin
+        panelWidth: Math.min(sysmonDetails.implicitWidth + 2 * Glass.panelPad, pill.outputWidth - 2 * Glass.gap)
+        panelHeight: sysmonDetails.implicitHeight + 2 * Glass.panelPad
         // hover anywhere the popup takes the pointer (its glass: over the trigger as it grows, then the panel)
         Item {
             parent: sysmonPanel.contentItem
@@ -1125,7 +1122,7 @@ QS.PanelWindow {
                 id: sysmonDetails
                 theme: pill.theme
                 live: sysmonPanel.open || sysmonPanel.visible
-                x: 2 * pill.theme.edgeMargin
+                x: Glass.panelPad
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -1139,18 +1136,18 @@ QS.PanelWindow {
         trigger: pill.mobile ? timeGlyph : dateGlyph
         open: pill.popup === "calendar"
         duration: pill.popupMs
-        panelWidth: calendar.implicitWidth + 2 * pill.theme.edgeMargin * 2
-        panelHeight: calendar.implicitHeight + 2 * pill.theme.edgeMargin * 2
+        panelWidth: calendar.implicitWidth + 2 * Glass.panelPad
+        panelHeight: calendar.implicitHeight + 2 * Glass.panelPad
         Item {
             anchors.fill: parent
             Column {
                 id: calendar
                 anchors.centerIn: parent
-                spacing: pill.theme.edgeMargin
+                spacing: Glass.inset
                 property date shown: new Date(pill.now.getFullYear(), pill.now.getMonth(), 1)
                 readonly property var locale: (pill.bar.week_starts_on === 0) ? Qt.locale("en_US") : Qt.locale("en_GB")
                 Row {
-                    spacing: pill.theme.edgeMargin
+                    spacing: Glass.gap
                     anchors.horizontalCenter: parent.horizontalCenter
                     Glyph {
                         text: "\u{f0141}"
@@ -1159,7 +1156,7 @@ QS.PanelWindow {
                     Glyph {
                         text: Qt.formatDate(calendar.shown, "MMMM yyyy")
                         font.bold: true
-                        width: 160
+                        width: grid.width - 2 * (Glass.bar + Glass.gap)
                         horizontalAlignment: Text.AlignHCenter
                         Hit { onClicked: calendar.shown = new Date(pill.now.getFullYear(), pill.now.getMonth(), 1) }
                     }
@@ -1184,12 +1181,11 @@ QS.PanelWindow {
                     month: calendar.shown.getMonth()
                     year: calendar.shown.getFullYear()
                     locale: calendar.locale
-                    width: 7 * 36
-                    delegate: Rectangle {
+                    width: 7 * Glass.bar
+                    delegate: GlassSurface {
                         required property var model
-                        implicitWidth: 36
-                        implicitHeight: 30
-                        radius: height / 2
+                        implicitWidth: Glass.bar
+                        implicitHeight: Glass.bar
                         color: model.today ? pill.theme.withAlpha(pill.theme.accent, pill.theme.selectionOpacity) : "transparent"
                         Text {
                             anchors.centerIn: parent
@@ -1205,82 +1201,209 @@ QS.PanelWindow {
         }
     }
 
-    // Power, session and system settings, grown out of the power glyph.
-    MeltPopup {
-        id: powerPanel
+    // ---- the island's modular popups (sound, network, power): [desktop.topbar.popups.<name>.modules] -----------------
+    // Each popup is its SSOT modules, enabled ones only, in their `order`, separated by a hairline; every row is bar tall
+    // (the design language), so the popups are no taller per row than the island and the app-menu pills.
+    function modulesOf(name) {
+        const m = (((bar.popups || {})[name]) || {}).modules || {}
+        return Object.keys(m).filter(k => m[k] && m[k].enabled !== false)
+                     .sort((a, b) => (Number(m[a].order) || 0) - (Number(m[b].order) || 0))
+    }
+    // Opens a modular popup, or runs its settings command when every module is switched off.
+    function togglePopup(name, fallback) {
+        if (!modulesOf(name).length) { run(fallback); return }
+        popup = popup === name ? "" : name
+    }
+    PwObjectTracker { objects: [Pipewire.defaultAudioSource] }
+    readonly property var source: Pipewire.defaultAudioSource
+    function nodeName(n) { return !n ? "" : (n.description || n.nickname || n.name || "") }
+
+    component ActionRow: GlassSurface {
+        id: actionRow
+        property string key: ""
+        property string icon: ""
+        property string label: ""
+        width: parent ? parent.width : 0
+        height: Glass.bar
+        color: actionHit.containsMouse ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            x: Glass.gap
+            spacing: Glass.gap
+            Glyph { text: actionRow.icon }
+            Glyph { text: actionRow.label }
+        }
+        MouseArea { id: actionHit; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: pill.run(actionRow.key) }
+    }
+    component ActionList: Column {
+        id: actionList
+        property var items: []
+        width: parent ? parent.width : 0
+        Repeater {
+            model: actionList.items.filter(it => !!pill.commands[it.key])
+            delegate: ActionRow { required property var modelData; key: modelData.key; icon: modelData.icon; label: modelData.label }
+        }
+    }
+    // A level track for a PipeWire node (sink or source): mute toggle, a capsule track (click / drag / wheel, capped at
+    // [desktop.topbar] volume_max_pct) and the percentage.
+    component VolumeRow: Item {
+        id: vr
+        property var node: null
+        readonly property var audio: node ? node.audio : null
+        width: parent ? parent.width : 0
+        height: Glass.bar
+        Glyph {
+            id: muteGlyph
+            x: Glass.gap
+            width: Glass.bar
+            text: !vr.audio ? "" : vr.audio.muted ? "\u{f075f}" : "\u{f057e}"
+            color: vr.audio && vr.audio.muted ? pill.theme.muted : pill.theme.fg
+            Hit { onClicked: if (vr.audio) vr.audio.muted = !vr.audio.muted }
+        }
+        Glyph {
+            id: pctGlyph
+            anchors.right: parent.right
+            anchors.rightMargin: Glass.gap
+            width: Glass.bar + Glass.gap
+            horizontalAlignment: Text.AlignRight
+            text: vr.audio ? Math.round(vr.audio.volume * 100) + "%" : ""
+        }
+        GlassSurface {
+            id: track
+            anchors.left: muteGlyph.right
+            anchors.right: pctGlyph.left
+            anchors.leftMargin: Glass.inset
+            anchors.rightMargin: Glass.inset
+            anchors.verticalCenter: parent.verticalCenter
+            height: Glass.inset
+            color: pill.theme.outlineColor
+            GlassSurface {
+                height: parent.height
+                width: parent.width * Math.max(0, Math.min(1, vr.audio ? vr.audio.volume / pill.volumeMax : 0))
+                color: vr.audio && vr.audio.muted ? pill.theme.muted : pill.theme.accent
+            }
+            MouseArea {
+                anchors.fill: parent
+                anchors.topMargin: -Glass.gap
+                anchors.bottomMargin: -Glass.gap
+                cursorShape: Qt.PointingHandCursor
+                function setAt(x) { if (vr.audio) vr.audio.volume = Math.max(0, Math.min(pill.volumeMax, x / Math.max(1, width) * pill.volumeMax)) }
+                onPressed: mouse => setAt(mouse.x)
+                onPositionChanged: mouse => { if (pressed) setAt(mouse.x) }
+                onWheel: wheel => { if (vr.audio) vr.audio.volume = Math.max(0, Math.min(pill.volumeMax, vr.audio.volume + (wheel.angleDelta.y > 0 ? 1 : -1) * pill.volumeStepPct / 100)) }
+            }
+        }
+    }
+    component NodeModule: Column {
+        id: nm
+        property var node: null
+        property string title: ""
+        width: parent ? parent.width : 0
+        Glyph {
+            x: Glass.gap
+            width: parent.width - 2 * Glass.gap
+            text: nm.title + (nm.node ? " · " + pill.nodeName(nm.node) : " · none")
+            textFormat: Text.PlainText   // device names come from PipeWire: never markup
+            elide: Text.ElideRight
+            color: pill.theme.subtle
+        }
+        VolumeRow { node: nm.node; visible: !!nm.node }
+    }
+    // Every enabled module of one popup, in order, a hairline between modules.
+    component ModuleColumn: Column {
+        id: mc
+        property string popupName: ""
+        property var builders: ({})
+        Repeater {
+            model: pill.modulesOf(mc.popupName)
+            delegate: Column {
+                required property var modelData
+                required property int index
+                width: mc.width
+                Item {
+                    visible: index > 0
+                    width: parent.width
+                    height: visible ? Glass.gap : 0
+                    Rectangle { anchors.centerIn: parent; width: parent.width - 2 * Glass.gap; height: Glass.hairline; color: pill.theme.outlineColor }
+                }
+                Loader { width: parent.width; sourceComponent: mc.builders[modelData] || null }
+            }
+        }
+    }
+    component ModularPopup: MeltPopup {
+        id: mpop
+        property string name: ""
+        property var builders: ({})
         anchor.window: pill
         theme: pill.theme
-        trigger: powerGlyph
-        align: "right"
-        open: pill.popup === "power"
+        open: pill.popup === name
         duration: pill.popupMs
-        panelWidth: 240
-        readonly property var items: [
-            { key: "settings", icon: "\u{f0493}", label: "Settings" },
-            { key: "display", icon: "\u{f0379}", label: "Display" },
-            { key: "sound", icon: "\u{f057e}", label: "Sound" },
-            { key: "network", icon: "\u{f06f3}", label: "Network" },
-            { key: "power_settings", icon: "\u{f06a5}", label: "Power" },
-            { key: "account", icon: "\u{f0004}", label: "Account" },
-            { key: "", icon: "", label: "" },
-            { key: "lock", icon: "\u{f033e}", label: "Lock" },
-            { key: "logout", icon: "\u{f0343}", label: "Log out" },
-            { key: "suspend", icon: "\u{f04b2}", label: "Suspend" },
-            { key: "reboot", icon: "\u{f0709}", label: "Restart" },
-            { key: "poweroff", icon: "\u{f0425}", label: "Shut down" },
-        ]
-        readonly property real contentHeight: {
-            let h = 0
-            for (const it of items) {
-                if (!it.key) h += 9
-                else if (pill.commands[it.key]) h += pill.theme.searchRowHeight - 8
-            }
-            return Math.max(h, menu.implicitHeight)
+        panelWidth: 280
+        panelHeight: modules.implicitHeight + 2 * Glass.panelPad
+        ModuleColumn {
+            id: modules
+            x: Glass.panelPad
+            y: Glass.panelPad
+            width: mpop.panelWidth - 2 * Glass.panelPad
+            popupName: mpop.name
+            builders: mpop.builders
         }
-        panelHeight: contentHeight + 2 * pill.theme.edgeMargin
-        Item {
-            anchors.fill: parent
-            Column {
-                id: menu
-                x: pill.theme.edgeMargin
-                y: pill.theme.edgeMargin
-                width: parent.width - 2 * pill.theme.edgeMargin
-                Glyph { text: "This computer"; font.bold: true }
-                Repeater {
-                    model: powerPanel.items
-                    delegate: Rectangle {
-                        required property var modelData
-                        width: menu.width
-                        height: modelData.key ? pill.theme.searchRowHeight - 8 : 9
-                        radius: height / 2
-                        visible: !modelData.key || !!pill.commands[modelData.key]
-                        color: rowHit.containsMouse && modelData.key ? pill.theme.withAlpha(pill.theme.accent, pill.theme.hoverOpacity) : "transparent"
-                        Rectangle {
-                            visible: !modelData.key
-                            anchors.centerIn: parent
-                            width: parent.width - 16
-                            height: 1
-                            color: pill.theme.outlineColor
-                        }
-                        Row {
-                            visible: !!modelData.key
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: pill.theme.edgeMargin
-                            spacing: pill.theme.edgeMargin
-                            Glyph { text: modelData.icon; height: parent.parent.height }
-                            Glyph { text: modelData.label; height: parent.parent.height }
-                        }
-                        MouseArea {
-                            id: rowHit
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            enabled: !!modelData.key
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: pill.run(modelData.key)
-                        }
-                    }
+    }
+
+    Component { id: soundOutputModule; NodeModule { title: "Output"; node: pill.sink } }
+    Component { id: soundInputModule; NodeModule { title: "Input"; node: pill.source } }
+    Component { id: soundSettingsModule; ActionList { items: [{ key: "sound", icon: "\u{f0493}", label: "Sound settings" }] } }
+    Component {
+        id: networkStatusModule
+        Column {
+            width: parent ? parent.width : 0
+            Glyph { x: Glass.gap; text: pill.online ? "Online" : "Offline"; font.bold: true; color: pill.online ? pill.theme.fg : pill.theme.muted }
+            Repeater {
+                model: Networking.devices.values
+                delegate: Row {
+                    required property var modelData
+                    x: Glass.gap
+                    spacing: Glass.gap
+                    Glyph { text: modelData.connected ? "\u{f06f3}" : "\u{f06f4}"; color: modelData.connected ? pill.theme.fg : pill.theme.muted }
+                    Glyph { text: String(modelData.name || "") + " · " + (modelData.connected ? "connected" : "disconnected"); textFormat: Text.PlainText; color: pill.theme.subtle }
                 }
             }
         }
+    }
+    Component { id: networkSettingsModule; ActionList { items: [{ key: "network", icon: "\u{f0493}", label: "Network settings" }] } }
+    Component {
+        id: powerSettingsModule
+        ActionList { items: [
+            { key: "settings", icon: "\u{f0493}", label: "Settings" }, { key: "display", icon: "\u{f0379}", label: "Display" },
+            { key: "sound", icon: "\u{f057e}", label: "Sound" }, { key: "network", icon: "\u{f06f3}", label: "Network" },
+            { key: "power_settings", icon: "\u{f06a5}", label: "Power" }, { key: "account", icon: "\u{f0004}", label: "Account" }] }
+    }
+    Component { id: powerSessionModule; ActionList { items: [{ key: "lock", icon: "\u{f033e}", label: "Lock" }, { key: "logout", icon: "\u{f0343}", label: "Log out" }] } }
+    Component {
+        id: powerPowerModule
+        ActionList { items: [{ key: "suspend", icon: "\u{f04b2}", label: "Suspend" }, { key: "reboot", icon: "\u{f0709}", label: "Restart" },
+                             { key: "poweroff", icon: "\u{f0425}", label: "Shut down" }] }
+    }
+
+    ModularPopup {
+        id: soundPanel
+        name: "sound"
+        trigger: soundGlyph
+        builders: ({ output: soundOutputModule, input: soundInputModule, settings: soundSettingsModule })
+    }
+    ModularPopup {
+        id: networkPanel
+        name: "network"
+        trigger: netGlyph
+        builders: ({ status: networkStatusModule, settings: networkSettingsModule })
+    }
+    // Power, session and system settings, grown out of the power glyph.
+    ModularPopup {
+        id: powerPanel
+        name: "power"
+        trigger: powerGlyph
+        align: "right"
+        panelWidth: 240
+        builders: ({ settings: powerSettingsModule, session: powerSessionModule, power: powerPowerModule })
     }
 }

@@ -9,7 +9,7 @@
 //          mode the daemon changed). Writes
 //          $XDG_RUNTIME_DIR/<state_file> for the login projection, Host.qml (wallpaper rate) and the Hypr3D room toggle.
 // AI-related: src/mios-rs/miosd/src/framerate/plan.rs, tools/native/mios-resolver/src/framerate.rs,
-// AI-related: usr/share/mios/mios.toml [desktop.framerate] [desktop.hyprland.mios-pacing], usr/lib/systemd/user/mios-framerate.service,
+// AI-related: usr/share/mios/mios.toml, usr/lib/systemd/user/mios-framerate.service,
 // AI-related: usr/share/mios/hyprland/plugins/mios-pacing, usr/share/mios/wallpaper/Host.qml
 
 pub mod plan;

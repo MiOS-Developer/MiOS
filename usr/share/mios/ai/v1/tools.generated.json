@@ -1,1 +1,1153 @@
-{"count":113,"data":[{"description":"Hand a SUB-TASK to another registered agent and GET ITS ANSWER BACK so YOU fold it into your own reasoning (you stay in control; this is NOT a final user reply and NOT a take-over). Pick a peer by id (mios-a2a-delegate --list-peers) or by skill name (--list-skills). Use when you want a second agent's result; to PASS THE SESSION to another agent use transfer_session_to_agent.","hidden":true,"model_name":"delegate_subtask_to_peer_agent","name":"a2a_delegate","permission":"read","section":"Agent collaboration","sig":"peer?, skill?, text, context_id?","tier":"rare"},{"description":"Cross-agent routing. mode='handoff' (transfer control entirely, ending your turn) or 'delegate' (sub-task an agent and get the result back).","hidden":false,"model_name":"","name":"agent_route","permission":"write","section":"Messaging","sig":"mode, agent, task","tier":"common"},{"description":"SEMANTIC search over the installed-app inventory: given a fuzzy natural-language description ('my note-taking app', 'phone settings'), return the top matching installed apps {name, category, launch, score}. Use when you need to FIND which app matches a vague description. For the FULL installed-app+game list use list_installed_apps; to actually launch use launch_app.","hidden":true,"model_name":"","name":"app_search","permission":"read","section":"Discovery / resolution","sig":"query, limit=5?","tier":"rare"},{"description":"Query applications. mode='list' (inventory of all installed apps), 'semantic' (fuzzy app capability search), or 'resolve' (get exact CLI launch command for an app without launching it).","hidden":false,"model_name":"","name":"apps","permission":"read","section":"Discovery / resolution","sig":"mode, query?","tier":"core"},{"description":"Gracefully CLOSE an open Windows application or window (by title pattern). Use this when the operator asks to close, quit, exit, or kill an application.","hidden":false,"model_name":"","name":"close_app","permission":"write","section":"Window / app launch","sig":"title","tier":"common"},{"description":"Gracefully CLOSE an OPEN Windows window by title (sends WM_CLOSE so the app saves state). Force-kill is intentionally unsupported. Use to close / quit / dismiss a window -- not to hide it (use minimize_window to send it to the taskbar).","hidden":true,"model_name":"","name":"close_window","permission":"write","section":"Window / app launch","sig":"title, mode=\"graceful\"?","tier":"rare"},{"description":"Write a PYTHON snippet that ORCHESTRATES MULTIPLE MiOS verbs programmatically instead of emitting one verb call at a time: `import mios_tools` exposes the verb surface (mios_tools.web_search(...), .system_status(), .call('<verb>', ...)). Runs in a rootless podman sandbox (no network, read-only, dropped caps). Use when a task needs several tool calls glued with logic/loops -- NOT for a one-off shell command (run_sandboxed_code).","hidden":false,"model_name":"run_python_tool_script","name":"code_mode","permission":"interactive","section":"OS shell verbs","sig":"code, lang=python?, net?, timeout=60?","tier":"rare"},{"description":"Run a SHORT one-off code snippet / command in an isolated sandbox (bubblewrap: read-only system, writable scratch only, NO network by default, resource caps + timeout). lang: bash (default) | python. Pass net=true only if it must reach the network. Use to compute/test something safely WITHOUT touching the host -- not to orchestrate MiOS verbs (run_python_tool_script) or to run Windows PowerShell (powershell_run).","hidden":true,"model_name":"run_sandboxed_code","name":"coderun","permission":"interactive","section":"OS shell verbs","sig":"code, lang=bash?, net?, timeout=60?","tier":"rare"},{"description":"RESTART ONE podman/quadlet CONTAINER by name. For podman CONTAINERS -- NOT systemd services (use service_restart). Write-class.","hidden":false,"model_name":"","name":"container_restart","permission":"write","section":"System","sig":"name","tier":"destructive"},{"description":"Check podman/quadlet CONTAINER status. Empty name = all containers. For podman CONTAINERS -- NOT systemd services (use service_status) and NOT whole-machine health (system_status). Read-only.","hidden":true,"model_name":"","name":"container_status","permission":"read","section":"System","sig":"name?","tier":"rare"},{"description":"Fetch ONE web page you already have the URL for and return its FULL content as clean, LLM-ready MARKDOWN via the LOCAL crawl4ai engine (headless Chrome over CDP, with a Camoufox stealth-Firefox fail-retry; offline-first, no cloud). The default reader for a single long ARTICLE or DOC page (~20000 chars). Does NOT fetch_url_markdown multiple pages / a whole site. For news/article INDEX pages use fetch_index_markdown; for quick short plain text use fetch_url_text.","hidden":true,"model_name":"fetch_url_markdown","name":"crawl","permission":"read","section":"Discovery / resolution","sig":"url, limit=20000?","tier":"rare"},{"description":"All-in-one vision grounding -> click -> verify loop for the LINUX desktop. Finds an element visually (qwen3-vl), clicks it, and verifies the state changed (if verify_after_act=true). Write-class.","hidden":true,"model_name":"linux_desktop_act","name":"cu_act","permission":"write","section":"Computer-use","sig":"query, button=\"left\"?","tier":"rare"},{"description":"Find a LINUX desktop UI element via the AT-SPI accessibility tree by its role/name and return its screen coordinates -- semantic a11y-tree lookup, NO pixels/vision. Read-class. Use when you can name the control (its label/role); use linux_desktop_locate_element for a fuzzy/visual description that may need the vision model.","hidden":true,"model_name":"linux_desktop_find_element_by_name","name":"cu_atspi_query","permission":"read","section":"Computer-use","sig":"query","tier":"rare"},{"description":"Move the pointer to (x,y) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM and click. This clicks the in-VM Linux screen, NOT the host Windows screen (use windows_desktop_click for that). Write-class, approval-gated. button = left|right|middle.","hidden":true,"model_name":"linux_desktop_click","name":"cu_click","permission":"write","section":"Computer-use","sig":"x, y, button=\"left\"?","tier":"rare"},{"description":"Locate a LINUX desktop UI element from a NATURAL-LANGUAGE description and return {x,y,confidence}. Tries the AT-SPI a11y tree first, then falls back to a vision model (qwen3-vl / UI-TARS) on a screenshot. Read-class. Use for fuzzy 'find the blue Submit button'; use linux_desktop_find_element_by_name when you know the exact label.","hidden":true,"model_name":"linux_desktop_locate_element","name":"cu_ground","permission":"read","section":"Computer-use","sig":"query","tier":"rare"},{"description":"Press ONE key (Enter, Tab, F5, Escape, ...) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Single key only -- use linux_desktop_press_key_combo for modifier chords like Ctrl+S. Targets the in-VM Linux session, NOT the host Windows desktop (use windows_desktop_press_key). Write-class.","hidden":true,"model_name":"linux_desktop_press_key","name":"cu_key","permission":"write","section":"Computer-use","sig":"key","tier":"rare"},{"description":"Press a MODIFIER CHORD (e.g. Ctrl+S, Alt+Tab, Ctrl+Shift+T) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Use this for any combo with modifiers; use linux_desktop_press_key for a single bare key. Targets the in-VM Linux session, NOT the host Windows desktop. Write-class.","hidden":true,"model_name":"linux_desktop_press_key_combo","name":"cu_key_combo","permission":"write","section":"Computer-use","sig":"combo","tier":"rare"},{"description":"Capture the LINUX (Wayland/Hyprland) desktop inside the MiOS VM to a PNG file (one-shot). This is the Linux in-VM screen, NOT the host Windows screen. Read-class. Pair with linux_desktop_click / linux_desktop_locate_element to act on what you see.","hidden":true,"model_name":"linux_desktop_screenshot","name":"cu_screenshot","permission":"read","section":"Computer-use","sig":"path","tier":"rare"},{"description":"Type literal text into the focused surface on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Sends keystrokes to whatever window has focus in the in-VM Linux session, NOT the host Windows desktop (use windows_desktop_type_text). For editing FILES, prefer create_file / replace_file_text instead. Write-class, approval-gated.","hidden":true,"model_name":"linux_desktop_type_text","name":"cu_type","permission":"write","section":"Computer-use","sig":"text","tier":"rare"},{"description":"Visual Definition-of-Done: verify if a UI element or application is visible on the LINUX desktop. Takes a screenshot and asks the vision model. Returns {ok: bool, reasoning: text}. Use this after taking actions to confirm success.","hidden":true,"model_name":"linux_desktop_verify_state","name":"cu_verify","permission":"read","section":"Computer-use","sig":"query","tier":"rare"},{"description":"List the open top-level windows on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM (via wmctrl / hyprctl / AT-SPI). This is the in-VM Linux desktop, NOT the host Windows windows (use list_windows for those). Read-class. Returns window titles/handles for the Linux session.","hidden":true,"model_name":"linux_desktop_window_list","name":"cu_window_list","permission":"read","section":"Computer-use","sig":"","tier":"rare"},{"description":"FAST first-try 'where is X' lookup over a cached filesystem map (~19k entries via mios-daemon, refreshed every 15 min, sub-100ms). TRY THIS FIRST for 'where is X' / 'find the file X' / 'what's the path to X' before the slower per-OS scans (windows_file_search, linux_file_search). Locates existing files/dirs on THIS machine -- not a web or knowledge search. May miss very new/uncached files.","hidden":true,"model_name":"find_file_fast","name":"directory_lookup","permission":"read","section":"Discovery / resolution","sig":"query, root?, ext?, kind?, limit=20?","tier":"rare"},{"description":"Actually POST a message to the operator's Discord (local bot, default channel). Use to DELIVER a message when the operator asks to post / send / share / DM / 'let me know on' Discord -- it really posts and returns the message id, so never claim something was sent without calling this. For a DM to a specific user, pass the user parameter with their @username or Discord user ID. One-shot send (for repeating posts use schedule).","hidden":false,"model_name":"","name":"discord_send","permission":"write","section":"Messaging","sig":"content, user?, channel?","tier":"core"},{"description":"Author a NEW document FROM TEXT YOU WRITE -> a real office artifact (.docx/.pptx/.xlsx/.pdf/.html). Output format inferred from out_path extension; write markdown (or CSV rows for .xlsx with from_fmt=csv); for .pptx separate slides with a line of ---. Fully local (Pandoc/LibreOffice). Use this to GENERATE a doc from content; to convert an EXISTING file use convert_document_format.","hidden":true,"model_name":"create_office_document","name":"docgen_build","permission":"write","section":"Doc-gen","sig":"out_path, content, from_fmt=\"markdown\"?","tier":"rare"},{"description":"Convert an EXISTING file to another format (.docx->.pdf, .md->.docx, .csv->.xlsx, .pptx->.pdf). Target format inferred from out_path extension. Fully local via Pandoc / LibreOffice headless. Use this to TRANSFORM a file that already exists; to author a NEW doc from text you write use create_office_document.","hidden":true,"model_name":"convert_document_format","name":"docgen_convert","permission":"write","section":"Doc-gen","sig":"in_path, out_path","tier":"rare"},{"description":"Generate or convert documents. op='build' (compile markdown to pdf/docx/etc.) or 'convert' (convert office docs/csv to markdown).","hidden":false,"model_name":"","name":"document","permission":"write","section":"Messaging","sig":"op, input, output?","tier":"common"},{"description":"Search for files on the WINDOWS side of this machine via the Voidtools Everything NTFS index (exhaustive, name/extension match). Finds FILES that already exist on Windows drives (C:, etc.) -- NOT a web or knowledge search, and NOT the Linux filesystem. Good for 'where is X.exe' on Windows.","hidden":true,"model_name":"windows_file_search","name":"everything_search","permission":"read","section":"Discovery / resolution","sig":"query, limit=10?, ext?","tier":"rare"},{"description":"Fetch ONE web page content. format='text' (lightweight ~4000 char plain text), 'article-md' (clean markdown of a long article via crawl4ai), or 'index-md' (markdown of a news/listing/index page via firecrawl).","hidden":false,"model_name":"","name":"fetch_page","permission":"read","section":"Discovery / resolution","sig":"url, format","tier":"core"},{"description":"Edit text files on disk. op='create' (write new file), 'replace' (replace matching text), 'insert' (insert text at line N, default prepend).","hidden":false,"model_name":"","name":"file_edit","permission":"write","section":"File edits","sig":"op, path, content?, find?, replace?, line?","tier":"core"},{"description":"Search for files on disk. scope='fast' (cached DB, sub-100ms, use FIRST), 'windows' (NTFS exhaustive search), or 'linux' (exhaustive Linux search). Use 'fast' unless a recent file is missing.","hidden":false,"model_name":"find_local_file","name":"find_file","permission":"read","section":"Discovery / resolution","sig":"query, scope","tier":"core"},{"description":"[legacy: use pkg(action='install', backend='flatpak', id=...)]","hidden":true,"model_name":"","name":"flatpak_install","permission":"write","section":"Package management","sig":"id, scope?","tier":"rare"},{"description":"[legacy: use pkg(action='list', backend='flatpak')]","hidden":true,"model_name":"","name":"flatpak_list","permission":"read","section":"Package management","sig":"","tier":"rare"},{"description":"[legacy: use pkg(action='preflight', backend='flatpak', id=...)]","hidden":true,"model_name":"","name":"flatpak_preflight","permission":"read","section":"Package management","sig":"id","tier":"rare"},{"description":"[legacy: use pkg(action='search', backend='flatpak')]","hidden":true,"model_name":"","name":"flatpak_search","permission":"read","section":"Package management","sig":"query, limit=10?","tier":"rare"},{"description":"[legacy: use pkg(action='show', backend='flatpak', id=...)]","hidden":true,"model_name":"","name":"flatpak_show","permission":"read","section":"Package management","sig":"id","tier":"rare"},{"description":"[legacy: use pkg(action='uninstall', backend='flatpak', id=...)]","hidden":true,"model_name":"","name":"flatpak_uninstall","permission":"write","section":"Package management","sig":"id","tier":"rare"},{"description":"[legacy: use pkg(action='upgrade', backend='flatpak')]","hidden":true,"model_name":"","name":"flatpak_upgrade","permission":"write","section":"Package management","sig":"id?","tier":"rare"},{"conflict_group":"desktop_ui","description":"Raise an already-OPEN Windows window to the FRONT (by title) and optionally re-position it (same placement enum as launch_windows_app). Use to switch to / bring forward / activate a window that already exists -- it does NOT launch anything. Run list_windows first to confirm the title.","hidden":true,"model_name":"","name":"focus_window","permission":"write","section":"Window / app launch","sig":"title, position=\"default\"?","tier":"rare"},{"description":"Search for files on the LINUX side of this machine via substring locate (plocate) \u2014 does NOT enumerate a directory; use list_dir for that.","hidden":true,"model_name":"linux_file_search","name":"fs_search","permission":"read","section":"Discovery / resolution","sig":"query, limit=20?, ext?, path?, type?","tier":"rare"},{"description":"TRANSFER (take-over) the live session to ANOTHER agent: the target inherits the shared session state via the A2A contextId and CONTINUES the workflow in your place. Use when a DIFFERENT model should TAKE OVER from here (e.g. hand a heavy task down to a lightweight CPU agent). This passes control away; to get a sub-answer back while staying in control use delegate_subtask_to_peer_agent.","hidden":true,"model_name":"transfer_session_to_agent","name":"handoff","permission":"read","section":"Agent collaboration","sig":"to?, skill?, context_id, goal?, from?","tier":"rare"},{"description":"INGEST local files/notes INTO the notes vault (the offline second-brain) -- LOCAL sources only, no cloud/SaaS. Walks a directory (or one file), tiers each doc (L0 abstract + L1 overview via the light model), and stores it as a vault node so notes_vault_list/search/read can navigate it and recall can surface it. Idempotent. This is a WRITE that adds documents to the vault, not a search.","hidden":true,"model_name":"notes_vault_ingest","name":"ingest","permission":"write","section":"Discovery / resolution","sig":"path?, file?, ext?, max=100?","tier":"rare"},{"description":"Query the OWUI RAG knowledge COLLECTIONS (curated document corpora uploaded to Open WebUI) and return citation-ready hits {score, source, snippet}. This is the RAG document store -- distinct from the local notes vault (notes_vault_search, your second-brain of skills/Q&A/memory), from durable AI memories (recall), and from web/file search.","hidden":true,"model_name":"","name":"knowledge_search","permission":"read","section":"Discovery / resolution","sig":"query, collection?, top_k=5?","tier":"rare"},{"description":"Inject input into the LINUX in-VM desktop. action='screenshot', 'ground', 'atspi', 'window-list', 'click', 'type', 'key'.","hidden":false,"model_name":"","name":"linux_input","permission":"write","section":"Computer-use","sig":"action, text?, key?, x?, y?","tier":"common"},{"description":"LIST the immediate entries of a directory, like `ls <path>`; defaults to the current working directory. Use this to list a directory's files and subdirectories.","hidden":false,"model_name":"list_directory","name":"list_dir","permission":"read","section":"Discovery / resolution","sig":"path?, depth=1?","tier":"core"},{"description":"Enumerate the currently OPEN Windows-desktop windows (titles). Run this BEFORE focus/move/close to confirm the target window exists. NOT the installed-app inventory (use list_installed_apps) and NOT the Linux/Wayland desktop (that is linux_desktop_window_list).","hidden":true,"model_name":"","name":"list_windows","permission":"read","section":"Window / app launch","sig":"","tier":"rare"},{"description":"Maximize an OPEN Windows window to fill its containing monitor. To restore it back to normal size use restore_window; for a specific pixel size use resize_window.","hidden":true,"model_name":"","name":"maximize_window","permission":"write","section":"Window / app launch","sig":"title","tier":"rare"},{"description":"Manage agent's self-directed memories/facts. op='add' (remember a new fact), 'list' (recall matching memories), 'update', or 'forget'.","hidden":false,"model_name":"","name":"memory","permission":"write","section":"Discovery / resolution","sig":"op, fact?, query?, id?","tier":"core"},{"description":"WRITE a durable FACT to your persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/conversations. scope: global (default) | agent:<name> | conversation:<id>. Optional `key` lets you later memory_replace/memory_forget it.","hidden":true,"model_name":"","name":"memory_append","permission":"write","section":"Discovery / resolution","sig":"fact, scope=global?, key?","tier":"rare"},{"description":"DELETE a durable memory you previously stored (Letta/MemGPT core_memory_remove) by its `key`. Use when a stored fact is wrong or obsolete and should be removed entirely. Pair: remember (write) / recall (read) / memory_update (edit). Returns {ok, op, key}.","hidden":true,"model_name":"","name":"memory_forget","permission":"write","section":"Discovery / resolution","sig":"key","tier":"rare"},{"description":"EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact. Requires the existing key.","hidden":true,"model_name":"","name":"memory_replace","permission":"write","section":"Discovery / resolution","sig":"key, fact","tier":"rare"},{"description":"Rollback durable memory edits (valid_to) to a prior timestamp (e.g. '2026-07-01T12:00:00Z'). Restores facts that were replaced or forgotten.","hidden":true,"model_name":"memory_rollback","name":"memory_rollback","permission":"write","section":"Memory","sig":"to_timestamp","tier":"rare"},{"description":"EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact instead of piling up duplicates with `remember`. Requires the existing key. Pair: remember (write-new) / recall (read) / memory_forget (delete). Returns {ok, op, key, updated}.","hidden":true,"model_name":"","name":"memory_update","permission":"write","section":"Discovery / resolution","sig":"key, fact","tier":"rare"},{"description":"Minimize an OPEN Windows window -- hide it to the taskbar without closing it. To bring it back use restore_window; to actually close it use close_window.","hidden":true,"model_name":"","name":"minimize_window","permission":"write","section":"Window / app launch","sig":"title","tier":"rare"},{"description":"Full INVENTORY of installed apps AND games across every surface (flatpak/rpm/winget/store/steam/epic/xbox/gog/cli/service). THE verb for 'what apps/games are installed', 'list my programs', 'detect my installed games'. Optional substring filter. NOT a web search, NOT list_windows (open windows only); for fuzzy 'which app does X' use app_search.","hidden":true,"model_name":"list_installed_apps","name":"mios_apps","permission":"read","section":"Discovery / resolution","sig":"filter?","tier":"rare"},{"description":"Resolve an app/program NAME to the exact runnable launch command WITHOUT launching it -- returns the cmd line only; the agent then decides whether to run it (e.g. via launch_windows_app/launch_app). This is NOT a file search and does NOT open anything. Use it to get the precise command before launching, or to check how something would be started.","hidden":true,"model_name":"resolve_launch_command","name":"mios_find","permission":"read","section":"Discovery / resolution","sig":"name","tier":"rare"},{"description":"Move an OPEN Windows window to a SEMANTIC region: center, a half of the screen (left-half / right-half / top-half / bottom-half), a corner (top-left / ...), or maximize -- optionally on a chosen monitor. Half/corner rectangles are derived live from the monitor's work area. Use when the operator names a place ('to the left half', 'center it', 'snap it right') rather than exact coordinates. For literal pixel (x,y) use place_window_at_pixel; to change size use resize_window.","hidden":true,"model_name":"move_window_to_region","name":"move_window","permission":"write","section":"Window / app launch","sig":"title, position, monitor=0?","tier":"rare"},{"conflict_group":"desktop_ui","description":"LAUNCH any app/program by name (resolves Windows AND Linux/flatpak apps) and optionally place its window (position center/left/right/top-left..., monitor index) or pass CLI args. THE one launch verb -- use for any 'open / launch / start / run X'. After launching, confirm with verify_launch.","hidden":true,"model_name":"launch_windows_app","name":"open_app","permission":"write","section":"Window / app launch","sig":"name, position=\"default\"?, args?, monitor=0?","tier":"rare"},{"description":"SHOW a web page to the operator in their VISIBLE browser. By DEFAULT opens the URL as a NEW TAB in the operator's ALREADY-RUNNING browser (reuses the instance -- NOT a new window, NOT a second instance). mode=window = a new window in the running browser; mode=new-window = force a brand-new isolated instance; private=true = incognito/private window. Use for 'open / pull up / show me this link' and 'open a tab to X'. NOT for research (that returns page content); this just displays the page.","hidden":false,"model_name":"","name":"open_url","permission":"write","section":"Window / app launch","sig":"url, mode?, browser?, private?, profile?, reuse_instance?","tier":"core"},{"description":"Run a PRE-DEFINED, NAMED OS-shell recipe from the [recipes.*] catalog (per-OS templates, shell-escaped, WSL path-converted). You pick an EXISTING recipe by name + params -- you do NOT write the code. Enumerate available recipes via `mios-os-recipe list`. For writing arbitrary code use run_sandboxed_code; for Windows PowerShell use powershell_run.","hidden":false,"model_name":"run_named_os_recipe","name":"os_recipe","permission":"interactive","section":"OS shell verbs","sig":"name, params?, os?","tier":"core"},{"description":"Move the cursor to (x,y) on the HOST WINDOWS desktop and click. This clicks the real Windows screen the operator sees, NOT the in-VM Linux desktop (use linux_desktop_click for that). Write-class. button = left|right|middle.","hidden":true,"model_name":"windows_desktop_click","name":"pc_click","permission":"write","section":"PC input","sig":"x, y, button=\"left\"?","tier":"rare"},{"description":"Click a UI control BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- finds the named control and clicks its center, acting on a SEMANTIC target instead of guessed pixels (more robust than pc_click x,y). Prefer this over pixel-clicking when the control has a name; use pc_find_element first if unsure of the exact name. Write-class.","hidden":true,"model_name":"windows_desktop_click_element","name":"pc_click_element","permission":"write","section":"PC input","sig":"name","tier":"rare"},{"description":"Find UI controls BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- the SEMANTIC alternative to guessing pixel coordinates. Returns matching elements with control type, automation_id, bounds, and clickable center. Use to LOCATE a button/menu/field before acting; then pc_click_element (by name) or pc_click (with the returned center). READ-only.","hidden":true,"model_name":"windows_desktop_find_element_by_name","name":"pc_find_element","permission":"read","section":"PC input","sig":"name","tier":"rare"},{"description":"Press a key or modifier chord on the HOST WINDOWS desktop (e.g. Enter, Tab, F5, or Ctrl+S as a combo). Targets the real Windows screen, NOT the in-VM Linux desktop (use linux_desktop_press_key / linux_desktop_press_key_combo). Write-class. This single verb handles both bare keys and modifier combos.","hidden":true,"model_name":"windows_desktop_press_key","name":"pc_key","permission":"write","section":"PC input","sig":"key","tier":"rare"},{"description":"List ALL named UI controls in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- a 'set of marks' SURVEY (each with control type, automation_id, bounds, clickable center, mark number) so you can SEE what's actionable, then pc_click_element (by name) or pc_click (the center). Use when you don't know the control names yet. READ-only.","hidden":true,"model_name":"windows_desktop_list_elements","name":"pc_list_elements","permission":"read","section":"PC input","sig":"","tier":"rare"},{"description":"Capture the WINDOWS host desktop (the operator's real screen) to a PNG file via the in-session UIA executor. This is the Windows screen, NOT the Linux in-VM desktop (use cu_screenshot for that). Read-class. Pair with windows_desktop_* (UIA) or a vision grounder to act on what you see.","hidden":false,"model_name":"windows_desktop_screenshot","name":"pc_screenshot","permission":"read","section":"Computer-use","sig":"path","tier":"rare"},{"conflict_group":"desktop_ui","description":"Type literal text into the focused window on the HOST WINDOWS desktop. Sends keystrokes to the foreground Windows app, NOT the in-VM Linux desktop (use linux_desktop_type_text). For editing FILES, prefer create_file / replace_file_text instead. Write-class.","hidden":true,"model_name":"windows_desktop_type_text","name":"pc_type","permission":"write","section":"PC input","sig":"text","tier":"rare"},{"description":"Directly set the text/value of a named UI control (by Name or AutomationId) via Windows UIA without simulating keystrokes. Completely bypasses window focus racing and keystroke drops. Use this for robust, deterministic typing into Windows apps when the target element exposes a ValuePattern.","hidden":false,"model_name":"windows_desktop_uia_set_value","name":"pc_uia_set_value","permission":"write","section":"PC input","sig":"name, text","tier":"rare"},{"description":"Extract the FULL UIA accessibility tree of the FOREGROUND window as JSON to deeply understand its structure, hierarchy, and nested components. Returns node types, names, bounds, and parent/child relationships. This is the structural foundation for Native UIA grounding.","hidden":false,"model_name":"windows_desktop_uia_tree","name":"pc_uia_tree","permission":"read","section":"PC input","sig":"","tier":"rare"},{"description":"INSTALL / SEARCH / SHOW / UPGRADE / UNINSTALL / LIST software packages BY ID across winget (Windows), flatpak (Linux), or dnf. action=search|show|install|upgrade|uninstall|list|preflight; backend=auto picks the OS. This MANAGES packages; for the question 'what apps/games are installed' use list_installed_apps (the inventory). 'list' here = installed PACKAGES, not the app catalog.","hidden":false,"model_name":"manage_packages","name":"pkg","permission":"write","section":"Package management","sig":"action, id?, query?, backend=\"auto\"?, limit=10?, scope?","tier":"common"},{"description":"Move an OPEN Windows window to LITERAL pixel coordinates (x, y). Use only when you have exact coords -- call screen_layout first to learn monitor geometry/resolution. For named regions (center/left/right) use move_window_to_region; to change size use resize_window.","hidden":true,"model_name":"place_window_at_pixel","name":"position_window","permission":"write","section":"Window / app launch","sig":"title, x, y","tier":"rare"},{"description":"Execute a PowerShell script on the WINDOWS side (not the Linux sandbox). High-privilege -- tainted sessions are refused; script cap 64 KiB. Object output is flattened to plain text, so cmdlets that emit .NET objects (Get-Service, Get-Process, Get-ChildItem) return readable tables. Use for Windows-host administration / cmdlets. For sandboxed Linux bash/python use run_sandboxed_code instead.","hidden":false,"model_name":"","name":"powershell_run","permission":"write","section":"Windows-side shell","sig":"script, timeout=30?, work_dir?","tier":"rare"},{"description":"List running OS PROCESSES, optionally filtered by name; sorted by rss (memory) / cpu / pid. Use to see which processes are running and what they consume. For container/service state use container_status / service_status instead.","hidden":true,"model_name":"","name":"process_list","permission":"read","section":"System","sig":"filter?, sort=\"rss\"?, limit=20?","tier":"rare"},{"description":"READ back the durable FACTS you previously stored with `remember` (Letta/MemGPT core-memory read). Returns the agent-authored memories for a scope {ok, count, memories:[{key, scope, fact, source}]}. This is your own persistent memory of facts -- NOT a vault search (notes_vault_search), NOT RAG (knowledge_search). Pair: remember (write) / memory_update (edit) / memory_forget (delete).","hidden":true,"model_name":"","name":"recall","permission":"read","section":"Discovery / resolution","sig":"scope=global?, limit=30?","tier":"rare"},{"description":"WRITE a durable FACT to your own persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/conversations. scope: global (default) | agent:<name> | conversation:<id>. Optional `key` lets you later memory_update/memory_forget it. This stores ONE fact -- to bulk-notes_vault_ingest documents use notes_vault_ingest.","hidden":true,"model_name":"","name":"remember","permission":"write","section":"Discovery / resolution","sig":"fact, scope=global?, key?","tier":"rare"},{"description":"Resize an OPEN Windows window to a literal pixel size (width x height). This ONLY changes size -- it does NOT move the window. To relocate use move_window_to_region (named region) or place_window_at_pixel (exact x,y); to fill the monitor use maximize_window.","hidden":true,"model_name":"","name":"resize_window","permission":"write","section":"Window / app launch","sig":"title, width, height","tier":"rare"},{"description":"Restore an OPEN Windows window from a minimized OR maximized state back to its last normal-size geometry. Use to 'un-minimize' / 'un-maximize' / bring back a window. Pairs with minimize_window and maximize_window.","hidden":true,"model_name":"","name":"restore_window","permission":"write","section":"Window / app launch","sig":"title","tier":"rare"},{"description":"Execute code. mode='sandbox' (safe isolated run) or 'orchestrate' (run a script that imports mios_tools to coordinate agentic sub-actions). language defaults to python; set 'bash' for shell.","hidden":false,"model_name":"","name":"run_code","permission":"write","section":"Code / shell","sig":"mode, code, language?","tier":"core"},{"description":"Schedule a RECURRING/standing task: run <prompt> through the agent on a repeating interval and post each result to the operator's Discord. Use for ANY 'do X every N minutes/hours', 'each day', 'keep me updated on ...', 'check ... regularly' request -- a STANDING job, NOT one-shot research.","hidden":false,"model_name":"","name":"schedule","permission":"write","section":"Automation / scheduling","sig":"prompt, every","tier":"core"},{"description":"Report Windows MONITOR geometry: each display's resolution, position, and which is primary. Use BEFORE place_window_at_pixel so you know valid coordinates. This describes the SCREENS/monitors, not the open windows (use list_windows for those).","hidden":false,"model_name":"","name":"screen_layout","permission":"read","section":"Window / app launch","sig":"","tier":"common"},{"description":"Search stored information. store='knowledge' (curated OWUI RAG document collections) or 'vault' (the local notes/skills vault).","hidden":false,"model_name":"","name":"search_store","permission":"read","section":"Discovery / resolution","sig":"query, store","tier":"common"},{"description":"Gracefully RESTART ONE Linux systemd SERVICE by unit name. For systemd services -- NOT podman containers (use container_restart). Note: for MiOS-owned services prefer the mios-restart recipe which preserves state. Write-class.","hidden":false,"model_name":"","name":"service_restart","permission":"write","section":"System","sig":"name","tier":"common"},{"description":"Check ONE Linux systemd SERVICE: is-active state + a status snapshot for the named unit (e.g. mios-agent-pipe, hermes-agent). For systemd services -- NOT podman CONTAINERS (use container_status) and NOT whole-machine health (use system_status). Read-only.","hidden":true,"model_name":"","name":"service_status","permission":"read","section":"System","sig":"name","tier":"rare"},{"description":"Run a command in a PERSISTENT bash session whose cwd, environment and history SURVIVE across turns -- `cd /tmp && export FOO=bar` then `echo $PWD $FOO` returns `/tmp bar`. One session per chat, tmux-backed, bwrap-confined at baseline. Use when a workflow needs several steps to share state; for a one-shot isolated command use run_sandboxed_code instead. Output is ACI-elided (head+tail kept) rather than raw-truncated.","hidden":false,"model_name":"run_in_shell","name":"shell_session","permission":"write","section":"Persistent shell","sig":"command, session?, timeout=120?","tier":"rare"},{"description":"TIERED summarisation of a document/text (the L0/L1/L2 gating primitive): L0 = one-sentence ~100-token abstract, L1 = ~2k-token structured overview (sections + key points), L2 = the raw text (returned as a char count, fetched on demand). Pass `text` or a `file` path. Runs on the CPU light lane. This CONDENSES content you supply -- it does NOT search or store anything (use notes_vault_ingest to persist).","hidden":false,"model_name":"","name":"summarize","permission":"read","section":"Discovery / resolution","sig":"text?, file?, tiers=l0,l1?","tier":"common"},{"description":"Switch the default application for an abstract app type (e.g. 'browser', 'editor').","hidden":false,"model_name":"","name":"switch_app_default","permission":"read","section":"Configuration","sig":"type, app","tier":"common"},{"description":"Apply the code-server/war-room workspace edits DIRECTLY onto the deployed MiOS-DEV root so they go LIVE for testing (no GitHub round-trip). Only works on a mutable MiOS-DEV deploy; an immutable bootc root is refused. Use mode=check (or dry-run) to preview what would change without touching anything, then mode=apply to make it live.","hidden":false,"model_name":"","name":"sync_to_root","permission":"write","section":"MiOS-DEV / self-development","sig":"mode=\"apply\"?","tier":"rare"},{"description":"READ the cached system/environment inventory (shared store): identity, the host OS + whether this is WSL2 + the Windows host, host hardware, which MiOS stack services are up/down, loaded models, and the installed launchable-app inventory by category. Read this to know the ENVIRONMENT and WHAT IS INSTALLED/RUNNING instead of guessing the OS or the apps. Cached (may be slightly stale -> sys_env_refresh). Read-only.","hidden":true,"model_name":"sys_env_snapshot","name":"sys_env","permission":"read","section":"System","sig":"","tier":"rare"},{"description":"WRITE/UPDATE the cached environment inventory: re-probe apps + services + models + host and overwrite the shared sys_env_snapshot database. Call when you suspect the sys_env_snapshot cache is stale (e.g. just installed/removed an app or started a service). This is the refresh half; sys_env_snapshot is the read half.","hidden":true,"model_name":"","name":"sys_env_refresh","permission":"write","section":"System","sig":"","tier":"rare"},{"description":"Query system status: query='status' (overall), 'env' (environment variables), 'env-refresh' (reload shell env), 'logs' (system logs for target service), 'service-status' (systemd status), 'processes' (top), 'containers' (podman ps).","hidden":false,"model_name":"","name":"system","permission":"read","section":"System","sig":"query, target?","tier":"core"},{"description":"Read recent LOG / journal entries from systemd. Filter by unit (mios-agent-pipe / hermes-agent / mios-open-webui / ...) or level (err / warning / info). Default: 50 lines from the last 10 minutes. Use to debug what a service printed -- NOT for live health numbers (system_status) or service up/down state (service_status).","hidden":true,"model_name":"","name":"system_logs","permission":"read","section":"System","sig":"unit?, since=\"10m\"?, lines=50?, level?","tier":"rare"},{"description":"Live LOCAL machine health dashboard (JSON): OS (Linux distro + kernel + whether this is WSL2 + the WINDOWS HOST OS caption/version when on WSL2), GPU/VRAM, RAM, disk usage, running services, loaded models. THE verb for 'system status', 'system health', 'what OS / Windows version am I on', 'is the GPU/memory/disk ok'. Local state only -- NEVER a web search, and NEVER answer the OS/host from training data: read it HERE (the `os` field). Single source of truth for these live numbers.","hidden":true,"model_name":"","name":"system_status","permission":"read","section":"System","sig":"","tier":"rare"},{"description":"CREATE a NEW file on disk with the given text content (path + content). For making a file that does not yet exist; to change an EXISTING file use replace_file_text or insert_file_lines, and to read one use read_file. Refuses write-protected system paths (/etc, /usr, /boot, /mnt/c/Windows, /mnt/c/Program Files).","hidden":true,"model_name":"create_file","name":"text_create","permission":"write","section":"Text editor","sig":"path, content","tier":"rare"},{"description":"INSERT new text into an existing file AFTER a given 1-indexed line number (0 = prepend to the very top); all existing content is kept. Args: path, line, content. Use this to ADD text at a position WITHOUT deleting anything; to OVERWRITE/replace existing text use replace_file_text, and to make a brand-new file use create_file.","hidden":true,"model_name":"insert_file_lines","name":"text_insert","permission":"write","section":"Text editor","sig":"path, line, content","tier":"rare"},{"description":"Find-and-replace text inside an existing file: replace an EXACT substring (old) with new text (new). `old` must occur EXACTLY once -- supply a larger surrounding block if it is ambiguous. Use this to MODIFY/overwrite existing content; to ADD lines without deleting use insert_file_lines, and to make a new file use create_file.","hidden":true,"model_name":"replace_file_text","name":"text_str_replace","permission":"write","section":"Text editor","sig":"path, old, new","tier":"rare"},{"description":"READ the contents of a local file (returns text with 1-indexed line numbers, optional start/end range). This is for files ALREADY on disk -- it does NOT search the web and does NOT find files by name. To list the contents of a directory, use list_directory instead.","hidden":false,"model_name":"read_file","name":"text_view","permission":"read","section":"Text editor","sig":"path, start?, end?","tier":"core"},{"description":"Find VERBS/TOOLS in the catalog by natural-language query when no listed verb obviously fits the user's ask. Returns top-k {name, sig, desc, score} via embedding search over verb name+description. Use to DISCOVER a capability you don't see; not for searching the web (web_search) or local files (windows_file_search).","hidden":false,"model_name":"","name":"tool_search","permission":"read","section":"Verb discovery","sig":"query, limit=5?","tier":"core"},{"description":"Manage the local second-brain vault. op='list' (ls), 'read' (cat), 'search' (find), or 'ingest' (add local file to vault).","hidden":false,"model_name":"","name":"vault","permission":"read","section":"Discovery / resolution","sig":"op, target?, content?","tier":"common"},{"description":"CHECK whether an app/window ACTUALLY launched, read-only, in-turn (delegates to the daemon-agent's Definition-of-Done window check). Call with the SAME name AFTER you fired launch_app / launch_windows_app / focus_window to confirm before claiming success. This only CHECKS -- it does NOT launch; to launch and confirm in one go use launch_and_verify_app.","hidden":true,"model_name":"","name":"verify_launch","permission":"read","section":"Window / app launch","sig":"app","tier":"rare"},{"description":"READ ONE node from the local notes vault at a chosen detail TIER (hierarchical gating): l0 = one-line abstract, l1 = structured overview (generated on read), l2 = raw full content (most context, fetch only when truly needed). `node` is `skills/<file>` or `knowledge/<id>` obtained from notes_vault_list / notes_vault_search. This reads a vault node, NOT a disk file (read_file) and NOT a web page.","hidden":true,"model_name":"notes_vault_read","name":"viking_cat","permission":"read","section":"Discovery / resolution","sig":"node, tier=l0?","tier":"rare"},{"description":"SEMANTIC search across the LOCAL notes vault (the offline second-brain: self-learned skills + stored Q&A + AI memory + ingested notes). Matches your query against L0 abstracts and returns hits {id, l0}; then notes_vault_read the best at a deeper tier. This searches YOUR local vault, NOT the OWUI RAG document collections (knowledge_search), NOT the web, NOT files on disk.","hidden":true,"model_name":"notes_vault_search","name":"viking_find","permission":"read","section":"Discovery / resolution","sig":"query, ns?, limit=20?","tier":"rare"},{"description":"LIST nodes in the local notes vault (the offline second-brain) at the cheap one-line (L0) tier for navigation. Pick a namespace: `skills` (self-learned SKILL.md files), `knowledge` (every finished Q&A), `memory` (stored AI memories). Skim these abstracts FIRST, then notes_vault_read the right node at a deeper tier. This is the local vault index, NOT web/file/RAG search.","hidden":true,"model_name":"notes_vault_list","name":"viking_ls","permission":"read","section":"Discovery / resolution","sig":"ns, query?, limit=20?","tier":"rare"},{"description":"Fetch ONE web page you already have the URL for and return its readable ARTICLE TEXT (lightweight, ~4000 chars, plain text not markdown). Use after web_search to read a single promising result and quote what it actually says. For full clean MARKDOWN of a long doc use fetch_url_markdown; for a news/article INDEX page use fetch_index_markdown. If the page lacks the answer, say so; never invent.","hidden":true,"model_name":"fetch_url_text","name":"web_extract","permission":"read","section":"Discovery / resolution","sig":"url, limit=4000?","tier":"rare"},{"description":"Fetch ONE web page by URL to clean, LLM-ready MARKDOWN via the LOCAL self-hosted Firecrawl engine (offline-first, no cloud). A second markdown fetch engine alongside fetch_url_markdown; its verified strength is NEWS / ARTICLE INDEX and LISTING pages (homepages, news fronts, blog/forum indexes) where the markdown of links + headlines must render reliably -- prefer it for those. For a single long article/doc page use fetch_url_markdown; for quick readable plain text use fetch_url_text.","hidden":true,"model_name":"fetch_index_markdown","name":"web_scrape","permission":"read","section":"Discovery / resolution","sig":"url, limit=20000?","tier":"rare"},{"description":"WEB search via the LOCAL self-hosted SearXNG (offline-first metasearch, no cloud dependency). USE THIS for anything from the internet or the current world: weather, news, current events, event dates/times/locations, prices, products, people, places, scores, facts, general knowledge -- ANY question whose answer is not a file on this machine. Returns real fetched {title, url, content} plus instant answers/infoboxes for citation. This is NOT file search: windows_file_search/linux_file_search/find_file_fast ONLY find files on disk and return nothing useful for a knowledge/current-events question. When a question needs a live fact you don't already have, call THIS and ground on the result -- never invent the answer, never default to remembered facts. RECENCY: when the answer must be CURRENT (today/latest/trending/breaking/recent/this week/this month), set time_range='day' (or 'week'/'month') so SearXNG returns fresh dated results instead of evergreen encyclopedia or year-overview pages; you may also set category='news' for breaking headlines. Leave time_range and category empty (null) for timeless facts.","hidden":false,"model_name":"","name":"web_search","permission":"read","section":"Discovery / resolution","sig":"query, limit=5?","tier":"core"},{"description":"Perform window operations: op='focus' (bring to front), 'move-region' (snap to left/right/etc via position), 'move-pixel' (set x/y), 'resize' (set width/height), 'min', 'max', 'restore', 'close'.","hidden":false,"model_name":"","name":"window_op","permission":"write","section":"Window / app launch","sig":"op, title, width?, height?, x?, y?, position?","tier":"core"},{"description":"Change the STATE of an OPEN Windows window (by title): minimize (hide to taskbar), maximize (fill its monitor), restore (back to normal size), or close (graceful WM_CLOSE so the app saves state). Run list_windows first to confirm the title. This is state only -- to bring a window to the front use focus_window, to relocate use move_window_to_region / place_window_at_pixel, to change size use resize_window.","hidden":true,"model_name":"","name":"window_state","permission":"write","section":"Window / app launch","sig":"action, title","tier":"rare"},{"description":"Inject input into the HOST WINDOWS desktop. action='type', 'key' (press a key/combo), 'click' (pixel click), 'find' (find UI element), 'click-element' (click named UI element), 'list-element' (list all UI elements).","hidden":false,"model_name":"","name":"windows_input","permission":"write","section":"PC input","sig":"action, text?, key?, name?, x?, y?","tier":"common"},{"description":"[legacy: use pkg(action='install', backend='winget', id=...)]","hidden":true,"model_name":"","name":"winget_install","permission":"write","section":"Package management","sig":"id","tier":"rare"},{"description":"[legacy: use pkg(action='list', backend='winget')]","hidden":true,"model_name":"","name":"winget_list","permission":"read","section":"Package management","sig":"","tier":"rare"},{"description":"[legacy: use pkg(action='search', backend='winget')]","hidden":true,"model_name":"","name":"winget_search","permission":"read","section":"Package management","sig":"query, limit=10?","tier":"rare"},{"description":"[legacy: use pkg(action='show', backend='winget', id=...)]","hidden":true,"model_name":"","name":"winget_show","permission":"read","section":"Package management","sig":"id","tier":"rare"},{"description":"[legacy: use pkg(action='uninstall', backend='winget', id=...)]","hidden":true,"model_name":"","name":"winget_uninstall","permission":"write","section":"Package management","sig":"id","tier":"rare"},{"description":"[legacy: use pkg(action='upgrade', backend='winget')]","hidden":true,"model_name":"","name":"winget_upgrade","permission":"write","section":"Package management","sig":"id?","tier":"rare"}],"generated":true,"object":"mios.verb.catalog","registry_kind":"verb-catalog","source":"/usr/share/mios/mios.toml#[verbs.*]","version":"v1"}
+{
+  "count": 114,
+  "data": [
+    {
+      "description": "Hand a SUB-TASK to another registered agent and GET ITS ANSWER BACK so YOU fold it into your own reasoning (you stay in control; this is NOT a final user reply and NOT a take-over). Pick a peer by id (mios-a2a-delegate --list-peers) or by skill name (--list-skills). Use when you want a second agent's result; to PASS THE SESSION to another agent use transfer_session_to_agent.",
+      "hidden": true,
+      "model_name": "delegate_subtask_to_peer_agent",
+      "name": "a2a_delegate",
+      "permission": "read",
+      "section": "Agent collaboration",
+      "sig": "peer?, skill?, text, context_id?",
+      "tier": "rare"
+    },
+    {
+      "description": "Cross-agent routing. mode='handoff' (transfer control entirely, ending your turn) or 'delegate' (sub-task an agent and get the result back).",
+      "hidden": false,
+      "model_name": "",
+      "name": "agent_route",
+      "permission": "write",
+      "section": "Messaging",
+      "sig": "mode, agent, task",
+      "tier": "common"
+    },
+    {
+      "description": "SEMANTIC search over the installed-app inventory: given a fuzzy natural-language description ('my note-taking app', 'phone settings'), return the top matching installed apps {name, category, launch, score}. Use when you need to FIND which app matches a vague description. For the FULL installed-app+game list use list_installed_apps; to actually launch use launch_app.",
+      "hidden": true,
+      "model_name": "",
+      "name": "app_search",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, limit=5?",
+      "tier": "rare"
+    },
+    {
+      "description": "Query applications. mode='list' (inventory of all installed apps), 'semantic' (fuzzy app capability search), or 'resolve' (get exact CLI launch command for an app without launching it).",
+      "hidden": false,
+      "model_name": "",
+      "name": "apps",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "mode, query?",
+      "tier": "core"
+    },
+    {
+      "description": "Gracefully CLOSE an open Windows application or window (by title pattern). Use this when the operator asks to close, quit, exit, or kill an application.",
+      "hidden": false,
+      "model_name": "",
+      "name": "close_app",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title",
+      "tier": "common"
+    },
+    {
+      "description": "Gracefully CLOSE an OPEN Windows window by title (sends WM_CLOSE so the app saves state). Force-kill is intentionally unsupported. Use to close / quit / dismiss a window -- not to hide it (use minimize_window to send it to the taskbar).",
+      "hidden": true,
+      "model_name": "",
+      "name": "close_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title, mode=\"graceful\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "Write a PYTHON snippet that ORCHESTRATES MULTIPLE MiOS verbs programmatically instead of emitting one verb call at a time: `import mios_tools` exposes the verb surface (mios_tools.web_search(...), .system_status(), .call('<verb>', ...)). Runs in a rootless podman sandbox (no network, read-only, dropped caps). Use when a task needs several tool calls glued with logic/loops -- NOT for a one-off shell command (run_sandboxed_code).",
+      "hidden": false,
+      "model_name": "run_python_tool_script",
+      "name": "code_mode",
+      "permission": "interactive",
+      "section": "OS shell verbs",
+      "sig": "code, lang=python?, net?, timeout=60?",
+      "tier": "rare"
+    },
+    {
+      "description": "Run a SHORT one-off code snippet / command in an isolated sandbox (bubblewrap: read-only system, writable scratch only, NO network by default, resource caps + timeout). lang: bash (default) | python. Pass net=true only if it must reach the network. Use to compute/test something safely WITHOUT touching the host -- not to orchestrate MiOS verbs (run_python_tool_script) or to run Windows PowerShell (powershell_run).",
+      "hidden": true,
+      "model_name": "run_sandboxed_code",
+      "name": "coderun",
+      "permission": "interactive",
+      "section": "OS shell verbs",
+      "sig": "code, lang=bash?, net?, timeout=60?",
+      "tier": "rare"
+    },
+    {
+      "description": "RESTART ONE podman/quadlet CONTAINER by name. For podman CONTAINERS -- NOT systemd services (use service_restart). Write-class.",
+      "hidden": false,
+      "model_name": "",
+      "name": "container_restart",
+      "permission": "write",
+      "section": "System",
+      "sig": "name",
+      "tier": "destructive"
+    },
+    {
+      "description": "Check podman/quadlet CONTAINER status. Empty name = all containers. For podman CONTAINERS -- NOT systemd services (use service_status) and NOT whole-machine health (system_status). Read-only.",
+      "hidden": true,
+      "model_name": "",
+      "name": "container_status",
+      "permission": "read",
+      "section": "System",
+      "sig": "name?",
+      "tier": "rare"
+    },
+    {
+      "description": "Fetch ONE web page you already have the URL for and return its FULL content as clean, LLM-ready MARKDOWN via the LOCAL crawl4ai engine (headless Chrome over CDP, with a Camoufox stealth-Firefox fail-retry; offline-first, no cloud). The default reader for a single long ARTICLE or DOC page (~20000 chars). Does NOT fetch_url_markdown multiple pages / a whole site. For news/article INDEX pages use fetch_index_markdown; for quick short plain text use fetch_url_text.",
+      "hidden": true,
+      "model_name": "fetch_url_markdown",
+      "name": "crawl",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "url, limit=20000?",
+      "tier": "rare"
+    },
+    {
+      "description": "All-in-one vision grounding -> click -> verify loop for the LINUX desktop. Finds an element visually (qwen3-vl), clicks it, and verifies the state changed (if verify_after_act=true). Write-class.",
+      "hidden": true,
+      "model_name": "linux_desktop_act",
+      "name": "cu_act",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "query, button=\"left\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "Find a LINUX desktop UI element via the AT-SPI accessibility tree by its role/name and return its screen coordinates -- semantic a11y-tree lookup, NO pixels/vision. Read-class. Use when you can name the control (its label/role); use linux_desktop_locate_element for a fuzzy/visual description that may need the vision model.",
+      "hidden": true,
+      "model_name": "linux_desktop_find_element_by_name",
+      "name": "cu_atspi_query",
+      "permission": "read",
+      "section": "Computer-use",
+      "sig": "query",
+      "tier": "rare"
+    },
+    {
+      "description": "Move the pointer to (x,y) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM and click. This clicks the in-VM Linux screen, NOT the host Windows screen (use windows_desktop_click for that). Write-class, approval-gated. button = left|right|middle.",
+      "hidden": true,
+      "model_name": "linux_desktop_click",
+      "name": "cu_click",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "x, y, button=\"left\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "Locate a LINUX desktop UI element from a NATURAL-LANGUAGE description and return {x,y,confidence}. Tries the AT-SPI a11y tree first, then falls back to a vision model (qwen3-vl / UI-TARS) on a screenshot. Read-class. Use for fuzzy 'find the blue Submit button'; use linux_desktop_find_element_by_name when you know the exact label.",
+      "hidden": true,
+      "model_name": "linux_desktop_locate_element",
+      "name": "cu_ground",
+      "permission": "read",
+      "section": "Computer-use",
+      "sig": "query",
+      "tier": "rare"
+    },
+    {
+      "description": "Press ONE key (Enter, Tab, F5, Escape, ...) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Single key only -- use linux_desktop_press_key_combo for modifier chords like Ctrl+S. Targets the in-VM Linux session, NOT the host Windows desktop (use windows_desktop_press_key). Write-class.",
+      "hidden": true,
+      "model_name": "linux_desktop_press_key",
+      "name": "cu_key",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "key",
+      "tier": "rare"
+    },
+    {
+      "description": "Press a MODIFIER CHORD (e.g. Ctrl+S, Alt+Tab, Ctrl+Shift+T) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Use this for any combo with modifiers; use linux_desktop_press_key for a single bare key. Targets the in-VM Linux session, NOT the host Windows desktop. Write-class.",
+      "hidden": true,
+      "model_name": "linux_desktop_press_key_combo",
+      "name": "cu_key_combo",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "combo",
+      "tier": "rare"
+    },
+    {
+      "description": "Capture the LINUX (Wayland/Hyprland) desktop inside the MiOS VM to a PNG file (one-shot). This is the Linux in-VM screen, NOT the host Windows screen. Read-class. Pair with linux_desktop_click / linux_desktop_locate_element to act on what you see.",
+      "hidden": true,
+      "model_name": "linux_desktop_screenshot",
+      "name": "cu_screenshot",
+      "permission": "read",
+      "section": "Computer-use",
+      "sig": "path",
+      "tier": "rare"
+    },
+    {
+      "description": "Type literal text into the focused surface on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Sends keystrokes to whatever window has focus in the in-VM Linux session, NOT the host Windows desktop (use windows_desktop_type_text). For editing FILES, prefer create_file / replace_file_text instead. Write-class, approval-gated.",
+      "hidden": true,
+      "model_name": "linux_desktop_type_text",
+      "name": "cu_type",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "text",
+      "tier": "rare"
+    },
+    {
+      "description": "Visual Definition-of-Done: verify if a UI element or application is visible on the LINUX desktop. Takes a screenshot and asks the vision model. Returns {ok: bool, reasoning: text}. Use this after taking actions to confirm success.",
+      "hidden": true,
+      "model_name": "linux_desktop_verify_state",
+      "name": "cu_verify",
+      "permission": "read",
+      "section": "Computer-use",
+      "sig": "query",
+      "tier": "rare"
+    },
+    {
+      "description": "List the open top-level windows on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM (via wmctrl / hyprctl / AT-SPI). This is the in-VM Linux desktop, NOT the host Windows windows (use list_windows for those). Read-class. Returns window titles/handles for the Linux session.",
+      "hidden": true,
+      "model_name": "linux_desktop_window_list",
+      "name": "cu_window_list",
+      "permission": "read",
+      "section": "Computer-use",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "FAST first-try 'where is X' lookup over a cached filesystem map (~19k entries via mios-daemon, refreshed every 15 min, sub-100ms). TRY THIS FIRST for 'where is X' / 'find the file X' / 'what's the path to X' before the slower per-OS scans (windows_file_search, linux_file_search). Locates existing files/dirs on THIS machine -- not a web or knowledge search. May miss very new/uncached files.",
+      "hidden": true,
+      "model_name": "find_file_fast",
+      "name": "directory_lookup",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, root?, ext?, kind?, limit=20?",
+      "tier": "rare"
+    },
+    {
+      "description": "Actually POST a message to the operator's Discord (local bot, default channel). Use to DELIVER a message when the operator asks to post / send / share / DM / 'let me know on' Discord -- it really posts and returns the message id, so never claim something was sent without calling this. For a DM to a specific user, pass the user parameter with their @username or Discord user ID. One-shot send (for repeating posts use schedule).",
+      "hidden": false,
+      "model_name": "",
+      "name": "discord_send",
+      "permission": "write",
+      "section": "Messaging",
+      "sig": "content, user?, channel?",
+      "tier": "core"
+    },
+    {
+      "description": "Author a NEW document FROM TEXT YOU WRITE -> a real office artifact (.docx/.pptx/.xlsx/.pdf/.html). Output format inferred from out_path extension; write markdown (or CSV rows for .xlsx with from_fmt=csv); for .pptx separate slides with a line of ---. Fully local (Pandoc/LibreOffice). Use this to GENERATE a doc from content; to convert an EXISTING file use convert_document_format.",
+      "hidden": true,
+      "model_name": "create_office_document",
+      "name": "docgen_build",
+      "permission": "write",
+      "section": "Doc-gen",
+      "sig": "out_path, content, from_fmt=\"markdown\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "Convert an EXISTING file to another format (.docx->.pdf, .md->.docx, .csv->.xlsx, .pptx->.pdf). Target format inferred from out_path extension. Fully local via Pandoc / LibreOffice headless. Use this to TRANSFORM a file that already exists; to author a NEW doc from text you write use create_office_document.",
+      "hidden": true,
+      "model_name": "convert_document_format",
+      "name": "docgen_convert",
+      "permission": "write",
+      "section": "Doc-gen",
+      "sig": "in_path, out_path",
+      "tier": "rare"
+    },
+    {
+      "description": "Generate or convert documents. op='build' (compile markdown to pdf/docx/etc.) or 'convert' (convert office docs/csv to markdown).",
+      "hidden": false,
+      "model_name": "",
+      "name": "document",
+      "permission": "write",
+      "section": "Messaging",
+      "sig": "op, input, output?",
+      "tier": "common"
+    },
+    {
+      "description": "Search for files on the WINDOWS side of this machine via the Voidtools Everything NTFS index (exhaustive, name/extension match). Finds FILES that already exist on Windows drives (C:, etc.) -- NOT a web or knowledge search, and NOT the Linux filesystem. Good for 'where is X.exe' on Windows.",
+      "hidden": true,
+      "model_name": "windows_file_search",
+      "name": "everything_search",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, limit=10?, ext?",
+      "tier": "rare"
+    },
+    {
+      "description": "Fetch ONE web page content. format='text' (lightweight ~4000 char plain text), 'article-md' (clean markdown of a long article via crawl4ai), or 'index-md' (markdown of a news/listing/index page via firecrawl).",
+      "hidden": false,
+      "model_name": "",
+      "name": "fetch_page",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "url, format",
+      "tier": "core"
+    },
+    {
+      "description": "Edit text files on disk. op='create' (write new file), 'replace' (replace matching text), 'insert' (insert text at line N, default prepend).",
+      "hidden": false,
+      "model_name": "",
+      "name": "file_edit",
+      "permission": "write",
+      "section": "File edits",
+      "sig": "op, path, content?, find?, replace?, line?",
+      "tier": "core"
+    },
+    {
+      "description": "Search for files on disk. scope='fast' (cached DB, sub-100ms, use FIRST), 'windows' (NTFS exhaustive search), or 'linux' (exhaustive Linux search). Use 'fast' unless a recent file is missing.",
+      "hidden": false,
+      "model_name": "find_local_file",
+      "name": "find_file",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, scope",
+      "tier": "core"
+    },
+    {
+      "description": "[legacy: use pkg(action='install', backend='flatpak', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_install",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "id, scope?",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='list', backend='flatpak')]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_list",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='preflight', backend='flatpak', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_preflight",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "id",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='search', backend='flatpak')]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_search",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "query, limit=10?",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='show', backend='flatpak', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_show",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "id",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='uninstall', backend='flatpak', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_uninstall",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "id",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='upgrade', backend='flatpak')]",
+      "hidden": true,
+      "model_name": "",
+      "name": "flatpak_upgrade",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "id?",
+      "tier": "rare"
+    },
+    {
+      "conflict_group": "desktop_ui",
+      "description": "Raise an already-OPEN Windows window to the FRONT (by title) and optionally re-position it (same placement enum as launch_windows_app). Use to switch to / bring forward / activate a window that already exists -- it does NOT launch anything. Run list_windows first to confirm the title.",
+      "hidden": true,
+      "model_name": "",
+      "name": "focus_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title, position=\"default\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "Search for files on the LINUX side of this machine via substring locate (plocate) — does NOT enumerate a directory; use list_dir for that.",
+      "hidden": true,
+      "model_name": "linux_file_search",
+      "name": "fs_search",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, limit=20?, ext?, path?, type?",
+      "tier": "rare"
+    },
+    {
+      "description": "TRANSFER (take-over) the live session to ANOTHER agent: the target inherits the shared session state via the A2A contextId and CONTINUES the workflow in your place. Use when a DIFFERENT model should TAKE OVER from here (e.g. hand a heavy task down to a lightweight CPU agent). This passes control away; to get a sub-answer back while staying in control use delegate_subtask_to_peer_agent.",
+      "hidden": true,
+      "model_name": "transfer_session_to_agent",
+      "name": "handoff",
+      "permission": "read",
+      "section": "Agent collaboration",
+      "sig": "to?, skill?, context_id, goal?, from?",
+      "tier": "rare"
+    },
+    {
+      "description": "INGEST local files/notes INTO the notes vault (the offline second-brain) -- LOCAL sources only, no cloud/SaaS. Walks a directory (or one file), tiers each doc (L0 abstract + L1 overview via the light model), and stores it as a vault node so notes_vault_list/search/read can navigate it and recall can surface it. Idempotent. This is a WRITE that adds documents to the vault, not a search.",
+      "hidden": true,
+      "model_name": "notes_vault_ingest",
+      "name": "ingest",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "path?, file?, ext?, max=100?",
+      "tier": "rare"
+    },
+    {
+      "description": "Query the OWUI RAG knowledge COLLECTIONS (curated document corpora uploaded to Open WebUI) and return citation-ready hits {score, source, snippet}. This is the RAG document store -- distinct from the local notes vault (notes_vault_search, your second-brain of skills/Q&A/memory), from durable AI memories (recall), and from web/file search.",
+      "hidden": true,
+      "model_name": "",
+      "name": "knowledge_search",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, collection?, top_k=5?",
+      "tier": "rare"
+    },
+    {
+      "description": "Inject input into the LINUX in-VM desktop. action='screenshot', 'ground', 'atspi', 'window-list', 'click', 'type', 'key'.",
+      "hidden": false,
+      "model_name": "",
+      "name": "linux_input",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "action, text?, key?, x?, y?",
+      "tier": "common"
+    },
+    {
+      "description": "LIST the immediate entries of a directory, like `ls <path>`; defaults to the current working directory. Use this to list a directory's files and subdirectories.",
+      "hidden": false,
+      "model_name": "list_directory",
+      "name": "list_dir",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "path?, depth=1?",
+      "tier": "core"
+    },
+    {
+      "description": "Enumerate the currently OPEN Windows-desktop windows (titles). Run this BEFORE focus/move/close to confirm the target window exists. NOT the installed-app inventory (use list_installed_apps) and NOT the Linux/Wayland desktop (that is linux_desktop_window_list).",
+      "hidden": true,
+      "model_name": "",
+      "name": "list_windows",
+      "permission": "read",
+      "section": "Window / app launch",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "Maximize an OPEN Windows window to fill its containing monitor. To restore it back to normal size use restore_window; for a specific pixel size use resize_window.",
+      "hidden": true,
+      "model_name": "",
+      "name": "maximize_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title",
+      "tier": "rare"
+    },
+    {
+      "description": "Manage agent's self-directed memories/facts. op='add' (remember a new fact), 'list' (recall matching memories), 'update', or 'forget'.",
+      "hidden": false,
+      "model_name": "",
+      "name": "memory",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "op, fact?, query?, id?",
+      "tier": "core"
+    },
+    {
+      "description": "WRITE a durable FACT to your persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/conversations. scope: global (default) | agent:<name> | conversation:<id>. Optional `key` lets you later memory_replace/memory_forget it.",
+      "hidden": true,
+      "model_name": "",
+      "name": "memory_append",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "fact, scope=global?, key?",
+      "tier": "rare"
+    },
+    {
+      "description": "DELETE a durable memory you previously stored (Letta/MemGPT core_memory_remove) by its `key`. Use when a stored fact is wrong or obsolete and should be removed entirely. Pair: remember (write) / recall (read) / memory_update (edit). Returns {ok, op, key}.",
+      "hidden": true,
+      "model_name": "",
+      "name": "memory_forget",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "key",
+      "tier": "rare"
+    },
+    {
+      "description": "EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact. Requires the existing key.",
+      "hidden": true,
+      "model_name": "",
+      "name": "memory_replace",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "key, fact",
+      "tier": "rare"
+    },
+    {
+      "description": "Rollback durable memory edits (valid_to) to a prior timestamp (e.g. '2026-07-01T12:00:00Z'). Restores facts that were replaced or forgotten.",
+      "hidden": true,
+      "model_name": "memory_rollback",
+      "name": "memory_rollback",
+      "permission": "write",
+      "section": "Memory",
+      "sig": "to_timestamp",
+      "tier": "rare"
+    },
+    {
+      "description": "EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact instead of piling up duplicates with `remember`. Requires the existing key. Pair: remember (write-new) / recall (read) / memory_forget (delete). Returns {ok, op, key, updated}.",
+      "hidden": true,
+      "model_name": "",
+      "name": "memory_update",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "key, fact",
+      "tier": "rare"
+    },
+    {
+      "description": "Minimize an OPEN Windows window -- hide it to the taskbar without closing it. To bring it back use restore_window; to actually close it use close_window.",
+      "hidden": true,
+      "model_name": "",
+      "name": "minimize_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title",
+      "tier": "rare"
+    },
+    {
+      "description": "Full INVENTORY of installed apps AND games across every surface (flatpak/rpm/winget/store/steam/epic/xbox/gog/cli/service). THE verb for 'what apps/games are installed', 'list my programs', 'detect my installed games'. Optional substring filter. NOT a web search, NOT list_windows (open windows only); for fuzzy 'which app does X' use app_search.",
+      "hidden": true,
+      "model_name": "list_installed_apps",
+      "name": "mios_apps",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "filter?",
+      "tier": "rare"
+    },
+    {
+      "description": "Resolve an app/program NAME to the exact runnable launch command WITHOUT launching it -- returns the cmd line only; the agent then decides whether to run it (e.g. via launch_windows_app/launch_app). This is NOT a file search and does NOT open anything. Use it to get the precise command before launching, or to check how something would be started.",
+      "hidden": true,
+      "model_name": "resolve_launch_command",
+      "name": "mios_find",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "name",
+      "tier": "rare"
+    },
+    {
+      "description": "Move an OPEN Windows window to a SEMANTIC region: center, a half of the screen (left-half / right-half / top-half / bottom-half), a corner (top-left / ...), or maximize -- optionally on a chosen monitor. Half/corner rectangles are derived live from the monitor's work area. Use when the operator names a place ('to the left half', 'center it', 'snap it right') rather than exact coordinates. For literal pixel (x,y) use place_window_at_pixel; to change size use resize_window.",
+      "hidden": true,
+      "model_name": "move_window_to_region",
+      "name": "move_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title, position, monitor=0?",
+      "tier": "rare"
+    },
+    {
+      "conflict_group": "desktop_ui",
+      "description": "LAUNCH any app/program by name (resolves Windows AND Linux/flatpak apps) and optionally place its window (position center/left/right/top-left..., monitor index) or pass CLI args. THE one launch verb -- use for any 'open / launch / start / run X'. After launching, confirm with verify_launch.",
+      "hidden": true,
+      "model_name": "launch_windows_app",
+      "name": "open_app",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "name, position=\"default\"?, args?, monitor=0?",
+      "tier": "rare"
+    },
+    {
+      "description": "SHOW a web page to the operator in their VISIBLE browser. By DEFAULT opens the URL as a NEW TAB in the operator's ALREADY-RUNNING browser (reuses the instance -- NOT a new window, NOT a second instance). mode=window = a new window in the running browser; mode=new-window = force a brand-new isolated instance; private=true = incognito/private window. Use for 'open / pull up / show me this link' and 'open a tab to X'. NOT for research (that returns page content); this just displays the page.",
+      "hidden": false,
+      "model_name": "",
+      "name": "open_url",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "url, mode?, browser?, private?, profile?, reuse_instance?",
+      "tier": "core"
+    },
+    {
+      "description": "Run a PRE-DEFINED, NAMED OS-shell recipe from the [recipes.*] catalog (per-OS templates, shell-escaped, WSL path-converted). You pick an EXISTING recipe by name + params -- you do NOT write the code. Enumerate available recipes via `mios-os-recipe list`. For writing arbitrary code use run_sandboxed_code; for Windows PowerShell use powershell_run.",
+      "hidden": false,
+      "model_name": "run_named_os_recipe",
+      "name": "os_recipe",
+      "permission": "interactive",
+      "section": "OS shell verbs",
+      "sig": "name, params?, os?",
+      "tier": "core"
+    },
+    {
+      "description": "Move the cursor to (x,y) on the HOST WINDOWS desktop and click. This clicks the real Windows screen the operator sees, NOT the in-VM Linux desktop (use linux_desktop_click for that). Write-class. button = left|right|middle.",
+      "hidden": true,
+      "model_name": "windows_desktop_click",
+      "name": "pc_click",
+      "permission": "write",
+      "section": "PC input",
+      "sig": "x, y, button=\"left\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "Click a UI control BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- finds the named control and clicks its center, acting on a SEMANTIC target instead of guessed pixels (more robust than pc_click x,y). Prefer this over pixel-clicking when the control has a name; use pc_find_element first if unsure of the exact name. Write-class.",
+      "hidden": true,
+      "model_name": "windows_desktop_click_element",
+      "name": "pc_click_element",
+      "permission": "write",
+      "section": "PC input",
+      "sig": "name",
+      "tier": "rare"
+    },
+    {
+      "description": "Find UI controls BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- the SEMANTIC alternative to guessing pixel coordinates. Returns matching elements with control type, automation_id, bounds, and clickable center. Use to LOCATE a button/menu/field before acting; then pc_click_element (by name) or pc_click (with the returned center). READ-only.",
+      "hidden": true,
+      "model_name": "windows_desktop_find_element_by_name",
+      "name": "pc_find_element",
+      "permission": "read",
+      "section": "PC input",
+      "sig": "name",
+      "tier": "rare"
+    },
+    {
+      "description": "Press a key or modifier chord on the HOST WINDOWS desktop (e.g. Enter, Tab, F5, or Ctrl+S as a combo). Targets the real Windows screen, NOT the in-VM Linux desktop (use linux_desktop_press_key / linux_desktop_press_key_combo). Write-class. This single verb handles both bare keys and modifier combos.",
+      "hidden": true,
+      "model_name": "windows_desktop_press_key",
+      "name": "pc_key",
+      "permission": "write",
+      "section": "PC input",
+      "sig": "key",
+      "tier": "rare"
+    },
+    {
+      "description": "List ALL named UI controls in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- a 'set of marks' SURVEY (each with control type, automation_id, bounds, clickable center, mark number) so you can SEE what's actionable, then pc_click_element (by name) or pc_click (the center). Use when you don't know the control names yet. READ-only.",
+      "hidden": true,
+      "model_name": "windows_desktop_list_elements",
+      "name": "pc_list_elements",
+      "permission": "read",
+      "section": "PC input",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "Capture the WINDOWS host desktop (the operator's real screen) to a PNG file via the in-session UIA executor. This is the Windows screen, NOT the Linux in-VM desktop (use cu_screenshot for that). Read-class. Pair with windows_desktop_* (UIA) or a vision grounder to act on what you see.",
+      "hidden": false,
+      "model_name": "windows_desktop_screenshot",
+      "name": "pc_screenshot",
+      "permission": "read",
+      "section": "Computer-use",
+      "sig": "path",
+      "tier": "rare"
+    },
+    {
+      "conflict_group": "desktop_ui",
+      "description": "Type literal text into the focused window on the HOST WINDOWS desktop. Sends keystrokes to the foreground Windows app, NOT the in-VM Linux desktop (use linux_desktop_type_text). For editing FILES, prefer create_file / replace_file_text instead. Write-class.",
+      "hidden": true,
+      "model_name": "windows_desktop_type_text",
+      "name": "pc_type",
+      "permission": "write",
+      "section": "PC input",
+      "sig": "text",
+      "tier": "rare"
+    },
+    {
+      "description": "Directly set the text/value of a named UI control (by Name or AutomationId) via Windows UIA without simulating keystrokes. Completely bypasses window focus racing and keystroke drops. Use this for robust, deterministic typing into Windows apps when the target element exposes a ValuePattern.",
+      "hidden": false,
+      "model_name": "windows_desktop_uia_set_value",
+      "name": "pc_uia_set_value",
+      "permission": "write",
+      "section": "PC input",
+      "sig": "name, text",
+      "tier": "rare"
+    },
+    {
+      "description": "Extract the FULL UIA accessibility tree of the FOREGROUND window as JSON to deeply understand its structure, hierarchy, and nested components. Returns node types, names, bounds, and parent/child relationships. This is the structural foundation for Native UIA grounding.",
+      "hidden": false,
+      "model_name": "windows_desktop_uia_tree",
+      "name": "pc_uia_tree",
+      "permission": "read",
+      "section": "PC input",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "INSTALL / SEARCH / SHOW / UPGRADE / UNINSTALL / LIST software packages BY ID across winget (Windows), flatpak (Linux), or dnf. action=search|show|install|upgrade|uninstall|list|preflight; backend=auto picks the OS. This MANAGES packages; for the question 'what apps/games are installed' use list_installed_apps (the inventory). 'list' here = installed PACKAGES, not the app catalog.",
+      "hidden": false,
+      "model_name": "manage_packages",
+      "name": "pkg",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "action, id?, query?, backend=\"auto\"?, limit=10?, scope?",
+      "tier": "common"
+    },
+    {
+      "description": "Move an OPEN Windows window to LITERAL pixel coordinates (x, y). Use only when you have exact coords -- call screen_layout first to learn monitor geometry/resolution. For named regions (center/left/right) use move_window_to_region; to change size use resize_window.",
+      "hidden": true,
+      "model_name": "place_window_at_pixel",
+      "name": "position_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title, x, y",
+      "tier": "rare"
+    },
+    {
+      "description": "Execute a PowerShell script on the WINDOWS side (not the Linux sandbox). High-privilege -- tainted sessions are refused; script cap 64 KiB. Object output is flattened to plain text, so cmdlets that emit .NET objects (Get-Service, Get-Process, Get-ChildItem) return readable tables. Use for Windows-host administration / cmdlets. For sandboxed Linux bash/python use run_sandboxed_code instead.",
+      "hidden": false,
+      "model_name": "",
+      "name": "powershell_run",
+      "permission": "write",
+      "section": "Windows-side shell",
+      "sig": "script, timeout=30?, work_dir?",
+      "tier": "rare"
+    },
+    {
+      "description": "List running OS PROCESSES, optionally filtered by name; sorted by rss (memory) / cpu / pid. Use to see which processes are running and what they consume. For container/service state use container_status / service_status instead.",
+      "hidden": true,
+      "model_name": "",
+      "name": "process_list",
+      "permission": "read",
+      "section": "System",
+      "sig": "filter?, sort=\"rss\"?, limit=20?",
+      "tier": "rare"
+    },
+    {
+      "description": "READ back the durable FACTS you previously stored with `remember` (Letta/MemGPT core-memory read). Returns the agent-authored memories for a scope {ok, count, memories:[{key, scope, fact, source}]}. This is your own persistent memory of facts -- NOT a vault search (notes_vault_search), NOT RAG (knowledge_search). Pair: remember (write) / memory_update (edit) / memory_forget (delete).",
+      "hidden": true,
+      "model_name": "",
+      "name": "recall",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "scope=global?, limit=30?",
+      "tier": "rare"
+    },
+    {
+      "description": "WRITE a durable FACT to your own persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/conversations. scope: global (default) | agent:<name> | conversation:<id>. Optional `key` lets you later memory_update/memory_forget it. This stores ONE fact -- to bulk-notes_vault_ingest documents use notes_vault_ingest.",
+      "hidden": true,
+      "model_name": "",
+      "name": "remember",
+      "permission": "write",
+      "section": "Discovery / resolution",
+      "sig": "fact, scope=global?, key?",
+      "tier": "rare"
+    },
+    {
+      "description": "Resize an OPEN Windows window to a literal pixel size (width x height). This ONLY changes size -- it does NOT move the window. To relocate use move_window_to_region (named region) or place_window_at_pixel (exact x,y); to fill the monitor use maximize_window.",
+      "hidden": true,
+      "model_name": "",
+      "name": "resize_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title, width, height",
+      "tier": "rare"
+    },
+    {
+      "description": "Restore an OPEN Windows window from a minimized OR maximized state back to its last normal-size geometry. Use to 'un-minimize' / 'un-maximize' / bring back a window. Pairs with minimize_window and maximize_window.",
+      "hidden": true,
+      "model_name": "",
+      "name": "restore_window",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "title",
+      "tier": "rare"
+    },
+    {
+      "description": "Execute code. mode='sandbox' (safe isolated run) or 'orchestrate' (run a script that imports mios_tools to coordinate agentic sub-actions). language defaults to python; set 'bash' for shell.",
+      "hidden": false,
+      "model_name": "",
+      "name": "run_code",
+      "permission": "write",
+      "section": "Code / shell",
+      "sig": "mode, code, language?",
+      "tier": "core"
+    },
+    {
+      "description": "Schedule a RECURRING/standing task: run <prompt> through the agent on a repeating interval and post each result to the operator's Discord. Use for ANY 'do X every N minutes/hours', 'each day', 'keep me updated on ...', 'check ... regularly' request -- a STANDING job, NOT one-shot research.",
+      "hidden": false,
+      "model_name": "",
+      "name": "schedule",
+      "permission": "write",
+      "section": "Automation / scheduling",
+      "sig": "prompt, every",
+      "tier": "core"
+    },
+    {
+      "description": "Report Windows MONITOR geometry: each display's resolution, position, and which is primary. Use BEFORE place_window_at_pixel so you know valid coordinates. This describes the SCREENS/monitors, not the open windows (use list_windows for those).",
+      "hidden": false,
+      "model_name": "",
+      "name": "screen_layout",
+      "permission": "read",
+      "section": "Window / app launch",
+      "sig": "",
+      "tier": "common"
+    },
+    {
+      "description": "Search stored information. store='knowledge' (curated OWUI RAG document collections) or 'vault' (the local notes/skills vault).",
+      "hidden": false,
+      "model_name": "",
+      "name": "search_store",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, store",
+      "tier": "common"
+    },
+    {
+      "description": "Gracefully RESTART ONE Linux systemd SERVICE by unit name. For systemd services -- NOT podman containers (use container_restart). Note: for MiOS-owned services prefer the mios-restart recipe which preserves state. Write-class.",
+      "hidden": false,
+      "model_name": "",
+      "name": "service_restart",
+      "permission": "write",
+      "section": "System",
+      "sig": "name",
+      "tier": "common"
+    },
+    {
+      "description": "Check ONE Linux systemd SERVICE: is-active state + a status snapshot for the named unit (e.g. mios-agent-pipe, hermes-agent). For systemd services -- NOT podman CONTAINERS (use container_status) and NOT whole-machine health (use system_status). Read-only.",
+      "hidden": true,
+      "model_name": "",
+      "name": "service_status",
+      "permission": "read",
+      "section": "System",
+      "sig": "name",
+      "tier": "rare"
+    },
+    {
+      "description": "Run a command in a PERSISTENT bash session whose cwd, environment and history SURVIVE across turns -- `cd /tmp && export FOO=bar` then `echo $PWD $FOO` returns `/tmp bar`. One session per chat, tmux-backed, bwrap-confined at baseline. Use when a workflow needs several steps to share state; for a one-shot isolated command use run_sandboxed_code instead. Output is ACI-elided (head+tail kept) rather than raw-truncated.",
+      "hidden": false,
+      "model_name": "run_in_shell",
+      "name": "shell_session",
+      "permission": "write",
+      "section": "Persistent shell",
+      "sig": "command, session?, timeout=120?",
+      "tier": "rare"
+    },
+    {
+      "description": "TIERED summarisation of a document/text (the L0/L1/L2 gating primitive): L0 = one-sentence ~100-token abstract, L1 = ~2k-token structured overview (sections + key points), L2 = the raw text (returned as a char count, fetched on demand). Pass `text` or a `file` path. Runs on the CPU light lane. This CONDENSES content you supply -- it does NOT search or store anything (use notes_vault_ingest to persist).",
+      "hidden": false,
+      "model_name": "",
+      "name": "summarize",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "text?, file?, tiers=l0,l1?",
+      "tier": "common"
+    },
+    {
+      "description": "Switch the default application for an abstract app type (e.g. 'browser', 'editor').",
+      "hidden": false,
+      "model_name": "",
+      "name": "switch_app_default",
+      "permission": "read",
+      "section": "Configuration",
+      "sig": "type, app",
+      "tier": "common"
+    },
+    {
+      "description": "Apply the code-server/war-room workspace edits DIRECTLY onto the deployed MiOS-DEV root so they go LIVE for testing (no GitHub round-trip). Only works on a mutable MiOS-DEV deploy; an immutable bootc root is refused. Use mode=check (or dry-run) to preview what would change without touching anything, then mode=apply to make it live.",
+      "hidden": false,
+      "model_name": "",
+      "name": "sync_to_root",
+      "permission": "write",
+      "section": "MiOS-DEV / self-development",
+      "sig": "mode=\"apply\"?",
+      "tier": "rare"
+    },
+    {
+      "description": "READ the cached system/environment inventory (shared store): identity, the host OS + whether this is WSL2 + the Windows host, host hardware, which MiOS stack services are up/down, loaded models, and the installed launchable-app inventory by category. Read this to know the ENVIRONMENT and WHAT IS INSTALLED/RUNNING instead of guessing the OS or the apps. Cached (may be slightly stale -> sys_env_refresh). Read-only.",
+      "hidden": true,
+      "model_name": "sys_env_snapshot",
+      "name": "sys_env",
+      "permission": "read",
+      "section": "System",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "WRITE/UPDATE the cached environment inventory: re-probe apps + services + models + host and overwrite the shared sys_env_snapshot database. Call when you suspect the sys_env_snapshot cache is stale (e.g. just installed/removed an app or started a service). This is the refresh half; sys_env_snapshot is the read half.",
+      "hidden": true,
+      "model_name": "",
+      "name": "sys_env_refresh",
+      "permission": "write",
+      "section": "System",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "Query system status: query='status' (overall), 'env' (environment variables), 'env-refresh' (reload shell env), 'logs' (system logs for target service), 'service-status' (systemd status), 'processes' (top), 'containers' (podman ps).",
+      "hidden": false,
+      "model_name": "",
+      "name": "system",
+      "permission": "read",
+      "section": "System",
+      "sig": "query, target?",
+      "tier": "core"
+    },
+    {
+      "description": "Read recent LOG / journal entries from systemd. Filter by unit (mios-agent-pipe / hermes-agent / mios-open-webui / ...) or level (err / warning / info). Default: 50 lines from the last 10 minutes. Use to debug what a service printed -- NOT for live health numbers (system_status) or service up/down state (service_status).",
+      "hidden": true,
+      "model_name": "",
+      "name": "system_logs",
+      "permission": "read",
+      "section": "System",
+      "sig": "unit?, since=\"10m\"?, lines=50?, level?",
+      "tier": "rare"
+    },
+    {
+      "description": "Live LOCAL machine health dashboard (JSON): OS (Linux distro + kernel + whether this is WSL2 + the WINDOWS HOST OS caption/version when on WSL2), GPU/VRAM, RAM, disk usage, running services, loaded models. THE verb for 'system status', 'system health', 'what OS / Windows version am I on', 'is the GPU/memory/disk ok'. Local state only -- NEVER a web search, and NEVER answer the OS/host from training data: read it HERE (the `os` field). Single source of truth for these live numbers.",
+      "hidden": true,
+      "model_name": "",
+      "name": "system_status",
+      "permission": "read",
+      "section": "System",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "CREATE a NEW file on disk with the given text content (path + content). For making a file that does not yet exist; to change an EXISTING file use replace_file_text or insert_file_lines, and to read one use read_file. Refuses write-protected system paths (/etc, /usr, /boot, /mnt/c/Windows, /mnt/c/Program Files).",
+      "hidden": true,
+      "model_name": "create_file",
+      "name": "text_create",
+      "permission": "write",
+      "section": "Text editor",
+      "sig": "path, content",
+      "tier": "rare"
+    },
+    {
+      "description": "INSERT new text into an existing file AFTER a given 1-indexed line number (0 = prepend to the very top); all existing content is kept. Args: path, line, content. Use this to ADD text at a position WITHOUT deleting anything; to OVERWRITE/replace existing text use replace_file_text, and to make a brand-new file use create_file.",
+      "hidden": true,
+      "model_name": "insert_file_lines",
+      "name": "text_insert",
+      "permission": "write",
+      "section": "Text editor",
+      "sig": "path, line, content",
+      "tier": "rare"
+    },
+    {
+      "description": "Find-and-replace text inside an existing file: replace an EXACT substring (old) with new text (new). `old` must occur EXACTLY once -- supply a larger surrounding block if it is ambiguous. Use this to MODIFY/overwrite existing content; to ADD lines without deleting use insert_file_lines, and to make a new file use create_file.",
+      "hidden": true,
+      "model_name": "replace_file_text",
+      "name": "text_str_replace",
+      "permission": "write",
+      "section": "Text editor",
+      "sig": "path, old, new",
+      "tier": "rare"
+    },
+    {
+      "description": "READ the contents of a local file (returns text with 1-indexed line numbers, optional start/end range). This is for files ALREADY on disk -- it does NOT search the web and does NOT find files by name. To list the contents of a directory, use list_directory instead.",
+      "hidden": false,
+      "model_name": "read_file",
+      "name": "text_view",
+      "permission": "read",
+      "section": "Text editor",
+      "sig": "path, start?, end?",
+      "tier": "core"
+    },
+    {
+      "description": "Find VERBS/TOOLS in the catalog by natural-language query when no listed verb obviously fits the user's ask. Returns top-k {name, sig, desc, score} via embedding search over verb name+description. Use to DISCOVER a capability you don't see; not for searching the web (web_search) or local files (windows_file_search).",
+      "hidden": false,
+      "model_name": "",
+      "name": "tool_search",
+      "permission": "read",
+      "section": "Verb discovery",
+      "sig": "query, limit=5?",
+      "tier": "core"
+    },
+    {
+      "description": "Manage the local second-brain vault. op='list' (ls), 'read' (cat), 'search' (find), or 'ingest' (add local file to vault).",
+      "hidden": false,
+      "model_name": "",
+      "name": "vault",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "op, target?, content?",
+      "tier": "common"
+    },
+    {
+      "description": "CHECK whether an app/window ACTUALLY launched, read-only, in-turn (delegates to the daemon-agent's Definition-of-Done window check). Call with the SAME name AFTER you fired launch_app / launch_windows_app / focus_window to confirm before claiming success. This only CHECKS -- it does NOT launch; to launch and confirm in one go use launch_and_verify_app.",
+      "hidden": true,
+      "model_name": "",
+      "name": "verify_launch",
+      "permission": "read",
+      "section": "Window / app launch",
+      "sig": "app",
+      "tier": "rare"
+    },
+    {
+      "description": "READ ONE node from the local notes vault at a chosen detail TIER (hierarchical gating): l0 = one-line abstract, l1 = structured overview (generated on read), l2 = raw full content (most context, fetch only when truly needed). `node` is `skills/<file>` or `knowledge/<id>` obtained from notes_vault_list / notes_vault_search. This reads a vault node, NOT a disk file (read_file) and NOT a web page.",
+      "hidden": true,
+      "model_name": "notes_vault_read",
+      "name": "viking_cat",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "node, tier=l0?",
+      "tier": "rare"
+    },
+    {
+      "description": "SEMANTIC search across the LOCAL notes vault (the offline second-brain: self-learned skills + stored Q&A + AI memory + ingested notes). Matches your query against L0 abstracts and returns hits {id, l0}; then notes_vault_read the best at a deeper tier. This searches YOUR local vault, NOT the OWUI RAG document collections (knowledge_search), NOT the web, NOT files on disk.",
+      "hidden": true,
+      "model_name": "notes_vault_search",
+      "name": "viking_find",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, ns?, limit=20?",
+      "tier": "rare"
+    },
+    {
+      "description": "LIST nodes in the local notes vault (the offline second-brain) at the cheap one-line (L0) tier for navigation. Pick a namespace: `skills` (self-learned SKILL.md files), `knowledge` (every finished Q&A), `memory` (stored AI memories). Skim these abstracts FIRST, then notes_vault_read the right node at a deeper tier. This is the local vault index, NOT web/file/RAG search.",
+      "hidden": true,
+      "model_name": "notes_vault_list",
+      "name": "viking_ls",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "ns, query?, limit=20?",
+      "tier": "rare"
+    },
+    {
+      "description": "Drive a virtual game controller (agent pad) smoothly: op='create' (seat=<label> makes a nested seat's pad), 'stick' (stick=left|right, x/y in -1..1 eased over ms, optional hold_ms then eases back), 'trigger' (side, value 0..1), 'button' (BTN_SOUTH.., action tap|press|release), 'dpad' (dir), 'release' (all to rest), 'assign' (route it into the nested session of seat), 'status', 'destroy', 'list'. Moves the Hypr3D camera/walk smoothly in the room it controls.",
+      "hidden": false,
+      "model_name": "",
+      "name": "virtual_controller",
+      "permission": "write",
+      "section": "Computer-use",
+      "sig": "op, pad?, seat?, stick?, x?, y?, side?, value?, button?, action?, dir?, ms?, hold_ms?, ease?, wait?",
+      "tier": "rare"
+    },
+    {
+      "description": "Fetch ONE web page you already have the URL for and return its readable ARTICLE TEXT (lightweight, ~4000 chars, plain text not markdown). Use after web_search to read a single promising result and quote what it actually says. For full clean MARKDOWN of a long doc use fetch_url_markdown; for a news/article INDEX page use fetch_index_markdown. If the page lacks the answer, say so; never invent.",
+      "hidden": true,
+      "model_name": "fetch_url_text",
+      "name": "web_extract",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "url, limit=4000?",
+      "tier": "rare"
+    },
+    {
+      "description": "Fetch ONE web page by URL to clean, LLM-ready MARKDOWN via the LOCAL self-hosted Firecrawl engine (offline-first, no cloud). A second markdown fetch engine alongside fetch_url_markdown; its verified strength is NEWS / ARTICLE INDEX and LISTING pages (homepages, news fronts, blog/forum indexes) where the markdown of links + headlines must render reliably -- prefer it for those. For a single long article/doc page use fetch_url_markdown; for quick readable plain text use fetch_url_text.",
+      "hidden": true,
+      "model_name": "fetch_index_markdown",
+      "name": "web_scrape",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "url, limit=20000?",
+      "tier": "rare"
+    },
+    {
+      "description": "WEB search via the LOCAL self-hosted SearXNG (offline-first metasearch, no cloud dependency). USE THIS for anything from the internet or the current world: weather, news, current events, event dates/times/locations, prices, products, people, places, scores, facts, general knowledge -- ANY question whose answer is not a file on this machine. Returns real fetched {title, url, content} plus instant answers/infoboxes for citation. This is NOT file search: windows_file_search/linux_file_search/find_file_fast ONLY find files on disk and return nothing useful for a knowledge/current-events question. When a question needs a live fact you don't already have, call THIS and ground on the result -- never invent the answer, never default to remembered facts. RECENCY: when the answer must be CURRENT (today/latest/trending/breaking/recent/this week/this month), set time_range='day' (or 'week'/'month') so SearXNG returns fresh dated results instead of evergreen encyclopedia or year-overview pages; you may also set category='news' for breaking headlines. Leave time_range and category empty (null) for timeless facts.",
+      "hidden": false,
+      "model_name": "",
+      "name": "web_search",
+      "permission": "read",
+      "section": "Discovery / resolution",
+      "sig": "query, limit=5?",
+      "tier": "core"
+    },
+    {
+      "description": "Perform window operations: op='focus' (bring to front), 'move-region' (snap to left/right/etc via position), 'move-pixel' (set x/y), 'resize' (set width/height), 'min', 'max', 'restore', 'close'.",
+      "hidden": false,
+      "model_name": "",
+      "name": "window_op",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "op, title, width?, height?, x?, y?, position?",
+      "tier": "core"
+    },
+    {
+      "description": "Change the STATE of an OPEN Windows window (by title): minimize (hide to taskbar), maximize (fill its monitor), restore (back to normal size), or close (graceful WM_CLOSE so the app saves state). Run list_windows first to confirm the title. This is state only -- to bring a window to the front use focus_window, to relocate use move_window_to_region / place_window_at_pixel, to change size use resize_window.",
+      "hidden": true,
+      "model_name": "",
+      "name": "window_state",
+      "permission": "write",
+      "section": "Window / app launch",
+      "sig": "action, title",
+      "tier": "rare"
+    },
+    {
+      "description": "Inject input into the HOST WINDOWS desktop. action='type', 'key' (press a key/combo), 'click' (pixel click), 'find' (find UI element), 'click-element' (click named UI element), 'list-element' (list all UI elements).",
+      "hidden": false,
+      "model_name": "",
+      "name": "windows_input",
+      "permission": "write",
+      "section": "PC input",
+      "sig": "action, text?, key?, name?, x?, y?",
+      "tier": "common"
+    },
+    {
+      "description": "[legacy: use pkg(action='install', backend='winget', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "winget_install",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "id",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='list', backend='winget')]",
+      "hidden": true,
+      "model_name": "",
+      "name": "winget_list",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='search', backend='winget')]",
+      "hidden": true,
+      "model_name": "",
+      "name": "winget_search",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "query, limit=10?",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='show', backend='winget', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "winget_show",
+      "permission": "read",
+      "section": "Package management",
+      "sig": "id",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='uninstall', backend='winget', id=...)]",
+      "hidden": true,
+      "model_name": "",
+      "name": "winget_uninstall",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "id",
+      "tier": "rare"
+    },
+    {
+      "description": "[legacy: use pkg(action='upgrade', backend='winget')]",
+      "hidden": true,
+      "model_name": "",
+      "name": "winget_upgrade",
+      "permission": "write",
+      "section": "Package management",
+      "sig": "id?",
+      "tier": "rare"
+    }
+  ],
+  "generated": true,
+  "object": "mios.verb.catalog",
+  "registry_kind": "verb-catalog",
+  "source": "/usr/share/mios/mios.toml#[verbs.*]",
+  "version": "v1"
+}

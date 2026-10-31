@@ -2652,6 +2652,66 @@ pub mod render_hyprland {
     fn string(value: &Value, path: &str) -> Result<String, String> {
         lua(at(value, path)?)
     }
+
+    /// The design language ([theme.shell] comment block): the derived geometry every surface shares, from
+    /// [theme.shell] top_height_px / inset_px / edge_margin_px / corner_power and decoration rounding (R).
+    /// The Python twin is usr/libexec/mios/mios-sync-theme (the theme bridge's "design" table, read by Glass.qml);
+    /// tests/test-design-language.py checks both agree.
+    pub fn design_tokens(data: &Value) -> Result<toml::map::Map<String, Value>, String> {
+        let num = |path: &str| -> Result<f64, String> {
+            let v = at(data, path)?;
+            v.as_integer().map(|i| i as f64).or_else(|| v.as_float()).filter(|n| n.is_finite() && *n >= 0.0)
+                .ok_or_else(|| format!("SSOT {path} must be a non-negative number (design language)"))
+        };
+        let bar = num("theme.shell.top_height_px")?;
+        let inset = num("theme.shell.inset_px")?;
+        let gap = num("theme.shell.edge_margin_px")?;
+        let power = num("theme.shell.corner_power")?;
+        let radius = num("desktop.hyprland.config.decoration.rounding")?;
+        if bar < 2.0 * inset + 2.0 {
+            return Err("theme.shell.inset_px leaves no room for a control inside the bar (top_height_px - 2 x inset_px < 2)".into());
+        }
+        if !(2.0..=10.0).contains(&power) {
+            return Err("theme.shell.corner_power must be 2..10 (Hyprland decoration rounding_power range)".into());
+        }
+        let mut t = toml::map::Map::new();
+        let mut put = |k: &str, v: f64| {
+            t.insert(k.into(), if v.fract() == 0.0 { Value::Integer(v as i64) } else { Value::Float(v) });
+        };
+        put("bar_px", bar);
+        put("inset_px", inset);
+        put("gap_px", gap);
+        put("control_px", bar - 2.0 * inset);
+        put("radius_px", radius);
+        put("panel_pad_px", inset.max(radius - bar / 2.0));   // rows (bar tall, capsules) concentric with the panel corner
+        put("tab_offset_px", radius + radius.min(bar) / 2.0 + inset);
+        put("bar_centre_px", gap + bar / 2.0);
+        put("hairline_px", 1.0);
+        t.insert("corner_power".into(), Value::Float(power));
+        Ok(t)
+    }
+
+    /// Replace "design.<token>" and "theme.shell.<key>" string references in `value` (a table, an array or a
+    /// scalar) with the number they name, recursively. Every other string is left alone.
+    pub fn resolve_design_refs(value: &mut Value, data: &Value, tokens: &toml::map::Map<String, Value>) -> Result<(), String> {
+        match value {
+            Value::String(s) if s.starts_with("design.") => {
+                *value = tokens.get(&s["design.".len()..]).cloned()
+                    .ok_or_else(|| format!("unknown design token {s} (see [theme.shell] design language)"))?;
+            }
+            Value::String(s) if s.starts_with("theme.shell.") => {
+                let v = at(data, s)?;
+                if v.as_integer().is_none() && v.as_float().is_none() {
+                    return Err(format!("SSOT reference {s} must name a number"));
+                }
+                *value = v.clone();
+            }
+            Value::Table(t) => for (_, v) in t.iter_mut() { resolve_design_refs(v, data, tokens)? },
+            Value::Array(a) => for v in a.iter_mut() { resolve_design_refs(v, data, tokens)? },
+            _ => {}
+        }
+        Ok(())
+    }
     /// The plain (unquoted) string at `path`.
     fn string_value(value: &Value, path: &str) -> Result<String, String> {
         at(value, path)?
@@ -3239,6 +3299,11 @@ end
             .filter(|n| (1..=100).contains(n))
             .ok_or("theme.windows.opacity_pct must be 1..100")?;
         let opacity = if acrylic { percent as f64 / 100.0 } else { 1.0 };
+        // decoration rounding_power (and any other design reference) follows the [theme.shell] design language
+        let tokens = design_tokens(data)?;
+        if let Some(d) = config.get_mut("decoration") {
+            resolve_design_refs(d, data, &tokens)?;
+        }
         let decoration = config
             .get_mut("decoration")
             .and_then(Value::as_table_mut)
@@ -3627,6 +3692,11 @@ end
                         .ok_or("hyprbars pill_alpha reference must name a 0..100 percentage")?;
                     cfg.insert("pill_alpha".into(), Value::Float(pctv / 100.0));
                 }
+                // Geometry: "theme.shell.*" / "design.*" references (bar height, paddings, tab offset) -> numbers.
+                let tokens = design_tokens(data)?;
+                for (_, v) in cfg.iter_mut() {
+                    resolve_design_refs(v, data, &tokens)?;
+                }
                 // Palette references -> plugin colors: <role>_palette + <role>_alpha -> <role>_color.
                 for role in ["pill", "pill_rim"] {
                     let Some(name) = cfg.remove(&format!("{role}_palette")) else { continue };
@@ -3682,7 +3752,9 @@ end
                 let name = |k: &str| at(button, k)?.as_str().ok_or_else(|| format!("hyprbars button {k} must be a palette name"));
                 b.insert("bg_color".into(), rgb(name("palette")?)?);
                 b.insert("fg_color".into(), rgb(name("icon_palette")?)?);
-                b.insert("size".into(), at(button, "size")?.clone());
+                let mut size = at(button, "size")?.clone();
+                resolve_design_refs(&mut size, data, &design_tokens(data)?)?;
+                b.insert("size".into(), size);
                 b.insert("icon".into(), at(button, "icon")?.clone());
                 b.insert("action".into(), at(button, "action")?.clone());
                 out += &format!(" hl.plugin.hyprbars.add_button({})\n", lua(&Value::Table(b))?);
@@ -6041,6 +6113,40 @@ end
         }
 
         #[test]
+        fn design_language_projects_one_geometry() {
+            // [theme.shell] design language: the controls tab and the windows take the shell's bar, inset and curve.
+            let d = real_ssot();
+            let t = design_tokens(&d).unwrap();
+            let n = |k: &str| t[k].as_integer().map(|i| i as f64).or_else(|| t[k].as_float()).unwrap();
+            let shell = &d["theme"]["shell"];
+            let bar = shell["top_height_px"].as_integer().unwrap() as f64;
+            let inset = shell["inset_px"].as_integer().unwrap() as f64;
+            let r = d["desktop"]["hyprland"]["config"]["decoration"]["rounding"].as_integer().unwrap() as f64;
+            assert_eq!(n("bar_px"), bar);
+            assert_eq!(n("control_px"), bar - 2.0 * inset);
+            assert_eq!(n("panel_pad_px"), inset.max(r - bar / 2.0));
+            assert_eq!(n("tab_offset_px"), r + r.min(bar) / 2.0 + inset);
+            let out = project(&d).unwrap();
+            assert!(out.contains(&format!("[\"rounding_power\"] = {}", lua(&shell["corner_power"]).unwrap())), "windows take the one curve");
+            assert!(!out.contains("\"theme.shell.") && !out.contains("\"design."), "every design reference is resolved");
+            assert!(out.contains(&format!("[\"bar_height\"] = {}", bar as i64)));
+            assert!(out.contains(&format!("[\"bar_button_padding\"] = {}", inset as i64)));
+            assert!(out.contains(&format!("[\"pill_padding\"] = {}", inset as i64)));
+            let sizes: Vec<&str> = out.match_indices("add_button(").map(|(i, _)| &out[i..]).collect();
+            assert_eq!(sizes.len(), d["desktop"]["hyprland"]["hyprbars"]["buttons"].as_array().unwrap().len());
+            for b in sizes {
+                assert!(b[..b.find('}').unwrap()].contains(&format!("[\"size\"] = {}", (bar - 2.0 * inset) as i64)), "buttons are control-sized");
+            }
+            // a bad token is an error, not a silent literal
+            let mut bad = d.clone();
+            bad["desktop"]["hyprland"]["hyprbars"]["config"]["bar_padding"] = Value::String("design.nope".into());
+            assert!(project(&bad).is_err());
+            let mut bad = d.clone();
+            bad["theme"]["shell"]["inset_px"] = Value::Integer(14);
+            assert!(design_tokens(&bad).is_err(), "no room for a control inside the bar");
+        }
+
+        #[test]
         fn hypr3d_glass_preset_is_the_desktop_preset() {
             // One glass look (MiOS rule): the room's glass is the hyprglass preset the desktop draws windows with,
             // resolved like hyprglass (theme table, preset, inherits, config, defaults), never a copy.
@@ -6070,7 +6176,8 @@ end
             let hg = &d["desktop"]["hyprland"]["hyprglass"]["config"];
             assert_eq!(g["edge_pass"].as_float(), hg["edge_pass"].as_float().or(hg["edge_pass"].as_integer().map(|i| i as f64)));
             assert_eq!(g["edge_pass_width"].as_float(), hg["edge_pass_width"].as_float().or(hg["edge_pass_width"].as_integer().map(|i| i as f64)));
-            assert_eq!(g["bevel_angle"].as_float(), Some(315.0));
+            // one light: the preset sets the bevel to face the specular light (hyprglass' own default would split them)
+            assert_eq!(g["bevel_angle"].as_float(), g["specular_angle"].as_float());
             assert_eq!(g["vibrancy"].as_float(), Some(0.15));
             assert_eq!(g.as_table().unwrap().len(), HYPR3D_GLASS_KEYS.len() + 6);
             // explicit glass keys win; an unknown preset is an error
@@ -7007,7 +7114,11 @@ pub mod hyprglass_build {
         cornerRadius = std::clamp(static_cast<float>(**radius) * monitor->m_scale, 0.0f,
                                  static_cast<float>(std::min(transformBox.w, transformBox.h) * 0.5));
     }
-    float roundingPower = 2.0f;"#;
+    // The one corner curve ([theme.shell] corner_power -> decoration:rounding_power): layers, windows and the tab alike.
+    float roundingPower = 2.0f;
+    const auto powerOption = Config::mgr()->getConfigValue("decoration:rounding_power");
+    if (powerOption.dataptr && powerOption.type && *powerOption.type == typeid(Config::FLOAT))
+        roundingPower = std::clamp(static_cast<float>(**reinterpret_cast<Config::FLOAT* const*>(powerOption.dataptr)), 2.0f, 10.0f);"#;
         if source.matches(include).count() != 1 || source.matches(old).count() != 1 {
             return Err("MiOS layer geometry fix (render.rs layer_geometry_source) no longer matches upstream src/GlassLayerSurface.cpp; update its anchor".into());
         }
@@ -7026,6 +7137,7 @@ pub mod hyprglass_build {
             assert!(fixed.contains("getConfigValue(\"decoration:rounding\")"));
             assert!(fixed.contains("monitor->m_scale"));
             assert!(fixed.contains("transformBox.h) * 0.5"));
+            assert!(fixed.contains("getConfigValue(\"decoration:rounding_power\")"), "layers follow the one corner curve");
             assert!(layer_geometry_source(&fixed).is_err());
             assert!(layer_geometry_source(&fixture.replace("cornerRadius  = 0.0f", "cornerRadius  = 5.0f")).is_err());
             assert!(layer_geometry_source(&(fixture.to_string() + fixture)).is_err());
