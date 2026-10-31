@@ -34,3 +34,12 @@ displayed value was 2000ms. Lock to 500ms here so btop refreshes 2x/sec
 on the dev VM out of the box.
 
 <!-- mios-src:77fe03ac20f8 from etc/btop/btop.conf:58-60 -->
+### Default symbols to use for graph creation, "braille"...
+
+* Default symbols to use for graph creation, "braille", "block" or "tty".
+* "braille" offers the highest resolution but might not be included in all fonts.
+* "block" has half the resolution of braille but uses more common characters.
+* "tty" uses only 3 different symbols but will work with most fonts and should work in a real TTY.
+* Note that "tty" only has half the horizontal resolution of the other two, so will show a shorter historical view.
+
+<!-- mios-src:1ada1c3d5b25 from etc/btop/btop.conf:41-45 -->

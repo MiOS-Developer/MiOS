@@ -1,5 +1,5 @@
 // AI-hint: mios-controls TUI: peripheral selector, keyboard and controller diagrams, the binding table per context, collision markers and a draft -> validate -> apply workflow; input arrives from the dedicated input thread, validation runs on a worker, the render thread only blocks on its channel.
-// AI-related: tools/native/mios-controls/src/{model,validate,apply,input,devices}.rs, usr/share/mios/mios.toml [keybindings.global] [colors]
+// AI-related: tools/native/mios-controls/src/model.rs, tools/native/mios-controls/src/validate.rs, tools/native/mios-controls/src/apply.rs, tools/native/mios-controls/src/input.rs, tools/native/mios-controls/src/devices.rs, usr/share/mios/mios.toml
 // AI-functions: run, App::handle, App::draw, keyboard_rows, pad_lines
 use crate::devices::{Device, Kind};
 use crate::model::{at, field, str_list, Draft, Layers, CONTEXTS, PAD_BUTTONS};

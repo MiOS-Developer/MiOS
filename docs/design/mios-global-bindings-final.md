@@ -1,4 +1,4 @@
-<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0 and P1 landed; G1 U1 I1-I4 GT M1 pending). -->
+<!-- AI-hint: Final global controller + keyboard binding spec: 20 controller inputs x 10 contexts (tap/hold), keyboard map, ownership-contract integration and the staged implementation plan by owner (S0, I1, I2, I3, P1 and I4 landed; G1 U1 GT M1 pending). -->
 <!-- AI-related: usr/share/mios/mios.toml [keybindings.*], docs/design/mios-global-bindings-staged.patch.toml, docs/design/mios-global-bindings-tests.md, usr/share/doc/mios/keybinds.md, tools/native/mios-inputd -->
 # MiOS global bindings: FINAL spec (controller + keyboard)
 
@@ -11,6 +11,37 @@ Labels:
 - **DOCUMENTED**: present in usr/share/doc/mios/keybinds.md.
 - Status of a behavior: **[K]** kept, **[F]** fix, **[N]** new.
 - Step tags (§7): S0, G1, U1, I1, I2, I3, I4, P1, GT, M1. A behavior tagged with a step is DECLARED in the patch but commented out, and becomes IMPLEMENTED when that step lands.
+
+**I1 as landed (operator decision 2026-10-29, supersedes O-1/O-4 defaults for the controller):** capture and release are identical for every window kind. No class list (`game`, `vm-passthrough`) captures the controller; those classes only scope keyboard passthrough. inputd's controller owner is `app` only for `app-capture` (fullscreen==2, `capture_tag` or the room `input_owner`, each cancelled by `release_tag`). The legacy daemon unit has no `[Install]`.
+
+**I2 as landed** (tools/native/mios-inputd/src/nav.rs, router.rs, runtime.rs; tests: router `nav_contract`, tests/test-inputd-nav.py, tests/test-inputd-nav-live.py). Differences from the text below:
+- Every uncaptured window navigates alike (operator decision): `nav.contexts` maps `game` and `vm-passthrough` to `desktop` too, and `cursor_mode_contexts` lists every uncaptured context. A class never decides who gets the controller.
+- `tmux:` verbs address the server of the client that discovery found (`tmux -S <socket>`, with the socket resolved from the client's `-L`/`-S` and `TMUX_TMPDIR`, because MiOS terminals set `TMUX_TMPDIR`), not `-L socket_name`. Which servers count is the SSOT list `nav.tmux_sockets` (`mios-human`, `mios-nested`). Discovery reads `/proc` only (once per second per focused terminal, no spawn).
+- The HAT d-pad folds into `BTN_DPAD_*` for nav (the system-layer fold stays I4). Pads that report triggers only as axes (xpad: no BTN_TL2/TR2) get digital nav edges at `trigger_threshold`.
+- `capture_osd_argv` (default `notify-send`) is the notifier; the OSD runs after the compositor confirmed the transaction, whose success marker now carries the window class.
+- `inherits` is resolved in mios-inputd (nav.rs), not in mios-resolver. `tmux:menu` sends `<prefix> <[keybindings.tmux].menu_key>` to the client (U1's binding opens the generated MiOS menu there, with its own small-terminal and VT handling), instead of invoking the alias without a target client. `tmux:keymap` is the I3 popup (see I3 as landed).
+- An empty `""` in any tier reaches the grammar and is a validation error (the Rust resolver does not drop it).
+- The fixture tier with `--live-context` projects `key:` (send_key_state to the focused window), `hypr:` and `tmux:` into the followed (nested) compositor, so the live test needs no uinput keyboard on the operator's seat.
+
+**I3 as landed** (tools/native/mios-inputd/src/console.rs, runtime.rs, router.rs, nav.rs; tests: router `console_contract`, runtime seat/rediscovery/VT-discovery tests, tests/test-inputd-console.py, tests/test-inputd-console-live.py). Operator decisions (2026-10-29) applied on top of the text below:
+- **Seat view (C-16, INV-8).** inputd reads logind's runtime state files (users/, sessions/, seats/; no spawn per check). This user's active tty session selects `console` (its VTNr and TTY); this user's active graphical session follows the compositor; the greeter, a lock screen, another user or nothing active suspends: the grab is released, every output is neutralised and nothing is routed until this user is active again. serve starts for any seated login (a VT included) and idles for an SSH-only login. The unit is no longer part of the desktop (`PartOf=` dropped, `WantedBy=default.target`, from `[user_units]` via mios-unit-gen).
+- **Rediscovery (C-16).** When IPC to the followed compositor fails, inputd re-selects the newest live top-level instance in `$XDG_RUNTIME_DIR/hypr` (lock pid alive, socket present, not nested inside another listed instance), at most every 250 ms, so a compositor restart needs no unit restart. If no compositor lives for `context_stale_ms` and this user has a graphical VT, the console context is used on that VT.
+- **Console profiles.** `console_tmux` (a MiOS tmux client attached to the active VT, found through `/proc`, also below the console bridge) keeps the spec's tmux verbs. `console_plain` follows operator decision C-18: sticks and d-pad = arrows (repeat 500/250 on the stick), South = Enter, East = Esc (hold Ctrl+C), West and the bumpers = Tab / BTab, triggers = PageUp / PageDown, Start = cursor mode. Console rows may use only `key:`, `tmux:`, `mios:graphical-vt`, `pointer:cursor` and `none` (C-23, enforced by inputd's validator); `console = "vpad"` is rejected.
+- **O-6 resolved.** West hold = `key:SHIFT+TAB` on the VT, the same stroke as on the desktop. T-I3-4 was decided from the installed keymaps instead of `showkey -a` (no VT may be used here): both `us` console keymaps (kbd `xkb/us.map` and `legacy/i386/qwerty/us.map`) map Shift+Tab to `Meta_Tab`, which the console sends as ESC TAB, and the linux terminfo has `kcbt=\E^I`.
+- **Cursor mode on a VT.** `pointer:cursor` (a button value) toggles cursor mode from a nav profile (`console_plain` Start tap, `console_tmux` Start hold). The sticks then drive `mios-vctl-pointer`, which gpm draws on the VT; buttons keep their nav meaning.
+- **C-17.** `mios:graphical-vt` strokes Ctrl+Alt+F<VTNr> of this user's graphical session on the uinput keyboard (the kernel keymap's `Console_<n>`). Without a graphical session, or beyond F12, nothing is sent. On the desktop the toggle chord still toggles the room.
+- **R-08.** Guide is no modifier on a VT; a Guide tap fires the console profile's `BTN_MODE`. Guide holds, the room table, ShaderGlass, North capture and the legacy host actions never run in `console`. R-09: a host binding without `contexts` is not active in `console`.
+- **`tmux:keymap` (R-21).** `display-popup -c <client> -E` with `[keybindings.global.controller.console].keymap_argv` (default `less -R {file}`, argv form, no shell) paging `mios-inputd map --text`, rendered to `$XDG_RUNTIME_DIR/mios-inputd-keymap.txt` (0600, atomic).
+- **C-18 gpm -> tmux-os bridge.** `mios-inputd console-bridge -- <tmux client argv>` runs the client on its own pty and copies the VT to it. It consumes every mouse-mode DECSET/DECRST the client sends (9, 1000-1003, 1005, 1006, 1015), so the VT itself never enters mouse reporting, and while the client tracks the mouse it opens one pointer source: gpm (`gpm_socket`, routed by its VT, gpm keeps drawing its pointer) or an evdev pointer read without a grab (`pointer_names`, default the controller's `mios-vctl-pointer`, `cell_px` pixels per cell). Pointer events become SGR 1006 reports (or the legacy encoding when the client did not ask for 1006). With mouse mode off it holds no source, so gpm selection works on that VT. mios-terminal wraps a local VT client (fd 0 is `/dev/tty<N>`) when `controller.console.bridge = true`. tmux on TERM=linux already emits the mouse modes (the linux terminfo has `kmous`), so U1's `terminal-features ',linux:mouse'` is not needed.
+- **Fixture tier.** `bridge --fixture-only --logind-state <dir> --console-tty <tty> --console-sink-fd <fd>` reads a private logind copy and writes console strokes as the bytes the Linux `us` keymap would deliver into a pty that stands in for the VT; `--rediscover` follows a private `XDG_RUNTIME_DIR`. No VT, no physical device and no real gpm is used by the tests.
+
+**I4 as landed** (tools/native/mios-inputd/src/router.rs, vpad.rs, nested.rs, runtime.rs, linux.rs, config.rs; mios-resolver keybindings.rs; tests: router `guide_layer_contract`, config quirk/pseudo-key/agent-pad tests, vpad and nested unit tests, tests/test-inputd-platform.py, tests/test-inputd-vpad-live.py). Operator decisions (2026-10-29) applied on top of the text below:
+- **C-15b Guide layer on every pad shape.** Under Guide (uncaptured, a compositor running, never on a VT) the HAT fires the system layer's `BTN_DPAD_*` once per press (no repeat), an analog-only trigger (xpad) fires `BTN_TL2/TR2` at `trigger_threshold`, and `LS_*`/`RS_*` fire once per stick flick (`nav.flick_on`, re-armed below `nav.flick_off`; a stick already deflected when Guide goes down is not armed). `LS_*`/`RS_*` are resolver pseudo-keys past KEY_MAX (`button_code` 0x300..0x307, `is_stick_pseudo`), accepted only as system-layer keys (never a chord, the room table, Guide, cursor or quirk code). With Guide held the sticks never move the pointer, scroll or click. A layer action makes the Guide press a modifier, so a quick Guide+HAT no longer also opens the drawer (the I3 router did). Vendor rows: `LS_UP/DOWN` = `mios:volume up/down` (wpctl, capped at 100 %), `LS_LEFT/RIGHT` = `mios:media previous/next` (playerctl), `RS_*` = `hypr:movewindow <dir>` (`hl.dsp.window.move({direction})`).
+- **C-19.** `quickshell:monitor-toggle` is gone: `mios:system-monitor` (the [keybindings.actions] `system` desktop command, same argv) is the Guide+Start row.
+- **O-7 per-driver quirk table** `[keybindings.global.controller.quirks.<name>]`: `drivers` (sysfs driver name) or `ids` (`vvvv:pppp`) match; `remap = { reported = "positional" }` (button names or hex codes), one-to-one. It applies to routing only; the cloned virtual pad gets the driver's own codes back, so a captured app (SDL maps by the clone's USB id) sees the device as it is. Vendor quirk `xpad` (driver xpad and the Xbox 360 / One S / Series USB ids): the top face button (Y, reported as 0x134 BTN_WEST) becomes BTN_NORTH and X (0x133) becomes BTN_WEST, and xpad's `dpad_to_buttons` codes BTN_TRIGGER_HAPPY1..4 become BTN_DPAD_LEFT/RIGHT/UP/DOWN. DualSense (hid-playstation) is positional and has no quirk. Proven with uinput fixtures that emulate both code layouts (`fixture-pad --layout xpad | xpad-dpad-buttons | dualsense`); T-C28 on a physical Xbox pad is still to be run (see §8 O-7).
+- **The agent virtual controller** `mios-inputd vpad <op>` ([keybindings.global.controller.agent_pad], MCP tool [verbs.virtual_controller] = the same argv): one holder process per pad owns a uinput gamepad (DualSense-like, BUS_VIRTUAL `agent_pad.usb_id`) and a 0600 control socket under `$XDG_RUNTIME_DIR/agent_pad.socket_dir`. Ops: `create` (`--seat <s>` names it [desktop.nested.devices].virtual_pad_name), `stick` (x/y, `--ms`, `--hold-ms` then eases back), `trigger`, `button` (tap/press/release), `dpad`, `release`, `wait`, `status`, `info`, `assign`, `unassign`, `destroy`, `list`. Every stick/trigger change is an eased ramp (linear, in, out, in-out cubic) sampled at `rate_hz`, starting from the current value (an interrupted ramp continues without a jump) and never shorter than `min_ms`; the trigger buttons follow the analog value with hysteresis. The holder exits on `destroy`, SIGTERM or `idle_exit_s` at rest, and the device goes with it.
+- **Nested-session controls passthrough** (the device binding itself is mios-gen's: `--device` / a seat preset / `virtual-pad`, bound into the session's masked /dev/input and listed in the [desktop.nested].registry_dir registry). inputd's side of that contract: the host bridge never opens a node a live session holds (and hands one over, outputs at rest and grab released, when a session claims it later), and never owns a seat's pad (a name matching virtual_pad_name). `mios-inputd bridge --nested <seat>` (also started by `vpad assign`) follows exactly that session: its compositor (XDG_RUNTIME_DIR / signature / display from the registry), its private room packet (`pad_state`; a session sharing the parent /tmp is refused), and only its assigned controller nodes. key:, hypr: and tmux: project into the session's compositor (never the host's uinput keyboard or pointer); there is no virtual pad clone (it would appear on the host): while an app in the session owns the pad, the bridge releases its grab and the app reads the assigned node itself, and the held toggle_chord still releases it. The bridge exits when the session ends. Live: an eased vpad ramp walks and turns the Hypr3D camera of a nested PiP session with a gradual speed profile (5 %->80 % rise about 0.29 s for a 700 ms ramp, against about 0.12 s for a raw stick step).
+- **Fixture isolation.** Test pads and fixture-named agent pads (`mios-input-fixture-*`) are opened only by fixture-tier bridges; the udev rule also clears their joystick/input classification so no udev consumer (libinput, SDL apps, a game launcher's desktop controller mapping) treats one as a controller.
 
 Deliverables in this directory:
 - `ssot-keybindings.patch.toml`: the complete replacement tables.
@@ -48,7 +79,7 @@ Deliverables in this directory:
 | R-12 Namespaces and chord shape | **Accepted.** | `mios:graphical-vt` is an inputd verb. `TOGGLE_CHORD` refers to the existing `toggle_chord` array, so there is no second chord syntax. `key` and `pointer` are added to action_namespaces at I2. |
 | R-13 One pseudo-key vocabulary | **Accepted.** | BTN_*, BTN_DPAD_*, BTN_TL2/TR2, LS_*/RS_*, TOGGLE_CHORD, used everywhere (nav, system_layer, room). |
 | R-14 Derive the prefix, pin the layout | **Accepted, CLI route.** | tmux verbs run `tmux -L <socket_name>` with `send-keys -c <client> -K <prefix> <k>`. That is a key-table lookup (tmux 3.7c man page, send-keys `-K`), so it is layout-independent and takes its prefix from `tmux_prefix`. The `key:` projection is pinned to `us` (C-31). |
-| R-15 VT Shift+Enter | **Accepted.** | VT South hold = none. VT West hold = none until `showkey -a` proves BTab (tests.md T-I3-4). |
+| R-15 VT Shift+Enter | **Accepted.** | VT South hold = none. VT West hold = BTab (`key:SHIFT+TAB` = Meta_Tab = ESC TAB; O-6, landed in I3). |
 | R-16 Rename needs inputd | **Accepted, verified** (config.rs:136, 675). | C-19 moves to I4 together with config.rs:136. The S0 patch keeps `quickshell:monitor-toggle`. |
 | R-17 Hyprland direction words | **Accepted.** | `left/right/up/down` everywhere (hyprland.lua:105-108 style). |
 | R-18 Per-input repeat | **Accepted.** | `[nav.repeat]`: arrows 400/60. LT/RT and VT paging 500/250. Right-stick flicks and holds never repeat. |
@@ -157,26 +188,26 @@ A login prompt (getty or greeter) is deliberately **no function**. No user manag
 |---|---|---|---|---|---|
 | South | app [K] | app [F I1] | toggle floating [K] | Enter (hold none: VT has no Shift+Enter) [N I3] | Enter [N I3] |
 | East | app [K] | app [F I1] | close window [K] | Esc · Ctrl+C [N I3] | Esc · Ctrl+C [N I3] |
-| West | app [K] | app [F I1] | terminal [K] | Tab (BTab unverified) [N I3] | Tab [N I3] |
+| West | app [K] | app [F I1] | terminal [K] | Tab · BTab [N I3] | Tab · BTab [N I3] |
 | North | app [K] | app [F I1: re-captures today] | browser [K] | zoom pane (`C-b z`) [N I3] | none |
 | D-pad | app [K] | app [F I1] | focus window l/r/u/d [N S0 on BTN_DPAD pads; I4 on HAT pads] | arrows [N I3] | arrows [N I3] |
-| Left stick | app [K] | wheel + hwheel (host) [K/F I2] | Y = volume ±5 %, X = media previous/next [N I4] | Y = page up/down (copy mode), 500/250; X none [N I3] | none (no console scrollback) |
-| Right stick | app [K] | pointer (host) [K] | flick = move window [N I4] | flick = pane focus, stops at the edge [N I3] | none |
-| LT | app [K] | right click (host) [K] | move window to previous workspace [K; analog-only pads I4] | tmux previous window [N I3] | none |
-| RT | app [K] | left click (host) [K] | move window to next workspace [K; analog-only pads I4] | tmux next window [N I3] | none |
-| LB | app [K] | app [F I1: ShaderGlass today] | previous workspace [K] | previous tmux session [N I3] | none |
-| RB | app [K] | app [F I1: ShaderGlass today] | next workspace [K] | next tmux session [N I3] | none |
+| Left stick | app [K] | wheel + hwheel (host) [K/F I2] | Y = volume ±5 %, X = media previous/next [N I4] | Y = page up/down (copy mode), 500/250; X none [N I3] | arrows, 500/250 (operator C-18) [N I3] |
+| Right stick | app [K] | pointer (host) [K] | flick = move window [N I4] | flick = pane focus, stops at the edge [N I3] | none (the pointer in cursor mode) |
+| LT | app [K] | right click (host) [K] | move window to previous workspace [K; analog-only pads I4] | tmux previous window [N I3] | PageUp (operator C-18) [N I3] |
+| RT | app [K] | left click (host) [K] | move window to next workspace [K; analog-only pads I4] | tmux next window [N I3] | PageDown (operator C-18) [N I3] |
+| LB | app [K] | app [F I1: ShaderGlass today] | previous workspace [K] | previous tmux session [N I3] | BTab (operator C-18) [N I3] |
+| RB | app [K] | app [F I1: ShaderGlass today] | next workspace [K] | next tmux session [N I3] | Tab (operator C-18) [N I3] |
 | Select | app [K] | app; Guide+Select returns to full capture [K] | Guide+Select = cursor toggle / half-capture [K] | tree (`C-b w`) · keymap popup [N I3] | none |
-| Start | app [K] | back to full capture [K] | system monitor [K; renamed I4] | copy mode (`C-b y`) [N I3] | none |
+| Start | app [K] | back to full capture [K] | system monitor [K; renamed I4] | copy mode (`C-b y`) · hold cursor mode [N I3] | cursor mode [N I3] |
 | Guide tap | replayed to the app [K] | replayed to the app [F I1] | (modifier) | MiOS menu [N U1+I3] | none |
 | L3 | app [K] | app [F I1] | lock [K] | tmux new window [N I3] | none |
 | R3 | app [K] | app [F I1] | VM passthrough latch [K] | compact view (`C-b f`) [N I3] | none |
 | L3+R3 tap | app (both presses forwarded) [K] | app [K] | suppressed: no lock+latch double fire [F I2] | switch to this user's graphical VT [N I3] | same [N I3] |
 | L3+R3 hold | **release capture** (contract); also unsets a fullscreen the bridge set [K/F I1] | release capture [K] | suppressed [F I2] | nothing more | nothing more |
-| Touchpad | host pointer into the focused app [K] | host pointer [K] | host pointer [K] | none (no gpm consumer configured) | none |
+| Touchpad | host pointer into the focused app [K] | host pointer [K] | host pointer [K] | gpm pointer; reports reach tmux through the console bridge (C-18) [N I3] | gpm pointer (selection) |
 | Motion sensors | none [K] | none | none | none | none |
 
-Why the VT·plain cells are "none": a bare shell might be running any program, so only keys that are safe in every program are projected (Enter, Esc/Ctrl+C, Tab, arrows), plus the VT switch. Paging cannot be projected, because Linux has had no console scrollback since 5.9. `/etc/inputrc:21` makes raw PageUp history-search-backward.
+VT·plain (operator decision C-18, I3): a bare VT may run any program (a shell, the session selector, a TUI), so it gets the keys every TUI reads: Enter, Esc/Ctrl+C, Tab/BTab, arrows and PageUp/PageDown, plus cursor mode and the VT switch. Linux has had no console scrollback since 5.9, so nothing pages the console itself; in a bare shell PageUp is `history-search-backward` (`/etc/inputrc:21`), and the left stick sends arrows, never PageUp.
 
 ### 3.3 Projection details
 
@@ -201,13 +232,13 @@ Why the VT·plain cells are "none": a bare shell might be running any program, s
 | L3+R3 tap = room | router.rs:503-528 (uncaptured only) | I2 (C-13 Guide suppression, R-23) |
 | L3+R3 hold = release | router.rs:703-712, 314-321 | I1 (C-02 release_tag) |
 | Guide+Select half-capture | router.rs:441-446, 464-485 | I1 (C-01) |
-| Guide system layer | router.rs:464-500 | I4 (HAT fold, LS/RS pseudo-keys) |
+| Guide system layer | router.rs:464-500; HAT, LS_*/RS_* and analog-trigger edges (nav_axis, layer_flicks) [landed I4] | I4 (HAT fold, LS/RS pseudo-keys) |
 | LB/RB ShaderGlass | router.rs:351-366, gated by router.rs:553 | I1 (half-capture gate) |
 | Room camera/move/grab/resize | router.rs:631-673 | P1 + I2 (room table) |
 | Cursor pointer and clicks | router.rs:559-571, 715-757 | I2 (C-11) |
 | Uncaptured 2D/terminal input | **forwarded to the vpad today** (router.rs:575-584, 589-594) | I2 (nav sink) |
 | Guide tap uncaptured | **swallowed today** (router.rs:456-462) | I2 |
-| VT | **inputd does not run** (unit PartOf/WantedBy mios-desktop.target, mios-inputd.service:3,20) | I3 |
+| VT | inputd follows the seat (logind state files) and projects to the VT [landed I3] | I3 |
 
 ## 4. Final keyboard map (global)
 
@@ -247,8 +278,8 @@ Unmarked rows are kept as they are. "Bypass" means the chord also reaches the ho
 | D-4 | keybinds.md:40-45 | Partial shortcut list | Full keyboard table (F-06) |
 | D-5 | keybinds.md:29 | Capture key names are missing | `capture_fullscreen`, `capture_tag`, `release_tag` (F-07) |
 | D-6 | keybinds.md:100-105, 145 | Legacy recovery path | Rewritten for I1 (C-05) |
-| D-7 | keybinds.md:28 | The context list lacks console | Adds `console` (I3) |
-| D-8 | keybinds.md:58-61 | VT mouse via GPM implied | The VT is driven by key projection; mouse_terms is optional (C-18, PLAUSIBLE) |
+| D-7 | keybinds.md:28 | The context list lacks console | Adds `console` (landed I3) |
+| D-8 | keybinds.md:58-61 | VT mouse via GPM implied | The VT is driven by key projection, and gpm reaches tmux through the console bridge (C-18, landed I3) |
 | D-9 | keybinds.md:139 | Configurator scope | nav/room tables are TOML-only, listed by mios-controls |
 | D-10 | mios.toml:4221 | Cites /var/tmp/mios-keybinds/schema.md | Points to keybinds.md (patch) (F-08..F-13) |
 | D-11 | mios.toml:4364-4365 | Tier 2 "Reserved, not yet realised": it is realised (hyprland.lua:254-285) | Patch comment (F-14) |
@@ -325,10 +356,13 @@ After S0: regenerate the projections (globals.sh/ps1, names registry, env baseli
 | I2 | C-11 | Cursor mode keeps button meanings (nav map), and adds hwheel | router.rs:559-571, 736-742; linux.rs:337 |
 | I2 | C-13 | L3, R3 and L3+R3 disambiguation; Guide suppresses the chord | router.rs:502-528 |
 | I2 | C-32 | `capture_osd` notification on capture and release | runtime.rs (action after `input:window`) |
-| I3 | C-16 | `console` context: logind session TYPE, live Hyprland socket rediscovery (fixes the stale `HYPRLAND_INSTANCE_SIGNATURE`, runtime.rs:32-45, 94-100), release the grab when another session is active. Unit: drop `PartOf=`, `WantedBy=default.target`. CONTEXTS gets `console` with the R-09 scoped default. Guide hold disabled on the console (R-08). | runtime.rs; config.rs:8-16; mios-inputd.service:3,20 |
-| I3 | C-17 | `mios:graphical-vt` | runtime.rs |
-| I4 | C-15b | HAT folded into BTN_DPAD_*; LS_*/RS_* pseudo-keys (resolver `button_code`); analog LT/RT edges; `hypr:movewindow`; volume and media argv | router.rs:486-500, 589-594; runtime.rs:127-138; mios-resolver keybindings.rs:114-135 |
-| I4 | C-19 | Rename `quickshell:monitor-toggle` to `mios:system-monitor` | config.rs:136, 675; SSOT `#@I4` lines |
+| I3 | C-16 | `console` context: logind session TYPE, live Hyprland socket rediscovery (fixes the stale `HYPRLAND_INSTANCE_SIGNATURE`, runtime.rs:32-45, 94-100), release the grab when another session is active. Unit: drop `PartOf=`, `WantedBy=default.target`. CONTEXTS gets `console` with the R-09 scoped default. Guide hold disabled on the console (R-08). Landed. | runtime.rs; config.rs:8-16; mios-inputd.service:3,20 |
+| I3 | C-17 | `mios:graphical-vt` (landed) | runtime.rs |
+| I3 | C-18 | `console-bridge` pty wrapper, gpm/evdev -> SGR 1006 while mouse mode is on (operator decision; landed) | console.rs; mios-terminal |
+| I4 | C-15b | HAT folded into BTN_DPAD_*; LS_*/RS_* pseudo-keys (resolver `button_code`); analog LT/RT edges; `hypr:movewindow`; volume and media argv. Landed. | router.rs:486-500, 589-594; runtime.rs:127-138; mios-resolver keybindings.rs:114-135 |
+| I4 | C-19 | Rename `quickshell:monitor-toggle` to `mios:system-monitor`. Landed. | config.rs:136, 675; SSOT `#@I4` lines |
+| I4 | O-7 | Per-driver quirk table (`controller.quirks`), applied at device open and inverted for the clone; fixture layouts xpad, xpad-dpad-buttons, dualsense. Landed. | config.rs (Quirk), linux.rs (apply_quirks, physical_events) |
+| I4 | agent | The agent virtual controller (`vpad`, `controller.agent_pad`, [verbs.virtual_controller]) and nested-session controls passthrough (`bridge --nested`, registry skip). Landed. | vpad.rs, nested.rs, runtime.rs, main.rs |
 | P1 | C-14b | Room table: whitelist `cancel`, `sprint`, `recenter`, `view` | runtime.rs:139-156; router.rs:373-395 |
 | pre-I2 (xpad) | C-28 | Run `mios-inputd observe` on an xpad pad. Add `positional_fixups` only if physical Y reports BTN_WEST. | linux.rs device open |
 
@@ -372,8 +406,8 @@ After S0: regenerate the projections (globals.sh/ps1, names registry, env baseli
 | O-3 | Key projection into VM clients that have no gamepad channel (Looking Glass, RDP) | off | — |
 | O-4 | Add `steam` to `[keybindings.global.contexts].game` | not added | edit that array (note: arrays replace) |
 | O-5 | Auto-detect apps that read the vpad (/proc/<pid>/fd), PLAUSIBLE | off | — |
-| O-6 | VT West hold = BTab once `showkey -a` proves it | none | `console_tmux.BTN_WEST = ["key:TAB","key:SHIFT+TAB"]` |
-| O-7 | xpad positional check before I2 reaches Xbox users | required | run tests.md T-C28 |
+| O-6 | VT West hold = BTab | **on (I3)**: the installed keymaps map Shift+Tab to Meta_Tab (ESC TAB = linux kcbt) | `BTN_WEST = ["key:TAB","key:SHIFT+TAB"]` in both console profiles |
+| O-7 | Hardware-agnostic mapping: evdev codes plus a per-driver quirk table in the SSOT | **on (I4)**: vendor quirk `xpad` (face order, dpad_to_buttons), proven with xpad/DualSense uinput fixtures; T-C28 on a physical Xbox pad still confirms it | edit `[keybindings.global.controller.quirks.<name>]` |
 
 ## 9. Live-bug traceability
 
@@ -381,4 +415,4 @@ After S0: regenerate the projections (globals.sh/ps1, names registry, env baseli
 |---|---|---|
 | RB fires ShaderGlass while an app is captured | (a) Half-capture: router.rs:440 sets captured=false and router.rs:553 runs legacy_action. (b) After a held L3+R3 the Lua still sees fullscreen==2 (hyprland.lua:305) while inputd has released it (router.rs:314-321, 188). (c) The app was never captured. | C-01; C-02 + C-35; O-1 + North tap + C-32 OSD |
 | Left stick moves game and camera | No healthy native path does both. Paths that can: the legacy recovery daemon (main.rs:91-92), or a transient override drop on focus change | C-05; C-03; C-04 |
-| VT mouse (gpm) does not reach tmux | inputd does not run without the desktop (mios-inputd.service:3,20); tmux mouse on TERM=linux is PLAUSIBLE | C-16 + C-07 + C-30 (no mouse needed); C-18 optional |
+| VT mouse (gpm) does not reach tmux | inputd does not run without the desktop (mios-inputd.service:3,20); tmux mouse on TERM=linux is PLAUSIBLE | C-16 + C-07 + C-30, and the C-18 console bridge (landed I3) |
