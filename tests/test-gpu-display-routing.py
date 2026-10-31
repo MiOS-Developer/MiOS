@@ -165,7 +165,8 @@ class NestedRender(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
 
     def test_negative_control_pre_change_nested_session_has_no_render_choice(self):
-        p = self.plan(BASE_GEN, OLD_SSOT, "dgpu")
+        # The pre-change binary reads the current SSOT (the shipped binary may need newer keys than the base commit's).
+        p = self.plan(BASE_GEN, NEW_SSOT, "dgpu")
         self.assertNotIn("render", p, "the old nested session inherits the parent's main device (the dGPU)")
 
 
