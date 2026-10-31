@@ -9,7 +9,8 @@ set -euo pipefail
 # ONE reader: usr/libexec/mios/mios-credential over usr/lib/mios/mios_credentials.py (the same
 # layered resolver the image build, 11-user.sh and the Windows projection use) -- no private
 # TOML parser here. This tree's vendor file is used when present (fresh host before the overlay).
-_MIOS_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# ${BASH_SOURCE[0]:-} -- unset when the script arrives on stdin (curl ... | bash), which set -u rejects.
+_MIOS_HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 _mios_cred() { # mios-credential <args...>; empty output + non-zero when unavailable/unresolved
     local bin="" c
     for c in "${_MIOS_HERE}/../usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
@@ -24,6 +25,7 @@ _mios_cred() { # mios-credential <args...>; empty output + non-zero when unavail
 }
 DEFAULT_USER="$(_mios_cred identity username 2>/dev/null || true)"
 DEFAULT_USER_FULLNAME="$(_mios_cred identity fullname 2>/dev/null || true)"
+DEFAULT_HOST="$(_mios_cred identity hostname 2>/dev/null || true)"
 DEFAULT_USER_SHELL="/bin/bash"
 DEFAULT_USER_GROUPS="wheel,libvirt,kvm,video,render,input,dialout"
 # shellcheck disable=SC2034

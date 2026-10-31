@@ -1,49 +1,13 @@
 #!/usr/bin/env bash
 # AI-hint: Canonical "Git = $ROOT" root-merge -- makes a target root ($MIOS_ROOT, default /) a
 # AI-functions: mios_root_merge
-# AI-related: build-mios.sh, build-mios.ps1, automation/build.sh, automation/mios-apply, usr/lib/mios/userenv.sh
+# AI-related: installation/mios-common.sh, build-mios.sh, build-mios.ps1, automation/build.sh, automation/mios-apply, usr/lib/mios/userenv.sh
 
-mios_root_merge() {
-    local root="${1:-/}"
-    local repo="${2:-}"
-    local branch="${3:-main}"
-
-    [[ -n "$root" ]] || { echo "[root-merge] FATAL: empty root" >&2; return 2; }
-    [[ -n "$repo" ]] || { echo "[root-merge] FATAL: empty repo/source" >&2; return 2; }
-
-    git config --global --add safe.directory "$root" 2>/dev/null || true
-    git config --global --add safe.directory '*'      2>/dev/null || true
-
-    if [[ ! -d "${root%/}/.git" ]]; then
-        git init "$root" >/dev/null || { echo "[root-merge] FATAL: git init $root failed" >&2; return 1; }
-    fi
-    if git -C "$root" remote get-url origin >/dev/null 2>&1; then
-        git -C "$root" remote set-url origin "$repo"
-    else
-        git -C "$root" remote add origin "$repo"
-    fi
-    git -C "$root" config core.autocrlf false 2>/dev/null || true
-
-    local fetch_err
-    if ! fetch_err="$(git -C "$root" fetch --depth=1 origin "$branch" 2>&1)"; then
-        echo "[root-merge] FATAL: fetch $branch from $repo failed: $fetch_err" >&2
-        return 1
-    fi
-    if ! git -C "$root" reset --hard FETCH_HEAD >/dev/null 2>&1; then
-        echo "[root-merge] FATAL: reset" >&2
-        return 1
-    fi
-
-    git -C "$root" checkout -B "$branch" >/dev/null 2>&1 || true
-    git -C "$root" config "branch.${branch}.remote" origin
-    git -C "$root" config "branch.${branch}.merge"  "refs/heads/${branch}"
-
-    # Git checkout already restores the tracked executable bits. Recursively
-    # chmodding runtime directories changes data and sourced libraries too,
-    # leaving the root worktree dirty immediately after installation.
-
-    return 0
-}
+# The implementation lives in installation/mios-common.sh, the shared Linux
+# library mirrored into mios-bootstrap (Law 15): the FHS installer runs the
+# merge from a bootstrap checkout before /automation exists. One definition.
+# shellcheck source=../../installation/mios-common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../installation" && pwd)/mios-common.sh"
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     case "${1:-}" in
