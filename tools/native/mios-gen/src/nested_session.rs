@@ -420,7 +420,10 @@ pub fn run(root:&Path,dry_run:bool,o:&Options)->Result<(),String>{
  let device_list=assigned.iter().flat_map(|d|d.nodes()).map(|p|p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
  let identity=[("MIOS_NESTED_SEAT",plan.seat.as_str()),("MIOS_NESTED_USER",plan.user.as_str()),("MIOS_NESTED_TARGET",plan.target.as_str()),("MIOS_NESTED_DEVICES",device_list.as_str())];
  let path=owned.0.join("hyprland.lua");fs::write(&path,config).map_err(|e|e.to_string())?;
- let mut child=spawn_sandboxed(&owned.0.join("desktop.log"),||{let mut c=Command::new("bwrap");c.args(&sandbox).args(["--","/usr/bin/Hyprland","--config"]).arg(&path)
+ // The session's compositor ([desktop.nested].compositor): the installed Hyprland, or a patched candidate build under test.
+ let compositor=n.get("compositor").and_then(Value::as_str).unwrap_or("/usr/bin/Hyprland");
+ if !Path::new(compositor).is_absolute()||compositor.chars().any(char::is_control)||!Path::new(compositor).is_file() {return Err(format!("desktop.nested.compositor {compositor} must be an absolute path to a compositor binary"));}
+ let mut child=spawn_sandboxed(&owned.0.join("desktop.log"),||{let mut c=Command::new("bwrap");c.args(&sandbox).args(["--",compositor,"--config"]).arg(&path)
  .envs(identity).env("MIOS_USER_TOML",&user).env("MIOS_USER_TOML_D",&fragments).env("XDG_RUNTIME_DIR",&owned.0).env("WAYLAND_DISPLAY",&display).env("AQ_DRM_DEVICES","/dev/null").env("WLR_DRM_DEVICES","/dev/null").env_remove("HYPRLAND_INSTANCE_SIGNATURE").env_remove("DISPLAY").env_remove("TMUX").env_remove("TMUX_PANE");c})?;
  let mut shell_child=None;
  let result=(||{
