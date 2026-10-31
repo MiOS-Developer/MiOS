@@ -24,6 +24,8 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
+import Quickshell.Wayland
 
 Singleton {
     id: glass
@@ -64,14 +66,35 @@ Singleton {
         return typeof n === "number" ? n : NaN
     }
 
+    // ---- the design language ([theme.shell] in mios.toml, the bridge's "design" table) ----------------------
+    // One geometry for every surface (GlassSurface.qml draws it): no surface hard-codes a radius, height, padding,
+    // shadow or glass value (tests/test-design-language.py). mios-gen render-hyprland projects the same tokens into
+    // the controls tab (hyprbars) and the windows (decoration rounding / rounding_power).
+    readonly property var design: theme.design || ({})
+    function token(k, d) { const v = glass.design[k]; return typeof v === "number" ? v : d }
+    readonly property real bar: token("bar_px", theme.topHeight)          // every bar-row element and popup row
+    readonly property real inset: token("inset_px", 6)                    // padding inside a bar / panel, button spacing
+    readonly property real gap: token("gap_px", theme.edgeMargin)         // outer margins, gaps between groups
+    readonly property real control: token("control_px", bar - 2 * inset)  // an element inside a bar (buttons, chips)
+    readonly property real panelPad: token("panel_pad_px", inset)         // panel padding: rows concentric with its corner
+    readonly property real hairline: token("hairline_px", 1)              // separators and outlines
+    readonly property real barCentre: token("bar_centre_px", gap + bar / 2) // the bar row's one vertical centre line
+    readonly property real cornerPower: token("corner_power", 2)          // the one corner curve (superellipse exponent)
+    // A body h tall: min(R, h / 2) (the layer glass rule, so the colour layer and the glass share one outline).
+    function corner(h) { return Math.min(glass.rounding, Math.max(0, h) / 2) }
+    // A highlight nested `by` px inside a body of radius `outer`: concentric (inner = outer - inset).
+    function inner(outer, by) { return Math.max(0, outer - by) }
+    // A panel (popup, menu, card) of rows: corner(min side) -- with panelPad padding its bar rows are concentric.
+    function panelRadius(w, h) { return corner(Math.min(w, h)) }
+
     // ---- geometry -----------------------------------------------------------------------------------
     readonly property real rounding: {
         const r = table("desktop.hyprland.config.decoration").rounding
-        return typeof r === "number" ? r : theme.radius
+        return typeof r === "number" ? r : token("radius_px", theme.radius)
     }
-    readonly property real barHeight: typeof barsCfg.bar_height === "number" ? barsCfg.bar_height : theme.topHeight
+    readonly property real barHeight: bar
     // The hyprbars tab rules, for any surface of height h.
-    function cornerFor(h) { return Math.min(glass.rounding, Math.max(0, h) / 2) }
+    function cornerFor(h) { return corner(h) }
     function filletFor(h) { return Math.min(glass.rounding / 2, h / 2) }
     // The same rules for a window of rounding r (the hyprbars tab follows its own window's rounding).
     function tabCorner(h, r) { return Math.min(Math.max(0, r), h) / 2 }
@@ -83,13 +106,29 @@ Singleton {
                                         ? barsMobile.touch_target : barHeight
     readonly property real mobileTabWidth: closeButton.size + 2 * pillPadding
     function mobileTabInset(h, r) { return Math.max(0, r) + tabFillet(h, r) }
-    readonly property real pillPadding: typeof barsCfg.pill_padding === "number" ? barsCfg.pill_padding : theme.edgeMargin
-    readonly property real buttonPadding: typeof barsCfg.bar_button_padding === "number" ? barsCfg.bar_button_padding : theme.edgeMargin
+    // the controls tab's paddings: the inset (mios.toml hyprbars pill_padding / bar_button_padding reference it)
+    readonly property real pillPadding: inset
+    readonly property real buttonPadding: inset
     readonly property bool iconOnHover: barsCfg.icon_on_hover !== false
 
     // ---- material -----------------------------------------------------------------------------------
     readonly property string fillHex: colour(barsCfg.pill_palette) || theme.bg
+    // ---- glass opacity per window state ([theme.shell.glass_states]) -----------------------------------
+    // One global level for the whole shell, from the focused window: fullscreen / maximized (Wayland toplevel state),
+    // tiled or floating (Hyprland's client "floating"), "focused" with no window. "vr_passthrough" is reserved.
+    readonly property var activeTop: ToplevelManager.activeToplevel
+    readonly property string windowState: {
+        const t = glass.activeTop
+        if (!t) return "focused"
+        if (t.fullscreen) return "fullscreen"
+        if (t.maximized) return "maximized"
+        const h = Hyprland.activeToplevel
+        const o = h && h.lastIpcObject ? h.lastIpcObject : null
+        return o && o.floating === false ? "tiled" : "focused"
+    }
     readonly property real fillAlpha: {
+        const s = (theme.glassStates || {})[glass.windowState + "_pct"]
+        if (typeof s === "number" && s >= 0 && s <= 100) return s / 100
         const p = percent(barsCfg.pill_alpha)
         return (p >= 0 && p <= 100) ? p / 100 : theme.panelOpacity
     }
@@ -99,7 +138,7 @@ Singleton {
     // ---- buttons ------------------------------------------------------------------------------------
     function button(b) {
         return ({ color: colour(b.palette) || theme.error, iconColor: colour(b.icon_palette) || theme.bg,
-                  size: typeof b.size === "number" && b.size > 0 ? b.size : Math.round(barHeight / 2),
+                  size: typeof b.size === "number" && b.size > 0 ? b.size : glass.control,
                   icon: typeof b.icon === "string" ? b.icon : "", action: String(b.action || ""),
                   closes: /window\.close\b|killactive/.test(String(b.action || "")) })
     }

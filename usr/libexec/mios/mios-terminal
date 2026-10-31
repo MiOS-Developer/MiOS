@@ -216,4 +216,11 @@ fi
 if [[ -n "$_mios_head" ]]; then
     tmux -L "${_mios_terminal_config[0]}" new-window -n 'MiOS Agent' "$_mios_head"
 fi
+# A local VT client runs under the native console bridge ([keybindings.global.controller.console]): it owns the mouse
+# modes tmux asks the VT for and turns gpm/controller pointer events into SGR 1006 reports. One process per VT login.
+if [[ -z "${MIOS_CONSOLE_BRIDGE:-}" && -t 0 && "$(readlink /proc/$$/fd/0)" =~ ^/dev/tty[0-9]+$ \
+      && "$(/usr/bin/mios-toml-get keybindings.global.controller.console bridge 2>/dev/null)" == true \
+      && -x /usr/libexec/mios/mios-inputd ]] && /usr/libexec/mios/mios-inputd console-bridge --help >/dev/null 2>&1; then
+    exec /usr/libexec/mios/mios-inputd console-bridge -- tmux -L "${_mios_terminal_config[0]}" attach-session -t "=${_mios_terminal_config[1]}"
+fi
 exec tmux -L "${_mios_terminal_config[0]}" attach-session -t "=${_mios_terminal_config[1]}"

@@ -378,12 +378,14 @@ class TestTier4RealWorldSessionScenario(unittest.TestCase):
     """Validation against source files, patches, and live compositor environment."""
 
     def test_ssot_hyprbars_configuration(self) -> None:
-        """Verify SSOT configuration in mios.toml for hyprbars bar_height = 28."""
+        """Verify SSOT configuration in mios.toml: hyprbars bar_height follows the 28 px design bar."""
         if not os.path.exists(SSOT_TOML):
             self.skipTest(f"{SSOT_TOML} not found")
         with open(SSOT_TOML, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("bar_height = 28", content, "SSOT must declare bar_height = 28")
+        # the bar row height is the design language's bar ([theme.shell] top_height_px = 28), by reference
+        self.assertIn('bar_height = "theme.shell.top_height_px"', content, "hyprbars bar_height must follow the design bar")
+        self.assertIn("top_height_px = 28", content, "SSOT must declare the 28 px bar")
 
     def test_source_code_contract(self) -> None:
         """Inspect barDeco.cpp to verify all 5 R1 changes exist once M1 completes."""
