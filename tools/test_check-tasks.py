@@ -3,6 +3,7 @@
 """Sibling tests for the consolidated task-plane gates."""
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -254,11 +255,85 @@ def agy_main():
     if agy__fails > 0:
         return 1
 
+int__fails = 0
+
+
+def int_check(name, cond, detail=""):
+    global int__fails
+    if cond:
+        print(f"ok   - {name}")
+    else:
+        int__fails += 1
+        print(f"FAIL - {name}" + (f" -- {detail}" if detail else ""))
+
+
+def int_run_tool(root):
+    p = subprocess.run(
+        [sys.executable, os.path.join(sp__HERE, "check-tasks.py"), "integrity"],
+        env={**os.environ, "MIOS_DRIFT_ROOT": root},
+        capture_output=True,
+        text=True,
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def int_main():
+    root = tempfile.mkdtemp(prefix="int-tasks-test-")
+    try:
+        # Positive control: clean records pass
+        tasks_clean = [
+            {"id": "task_1", "number": 1, "status": "completed", "title": "Done task", "verification_evidence": "verified"},
+            {"id": "task_2", "number": 2, "status": "pending", "title": "Future task"},
+        ]
+        with open(os.path.join(root, "tasks.jsonl"), "w", encoding="utf-8") as f:
+            for r in tasks_clean:
+                f.write(json.dumps(r) + "\n")
+
+        rc, out = int_run_tool(root)
+        int_check("clean tasks.jsonl passes integrity check", rc == 0, f"rc={rc} out={out}")
+
+        # Negative control 1: pending with [DONE]
+        tasks_bad1 = tasks_clean + [
+            {"id": "task_3", "number": 3, "status": "pending", "title": "Fake complete [DONE]"}
+        ]
+        with open(os.path.join(root, "tasks.jsonl"), "w", encoding="utf-8") as f:
+            for r in tasks_bad1:
+                f.write(json.dumps(r) + "\n")
+        rc, out = int_run_tool(root)
+        int_check("pending task with [DONE] fails integrity check", rc != 0 and "title/status contradiction" in out, f"rc={rc} out={out}")
+
+        # Negative control 2: in_progress with ✅ DONE
+        tasks_bad2 = tasks_clean + [
+            {"id": "task_4", "number": 4, "status": "in_progress", "title": "Premature ✅ DONE"}
+        ]
+        with open(os.path.join(root, "tasks.jsonl"), "w", encoding="utf-8") as f:
+            for r in tasks_bad2:
+                f.write(json.dumps(r) + "\n")
+        rc, out = int_run_tool(root)
+        int_check("in_progress task with ✅ DONE fails integrity check", rc != 0 and "title/status contradiction" in out, f"rc={rc} out={out}")
+
+        # Negative control 3: pending with DONE this session
+        tasks_bad3 = tasks_clean + [
+            {"id": "task_5", "number": 5, "status": "pending", "title": "Unfulfilled DONE this session"}
+        ]
+        with open(os.path.join(root, "tasks.jsonl"), "w", encoding="utf-8") as f:
+            for r in tasks_bad3:
+                f.write(json.dumps(r) + "\n")
+        rc, out = int_run_tool(root)
+        int_check("pending task with DONE this session fails integrity check", rc != 0 and "title/status contradiction" in out, f"rc={rc} out={out}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    if int__fails > 0:
+        return 1
+    return 0
+
+
 def main():
     # Every suite runs even when an earlier one fails; the old scripts called
     # sys.exit, which in one file would hide the suites after the first failure.
     rc = 0
-    for fn in (sp_main, sch_main, agy_main):
+    for fn in (sp_main, sch_main, agy_main, int_main):
         rc |= (fn() or 0)
     return rc
 

@@ -61,18 +61,41 @@ resolved["opacity_pct"] = int(theme.get("opacity", 50))
 resolved["shell"] = theme["shell"]
 resolved["search"] = theme["search"]
 resolved["topbar"] = merged["desktop"]["topbar"]
+# The design language ([theme.shell] comment block in mios.toml): one geometry for every surface. Twin of
+# mios-gen render.rs design_tokens (the hyprbars / decoration projection); tests/test-design-language.py checks both.
+_shell = theme["shell"]
+_R = float(merged["desktop"]["hyprland"]["config"]["decoration"]["rounding"])
+_bar, _inset, _gap = float(_shell["top_height_px"]), float(_shell["inset_px"]), float(_shell["edge_margin_px"])
+_power = float(_shell["corner_power"])
+if _bar < 2 * _inset + 2 or not 2.0 <= _power <= 10.0:
+    raise SystemExit("[mios-sync-theme] theme.shell inset_px / corner_power out of range (design language)")
+def _n(v):
+    return int(v) if float(v).is_integer() else v
+resolved["design"] = {
+    "bar_px": _n(_bar), "inset_px": _n(_inset), "gap_px": _n(_gap), "control_px": _n(_bar - 2 * _inset),
+    "radius_px": _n(_R), "panel_pad_px": _n(max(_inset, _R - _bar / 2)),
+    "tab_offset_px": _n(_R + min(_R, _bar) / 2 + _inset), "bar_centre_px": _n(_gap + _bar / 2),
+    "hairline_px": 1, "corner_power": _power,
+}
+def _design_ref(v):
+    """A hyprbars geometry value: a number, a "theme.shell.<key>" or a "design.<token>" reference."""
+    if isinstance(v, str) and v.startswith("design."):
+        return resolved["design"][v[len("design."):]]
+    if isinstance(v, str) and v.startswith("theme.shell."):
+        return _shell[v[len("theme.shell."):]]
+    return v
 # Window control tab geometry (hyprbars overlay): the top-left app menus start right of the focused
 # window's tab when it reaches into the bar row.
 _hb = merged["desktop"]["hyprland"].get("hyprbars", {})
 _hbc = _hb.get("config", {})
 resolved["hyprbars"] = {
     "enabled": bool(_hb.get("enabled", False)) and bool(_hbc.get("bar_overlay", False)),
-    "bar_height": int(_hbc.get("bar_height", 0)),
-    "bar_padding": int(_hbc.get("bar_padding", 0)),
-    "bar_button_padding": int(_hbc.get("bar_button_padding", 0)),
-    "pill_padding": int(_hbc.get("pill_padding", 0)),
+    "bar_height": int(_design_ref(_hbc.get("bar_height", 0))),
+    "bar_padding": int(_design_ref(_hbc.get("bar_padding", 0))),
+    "bar_button_padding": int(_design_ref(_hbc.get("bar_button_padding", 0))),
+    "pill_padding": int(_design_ref(_hbc.get("pill_padding", 0))),
     "alignment": _hbc.get("bar_buttons_alignment", "left"),
-    "buttons": [int(b.get("size", 0)) for b in _hb.get("buttons", [])],
+    "buttons": [int(_design_ref(b.get("size", 0))) for b in _hb.get("buttons", [])],
 }
 # Keybind map (Super+Escape overlay): generated natively by `mios-gen keymap-overlay` from the same tables
 # render-hyprland binds (compositor bindings with their [keybindings.global] remaps, every global row and its bypass,
@@ -135,6 +158,11 @@ css_lines = [
     f'  --mios-font-family: \'{resolved["font_family"]}\', \'Geist Mono\', ui-monospace, monospace;',
     f'  --mios-font-size: {resolved["font_size"]}px;',
     f'  --mios-radius: {resolved["radius_px"]}px;',
+    f'  --mios-bar: {resolved["design"]["bar_px"]}px;',
+    f'  --mios-control: {resolved["design"]["control_px"]}px;',
+    f'  --mios-inset: {resolved["design"]["inset_px"]}px;',
+    f'  --mios-gap: {resolved["design"]["gap_px"]}px;',
+    f'  --mios-panel-pad: {resolved["design"]["panel_pad_px"]}px;',
     f'  --mios-opacity: {resolved["opacity_pct"] / 100};',
     f'  --mios-outline-opacity: {resolved["shell"]["outline_opacity_pct"] / 100};',
     f'  --mios-border-thin: 1px solid color-mix(in srgb, var(--mios-subtle) {resolved["shell"]["outline_opacity_pct"]}%, transparent);',

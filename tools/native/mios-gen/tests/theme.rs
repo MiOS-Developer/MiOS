@@ -1,6 +1,6 @@
 // AI-hint: Two-sided integration tests for the mios-gen desktop and terminal verbs: render-fastfetch, render-desktop and render-tmux-theme with its host and runtime layers (ADR-0021, Law 14).
 // AI-doc: usr/share/doc/mios/manual/tools.md
-// AI-related: tools/native/mios-gen/src/terminal.rs, automation/98-drift-checks.sh, tools/native/mios-gen/src/render.rs, tests/drift-gate-negatives.sh, usr/libexec/mios/ux/theme_sync.py, etc/profile.d/mios-prompt.sh, usr/libexec/mios/mios-terminal
+// AI-related: tools/native/mios-gen/src/terminal.rs, automation/98-drift-checks.sh, tools/native/mios-gen/src/render.rs, tests/drift-gate-negatives.sh, usr/libexec/mios/ux/theme_sync.py, etc/profile.d/50-mios.sh, usr/libexec/mios/mios-terminal
 
 use std::sync::{Mutex, MutexGuard};
 

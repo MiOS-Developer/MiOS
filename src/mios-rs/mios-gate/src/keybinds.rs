@@ -678,10 +678,16 @@ const NAV_REQUIRED: &[&str] = &[
 /// Owned by the capture contract or the room on a compositor (North capture, bumpers ShaderGlass, Start cursor mode,
 /// the toggle chord); a console profile maps them too, because no compositor runs there.
 const CONTRACT_INPUTS: &[&str] = &["BTN_NORTH", "BTN_TL", "BTN_TR", "BTN_START", "TOGGLE_CHORD"];
-/// The uncaptured contexts MiOS owns outside the room. Captured contexts never get a nav profile: capture and
-/// release are the same for every window kind.
-const NAV_CONTEXTS: &[&str] = &["desktop-2d", "terminal", "console"];
-const NAV_SETTINGS: &[&str] = &["enabled", "flick_on", "flick_off", "contexts", "repeat"];
+/// The uncaptured contexts MiOS owns outside the room (mios-inputd nav.rs, keybinds.md section 2). `game` and
+/// `vm-passthrough` are class contexts that scope keyboard passthrough only: no window class captures the controller,
+/// so an uncaptured game or VM window follows a nav profile like any window until North captures it. `app-capture`
+/// (captured: the controller belongs to the app) and `desktop-3d` (the room has its own map) never take one.
+const NAV_CONTEXTS: &[&str] = &["desktop-2d", "terminal", "game", "vm-passthrough", "console"];
+/// Settings of [keybindings.global.controller.nav] that are not profiles (mios-inputd nav.rs RESERVED).
+const NAV_SETTINGS: &[&str] = &["enabled", "flick_on", "flick_off", "contexts", "repeat", "tmux_sockets"];
+/// Cursor mode (mios-inputd nav.rs CURSOR): a button toggles it. On the console the sticks drive the gpm pointer and
+/// the triggers select, so it is the one pointer: action a VT profile may use; no other pointer: action reaches a VT.
+const CURSOR: &str = "pointer:cursor";
 const TMUX_VERBS: &[&str] = &["focus", "page-up", "page-down", "session-prev", "session-next", "menu", "keymap", "key"];
 
 fn input_known(name: &str) -> bool {
@@ -744,7 +750,7 @@ pub fn controller_audit(
     // tmux:menu runs `send-keys -c <client> -K <tmux_prefix> <menu_key>` (the bare `mios-menu` alias cannot be aimed
     // at a client), so it needs the menu key.
     let menu_key = ssot.get("keybindings").and_then(|kb| kb.get("tmux")).and_then(|t| t.get("menu_key")).and_then(Value::as_str).filter(|k| !k.is_empty());
-    let check_action = |tag: &str, a: &str, console: bool, out: &mut Vec<String>| {
+    let check_action = |tag: &str, a: &str, console: bool, button: bool, out: &mut Vec<String>| {
         if a.is_empty() {
             out.push(format!("{tag}: \"\" is not a value; use \"none\" to unbind"));
             return;
@@ -776,15 +782,20 @@ pub fn controller_audit(
             }
             _ => out.push(format!("{tag}: action {a:?} must be <namespace>:<verb> with a namespace in action_namespaces")),
         }
-        if console && !console_capable(a) {
-            out.push(format!("{tag}: action {a:?} cannot run on the console (no compositor); use key:, tmux: or mios:graphical-vt"));
+        if a == CURSOR && !button {
+            out.push(format!("{tag}: {CURSOR} toggles cursor mode; only a button can fire it (not a stick direction or the toggle chord)"));
+        }
+        if console && !console_capable(a) && a != CURSOR {
+            out.push(format!("{tag}: action {a:?} cannot run on the console (no compositor); use key:, tmux:, {CURSOR} or mios:graphical-vt"));
         }
     };
-    let check_value = |tag: &str, v: &Value, console: bool, out: &mut Vec<String>| match v {
-        Value::String(a) => check_action(tag, a, console, out),
+    // `input` is the mapped controller input: stick directions and the toggle chord are not buttons.
+    let is_button = |input: &str| !PSEUDO_INPUTS.contains(&input);
+    let check_value = |tag: &str, input: &str, v: &Value, console: bool, out: &mut Vec<String>| match v {
+        Value::String(a) => check_action(tag, a, console, is_button(input), out),
         Value::Array(a) if a.len() == 2 && a.iter().all(|x| x.is_str()) => {
             for x in a {
-                check_action(tag, x.as_str().unwrap_or(""), console, out);
+                check_action(tag, x.as_str().unwrap_or(""), console, is_button(input), out);
             }
         }
         _ => out.push(format!("{tag}: value must be \"ns:action\", \"none\" or [\"tap\", \"hold\"]")),
@@ -820,7 +831,7 @@ pub fn controller_audit(
             if !input_known(k) {
                 out.push(format!("{tag}: unknown controller input {k}"));
             }
-            check_value(&tag, v, false, &mut out);
+            check_value(&tag, k, v, false, &mut out);
         }
     }
     let Some(nav) = ctl.get("nav").and_then(Value::as_table) else { return out };
@@ -839,6 +850,13 @@ pub fn controller_audit(
             out.push(format!("controller.nav.repeat.{k}: needs a known input and [delay_ms, rate_ms] > 0"));
         }
     }
+    if let Some(s) = nav.get("tmux_sockets") {
+        // tmux -L names whose clients select the <profile>_tmux profile (mios-inputd nav.rs, the same rule).
+        let ok = |x: &Value| x.as_str().is_some_and(|n| !n.is_empty() && n.len() <= 64 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+        if !s.as_array().is_some_and(|a| a.iter().all(ok)) {
+            out.push("controller.nav.tmux_sockets: must be a list of tmux -L socket names ([A-Za-z0-9_-]{1,64})".into());
+        }
+    }
     for (name, t) in nav {
         if NAV_SETTINGS.contains(&name.as_str()) {
             continue;
@@ -854,7 +872,7 @@ pub fn controller_audit(
             if !input_known(k) {
                 out.push(format!("controller.nav.{name}.{k}: unknown controller input {k}"));
             }
-            check_value(&format!("controller.nav.{name}.{k}"), v, false, &mut out);
+            check_value(&format!("controller.nav.{name}.{k}"), k, v, false, &mut out);
         }
     }
     let contexts = nav.get("contexts").and_then(Value::as_table).cloned().unwrap_or_default();
@@ -890,7 +908,7 @@ pub fn controller_audit(
                     None => out.push(format!("{tag}: {input} unmapped (map it to an action or \"none\")")),
                     Some(v) => {
                         if console {
-                            check_value(&format!("{tag}.{input}"), v, true, &mut out);
+                            check_value(&format!("{tag}.{input}"), input, v, true, &mut out);
                         }
                     }
                 }
@@ -1414,7 +1432,13 @@ crouch_button = "BTN_WEST"
             ("menu_key = \"Space\"\n", "", "tmux:menu needs [keybindings.tmux].menu_key"),
             ("RS_LEFT = \"tmux:focus left\"", "RS_LEFT = \"tmux:warp left\"", "unknown tmux verb"),
             ("BTN_THUMBR = \"key:CTRL+0\"", "BTN_THUMBR = \"key:CTRL+0\"\nBTN_NORTH = \"key:F\"", "owned by the capture contract"),
-            ("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\ngame = \"desktop\"", "captured contexts belong to the app"),
+            ("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\napp-capture = \"desktop\"", "captured contexts belong to the app"),
+            ("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\ndesktop-3d = \"desktop\"", "the room has its own map"),
+            ("flick_off = 0.3", "flick_off = 0.3\ntmux_sockets = \"mios-human\"", "tmux_sockets: must be a list"),
+            ("flick_off = 0.3", "flick_off = 0.3\ntmux_sockets = [\"mios human\"]", "tmux_sockets: must be a list"),
+            ("BTN_START = \"none\"", "BTN_START = \"pointer:wheel-up\"", "cannot run on the console"),
+            ("RS_UP = \"none\"", "RS_UP = \"pointer:cursor\"", "only a button can fire it"),
+            ("TOGGLE_CHORD = \"mios:graphical-vt\"", "TOGGLE_CHORD = \"pointer:cursor\"", "only a button can fire it"),
             ("inherits = \"console_plain\"", "inherits = \"console_tmux\"", "inherits cycle"),
             ("BTN_SOUTH = [\"key:ENTER\", \"key:SHIFT+ENTER\"]", "BTN_SOUTH = [\"key:ENTER\"]", "value must be"),
             ("flick_off = 0.3", "flick_off = 0.7", "flick_off"),
@@ -1428,6 +1452,32 @@ crouch_button = "BTN_WEST"
             let f = audit(&NAV.replacen(from, to, 1));
             assert!(f.iter().any(|x| x.contains(want)), "{to:?} -> want {want:?}, got {f:?}");
         }
+    }
+
+    /// mios-inputd's nav schema (nav.rs): `tmux_sockets` is a setting, not a profile; the uncaptured class contexts
+    /// `game` and `vm-passthrough` take a nav profile (no class captures the controller); a console button may toggle
+    /// cursor mode (`pointer:cursor`, the gpm pointer). Negative controls are in nav_grammar_violations_are_findings,
+    /// and a class profile still may not claim a capture-contract input.
+    #[test]
+    fn inputd_nav_schema_passes_the_audit() {
+        let ok = NAV
+            .replacen("flick_off = 0.3", "flick_off = 0.3\ntmux_sockets = [\"mios-human\", \"mios-nested\"]", 1)
+            .replacen("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\ngame = \"desktop\"\nvm-passthrough = \"desktop\"", 1)
+            .replacen("BTN_START = \"none\"", "BTN_START = \"pointer:cursor\"", 1)
+            .replacen("BTN_SELECT = [\"tmux:key w\", \"tmux:keymap\"]", "BTN_SELECT = [\"tmux:key w\", \"tmux:keymap\"]\nBTN_START = [\"tmux:key y\", \"pointer:cursor\"]", 1);
+        assert!(ok.contains("tmux_sockets") && ok.contains("vm-passthrough = ") && ok.contains("[\"tmux:key y\", \"pointer:cursor\"]"));
+        let f = audit(&ok);
+        assert!(f.is_empty(), "{f:?}");
+        // a class context profile is still a compositor profile: the capture contract owns North there
+        let bad = audit(&ok.replacen("game = \"desktop\"", "game = \"gamenav\"", 1).replacen(
+            "[keybindings.global.controller.nav.terminal_tmux]",
+            "[keybindings.global.controller.nav.gamenav]\ninherits = \"desktop\"\nBTN_NORTH = \"key:F\"\n[keybindings.global.controller.nav.terminal_tmux]",
+            1,
+        ));
+        assert!(bad.iter().any(|x| x.contains("controller.nav game (gamenav): BTN_NORTH is owned by the capture contract")), "{bad:?}");
+        // a pointer: action other than cursor mode never reaches a VT, and cursor mode is never a desktop stick action
+        let bad = audit(&ok.replacen("RS_LEFT = \"hypr:movefocus left\"", "RS_LEFT = \"pointer:cursor\"", 1));
+        assert!(bad.iter().any(|x| x.contains("controller.nav.desktop.RS_LEFT: pointer:cursor toggles cursor mode")), "{bad:?}");
     }
 
     /// The staged all-steps SSOT (every "#@<STEP>" line enabled, every "@drop" line removed) passes the controller

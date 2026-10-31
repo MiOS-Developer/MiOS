@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=bake-only
 # AI-hint: Builds the MiOS native RDP server (src/mios-rdp-server: mios-rdp-server + mios-rdp-priv) against IronRDP's default-branch HEAD, resolved now and never pinned (the resolved commit, the generated Cargo.lock hash and the enabled features are build output in /usr/libexec/mios/rdp-native/build.json and the SBOM), and installs it to /usr/libexec/mios/rdp-native/. Documented static-policy exceptions (rdp-native-design.md 12): both binaries are x86_64-unknown-linux-gnu, dynamically linked (E1 mios-rdp-server: libEGL/libgbm/libxkbcommon + dlopen of the Cisco libopenh264; E2 mios-rdp-priv: libpam). If the build fails nothing is installed (image) or the last good binary stays (MIOS_RDP_DESTDIR host/dev builds), and [remote.rdp].server = "native" falls back to xrdp.
-# AI-related: /usr/libexec/mios/mios-rdp, /usr/lib/systemd/user/mios-rdp-native.service, /usr/lib/systemd/system/mios-rdp-priv.socket, /usr/share/mios/mios.toml [remote.rdp] [remote.rdp.native] [packages.rdp-server-build], src/mios-rdp-server/
+# AI-related: /usr/libexec/mios/mios-rdp, /usr/lib/systemd/user/mios-rdp-native.service, /usr/lib/systemd/system/mios-rdp-priv.socket, /usr/share/mios/mios.toml, src/mios-rdp-server/
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 umask 0022

@@ -710,6 +710,7 @@ pub fn check(st: &Store, state: &State, only: Option<&str>) -> Vec<String> {
         c.sort();
         p.push(format!("depends_on cycle among [{}]", c.join(", ")));
     }
+    p.extend(overrides::find_contradictions(&eff.records, idx));
     p.extend(hygiene(state, &st.doc));
     // The doc is a projection: it must equal the render byte for byte.
     if let Some(md) = &state.md {
