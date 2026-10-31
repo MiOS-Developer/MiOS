@@ -2630,6 +2630,7 @@ surfaces = [
   { generator = "tools/native/mios-gen/src/image.rs", check = "check_cargo_manifest_generated", output = "tools/native/Cargo.toml" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_cockpit_projection", output = "etc/cockpit/cockpit.conf" },
   { generator = "tools/native/mios-gen/src/main.rs", check = "check_egress_firewall", output = "usr/share/mios/security/egress.nft" },
+  { generator = "tools/native/mios-gen/src/flatpak_overrides.rs", check = "check_flatpak_overrides", output = "var/lib/flatpak/overrides/global" },
   { generator = "tools/native/mios-gen/src/indexes.rs", check = "check_gate_index", output = "usr/share/mios/reference/drift-gate-index.tsv" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_pipe_boundaries", output = "usr/share/mios/pipe-boundaries.manifest.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_ipa_enroll_projection", output = "etc/mios/ipa-enroll.env" },
@@ -7436,6 +7437,21 @@ default_remote   = "flathub"  # tail-fallback remote when no beta available
 default_scope    = "system"   # system | user
 noninteractive   = true       # all install/update operations are headless
 
+# System-wide Flatpak override, projected to var/lib/flatpak/overrides/global by `mios-gen render-flatpak-overrides`
+# (never hand-edited). session_bus_talk: well-known names every sandboxed app may talk to. The global application menus
+# need com.canonical.AppMenu.Registrar: it is owned by `miosd appmenu serve`, and talking to it is what makes the
+# exporter's connection visible through the app's xdg-dbus-proxy, so the exporter can read and activate the app's
+# org.gtk.Menus / com.canonical.dbusmenu menus (Qt and Electron also only export a menubar when they can see it).
+# environment_from: override environment variable -> the SSOT key holding its value.
+[flatpak.overrides.global]
+filesystems = ["xdg-config/gtk-4.0:ro", "/etc/gtk-3.0:ro", "xdg-data/themes:ro", "xdg-data/icons:ro", "xdg-config/gtk-3.0:ro", "/etc/gtk-4.0:ro", "!/usr/share/icons", "!/usr/share/themes", "!/usr/share/fonts"]
+session_bus_talk = ["com.canonical.AppMenu.Registrar"]
+[flatpak.overrides.global.environment_from]
+GTK_THEME = "appearance.gtk_theme"
+ADW_DEBUG_COLOR_SCHEME = "appearance.adw_color_scheme"
+XCURSOR_SIZE = "appearance.cursor_size"
+XCURSOR_THEME = "appearance.cursor_theme"
+
 [appearance]
 gtk_theme        = "adw-gtk3-dark"              # GTK3 + libadwaita color-scheme target
 icon_theme       = "Adwaita"                    # gtk-icon-theme-name (GTK settings.ini + dconf interface icon-theme)
@@ -9072,6 +9088,18 @@ slack_us = 500                     # a frame due within this long counts as due 
 require_vrr = true                 # cap only outputs whose VRR is active (false: also fixed-refresh outputs, judders)
 wallpaper_namespaces = "mios-wallpaper"   # layer namespaces (exact) whose frame callbacks follow the wallpaper rate W
 capture_guard = true               # live stopgap until the patched compositor ([desktop.hyprland.compositor]) runs: refuse toplevel captures of closed, unmapped or monitor-less windows with `failed` (capture_guard.hpp); loading the plugin needs no compositor restart
+
+# Global application menus, compositor side (MiOS-original plugin in the tree): serves the KDE appmenu protocol
+# (org_kde_kwin_appmenu_manager v2). Wayland-native Qt 6, Gecko (Zen/Firefox global menu) and Chromium/Electron
+# windows then announce their com.canonical.dbusmenu menubar per surface (set_address), and `miosd appmenu serve`
+# ([user_units."mios-appmenu.service"]) reads the exact window -> menu binding from `hyprctl mios-appmenu` and the
+# `miosappmenu>>` IPC event instead of guessing it from bus objects. Chromium and Electron export a global menu on
+# Wayland only when this protocol is offered. false = no protocol (miosd falls back to bus discovery).
+[desktop.hyprland.mios-appmenu]
+enabled = true
+source_path = "usr/share/mios/hyprland/plugins/mios-appmenu"
+build_system = "make"
+path = "/usr/lib64/mios/mios-appmenu.so"
 
 # Catch-all monitor rule (output = "" matches every output); projected first.
 [desktop.hyprland.monitor]
@@ -16486,6 +16514,8 @@ exempt = [
   "check_drift_projection",
   # Egress firewall: requires nftables egress rule generator context.
   "check_egress_firewall",
+  # Flatpak overrides: requires the native mios-gen render-flatpak-overrides projection.
+  "check_flatpak_overrides",
   # ETC duplicates: requires system configuration file deduplication scanner.
   "check_etc_duplicates",
   # Fluff tokens: requires token hygiene scanner.
@@ -18854,6 +18884,9 @@ calls = [{ tool = "mios-gen", args = ["render-agent-interaction", "--root", "{ro
 [[generation.sync.steps]]
 id = "host-tuning.projection"
 calls = [{ tool = "mios-gen", args = ["render-tuned", "--root", "{root}"] }]
+[[generation.sync.steps]]
+id = "flatpak-overrides.projection"
+calls = [{ tool = "mios-gen", args = ["render-flatpak-overrides", "--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "hyprland.projection"
 calls = [{ tool = "mios-gen", args = ["render-hyprland", "--root", "{root}"] }]
