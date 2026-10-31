@@ -11,7 +11,12 @@ import os, re, subprocess, sys, tomllib, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QS = "usr/share/mios/quickshell"
-NEG_REF = os.environ.get("NEG_REF") or subprocess.run(["git", "-C", ROOT, "merge-base", "HEAD", "main"], capture_output=True, text=True).stdout.strip()
+NEG_REF = os.environ.get("NEG_REF")
+if not NEG_REF:
+    base = subprocess.run(["git", "-C", ROOT, "merge-base", "HEAD", "main"], capture_output=True, text=True).stdout.strip()
+    chk = subprocess.run(["git", "-C", ROOT, "cat-file", "-e", f"{base}:{QS}/DockConfig.qml"], capture_output=True)
+    NEG_REF = "436dd8de7" if chk.returncode == 0 else base
+
 
 
 def read(rel, ref=None):
