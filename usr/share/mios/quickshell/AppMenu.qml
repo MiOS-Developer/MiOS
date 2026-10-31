@@ -58,7 +58,13 @@ QS.PanelWindow {
         return s.menus.filter(m => m && m.label &&
                              ((Array.isArray(m.items) && m.items.length) || (typeof m.action === "string" && m.action.length)))
     }
-    onMenuItemsChanged: { openMenu = -1; pillViewport.contentX = 0 }
+    // A refreshed export of the same app (a toggle flipped, the window lost focus to the open dropdown) keeps the open
+    // dropdown when its menu is still there under the same label; anything else closes it.
+    property string openLabel: ""
+    onMenuItemsChanged: {
+        const keep = openMenu >= 0 && openMenu < menuItems.length && menuItems[openMenu].label === openLabel
+        if (!keep) { openMenu = -1; pillViewport.contentX = 0 }
+    }
     onAppIdChanged: { openMenu = -1; pillViewport.contentX = 0 }
 
     // ---- window control tabs in the bar row -----------------------------------------------------
@@ -135,12 +141,15 @@ QS.PanelWindow {
         updateRowPosition()
         if (reveal) reveal.menuPopup = openMenu >= 0
         cursor = -1
+        openLabel = openMenu >= 0 && openMenu < menuItems.length ? menuItems[openMenu].label : ""
         if (openMenu >= 0) Qt.callLater(() => keyNav.forceActiveFocus())
     }
     onVisibleChanged: if (!visible && reveal && reveal.menuHovered) Qt.callLater(() => { if (!menus.visible && menus.reveal) menus.reveal.menuHovered = false })
     WlrLayershell.namespace: "mios-appmenu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: openMenu >= 0 ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    // OnDemand (constant: a changed layer focus mode remaps the surface): the open dropdown's focus grab hands the bar
+    // the keyboard, so the keys below reach it; with no dropdown the bar never takes focus from the app.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
     anchors.top: true
     anchors.left: true
     margins.top: overFullscreen ? 0 : Glass.gap   // the island's row: flush over a fullscreen window (its inset tab)
@@ -359,7 +368,7 @@ QS.PanelWindow {
                     readonly property bool cursorOn: menus.cursor === index
                     required property int index
                     readonly property real labelWidth: itemLabel.implicitWidth + modelData.depth * Glass.panelPad + 2 * Glass.gap + (hasSub ? Glass.bar : 0)
-                                                       + (rowBox.it.toggle ? toggleMark.implicitWidth + 6 : 0)
+                                                       + (rowBox.it.toggle ? toggleMark.implicitWidth + Glass.gap / 2 : 0)
                                                        + (rowBox.it.shortcut ? shortcutLabel.implicitWidth + 2 * Glass.gap : 0)
                     width: menuColumn.width
                     Item {
@@ -388,7 +397,7 @@ QS.PanelWindow {
                         }
                         Text {
                             id: itemLabel
-                            x: Glass.gap + rowBox.modelData.depth * Glass.panelPad + (rowBox.it.toggle ? toggleMark.implicitWidth + 6 : 0)
+                            x: Glass.gap + rowBox.modelData.depth * Glass.panelPad + (rowBox.it.toggle ? toggleMark.implicitWidth + Glass.gap / 2 : 0)
                             anchors.verticalCenter: parent.verticalCenter
                             text: rowBox.it.label
                             textFormat: Text.PlainText // app-supplied label: no rich-text injection
