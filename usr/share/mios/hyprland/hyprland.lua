@@ -277,7 +277,7 @@ mios_section("global-input", function()
  local escapes={}
  local capture_fullscreen=true
  local capture_tag="mios-input-captured"
- local release_tag=""
+ local release_tag="mios-input-released"
  policies["SUPER+space"]={contexts={},passthrough={"vm-passthrough"}}
  escapes["SUPER+space"]="SUPER+CTRL+space"
  policies["SUPER+return"]={contexts={},passthrough={"vm-passthrough"}}

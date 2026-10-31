@@ -1,8 +1,14 @@
-# AI-hint: Classify the native input bridge outputs without hiding its desktop pointer.
+# AI-hint: Classify the native input bridge outputs: the virtual pointer and keyboard stay visible, the virtual pads are hidden from libinput.
 # AI-related: tools/native/mios-inputd/src/linux.rs, keybindings.global.controller
 ACTION!="add|change", GOTO="mios_input_end"
 SUBSYSTEM!="input", GOTO="mios_input_end"
 KERNEL!="event*", GOTO="mios_input_end"
 ATTRS{name}=="mios-vctl-pointer", ENV{ID_INPUT_MOUSE}="1", TAG+="uaccess", GOTO="mios_input_end"
+# C-07: the nav projection's virtual keyboard is a real keyboard for the compositor (pinned to the US layout there) and
+# the kernel console. It must match before the catch-all, which hides the virtual pads from libinput.
+ATTRS{name}=="mios-vctl-keyboard", ENV{ID_INPUT_KEYBOARD}="1", ENV{ID_INPUT_KEY}="1", TAG+="uaccess", GOTO="mios_input_end"
+# I4: private test pads and fixture-named agent pads (mios-input-fixture-*) are for MiOS fixture bridges only: no
+# udev consumer (libinput, SDL apps, a game launcher's desktop controller mapping) may treat one as a controller.
+ATTRS{name}=="mios-input-fixture-*", ENV{ID_INPUT_JOYSTICK}="", ENV{ID_INPUT}="", ENV{LIBINPUT_IGNORE_DEVICE}="1", GOTO="mios_input_end"
 ATTRS{name}=="mios-vctl-*", ENV{ID_INPUT_JOYSTICK}="1", ENV{LIBINPUT_IGNORE_DEVICE}="1", TAG+="uaccess"
 LABEL="mios_input_end"

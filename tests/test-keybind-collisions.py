@@ -53,7 +53,8 @@ class Contract(unittest.TestCase):
         ids = [b['id'] for b in data['bindings']]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertIn('BTN_TL', data['controller']['system_layer'])
-        self.assertFalse(data['controller']['exclusive_grab'], 'vendor capture remains off until migration')
+        self.assertIsInstance(data['controller']['exclusive_grab'], bool)
+        self.assertNotIn('recovery_argv', data['controller'], 'I1 retired the recovery owner: serve exits or idles instead')
 
 
 class Gate(unittest.TestCase):

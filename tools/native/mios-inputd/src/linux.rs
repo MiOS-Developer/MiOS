@@ -1,4 +1,4 @@
-// AI-hint: Linux evdev/uinput file-descriptor ownership, capability cloning and private fixture gate.
+// AI-hint: Linux evdev/uinput file-descriptor ownership, capability cloning, the virtual pointer and keyboard, and private fixture gates.
 // AI-related: docs.kernel.org/input/uinput.html, docs.kernel.org/input/event-codes.html
 use crate::config::VIRTUAL_PREFIX;
 use crate::router::{Axis, Event, EV_ABS, EV_KEY, EV_REL, EV_SYN, SYN_REPORT};
@@ -95,6 +95,11 @@ pub struct Device {
     abs: BTreeMap<u16, AbsInfo>,
     id: InputId,
     grabbed: bool,
+    /// O-7 (I4): reported -> positional key codes from the matching SSOT quirks, and the inverse for the virtual pad
+    /// (a captured app gets the driver's own codes back, as from the physical device).
+    remap: BTreeMap<u16, u16>,
+    unmap: BTreeMap<u16, u16>,
+    pub quirks: Vec<String>,
 }
 impl Device {
     pub fn open(path: &Path, fixture_only: bool) -> io::Result<Self> {
@@ -169,10 +174,70 @@ impl Device {
             abs,
             id,
             grabbed: false,
+            remap: BTreeMap::new(),
+            unmap: BTreeMap::new(),
+            quirks: vec![],
         })
     }
+    /// USB vendor and product ids.
+    pub fn usb_id(&self) -> (u16, u16) {
+        (self.id.vendor, self.id.product)
+    }
+    /// The kernel driver bound to the device behind this event node (sysfs), e.g. xpad or playstation; None for
+    /// uinput devices (no parent device).
+    pub fn driver(&self) -> Option<String> {
+        let event = self.path.file_name()?;
+        let link = std::fs::read_link(Path::new("/sys/class/input").join(event).join("device/device/driver")).ok()?;
+        link.file_name().map(|n| n.to_string_lossy().into_owned())
+    }
+    /// Apply the SSOT quirk table (O-7) to this device; returns the matching quirk names. Only codes the device
+    /// reports are remapped (a source it never sends is inert, and must not invert a code it does send). A merged
+    /// map that would route two of the device's buttons as one code is refused whole: the device keeps its codes.
+    pub fn apply_quirks(&mut self, quirks: &BTreeMap<String, crate::config::Quirk>) -> Result<Vec<String>, String> {
+        let (names, mut map) = crate::config::quirk_maps(quirks, self.driver().as_deref(), self.id.vendor, self.id.product);
+        map.retain(|from, _| self.keys.contains(from));
+        self.remap.clear();
+        self.unmap.clear();
+        self.quirks.clear();
+        if let Some((a, b, to)) = crate::config::quirk_collision(&self.keys, &map) {
+            return Err(format!("quirks {names:?} refused for {}: codes 0x{a:x} and 0x{b:x} would both route as 0x{to:x}", self.path.display()));
+        }
+        self.unmap = map.iter().map(|(a, b)| (*b, *a)).collect();
+        self.remap = map;
+        self.quirks = names.clone();
+        Ok(names)
+    }
+    /// A reported key code as the router sees it (positional).
+    pub fn logical(&self, code: u16) -> u16 {
+        self.remap.get(&code).copied().unwrap_or(code)
+    }
+    /// The router's events back in the driver's own codes, for the cloned virtual pad.
+    pub fn physical_events(&self, events: &[Event]) -> Vec<Event> {
+        events.iter().map(|e| if e.kind == EV_KEY { Event::new(e.kind, self.unmap.get(&e.code).copied().unwrap_or(e.code), e.value) } else { *e }).collect()
+    }
+    pub fn grabbed(&self) -> bool {
+        self.grabbed
+    }
+    /// The pad reports its triggers only as axes (xpad: ABS_Z/ABS_RZ, no BTN_TL2/BTN_TR2): nav synthesizes edges.
+    pub fn analog_triggers(&self) -> bool {
+        !self.keys.contains(&0x138) && !self.keys.contains(&0x139) && (self.abs.contains_key(&2) || self.abs.contains_key(&5))
+    }
     pub fn grab(&mut self) -> io::Result<()> {
-        ioctl_int(self.file.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1)?;
+        // A fixture pad's GrabProbe holds the grab for one ioctl pair while nobody else does: a few short retries
+        // ride that out; a real owner still refuses after them.
+        let mut tries = 0;
+        loop {
+            match ioctl_int(self.file.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1) {
+                Err(e) if e.raw_os_error() == Some(libc::EBUSY) && tries < 4 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                r => {
+                    r?;
+                    break;
+                }
+            }
+        }
         self.grabbed = true;
         Ok(())
     }
@@ -185,7 +250,7 @@ impl Device {
     pub fn held_keys(&self) -> io::Result<BTreeSet<u16>> {
         let mut bits = [0u8; 128];
         ioctl_ptr(self.file.as_raw_fd(), read_ioctl(0x18, bits.len()), &mut bits)?;
-        Ok(codes(&bits).into_iter().collect())
+        Ok(codes(&bits).into_iter().map(|c| self.logical(c)).collect())
     }
     pub fn snapshot(&self) -> io::Result<(BTreeSet<u16>, BTreeMap<u16, Axis>)> {
         let fd = self.file.as_raw_fd();
@@ -231,7 +296,8 @@ impl Device {
             // SAFETY: input_event is plain integers/timeval and read_unaligned
             // copies exactly one complete initialized kernel event.
             let e = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<InputEvent>()) };
-            out.push(Event::new(e.kind, e.code, e.value));
+            let code = if e.kind == EV_KEY { self.logical(e.code) } else { e.code };
+            out.push(Event::new(e.kind, code, e.value));
         }
         Ok(out)
     }
@@ -244,6 +310,66 @@ impl Drop for Device {
 pub struct VirtualDevice {
     file: File,
     pub name: String,
+}
+/// The fixture tier's emit guard. A host app (Steam through SDL) reads every uinput pad, so an event a test pad
+/// emits must reach exactly one exclusive reader, never an ungrabbed node. The probe keeps its own descriptor of the
+/// pad's node and asks the kernel whether another descriptor holds EVIOCGRAB: taking the grab succeeds only while
+/// nobody holds it (the probe then drops it at once and the caller must not emit).
+pub struct GrabProbe {
+    file: File,
+    pub path: PathBuf,
+}
+impl GrabProbe {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW).open(path)?;
+        Ok(Self { file, path: path.to_owned() })
+    }
+    /// Another descriptor holds the exclusive grab now.
+    pub fn held_elsewhere(&self) -> bool {
+        let fd = self.file.as_raw_fd();
+        match ioctl_int(fd, ioc(1, b'E', 0x90, 4), 1) {
+            Ok(()) => {
+                let _ = ioctl_int(fd, ioc(1, b'E', 0x90, 4), 0);
+                false
+            }
+            Err(e) => e.raw_os_error() == Some(libc::EBUSY),
+        }
+    }
+    fn ungrabbed(&self) -> String {
+        format!("refusing to emit on {}: no exclusive grab holds it (a host app such as Steam would read the event)", self.path.display())
+    }
+    /// Emit through `write` only while another descriptor holds the grab, then probe again. The kernel routes an event
+    /// at write() time and userspace cannot make "grab held" and "write" one atomic step (holding the grab itself
+    /// would starve the real reader), so a reader that lets go between the two probes is the one window left. The
+    /// second probe makes that window fail closed: the caller learns of it (GrabLost) and stops emitting, so at most
+    /// that one frame can have been ungrabbed and it is never silent.
+    pub fn emit(&self, write: impl FnOnce() -> io::Result<()>) -> Result<(), EmitError> {
+        if !self.held_elsewhere() {
+            return Err(EmitError::Ungrabbed(self.ungrabbed()));
+        }
+        write().map_err(|e| EmitError::Io(e.to_string()))?;
+        if self.held_elsewhere() {
+            Ok(())
+        } else {
+            Err(EmitError::GrabLost(format!("{}: the exclusive grab was released while a frame was written; emitting stopped (that frame may have reached other readers)", self.path.display())))
+        }
+    }
+}
+#[derive(Debug, PartialEq)]
+pub enum EmitError {
+    /// Nobody held the grab: nothing was written.
+    Ungrabbed(String),
+    /// The write itself failed.
+    Io(String),
+    /// Written, but the grab was gone right after: fail closed.
+    GrabLost(String),
+}
+impl std::fmt::Display for EmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EmitError::Ungrabbed(s) | EmitError::Io(s) | EmitError::GrabLost(s) => f.write_str(s),
+        }
+    }
 }
 impl VirtualDevice {
     fn create(
@@ -334,8 +460,41 @@ impl VirtualDevice {
             },
             &[0x110, 0x111],
             &BTreeMap::new(),
-            &[0, 1, 8],
+            // REL_X, REL_Y, REL_HWHEEL (C-11), REL_WHEEL.
+            &[0, 1, 6, 8],
         )
+    }
+    /// C-07: the nav projection's virtual keyboard. udev classifies `mios-vctl-keyboard` as a keyboard (before the
+    /// `mios-vctl-*` catch-all that hides the virtual pads from libinput); the compositor pins it to the US layout.
+    pub fn keyboard() -> io::Result<Self> {
+        Self::keyboard_named(&format!("{VIRTUAL_PREFIX}-keyboard"))
+    }
+    fn keyboard_named(name: &str) -> io::Result<Self> {
+        Self::create(
+            name,
+            InputId { bustype: 6, vendor: 0, product: 0, version: 1 },
+            &crate::nav::keyboard_codes(),
+            &BTreeMap::new(),
+            &[],
+        )
+    }
+    /// I4: the agent virtual controller (`mios-inputd vpad`): a DualSense-like gamepad on BUS_VIRTUAL with positional
+    /// face buttons, digital + analog triggers and a HAT d-pad. Its name is a seat's pad, an agent pad or a fixture.
+    pub fn agent_pad(name: &str, vendor: u16, product: u16) -> io::Result<Self> {
+        if name.starts_with(VIRTUAL_PREFIX) {
+            return Err(io::Error::other("an agent pad is an input, not a mios-vctl output"));
+        }
+        let mut abs = BTreeMap::new();
+        for code in [0u16, 1, 3, 4] {
+            abs.insert(code, AbsInfo { minimum: -32768, maximum: 32767, flat: 128, ..AbsInfo::default() });
+        }
+        for code in [2u16, 5] {
+            abs.insert(code, AbsInfo { minimum: 0, maximum: 255, ..AbsInfo::default() });
+        }
+        for code in [16u16, 17] {
+            abs.insert(code, AbsInfo { minimum: -1, maximum: 1, ..AbsInfo::default() });
+        }
+        Self::create(name, InputId { bustype: 6, vendor, product, version: 1 }, &crate::vpad::KEYS, &abs, &[])
     }
     pub fn fixture() -> io::Result<Self> {
         let mut abs = BTreeMap::new();
@@ -551,6 +710,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let path = path.ok_or("fixture did not enumerate")?;
+    let probe = GrabProbe::open(&path).map_err(|e| e.to_string())?;
     if !Device::open(&path,false).err().is_some_and(|e|e.to_string().contains("isolated from the live bridge")) {
         return Err("private fixture could enter live controller routing".into());
     }
@@ -565,7 +725,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         Event::new(EV_KEY, 0x136, 1),
         Event::new(EV_SYN, SYN_REPORT, 0),
     ];
-    producer.write(&sample).map_err(|e| e.to_string())?;
+    probe.emit(|| producer.write(&sample)).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let got = input.read_events().map_err(|e| e.to_string())?;
     if !got.iter().any(|e| *e == sample[0]) {
@@ -575,6 +735,24 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
     if !matches!(other.read(&mut b),Err(ref e)if e.kind()==io::ErrorKind::WouldBlock) {
         return Err("grabbed event leaked to second reader".into());
     }
+    // The emit guard fails closed. The race is simulated without emitting anything: the "write" step only lets go of
+    // the grab, so emit must report GrabLost; with nobody holding the grab, emit must refuse without calling write.
+    let lost = probe.emit(|| {
+        input.release();
+        Ok(())
+    });
+    if !matches!(lost, Err(EmitError::GrabLost(_))) {
+        return Err(format!("a grab released during an emit was not reported: {lost:?}"));
+    }
+    let mut called = false;
+    let refused = probe.emit(|| {
+        called = true;
+        Ok(())
+    });
+    if called || !matches!(refused, Err(EmitError::Ungrabbed(_))) {
+        return Err(format!("an ungrabbed emit reached write: {refused:?}"));
+    }
+    input.grab().map_err(|e| e.to_string())?;
     let mut output = VirtualDevice::clone_gamepad(&input).map_err(|e| e.to_string())?;
     let mut output_path = None;
     for _ in 0..100 {
@@ -606,7 +784,7 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
         Event::new(EV_KEY, 0x131, 1),
         Event::new(EV_SYN, SYN_REPORT, 0),
     ];
-    producer.write(&ordinary).map_err(|e| e.to_string())?;
+    probe.emit(|| producer.write(&ordinary)).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
     let incoming = input.read_events().map_err(|e| e.to_string())?;
     if !incoming.contains(&ordinary[0]) {
@@ -625,14 +803,19 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
     }
     drop(duplicate);
     input.release();
-    producer
-        .write(&[
-            Event::new(EV_KEY, 0x136, 0),
-            Event::new(EV_SYN, SYN_REPORT, 0),
-        ])
+    // The release restores the other reader: it can now take the grab itself (proof without an ungrabbed event), and
+    // a grabbed event then reaches it.
+    let grab = ioc(1, b'E', 0x90, 4);
+    if ioctl_int(other.as_raw_fd(), grab, 1).is_err() {
+        return Err("release did not restore other reader".into());
+    }
+    probe
+        .emit(|| producer.write(&[Event::new(EV_KEY, 0x136, 0), Event::new(EV_SYN, SYN_REPORT, 0)]))
         .map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(20));
-    if other.read(&mut b).is_err() {
+    let restored = other.read(&mut b).is_ok();
+    let _ = ioctl_int(other.as_raw_fd(), grab, 0);
+    if !restored {
         return Err("release did not restore other reader".into());
     }
     let mut signal_results = vec![];
@@ -680,23 +863,68 @@ pub fn private_fixture() -> Result<serde_json::Value, String> {
             libc::kill(child.id() as i32, signal);
         }
         child.wait().map_err(|e| e.to_string())?;
+        // The killed child's grab is gone when the other reader can take it; a grabbed event then reaches it.
+        if ioctl_int(other.as_raw_fd(), grab, 1).is_err() {
+            return Err(format!("signal {signal} left private device grabbed"));
+        }
         // Drain previous events before proving a new press reaches the reader.
         while other.read(&mut b).is_ok() {}
-        producer
-            .write(&[
-                Event::new(EV_KEY, 0x131, if signal == libc::SIGTERM { 0 } else { 1 }),
-                Event::new(EV_SYN, SYN_REPORT, 0),
-            ])
-            .map_err(|e| e.to_string())?;
+        let mut batch = vec![Event::new(EV_KEY, 0x131, if signal == libc::SIGTERM { 0 } else { 1 }), Event::new(EV_SYN, SYN_REPORT, 0)];
+        if signal != libc::SIGTERM {
+            // Leave nothing held: the device's last state is all released.
+            batch.extend([Event::new(EV_KEY, 0x131, 0), Event::new(EV_SYN, SYN_REPORT, 0)]);
+        }
+        probe.emit(|| producer.write(&batch)).map_err(|e| e.to_string())?;
         std::thread::sleep(std::time::Duration::from_millis(20));
-        if other.read(&mut b).is_err() {
+        let reached = other.read(&mut b).is_ok();
+        let _ = ioctl_int(other.as_raw_fd(), grab, 0);
+        if !reached {
             return Err(format!("signal {signal} left private device grabbed"));
         }
         signal_results.push(signal);
     }
     Ok(
-        serde_json::json!({"fixture":"private-uinput","isolated_from_live_bridge":true,"grab_owner_received":true,"other_reader_blocked":true,"release_restored_reader":true,"replay_loop_rejected":true,"duplicate_owner_rejected":true,"typing_keyboard_rejected":true,"keyboard_aux_joystick_rejected":true,"virtual_app_grab_preserves_host_input":true,"ordinary_input_replayed":true,"release_after_signals":signal_results}),
+        serde_json::json!({"fixture":"private-uinput","isolated_from_live_bridge":true,"grab_owner_received":true,"other_reader_blocked":true,"release_restored_reader":true,"replay_loop_rejected":true,"grab_lost_fails_closed":true,"duplicate_owner_rejected":true,"typing_keyboard_rejected":true,"keyboard_aux_joystick_rejected":true,"virtual_app_grab_preserves_host_input":true,"ordinary_input_replayed":true,"release_after_signals":signal_results}),
     )
+}
+
+/// C-07 proof without touching any session: create the bridge's virtual keyboard under a fixture name (still inside the
+/// `mios-vctl-*` libinput-ignored namespace), grab its event node exclusively before writing, project each `key:` chord
+/// as the bridge does, and report what an exclusive reader received.
+pub fn fixture_keys(chords: &[String]) -> Result<serde_json::Value, String> {
+    let parsed = chords.iter().map(|c| crate::nav::parse_key_chord(c.strip_prefix("key:").unwrap_or(c))).collect::<Result<Vec<_>, _>>()?;
+    let mut kbd = VirtualDevice::keyboard_named(&format!("{VIRTUAL_PREFIX}-fixture-keyboard")).map_err(|e| e.to_string())?;
+    let mut path = None;
+    for _ in 0..200 {
+        if let Ok(p) = kbd.event_path() {
+            path = Some(p);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let path = path.ok_or("fixture keyboard did not enumerate")?;
+    let mut reader = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(&path).map_err(|e| e.to_string())?;
+    ioctl_int(reader.as_raw_fd(), ioc(1, b'E', 0x90, 4), 1).map_err(|e| format!("exclusive grab of the fixture keyboard: {e}"))?;
+    let rejected = Device::open(&path, false).err().is_some_and(|e| e.to_string().contains("replay loop"));
+    let mut strokes = vec![];
+    for chord in &parsed {
+        kbd.write(&crate::nav::stroke(chord)).map_err(|e| e.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let size = std::mem::size_of::<InputEvent>();
+        let mut bytes = vec![0u8; size * 64];
+        let n = match reader.read(&mut bytes) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
+            Err(e) => return Err(e.to_string()),
+        };
+        let keys: Vec<(u16, i32)> = bytes[..n].chunks_exact(size).map(|b| {
+            // SAFETY: one complete kernel input_event per chunk.
+            let e = unsafe { std::ptr::read_unaligned(b.as_ptr().cast::<InputEvent>()) };
+            (e.kind, e.code, e.value)
+        }).filter(|(k, _, _)| *k == EV_KEY).map(|(_, c, v)| (c, v)).collect();
+        strokes.push(keys);
+    }
+    Ok(serde_json::json!({"keyboard": kbd.name, "path": path, "exclusive_reader": true, "rejected_by_discovery": rejected, "strokes": strokes}))
 }
 
 /// Only the parent fixture invokes this helper on its explicitly named virtual pad.
@@ -707,5 +935,84 @@ pub fn fixture_grab(path: &Path) -> Result<(), String> {
     std::io::stdout().flush().map_err(|e| e.to_string())?;
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+/// A private test pad: a uinput device named `mios-input-fixture-<layout>` that only the fixture tier may open.
+/// stdin carries JSON lines: {"events":[[kind,code,value],...]} writes one batch, {"sleep_ms":N} waits, and EOF
+/// destroys the device. A batch is written only while another descriptor (the bridge's or the test's) holds the pad's
+/// exclusive grab; an ungrabbed batch is refused and the fixture exits, so no host app ever reads a test event. Layouts emulate a driver's code layout (O-7): its USB ids, axis ranges and which codes exist.
+/// The test writes the codes that driver reports (xpad: physical Y = 0x134, X = 0x133; DualSense: positional).
+///   dualsense          054c:0ce6, BTN_TL2/TR2 digital + ABS_Z/RZ, HAT d-pad
+///   xpad               045e:028e, triggers only as ABS_Z/RZ, HAT d-pad
+///   xpad-dpad-buttons  045e:028e, xpad's dpad_to_buttons mode: BTN_TRIGGER_HAPPY1..4 (left, right, up, down), no HAT
+pub fn fixture_pad(layout: &str) -> Result<(), String> {
+    // xpad reports its triggers only as ABS_Z/ABS_RZ (no BTN_TL2/BTN_TR2); DualSense reports both.
+    let (vendor, product, trigger_max, digital_triggers, hat) = match layout {
+        "dualsense" => (0x054c, 0x0ce6, 255, true, true),
+        "xpad" => (0x045e, 0x028e, 255, false, true),
+        "xpad-dpad-buttons" => (0x045e, 0x028e, 255, false, false),
+        _ => return Err(format!("unknown fixture layout {layout} (dualsense, xpad, xpad-dpad-buttons)")),
+    };
+    let mut abs = BTreeMap::new();
+    for code in [0u16, 1, 3, 4] {
+        abs.insert(code, AbsInfo { minimum: -32768, maximum: 32767, ..AbsInfo::default() });
+    }
+    for code in [2u16, 5] {
+        abs.insert(code, AbsInfo { minimum: 0, maximum: trigger_max, ..AbsInfo::default() });
+    }
+    if hat {
+        for code in [16u16, 17] {
+            abs.insert(code, AbsInfo { minimum: -1, maximum: 1, ..AbsInfo::default() });
+        }
+    }
+    let mut keys = (0x130..=0x13e).filter(|c| ![0x132, 0x135].contains(c) && (digital_triggers || ![0x138, 0x139].contains(c))).collect::<Vec<_>>();
+    if !hat {
+        keys.extend(0x2c0..=0x2c3);
+    }
+    let mut pad = VirtualDevice::create(
+        &format!("mios-input-fixture-{layout}"),
+        InputId { bustype: 3, vendor, product, version: 1 },
+        &keys,
+        &abs,
+        &[],
+    )
+    .map_err(|e| e.to_string())?;
+    let mut path = None;
+    for _ in 0..200 {
+        if let Ok(p) = pad.event_path() {
+            path = Some(p);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let path = path.ok_or("fixture pad did not enumerate")?;
+    let probe = GrabProbe::open(&path).map_err(|e| e.to_string())?;
+    println!("{}", serde_json::json!({"fixture_pad": layout, "path": path, "name": pad.name, "emits": "grabbed-only"}));
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    let stdin = io::stdin();
+    loop {
+        line.clear();
+        if stdin.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+            return Ok(());
+        }
+        let v: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
+        if let Some(ms) = v.get("sleep_ms").and_then(serde_json::Value::as_u64) {
+            std::thread::sleep(std::time::Duration::from_millis(ms.min(10_000)));
+        }
+        if let Some(events) = v.get("events").and_then(serde_json::Value::as_array) {
+            let mut batch = vec![];
+            for e in events {
+                let t = e.as_array().filter(|t| t.len() == 3).ok_or("event must be [kind, code, value]")?;
+                let n = |i: usize| t[i].as_i64().ok_or("event fields must be integers");
+                batch.push(Event::new(u16::try_from(n(0)?).map_err(|e| e.to_string())?, u16::try_from(n(1)?).map_err(|e| e.to_string())?, i32::try_from(n(2)?).map_err(|e| e.to_string())?));
+            }
+            batch.push(Event::new(EV_SYN, SYN_REPORT, 0));
+            // Nothing is ever emitted while no exclusive reader (the bridge's or the test's grab) holds the pad.
+            probe.emit(|| pad.write(&batch)).map_err(|e| e.to_string())?;
+        }
+        println!("{}", serde_json::json!({"ok": true}));
+        std::io::stdout().flush().map_err(|e| e.to_string())?;
     }
 }

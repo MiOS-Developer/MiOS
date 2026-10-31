@@ -1,1 +1,1010 @@
-{"object":"mios.capability.manifest","ceiling":"interactive","summary":{"total":144,"by_kind":{"recipe":19,"skill":12,"verb":113},"by_tier":{"read":70,"write":71,"interactive":3}},"data":[{"name":"copy-to-clipboard","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Copy a literal string to the system clipboard."},{"name":"disk-usage","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"What's using disk space: filesystem fill (df) plus the largest top-level directories under / (du), ranked. Use for 'what's taking up space / disk full / largest folders'."},{"name":"list-drives","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"List mounted drives / volumes."},{"name":"lock-screen","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Lock the workstation."},{"name":"open-control-panel","kind":"recipe","tier":"read","platforms":["windows"],"description":"Open a Windows Control Panel page by canonical name (powercfg.cpl, ncpa.cpl, appwiz.cpl, sysdm.cpl, mmsys.cpl, timedate.cpl, ...)."},{"name":"open-folder","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Open a folder in the OS file manager (Files / Explorer)."},{"name":"open-settings-uri","kind":"recipe","tier":"read","platforms":["windows"],"description":"Open a Windows Settings page by ms-settings: URI (display, sound, network, system, privacy-microphone, gaming-gamebar, ...)."},{"name":"open-shell-folder","kind":"recipe","tier":"read","platforms":["windows"],"description":"Open a Windows Shell special folder by name (Desktop, Downloads, RecycleBinFolder, AppsFolder, Startup, SendTo, Fonts, ...)."},{"name":"os-control-health","kind":"recipe","tier":"read","platforms":["linux"],"description":"Probe the Windows OS-control plane (in-session executor :8950 + WSL-interop) and report typed JSON status {executor, interop, blind, reason}. Use to EXPLAIN why a Windows control/recipe action (show-n"},{"name":"read-clipboard","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Read the current clipboard contents."},{"name":"reboot","kind":"recipe","tier":"write","platforms":["linux","windows"],"description":"Reboot the host (WRITE)."},{"name":"reveal-in-folder","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Reveal a single file in its containing folder, selected."},{"name":"run-bash","kind":"recipe","tier":"read","platforms":["linux"],"description":"Run a bash command and return stdout (READ-ONLY)."},{"name":"run-powershell","kind":"recipe","tier":"read","platforms":["windows"],"description":"Run a PowerShell command and return stdout (READ-ONLY by default; the agent should only emit read commands like Get-* / Test-* / Resolve-* / Measure-*)."},{"name":"service-status","kind":"recipe","tier":"read","platforms":["linux"],"description":"systemctl is-active + status snapshot for a Linux service (READ). Pass the unit name as `service`."},{"name":"show-network","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Show active network adapters + IPs."},{"name":"show-process","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Show top processes by CPU / memory."},{"name":"shutdown","kind":"recipe","tier":"write","platforms":["linux","windows"],"description":"Shutdown the host (WRITE -- requires MIOS_OS_RECIPE_WRITE=1)."},{"name":"toast","kind":"recipe","tier":"read","platforms":["linux","windows"],"description":"Show a notification toast."},{"name":"install-flatpak-app","kind":"skill","tier":"write","uses":["flatpak_search","flatpak_install","open_app"],"description":"Search configured flatpak remotes for `query`, install the matched id, then launch it via open_app."},{"name":"install-windows-app","kind":"skill","tier":"write","uses":["winget_search","winget_install"],"description":"Search winget for `query`, then install the matched package by `id`."},{"name":"open-and-focus","kind":"skill","tier":"write","uses":["open_app","focus_window"],"description":"Launch the app named `app`, then focus its window."},{"name":"open-url-fallback-chain","kind":"skill","tier":"write","uses":["open_url"],"description":"Open `url` and try each id from the `browsers` array in order until one succeeds. Halts on the first browser that lands a visible window. Use when the default browser may fail in the current runtime c"},{"name":"open-url-resilient","kind":"skill","tier":"write","uses":["open_url","open_url"],"description":"Open `url` in the operator's default browser; on failure, try the same url with each browser id from `fallbacks` in order. First step that lands a visible window wins. Use when sandboxed flatpak brows"},{"name":"safe-open-flatpak","kind":"skill","tier":"write","uses":["flatpak_preflight","open_app"],"description":"Probe the flatpak `id` sandbox via flatpak_preflight; on success, launch via open_app. Halts on preflight failure so the agent surfaces the actual sandbox error (portal_helper_env_fd / user_bus_creden"},{"name":"save-document","kind":"skill","tier":"write","uses":["focus_window","pc_type","pc_key"],"description":"Focus a window matching `editor`, type `body` text into it, save via Ctrl+S."},{"name":"sync-to-root","kind":"skill","tier":"write","uses":["sync_to_root"],"description":"Apply the code-server / war-room workspace edits DIRECTLY onto the deployed MiOS-DEV root so they go LIVE for testing, with no GitHub round-trip. Use when an agent has changed files in the code-server"},{"name":"window-focus-mode","kind":"skill","tier":"write","uses":["maximize_window","minimize_window"],"description":"Maximize the window matching `focus`, minimize the window matching `distractor`."},{"name":"window-restore-and-focus","kind":"skill","tier":"write","uses":["restore_window","focus_window"],"description":"Restore a minimized/maximized window matching `title`, then focus it."},{"name":"window-tile-side-by-side","kind":"skill","tier":"write","uses":["focus_window","position_window","resize_window","focus_window","position_window","resize_window"],"description":"Tile two windows side-by-side: window matching `left` at (0,0) sized `half_width`x`height`, window matching `right` at (`half_width`,0) same size."},{"name":"write-text-file","kind":"skill","tier":"write","uses":["text_create","text_view"],"description":"Create a file at `path` with `body` content via text_create, then text_view it to confirm."},{"name":"a2a_delegate","kind":"verb","tier":"read","description":"Hand a SUB-TASK to another registered agent and GET ITS ANSWER BACK so YOU fold it into your own reasoning (you stay in control; this is NOT a final user reply and NOT a take-over). Pick a peer by id "},{"name":"agent_route","kind":"verb","tier":"write","description":"Cross-agent routing. mode='handoff' (transfer control entirely, ending your turn) or 'delegate' (sub-task an agent and get the result back)."},{"name":"app_search","kind":"verb","tier":"read","description":"SEMANTIC search over the installed-app inventory: given a fuzzy natural-language description ('my note-taking app', 'phone settings'), return the top matching installed apps {name, category, launch, s"},{"name":"apps","kind":"verb","tier":"read","description":"Query applications. mode='list' (inventory of all installed apps), 'semantic' (fuzzy app capability search), or 'resolve' (get exact CLI launch command for an app without launching it)."},{"name":"close_app","kind":"verb","tier":"write","description":"Gracefully CLOSE an open Windows application or window (by title pattern). Use this when the operator asks to close, quit, exit, or kill an application."},{"name":"close_window","kind":"verb","tier":"write","description":"Gracefully CLOSE an OPEN Windows window by title (sends WM_CLOSE so the app saves state). Force-kill is intentionally unsupported. Use to close / quit / dismiss a window -- not to hide it (use minimiz"},{"name":"code_mode","kind":"verb","tier":"interactive","description":"Write a PYTHON snippet that ORCHESTRATES MULTIPLE MiOS verbs programmatically instead of emitting one verb call at a time: `import mios_tools` exposes the verb surface (mios_tools.web_search(...), .sy"},{"name":"coderun","kind":"verb","tier":"interactive","description":"Run a SHORT one-off code snippet / command in an isolated sandbox (bubblewrap: read-only system, writable scratch only, NO network by default, resource caps + timeout). lang: bash (default) | python. "},{"name":"container_restart","kind":"verb","tier":"write","description":"RESTART ONE podman/quadlet CONTAINER by name. For podman CONTAINERS -- NOT systemd services (use service_restart). Write-class."},{"name":"container_status","kind":"verb","tier":"read","description":"Check podman/quadlet CONTAINER status. Empty name = all containers. For podman CONTAINERS -- NOT systemd services (use service_status) and NOT whole-machine health (system_status). Read-only."},{"name":"crawl","kind":"verb","tier":"read","description":"Fetch ONE web page you already have the URL for and return its FULL content as clean, LLM-ready MARKDOWN via the LOCAL crawl4ai engine (headless Chrome over CDP, with a Camoufox stealth-Firefox fail-r"},{"name":"cu_act","kind":"verb","tier":"write","description":"All-in-one vision grounding -> click -> verify loop for the LINUX desktop. Finds an element visually (qwen3-vl), clicks it, and verifies the state changed (if verify_after_act=true). Write-class."},{"name":"cu_atspi_query","kind":"verb","tier":"read","description":"Find a LINUX desktop UI element via the AT-SPI accessibility tree by its role/name and return its screen coordinates -- semantic a11y-tree lookup, NO pixels/vision. Read-class. Use when you can name t"},{"name":"cu_click","kind":"verb","tier":"write","description":"Move the pointer to (x,y) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM and click. This clicks the in-VM Linux screen, NOT the host Windows screen (use windows_desktop_click for that). Wr"},{"name":"cu_ground","kind":"verb","tier":"read","description":"Locate a LINUX desktop UI element from a NATURAL-LANGUAGE description and return {x,y,confidence}. Tries the AT-SPI a11y tree first, then falls back to a vision model (qwen3-vl / UI-TARS) on a screens"},{"name":"cu_key","kind":"verb","tier":"write","description":"Press ONE key (Enter, Tab, F5, Escape, ...) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Single key only -- use linux_desktop_press_key_combo for modifier chords like Ctrl+S. Targets th"},{"name":"cu_key_combo","kind":"verb","tier":"write","description":"Press a MODIFIER CHORD (e.g. Ctrl+S, Alt+Tab, Ctrl+Shift+T) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Use this for any combo with modifiers; use linux_desktop_press_key for a single "},{"name":"cu_screenshot","kind":"verb","tier":"read","description":"Capture the LINUX (Wayland/Hyprland) desktop inside the MiOS VM to a PNG file (one-shot). This is the Linux in-VM screen, NOT the host Windows screen. Read-class. Pair with linux_desktop_click / linux"},{"name":"cu_type","kind":"verb","tier":"write","description":"Type literal text into the focused surface on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Sends keystrokes to whatever window has focus in the in-VM Linux session, NOT the host Windows de"},{"name":"cu_verify","kind":"verb","tier":"read","description":"Visual Definition-of-Done: verify if a UI element or application is visible on the LINUX desktop. Takes a screenshot and asks the vision model. Returns {ok: bool, reasoning: text}. Use this after taki"},{"name":"cu_window_list","kind":"verb","tier":"read","description":"List the open top-level windows on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM (via wmctrl / hyprctl / AT-SPI). This is the in-VM Linux desktop, NOT the host Windows windows (use list_wind"},{"name":"directory_lookup","kind":"verb","tier":"read","description":"FAST first-try 'where is X' lookup over a cached filesystem map (~19k entries via mios-daemon, refreshed every 15 min, sub-100ms). TRY THIS FIRST for 'where is X' / 'find the file X' / 'what's the pat"},{"name":"discord_send","kind":"verb","tier":"write","description":"Actually POST a message to the operator's Discord (local bot, default channel). Use to DELIVER a message when the operator asks to post / send / share / DM / 'let me know on' Discord -- it really post"},{"name":"docgen_build","kind":"verb","tier":"write","description":"Author a NEW document FROM TEXT YOU WRITE -> a real office artifact (.docx/.pptx/.xlsx/.pdf/.html). Output format inferred from out_path extension; write markdown (or CSV rows for .xlsx with from_fmt="},{"name":"docgen_convert","kind":"verb","tier":"write","description":"Convert an EXISTING file to another format (.docx->.pdf, .md->.docx, .csv->.xlsx, .pptx->.pdf). Target format inferred from out_path extension. Fully local via Pandoc / LibreOffice headless. Use this "},{"name":"document","kind":"verb","tier":"write","description":"Generate or convert documents. op='build' (compile markdown to pdf/docx/etc.) or 'convert' (convert office docs/csv to markdown)."},{"name":"everything_search","kind":"verb","tier":"read","description":"Search for files on the WINDOWS side of this machine via the Voidtools Everything NTFS index (exhaustive, name/extension match). Finds FILES that already exist on Windows drives (C:, etc.) -- NOT a we"},{"name":"fetch_page","kind":"verb","tier":"read","description":"Fetch ONE web page content. format='text' (lightweight ~4000 char plain text), 'article-md' (clean markdown of a long article via crawl4ai), or 'index-md' (markdown of a news/listing/index page via fi"},{"name":"file_edit","kind":"verb","tier":"write","description":"Edit text files on disk. op='create' (write new file), 'replace' (replace matching text), 'insert' (insert text at line N, default prepend)."},{"name":"find_file","kind":"verb","tier":"read","description":"Search for files on disk. scope='fast' (cached DB, sub-100ms, use FIRST), 'windows' (NTFS exhaustive search), or 'linux' (exhaustive Linux search). Use 'fast' unless a recent file is missing."},{"name":"flatpak_install","kind":"verb","tier":"write","description":"[legacy: use pkg(action='install', backend='flatpak', id=...)]"},{"name":"flatpak_list","kind":"verb","tier":"read","description":"[legacy: use pkg(action='list', backend='flatpak')]"},{"name":"flatpak_preflight","kind":"verb","tier":"read","description":"[legacy: use pkg(action='preflight', backend='flatpak', id=...)]"},{"name":"flatpak_search","kind":"verb","tier":"read","description":"[legacy: use pkg(action='search', backend='flatpak')]"},{"name":"flatpak_show","kind":"verb","tier":"read","description":"[legacy: use pkg(action='show', backend='flatpak', id=...)]"},{"name":"flatpak_uninstall","kind":"verb","tier":"write","description":"[legacy: use pkg(action='uninstall', backend='flatpak', id=...)]"},{"name":"flatpak_upgrade","kind":"verb","tier":"write","description":"[legacy: use pkg(action='upgrade', backend='flatpak')]"},{"name":"focus_window","kind":"verb","tier":"write","description":"Raise an already-OPEN Windows window to the FRONT (by title) and optionally re-position it (same placement enum as launch_windows_app). Use to switch to / bring forward / activate a window that alread"},{"name":"fs_search","kind":"verb","tier":"read","description":"Search for files on the LINUX side of this machine via substring locate (plocate) \u2014 does NOT enumerate a directory; use list_dir for that."},{"name":"handoff","kind":"verb","tier":"read","description":"TRANSFER (take-over) the live session to ANOTHER agent: the target inherits the shared session state via the A2A contextId and CONTINUES the workflow in your place. Use when a DIFFERENT model should T"},{"name":"ingest","kind":"verb","tier":"write","description":"INGEST local files/notes INTO the notes vault (the offline second-brain) -- LOCAL sources only, no cloud/SaaS. Walks a directory (or one file), tiers each doc (L0 abstract + L1 overview via the light "},{"name":"knowledge_search","kind":"verb","tier":"read","description":"Query the OWUI RAG knowledge COLLECTIONS (curated document corpora uploaded to Open WebUI) and return citation-ready hits {score, source, snippet}. This is the RAG document store -- distinct from the "},{"name":"linux_input","kind":"verb","tier":"write","description":"Inject input into the LINUX in-VM desktop. action='screenshot', 'ground', 'atspi', 'window-list', 'click', 'type', 'key'."},{"name":"list_dir","kind":"verb","tier":"read","description":"LIST the immediate entries of a directory, like `ls <path>`; defaults to the current working directory. Use this to list a directory's files and subdirectories."},{"name":"list_windows","kind":"verb","tier":"read","description":"Enumerate the currently OPEN Windows-desktop windows (titles). Run this BEFORE focus/move/close to confirm the target window exists. NOT the installed-app inventory (use list_installed_apps) and NOT t"},{"name":"maximize_window","kind":"verb","tier":"write","description":"Maximize an OPEN Windows window to fill its containing monitor. To restore it back to normal size use restore_window; for a specific pixel size use resize_window."},{"name":"memory","kind":"verb","tier":"write","description":"Manage agent's self-directed memories/facts. op='add' (remember a new fact), 'list' (recall matching memories), 'update', or 'forget'."},{"name":"memory_append","kind":"verb","tier":"write","description":"WRITE a durable FACT to your persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/conve"},{"name":"memory_forget","kind":"verb","tier":"write","description":"DELETE a durable memory you previously stored (Letta/MemGPT core_memory_remove) by its `key`. Use when a stored fact is wrong or obsolete and should be removed entirely. Pair: remember (write) / recal"},{"name":"memory_replace","kind":"verb","tier":"write","description":"EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact. Requires the existing key."},{"name":"memory_rollback","kind":"verb","tier":"write","description":"Rollback durable memory edits (valid_to) to a prior timestamp (e.g. '2026-07-01T12:00:00Z'). Restores facts that were replaced or forgotten."},{"name":"memory_update","kind":"verb","tier":"write","description":"EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact instead of piling up duplicates wit"},{"name":"minimize_window","kind":"verb","tier":"write","description":"Minimize an OPEN Windows window -- hide it to the taskbar without closing it. To bring it back use restore_window; to actually close it use close_window."},{"name":"mios_apps","kind":"verb","tier":"read","description":"Full INVENTORY of installed apps AND games across every surface (flatpak/rpm/winget/store/steam/epic/xbox/gog/cli/service). THE verb for 'what apps/games are installed', 'list my programs', 'detect my"},{"name":"mios_find","kind":"verb","tier":"read","description":"Resolve an app/program NAME to the exact runnable launch command WITHOUT launching it -- returns the cmd line only; the agent then decides whether to run it (e.g. via launch_windows_app/launch_app). T"},{"name":"move_window","kind":"verb","tier":"write","description":"Move an OPEN Windows window to a SEMANTIC region: center, a half of the screen (left-half / right-half / top-half / bottom-half), a corner (top-left / ...), or maximize -- optionally on a chosen monit"},{"name":"open_app","kind":"verb","tier":"write","description":"LAUNCH any app/program by name (resolves Windows AND Linux/flatpak apps) and optionally place its window (position center/left/right/top-left..., monitor index) or pass CLI args. THE one launch verb -"},{"name":"open_url","kind":"verb","tier":"write","description":"SHOW a web page to the operator in their VISIBLE browser. By DEFAULT opens the URL as a NEW TAB in the operator's ALREADY-RUNNING browser (reuses the instance -- NOT a new window, NOT a second instanc"},{"name":"os_recipe","kind":"verb","tier":"interactive","description":"Run a PRE-DEFINED, NAMED OS-shell recipe from the [recipes.*] catalog (per-OS templates, shell-escaped, WSL path-converted). You pick an EXISTING recipe by name + params -- you do NOT write the code. "},{"name":"pc_click","kind":"verb","tier":"write","description":"Move the cursor to (x,y) on the HOST WINDOWS desktop and click. This clicks the real Windows screen the operator sees, NOT the in-VM Linux desktop (use linux_desktop_click for that). Write-class. butt"},{"name":"pc_click_element","kind":"verb","tier":"write","description":"Click a UI control BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- finds the named control and clicks its center, acting on a SEMANTIC target instead of g"},{"name":"pc_find_element","kind":"verb","tier":"read","description":"Find UI controls BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- the SEMANTIC alternative to guessing pixel coordinates. Returns matching elements with co"},{"name":"pc_key","kind":"verb","tier":"write","description":"Press a key or modifier chord on the HOST WINDOWS desktop (e.g. Enter, Tab, F5, or Ctrl+S as a combo). Targets the real Windows screen, NOT the in-VM Linux desktop (use linux_desktop_press_key / linux"},{"name":"pc_list_elements","kind":"verb","tier":"read","description":"List ALL named UI controls in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- a 'set of marks' SURVEY (each with control type, automation_id, bounds, clickable center, mark numb"},{"name":"pc_screenshot","kind":"verb","tier":"read","description":"Capture the WINDOWS host desktop (the operator's real screen) to a PNG file via the in-session UIA executor. This is the Windows screen, NOT the Linux in-VM desktop (use cu_screenshot for that). Read-"},{"name":"pc_type","kind":"verb","tier":"write","description":"Type literal text into the focused window on the HOST WINDOWS desktop. Sends keystrokes to the foreground Windows app, NOT the in-VM Linux desktop (use linux_desktop_type_text). For editing FILES, pre"},{"name":"pc_uia_set_value","kind":"verb","tier":"write","description":"Directly set the text/value of a named UI control (by Name or AutomationId) via Windows UIA without simulating keystrokes. Completely bypasses window focus racing and keystroke drops. Use this for rob"},{"name":"pc_uia_tree","kind":"verb","tier":"read","description":"Extract the FULL UIA accessibility tree of the FOREGROUND window as JSON to deeply understand its structure, hierarchy, and nested components. Returns node types, names, bounds, and parent/child relat"},{"name":"pkg","kind":"verb","tier":"write","description":"INSTALL / SEARCH / SHOW / UPGRADE / UNINSTALL / LIST software packages BY ID across winget (Windows), flatpak (Linux), or dnf. action=search|show|install|upgrade|uninstall|list|preflight; backend=auto"},{"name":"position_window","kind":"verb","tier":"write","description":"Move an OPEN Windows window to LITERAL pixel coordinates (x, y). Use only when you have exact coords -- call screen_layout first to learn monitor geometry/resolution. For named regions (center/left/ri"},{"name":"powershell_run","kind":"verb","tier":"write","description":"Execute a PowerShell script on the WINDOWS side (not the Linux sandbox). High-privilege -- tainted sessions are refused; script cap 64 KiB. Use for Windows-host administration / cmdlets. For sandboxed"},{"name":"process_list","kind":"verb","tier":"read","description":"List running OS PROCESSES, optionally filtered by name; sorted by rss (memory) / cpu / pid. Use to see which processes are running and what they consume. For container/service state use container_stat"},{"name":"recall","kind":"verb","tier":"read","description":"READ back the durable FACTS you previously stored with `remember` (Letta/MemGPT core-memory read). Returns the agent-authored memories for a scope {ok, count, memories:[{key, scope, fact, source}]}. T"},{"name":"remember","kind":"verb","tier":"write","description":"WRITE a durable FACT to your own persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/c"},{"name":"resize_window","kind":"verb","tier":"write","description":"Resize an OPEN Windows window to a literal pixel size (width x height). This ONLY changes size -- it does NOT move the window. To relocate use move_window_to_region (named region) or place_window_at_p"},{"name":"restore_window","kind":"verb","tier":"write","description":"Restore an OPEN Windows window from a minimized OR maximized state back to its last normal-size geometry. Use to 'un-minimize' / 'un-maximize' / bring back a window. Pairs with minimize_window and max"},{"name":"run_code","kind":"verb","tier":"write","description":"Execute code. mode='sandbox' (safe isolated run) or 'orchestrate' (run a script that imports mios_tools to coordinate agentic sub-actions). language defaults to python; set 'bash' for shell."},{"name":"schedule","kind":"verb","tier":"write","description":"Schedule a RECURRING/standing task: run <prompt> through the agent on a repeating interval and post each result to the operator's Discord. Use for ANY 'do X every N minutes/hours', 'each day', 'keep m"},{"name":"screen_layout","kind":"verb","tier":"read","description":"Report Windows MONITOR geometry: each display's resolution, position, and which is primary. Use BEFORE place_window_at_pixel so you know valid coordinates. This describes the SCREENS/monitors, not the"},{"name":"search_store","kind":"verb","tier":"read","description":"Search stored information. store='knowledge' (curated OWUI RAG document collections) or 'vault' (the local notes/skills vault)."},{"name":"service_restart","kind":"verb","tier":"write","description":"Gracefully RESTART ONE Linux systemd SERVICE by unit name. For systemd services -- NOT podman containers (use container_restart). Note: for MiOS-owned services prefer the mios-restart recipe which pre"},{"name":"service_status","kind":"verb","tier":"read","description":"Check ONE Linux systemd SERVICE: is-active state + a status snapshot for the named unit (e.g. mios-agent-pipe, hermes-agent). For systemd services -- NOT podman CONTAINERS (use container_status) and N"},{"name":"shell_session","kind":"verb","tier":"write","description":"Run a command in a PERSISTENT bash session whose cwd, environment and history SURVIVE across turns -- `cd /tmp && export FOO=bar` then `echo $PWD $FOO` returns `/tmp bar`. One session per chat, tmux-b"},{"name":"summarize","kind":"verb","tier":"read","description":"TIERED summarisation of a document/text (the L0/L1/L2 gating primitive): L0 = one-sentence ~100-token abstract, L1 = ~2k-token structured overview (sections + key points), L2 = the raw text (returned "},{"name":"switch_app_default","kind":"verb","tier":"read","description":"Switch the default application for an abstract app type (e.g. 'browser', 'editor')."},{"name":"sync_to_root","kind":"verb","tier":"write","description":"Apply the code-server/war-room workspace edits DIRECTLY onto the deployed MiOS-DEV root so they go LIVE for testing (no GitHub round-trip). Only works on a mutable MiOS-DEV deploy; an immutable bootc "},{"name":"sys_env","kind":"verb","tier":"read","description":"READ the cached system/environment inventory (shared store): identity, the host OS + whether this is WSL2 + the Windows host, host hardware, which MiOS stack services are up/down, loaded models, and t"},{"name":"sys_env_refresh","kind":"verb","tier":"write","description":"WRITE/UPDATE the cached environment inventory: re-probe apps + services + models + host and overwrite the shared sys_env_snapshot database. Call when you suspect the sys_env_snapshot cache is stale (e"},{"name":"system","kind":"verb","tier":"read","description":"Query system status: query='status' (overall), 'env' (environment variables), 'env-refresh' (reload shell env), 'logs' (system logs for target service), 'service-status' (systemd status), 'processes' "},{"name":"system_logs","kind":"verb","tier":"read","description":"Read recent LOG / journal entries from systemd. Filter by unit (mios-agent-pipe / hermes-agent / mios-open-webui / ...) or level (err / warning / info). Default: 50 lines from the last 10 minutes. Use"},{"name":"system_status","kind":"verb","tier":"read","description":"Live LOCAL machine health dashboard (JSON): OS (Linux distro + kernel + whether this is WSL2 + the WINDOWS HOST OS caption/version when on WSL2), GPU/VRAM, RAM, disk usage, running services, loaded mo"},{"name":"text_create","kind":"verb","tier":"write","description":"CREATE a NEW file on disk with the given text content (path + content). For making a file that does not yet exist; to change an EXISTING file use replace_file_text or insert_file_lines, and to read on"},{"name":"text_insert","kind":"verb","tier":"write","description":"INSERT new text into an existing file AFTER a given 1-indexed line number (0 = prepend to the very top); all existing content is kept. Args: path, line, content. Use this to ADD text at a position WIT"},{"name":"text_str_replace","kind":"verb","tier":"write","description":"Find-and-replace text inside an existing file: replace an EXACT substring (old) with new text (new). `old` must occur EXACTLY once -- supply a larger surrounding block if it is ambiguous. Use this to "},{"name":"text_view","kind":"verb","tier":"read","description":"READ the contents of a local file (returns text with 1-indexed line numbers, optional start/end range). This is for files ALREADY on disk -- it does NOT search the web and does NOT find files by name."},{"name":"tool_search","kind":"verb","tier":"read","description":"Find VERBS/TOOLS in the catalog by natural-language query when no listed verb obviously fits the user's ask. Returns top-k {name, sig, desc, score} via embedding search over verb name+description. Use"},{"name":"vault","kind":"verb","tier":"read","description":"Manage the local second-brain vault. op='list' (ls), 'read' (cat), 'search' (find), or 'ingest' (add local file to vault)."},{"name":"verify_launch","kind":"verb","tier":"read","description":"CHECK whether an app/window ACTUALLY launched, read-only, in-turn (delegates to the daemon-agent's Definition-of-Done window check). Call with the SAME name AFTER you fired launch_app / launch_windows"},{"name":"viking_cat","kind":"verb","tier":"read","description":"READ ONE node from the local notes vault at a chosen detail TIER (hierarchical gating): l0 = one-line abstract, l1 = structured overview (generated on read), l2 = raw full content (most context, fetch"},{"name":"viking_find","kind":"verb","tier":"read","description":"SEMANTIC search across the LOCAL notes vault (the offline second-brain: self-learned skills + stored Q&A + AI memory + ingested notes). Matches your query against L0 abstracts and returns hits {id, l0"},{"name":"viking_ls","kind":"verb","tier":"read","description":"LIST nodes in the local notes vault (the offline second-brain) at the cheap one-line (L0) tier for navigation. Pick a namespace: `skills` (self-learned SKILL.md files), `knowledge` (every finished Q&A"},{"name":"web_extract","kind":"verb","tier":"read","description":"Fetch ONE web page you already have the URL for and return its readable ARTICLE TEXT (lightweight, ~4000 chars, plain text not markdown). Use after web_search to read a single promising result and quo"},{"name":"web_scrape","kind":"verb","tier":"read","description":"Fetch ONE web page by URL to clean, LLM-ready MARKDOWN via the LOCAL self-hosted Firecrawl engine (offline-first, no cloud). A second markdown fetch engine alongside fetch_url_markdown; its verified s"},{"name":"web_search","kind":"verb","tier":"read","description":"WEB search via the LOCAL self-hosted SearXNG (offline-first metasearch, no cloud dependency). USE THIS for anything from the internet or the current world: weather, news, current events, event dates/t"},{"name":"window_op","kind":"verb","tier":"write","description":"Perform window operations: op='focus' (bring to front), 'move-region' (snap to left/right/etc via position), 'move-pixel' (set x/y), 'resize' (set width/height), 'min', 'max', 'restore', 'close'."},{"name":"window_state","kind":"verb","tier":"write","description":"Change the STATE of an OPEN Windows window (by title): minimize (hide to taskbar), maximize (fill its monitor), restore (back to normal size), or close (graceful WM_CLOSE so the app saves state). Run "},{"name":"windows_input","kind":"verb","tier":"write","description":"Inject input into the HOST WINDOWS desktop. action='type', 'key' (press a key/combo), 'click' (pixel click), 'find' (find UI element), 'click-element' (click named UI element), 'list-element' (list al"},{"name":"winget_install","kind":"verb","tier":"write","description":"[legacy: use pkg(action='install', backend='winget', id=...)]"},{"name":"winget_list","kind":"verb","tier":"read","description":"[legacy: use pkg(action='list', backend='winget')]"},{"name":"winget_search","kind":"verb","tier":"read","description":"[legacy: use pkg(action='search', backend='winget')]"},{"name":"winget_show","kind":"verb","tier":"read","description":"[legacy: use pkg(action='show', backend='winget', id=...)]"},{"name":"winget_uninstall","kind":"verb","tier":"write","description":"[legacy: use pkg(action='uninstall', backend='winget', id=...)]"},{"name":"winget_upgrade","kind":"verb","tier":"write","description":"[legacy: use pkg(action='upgrade', backend='winget')]"}]}
+{
+  "object": "mios.capability.manifest",
+  "ceiling": "interactive",
+  "summary": {
+    "total": 145,
+    "by_kind": {
+      "recipe": 19,
+      "skill": 12,
+      "verb": 114
+    },
+    "by_tier": {
+      "read": 70,
+      "write": 72,
+      "interactive": 3
+    }
+  },
+  "data": [
+    {
+      "name": "copy-to-clipboard",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Copy a literal string to the system clipboard."
+    },
+    {
+      "name": "disk-usage",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "What's using disk space: filesystem fill (df) plus the largest top-level directories under / (du), ranked. Use for 'what's taking up space / disk full / largest folders'."
+    },
+    {
+      "name": "list-drives",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "List mounted drives / volumes."
+    },
+    {
+      "name": "lock-screen",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Lock the workstation."
+    },
+    {
+      "name": "open-control-panel",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "windows"
+      ],
+      "description": "Open a Windows Control Panel page by canonical name (powercfg.cpl, ncpa.cpl, appwiz.cpl, sysdm.cpl, mmsys.cpl, timedate.cpl, ...)."
+    },
+    {
+      "name": "open-folder",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Open a folder in the OS file manager (Files / Explorer)."
+    },
+    {
+      "name": "open-settings-uri",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "windows"
+      ],
+      "description": "Open a Windows Settings page by ms-settings: URI (display, sound, network, system, privacy-microphone, gaming-gamebar, ...)."
+    },
+    {
+      "name": "open-shell-folder",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "windows"
+      ],
+      "description": "Open a Windows Shell special folder by name (Desktop, Downloads, RecycleBinFolder, AppsFolder, Startup, SendTo, Fonts, ...)."
+    },
+    {
+      "name": "os-control-health",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux"
+      ],
+      "description": "Probe the Windows OS-control plane (in-session executor :8950 + WSL-interop) and report typed JSON status {executor, interop, blind, reason}. Use to EXPLAIN why a Windows control/recipe action (show-n"
+    },
+    {
+      "name": "read-clipboard",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Read the current clipboard contents."
+    },
+    {
+      "name": "reboot",
+      "kind": "recipe",
+      "tier": "write",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Reboot the host (WRITE)."
+    },
+    {
+      "name": "reveal-in-folder",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Reveal a single file in its containing folder, selected."
+    },
+    {
+      "name": "run-bash",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux"
+      ],
+      "description": "Run a bash command and return stdout (READ-ONLY)."
+    },
+    {
+      "name": "run-powershell",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "windows"
+      ],
+      "description": "Run a PowerShell command and return stdout (READ-ONLY by default; the agent should only emit read commands like Get-* / Test-* / Resolve-* / Measure-*)."
+    },
+    {
+      "name": "service-status",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux"
+      ],
+      "description": "systemctl is-active + status snapshot for a Linux service (READ). Pass the unit name as `service`."
+    },
+    {
+      "name": "show-network",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Show active network adapters + IPs."
+    },
+    {
+      "name": "show-process",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Show top processes by CPU / memory."
+    },
+    {
+      "name": "shutdown",
+      "kind": "recipe",
+      "tier": "write",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Shutdown the host (WRITE -- requires MIOS_OS_RECIPE_WRITE=1)."
+    },
+    {
+      "name": "toast",
+      "kind": "recipe",
+      "tier": "read",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "description": "Show a notification toast."
+    },
+    {
+      "name": "install-flatpak-app",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "flatpak_search",
+        "flatpak_install",
+        "open_app"
+      ],
+      "description": "Search configured flatpak remotes for `query`, install the matched id, then launch it via open_app."
+    },
+    {
+      "name": "install-windows-app",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "winget_search",
+        "winget_install"
+      ],
+      "description": "Search winget for `query`, then install the matched package by `id`."
+    },
+    {
+      "name": "open-and-focus",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "open_app",
+        "focus_window"
+      ],
+      "description": "Launch the app named `app`, then focus its window."
+    },
+    {
+      "name": "open-url-fallback-chain",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "open_url"
+      ],
+      "description": "Open `url` and try each id from the `browsers` array in order until one succeeds. Halts on the first browser that lands a visible window. Use when the default browser may fail in the current runtime c"
+    },
+    {
+      "name": "open-url-resilient",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "open_url",
+        "open_url"
+      ],
+      "description": "Open `url` in the operator's default browser; on failure, try the same url with each browser id from `fallbacks` in order. First step that lands a visible window wins. Use when sandboxed flatpak brows"
+    },
+    {
+      "name": "safe-open-flatpak",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "flatpak_preflight",
+        "open_app"
+      ],
+      "description": "Probe the flatpak `id` sandbox via flatpak_preflight; on success, launch via open_app. Halts on preflight failure so the agent surfaces the actual sandbox error (portal_helper_env_fd / user_bus_creden"
+    },
+    {
+      "name": "save-document",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "focus_window",
+        "pc_type",
+        "pc_key"
+      ],
+      "description": "Focus a window matching `editor`, type `body` text into it, save via Ctrl+S."
+    },
+    {
+      "name": "sync-to-root",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "sync_to_root"
+      ],
+      "description": "Apply the code-server / war-room workspace edits DIRECTLY onto the deployed MiOS-DEV root so they go LIVE for testing, with no GitHub round-trip. Use when an agent has changed files in the code-server"
+    },
+    {
+      "name": "window-focus-mode",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "maximize_window",
+        "minimize_window"
+      ],
+      "description": "Maximize the window matching `focus`, minimize the window matching `distractor`."
+    },
+    {
+      "name": "window-restore-and-focus",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "restore_window",
+        "focus_window"
+      ],
+      "description": "Restore a minimized/maximized window matching `title`, then focus it."
+    },
+    {
+      "name": "window-tile-side-by-side",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "focus_window",
+        "position_window",
+        "resize_window",
+        "focus_window",
+        "position_window",
+        "resize_window"
+      ],
+      "description": "Tile two windows side-by-side: window matching `left` at (0,0) sized `half_width`x`height`, window matching `right` at (`half_width`,0) same size."
+    },
+    {
+      "name": "write-text-file",
+      "kind": "skill",
+      "tier": "write",
+      "uses": [
+        "text_create",
+        "text_view"
+      ],
+      "description": "Create a file at `path` with `body` content via text_create, then text_view it to confirm."
+    },
+    {
+      "name": "a2a_delegate",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Hand a SUB-TASK to another registered agent and GET ITS ANSWER BACK so YOU fold it into your own reasoning (you stay in control; this is NOT a final user reply and NOT a take-over). Pick a peer by id "
+    },
+    {
+      "name": "agent_route",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Cross-agent routing. mode='handoff' (transfer control entirely, ending your turn) or 'delegate' (sub-task an agent and get the result back)."
+    },
+    {
+      "name": "app_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "SEMANTIC search over the installed-app inventory: given a fuzzy natural-language description ('my note-taking app', 'phone settings'), return the top matching installed apps {name, category, launch, s"
+    },
+    {
+      "name": "apps",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Query applications. mode='list' (inventory of all installed apps), 'semantic' (fuzzy app capability search), or 'resolve' (get exact CLI launch command for an app without launching it)."
+    },
+    {
+      "name": "close_app",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Gracefully CLOSE an open Windows application or window (by title pattern). Use this when the operator asks to close, quit, exit, or kill an application."
+    },
+    {
+      "name": "close_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Gracefully CLOSE an OPEN Windows window by title (sends WM_CLOSE so the app saves state). Force-kill is intentionally unsupported. Use to close / quit / dismiss a window -- not to hide it (use minimiz"
+    },
+    {
+      "name": "code_mode",
+      "kind": "verb",
+      "tier": "interactive",
+      "description": "Write a PYTHON snippet that ORCHESTRATES MULTIPLE MiOS verbs programmatically instead of emitting one verb call at a time: `import mios_tools` exposes the verb surface (mios_tools.web_search(...), .sy"
+    },
+    {
+      "name": "coderun",
+      "kind": "verb",
+      "tier": "interactive",
+      "description": "Run a SHORT one-off code snippet / command in an isolated sandbox (bubblewrap: read-only system, writable scratch only, NO network by default, resource caps + timeout). lang: bash (default) | python. "
+    },
+    {
+      "name": "container_restart",
+      "kind": "verb",
+      "tier": "write",
+      "description": "RESTART ONE podman/quadlet CONTAINER by name. For podman CONTAINERS -- NOT systemd services (use service_restart). Write-class."
+    },
+    {
+      "name": "container_status",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Check podman/quadlet CONTAINER status. Empty name = all containers. For podman CONTAINERS -- NOT systemd services (use service_status) and NOT whole-machine health (system_status). Read-only."
+    },
+    {
+      "name": "crawl",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Fetch ONE web page you already have the URL for and return its FULL content as clean, LLM-ready MARKDOWN via the LOCAL crawl4ai engine (headless Chrome over CDP, with a Camoufox stealth-Firefox fail-r"
+    },
+    {
+      "name": "cu_act",
+      "kind": "verb",
+      "tier": "write",
+      "description": "All-in-one vision grounding -> click -> verify loop for the LINUX desktop. Finds an element visually (qwen3-vl), clicks it, and verifies the state changed (if verify_after_act=true). Write-class."
+    },
+    {
+      "name": "cu_atspi_query",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Find a LINUX desktop UI element via the AT-SPI accessibility tree by its role/name and return its screen coordinates -- semantic a11y-tree lookup, NO pixels/vision. Read-class. Use when you can name t"
+    },
+    {
+      "name": "cu_click",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Move the pointer to (x,y) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM and click. This clicks the in-VM Linux screen, NOT the host Windows screen (use windows_desktop_click for that). Wr"
+    },
+    {
+      "name": "cu_ground",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Locate a LINUX desktop UI element from a NATURAL-LANGUAGE description and return {x,y,confidence}. Tries the AT-SPI a11y tree first, then falls back to a vision model (qwen3-vl / UI-TARS) on a screens"
+    },
+    {
+      "name": "cu_key",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Press ONE key (Enter, Tab, F5, Escape, ...) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Single key only -- use linux_desktop_press_key_combo for modifier chords like Ctrl+S. Targets th"
+    },
+    {
+      "name": "cu_key_combo",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Press a MODIFIER CHORD (e.g. Ctrl+S, Alt+Tab, Ctrl+Shift+T) on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Use this for any combo with modifiers; use linux_desktop_press_key for a single "
+    },
+    {
+      "name": "cu_screenshot",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Capture the LINUX (Wayland/Hyprland) desktop inside the MiOS VM to a PNG file (one-shot). This is the Linux in-VM screen, NOT the host Windows screen. Read-class. Pair with linux_desktop_click / linux"
+    },
+    {
+      "name": "cu_type",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Type literal text into the focused surface on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM. Sends keystrokes to whatever window has focus in the in-VM Linux session, NOT the host Windows de"
+    },
+    {
+      "name": "cu_verify",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Visual Definition-of-Done: verify if a UI element or application is visible on the LINUX desktop. Takes a screenshot and asks the vision model. Returns {ok: bool, reasoning: text}. Use this after taki"
+    },
+    {
+      "name": "cu_window_list",
+      "kind": "verb",
+      "tier": "read",
+      "description": "List the open top-level windows on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM (via wmctrl / hyprctl / AT-SPI). This is the in-VM Linux desktop, NOT the host Windows windows (use list_wind"
+    },
+    {
+      "name": "directory_lookup",
+      "kind": "verb",
+      "tier": "read",
+      "description": "FAST first-try 'where is X' lookup over a cached filesystem map (~19k entries via mios-daemon, refreshed every 15 min, sub-100ms). TRY THIS FIRST for 'where is X' / 'find the file X' / 'what's the pat"
+    },
+    {
+      "name": "discord_send",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Actually POST a message to the operator's Discord (local bot, default channel). Use to DELIVER a message when the operator asks to post / send / share / DM / 'let me know on' Discord -- it really post"
+    },
+    {
+      "name": "docgen_build",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Author a NEW document FROM TEXT YOU WRITE -> a real office artifact (.docx/.pptx/.xlsx/.pdf/.html). Output format inferred from out_path extension; write markdown (or CSV rows for .xlsx with from_fmt="
+    },
+    {
+      "name": "docgen_convert",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Convert an EXISTING file to another format (.docx->.pdf, .md->.docx, .csv->.xlsx, .pptx->.pdf). Target format inferred from out_path extension. Fully local via Pandoc / LibreOffice headless. Use this "
+    },
+    {
+      "name": "document",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Generate or convert documents. op='build' (compile markdown to pdf/docx/etc.) or 'convert' (convert office docs/csv to markdown)."
+    },
+    {
+      "name": "everything_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Search for files on the WINDOWS side of this machine via the Voidtools Everything NTFS index (exhaustive, name/extension match). Finds FILES that already exist on Windows drives (C:, etc.) -- NOT a we"
+    },
+    {
+      "name": "fetch_page",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Fetch ONE web page content. format='text' (lightweight ~4000 char plain text), 'article-md' (clean markdown of a long article via crawl4ai), or 'index-md' (markdown of a news/listing/index page via fi"
+    },
+    {
+      "name": "file_edit",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Edit text files on disk. op='create' (write new file), 'replace' (replace matching text), 'insert' (insert text at line N, default prepend)."
+    },
+    {
+      "name": "find_file",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Search for files on disk. scope='fast' (cached DB, sub-100ms, use FIRST), 'windows' (NTFS exhaustive search), or 'linux' (exhaustive Linux search). Use 'fast' unless a recent file is missing."
+    },
+    {
+      "name": "flatpak_install",
+      "kind": "verb",
+      "tier": "write",
+      "description": "[legacy: use pkg(action='install', backend='flatpak', id=...)]"
+    },
+    {
+      "name": "flatpak_list",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='list', backend='flatpak')]"
+    },
+    {
+      "name": "flatpak_preflight",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='preflight', backend='flatpak', id=...)]"
+    },
+    {
+      "name": "flatpak_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='search', backend='flatpak')]"
+    },
+    {
+      "name": "flatpak_show",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='show', backend='flatpak', id=...)]"
+    },
+    {
+      "name": "flatpak_uninstall",
+      "kind": "verb",
+      "tier": "write",
+      "description": "[legacy: use pkg(action='uninstall', backend='flatpak', id=...)]"
+    },
+    {
+      "name": "flatpak_upgrade",
+      "kind": "verb",
+      "tier": "write",
+      "description": "[legacy: use pkg(action='upgrade', backend='flatpak')]"
+    },
+    {
+      "name": "focus_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Raise an already-OPEN Windows window to the FRONT (by title) and optionally re-position it (same placement enum as launch_windows_app). Use to switch to / bring forward / activate a window that alread"
+    },
+    {
+      "name": "fs_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Search for files on the LINUX side of this machine via substring locate (plocate) — does NOT enumerate a directory; use list_dir for that."
+    },
+    {
+      "name": "handoff",
+      "kind": "verb",
+      "tier": "read",
+      "description": "TRANSFER (take-over) the live session to ANOTHER agent: the target inherits the shared session state via the A2A contextId and CONTINUES the workflow in your place. Use when a DIFFERENT model should T"
+    },
+    {
+      "name": "ingest",
+      "kind": "verb",
+      "tier": "write",
+      "description": "INGEST local files/notes INTO the notes vault (the offline second-brain) -- LOCAL sources only, no cloud/SaaS. Walks a directory (or one file), tiers each doc (L0 abstract + L1 overview via the light "
+    },
+    {
+      "name": "knowledge_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Query the OWUI RAG knowledge COLLECTIONS (curated document corpora uploaded to Open WebUI) and return citation-ready hits {score, source, snippet}. This is the RAG document store -- distinct from the "
+    },
+    {
+      "name": "linux_input",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Inject input into the LINUX in-VM desktop. action='screenshot', 'ground', 'atspi', 'window-list', 'click', 'type', 'key'."
+    },
+    {
+      "name": "list_dir",
+      "kind": "verb",
+      "tier": "read",
+      "description": "LIST the immediate entries of a directory, like `ls <path>`; defaults to the current working directory. Use this to list a directory's files and subdirectories."
+    },
+    {
+      "name": "list_windows",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Enumerate the currently OPEN Windows-desktop windows (titles). Run this BEFORE focus/move/close to confirm the target window exists. NOT the installed-app inventory (use list_installed_apps) and NOT t"
+    },
+    {
+      "name": "maximize_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Maximize an OPEN Windows window to fill its containing monitor. To restore it back to normal size use restore_window; for a specific pixel size use resize_window."
+    },
+    {
+      "name": "memory",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Manage agent's self-directed memories/facts. op='add' (remember a new fact), 'list' (recall matching memories), 'update', or 'forget'."
+    },
+    {
+      "name": "memory_append",
+      "kind": "verb",
+      "tier": "write",
+      "description": "WRITE a durable FACT to your persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/conve"
+    },
+    {
+      "name": "memory_forget",
+      "kind": "verb",
+      "tier": "write",
+      "description": "DELETE a durable memory you previously stored (Letta/MemGPT core_memory_remove) by its `key`. Use when a stored fact is wrong or obsolete and should be removed entirely. Pair: remember (write) / recal"
+    },
+    {
+      "name": "memory_replace",
+      "kind": "verb",
+      "tier": "write",
+      "description": "EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact. Requires the existing key."
+    },
+    {
+      "name": "memory_rollback",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Rollback durable memory edits (valid_to) to a prior timestamp (e.g. '2026-07-01T12:00:00Z'). Restores facts that were replaced or forgotten."
+    },
+    {
+      "name": "memory_update",
+      "kind": "verb",
+      "tier": "write",
+      "description": "EDIT a durable memory you previously stored (Letta/MemGPT core_memory_replace): overwrite the fact at `key` with a new value. Use to CORRECT or refine a stored fact instead of piling up duplicates wit"
+    },
+    {
+      "name": "minimize_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Minimize an OPEN Windows window -- hide it to the taskbar without closing it. To bring it back use restore_window; to actually close it use close_window."
+    },
+    {
+      "name": "mios_apps",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Full INVENTORY of installed apps AND games across every surface (flatpak/rpm/winget/store/steam/epic/xbox/gog/cli/service). THE verb for 'what apps/games are installed', 'list my programs', 'detect my"
+    },
+    {
+      "name": "mios_find",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Resolve an app/program NAME to the exact runnable launch command WITHOUT launching it -- returns the cmd line only; the agent then decides whether to run it (e.g. via launch_windows_app/launch_app). T"
+    },
+    {
+      "name": "move_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Move an OPEN Windows window to a SEMANTIC region: center, a half of the screen (left-half / right-half / top-half / bottom-half), a corner (top-left / ...), or maximize -- optionally on a chosen monit"
+    },
+    {
+      "name": "open_app",
+      "kind": "verb",
+      "tier": "write",
+      "description": "LAUNCH any app/program by name (resolves Windows AND Linux/flatpak apps) and optionally place its window (position center/left/right/top-left..., monitor index) or pass CLI args. THE one launch verb -"
+    },
+    {
+      "name": "open_url",
+      "kind": "verb",
+      "tier": "write",
+      "description": "SHOW a web page to the operator in their VISIBLE browser. By DEFAULT opens the URL as a NEW TAB in the operator's ALREADY-RUNNING browser (reuses the instance -- NOT a new window, NOT a second instanc"
+    },
+    {
+      "name": "os_recipe",
+      "kind": "verb",
+      "tier": "interactive",
+      "description": "Run a PRE-DEFINED, NAMED OS-shell recipe from the [recipes.*] catalog (per-OS templates, shell-escaped, WSL path-converted). You pick an EXISTING recipe by name + params -- you do NOT write the code. "
+    },
+    {
+      "name": "pc_click",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Move the cursor to (x,y) on the HOST WINDOWS desktop and click. This clicks the real Windows screen the operator sees, NOT the in-VM Linux desktop (use linux_desktop_click for that). Write-class. butt"
+    },
+    {
+      "name": "pc_click_element",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Click a UI control BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- finds the named control and clicks its center, acting on a SEMANTIC target instead of g"
+    },
+    {
+      "name": "pc_find_element",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Find UI controls BY NAME (substring) in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- the SEMANTIC alternative to guessing pixel coordinates. Returns matching elements with co"
+    },
+    {
+      "name": "pc_key",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Press a key or modifier chord on the HOST WINDOWS desktop (e.g. Enter, Tab, F5, or Ctrl+S as a combo). Targets the real Windows screen, NOT the in-VM Linux desktop (use linux_desktop_press_key / linux"
+    },
+    {
+      "name": "pc_list_elements",
+      "kind": "verb",
+      "tier": "read",
+      "description": "List ALL named UI controls in the FOREGROUND window on the HOST WINDOWS desktop via UI Automation -- a 'set of marks' SURVEY (each with control type, automation_id, bounds, clickable center, mark numb"
+    },
+    {
+      "name": "pc_screenshot",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Capture the WINDOWS host desktop (the operator's real screen) to a PNG file via the in-session UIA executor. This is the Windows screen, NOT the Linux in-VM desktop (use cu_screenshot for that). Read-"
+    },
+    {
+      "name": "pc_type",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Type literal text into the focused window on the HOST WINDOWS desktop. Sends keystrokes to the foreground Windows app, NOT the in-VM Linux desktop (use linux_desktop_type_text). For editing FILES, pre"
+    },
+    {
+      "name": "pc_uia_set_value",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Directly set the text/value of a named UI control (by Name or AutomationId) via Windows UIA without simulating keystrokes. Completely bypasses window focus racing and keystroke drops. Use this for rob"
+    },
+    {
+      "name": "pc_uia_tree",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Extract the FULL UIA accessibility tree of the FOREGROUND window as JSON to deeply understand its structure, hierarchy, and nested components. Returns node types, names, bounds, and parent/child relat"
+    },
+    {
+      "name": "pkg",
+      "kind": "verb",
+      "tier": "write",
+      "description": "INSTALL / SEARCH / SHOW / UPGRADE / UNINSTALL / LIST software packages BY ID across winget (Windows), flatpak (Linux), or dnf. action=search|show|install|upgrade|uninstall|list|preflight; backend=auto"
+    },
+    {
+      "name": "position_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Move an OPEN Windows window to LITERAL pixel coordinates (x, y). Use only when you have exact coords -- call screen_layout first to learn monitor geometry/resolution. For named regions (center/left/ri"
+    },
+    {
+      "name": "powershell_run",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Execute a PowerShell script on the WINDOWS side (not the Linux sandbox). High-privilege -- tainted sessions are refused; script cap 64 KiB. Object output is flattened to plain text, so cmdlets that em"
+    },
+    {
+      "name": "process_list",
+      "kind": "verb",
+      "tier": "read",
+      "description": "List running OS PROCESSES, optionally filtered by name; sorted by rss (memory) / cpu / pid. Use to see which processes are running and what they consume. For container/service state use container_stat"
+    },
+    {
+      "name": "recall",
+      "kind": "verb",
+      "tier": "read",
+      "description": "READ back the durable FACTS you previously stored with `remember` (Letta/MemGPT core-memory read). Returns the agent-authored memories for a scope {ok, count, memories:[{key, scope, fact, source}]}. T"
+    },
+    {
+      "name": "remember",
+      "kind": "verb",
+      "tier": "write",
+      "description": "WRITE a durable FACT to your own persistent memory (Letta/MemGPT core-memory, self-editing). Use when the operator tells you something to keep, or you learn a stable fact worth carrying across turns/c"
+    },
+    {
+      "name": "resize_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Resize an OPEN Windows window to a literal pixel size (width x height). This ONLY changes size -- it does NOT move the window. To relocate use move_window_to_region (named region) or place_window_at_p"
+    },
+    {
+      "name": "restore_window",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Restore an OPEN Windows window from a minimized OR maximized state back to its last normal-size geometry. Use to 'un-minimize' / 'un-maximize' / bring back a window. Pairs with minimize_window and max"
+    },
+    {
+      "name": "run_code",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Execute code. mode='sandbox' (safe isolated run) or 'orchestrate' (run a script that imports mios_tools to coordinate agentic sub-actions). language defaults to python; set 'bash' for shell."
+    },
+    {
+      "name": "schedule",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Schedule a RECURRING/standing task: run <prompt> through the agent on a repeating interval and post each result to the operator's Discord. Use for ANY 'do X every N minutes/hours', 'each day', 'keep m"
+    },
+    {
+      "name": "screen_layout",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Report Windows MONITOR geometry: each display's resolution, position, and which is primary. Use BEFORE place_window_at_pixel so you know valid coordinates. This describes the SCREENS/monitors, not the"
+    },
+    {
+      "name": "search_store",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Search stored information. store='knowledge' (curated OWUI RAG document collections) or 'vault' (the local notes/skills vault)."
+    },
+    {
+      "name": "service_restart",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Gracefully RESTART ONE Linux systemd SERVICE by unit name. For systemd services -- NOT podman containers (use container_restart). Note: for MiOS-owned services prefer the mios-restart recipe which pre"
+    },
+    {
+      "name": "service_status",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Check ONE Linux systemd SERVICE: is-active state + a status snapshot for the named unit (e.g. mios-agent-pipe, hermes-agent). For systemd services -- NOT podman CONTAINERS (use container_status) and N"
+    },
+    {
+      "name": "shell_session",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Run a command in a PERSISTENT bash session whose cwd, environment and history SURVIVE across turns -- `cd /tmp && export FOO=bar` then `echo $PWD $FOO` returns `/tmp bar`. One session per chat, tmux-b"
+    },
+    {
+      "name": "summarize",
+      "kind": "verb",
+      "tier": "read",
+      "description": "TIERED summarisation of a document/text (the L0/L1/L2 gating primitive): L0 = one-sentence ~100-token abstract, L1 = ~2k-token structured overview (sections + key points), L2 = the raw text (returned "
+    },
+    {
+      "name": "switch_app_default",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Switch the default application for an abstract app type (e.g. 'browser', 'editor')."
+    },
+    {
+      "name": "sync_to_root",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Apply the code-server/war-room workspace edits DIRECTLY onto the deployed MiOS-DEV root so they go LIVE for testing (no GitHub round-trip). Only works on a mutable MiOS-DEV deploy; an immutable bootc "
+    },
+    {
+      "name": "sys_env",
+      "kind": "verb",
+      "tier": "read",
+      "description": "READ the cached system/environment inventory (shared store): identity, the host OS + whether this is WSL2 + the Windows host, host hardware, which MiOS stack services are up/down, loaded models, and t"
+    },
+    {
+      "name": "sys_env_refresh",
+      "kind": "verb",
+      "tier": "write",
+      "description": "WRITE/UPDATE the cached environment inventory: re-probe apps + services + models + host and overwrite the shared sys_env_snapshot database. Call when you suspect the sys_env_snapshot cache is stale (e"
+    },
+    {
+      "name": "system",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Query system status: query='status' (overall), 'env' (environment variables), 'env-refresh' (reload shell env), 'logs' (system logs for target service), 'service-status' (systemd status), 'processes' "
+    },
+    {
+      "name": "system_logs",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Read recent LOG / journal entries from systemd. Filter by unit (mios-agent-pipe / hermes-agent / mios-open-webui / ...) or level (err / warning / info). Default: 50 lines from the last 10 minutes. Use"
+    },
+    {
+      "name": "system_status",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Live LOCAL machine health dashboard (JSON): OS (Linux distro + kernel + whether this is WSL2 + the WINDOWS HOST OS caption/version when on WSL2), GPU/VRAM, RAM, disk usage, running services, loaded mo"
+    },
+    {
+      "name": "text_create",
+      "kind": "verb",
+      "tier": "write",
+      "description": "CREATE a NEW file on disk with the given text content (path + content). For making a file that does not yet exist; to change an EXISTING file use replace_file_text or insert_file_lines, and to read on"
+    },
+    {
+      "name": "text_insert",
+      "kind": "verb",
+      "tier": "write",
+      "description": "INSERT new text into an existing file AFTER a given 1-indexed line number (0 = prepend to the very top); all existing content is kept. Args: path, line, content. Use this to ADD text at a position WIT"
+    },
+    {
+      "name": "text_str_replace",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Find-and-replace text inside an existing file: replace an EXACT substring (old) with new text (new). `old` must occur EXACTLY once -- supply a larger surrounding block if it is ambiguous. Use this to "
+    },
+    {
+      "name": "text_view",
+      "kind": "verb",
+      "tier": "read",
+      "description": "READ the contents of a local file (returns text with 1-indexed line numbers, optional start/end range). This is for files ALREADY on disk -- it does NOT search the web and does NOT find files by name."
+    },
+    {
+      "name": "tool_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Find VERBS/TOOLS in the catalog by natural-language query when no listed verb obviously fits the user's ask. Returns top-k {name, sig, desc, score} via embedding search over verb name+description. Use"
+    },
+    {
+      "name": "vault",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Manage the local second-brain vault. op='list' (ls), 'read' (cat), 'search' (find), or 'ingest' (add local file to vault)."
+    },
+    {
+      "name": "verify_launch",
+      "kind": "verb",
+      "tier": "read",
+      "description": "CHECK whether an app/window ACTUALLY launched, read-only, in-turn (delegates to the daemon-agent's Definition-of-Done window check). Call with the SAME name AFTER you fired launch_app / launch_windows"
+    },
+    {
+      "name": "viking_cat",
+      "kind": "verb",
+      "tier": "read",
+      "description": "READ ONE node from the local notes vault at a chosen detail TIER (hierarchical gating): l0 = one-line abstract, l1 = structured overview (generated on read), l2 = raw full content (most context, fetch"
+    },
+    {
+      "name": "viking_find",
+      "kind": "verb",
+      "tier": "read",
+      "description": "SEMANTIC search across the LOCAL notes vault (the offline second-brain: self-learned skills + stored Q&A + AI memory + ingested notes). Matches your query against L0 abstracts and returns hits {id, l0"
+    },
+    {
+      "name": "viking_ls",
+      "kind": "verb",
+      "tier": "read",
+      "description": "LIST nodes in the local notes vault (the offline second-brain) at the cheap one-line (L0) tier for navigation. Pick a namespace: `skills` (self-learned SKILL.md files), `knowledge` (every finished Q&A"
+    },
+    {
+      "name": "virtual_controller",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Drive a virtual game controller (agent pad) smoothly: op='create' (seat=<label> makes a nested seat's pad), 'stick' (stick=left|right, x/y in -1..1 eased over ms, optional hold_ms then eases back), 't"
+    },
+    {
+      "name": "web_extract",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Fetch ONE web page you already have the URL for and return its readable ARTICLE TEXT (lightweight, ~4000 chars, plain text not markdown). Use after web_search to read a single promising result and quo"
+    },
+    {
+      "name": "web_scrape",
+      "kind": "verb",
+      "tier": "read",
+      "description": "Fetch ONE web page by URL to clean, LLM-ready MARKDOWN via the LOCAL self-hosted Firecrawl engine (offline-first, no cloud). A second markdown fetch engine alongside fetch_url_markdown; its verified s"
+    },
+    {
+      "name": "web_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "WEB search via the LOCAL self-hosted SearXNG (offline-first metasearch, no cloud dependency). USE THIS for anything from the internet or the current world: weather, news, current events, event dates/t"
+    },
+    {
+      "name": "window_op",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Perform window operations: op='focus' (bring to front), 'move-region' (snap to left/right/etc via position), 'move-pixel' (set x/y), 'resize' (set width/height), 'min', 'max', 'restore', 'close'."
+    },
+    {
+      "name": "window_state",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Change the STATE of an OPEN Windows window (by title): minimize (hide to taskbar), maximize (fill its monitor), restore (back to normal size), or close (graceful WM_CLOSE so the app saves state). Run "
+    },
+    {
+      "name": "windows_input",
+      "kind": "verb",
+      "tier": "write",
+      "description": "Inject input into the HOST WINDOWS desktop. action='type', 'key' (press a key/combo), 'click' (pixel click), 'find' (find UI element), 'click-element' (click named UI element), 'list-element' (list al"
+    },
+    {
+      "name": "winget_install",
+      "kind": "verb",
+      "tier": "write",
+      "description": "[legacy: use pkg(action='install', backend='winget', id=...)]"
+    },
+    {
+      "name": "winget_list",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='list', backend='winget')]"
+    },
+    {
+      "name": "winget_search",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='search', backend='winget')]"
+    },
+    {
+      "name": "winget_show",
+      "kind": "verb",
+      "tier": "read",
+      "description": "[legacy: use pkg(action='show', backend='winget', id=...)]"
+    },
+    {
+      "name": "winget_uninstall",
+      "kind": "verb",
+      "tier": "write",
+      "description": "[legacy: use pkg(action='uninstall', backend='winget', id=...)]"
+    },
+    {
+      "name": "winget_upgrade",
+      "kind": "verb",
+      "tier": "write",
+      "description": "[legacy: use pkg(action='upgrade', backend='winget')]"
+    }
+  ]
+}
