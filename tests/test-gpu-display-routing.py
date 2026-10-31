@@ -24,8 +24,19 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 GEN = os.environ.get("MIOS_GEN", os.path.join(ROOT, "tools/native/target/x86_64-unknown-linux-musl/release/mios-gen"))
-BASE_GEN = os.environ.get("MIOS_GEN_BASELINE", "/usr/bin/mios-gen")
+
+def _resolve_baseline_gen():
+    override = os.environ.get("MIOS_GEN_BASELINE")
+    if override:
+        return override
+    known_good = "/home/mios/mios-desktop-work-1/mios-gen.good-dc7ac4e9"
+    if os.path.exists(known_good) and os.access(known_good, os.X_OK):
+        return known_good
+    return "/usr/bin/mios-gen"
+
+BASE_GEN = _resolve_baseline_gen()
 BASE = os.environ.get("MIOS_ROUTING_BASE", "bcd6b3f22")
+
 LAUNCHER = os.path.join(ROOT, "usr/libexec/mios/mios-greeter-session")
 MOCK = os.path.join(HERE, "greeter/mock_greetd.py")
 VKBD = os.path.join(HERE, "greeter/vkbd.py")
