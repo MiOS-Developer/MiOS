@@ -852,22 +852,17 @@ test_bake_budget() {
     log "Testing check_bake_budget"
     local sbom_tsv="${ROOT}/usr/share/mios/artifacts/sbom/bound-images.tsv"
     local bak; bak="$(mktemp)"; cp -p "$sbom_tsv" "$bak"
-    _budget_fail() { unset -f set 2>/dev/null || true; cp -p "$bak" "$sbom_tsv"; rm -f "$bak"; unset -f _budget_fail; die "$1"; }
+    _budget_fail() { cp -p "$bak" "$sbom_tsv"; rm -f "$bak"; unset -f _budget_fail; die "$1"; }
 
     # Current Day-0 total in bound-images.tsv is ~34.0 GB against 40 GB budget.
     # Inject valid 4-column TSV row (image, digest, group, size_gb) with numeric size exceeding budget:
     # Adding a 10.0 GB image yields 44.0 GB > 40 GB runner_disk_budget_gb.
     printf 'localhost/fake-oversize-layer:latest\tlocal\tsys\t10.0\n' >> "$sbom_tsv"
 
-    set() { if [[ "$*" == *"-euo pipefail"* ]]; then command set -uo pipefail; else command set "$@"; fi; }
-    export -f set
-
+    # The real gate, run exactly as production runs it (set -e intact): it must print its diagnostic and fail.
     if _neg_gate check_bake_budget; then
-        unset -f set
         _budget_fail "check_bake_budget passed despite exceeding runner_disk_budget_gb"
     fi
-
-    unset -f set
 
     # Assert diagnostic specifically contains 'exceeds SSOT budget' proving the disk budget logic failed
     if [[ "$_NEG_GATE_OUT" != *"exceeds SSOT budget"* ]]; then
