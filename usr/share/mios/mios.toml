@@ -16129,6 +16129,7 @@ suppress_hint = "quiet flags only (dnf5 -q, buildah --quiet, cargo -q). Never pa
 "legibility.max_shell_lines" = "Re-baselined to 54941 following approved merges on main (ADR-0026 task store, operator-approved 2026-09-26)"
 "legibility.max_ps_lines" = "Re-baselined to 27878 following approved merges on main"
 "legibility.max_tooling_python_lines" = "Re-baselined to 81188 following approved merges on main (ADR-0026 task store, operator-approved 2026-09-26)"
+"laws.projection_registry.max_exempt" = "Exempts tools/native/mios-gen/src/hyprland_build.rs from Law 8 projection coverage as it builds an RPM in --out rather than a tracked file"
 
 [drift.budget_keys]
 # task_984. Budget keys that MUST exist in [agent_pipe] or [dispatch].
