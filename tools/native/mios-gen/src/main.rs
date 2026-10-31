@@ -17,6 +17,8 @@ mod btop_theme;
 mod display_scale;
 mod env_snapshot;
 mod ai_metadata;
+mod dotfiles_sync;
+mod pyfmt;
 mod hypr3d_spawn;
 mod docs;
 mod greeter;
@@ -115,6 +117,22 @@ enum Commands {
         /// Compare a committed snapshot with a fresh one; write nothing.
         #[arg(long)]
         check: Option<PathBuf>,
+    },
+    /// Sync the .dotfiles editor settings SSOT to its copies and merge the client-portable subset into every devcontainer.json / *.code-workspace (dotfiles.projection).
+    #[command(name = "sync-dotfiles")]
+    SyncDotfiles {
+        /// The tree (default: MIOS_ROOT, else the working directory).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// The mios-bootstrap checkout (default: MIOS_BOOTSTRAP_ROOT, else <root>/../mios-bootstrap).
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+        /// Assert the projections match the SSOT without modifying disk.
+        #[arg(long)]
+        check: bool,
+        /// Only the API-applied devcontainer.json / *.code-workspace settings blocks; skip the byte copies, skeleton and HOME.
+        #[arg(long = "client-surfaces")]
+        client_surfaces: bool,
     },
     /// Project the AI header metadata catalog (usr/share/mios/ai/v1/metadata.json) from the tracked tree.
     #[command(name = "ai-metadata")]
@@ -1249,6 +1267,17 @@ fn main() -> ExitCode {
                     ExitCode::FAILURE
                 }
             };
+        }
+        Commands::SyncDotfiles { root, bootstrap, check, client_surfaces } => {
+            let root = root
+                .or_else(|| env::var_os("MIOS_ROOT").filter(|r| !r.is_empty()).map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("."));
+            let bootstrap = bootstrap.or_else(|| env::var_os("MIOS_BOOTSTRAP_ROOT").filter(|r| !r.is_empty()).map(PathBuf::from));
+            let home = env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
+            let out = dotfiles_sync::run(&root, bootstrap.as_deref(), home.as_deref(), check, client_surfaces);
+            print!("{}", out.stdout);
+            eprint!("{}", out.stderr);
+            return ExitCode::from(out.code);
         }
         Commands::AiMetadata { root, export, check_fresh } => {
             let root = resolve_root(root);

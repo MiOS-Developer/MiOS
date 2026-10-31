@@ -237,72 +237,7 @@ pub fn catalog(root: &Path) -> Result<Value, String> {
 
 /// json.dumps(v, indent=2) with the default ensure_ascii=True.
 pub fn render(v: &Value) -> String {
-    let mut out = String::new();
-    write_value(&mut out, v, 0);
-    out
-}
-
-fn write_string(out: &mut String, s: &str) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            ' '..='~' => out.push(c),
-            _ => {
-                let mut units = [0u16; 2];
-                for unit in c.encode_utf16(&mut units) {
-                    out.push_str(&format!("\\u{unit:04x}"));
-                }
-            }
-        }
-    }
-    out.push('"');
-}
-
-fn write_value(out: &mut String, v: &Value, depth: usize) {
-    let pad = |n: usize| "  ".repeat(n);
-    match v {
-        Value::Null => out.push_str("null"),
-        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Value::Number(n) => out.push_str(&n.to_string()),
-        Value::String(s) => write_string(out, s),
-        Value::Array(items) if items.is_empty() => out.push_str("[]"),
-        Value::Array(items) => {
-            out.push_str("[\n");
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(",\n");
-                }
-                out.push_str(&pad(depth + 1));
-                write_value(out, item, depth + 1);
-            }
-            out.push('\n');
-            out.push_str(&pad(depth));
-            out.push(']');
-        }
-        Value::Object(map) if map.is_empty() => out.push_str("{}"),
-        Value::Object(map) => {
-            out.push_str("{\n");
-            for (i, (key, item)) in map.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(",\n");
-                }
-                out.push_str(&pad(depth + 1));
-                write_string(out, key);
-                out.push_str(": ");
-                write_value(out, item, depth + 1);
-            }
-            out.push('\n');
-            out.push_str(&pad(depth));
-            out.push('}');
-        }
-    }
+    crate::pyfmt::dumps(v)
 }
 
 fn short(v: Option<&Value>) -> String {
