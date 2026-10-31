@@ -1,6 +1,49 @@
+--- a/src/managers/screenshare/ScreenshareManager.cpp
++++ b/src/managers/screenshare/ScreenshareManager.cpp
+@@ -73,7 +73,9 @@
+ }
+ 
+ UP<CScreenshareSession> CScreenshareManager::newSession(wl_client* client, PHLWINDOW window) {
+-    if UNLIKELY (!window || !window->m_isMapped) {
++    // MiOS: a window without a live monitor (pinned across a removed output) cannot be shared either; returning null
++    // lets ext-image-copy-capture answer `stopped` instead of leaving the client waiting for constraints.
++    if UNLIKELY (!window || !window->m_isMapped || !window->m_monitor) {
+         LOGM(Log::ERR, "Client requested sharing of window that is gone or not shareable!");
+         return nullptr;
+     }
+@@ -138,6 +140,12 @@
+         }
+ 
+         session->m_self = session;
++
++        // MiOS: a session init() refused (no monitor) is never managed: a later capture of the same window, once it has
++        // a monitor again, gets a fresh session instead of this stopped one.
++        if UNLIKELY (!session->isActive())
++            return {};
++
+         m_sessions.emplace_back(session);
+ 
+         it = m_managedSessions.emplace(m_managedSessions.end(), makeUnique<SManagedSession>(std::move(session)));
 --- a/src/managers/screenshare/ScreenshareSession.cpp
 +++ b/src/managers/screenshare/ScreenshareSession.cpp
-@@ -66,6 +66,14 @@
+@@ -25,8 +25,14 @@
+         m_events.constraintsChanged.emit();
+     });
+     m_listeners.windowMonitorChanged = m_window->m_events.monitorChanged.listen([this]() {
+-        m_listeners.monitorDestroyed   = monitor()->m_events.disconnect.listen([this]() { stop(); });
+-        m_listeners.monitorModeChanged = monitor()->m_events.modeChanged.listen([this]() {
++        // MiOS: the window may have moved to no monitor at all
++        const auto PMONITOR = monitor();
++        if UNLIKELY (!PMONITOR) {
++            stop();
++            return;
++        }
++        m_listeners.monitorDestroyed   = PMONITOR->m_events.disconnect.listen([this]() { stop(); });
++        m_listeners.monitorModeChanged = PMONITOR->m_events.modeChanged.listen([this]() {
+             calculateConstraints();
+             m_events.constraintsChanged.emit();
+         });
+@@ -66,6 +72,14 @@
  }
  
  void CScreenshareSession::init() {
