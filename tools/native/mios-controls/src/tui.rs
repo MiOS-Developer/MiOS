@@ -302,7 +302,8 @@ impl App {
             });
         let devices = crate::devices::scan();
         let families = Family::from_ssot(&merged);
-        let pad_dev = devices.iter().position(|d| d.kind == Kind::Controller && !d.is_virtual());
+        let names = pad_names(&merged);
+        let pad_dev = devices.iter().position(|d| d.kind == Kind::Controller && !d.is_virtual() && crate::pads::wanted(&names, &d.name));
         let mouse_dev = devices.iter().position(|d| d.kind == Kind::Mouse && !d.is_virtual());
         let mut app = Self {
             validator: Validator::from_ssot(&merged),
@@ -677,6 +678,12 @@ impl App {
     fn pad(&mut self, e: PadEdge) {
         if !self.focused {
             return;
+        }
+        // the controller drawing follows the pad that was used last
+        if e.down && e.input.starts_with("pad:") {
+            if let Some(i) = self.devices.iter().position(|d| d.kind == Kind::Controller && d.name == e.device) {
+                self.pad_dev = Some(i);
+            }
         }
         if self.capture.is_some() {
             if e.down && !e.repeat {
@@ -1959,7 +1966,7 @@ impl App {
         if self.compact {
             spans.push(Span::raw(format!("[{ctx}] {state}  m menu  ? help")));
         } else {
-            spans.push(Span::raw(format!("| context [{ctx}] ([ ]) | {state} | m menu | ? help")));
+            spans.push(Span::raw(format!("| context [{ctx}] (keys [ and ]) | {state} | m menu | ? help")));
         }
         if self.capture.is_some() {
             spans.push(Span::styled(format!("  CAPTURE {}s", self.capture_timeout_left().map(|d| d.as_secs()).unwrap_or(0)), Style::new().fg(t.warn).add_modifier(Modifier::BOLD)));
@@ -2461,7 +2468,9 @@ impl App {
     }
 
     fn draw_help(&self, fr: &mut Frame) {
-        let area = if self.compact { fr.area() } else { centered(fr.area(), 92, 30) };
+        let full = fr.area();
+        // as tall as the screen allows (the help scrolls when it still does not fit)
+        let area = if self.compact { full } else { centered(full, 100.min(full.width.saturating_sub(4)), 44.min(full.height.saturating_sub(2))) };
         fr.render_widget(Clear, area);
         let hold = self.hold_ms();
         let text = [
@@ -2650,6 +2659,14 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
 }
 
+/// [desktop.controls].pad_names: the controllers the editor reads (empty = all).
+fn pad_names(merged: &Value) -> Vec<String> {
+    at(merged, "desktop.controls.pad_names")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
 pub fn run(layers: Layers) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
     let merged = layers.effective();
@@ -2660,6 +2677,7 @@ pub fn run(layers: Layers) -> Result<(), String> {
         trigger_threshold: f("trigger_threshold", 0.3).clamp(0.05, 0.95),
         repeat_delay: Duration::from_millis(crate::controls_int(&merged, "nav_repeat_delay_ms").unwrap_or(400).max(50) as u64),
         repeat_every: Duration::from_millis(crate::controls_int(&merged, "nav_repeat_ms").unwrap_or(120).max(30) as u64),
+        pad_names: pad_names(&merged),
     };
     let mut app = App::new(layers, tx.clone());
     let mut terminal = ratatui::init();
@@ -2941,6 +2959,20 @@ mod tests {
         a.focused = false;
         a.pad(PadEdge { device: "pad".into(), input: "pad:BTN_TR2".into(), down: true, repeat: false });
         assert_eq!(a.view, View::Mouse, "an unfocused editor ignores the pad");
+    }
+
+    #[test]
+    fn the_controller_drawing_follows_the_pad_that_was_used() {
+        let mut a = app();
+        a.devices = crate::devices::parse("I: Bus=0003 Vendor=04d9 Product=a293\nN: Name=\"OBINS AnnePro2\"\nH: Handlers=event13 js0\nB: KEY=ffff000000000000 0 0 0 0\nB: ABS=3b\n\nI: Bus=0003 Vendor=045e Product=0b12\nN: Name=\"mios-input-fixture-t-xbox\"\nH: Handlers=event40 js1\nB: KEY=7cdb000000000000 0 0 0 0\nB: ABS=3003f\n");
+        a.families.insert(0, Family { id: "xbox".into(), vendors: vec![0x045e], ..Family::generic() });
+        a.pad_dev = Some(0);
+        assert_eq!(a.family().id, "generic");
+        a.pad(PadEdge { device: "mios-input-fixture-t-xbox".into(), input: "pad:BTN_TR2".into(), down: true, repeat: false });
+        assert_eq!(a.pad_dev, Some(1));
+        assert_eq!(a.family().id, "xbox", "the Xbox glyphs follow the Xbox pad");
+        a.pad(PadEdge { device: "OBINS AnnePro2".into(), input: "pad:BTN_TR2".into(), down: false, repeat: false });
+        assert_eq!(a.pad_dev, Some(1), "a release does not switch the drawing");
     }
 
     #[test]

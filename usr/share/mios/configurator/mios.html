@@ -3400,6 +3400,14 @@
         <label>Controls editor input CPU (-1 = automatic) <input data-key="desktop.controls.input_cpu" data-type="int" type="number" min="-1" step="1"></label>
         <label>Controls editor backup suffix <input data-key="desktop.controls.backup_suffix" type="text"></label>
         <label>Controls editor session renderer <input data-key="desktop.controls.mios_gen" type="text"></label>
+        <label>Controls editor drawing glyphs <select data-key="desktop.controls.glyphs"><option value="auto">auto (box drawing; plain lines and ASCII labels on TERM=linux)</option><option value="unicode">unicode</option><option value="ascii">ascii</option></select></label>
+        <label>Controls editor capture-to-bind timeout (ms) <input data-key="desktop.controls.capture_timeout_ms" data-type="int" type="number" min="500" max="120000"></label>
+        <label>Controls editor stick direction threshold (0..1) <input data-key="desktop.controls.stick_threshold" data-type="float" type="number" min="0.05" max="0.95" step="0.05"></label>
+        <label>Controls editor trigger press threshold (0..1) <input data-key="desktop.controls.trigger_threshold" data-type="float" type="number" min="0.05" max="0.95" step="0.05"></label>
+        <label>Controls editor held-direction repeat delay (ms) <input data-key="desktop.controls.nav_repeat_delay_ms" data-type="int" type="number" min="50" max="5000"></label>
+        <label>Controls editor held-direction repeat interval (ms) <input data-key="desktop.controls.nav_repeat_ms" data-type="int" type="number" min="30" max="2000"></label>
+        <label>Controls editor undo depth <input data-key="desktop.controls.undo_depth" data-type="int" type="number" min="1" max="10000"></label>
+        <label>Controls editor controllers (name parts; empty = all) <input data-key="desktop.controls.pad_names" data-array="csv" type="text"></label>
         <details><summary>Picture-in-Picture and desktop sessions</summary>
         <label>Enable PiP layout <input data-key="desktop.pip_gravity.enabled" type="checkbox"></label>
         <label>PiP HUD settle time (ms) <input data-key="desktop.pip_gravity.hud_settle_ms" data-type="int" type="number" min="0" max="5000"></label>
