@@ -1,5 +1,5 @@
 // AI-hint: Shared desktop entry launcher. Rust preflight recovers missing portal mounts and bounds sandbox probes; GIO handles desktop activation, while the configured terminal opens TUIs. Checks time out with visible failure.
-// AI-related: tools/native/mios-gen/src/app_preflight.rs, Sidebar.qml, AppDrawer.qml, Search.qml, usr/share/mios/mios.toml [desktop.launch]
+// AI-related: tools/native/mios-gen/src/app_preflight.rs, Sidebar.qml, Search.qml, usr/share/mios/mios.toml [desktop.launch]
 pragma Singleton
 import QtQuick
 import Quickshell

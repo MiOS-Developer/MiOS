@@ -71,8 +71,7 @@ def misc_errors(d: dict) -> list[str]:
     return e
 
 
-SURFACES = {  # file -> the main surface's id (or None: the first Rectangle carrying the surface fill)
-    "AppDrawer.qml": "pane",
+SURFACES = {  # file -> the main surface's id (or None: the first glass surface filling its window)
     "Search.qml": None,
     "Keymap.qml": "card",
     "SecretPrompt.qml": "modalBox",
@@ -81,9 +80,9 @@ SURFACES = {  # file -> the main surface's id (or None: the first Rectangle carr
 
 def surface_block(text: str, ident: str | None) -> str:
     if ident:
-        m = re.search(r"Rectangle\s*\{\s*id:\s*%s\b" % re.escape(ident), text)
+        m = re.search(r"(?:Rectangle|GlassSurface)\s*\{\s*id:\s*%s\b" % re.escape(ident), text)
     else:
-        m = re.search(r"Rectangle\s*\{\s*anchors\.fill:\s*parent", text)
+        m = re.search(r"(?:Rectangle|GlassSurface)\s*\{\s*(?:id:\s*\w+\s*)?anchors\.fill:\s*parent", text)
     if not m:
         return ""
     return text[m.start():m.start() + 700]
@@ -94,9 +93,12 @@ def glass_surface_errors(name: str, text: str) -> list[str]:
     e = []
     if not b:
         return [f"{name}: main surface not found"]
-    if "radius: Glass.cornerFor(height)" not in b:
-        e.append(f"{name}: surface radius must be Glass.cornerFor(height)")
-    if not re.search(r"color:.*Glass\.(fill|fillHex)", b):
+    # the design language: the one glass component (GlassSurface: Glass.corner of its size) or the Glass corner rule
+    glass_shape = b.startswith("GlassSurface") and not re.search(r"^\s*radius:", b, re.M)
+    if not (glass_shape or "radius: Glass.cornerFor(height)" in b):
+        e.append(f"{name}: surface radius must be the design language's (GlassSurface / Glass.cornerFor(height))")
+    # GlassSurface's default colour is Glass.fill
+    if not re.search(r"color:.*Glass\.(fill|fillHex)", b) and not (b.startswith("GlassSurface") and not re.search(r"^\s*color:", b, re.M)):
         e.append(f"{name}: surface fill must be the shared Glass fill colour")
     if "outlineColor" in b:
         e.append(f"{name}: no hand-drawn outline (the rim is hyprglass' fresnel)")
@@ -280,7 +282,7 @@ class TestQml(unittest.TestCase):
         self.assertRegex(t, r"MiOS\.AppMenu \{ screen: modelData; shellState: state; reveal: reveal \}")
         a = read(os.path.join(QS, "AppMenu.qml"))
         self.assertIn('shellState.topbarShown("app_menu")', a)  # hidden unless the item is listed
-        self.assertIn("radius: Glass.cornerFor(height)", a)      # the pills are the island's glass blobs
+        self.assertIn("component Pill: GlassSurface", a)      # the pills are the island's glass blobs (one component)
         r = subprocess.run(["git", "-C", ROOT, "show", f"{PRE_SHELL_MAIN}:usr/share/mios/quickshell/Nested.qml"],
                            capture_output=True, text=True)
         if r.returncode == 0:  # negative control: main's nested shell has no app menus

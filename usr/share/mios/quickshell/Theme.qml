@@ -35,6 +35,12 @@ QtObject {
     property string muted:   "#948E8E"
     property string fontFamily: "GeistMono Nerd Font Mono"
     property int    radius:  28   // shared SSOT surface radius
+    // The design language ([theme.shell] in mios.toml; the bridge's "design" table, mios-sync-theme). Read through
+    // Glass.qml (bar, control, inset, gap, panelPad, corner(), cornerPower) -- surfaces never read these directly.
+    // [theme.shell.glass_states]: the shell glass fill per focused-window state (Glass.qml fillAlpha).
+    property var glassStates: ({})
+    property var design: ({ bar_px: 28, inset_px: 6, gap_px: 8, control_px: 16, radius_px: 28, panel_pad_px: 14,
+                            tab_offset_px: 48, bar_centre_px: 22, hairline_px: 1, corner_power: 2.0 })
     property real   panelOpacity: 22 / 100
     property real outlineOpacity: 14 / 100
     readonly property color outlineColor: withAlpha(subtle, outlineOpacity)
@@ -111,6 +117,8 @@ QtObject {
                 if (t.topbar) theme.topbar = t.topbar
                 if (t.hyprbars) theme.hyprbars = t.hyprbars
                 if (t.keymap) theme.keymap = t.keymap
+                if (t.design) theme.design = t.design
+                if (t.shell && t.shell.glass_states) theme.glassStates = t.shell.glass_states
                 if (t.font_size !== undefined) theme.fontSize = t.font_size
                 if (t.shell) {
                     theme.topHeight = t.shell.top_height_px

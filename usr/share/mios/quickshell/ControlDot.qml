@@ -21,12 +21,10 @@ Item {
     width: button.size || 0
     height: width
 
-    Rectangle {
+    GlassSurface {
         objectName: "dotFill"
-        anchors.fill: parent
-        radius: width / 2
+        anchors.fill: parent        // a control-sized button: Glass.corner(size) = a circle, as the hyprbars buttons
         color: dot.button.color || "transparent"
-        antialiasing: true
     }
     Text {
         anchors.centerIn: parent

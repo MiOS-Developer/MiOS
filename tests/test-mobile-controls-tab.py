@@ -25,9 +25,31 @@ PATCH = os.environ.get("MIOS_HYPRBARS_PATCH") or os.path.join(ROOT, "usr", "shar
 TOUCH_MIN = 44  # finger-sized target, logical px (HIG 44 pt / Material 48 dp)
 
 
+def resolve_design(d: dict) -> dict:
+    """The hyprbars geometry as mios-gen render-hyprland projects it: "theme.shell.*" / "design.*" references
+    ([theme.shell] design language, render.rs design_tokens) resolved to numbers."""
+    s, R = d["theme"]["shell"], d["desktop"]["hyprland"]["config"]["decoration"]["rounding"]
+    bar, inset = s["top_height_px"], s["inset_px"]
+    design = {"control_px": bar - 2 * inset, "tab_offset_px": R + min(R, bar) / 2 + inset, "bar_px": bar, "inset_px": inset}
+
+    def ref(v):
+        if isinstance(v, str) and v.startswith("design."):
+            return design[v[len("design."):]]
+        if isinstance(v, str) and v.startswith("theme.shell."):
+            return s[v[len("theme.shell."):]]
+        return v
+    bars = d["desktop"]["hyprland"]["hyprbars"]
+    for k, v in list(bars["config"].items()):
+        if k != "pill_alpha":
+            bars["config"][k] = ref(v)
+    for b in bars.get("buttons", []):
+        b["size"] = ref(b.get("size"))
+    return d
+
+
 def ssot() -> dict:
     with open(SSOT, "rb") as f:
-        return tomllib.load(f)
+        return resolve_design(tomllib.load(f))
 
 
 def mobile_errors(d: dict) -> list[str]:

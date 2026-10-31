@@ -8630,12 +8630,12 @@ patches = ["usr/share/mios/hyprland/patches/hyprbars-mios-overlay-tab.patch"]
 path = "/usr/lib64/mios/hyprbars.so"
 [desktop.hyprland.hyprbars.config]
 bar_overlay = true
-bar_height = 28
+bar_height = "theme.shell.top_height_px"   # the bar row height (design language: bar)
 bar_color = "rgba(00000000)"   # transparent strip: only the controls draw over the content
 bar_title_enabled = false
 bar_buttons_alignment = "left"
-bar_padding = 52               # keep the control tab and its fillets inside the rounded window corner
-bar_button_padding = 10
+bar_padding = "design.tab_offset_px"   # R + min(R, bar)/2 + inset: the tab and its fillets stay inside the rounded window corner
+bar_button_padding = "theme.shell.inset_px"   # gap between the window buttons = the inset (buttons concentric with the capsule tab)
 bar_part_of_window = true
 icon_on_hover = true
 # What reveals a window's controls tab (a hidden tab never claims clicks). The tab is a glass tab that
@@ -8681,26 +8681,24 @@ pill_shadow_comp = true        # remove the window's drop shadow from the backdr
 # app-menu pills to its right (usr/share/mios/quickshell/AppMenu.qml).
 tab_yield = true
 yield_layers = "mios-topbar,mios-dock"
-pill_padding = 10
-pill_inset = 3
-pill_feather = 6
+pill_padding = "theme.shell.inset_px"   # tab padding around the buttons = the inset
 # Buttons in display order; palette/icon_palette name [colors] keys.
 [[desktop.hyprland.hyprbars.buttons]]
 palette = "error"
 icon_palette = "bg"
-size = 16
+size = "design.control_px"
 icon = "✕"
 action = "hyprctl dispatch 'hl.dsp.window.close()'"
 [[desktop.hyprland.hyprbars.buttons]]
 palette = "warning"
 icon_palette = "bg"
-size = 16
+size = "design.control_px"
 icon = "–"
 action = "hyprctl dispatch '(hl.plugin.mios_lamp and hl.plugin.mios_lamp.minimize() or hl.dsp.window.move({workspace = \"special:minimized\", follow = false}))'"   # magic lamp into the dock ([desktop.hyprland.lamp]); plain silent move without the plugin
 [[desktop.hyprland.hyprbars.buttons]]
 palette = "success"
 icon_palette = "bg"
-size = 16
+size = "design.control_px"
 icon = "+"
 action = "hyprctl dispatch 'hl.dsp.window.fullscreen({mode = \"maximized\", action = \"toggle\"})'"
 
@@ -9520,6 +9518,7 @@ sensitivity = 0
 natural_scroll = true
 [desktop.hyprland.config.decoration]
 rounding = 28
+rounding_power = "theme.shell.corner_power"   # the one corner curve ([theme.shell] design language)
 active_opacity = 1.0
 inactive_opacity = 0.93
 fullscreen_opacity = 1.0
@@ -11313,12 +11312,35 @@ padding             = "0"                # EVERY terminal surface: WT grammar "#
 suppress_app_title  = true               # WT doesn't override our title
 launch_mode         = "focus"            # frame-less / border-less / no-titlebar / no-tab-row -- forces WT to measure the viewport at the actual cell count cols × rows from FIRST PAINT (no titlebar to strip later, no off-by-1/2 cell-count window before scrollbarState='hidden' applies). Required for true edge-to-edge in mios-bootstrap's Install-MiOSTerminalProfile.
 
+# ONE design language (operator 2026-10-30: "UNIFY THE DESIGN LANGUAGE TO USE THE SAME CURVE VECTORS AND RADII ...
+# Docks, topbars, blobs, controls, altbar menus ... ALL USE A GLOBAL DESIGN LANGUAGE"). Every shell surface (Quickshell:
+# GlassSurface.qml through Glass.qml, fed by the theme bridge's "design" table), the window controls tab (hyprbars: its
+# geometry keys are "theme.shell.*" / "design.*" references that mios-gen render-hyprland resolves), the windows
+# (Hyprland decoration rounding / rounding_power) and the Hypr3D room take their geometry from these keys and
+# [desktop.hyprland.config.decoration].rounding (R); the glass and the light are the [desktop.hyprland.hyprglass]
+# "mios" preset (one recipe: frost, refraction, tint, fresnel / specular / bevel and their light angles):
+#   bar        = top_height_px                      every element of the bar row: status island, app-menu pills, the
+#                                                   controls tab, popup / menu rows (no control is taller than the bar)
+#   control    = bar - 2 x inset_px                 an element inside a bar: window buttons, chips, the volume chip
+#   gap        = edge_margin_px                     outer margins and every gap between groups (tab -> pill -> island)
+#   inset      = inset_px                           padding inside a bar or a panel, between window buttons, between pills
+#   corner(h)  = min(R, h / 2)                      a body h tall (capsule up to 2R, then the window rounding)
+#   panel      = min(R, bar / 2 + inset_px)         popups, menus, cards, previews: concentric with their bar-tall rows
+#                                                   (an inner radius is always its outer radius minus the inset between)
+#   curve      = corner_power                       the one corner curve, a superellipse |x|^p + |y|^p = r^p (2 = circular)
+#   bar centre = edge_margin_px + bar / 2           one vertical centre line for the whole bar row; a window under the
+#                                                   row starts at edge_margin_px + bar, so its raised controls tab IS the row
+#   tab offset = R + min(R, bar) / 2 + inset_px     where the controls tab's first button starts inside its window
+# tests/test-design-language.py fails when a QML surface or compositor rule hard-codes a radius, height, shadow or glass
+# parameter instead of these tokens; tests/test-design-language-live.py measures the bar row in a nested session.
 [theme.shell]
 fill_opacity_pct = 22
 outline_opacity_pct = 14
 top_height_px = 28
 top_width_px = 640
 edge_margin_px = 8
+inset_px = 6           # see the design language above: padding inside bars and panels, button spacing (control = bar - 2 x inset)
+corner_power = 2.0     # the one corner curve for windows, shell surfaces, the controls tab and Hypr3D (2 = circular arc; up to 10 = squarer continuous corner)
 dock_height_px = 56
 drawer_width_fraction = 0.72
 drawer_height_fraction = 0.6
@@ -11338,6 +11360,23 @@ dock_fullscreen_reveal   = true # under a fullscreen window the dock hides; true
 drawer_full_pane         = true # app drawer morphs out of the dock to the full glass pane; false = to drawer_*_fraction size
 drawer_pane_margin_px    = 48   # full-pane drawer inset from the usable screen area on every side
 drawer_fill_opacity_pct  = 55   # full-pane drawer glass fill: the dock fill morphs to bg at this alpha (legible over busy windows)
+
+# Glass opacity per window state (operator 2026-10-30: "Glass layers get GLOBAL opacity levels per state"). The colour
+# layer of every shell glass surface (status island, app-menu pills, dock, popups, notifications -- Glass.fill) takes the
+# level of the state of the focused window, globally: one level at a time for the whole shell, never per surface.
+#   focused        -- a focused floating window, or no window (the desktop)
+#   tiled          -- a focused tiled window
+#   maximized      -- a focused maximized window (the HUD stays shown and reserved)
+#   fullscreen     -- a focused fullscreen window (the HUD is hidden; this is the revealed row's and dock's level)
+#   vr_passthrough -- reserved for the Hypr3D room / a future passthrough view (not consumed yet: see the design-unify
+#                     lane report's research note; the room keeps the focused level until it is)
+# Values are 0..100 percent of [colors].bg over the hyprglass "mios" glass (fill_opacity_pct is the vendor level).
+[theme.shell.glass_states]
+focused_pct        = 22
+tiled_pct          = 22
+maximized_pct      = 22
+fullscreen_pct     = 22
+vr_passthrough_pct = 22
 
 # Global web stylesheet (usr/share/mios/theme/templates/mios-web.css.tmpl), projected as
 # user-origin CSS into every MiOS browser: Epiphany's profile user-stylesheet.css and Zen chrome/userContent.css.
@@ -11385,6 +11424,43 @@ date       = false
 clock      = true
 power      = true
 fps        = false
+
+# Island popups (operator 2026-10-30: the sound / network / power "controls" were bloated: make their information
+# relevant, modular, toggleable and customizable). Each popup is built from SSOT-declared modules in `order` (lower
+# first); `enabled = false` drops a module. A popup with no enabled module falls back to its settings command. Every
+# module is laid out on the design language ([theme.shell]): bar-tall rows, concentric panel padding, capsule controls.
+# sound:   output   -- the default output device's name, a volume track (wheel / drag, capped at volume_max_pct) and mute
+#          input    -- the default microphone's name and mute
+#          settings -- opens [desktop.topbar.commands].sound
+# network: status   -- online / offline and each network device with its state
+#          settings -- opens [desktop.topbar.commands].network
+# power:   settings -- Settings, Display, Sound, Network, Power, Account ([desktop.topbar.commands])
+#          session  -- Lock, Log out
+#          power    -- Suspend, Restart, Shut down
+[desktop.topbar.popups.sound.modules.output]
+enabled = true
+order = 1
+[desktop.topbar.popups.sound.modules.input]
+enabled = true
+order = 2
+[desktop.topbar.popups.sound.modules.settings]
+enabled = true
+order = 3
+[desktop.topbar.popups.network.modules.status]
+enabled = true
+order = 1
+[desktop.topbar.popups.network.modules.settings]
+enabled = true
+order = 2
+[desktop.topbar.popups.power.modules.settings]
+enabled = true
+order = 1
+[desktop.topbar.popups.power.modules.session]
+enabled = true
+order = 2
+[desktop.topbar.popups.power.modules.power]
+enabled = true
+order = 3
 
 # Commands the bar runs; settings panels need XDG_CURRENT_DESKTOP=GNOME outside GNOME Shell.
 [desktop.topbar.commands]
@@ -18664,6 +18740,12 @@ bevel_shadow = 0.12              # dark side of the bevel ring (operator 2026-10
 bevel_size = 10.0
 edge_thickness = 0.12
 glass_opacity = 1.0
+# One light (design language, [theme.shell]): the specular streak and the lit side of the bevel ring face the same
+# direction on every surface -- windows, the controls tab, the shell layers and the Hypr3D room (clockwise degrees,
+# 0 = from the top). hyprglass' own defaults split them (specular 0, bevel 315); the hyprbars CPU fallback is not used
+# while hyprglass draws the tab.
+specular_angle = 0.0
+bevel_angle = 0.0
 [desktop.hyprland.hyprglass.presets.mios.dark]
 brightness = 1.0
 contrast = 1.0

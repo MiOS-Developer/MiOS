@@ -12,7 +12,7 @@ Column {
     id: sd
     required property QtObject theme
     property bool live: true
-    spacing: 2
+    spacing: 0
 
     function line(label, value, detail, warn, sub) { return ({ label: label, value: value, detail: detail || "", warn: !!warn, sub: !!sub }) }
     readonly property var rows: live ? build() : []
@@ -49,7 +49,7 @@ Column {
         delegate: Row {
             required property int index
             readonly property var modelData: sd.rows[index] || ({ label: "", value: "", detail: "", warn: false, sub: false })
-            height: sd.theme.fontSize + 8
+            height: Glass.bar - Glass.inset   // compact detail rows: a bar less its inset
             Text {
                 width: sd.labelWidth
                 text: (modelData.sub ? "  " : "") + modelData.label
@@ -89,6 +89,6 @@ Column {
         color: sd.theme.muted
         font.family: sd.theme.fontFamily
         font.pixelSize: sd.theme.smallFontSize
-        topPadding: 4
+        topPadding: Glass.inset
     }
 }
