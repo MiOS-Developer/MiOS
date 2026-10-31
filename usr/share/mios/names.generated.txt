@@ -2914,6 +2914,10 @@ remote.rdp.native.camera_max_fps  MIOS_REMOTE_RDP_NATIVE_CAMERA_MAX_FPS
 remote.rdp.native.camera_max_devices  MIOS_REMOTE_RDP_NATIVE_CAMERA_MAX_DEVICES
 remote.rdp.native.camera_poll_ms  MIOS_REMOTE_RDP_NATIVE_CAMERA_POLL_MS
 remote.rdp.native.camera_timeout_ms  MIOS_REMOTE_RDP_NATIVE_CAMERA_TIMEOUT_MS
+remote.rdp.native.camera_provider_restarts  MIOS_REMOTE_RDP_NATIVE_CAMERA_PROVIDER_RESTARTS
+remote.rdp.native.camera_v4l2  MIOS_REMOTE_RDP_NATIVE_CAMERA_V4L2
+remote.rdp.native.camera_v4l2_library  MIOS_REMOTE_RDP_NATIVE_CAMERA_V4L2_LIBRARY
+remote.rdp.native.camera_pipewire_runtime  MIOS_REMOTE_RDP_NATIVE_CAMERA_PIPEWIRE_RUNTIME
 remote.rdp.native.drive_timeout_ms  MIOS_REMOTE_RDP_NATIVE_DRIVE_TIMEOUT_MS
 remote.rdp.native.drive_max_devices  MIOS_REMOTE_RDP_NATIVE_DRIVE_MAX_DEVICES
 remote.rdp.native.drive_max_entries  MIOS_REMOTE_RDP_NATIVE_DRIVE_MAX_ENTRIES
@@ -9807,6 +9811,7 @@ desktop.portal.gecko.phase_script  MIOS_DESKTOP_PORTAL_GECKO_PHASE_SCRIPT
 desktop.portal.gecko.home_url  MIOS_DESKTOP_PORTAL_GECKO_HOME_URL
 desktop.portal.gecko.newtab_url  MIOS_DESKTOP_PORTAL_GECKO_NEWTAB_URL
 desktop.portal.gecko.chat_url  MIOS_DESKTOP_PORTAL_GECKO_CHAT_URL
+desktop.portal.gecko.pipewire_camera  MIOS_DESKTOP_PORTAL_GECKO_PIPEWIRE_CAMERA
 desktop.portal.gecko.layout.vertical_tabs  MIOS_DESKTOP_PORTAL_GECKO_LAYOUT_VERTICAL_TABS
 desktop.portal.gecko.layout.tabs_at_start  MIOS_DESKTOP_PORTAL_GECKO_LAYOUT_TABS_AT_START
 desktop.portal.gecko.layout.tabs_visibility  MIOS_DESKTOP_PORTAL_GECKO_LAYOUT_TABS_VISIBILITY

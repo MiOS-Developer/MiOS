@@ -2390,6 +2390,14 @@
             <input type="number" id="f-rdp-camera-poll-ms" data-key="remote.rdp.native.camera_poll_ms" min="250" max="2000" data-type="int" value="500">
             <label for="f-rdp-camera-timeout-ms">Camera frame timeout (ms)</label>
             <input type="number" id="f-rdp-camera-timeout-ms" data-key="remote.rdp.native.camera_timeout_ms" min="2000" max="30000" data-type="int" value="10000">
+            <label for="f-rdp-camera-provider-restarts">Camera provider restarts after a decoder exit (0 closes the camera)</label>
+            <input type="number" id="f-rdp-camera-provider-restarts" data-key="remote.rdp.native.camera_provider_restarts" min="0" max="8" data-type="int" value="3">
+            <label for="f-rdp-camera-v4l2">Serve V4L2-only apps too (launch them with mios-camera-v4l2; no kernel module)</label>
+            <input type="text" id="f-rdp-camera-v4l2" data-key="remote.rdp.native.camera_v4l2" data-type="bool" placeholder="true">
+            <label for="f-rdp-camera-v4l2-library">PipeWire V4L2 compatibility library</label>
+            <input type="text" id="f-rdp-camera-v4l2-library" data-key="remote.rdp.native.camera_v4l2_library" value="/usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so">
+            <label for="f-rdp-camera-pipewire-runtime">Camera PipeWire runtime (empty = operator session)</label>
+            <input type="text" id="f-rdp-camera-pipewire-runtime" data-key="remote.rdp.native.camera_pipewire_runtime" value="">
             <label for="f-rdp-camera-source">Camera source prefix</label>
             <input type="text" id="f-rdp-camera-source" data-key="remote.rdp.naming.camera_source_prefix" value="mios-remote-camera">
             <label for="f-rdp-files-enabled">Allow client-selected shared folders</label>

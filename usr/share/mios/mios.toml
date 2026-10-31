@@ -7296,6 +7296,10 @@ camera_max_fps = 30                 # negotiated source rate ceiling, 1..60
 camera_max_devices = 4              # bounded camera announcements per connection, 1..8
 camera_poll_ms = 500                # native consumer detection interval, 250..2000 ms
 camera_timeout_ms = 10000           # startup/active source frame timeout, 2000..30000 ms
+camera_provider_restarts = 3        # bounded native provider restarts after its decoder process exits (e.g. a consumer's failed buffer negotiation), 0..8; 0 closes the camera
+camera_v4l2 = true                  # also serve V4L2-only apps through PipeWire's V4L2 compatibility library: run them with `mios-camera-v4l2 <app>` (the BGRA source is single-plane; no kernel module)
+camera_v4l2_library = "/usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so" # pipewire-v4l2 compatibility library the launcher preloads; absolute path
+camera_pipewire_runtime = ""        # "" = the operator's PipeWire (/run/user/<uid>); an absolute runtime dir targets a private lab PipeWire instead
 drive_timeout_ms = 10000           # timeout poisons drive transport until reconnect, preventing late-response reuse
 drive_max_devices = 16             # total accepted/hot-removed file devices per connection, 1..64
 drive_max_entries = 4096           # bounded native inode and directory-entry caches, 64..65536
@@ -7315,7 +7319,7 @@ pen                 = true          # MS-RDPEI v3 pen -> uinput "MiOS Remote Pen
 audio_output        = false         # MS-RDPSND audio output (Phase 5 stub; off until PipeWire wave sink is wired)
 microphone          = true          # negotiated MS-RDPEAI PCM -> per-session PipeWire microphone; client permission still required
 drives              = true          # negotiated client folders -> session-owned native FUSE mounts; client selects what to share
-camera              = true          # client-selected cameras become per-session native PipeWire video sources
+camera              = true          # client-selected cameras become per-session native PipeWire video sources (media.role=Camera: portal/browser pickers; V4L2 apps via mios-camera-v4l2)
 location            = false         # MS-RDPEL geolocation redirection (Phase 7 stub; off by default)
 timezone            = "report"      # "report" | "follow" | "ignore" (Client Info TS_TIME_ZONE_INFORMATION)
 smartcard           = false         # MS-RDPESC smartcard redirection (off by default)
@@ -17383,6 +17387,9 @@ phase_script = "67-bake-portal.sh"     # the image phase that installs the artif
 home_url     = "http://localhost:${MIOS_PORTS_AGENT_PIPE}/"
 newtab_url   = "http://localhost:${MIOS_PORTS_AGENT_PIPE}/"
 chat_url     = "http://127.0.0.1:${MIOS_PORTS_AGENT_PIPE}/v1"
+# WebRTC camera pickers enumerate PipeWire cameras (camera portal), which includes MiOS RDP remote
+# cameras (media.role=Camera); false keeps Gecko's direct /dev/video* enumeration only.
+pipewire_camera = true                 # media.webrtc.camera.allow-pipewire
 
 # Sketch layout (MP-5): left vertical tab sidebar, collapsible, with the apps/tools footer; web content
 # edge to edge; right chat panel that auto-hides to a peek strip; compact density; no window controls.
@@ -18886,7 +18893,7 @@ pkgs = ["gpm"]
 # RDP front-end + wlroots VNC capture for [remote.rdp] (live-session remote desktop).
 [packages.remote-desktop]
 enable = true
-pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils", "fuse3", "pipewire-utils", "pipewire-gstreamer", "gstreamer1", "gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-openh264"] # native remote audio, files and camera decoding
+pkgs = ["xrdp", "xrdp-selinux", "wayvnc", "openssl", "pulseaudio-utils", "fuse3", "pipewire-utils", "pipewire-gstreamer", "gstreamer1", "gstreamer1-plugins-base", "gstreamer1-plugins-good", "gstreamer1-plugins-bad-free", "gstreamer1-plugin-openh264", "pipewire-v4l2"] # native remote audio, files and camera decoding; pipewire-v4l2 = V4L2 compatibility for remote cameras
 
 # Build deps of automation/70-bake-wayvnc-upstream.sh (wayvnc + neatvnc + aml from upstream HEAD,
 # neatvnc/aml static; preferred by the RDP bridge over the distro wayvnc).

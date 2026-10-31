@@ -58,6 +58,16 @@ pub struct Native {
     pub camera_max_devices: usize,
     pub camera_poll_ms: u64,
     pub camera_timeout_ms: u64,
+    /// Bounded provider restarts after the native decoder process exits (a
+    /// consumer whose buffer negotiation fails ends it); 0 closes the camera.
+    pub camera_provider_restarts: u32,
+    /// Offer the (single-plane BGRA) source to V4L2-only applications through
+    /// PipeWire's V4L2 compatibility library and the mios-camera-v4l2 launcher.
+    pub camera_v4l2: bool,
+    pub camera_v4l2_library: String,
+    /// Empty = the operator's PipeWire runtime (/run/user/<operator_uid>); an absolute
+    /// path targets another PipeWire runtime (private synthetic labs).
+    pub camera_pipewire_runtime: String,
     pub drive_timeout_ms: u64,
     pub drive_max_devices: usize,
     pub drive_max_entries: usize,
@@ -116,6 +126,10 @@ impl Default for Native {
             camera_max_devices: 4,
             camera_poll_ms: 500,
             camera_timeout_ms: 10000,
+            camera_provider_restarts: 3,
+            camera_v4l2: true,
+            camera_v4l2_library: "/usr/lib64/pipewire-0.3/v4l2/libpw-v4l2.so".into(),
+            camera_pipewire_runtime: String::new(),
             drive_timeout_ms: 10000,
             drive_max_devices: 16,
             drive_max_entries: 4096,
@@ -328,8 +342,14 @@ impl Config {
         if !(16..=1920).contains(&n.camera_max_width) || !(16..=1080).contains(&n.camera_max_height)
             || !(1..=60).contains(&n.camera_max_fps) || !(1..=8).contains(&n.camera_max_devices)
             || !(250..=2000).contains(&n.camera_poll_ms) || !(2000..=30000).contains(&n.camera_timeout_ms)
+            || n.camera_provider_restarts > 8
             || n.camera_video_program.is_empty() || n.camera_graph_program.is_empty() {
             bail!("invalid native camera program, resolution, FPS, device or timing bounds");
+        }
+        let absolute = |p: &str| p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|c| c == "..");
+        if (n.camera_v4l2 && !absolute(&n.camera_v4l2_library))
+            || (!n.camera_pipewire_runtime.is_empty() && !absolute(&n.camera_pipewire_runtime)) {
+            bail!("camera_v4l2_library and a nonempty camera_pipewire_runtime must be absolute paths without '..'");
         }
         let prefix=&self.naming.camera_source_prefix;
         if prefix.is_empty() || prefix.len()>48 || !prefix.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_') {
@@ -487,6 +507,33 @@ mod tests {
             else { c.native.tcp_notsent_lowat_kib=4097; }
             assert!(c.validate().unwrap_err().to_string().contains("tcp_"));
         }
+    }
+
+    #[test]
+    fn camera_compatibility_paths_must_be_absolute() {
+        let mut c = Config::default();
+        c.validate().unwrap();
+        assert!(c.native.camera_v4l2 && c.native.camera_pipewire_runtime.is_empty());
+        for bad in ["libpw-v4l2.so", "/usr/lib64/../tmp/x.so", ""] {
+            let mut c = Config::default();
+            c.native.camera_v4l2_library = bad.into();
+            assert!(c.validate().unwrap_err().to_string().contains("camera_v4l2_library"));
+        }
+        let mut off = Config::default();
+        off.native.camera_v4l2 = false;
+        off.native.camera_v4l2_library.clear();
+        off.validate().unwrap();
+        let mut rt = Config::default();
+        rt.native.camera_pipewire_runtime = "relative/rt".into();
+        assert!(rt.validate().is_err());
+        rt.native.camera_pipewire_runtime = "/run/user/1000/mios-nested-desktop-1".into();
+        rt.validate().unwrap();
+        let mut restarts = Config::default();
+        assert_eq!(restarts.native.camera_provider_restarts, 3);
+        restarts.native.camera_provider_restarts = 0;
+        restarts.validate().unwrap();
+        restarts.native.camera_provider_restarts = 9;
+        assert!(restarts.validate().is_err());
     }
 
     #[test]
