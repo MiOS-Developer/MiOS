@@ -58,7 +58,13 @@ QS.PanelWindow {
         return s.menus.filter(m => m && m.label &&
                              ((Array.isArray(m.items) && m.items.length) || (typeof m.action === "string" && m.action.length)))
     }
-    onMenuItemsChanged: { openMenu = -1; pillViewport.contentX = 0 }
+    // A refreshed export of the same app (a toggle flipped, the window lost focus to the open dropdown) keeps the open
+    // dropdown when its menu is still there under the same label; anything else closes it.
+    property string openLabel: ""
+    onMenuItemsChanged: {
+        const keep = openMenu >= 0 && openMenu < menuItems.length && menuItems[openMenu].label === openLabel
+        if (!keep) { openMenu = -1; pillViewport.contentX = 0 }
+    }
     onAppIdChanged: { openMenu = -1; pillViewport.contentX = 0 }
 
     // ---- window control tabs in the bar row -----------------------------------------------------
@@ -135,6 +141,7 @@ QS.PanelWindow {
         updateRowPosition()
         if (reveal) reveal.menuPopup = openMenu >= 0
         cursor = -1
+        openLabel = openMenu >= 0 && openMenu < menuItems.length ? menuItems[openMenu].label : ""
         if (openMenu >= 0) Qt.callLater(() => keyNav.forceActiveFocus())
     }
     onVisibleChanged: if (!visible && reveal && reveal.menuHovered) Qt.callLater(() => { if (!menus.visible && menus.reveal) menus.reveal.menuHovered = false })
