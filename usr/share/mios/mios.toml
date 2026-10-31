@@ -2684,8 +2684,10 @@ generator_globs = [
 
 # Shrink-only. A generator belongs here ONLY if it projects nothing tracked, and
 # then with the reason spelled out -- a bare name would make this a count.
-exempt = []
-max_exempt = 0
+exempt = [
+  { generator = "tools/native/mios-gen/src/hyprland_build.rs", reason = "builds the patched compositor RPM from the installed SRPM and [desktop.hyprland.compositor].patches; its only output is the RPM in --out (never a tracked file), and every patch is checked against the pristine source before the build" },
+]
+max_exempt = 1
 
 
 [security.sigstore]
@@ -8811,15 +8813,17 @@ remote = "same"                             # every output, local or remote/mobi
 # MiOS patches to the compositor itself (operator decision "Patch Hyprland"): mios-gen build-hyprland rebuilds the
 # installed release's source RPM (hyprglass.hyprland_version, the compositor ABI hold) with these applied in order after
 # the spec's own patches -- a patch that no longer applies fails the build naming it -- and tags the Release with
-# release_tag (2.fc44 -> 2.mios1.fc44: the patched package upgrades the stock one and `rpm -q hyprland` shows it).
+# release_tag (2.fc44 -> 2.mios2.fc44: the patched package upgrades the stock one and `rpm -q hyprland` shows it).
 # Bump release_tag whenever the series changes. A patched compositor takes effect at the next compositor start.
 #   hyprland-screenshare-no-monitor.patch: a toplevel capture (hyprland-toplevel-export: Quickshell ScreencopyView,
 #   xdg-desktop-portal-hyprland window share) of a window without a live monitor -- a pinned window whose output was
 #   removed keeps an expired m_monitor -- SEGVs in Screenshare::CScreenshareSession::init (nullptr->m_scale); a capture
-#   of a closed/unmapped window disconnected the capturing client. Both now answer the frame with `failed`.
+#   of a closed/unmapped window returned without creating the client's frame. Both now answer the frame with `failed`;
+#   an ext-image-copy-capture window source without a monitor gets `stopped`, a session init() refuses is never kept,
+#   and a window session survives its window moving to no monitor.
 [desktop.hyprland.compositor]
 patches = ["usr/share/mios/hyprland/patches/hyprland-screenshare-no-monitor.patch"]
-release_tag = "mios1"
+release_tag = "mios2"
 
 # ABI held to the deployed Hyprland release; upgrade this pair together.
 [desktop.hyprland.hyprglass]

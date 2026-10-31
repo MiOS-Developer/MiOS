@@ -4,7 +4,7 @@
 // ABI-held [desktop.hyprland.hyprglass].hyprland_version; --srpm or `dnf download --source`) with the SSOT patches
 // applied in order after the spec's own %prep patches: each patch is checked against the pristine source first and a
 // patch that no longer applies fails the build naming it (never silently skipped); the Release gets the SSOT
-// release_tag (2.fc44 -> 2.mios1.fc44), so the result upgrades the stock package and `rpm -q hyprland` shows it is
+// release_tag (2.fc44 -> 2.mios2.fc44), so the result upgrades the stock package and `rpm -q hyprland` shows it is
 // patched. Build parallelism is the plugin builds' [desktop.hyprland.hyprglass].build_jobs. Runs only inside
 // podman-MiOS-DEV; the RPMs land in --out (the bake installs them; a live host installs them with rpm-ostree/dnf and the
 // patch takes effect at the next compositor start -- a running Hyprland is never touched).
@@ -12,7 +12,7 @@
 // on a toplevel capture of a window without a live monitor).
 // AI-related: usr/share/mios/mios.toml [desktop.hyprland.compositor], usr/share/mios/hyprland/patches/hyprland-screenshare-no-monitor.patch,
 // tools/native/mios-gen/src/render.rs (hyprglass_build: the plugin patch series), automation/65-bake-hyprland.sh,
-// tests/test-hyprland-capture-guard-live.py
+// tests/test-hyprland-capture-patch-live.py
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};

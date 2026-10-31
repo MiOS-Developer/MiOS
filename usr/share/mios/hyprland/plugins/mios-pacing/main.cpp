@@ -700,7 +700,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         Notification::overlay()->dismissNotifications(-1);
 
     // The toplevel-capture guard (capture_guard.hpp). Loud when Hyprland renamed the function: previews then run unguarded,
-    // and the shell's own guard (DockPreview.qml never captures an output-less window) is the only line left.
+    // and only the shell's own capture checks and the patched compositor ([desktop.hyprland.compositor]) are left.
     for (const auto& match : HyprlandAPI::findFunctionsByName(PHANDLE, "captureToplevel")) {
         if (match.demangled.find("CToplevelExportClient::captureToplevel(") == std::string::npos)
             continue;
