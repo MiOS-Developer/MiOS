@@ -4630,6 +4630,7 @@ tier = 1
 chord = "SUPER+CTRL+Super_L"
 trigger = "release"
 action = "mios:tmux-os-launcher"
+realized_by = "hyprland"
 note = "Hold CTRL+SUPER and let go: the tmux-os launcher (the focused terminal's client, else a new terminal)."
 
 # Session scale: the whole session on the focused output (apps, HUD, shell) -- or the focused nested session's zoom.

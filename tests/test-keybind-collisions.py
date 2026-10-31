@@ -129,7 +129,8 @@ class Gate(unittest.TestCase):
         self.bad('[[keybindings.global.bindings]]\nid="ghost"\ntier=1\nchord="SUPER+F7"\naction="exec:x"\nrealized_by="hyprland"\npassthrough=["vm-passthrough"]\n', 'realized_by hyprland but no compositor binding')
 
     def test_removed_real_lua_line_fails_even_with_ssot_declaration(self):
-        lines = [line for line in LUA.read_text().splitlines() if not ('hl.bind(' in line and '"space"' in line.lower())]
+        # The app-drawer literal is hl.bind("SUPER + SPACE", ...); its bypass handle stays, so only the row's own chord is gone.
+        lines = [line for line in LUA.read_text().splitlines() if not ('hl.bind(' in line and re.search(r'"SUPER ?\+ ?SPACE"', line, re.I))]
         result = run_gate(self.binary, self.tmp_root(lua='\n'.join(lines)))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('app-drawer: realized_by hyprland but no compositor binding', result.stdout + result.stderr)
