@@ -18226,6 +18226,7 @@ unit = [
     "tests/test-nested-multiuse-live.py",
     "tests/test-nested-session-scaling.py",
     "tests/test-pip-gravity-drawer-live.py",
+    "tests/test-pip-resize-gravity.py",
     "tests/test-blender-mcp-live.py",
     "tests/test-blender-mcp-real.py",
     "tests/test-keymap-overlay.py",
@@ -19419,6 +19420,7 @@ min_width_frac = 0.02                # small PiPs stay resizable; applications r
 min_width_px = 160                   # absolute smallest PiP width (logical px); a smaller resize springs back to it
 max_width_frac = 1.0                 # manual enlargement may exceed the launch rail; keep within HUD bounds (aspect-true)
 size_snap_px = 24                    # size magnets: within this many px of the minimum, launch (flank) or maximum width the size snaps exactly; 0 = off
+resize_snap_proximity_px = 32        # margin snap proximity range (px) for edge resizing and adjacent window margins
 initial_width_frac = 0.24             # fallback when the opening policy leaves no flank
 fit_default_window = true
 keep_above = true                    # native stay-on-top: keep PiPs pinned (Hyprland's always-above layer) and above other pinned windows

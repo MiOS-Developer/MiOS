@@ -117,24 +117,24 @@ mod tests {
 
     #[test]
     fn a_fullscreen_pips_reserved_slot_keeps_its_neighbours_in_place() {
-        let p = Params { left: true, right: true, margin: 8.0, gap: 8.0, hud_gap: 8.0, attract: 48.0, min_w_frac: 0.02, max_w_frac: 1.0, snap_width: 464.0, min_w_px: 160.0, size_snap: 24.0 };
+        let p = Params { left: true, right: true, margin: 8.0, gap: 8.0, hud_gap: 8.0, attract: 48.0, min_w_frac: 0.02, max_w_frac: 1.0, snap_width: 464.0, min_w_px: 160.0, size_snap: 24.0, resize_snap_proximity: 32.0 };
         let area = Rect::new(0.0, 44.0, 1920.0, 964.0);
         let (mut seed, mut dropped_moves) = (11u64, 0);
         for _ in 0..300 {
             let n = 2 + (lcg(&mut seed) * 6.0) as usize;
             // Integer logical geometry, as the compositor reports it.
             let pips: Vec<Rect> = (0..n).map(|_| { let w = (160.0 + lcg(&mut seed) * 700.0).round(); Rect::new((lcg(&mut seed) * 1800.0).round(), (44.0 + lcg(&mut seed) * 900.0).round(), w, (w / (0.6 + lcg(&mut seed) * 1.4)).round()) }).collect();
-            let settled = plan(&pips, area, &[], &p);
+            let settled = plan(&pips, area, &[], &[], &p);
             let k = (lcg(&mut seed) * n as f64) as usize % n;
             // PiP k goes fullscreen: its pre-fullscreen slot (position and natural size) stays in the plan, reserved.
             let input = replan_input(&settled, &pips);
-            let with_slot = plan(&input, area, &[], &p);
+            let with_slot = plan(&input, area, &[], &[], &p);
             for (i, (a, b)) in settled.iter().zip(&with_slot).enumerate() {
                 assert!((a.x - b.x).abs() < SETTLE_PX && (a.y - b.y).abs() < SETTLE_PX && (a.w - b.w).abs() < SETTLE_PX, "PiP {i} moved: {a:?} -> {b:?}");
             }
             // The old behaviour dropped PiP k from the plan entirely.
             let keep = |v: &[Rect]| -> Vec<Rect> { v.iter().enumerate().filter(|(i, _)| *i != k).map(|(_, r)| *r).collect() };
-            let (others, without) = (keep(&settled), plan(&keep(&input), area, &[], &p));
+            let (others, without) = (keep(&settled), plan(&keep(&input), area, &[], &[], &p));
             if others.iter().zip(&without).any(|(a, b)| (a.x - b.x).abs() >= SETTLE_PX || (a.y - b.y).abs() >= SETTLE_PX || (a.w - b.w).abs() >= SETTLE_PX) {
                 dropped_moves += 1;
             }

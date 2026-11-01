@@ -5,7 +5,7 @@ mod hud;
 mod matrix;
 mod window;
 
-use gravity::{plan, spring_step, Params, Rect};
+use gravity::{spring_step, Params, Rect};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ fn matchers_from(acc:&toml::Value)->Result<Vec<Matcher>,String> {
 /// the SSOT that introduced them) turns that one feature off -- exactly the behaviour before the key existed -- instead of
 /// refusing the whole table (which failed `ExecStartPre=check` and every nested PiP launch). A present but invalid value
 /// is still rejected.
-const OPTIONAL_KEYS: &[&str] = &["min_width_px", "size_snap_px", "fullscreen_release_ms"];
+const OPTIONAL_KEYS: &[&str] = &["min_width_px", "size_snap_px", "fullscreen_release_ms", "resize_snap_proximity_px"];
 fn load_cfg() -> Result<Cfg, String> {
     let doc=mios_resolver::resolve_merged(None,false).map_err(|e|e.to_string())?;
     cfg_from(&doc)
@@ -96,6 +96,10 @@ fn cfg_from(doc:&toml::Value) -> Result<Cfg, String> {
             snap_width:0.0,
             min_w_px: f("min_width_px")?,
             size_snap: f("size_snap_px")?,
+            resize_snap_proximity: {
+                let prox = f("resize_snap_proximity_px")?;
+                if prox > 0.0 { prox } else { 32.0 }
+            },
         },
         matchers,
         initial_width_frac:f("initial_width_frac")?,
@@ -156,7 +160,10 @@ fn monitor_at(mons: &Value, x: f64, y: f64) -> Option<i64> {
     mons.as_array()?.iter().find_map(|m| {
         let g = |k: &str| m.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
         let sc = g("scale").max(0.1);
-        let (mx, my, mw, mh) = (g("x"), g("y"), g("width") / sc, g("height") / sc);
+        let tf = m.get("transform").and_then(|t| t.as_i64()).unwrap_or(0);
+        let (raw_w, raw_h) = (g("width"), g("height"));
+        let (mw, mh) = if tf % 2 == 1 { (raw_h / sc, raw_w / sc) } else { (raw_w / sc, raw_h / sc) };
+        let (mx, my) = (g("x"), g("y"));
         (x >= mx && x < mx + mw && y >= my && y < my + mh).then(|| m.get("id").and_then(|i| i.as_i64())).flatten()
     })
 }
@@ -173,6 +180,16 @@ mod monitor_tests {
         assert_eq!(monitor_at(&m, 1526.0, 827.0), Some(0));
         assert_eq!(monitor_at(&m, 2100.0, 100.0), Some(1));
         assert_eq!(monitor_at(&m, 5000.0, 100.0), None);
+    }
+
+    #[test]
+    fn monitor_at_respects_transform_rotation() {
+        let m = serde_json::json!([
+            {"id": 2, "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0, "transform": 1}
+        ]);
+        // With transform 1 (rotated 90 deg), logical width is 1080 and height is 1920
+        assert_eq!(monitor_at(&m, 500.0, 1500.0), Some(2));
+        assert_eq!(monitor_at(&m, 1500.0, 500.0), None);
     }
 
     #[test]
@@ -207,6 +224,14 @@ struct Track {
     /// Just released by the room: settle only on the exact kept slot. The room's close can leave a window a pixel or
     /// two off (inside SETTLE_PX), which the ordinary settle tolerance would keep for good.
     exact: bool,
+    /// Initial drag anchor before operator movement/resize.
+    anchor: Option<Rect>,
+    /// Magnetic rail (false=left/top, true=right/bottom) when drag started or last settled.
+    anchor_rail: Option<bool>,
+    /// Smoothed operator drag/flick velocity (vx, vy) in px/sec.
+    velocity: (f64, f64),
+    /// Timestamp of the last observation when moving.
+    last_observed_at: Option<Instant>,
 }
 
 /// Room ownership of one PiP. While the room is active, and after it closed until the window has been geometrically
@@ -228,7 +253,28 @@ const FRAME_GRACE: Duration = Duration::from_millis(1000);
 
 impl Track {
     fn new(cur: Rect, now: Instant) -> Self {
-        Track { last: cur, natural: (cur.w, cur.h), expected: Vec::new(), dispatched_at: None, stable_since: now, settled: false, anim: None, room: None, exact: false }
+        Track {
+            last: cur,
+            natural: (cur.w, cur.h),
+            expected: Vec::new(),
+            dispatched_at: None,
+            stable_since: now,
+            settled: false,
+            anim: None,
+            room: None,
+            exact: false,
+            anchor: None,
+            anchor_rail: None,
+            velocity: (0.0, 0.0),
+            last_observed_at: Some(now),
+        }
+    }
+    fn motion(&self) -> gravity::Motion {
+        gravity::Motion {
+            anchor: self.anchor,
+            anchor_rail: self.anchor_rail,
+            velocity: self.velocity,
+        }
     }
     /// The room took over placement this tick. The kept slot is the last flat geometry; re-entering the room before a
     /// release finished keeps the original slot (the window is still where the room left it).
@@ -297,6 +343,23 @@ impl Track {
             }
         } else if !self.ours(cur, now) && !close(self.last, cur) {
             // moved/resized by the operator (or the client): wait until they let go, then re-plan
+            if self.anchor.is_none() {
+                self.anchor = Some(self.last);
+            }
+            if let Some(prev_t) = self.last_observed_at {
+                let dt = now.duration_since(prev_t).as_secs_f64();
+                if dt > 1e-4 {
+                    let raw_vx = (cur.cx() - self.last.cx()) / dt;
+                    let raw_vy = (cur.cy() - self.last.cy()) / dt;
+                    let alpha = 0.6;
+                    self.velocity = (
+                        self.velocity.0 * (1.0 - alpha) + raw_vx * alpha,
+                        self.velocity.1 * (1.0 - alpha) + raw_vy * alpha,
+                    );
+                }
+            }
+            self.last_observed_at = Some(now);
+
             if (cur.w - self.last.w).abs() >= gravity::SETTLE_PX || (cur.h - self.last.h).abs() >= gravity::SETTLE_PX {
                 trace(&format!("natural size {:?} -> {:?} (resize not ours; last {:?}, newest frame {:?})", self.natural, (cur.w, cur.h), self.last, self.expected.last()));
                 self.natural = (cur.w, cur.h);
@@ -325,6 +388,8 @@ impl Track {
             if close(tgt, cur) && !(self.exact && cur != tgt) {
                 self.settled = true;
                 self.exact = false;
+                self.anchor = None;
+                self.velocity = (0.0, 0.0);
             } else {
                 self.anim = Some(([cur.x, cur.y, cur.w, cur.h], [0.0; 4], tgt));
             }
@@ -372,7 +437,7 @@ fn keep_above(ipc:&Ipc,clients:&Value,unpinned:&mut HashMap<String,Instant>,now:
 /// Compositor events wake the loop at once (adoption on map, stay-on-top on focus/pin/fullscreen changes); polling
 /// remains the fallback when the event socket is unavailable. Title changes are deliberately not wake events: a client can
 /// retitle every frame, and no adoption rule needs a late title (Discord matches its initial title, Spotify its sibling).
-const WAKE_EVENTS:&[&str]=&["openwindow","closewindow","activewindowv2","fullscreen","changefloatingmode","pin","movewindowv2","workspacev2","focusedmonv2","monitoraddedv2","monitorremovedv2","openlayer","closelayer","activespecialv2"];
+const WAKE_EVENTS:&[&str]=&["openwindow","closewindow","activewindowv2","fullscreen","changefloatingmode","pin","movewindow","movewindowv2","resizewindow","resizewindowv2","workspacev2","focusedmonv2","monitoraddedv2","monitorremovedv2","openlayer","closelayer","activespecialv2"];
 fn spawn_events(tx:mpsc::SyncSender<()>) {
  let Ok(rt)=std::env::var("XDG_RUNTIME_DIR") else {return};let Ok(sig)=std::env::var("HYPRLAND_INSTANCE_SIGNATURE") else {return};
  let path=format!("{rt}/hypr/{sig}/.socket2.sock");
@@ -414,7 +479,11 @@ fn apply(ipc:&Ipc,cfg:&Cfg,w:&Value,mode:&str)->Result<(),String> {
  let mon=mons.as_array().and_then(|v|v.iter().find(|m|m["id"].as_i64()==Some(mid))).ok_or("window monitor removed")?;
  let scale=mon["scale"].as_f64().unwrap_or(1.0).max(0.1);
  let reserved=mon.get("reserved").cloned().unwrap_or_default();
- let area=Rect::new(mon["x"].as_f64().unwrap_or(0.0)+num(&reserved,0),mon["y"].as_f64().unwrap_or(0.0)+num(&reserved,1),mon["width"].as_f64().ok_or("monitor width missing")?/scale-num(&reserved,0)-num(&reserved,2),mon["height"].as_f64().ok_or("monitor height missing")?/scale-num(&reserved,1)-num(&reserved,3));
+ let tf=mon.get("transform").and_then(|t|t.as_i64()).unwrap_or(0);
+ let raw_w=mon["width"].as_f64().ok_or("monitor width missing")?;
+ let raw_h=mon["height"].as_f64().ok_or("monitor height missing")?;
+ let (mw,mh)=if tf%2==1 {(raw_h/scale, raw_w/scale)} else {(raw_w/scale, raw_h/scale)};
+ let area=Rect::new(mon["x"].as_f64().unwrap_or(0.0)+num(&reserved,0),mon["y"].as_f64().unwrap_or(0.0)+num(&reserved,1),mw-num(&reserved,0)-num(&reserved,2),mh-num(&reserved,1)-num(&reserved,3));
  let p=rail_params(cfg,area);
  let width=if p.snap_width>0.0 {p.snap_width}else{area.w*cfg.initial_width_frac};
  if let Some(lua)=window::plan(w,mode,width)? {
@@ -511,7 +580,11 @@ fn main() {
         {
             let heights: HashMap<String, f64> = mons.as_array().into_iter().flatten().filter_map(|m| {
                 let sc = m.get("scale").and_then(|s| s.as_f64()).unwrap_or(1.0).max(0.1);
-                Some((m.get("name")?.as_str()?.to_string(), m.get("height")?.as_f64()? / sc))
+                let tf = m.get("transform").and_then(|t| t.as_i64()).unwrap_or(0);
+                let raw_w = m.get("width")?.as_f64()?;
+                let raw_h = m.get("height")?.as_f64()?;
+                let eff_h = if tf % 2 == 1 { raw_w / sc } else { raw_h / sc };
+                Some((m.get("name")?.as_str()?.to_string(), eff_h))
             }).collect();
             let mut samples = Vec::new();
             if let Some(Value::Object(m)) = ipc.json("layers") {
@@ -531,6 +604,12 @@ fn main() {
         }
         // candidate PiPs, grouped by monitor id; `frozen` marks a maximized/fullscreen PiP whose pre-fullscreen slot
         // stays reserved (planned around, never moved) so its neighbours hold still and it restores into it.
+        let active_ws_by_mon: HashMap<i64, i64> = mons.as_array().into_iter().flatten().filter_map(|m| {
+            let mid = m.get("id").and_then(|i| i.as_i64())?;
+            let ws_id = m.get("activeWorkspace").and_then(|w| w.get("id")).and_then(|i| i.as_i64())?;
+            Some((mid, ws_id))
+        }).collect();
+        let mut non_pips_by_mon: HashMap<i64, Vec<Rect>> = HashMap::new();
         let mut by_mon: HashMap<i64, Vec<(String, Rect, bool)>> = HashMap::new();
         for c in clients.as_array().into_iter().flatten() {
             let s = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("");
@@ -539,7 +618,20 @@ fn main() {
             if !b("mapped") || b("hidden") || ws.starts_with("special") {
                 continue;
             }
-            if window::has_tag(c,window::OPT_OUT) || !window::has_tag(c,window::MANAGED) {continue;}
+            if window::has_tag(c, window::OPT_OUT) || !window::has_tag(c, window::MANAGED) {
+                let mid = c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(0);
+                let ws_id = c.get("workspace").and_then(|w| w.get("id")).and_then(|i| i.as_i64()).unwrap_or(0);
+                let fs = c.get("fullscreen").and_then(|f| f.as_i64()).unwrap_or(0);
+                if active_ws_by_mon.get(&mid) == Some(&ws_id) && fs == 0 {
+                    let at = c.get("at").cloned().unwrap_or_default();
+                    let sz = c.get("size").cloned().unwrap_or_default();
+                    let rect = Rect::new(num(&at, 0), num(&at, 1), num(&sz, 0), num(&sz, 1));
+                    if rect.w > 0.0 && rect.h > 0.0 {
+                        non_pips_by_mon.entry(mid).or_default().push(rect);
+                    }
+                }
+                continue;
+            }
             if c.get("fullscreen").and_then(|f| f.as_i64()).unwrap_or(0) != 0 {
                 if let Some(t) = tracks.get(s("address")) {
                     let kept = t.kept();
@@ -580,8 +672,11 @@ fn main() {
             let Some(m) = mons.as_array().and_then(|a| a.iter().find(|m| m.get("id").and_then(|i| i.as_i64()) == Some(mid))) else { continue };
             let sc = m.get("scale").and_then(|s| s.as_f64()).unwrap_or(1.0).max(0.1);
             let res = m.get("reserved").cloned().unwrap_or_default();
+            let tf = m.get("transform").and_then(|t| t.as_i64()).unwrap_or(0);
+            let raw_w = m.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let raw_h = m.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let (mw, mh) = if tf % 2 == 1 { (raw_h / sc, raw_w / sc) } else { (raw_w / sc, raw_h / sc) };
             let (mx, my) = (m.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0), m.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0));
-            let (mw, mh) = (m.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0) / sc, m.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0) / sc);
             let fresh = matrix::Bounds {
                 output: Rect::new(mx, my, mw, mh),
                 area: Rect::new(mx + num(&res, 0), my + num(&res, 1), mw - num(&res, 0) - num(&res, 2), mh - num(&res, 1) - num(&res, 3)),
@@ -596,21 +691,32 @@ fn main() {
             let (mon, mon_huds) = (bounds.area, bounds.huds);
             // Current positions with natural sizes (a PiP seen for the first time: its current size).
             let rects: Vec<Rect> = pips.iter().map(|(a, r, frozen)| match tracks.get(a) { Some(t) if !*frozen => t.plan_input(*r), Some(t) => { let k = t.kept(); Rect::new(k.x, k.y, t.natural.0, t.natural.1) }, None => *r }).collect();
-            let targets = plan(&rects, mon, &mon_huds, &rail_params(&cfg,mon));
+            let motions: Vec<gravity::Motion> = pips.iter().map(|(a, _, _)| tracks.get(a).map(|t| t.motion()).unwrap_or_default()).collect();
+            let others = non_pips_by_mon.get(&mid).map(|v| v.as_slice()).unwrap_or(&[]);
+            let targets = gravity::plan_with_motion(&rects, &motions, mon, &mon_huds, others, &rail_params(&cfg, mon));
             for ((addr, cur, frozen), tgt) in pips.iter().zip(targets) {
                 if *frozen {continue;}
                 let t = tracks.entry(addr.clone()).or_insert_with(|| Track::new(*cur, now));
                 let natural = t.natural;
                 t.observe(*cur, now, Duration::from_millis(cfg.settle_ms as u64));
+                if t.anchor_rail.is_none() {
+                    t.anchor_rail = Some(if mon.h > mon.w { cur.cy() >= mon.cy() } else { cur.cx() >= mon.cx() });
+                }
                 if t.natural != natural {trace(&format!("  ^ {addr} fullscreen={} anim={}", clients.as_array().into_iter().flatten().find(|c| c["address"].as_str() == Some(addr)).map_or(-1, |c| c["fullscreen"].as_i64().unwrap_or(-1)), t.anim.is_some()));}
                 // Leaving the room: hold still (never dispatch) until the room's close has finished moving this window.
                 if t.held() {continue;}
                 t.step_toward(*cur, tgt, now, Duration::from_millis(cfg.settle_ms as u64));
+                if t.settled {
+                    t.anchor_rail = Some(if mon.h > mon.w { tgt.cy() >= mon.cy() } else { tgt.cx() >= mon.cx() });
+                }
                 if let Some((p, v, tg)) = t.anim.as_mut() {
-                    let goal = [tg.x, tg.y, tg.w, tg.h];
+                    let goal_tgt = *tg;
+                    let goal = [goal_tgt.x, goal_tgt.y, goal_tgt.w, goal_tgt.h];
                     let mut done = true;
+                    let m_factor = gravity::mass_factor(p[2], p[3], mon.w, mon.h);
+                    let stiff = gravity::mass_stiffness(cfg.stiffness, m_factor);
                     for i in 0..4 {
-                        done &= spring_step(&mut p[i], &mut v[i], goal[i], cfg.stiffness, cfg.damping, dt);
+                        done &= spring_step(&mut p[i], &mut v[i], goal[i], stiff, cfg.damping, dt);
                     }
                     let r = Rect::new(p[0].round(), p[1].round(), p[2].round().max(1.0), p[3].round().max(1.0));
                     let Some(native) = clients.as_array().and_then(|v|v.iter().find(|w|w["address"].as_str()==Some(addr))) else {continue};
@@ -625,6 +731,9 @@ fn main() {
                         t.anim = None;
                         t.settled = true;
                         t.exact = false;
+                        t.anchor = None;
+                        t.velocity = (0.0, 0.0);
+                        t.anchor_rail = Some(if mon.h > mon.w { goal_tgt.cy() >= mon.cy() } else { goal_tgt.cx() >= mon.cx() });
                     }
                 }
             }
@@ -790,6 +899,24 @@ mod track_tests {
   assert_eq!(t.natural, (272.0, 128.0));
   assert!(t.settled);
  }
+ #[test] fn track_records_anchor_and_smooths_drag_velocity() {
+  let t0 = Instant::now();
+  let r0 = Rect::new(10.0, 10.0, 200.0, 100.0);
+  let mut t = Track::new(r0, t0);
+  t.settled = true;
+  assert_eq!(t.motion().anchor, None);
+  assert_eq!(t.motion().velocity, (0.0, 0.0));
+  let t1 = t0 + Duration::from_millis(50);
+  let r1 = Rect::new(60.0, 10.0, 200.0, 100.0);
+  t.observe(r1, t1, SETTLE);
+  assert_eq!(t.anchor, Some(r0), "anchor captures initial drag position");
+  assert!(t.velocity.0 > 0.0, "velocity is positive in x direction");
+  let t2 = t1 + Duration::from_millis(50);
+  let r2 = Rect::new(120.0, 10.0, 200.0, 100.0);
+  t.observe(r2, t2, SETTLE);
+  assert_eq!(t.anchor, Some(r0), "anchor is preserved across drag steps");
+  assert!(t.motion().velocity.0 > 500.0);
+ }
 }
 
 #[cfg(test)]
@@ -814,7 +941,7 @@ mod pacing_tests {
   assert!(unpaced>3*(100/16+2),"unpaced loop should tick per event: {unpaced}");
  }
  #[test] fn map_and_fullscreen_wake_but_per_frame_title_updates_do_not() {
-  for e in ["openwindow","closewindow","fullscreen","pin","changefloatingmode"] {assert!(WAKE_EVENTS.contains(&e),"{e}");}
+  for e in ["openwindow","closewindow","fullscreen","pin","changefloatingmode","resizewindow","resizewindowv2","movewindow","movewindowv2"] {assert!(WAKE_EVENTS.contains(&e),"{e}");}
   for e in ["windowtitle","windowtitlev2","mousemove"] {assert!(!WAKE_EVENTS.contains(&e),"{e} must not wake the loop");}
  }
  #[test] fn without_events_the_poll_timeout_still_ticks() {
