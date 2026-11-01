@@ -1,7 +1,7 @@
 #!/bin/sh
 # AI-hint: Dedicated desktop application launcher. Decouples GUI apps from caller stdio pipes, strips MIOS_* environment variables to prevent bubblewrap argument overflow, detaches session, and encapsulates execution in a transient systemd user scope while propagating dispatch status.
 # AI-related: usr/share/mios/quickshell/AppLaunch.qml, usr/share/mios/mios.toml [desktop.launch], usr/libexec/mios/mios-flatpak-run
-# AI-doc: usr/share/doc/mios/manual/desktop.md
+# AI-doc: usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md
 
 set -eu
 

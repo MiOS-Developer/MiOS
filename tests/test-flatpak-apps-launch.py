@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided automated test suite verifying desktop application launch reliability, EPIPE/SIGPIPE immunity across pipe closures, 10,000 stdout/stderr writes, and mios-shell restart resilience.
 # AI-related: usr/libexec/mios/mios-desktop-launch, usr/share/mios/quickshell/AppLaunch.qml, usr/share/mios/mios.toml, usr/libexec/mios/mios-flatpak-run
-# AI-doc: usr/share/doc/mios/manual/desktop.md
+# AI-doc: usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md
 # AI-functions: FlatpakAppsLaunchSuite
 
 from __future__ import annotations

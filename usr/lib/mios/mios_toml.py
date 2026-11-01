@@ -802,7 +802,7 @@ def process_val(dotted, v, stack_offset=0):
         # of check_resolver_differential_parity, sitting exactly at its ceiling
         # of 12 with no headroom (task_3361). TOML wins because it is a real
         # format and because Rust is the destination tier.
-                #
+        #
         # A boolean member renders as TOML spells it (`true`), never Python's
         # `True`: mios-resolver joined `["ai", 7, true]` as `ai,7,true` while this
         # twin printed `ai,7,True` (Law 13; tests/test-resolver-dropin-parity.py).

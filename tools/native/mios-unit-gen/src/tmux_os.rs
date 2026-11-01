@@ -914,7 +914,16 @@ pub(crate) fn render_tmux_keys(
             // use them.
             // A right-click menu opens with its top-left corner at the pointer (stock tmux -x M -y M): releasing
             // the button over an item would choose it, so a quick click or tap must land on the border instead.
-            let (x, y) = if mouse { ("M", "M") } else { (MENU_X, MENU_Y) };
+            // tmux 3.7c never moves a menu back on screen: one that does not fit below the pointer is silently not
+            // shown (probed: a 19-row menu from a click on row 12 of a 30-row client). Below the pointer when it
+            // fits (#{popup_mouse_top} = -y M), else above it with its bottom border over the pointer row
+            // (#{popup_mouse_y}), so the release still lands outside the items.
+            let mouse_y = format!(
+                "#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{0}}},#{{client_height}}}},#{{popup_mouse_top}},#{{?#{{e|>=:#{{mouse_y}},{0}}},#{{popup_mouse_y}},#{{popup_centre_y}}}}}}",
+                menu.rows
+            );
+
+            let (x, y) = if mouse { ("M", mouse_y.as_str()) } else { (MENU_X, MENU_Y) };
             let title = format!("#[align=centre]{}", menu.title);
             let mut args: Vec<String> = vec!["display-menu".into(), "-T".into(), title, "-x".into(), x.into(), "-y".into(), y.into()];
             if mouse {
@@ -1003,8 +1012,8 @@ pub(crate) fn render_tmux_keys(
         }
     }
 
-    // ---- root table: only the right-click menus and the agent accept chord ----
-    out += "unbind-key -T root MouseDown3Pane\nunbind-key -T root MouseDown3Status\n";
+    // ---- root table: launcher, right-click menus, M-Space, and the agent accept chord ----
+    out += "unbind-key -T root MouseDown3Pane\nunbind-key -T root MouseDown3Status\nunbind-key -T root MouseDown1StatusLeft\n";
     let mouse_opener = |id: &str| -> Result<String, UnitGenError> {
         let rows = menu_rows.get(id).ok_or_else(|| gm(format!("menu {id:?} is not declared in [[keybindings.tmux.menus]]")))?;
         Ok(menu_opener_for(id, *rows, &too_small, "-mouse"))
@@ -1021,6 +1030,21 @@ pub(crate) fn render_tmux_keys(
             "bind-key -N {} -T root MouseDown3Status {}\n",
             quote(&req_text(tmux, sec, "menu_note")?),
             quote(&mouse_opener("root")?)
+        );
+        let status_left_cmd = if launcher_on { launcher_opener("") } else { quote(&mouse_opener("root")?) };
+        out += &format!(
+            "bind-key -N {} -T root MouseDown1StatusLeft {}\n",
+            quote(&req_text(tmux, sec, "menu_note")?),
+            status_left_cmd
+        );
+    }
+    if linux {
+        out += "unbind-key -T root M-Space\n";
+        let m_space_cmd = if launcher_on { launcher_opener("") } else { quote(&opener("root")?) };
+        out += &format!(
+            "bind-key -N {} -n M-Space {}\n",
+            quote(&req_text(tmux, sec, "menu_note")?),
+            m_space_cmd
         );
     }
     // One accept chord for every agent CLI (mobile-safe, no Ctrl-K): tmux receives it (extended keys) and
@@ -1271,7 +1295,11 @@ mod tests {
         assert_eq!(aliases.len(), 2 * ssot()["keybindings"]["tmux"]["menus"].as_array().unwrap().len() + 2 * MOUSE_MENUS.len() + 1);
         // Right-click variants stay open on release (-O) and carry no -C; key variants start on an item.
         let mouse = aliases.iter().find(|l| l.contains("\"mios-menu-pane-mouse=")).unwrap();
-        assert!(mouse.contains(" -x M -y M -O ") && !mouse.contains(" -C "), "{mouse}");
+        assert!(mouse.contains(" -x M -y ") && mouse.contains(" -O ") && !mouse.contains(" -C "), "{mouse}");
+        // Below the pointer when the menu fits there, else above it (tmux 3.7c never moves a menu back on screen).
+        let rows = launcher_menus(&ssot(), "linux").unwrap().into_iter().find(|m| m.id == "pane").unwrap().rows;
+        assert!(mouse.contains(&format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{rows}}},#{{client_height}}}},#{{popup_mouse_top}},#{{?#{{e|>=:#{{mouse_y}},{rows}}},#{{popup_mouse_y}},#{{popup_centre_y}}}}}}")), "{mouse}");
+
         assert!(aliases.iter().any(|l| l.contains("\"mios-menu-root-vt-mouse=") && l.contains("-b single")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Pane") && l.contains("'mios-menu-pane-mouse'")));
         assert!(conf.lines().any(|l| l.contains("-T root MouseDown3Status") && l.contains("'mios-menu-root-vt-mouse'")));
@@ -1363,6 +1391,8 @@ mod tests {
         assert!(space.contains("TMUX_PANE=#{pane_id} /usr/bin/miosd launcher open --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}\""), "{space}");
         let e = conf.lines().find(|l| l.contains("\" e run-shell")).unwrap();
         assert!(e.ends_with("--start apps\""), "{e}");
+        assert!(conf.lines().any(|l| l.contains("-T root MouseDown1StatusLeft") && l.contains("miosd launcher open")));
+        assert!(conf.lines().any(|l| l.contains("-n M-Space") && l.contains("miosd launcher open")));
         // Negative control: with the launcher off both keys open the generated menus, as before.
         let mut d = ssot();
         d["keybindings"]["tmux"]["launcher"]["enabled"] = false.into();
@@ -1370,6 +1400,8 @@ mod tests {
         assert!(!off.contains("miosd launcher open --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}\""), "no launcher binding");
         assert!(off.lines().any(|l| l.contains("\" Space if-shell -F '#{e|<:#{client_height},") && l.contains("'mios-menu-root'")));
         assert!(off.lines().any(|l| l.contains("--menu apps --client #{q:client_name}")));
+        assert!(!off.contains("MouseDown1StatusLeft run-shell"));
+        assert!(!off.contains("-n M-Space run-shell"));
         // Off Linux there is no launcher either.
         let mut w = ssot();
         for b in w["keybindings"]["tmux"]["bindings"].as_array_mut().unwrap() {

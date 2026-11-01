@@ -2,6 +2,20 @@
 [alias]
 xtask = "run --package xtask --"
 
+[build]
+target = "x86_64-unknown-linux-musl"
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-pie"]
+jobs = 2
+
+[env]
+TMPDIR = { value = "/var/tmp", force = true }
+CARGO_INCREMENTAL = { value = "0", force = true }
+
+[profile.dev]
+opt-level = 3
+debug = false
+incremental = false
+
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-gcc-ar"

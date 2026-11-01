@@ -197,7 +197,9 @@ QS.Scope {
     function launch(entry, iconRect) {
         if (!entry) return
         const outName = screen ? screen.name : ""
-        const rect = (Array.isArray(iconRect) && iconRect.length === 4) ? iconRect : dock.rectForEntry(entry)
+        const isBad = !Array.isArray(iconRect) || iconRect.length !== 4 || (iconRect[0] === 0 && iconRect[1] === 0 && iconRect[2] <= 48 && iconRect[3] <= 48)
+        const rect = isBad ? dock.rectForEntry(entry) : iconRect
+        DockLamp.recordLaunch(entry, outName, rect)
         AppLaunch.launch(entry, outName, rect)
         shellState.drawerOpen = false
     }
@@ -219,11 +221,11 @@ QS.Scope {
         next.osk[outputName] = !!on
         dockState = next
         stateFile.setText(JSON.stringify(next, null, 1) + "\n")
-        if (on && !steviaProc.running) steviaProc.running = true
-    }
-    Process {
-        id: steviaProc
-        command: ["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "true"]
+        if (on) {
+            oskUnfoldTimer.restart()
+        } else {
+            Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "false"])
+        }
     }
     FileView {
         id: stateFile
@@ -232,6 +234,14 @@ QS.Scope {
         printErrors: false
         preload: true
         onLoaded: { try { root.dockState = JSON.parse(text()) || ({}) } catch (e) { root.dockState = ({}) } }
+    }
+    Timer {
+        id: oskUnfoldTimer
+        interval: 350
+        repeat: false
+        onTriggered: {
+            Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "true"])
+        }
     }
     // The keyboard runs only while the dock is expanded with the toggle on, placed by `mios-gen dock osk` inside the
     // panel: the dock's width, osk height_px tall, its bottom edge on the dock bar. Collapsing the dock stops it.
@@ -244,6 +254,7 @@ QS.Scope {
                   "--bottom", String(Math.max(0, Math.round(((Glass.gap || 8) + (theme.dockHeight || 56)) * (dock.ui || 1))))]
             .concat(QS.Quickshell.env("MIOS_DOCK_OSK_PRIVATE_BUS") === "1" ? ["--private-bus"] : [])
             .concat(["--force-show"])   // the toggle is on: shown, not waiting for a text field
+        onStarted: oskUnfoldTimer.restart()
     }
     function openAppMenu(entry, item) {
         const pt = item.mapToItem(null, item.width / 2, 0)
@@ -432,21 +443,36 @@ QS.Scope {
         }
 
         function rectForEntry(entry) {
-            const g = dock.lampGeometry
-            if (entry && g && Array.isArray(g.icons)) {
-                const targetId = DockLamp.stripDesktop(entry.id || entry.appId || "")
+            const targetId = entry ? DockLamp.stripDesktop(entry.id || entry.appId || "") : ""
+            const entryId = entry ? String(entry.id || "") : ""
+            const outName = root.screen ? root.screen.name : ""
+
+            // Tier 1: Local dock.lampGeometry icons
+            if (g && Array.isArray(g.icons)) {
                 for (const ic of g.icons) {
-                    if (ic.app_id === targetId || ic.desktop_id === entry.id) return ic.rect
+                    if (ic.app_id === targetId || (entryId && ic.desktop_id === entryId)) return ic.rect
                 }
             }
-            if (g && Array.isArray(g.dock_rect) && g.dock_rect.length === 4) {
-                const dr = g.dock_rect
-                return [Math.round(dr[0] + (dr[2] - 48) / 2), Math.round(dr[1] + (dr[3] - 48) / 2), 48, 48]
+
+            // Tier 2: Authoritative singleton DockLamp.outputs for this screen
+            const pub = (DockLamp.outputs && outName) ? DockLamp.outputs[outName] : null
+            if (pub && Array.isArray(pub.icons)) {
+                for (const ic of pub.icons) {
+                    if (ic.app_id === targetId || (entryId && ic.desktop_id === entryId)) return ic.rect
+                }
             }
-            const scrW = root.screen ? root.screen.width : 1920
-            const scrH = root.screen ? root.screen.height : 1080
-            // NEVER top-left [0, 0, 48, 48]: bottom-center dock fallback coordinates
-            return [root.monX + Math.round((scrW - 48) / 2), Math.round(root.monY + scrH - 64), 48, 48]
+
+            // Tier 3: Dock container rect or minimized slot from local or singleton
+            if (g && Array.isArray(g.dock_rect) && g.dock_rect.length === 4) return g.dock_rect
+            if (pub && Array.isArray(pub.dock_rect) && pub.dock_rect.length === 4) return pub.dock_rect
+            if (g && Array.isArray(g.minimized_slot) && g.minimized_slot.length === 4) return g.minimized_slot
+            if (pub && Array.isArray(pub.minimized_slot) && pub.minimized_slot.length === 4) return pub.minimized_slot
+
+            // Tier 4: Screen bottom-center fallback (NEVER top-left [0, 0, 48, 48])
+            const sw = root.screen ? root.screen.width : 1920
+            const sh = root.screen ? root.screen.height : 1080
+            const dw = Math.min(sw, 512), dh = dock.theme ? dock.theme.dockHeight : 56
+            return [root.monX + Math.round((sw - dw) / 2), root.monY + sh - dh - 8, dw, dh]
         }
 
         function rectForAddress(address) {
@@ -458,7 +484,22 @@ QS.Scope {
                     if (m && m.address === a) return m.rect
                 }
             }
-            return g ? (g.minimized_slot || g.dock_rect || [0, 0, 48, 48]) : [0, 0, 48, 48]
+            const outName = root.screen ? root.screen.name : ""
+            const pub = (DockLamp.outputs && outName) ? DockLamp.outputs[outName] : null
+            if (pub && Array.isArray(pub.minimized)) {
+                for (let i = 0; i < pub.minimized.length; i++) {
+                    const m = pub.minimized[i]
+                    if (m && m.address === a) return m.rect
+                }
+            }
+            if (g && Array.isArray(g.minimized_slot) && g.minimized_slot.length === 4) return g.minimized_slot
+            if (pub && Array.isArray(pub.minimized_slot) && pub.minimized_slot.length === 4) return pub.minimized_slot
+            if (g && Array.isArray(g.dock_rect) && g.dock_rect.length === 4) return g.dock_rect
+            if (pub && Array.isArray(pub.dock_rect) && pub.dock_rect.length === 4) return pub.dock_rect
+            const sw = root.screen ? root.screen.width : 1920
+            const sh = root.screen ? root.screen.height : 1080
+            const dw = Math.min(sw, 512), dh = dock.theme ? dock.theme.dockHeight : 56
+            return [root.monX + Math.round((sw - dw) / 2), root.monY + sh - dh - 8, dw, dh]
         }
 
         onLampGeometryChanged: publishLampGeometry()

@@ -895,7 +895,42 @@ Singleton {
         const appId = stripDesktop(rawId)
         const desktopId = rawId.endsWith(".desktop") ? rawId : rawId + ".desktop"
         const classes = classesForEntry(entry, [])
-        const r = (Array.isArray(rect) && rect.length === 4) ? rect.map(Number) : [0, 0, 48, 48]
+        let r = (Array.isArray(rect) && rect.length === 4) ? rect.map(Number) : null
+        if (!r || (r[0] === 0 && r[1] === 0 && r[2] <= 48 && r[3] <= 48)) {
+            // Attempt recovery from known outputs
+            const out = (outputName && lamp.outputs) ? lamp.outputs[outputName] : null
+            if (out && Array.isArray(out.icons)) {
+                for (const ic of out.icons) {
+                    if (ic.app_id === appId || ic.desktop_id === desktopId) {
+                        r = ic.rect
+                        break
+                    }
+                }
+            }
+            if (!r && out && Array.isArray(out.dock_rect) && out.dock_rect.length === 4) {
+                r = out.dock_rect
+            }
+            // If still not found and lamp.outputs has entries, check other outputs
+            if (!r && lamp.outputs) {
+                for (const k in lamp.outputs) {
+                    const otherOut = lamp.outputs[k]
+                    if (otherOut && Array.isArray(otherOut.icons)) {
+                        for (const ic of otherOut.icons) {
+                            if (ic.app_id === appId || ic.desktop_id === desktopId) {
+                                r = ic.rect
+                                break
+                            }
+                        }
+                    }
+                    if (r) break
+                    if (otherOut && Array.isArray(otherOut.dock_rect) && otherOut.dock_rect.length === 4) {
+                        r = otherOut.dock_rect
+                        break
+                    }
+                }
+            }
+        }
+        if (!r) r = [0, 0, 48, 48]
         launchSeq++
         const item = {
             id: String(now) + "-" + String(launchSeq) + "-" + appId,

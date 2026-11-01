@@ -1,5 +1,5 @@
 // AI-hint: Native env-baseline projection (usr/share/mios/reference/env-baseline.txt): the MIOS_* environment a sealed login shell gets from userenv.sh over the vendor tiers of a tree, one escaped KEY=value per line, byte-sorted -- the Rust port of the former bash body of usr/libexec/mios/mios-env-snapshot.
-// AI-related: usr/libexec/mios/mios-env-snapshot, usr/lib/mios/userenv.sh, tools/native/mios-resolver/src/emit.rs, usr/share/mios/mios.toml, automation/98-drift-checks.sh, tests/golden/README.md
+// AI-related: usr/libexec/mios/mios-env-snapshot, usr/lib/mios/userenv.sh, tools/native/mios-resolver/src/emit.rs (emit_shell::shell_exports), usr/share/mios/mios.toml [generation.sync], automation/98-drift-checks.sh (check_resolved_env_lossless), tests/golden/README.md
 // AI-functions: snapshot, render, run
 //
 // What the bash adapter computed, restated: `env -i` with a fixed, sealed
@@ -14,8 +14,9 @@
 // MIOS_HOST_TOML unset, so the resolver fell back to <root>/etc/mios/mios.toml
 // and <root>/etc/mios/mios.d -- which on a deployed host, where the root is
 // `/`, is the operator's live admin tier. A committed baseline must depend on
-// the tree alone; tests/golden/README.md (env-snapshot) plants a host fragment
-// to keep that difference visible.
+// the tree alone; tests/test-env-snapshot-native-parity.py plants a host
+// fragment to keep that difference visible, and replays the frozen bash body
+// against this port for byte parity everywhere else.
 
 use std::collections::BTreeMap;
 use std::fs;

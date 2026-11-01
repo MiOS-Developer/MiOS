@@ -166,7 +166,12 @@ class ImportExport(Base):
         r = self.run_cli('export', str(out))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o600)
-        self.assertEqual(set(tomllib.loads(out.read_text())), {'keybindings'})
+        exported = tomllib.loads(out.read_text())
+        # the binding map is [keybindings] plus the compositor key tables the editor may move rows in
+        self.assertEqual(set(exported), {'keybindings', 'desktop'})
+        self.assertLessEqual(set(exported['desktop']), {'hyprland', 'screenshot', 'shaderglass'})
+        for table in exported['desktop'].values():
+            self.assertEqual(set(table), {'bindings'}, 'only the bindings arrays of the desktop tables are exported')
         r = self.run_cli('export', str(out))
         self.assertNotEqual(r.returncode, 0, 'export must refuse an existing file')
 
@@ -175,7 +180,8 @@ class ImportExport(Base):
         bad.write_text('[identity]\nuser_password = "x"\n')
         r = self.run_cli('import', str(bad), '--apply')
         self.assertEqual(r.returncode, 2)
-        self.assertIn('outside [keybindings]', r.stderr)
+        self.assertIn('import may carry only the editable binding map', r.stderr)
+        self.assertIn('not identity', r.stderr)
         bad.write_text('[keybindings.global]\nbypass_mod = "ALT"\n')
         self.assertEqual(self.run_cli('import', str(bad)).returncode, 2)
         good = Path(self.tmp.name) / 'good.toml'
@@ -256,7 +262,17 @@ class Tui(Base):
     def setUp(self):
         super().setUp()
         self.sock = f'mios-controls-test-{os.getpid()}'
-        self.tmux_env = dict(self.env, TMUX_TMPDIR=self.tmp.name, TERM='xterm-256color')
+        # a host-tier fragment points the pad thread at no real controller: a capture grabs the pads it reads, and
+        # the operator's controllers are not this test's to grab
+        hostd = Path(self.tmp.name) / 'host.d'
+        hostd.mkdir()
+        for frag in sorted(Path('/etc/mios/mios.d').glob('*.toml')):
+            try:
+                (hostd / frag.name).write_text(frag.read_text())
+            except OSError:
+                pass
+        (hostd / '99-pads.toml').write_text('[desktop.controls]\npad_names = ["mios-input-fixture-no-such-pad"]\n')
+        self.tmux_env = dict(self.env, TMUX_TMPDIR=self.tmp.name, TERM='xterm-256color', MIOS_HOST_TOML_D=str(hostd))
         self.tmux_env.pop('TMUX', None)
 
     def tmux(self, *a):
@@ -281,15 +297,13 @@ class Tui(Base):
         r = self.tmux('new-session', '-d', '-s', 'c', '-x', '170', '-y', '45', cmd)
         self.assertEqual(r.returncode, 0, r.stderr)
         s = self.screen('MiOS Controls')
-        for part in ['Peripherals', 'Keyboard', 'Bindings', 'app-drawer', '? help']:
+        for part in ['1 Keyboard', '2 Mouse', '3 Controller', '4 Bindings', '5 Devices', 'Esc', 'Space', '? help']:
             self.assertIn(part, s)
         self.screen('valid:', timeout=60)
         self.tmux('send-keys', '-t', 'c', ']')
         self.screen('context [desktop-2d]')
-        self.tmux('send-keys', '-t', 'c', 'Tab')
-        self.tmux('send-keys', '-t', 'c', 'Down')
-        self.tmux('send-keys', '-t', 'c', 'Enter')
-        self.screen('Controller')
+        self.tmux('send-keys', '-t', 'c', '3')
+        self.screen('Controller: ')
         self.tmux('send-keys', '-t', 'c', '?')
         self.screen('TAKING CONTROL')
         self.tmux('send-keys', '-t', 'c', 'x')
@@ -297,6 +311,199 @@ class Tui(Base):
         self.screen('EXITED:0')
         self.assertFalse(self.user.exists(), 'browsing writes nothing')
 
+    def test_select_key_capture_rebind_undo_and_apply(self):
+        """Keyboard view: move to a key, list its uses, capture-to-bind, rebind a Guide button, undo and apply."""
+        cmd = f'{self.bin} --root {ROOT}; echo EXITED:$?; sleep 30'
+        self.assertEqual(self.tmux('new-session', '-d', '-s', 'c', '-x', '170', '-y', '45', cmd).returncode, 0)
+        self.screen('valid:', timeout=60)
+        # capture-to-bind with a terminal key: c, then press x -> the drawing selects key x and lists its uses
+        self.tmux('send-keys', '-t', 'c', 'c')
+        self.screen('CAPTURE')
+        self.tmux('send-keys', '-t', 'c', 'x')
+        self.screen('key x (')
+        # search jumps to the Guide-layer use on the controller drawing; rebind it by moving the cursor (a swap),
+        # then undo, redo and undo again
+        self.tmux('send-keys', '-t', 'c', '/')
+        self.tmux('send-keys', '-t', 'c', '-l', 'launch-browser')
+        self.screen('Search "launch-browser": 1')
+        self.tmux('send-keys', '-t', 'c', 'Enter')
+        self.tmux('send-keys', '-t', 'c', 'Enter')
+        self.screen('Guide + BTN_NORTH on the Controller drawing')
+        self.tmux('send-keys', '-t', 'c', 'r')
+        self.screen('REBIND Guide + BTN_NORTH')
+        self.tmux('send-keys', '-t', 'c', 'Down')
+        self.tmux('send-keys', '-t', 'c', 'Enter')
+        self.screen('Guide + BTN_NORTH <-> Guide + BTN_SOUTH (swapped)', timeout=60)
+        self.screen('DRAFT (1 edit(s))')
+        self.tmux('send-keys', '-t', 'c', 'u')
+        self.screen('| saved |')
+        self.tmux('send-keys', '-t', 'c', 'U')
+        self.screen('DRAFT (1 edit(s))')
+        self.tmux('send-keys', '-t', 'c', 'u')
+        self.screen('| saved |')
+        self.tmux('send-keys', '-t', 'c', 'q')
+        self.screen('EXITED:0')
+        self.assertFalse(self.user.exists(), 'nothing applied')
+
+
+class DeviceViews(Base):
+    """The drawings and the read-only verbs: layout, uses, search, conflicts, devices, profile. The pre-fix editor
+    (MIOS_CONTROLS_OLD, e.g. the installed one) has none of these verbs: the negative control."""
+
+    VIEWS = ('keyboard', 'mouse', 'controller', 'bindings', 'devices')
+    BOX = set(chr(c) for c in range(0x2500, 0x2580))
+
+    def layout(self, view, *extra, term='xterm-256color', w=160, h=45):
+        env = dict(self.env, TERM=term)
+        return subprocess.run([str(self.bin), '--root', str(ROOT), 'layout', view, '--width', str(w), '--height', str(h), *extra],
+                              capture_output=True, text=True, timeout=60, env=env)
+
+    def test_every_view_draws_at_desktop_pip_and_console_sizes(self):
+        for view in self.VIEWS:
+            for w, h in ((160, 45), (100, 30), (80, 25), (60, 20)):
+                r = self.layout(view, w=w, h=h)
+                self.assertEqual(r.returncode, 0, f'{view} {w}x{h}: {r.stderr}')
+                lines = r.stdout.rstrip('\n').split('\n')
+                self.assertTrue(all(len(l) <= w for l in lines), f'{view} {w}x{h} overflows')
+                self.assertIn('MiOS Controls', r.stdout)
+
+    def test_keyboard_drawing_has_every_row_and_marks_the_selection(self):
+        r = self.layout('keyboard', '--select', 'key:c', '--layer', 'SUPER')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for cap in ('Esc', 'F12', 'Bksp', 'Tab', 'Caps', 'Enter', 'Shift', 'Ctrl', 'Super', 'Space', 'PgUp'):
+            self.assertIn(cap, r.stdout)
+        self.assertIn('key c (', r.stdout, 'the selected key lists its uses')
+        self.assertIn('hypr:killactive', r.stdout)
+
+    def test_mouse_drawing_has_buttons_wheel_and_side_buttons(self):
+        r = self.layout('mouse', w=120, h=40)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for part in ('Left', 'Right', 'Mid', 'Side', 'Extra', 'Fwd', 'Back'):
+            self.assertIn(part, r.stdout)
+
+    def test_controller_families_have_their_own_glyphs_and_layout(self):
+        xbox = self.layout('controller', '--family', 'xbox', '--glyphs', 'unicode').stdout
+        ps = self.layout('controller', '--family', 'playstation', '--glyphs', 'unicode').stdout
+        gen = self.layout('controller', '--family', 'generic', '--glyphs', 'unicode').stdout
+        for part in ('LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'Xbox', 'LS', 'RS'):
+            self.assertIn(part, xbox)
+        for part in ('\u2715', '\u25cb', '\u25a1', '\u25b3', 'L1', 'R2', 'Options', 'PS'):
+            self.assertIn(part, ps)
+        self.assertIn('Guide', gen)
+        self.assertNotEqual(xbox, ps)
+        vt = self.layout('controller', '--family', 'playstation', term='linux').stdout
+        self.assertNotIn('\u2715', vt, 'the VT font has no PlayStation shapes')
+        self.assertIn('Tri', vt)
+
+    def test_vt_console_output_is_ascii_plus_single_box_lines(self):
+        for view in self.VIEWS:
+            r = self.layout(view, term='linux', w=100, h=40)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            odd = {c for c in r.stdout if ord(c) > 127} - self.BOX
+            self.assertEqual(odd, set(), f'{view} on TERM=linux draws glyphs the VT font lacks')
+            self.assertFalse({'\u256d', '\u2550', '\u2551'} & set(r.stdout), 'no rounded or double lines on the VT')
+        r = self.layout('keyboard', '--glyphs', 'ascii')
+        self.assertEqual({c for c in r.stdout if ord(c) > 127}, set(), 'glyphs = ascii is pure ASCII')
+
+    def test_uses_lists_every_layer_for_an_input(self):
+        r = self.run_cli('uses', 'pad:BTN_EAST', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        uses = json.loads(r.stdout)
+        self.assertEqual({u['source'] for u in uses}, {'guide', 'fixed', 'room'}, uses)
+        self.assertIn('hypr:hypr3d:cancel', [u['action'] for u in uses if u['source'] == 'room'])
+        r = self.run_cli('uses', 'key:x')
+        self.assertIn('tmux-os', r.stdout, 'the tmux-os prefix layer is one of the uses')
+        r = self.run_cli('uses', 'key:return')
+        self.assertIn('SUPER+Return', r.stdout)
+        r = self.run_cli('uses', 'bogus:thing')
+        self.assertNotEqual(r.returncode, 0, 'an unknown input is an error, not an empty list')
+
+    def test_search_finds_actions_and_chords(self):
+        r = self.run_cli('search', 'screenshot', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        found = json.loads(r.stdout)
+        self.assertTrue(any('screenshot' in (u['action'] + u['label'] + u['note']).lower() or 'shot' in u['action'] for u in found))
+        r = self.run_cli('search', 'no-such-action-anywhere', '--json')
+        self.assertEqual(json.loads(r.stdout), [])
+
+    def test_conflicts_are_found_and_highlighted(self):
+        r = self.run_cli('conflicts')
+        self.assertEqual(r.returncode, 0, 'the shipped map has no conflicts\n' + r.stdout)
+        self.write_user('[desktop.screenshot]\nbindings = [ { key = "SUPER + C", args = "region", label = "Shot" } ]\n')
+        r = self.run_cli('conflicts', '--json')
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        hit = [u for u in json.loads(r.stdout) if u['conflict']]
+        self.assertTrue(any(u['input'] == 'key:c' for u in hit), hit)
+        r = self.layout('keyboard', '--layer', 'SUPER', '--select', 'key:c')
+        self.assertIn('!desktop', r.stdout.replace('\u2502', ''), 'conflicting uses are flagged in the panel')
+
+    def test_devices_and_profile_are_read_only(self):
+        r = self.run_cli('devices', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        devs = json.loads(r.stdout)
+        if not devs:
+            self.skipTest('no input devices visible')
+        r = self.run_cli('profile', '0')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotEqual(self.run_cli('profile', 'no-such-device-name').returncode, 0)
+        self.assertFalse(self.user.exists())
+
+    def test_pre_fix_editor_lacks_the_device_views(self):
+        old = os.environ.get('MIOS_CONTROLS_OLD')
+        if not old:
+            self.skipTest('set MIOS_CONTROLS_OLD to the pre-fix binary')
+        for args in (['layout', 'keyboard'], ['uses', 'key:c'], ['conflicts'], ['rebind', 'guide:BTN_NORTH', '--to', 'pad:BTN_WEST']):
+            r = subprocess.run([old, '--root', str(ROOT), *args], capture_output=True, text=True, timeout=60, env=self.env)
+            self.assertNotEqual(r.returncode, 0, f'negative control: the pre-fix editor has {args[0]}')
+
+
+class Rebind(Base):
+    """rebind moves one use to another input through the same draft -> validate -> apply pipeline."""
+
+    def test_guide_layer_buttons_swap(self):
+        r = self.run_cli('rebind', 'guide:BTN_NORTH', '--to', 'pad:BTN_WEST')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('swapped', r.stdout)
+        self.assertIn('0 finding(s)', r.stdout)
+        self.assertFalse(self.user.exists(), 'dry run')
+        r = self.run_cli('rebind', 'guide:BTN_NORTH', '--to', 'pad:BTN_WEST', '--apply')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        layer = tomllib.loads(self.user.read_text())['keybindings']['global']['controller']['system_layer']
+        self.assertEqual(layer['BTN_WEST'], 'mios:launch-browser')
+        self.assertEqual(stat.S_IMODE(self.user.stat().st_mode), 0o600)
+
+    def test_room_button_moves(self):
+        r = self.run_cli('rebind', 'room:BTN_EAST', '--to', 'pad:BTN_TR')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('BTN_TR = "hypr:hypr3d:cancel"', r.stdout)
+
+    def test_global_row_moves_with_its_compositor_row_and_a_collision_is_refused(self):
+        r = self.run_cli('rebind', 'global:screenshot-region', '--to', 'SUPER+F9')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        r = self.run_cli('rebind', 'global:screenshot-region', '--to', 'SUPER+c', '--apply')
+        self.assertEqual(r.returncode, 1, 'negative control: a colliding rebind is refused\n' + r.stdout)
+        self.assertIn('NEW FINDING: collision chord SUPER+c', r.stdout)
+        self.assertFalse(self.user.exists(), 'a refused draft is never written')
+
+    def test_unmovable_and_invalid_targets_are_refused(self):
+        r = self.run_cli('rebind', 'global:terminal', '--to', 'SUPER+F9')
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn('cannot move', r.stderr)
+        r = self.run_cli('rebind', 'tmux:x', '--to', 'key:F7')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('tmux-os cannot bind F7', r.stderr)
+        r = self.run_cli('rebind', 'tmux:x', '--to', 'key:k', '--apply')
+        self.assertEqual(r.returncode, 1, 'a tmux key that does not project is a finding\n' + r.stdout)
+        self.assertFalse(self.user.exists())
+
+    def test_apply_refuses_foreign_tables_and_keeps_them_byte_identical(self):
+        original = f'[identity]\nuser_password = "{SECRET}"\n'
+        self.write_user(original)
+        r = self.run_cli('rebind', 'room:BTN_EAST', '--to', 'pad:BTN_TR', '--apply')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(SECRET, r.stdout + r.stderr)
+        self.assertTrue(self.user.read_text().startswith(original))
+        self.assertEqual(self.user.with_name('mios.toml.controls-backup').read_text(), original)
 
 if __name__ == '__main__':
     unittest.main()
