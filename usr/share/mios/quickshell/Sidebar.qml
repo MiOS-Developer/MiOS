@@ -36,9 +36,16 @@ QS.Scope {
     property bool paneDrawer: theme.drawerFullPane   // drawer target size: full pane vs fraction
     // Fullscreen on this output's visible workspaces (EdgeReveal.qml); the foreign-toplevel flag is the
     // fallback when the shell runs without it.
-    property QtObject reveal: null
-    property bool fullscreen: reveal ? reveal.fullscreen
-                                     : ToplevelManager.toplevels.values.some(t => t.fullscreen && t.screens.indexOf(screen) >= 0)
+    property bool fullscreen: {
+        if (reveal) return reveal.fullscreen
+        const m = root.screen ? Hyprland.monitorFor(root.screen) : null
+        if (!m) return false
+        const ws = m.activeWorkspace ? m.activeWorkspace.id : null
+        return Hyprland.toplevels.values.some(tl => {
+            const o = tl.lastIpcObject
+            return !!o && !!o.workspace && o.fullscreen >= 2 && o.monitor === m.id && !o.hidden && o.workspace.id === ws
+        })
+    }
     // Under a fullscreen window the dock auto-hides: the bottom-edge hot zone reveals it on the overlay
     // layer above the window, reserving nothing ([theme.shell] dock_fullscreen_reveal).
     readonly property bool fullscreenReveal: fullscreen && theme.dockFullscreenReveal
@@ -211,6 +218,11 @@ QS.Scope {
         next.osk[outputName] = !!on
         dockState = next
         stateFile.setText(JSON.stringify(next, null, 1) + "\n")
+        if (on && !steviaProc.running) steviaProc.running = true
+    }
+    Process {
+        id: steviaProc
+        command: ["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "true"]
     }
     FileView {
         id: stateFile
@@ -226,9 +238,9 @@ QS.Scope {
         id: oskProc
         running: DockConfig.oskEnabled && root.oskWanted && dock.expanded && dock.drawerProgress >= 1
         command: [DockConfig.backend, "dock", "osk",
-                  "--width", String(Math.round(dock.width)),
-                  "--height", String(Math.round(DockConfig.oskHeight * dock.ui)),
-                  "--bottom", String(Math.round((Glass.gap + theme.dockHeight) * dock.ui))]
+                  "--width", String(Math.max(1, Math.round(dock.width || 800))),
+                  "--height", String(Math.max(1, Math.round((DockConfig.oskHeight || 220) * (dock.ui || 1)))),
+                  "--bottom", String(Math.max(0, Math.round(((Glass.gap || 8) + (theme.dockHeight || 56)) * (dock.ui || 1))))]
             .concat(QS.Quickshell.env("MIOS_DOCK_OSK_PRIVATE_BUS") === "1" ? ["--private-bus"] : [])
             .concat(["--force-show"])   // the toggle is on: shown, not waiting for a text field
     }
@@ -320,7 +332,7 @@ QS.Scope {
         // "mios-dock-remote" where [desktop.mobile.remote_effects] applies (cheaper hyprglass preset, same look).
         WlrLayershell.namespace: Mobile.layerNamespace("mios-dock", root.screen ? root.screen.name : "")
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: expanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: (expanded && !root.oskWanted) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
         anchors.bottom: true
         margins.bottom: Math.round(Glass.gap * ui)
         visible: !reserveRebuild && ((root.revealed && (!root.fullscreen || root.fullscreenReveal)) || expanded || drawerProgress > 0)
@@ -420,14 +432,20 @@ QS.Scope {
 
         function rectForEntry(entry) {
             const g = dock.lampGeometry
-            if (!g) return [0, 0, 48, 48]
-            if (entry && Array.isArray(g.icons)) {
+            if (entry && g && Array.isArray(g.icons)) {
                 const targetId = DockLamp.stripDesktop(entry.id || entry.appId || "")
                 for (const ic of g.icons) {
                     if (ic.app_id === targetId || ic.desktop_id === entry.id) return ic.rect
                 }
             }
-            return g.minimized_slot || g.dock_rect || [0, 0, 48, 48]
+            if (g && Array.isArray(g.dock_rect) && g.dock_rect.length === 4) {
+                const dr = g.dock_rect
+                return [Math.round(dr[0] + (dr[2] - 48) / 2), Math.round(dr[1] + (dr[3] - 48) / 2), 48, 48]
+            }
+            const scrW = root.screen ? root.screen.width : 1920
+            const scrH = root.screen ? root.screen.height : 1080
+            // NEVER top-left [0, 0, 48, 48]: bottom-center dock fallback coordinates
+            return [root.monX + Math.round((scrW - 48) / 2), Math.round(root.monY + scrH - 64), 48, 48]
         }
 
         function rectForAddress(address) {
@@ -505,6 +523,13 @@ QS.Scope {
                     Item {
                         width: dock.theme.dockHeight - Glass.gap
                         height: dock.theme.dockHeight
+                        GlassSurface {
+                            anchors.fill: parent
+                            anchors.topMargin: Glass.inset
+                            anchors.bottomMargin: Glass.inset
+                            radius: Glass.cornerFor(height)
+                            color: drawerHit.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
+                        }
                         Text {
                             anchors.centerIn: parent
                             text: "▦"
@@ -513,7 +538,9 @@ QS.Scope {
                             font.pixelSize: dock.theme.appIcon
                         }
                         MouseArea {
+                            id: drawerHit
                             anchors.fill: parent
+                            hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.shellState.toggleDrawer()
                         }
@@ -540,6 +567,7 @@ QS.Scope {
                                 anchors.fill: parent
                                 anchors.topMargin: Glass.inset
                                 anchors.bottomMargin: Glass.inset
+                                radius: Glass.cornerFor(height)
                                 color: tileMouse.containsMouse ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity) : "transparent"
                                 hairline: DockLamp.reorderMode && appTile.isPinnedTile
                                 borderColor: dock.theme.cursor
@@ -741,6 +769,7 @@ QS.Scope {
                                 anchors.fill: parent
                                 anchors.topMargin: Glass.inset
                                 anchors.bottomMargin: Glass.inset
+                                radius: Glass.cornerFor(height)
                                 color: minMouse.containsMouse
                                     ? dock.theme.withAlpha(dock.theme.accent, dock.theme.hoverOpacity)
                                     : dock.theme.withAlpha(dock.theme.subtle, dock.theme.outlineOpacity)

@@ -53,27 +53,86 @@ if ! command -v "$LAUNCHER" >/dev/null 2>&1; then
     fi
 fi
 
+# Ensure XDG_CURRENT_DESKTOP includes GNOME and Phosh for GNOME Settings / Phosh apps
+CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-Hyprland}"
+case "$CURRENT_DESKTOP" in
+    *GNOME*) ;;
+    *) CURRENT_DESKTOP="${CURRENT_DESKTOP}:GNOME:Phosh" ;;
+esac
+export XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP"
+
+# Bypass DBusActivatable=true headless daemon invocation (e.g. Calls daemon)
+TARGET_DESK="${1:-}"
+DIRECT_EXEC=""
+if [ -n "$TARGET_DESK" ]; then
+    DESK_PATH=""
+    if [ -f "$TARGET_DESK" ]; then
+        DESK_PATH="$TARGET_DESK"
+    else
+        for d in /usr/share/applications /usr/local/share/applications "${HOME:-/root}/.local/share/applications" /var/lib/flatpak/exports/share/applications; do
+            if [ -f "$d/$TARGET_DESK" ]; then
+                DESK_PATH="$d/$TARGET_DESK"
+                break
+            elif [ -f "$d/${TARGET_DESK}.desktop" ]; then
+                DESK_PATH="$d/${TARGET_DESK}.desktop"
+                break
+            fi
+        done
+    fi
+    if [ -n "$DESK_PATH" ] && [ -f "$DESK_PATH" ]; then
+        if grep -q '^DBusActivatable=true' "$DESK_PATH" 2>/dev/null; then
+            RAW_LINE=$(grep -m1 '^Exec=' "$DESK_PATH" | sed 's/^Exec=//')
+            if [ -n "$RAW_LINE" ]; then
+                DIRECT_EXEC=$(echo "$RAW_LINE" | sed -E 's/%[a-zA-Z]//g')
+                shift
+            fi
+        fi
+    fi
+fi
+
 # Execute launch detached with stdio decoupled (stdin/stdout/stderr connected to /dev/null)
-# Propagate GIO's dispatch exit status to the caller
+# Propagate launch exit status to the caller
 STATUS=0
 if [ "$_USE_SYSTEMD" = "1" ]; then
     _SCOPE_NAME="app-launch-$$-$(date +%s%N 2>/dev/null || echo $RANDOM)"
-    if command -v setsid >/dev/null 2>&1; then
-        # shellcheck disable=SC2086
-        setsid -w systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
-            env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+    if [ -n "$DIRECT_EXEC" ]; then
+        if command -v setsid >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            setsid -w systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
+                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        else
+            # shellcheck disable=SC2086
+            systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
+                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        fi
     else
-        # shellcheck disable=SC2086
-        systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
-            env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        if command -v setsid >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            setsid -w systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
+                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        else
+            # shellcheck disable=SC2086
+            systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
+                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        fi
     fi
 else
-    if command -v setsid >/dev/null 2>&1; then
-        # shellcheck disable=SC2086
-        setsid -w env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+    if [ -n "$DIRECT_EXEC" ]; then
+        if command -v setsid >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            setsid -w env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        else
+            # shellcheck disable=SC2086
+            env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        fi
     else
-        # shellcheck disable=SC2086
-        env $UNSET_ARGS "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        if command -v setsid >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            setsid -w env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        else
+            # shellcheck disable=SC2086
+            env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
+        fi
     fi
 fi
 

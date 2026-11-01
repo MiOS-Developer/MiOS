@@ -98,6 +98,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-dashboard-render-issue.sh` | bash Composites the MiOS dashboard into /etc/issue.d/30-mios.issue so it AI-related: /usr/libexec/mios/mios-dashboard-render-issu... |
 | `usr/libexec/mios/mios-day0-reset` | Purges volatile runtime data (sessions, tool_calls, knowledge, logs) from the pgvector agent DB (via parameterized mios-db --pg) plus OWUI's sqlite chats and filesystem caches, while preserving core... |
 | `usr/libexec/mios/mios-db` | Unified MiOS shared-state CLI fronting the agent backends: PostgreSQL/pgvector for cross-cutting state (--pg), Open WebUI's SQLite webui.db (--owui), and local OpenAI-compat embeddings on... |
+| `usr/libexec/mios/mios-desktop-launch` | Dedicated desktop application launcher. Decouples GUI apps from caller stdio pipes, strips MIOS_* environment variables to prevent bubblewrap argument overflow, detaches session, and encapsulates... |
 | `usr/libexec/mios/mios-directory-lookup` | Provides high-speed (<100ms) retrieval of the pgvector-cached directory map (parameterized pg via mios-db --pg-json) to allow agents to perform rapid file/directory lookups and navigation instead of... |
 | `usr/libexec/mios/mios-discord-send` | Python script for sending deterministic Discord messages or DMs to specific users/channels, providing the orchestrator with real-time success/failure JSON results instead of hallucinated outcomes. |
 | `usr/libexec/mios/mios-discord-status` | Diagnostic script for the Hermes-Agent Discord integration that validates token validity, API connectivity, and configuration completeness to help agents and operators troubleshoot Discord... |
@@ -126,7 +127,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-flatpak-lockdown` | Flatpak permission lockdown profile validator and manager (task_433). |
 | `usr/libexec/mios/mios-flatpak-overrides-apply` | Executes `flatpak override` to apply global theme, portal, and cursor settings from `mios.toml` to all flatpak applications, ensuring consistent UI styling across the system. |
 | `usr/libexec/mios/mios-flatpak-preflight` | Validates if a flatpak app can successfully bootstrap its sandbox by running a probe command and checking for specific stderr signatures (GPU, portal, or D-Bus errors) to provide a synchronous... |
-| `usr/libexec/mios/mios-flatpak-run` | Runs a Flatpak app without the session's MIOS_* exports. userenv.sh exports the whole resolved SSOT (thousands of MIOS_* variables); flatpak forwards each one to bwrap and aborts past bwrap's... |
+| `usr/libexec/mios/mios-flatpak-run` | Runs a Flatpak app without the session's MIOS_* exports and with safe standard streams. Strips thousands of MIOS_* exports to stay well within bwrap's 9000-argument limit, and guards standard... |
 | `usr/libexec/mios/mios-forgejo-runner-firstboot.sh` | bash Run `forgejo-runner register` once so /srv/mios/forge-runner/.runner AI-related: /usr/libexec/mios/mios-forgejo-runner-fir... |
 | `usr/libexec/mios/mios-freeipa-enroll.sh` | bash Bash oneshot run by mios-freeipa-enroll.service that joins the host to a FreeIPA domain via ipa-client-install; gated on /etc/mios/i... |
 | `usr/libexec/mios/mios-gamepad-hypr3d` | Universal USB/Bluetooth controller daemon for Hypr3D (L3+R3 toggle chord, dual-stick movement & camera, RT grab & LT resize). |
@@ -301,7 +302,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 271 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 272 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)

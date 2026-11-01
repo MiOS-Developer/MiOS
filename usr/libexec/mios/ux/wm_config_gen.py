@@ -159,7 +159,11 @@ animations {{
 }}
 
 layerrule = blur, quickshell
-layerrule = ignorealpha 0.2, quickshell
+layerrule = ignorealpha 0.15, quickshell
+layerrule = xray 0, quickshell
+layerrule = blur, ^(mios-.*)$
+layerrule = ignorealpha 0.15, ^(mios-.*)$
+layerrule = xray 0, ^(mios-.*)$
 layerrule = blur, rofi
 layerrule = ignorealpha 0.5, rofi
 layerrule = blur, notifications

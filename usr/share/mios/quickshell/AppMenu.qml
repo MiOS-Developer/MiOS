@@ -140,7 +140,7 @@ QS.PanelWindow {
     onVisibleChanged: if (!visible && reveal && reveal.menuHovered) Qt.callLater(() => { if (!menus.visible && menus.reveal) menus.reveal.menuHovered = false })
     WlrLayershell.namespace: "mios-appmenu"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: openMenu >= 0 ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: openMenu >= 0 ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     anchors.top: true
     anchors.left: true
     margins.top: overFullscreen ? 0 : Glass.gap   // the island's row: flush over a fullscreen window (its inset tab)

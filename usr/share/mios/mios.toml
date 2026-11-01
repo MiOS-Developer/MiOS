@@ -18273,6 +18273,7 @@ unit = [
     "tests/test-design-language.py",
     "tests/test-device-forwarding.py",
     "tests/test-dock-hud.py",
+    "tests/test-gui-shell-unify.py",
     "tests/test-gpu-display-routing.py",
     "tests/test-hyprland-capture-patch-live.py",
     "tests/test-inputd-console-live.py",

@@ -7,6 +7,7 @@ import QtQuick
 import Quickshell as QS
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 
 QS.PanelWindow {
     id: keymap
@@ -15,12 +16,18 @@ QS.PanelWindow {
 
     WlrLayershell.namespace: "mios-keymap"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     exclusionMode: QS.ExclusionMode.Ignore
     visible: open
     implicitWidth: card.implicitWidth
     implicitHeight: card.implicitHeight
     color: "transparent"
+
+    HyprlandFocusGrab {
+        windows: [keymap]
+        active: keymap.open
+        onCleared: keymap.open = false
+    }
 
     IpcHandler {
         target: "keymap"
@@ -34,8 +41,9 @@ QS.PanelWindow {
         readonly property int columns: Math.max(2, Math.ceil((keymap.theme.keymap || []).length / 24))
         implicitWidth: grid.implicitWidth + 2 * Glass.panelPad
         implicitHeight: title.implicitHeight + grid.implicitHeight + 2 * Glass.panelPad + Glass.gap
-        // the island's glass (GlassSurface) at the notification legibility alpha; no outline (hyprglass draws the rim)
         color: keymap.theme.withAlpha(Glass.fillHex, keymap.theme.notificationOpacity)
+        hairline: true
+        borderColor: keymap.theme.outlineColor
         focus: keymap.open
         Keys.onEscapePressed: keymap.open = false
 

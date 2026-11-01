@@ -49,12 +49,13 @@ Item {
         opacity: preview.win && preview.win.minimized ? 0.7 : 1
     }
     // Title on a thin scrim along the bottom edge; the focus/active state is the scrim's accent, not a border.
-    Rectangle {
+    GlassSurface {
         visible: preview.showTitle
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: titleText.implicitHeight + Glass.gap / 2
+        radius: Glass.cornerFor(height)
         color: preview.focused ? preview.theme.withAlpha(preview.theme.accent, preview.theme.selectionOpacity)
                                : preview.theme.withAlpha(preview.theme.bg, preview.theme.scrimOpacity)
         Text {

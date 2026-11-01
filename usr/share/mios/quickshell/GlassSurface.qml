@@ -30,12 +30,24 @@ Item {
     readonly property real k: (Math.pow(2, -1 / Math.max(2, power)) - 0.5) / 0.375
 
     Rectangle {
+        id: bgRect
         anchors.fill: parent
         visible: surface.circular
         radius: surface.r
         color: surface.color
         border.width: surface.hairline ? Glass.hairline : 0
         border.color: surface.borderColor
+    }
+
+    Rectangle {
+        id: innerSpecular
+        anchors.fill: parent
+        anchors.margins: Glass.hairline
+        visible: surface.circular && surface.hairline && surface.r > Glass.hairline
+        radius: Math.max(0, surface.r - Glass.hairline)
+        color: "transparent"
+        border.width: Glass.hairline
+        border.color: Qt.rgba(1, 1, 1, 0.16)
     }
     Shape {
         anchors.fill: parent

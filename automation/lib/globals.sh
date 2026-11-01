@@ -1925,7 +1925,7 @@ _mios_input MIOS_DESKTOP_FLATPAKS MIOS_FLATPAKS || { return 1 2>/dev/null || exi
 : "${MIOS_DESKTOP_LAUNCHERS_MIOS_ZEN_STARTUP_WM_CLASS:=zen}"
 : "${MIOS_DESKTOP_LAUNCHERS_MIOS_ZEN_TITLE:=Zen Browser}"
 [ -n "${MIOS_DESKTOP_LAUNCH_APPLICATION_DIRS+x}" ] || MIOS_DESKTOP_LAUNCH_APPLICATION_DIRS='$XDG_DATA_HOME/applications,~/.local/share/flatpak/exports/share/applications,/var/lib/flatpak/exports/share/applications,/usr/local/share/applications,/usr/share/applications'
-: "${MIOS_DESKTOP_LAUNCH_DESKTOP_LAUNCHER_PROGRAM:=gio}"
+: "${MIOS_DESKTOP_LAUNCH_DESKTOP_LAUNCHER_PROGRAM:=/usr/libexec/mios/mios-desktop-launch}"
 : "${MIOS_DESKTOP_LAUNCH_DOCUMENT_PORTAL_SUBDIR:=doc}"
 : "${MIOS_DESKTOP_LAUNCH_DOCUMENT_PORTAL_UNIT:=xdg-document-portal.service}"
 : "${MIOS_DESKTOP_LAUNCH_ENVIRONMENT_PROGRAM:=env}"
