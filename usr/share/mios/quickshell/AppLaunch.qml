@@ -74,7 +74,7 @@ Singleton {
                     let response = ({})
                     try { response = JSON.parse(result) } catch (e) {}
                     if (code === 0 && response.ok && response.desktop_file) {
-                        if (outputName && iconRect.length === 4)
+                        if (outputName)
                             DockLamp.recordLaunch(entry, outputName, iconRect)
                         if (entry.runInTerminal) {
                             const terminal = launches.cfg.terminal_command || []
