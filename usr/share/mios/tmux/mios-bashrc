@@ -1,6 +1,7 @@
 # AI-hint: MiOS-owned interactive tmux startup; layered SSOT prompt without sourcing personal shell hooks.
 # AI-related: /etc/profile.d/50-mios.sh, /usr/libexec/mios/mios-gen (render-tmux-theme --runtime), /usr/share/mios/mios.toml
 case $- in *i*) ;; *) return ;; esac
+umask 022
 if [[ "${MIOS_TMUX_HELPER:-}" == 1 ]]; then
     # A worker has no human prompt hooks. Bash/readline can crash while a
     # multiline rich prompt is redrawn during rapid desktop/portrait rotation.

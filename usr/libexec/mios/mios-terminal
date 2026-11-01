@@ -179,8 +179,8 @@ fi
 # A new desktop/SSH session uses the deployed root. Existing tmux invocations
 # keep their pane's project directory; Windows entry passes its explicit cwd.
 cd -- "${MIOS_TERMINAL_DIRECTORY:-${_mios_terminal_config[7]}}"
-umask 077
-"$_libgen" render-tmux-theme --runtime "$_mios_runtime"
+(umask 077 && "$_libgen" render-tmux-theme --runtime "$_mios_runtime")
+umask 022
 export MIOS_OMP_THEME="$_mios_runtime/mios.omp.json"
 _mios_bootstrap=""
 _mios_created=0

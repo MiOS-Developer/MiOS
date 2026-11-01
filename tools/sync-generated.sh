@@ -2,6 +2,7 @@
 # AI-hint: Compatibility entry point; the complete ordered pipeline belongs to native mios-gen sync.
 # AI-doc: usr/share/doc/mios/manual/tools.md
 set -euo pipefail
+umask 022
 ROOT="${MIOS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 _gen="${MIOS_GEN_BIN:-}"
 if [[ -n "${MIOS_NATIVE_BIN_DIR:-}" ]]; then

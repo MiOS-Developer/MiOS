@@ -371,6 +371,71 @@ else
 fi
 
 # ==============================================================================
+# Test 8: 77-composefs-verity.sh remount-fs mask guard & terminal umask 022
+# ==============================================================================
+log "Test 8: 77-composefs-verity.sh remount-fs mask guard & terminal umask 022"
+
+VERITY_SCRIPT="${ROOT_DIR}/automation/77-composefs-verity.sh"
+PROBE_CONF="${TMP_DIR}/probe-prepare-root.conf"
+PROBE_ETC="${TMP_DIR}/etc-systemd"
+mkdir -p "$PROBE_ETC"
+
+# 8a. Positive control: COMPOSEFS_CONF projection probe never masks systemd-remount-fs.service
+MIOS_TOML_ROOT="$ROOT_DIR" COMPOSEFS_CONF="$PROBE_CONF" SYSTEMD_ETC_DIR="$PROBE_ETC" bash "$VERITY_SCRIPT" >/dev/null 2>&1
+if [[ -f "$PROBE_CONF" && ! -L "$PROBE_ETC/systemd-remount-fs.service" ]]; then
+    assert_pass "77-composefs-verity.sh with COMPOSEFS_CONF skips masking systemd-remount-fs.service"
+else
+    assert_fail "77-composefs-verity.sh with COMPOSEFS_CONF unexpectedly masked systemd-remount-fs.service"
+fi
+
+# 8b. Positive control: Explicit isolated SYSTEMD_ETC_DIR without COMPOSEFS_CONF masks inside target dir only
+TARGET_CONF="${TMP_DIR}/target-prepare-root.conf"
+cp -p "${ROOT_DIR}/usr/lib/ostree/prepare-root.conf" "$TARGET_CONF"
+if MIOS_TOML_ROOT="$ROOT_DIR" COMPOSEFS_TARGET_CONF="$TARGET_CONF" SYSTEMD_ETC_DIR="$PROBE_ETC" bash "$VERITY_SCRIPT" >/dev/null 2>&1 && \
+   [[ -L "$PROBE_ETC/systemd-remount-fs.service" ]]; then
+    assert_pass "77-composefs-verity.sh masks systemd-remount-fs.service when targeting isolated SYSTEMD_ETC_DIR"
+else
+    assert_fail "77-composefs-verity.sh failed to mask systemd-remount-fs.service in isolated SYSTEMD_ETC_DIR"
+fi
+
+# 8c. Negative control: unguarded 77-composefs-verity.sh leaks mask during COMPOSEFS_CONF projection probe
+UNGUARDED_ETC="${TMP_DIR}/unguarded-etc-systemd"
+mkdir -p "$UNGUARDED_ETC"
+if python3 -c '
+import os, subprocess, sys
+root, script, unguarded_etc, probe_conf = sys.argv[1:5]
+with open(script, "r", encoding="utf-8") as f:
+    src = f.read()
+bad_src = src.replace("-z \"${COMPOSEFS_CONF:-}\" && ", "")
+tmp_script = probe_conf + ".unguarded.sh"
+with open(tmp_script, "w", encoding="utf-8") as f:
+    f.write(bad_src)
+env = dict(
+    os.environ,
+    MIOS_TOML_ROOT=root,
+    MIOS_AUTOMATION_DIR=os.path.join(root, "automation"),
+    COMPOSEFS_CONF=probe_conf,
+    SYSTEMD_ETC_DIR=unguarded_etc,
+)
+subprocess.call(["bash", tmp_script], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+sys.exit(0 if os.path.islink(os.path.join(unguarded_etc, "systemd-remount-fs.service")) else 1)
+' "$ROOT_DIR" "$VERITY_SCRIPT" "$UNGUARDED_ETC" "$PROBE_CONF"; then
+    assert_pass "Negative control: unguarded 77-composefs-verity.sh detected leaking systemd-remount-fs.service mask"
+else
+    assert_fail "Negative control failed: unguarded script did not trigger mask detection"
+fi
+
+# 8d. Positive & Negative control: mios-terminal, mios-bashrc, and sync-generated.sh enforce umask 022
+if grep -q '(umask 077 && "\$_libgen" render-tmux-theme' "${ROOT_DIR}/usr/libexec/mios/mios-terminal" && \
+   grep -q '^umask 022$' "${ROOT_DIR}/usr/libexec/mios/mios-terminal" && \
+   grep -q '^umask 022$' "${ROOT_DIR}/usr/share/mios/tmux/mios-bashrc" && \
+   grep -q '^umask 022$' "${ROOT_DIR}/tools/sync-generated.sh"; then
+    assert_pass "mios-terminal, mios-bashrc, and sync-generated.sh scope umask 077 and restore umask 022"
+else
+    assert_fail "umask 022 restoration missing in mios-terminal, mios-bashrc, or sync-generated.sh"
+fi
+
+# ==============================================================================
 # Summary
 # ==============================================================================
 log "=== Test Results: $pass_count passed, $fail_count failed, $skip_count skipped ==="
