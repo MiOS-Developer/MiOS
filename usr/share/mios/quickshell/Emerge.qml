@@ -18,6 +18,7 @@ Item {
     property color fill: "transparent"
     property color fromFill: fill     // the trigger's glass; blends into `fill` as the body grows
     property color outline: "transparent"
+    property bool specular: false
     property real progress: 0
     readonly property bool shown: progress > 0
     readonly property alias glass: glass
@@ -52,6 +53,7 @@ Item {
         color: Qt.rgba(em.lerp(em.fromFill.r, em.fill.r), em.lerp(em.fromFill.g, em.fill.g),
                        em.lerp(em.fromFill.b, em.fill.b), em.lerp(em.fromFill.a, em.fill.a))
         hairline: true
+        specular: em.specular
         borderColor: em.outline
         clip: true
         Item {

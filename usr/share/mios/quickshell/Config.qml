@@ -215,6 +215,7 @@ QS.ShellRoot {
         function toast(title, body) { post({ title: title, body: body || "", kind: "info" }) }
         // The output that shows it: the focused one, else (no focus known, or no shell surface there) the first.
         function post(t) {
+            MiOS.NotifModel.recordHistory(t)
             const screens = QS.Quickshell.screens
             const on = screens.some(s => s.name === screenName) ? screenName : (screens.length ? screens[0].name : "")
             posted(Object.assign({ output: on }, t))
@@ -229,6 +230,31 @@ QS.ShellRoot {
             post({ title: n.summary || n.appName || "", body: n.body || "", kind: critical ? "error" : "info",
                    image: n.image || "", n: n, critical: critical, expire_timeout: n.expireTimeout,
                    timeout: (n.resident || critical) ? 0 : timeoutMs(n.expireTimeout) })
+        }
+    }
+
+    Component.onCompleted: {
+        QS.Quickshell.inhibitReloadPopup()
+    }
+
+    Connections {
+        target: QS.Quickshell
+        function onReloadCompleted() {
+            notifBus.post({
+                title: "Quickshell Reloaded",
+                body: "Shell configuration reloaded successfully.",
+                kind: "success",
+                timeout: 3000
+            })
+        }
+        function onReloadFailed(errorString) {
+            notifBus.post({
+                title: "Quickshell Reload Failed",
+                body: errorString || "An error occurred during QML reload.",
+                kind: "error",
+                critical: true,
+                timeout: 0
+            })
         }
     }
     NotificationServer {

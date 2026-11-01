@@ -63,6 +63,7 @@ QtObject {
     property real drawerOpacity: 55 / 100
     property int notificationWidth: 310
     property real notificationOpacity: 92 / 100
+    property string notificationPosition: "top-center"
     property real hoverOpacity: 50 / 100
     property real selectionOpacity: 65 / 100
     property real scrimOpacity: 60 / 100
@@ -132,6 +133,7 @@ QtObject {
                     theme.dockPinned = t.shell.dock_pinned
                     theme.notificationWidth = t.shell.notification_width_px
                     theme.notificationOpacity = t.shell.notification_opacity_pct / 100
+                    if (t.shell.notification_position) theme.notificationPosition = t.shell.notification_position
                     theme.hoverOpacity = t.shell.hover_opacity_pct / 100
                     theme.selectionOpacity = t.shell.selection_opacity_pct / 100
                     theme.scrimOpacity = t.shell.scrim_opacity_pct / 100

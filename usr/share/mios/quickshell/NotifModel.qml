@@ -21,13 +21,43 @@ Singleton {
     property bool loaded: false
 
     function num(key, dflt) { const v = cfg[key]; return (typeof v === "number" && isFinite(v)) ? v : dflt }
-    // "island": the only placement -- every notification grows out of the status island (top centre).
-    readonly property string position: typeof cfg.position === "string" ? cfg.position : "island"
+    // "top-center": default placement -- every notification is centered at y = 44px (8px below TopBar/HUD).
+    readonly property string position: typeof cfg.position === "string" ? cfg.position : (theme.notificationPosition || "top-center")
     // Expiry for notifications that leave it to the server (expire_timeout -1); critical / resident ones stay.
     readonly property int timeoutMs: Math.max(1000, num("timeout_ms", 5000))
     readonly property int maxVisible: Math.max(1, Math.round(num("max_visible", 4)))
     // Card width in shell units: width_px, or [theme.shell] notification_width_px when 0.
     readonly property real width: num("width_px", 0) > 0 ? num("width_px", 0) : theme.notificationWidth
+
+    // ---- Persistent Notification History (Notification Tray) ------------------------------------------------
+    property var historyList: []
+    signal historyUpdated()
+
+    function recordHistory(entry) {
+        if (!entry) return
+        const item = {
+            id: entry.id || Date.now() + Math.random(),
+            time: new Date().toLocaleTimeString(Qt.locale(), "hh:mm"),
+            title: entry.title || "",
+            body: entry.body || "",
+            kind: entry.kind || "info",
+            appName: entry.appName || (entry.n ? entry.n.appName : "System"),
+            image: entry.image || "",
+            critical: !!entry.critical
+        }
+        historyList = [item].concat(historyList.slice(0, 99))
+        historyUpdated()
+    }
+
+    function removeHistory(id) {
+        historyList = historyList.filter(item => item.id !== id)
+        historyUpdated()
+    }
+
+    function clearHistory() {
+        historyList = []
+        historyUpdated()
+    }
     // Island -> card morph: morph_ms, or [desktop.topbar] popup_ms (the island menus' morph) when 0.
     readonly property int morphMs: {
         const own = num("morph_ms", 0)

@@ -63,6 +63,7 @@ QtObject {
     property real drawerOpacity: @MIOS:theme.shell.drawer_fill_opacity_pct@ / 100
     property int notificationWidth: @MIOS:theme.shell.notification_width_px@
     property real notificationOpacity: @MIOS:theme.shell.notification_opacity_pct@ / 100
+    property string notificationPosition: "@MIOS:desktop.notifications.position@"
     property real hoverOpacity: @MIOS:theme.shell.hover_opacity_pct@ / 100
     property real selectionOpacity: @MIOS:theme.shell.selection_opacity_pct@ / 100
     property real scrimOpacity: @MIOS:theme.shell.scrim_opacity_pct@ / 100
@@ -132,6 +133,7 @@ QtObject {
                     theme.dockPinned = t.shell.dock_pinned
                     theme.notificationWidth = t.shell.notification_width_px
                     theme.notificationOpacity = t.shell.notification_opacity_pct / 100
+                    if (t.shell.notification_position) theme.notificationPosition = t.shell.notification_position
                     theme.hoverOpacity = t.shell.hover_opacity_pct / 100
                     theme.selectionOpacity = t.shell.selection_opacity_pct / 100
                     theme.scrimOpacity = t.shell.scrim_opacity_pct / 100

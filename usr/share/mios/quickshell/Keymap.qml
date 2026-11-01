@@ -5,6 +5,7 @@
 // AI-related: usr/share/mios/mios.toml [desktop.hyprland].bindings, tools/native/mios-gen/src/global_bindings.rs, usr/libexec/mios/mios-sync-theme
 import QtQuick
 import Quickshell as QS
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 
@@ -15,12 +16,18 @@ QS.PanelWindow {
 
     WlrLayershell.namespace: "mios-keymap"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     exclusionMode: QS.ExclusionMode.Ignore
     visible: open
     implicitWidth: card.implicitWidth
     implicitHeight: card.implicitHeight
     color: "transparent"
+
+    HyprlandFocusGrab {
+        windows: [keymap]
+        active: keymap.open
+        onCleared: keymap.open = false
+    }
 
     IpcHandler {
         target: "keymap"
@@ -59,7 +66,7 @@ QS.PanelWindow {
             columnSpacing: 2 * Glass.gap
             rowSpacing: Glass.inset
             // Column-major halves so the list reads top-to-bottom in each column.
-            readonly property var rows: {
+            readonly property var gridRows: {
                 const k = keymap.theme.keymap || []
                 const half = Math.ceil(k.length / card.columns)
                 const out = []
@@ -71,7 +78,7 @@ QS.PanelWindow {
                 return out
             }
             Repeater {
-                model: grid.rows
+                model: grid.gridRows
                 delegate: Text {
                     required property var modelData
                     required property int index

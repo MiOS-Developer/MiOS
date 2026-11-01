@@ -92,6 +92,7 @@ Singleton {
         const r = table("desktop.hyprland.config.decoration").rounding
         return typeof r === "number" ? r : token("radius_px", theme.radius)
     }
+    readonly property real radius: rounding
     readonly property real barHeight: bar
     // The hyprbars tab rules, for any surface of height h.
     function cornerFor(h) { return corner(h) }

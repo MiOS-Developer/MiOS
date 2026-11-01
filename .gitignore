@@ -373,6 +373,8 @@ etc/xdg/xdg-desktop-portal/*
 
 !/etc/systemd/
 etc/systemd/*
+!/etc/systemd/user/
+!/etc/systemd/user/mios-steam-bridge.service
 !/etc/systemd/oomd.conf
 !/etc/systemd/resolved.conf.d/
 !/etc/systemd/resolved.conf.d/*

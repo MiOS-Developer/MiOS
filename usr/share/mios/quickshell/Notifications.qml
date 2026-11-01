@@ -63,13 +63,14 @@ QS.Scope {
         return Qt.rect(Math.round((outputWidth - h) / 2), Math.round(Glass.gap * ui), h, h)
     }
     readonly property real islandRadius: fallback ? Glass.corner(Glass.bar) * ui : drawn.radius
-    // Card geometry: centred under the island, one MeltPopup gap below it, clamped inside the edge margins.
+    // Card geometry: Top-center aligned, unified 8px margin below TopBar/HUD
     readonly property real cardWidth: Math.max(1, Math.min(NotifModel.width * ui, outputWidth - 2 * margin))
     readonly property real gap: Glass.gap * ui   // the MeltPopup gap below the bar (design language)
-    readonly property real cardX: Math.max(margin, Math.min(islandRect.x + islandRect.width / 2 - cardWidth / 2,
-                                                             outputWidth - margin - cardWidth))
-    readonly property real cardY: islandRect.y + islandRect.height + gap
-    readonly property real cardRadius: Glass.rounding * ui   // GlassSurface clamps it: Glass.corner(min side), the layer glass rule
+    readonly property real topbarHeight: Math.round(Glass.bar * ui)
+    readonly property real topbarTopMargin: Math.round(Glass.gap * ui)
+    readonly property real cardX: Math.round((outputWidth - cardWidth) / 2)
+    readonly property real cardY: topbarTopMargin + topbarHeight + gap
+    readonly property real cardRadius: Glass.radius * ui   // GlassSurface clamps it: Glass.corner(min side), the layer glass rule
     readonly property real maxStackHeight: Math.max(1, outputHeight - cardY - margin)
     // the stack as drawn now (cards growing in / collapsing out) and settled (every card full height)
     property real stackDrawn: 1
@@ -620,6 +621,7 @@ QS.Scope {
                 toRect: root.stackRect
                 fromRadius: root.islandRadius
                 toRadius: root.cardRadius
+                specular: true
                 // The island's material: the same fill over the same hyprglass layer pass, no outline (its rim is hyprglass').
                 fill: Glass.fill
                 fromFill: Glass.fill
@@ -668,6 +670,7 @@ QS.Scope {
             width: root.restCard.width
             height: root.restCard.height
             radius: root.cardRadius
+            specular: true
             color: Glass.fill
             clip: true
             Connections {

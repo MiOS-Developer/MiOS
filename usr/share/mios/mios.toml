@@ -11772,7 +11772,7 @@ power_interval_s    = 1                                     # CPU package watts:
 # (EdgeReveal) and hides again afterwards. Material: the island's (Glass.qml fill over the hyprglass mios preset on the
 # glass-covered "mios-notifications" layer); corner radius: the global window rounding. Never anywhere else on screen.
 [desktop.notifications]
-position            = "island"   # the only placement: out of the status island (no island on the output: its place, top centre)
+position            = "top-center"   # placement: top-centered horizontally below the TopBar/HUD
 timeout_ms          = 5000       # expiry when the app leaves it to the server (expire_timeout -1); 0 from the app = never; critical/resident stay
 max_visible         = 4          # cards in the stack; a new one past this expires the oldest
 width_px            = 0          # card width (logical px); 0 = [theme.shell] notification_width_px; clamped to the output minus the edge margins
@@ -18294,6 +18294,7 @@ unit = [
     "tests/test-resolver-dropin-parity.py",
     "tests/test-tmuxos-launcher-live.py",
     "tests/test-ui-margin-unify-live.py",
+    "tests/test-notifications-glass-unify.py",
 ]
 # Fitness functions over the whole tree. Slowest, so they run last.
 gate = [

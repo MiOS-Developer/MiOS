@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+# AI-hint: Daemon bridging raw Steam XWayland toast windows to native MiOS Glass notifications.
+# Intercepts Hyprland socket2 openwindow events matching Steam notificationtoasts_* windows,
+# translates them to org.freedesktop.Notifications toasts via notify-send, and closes the suppressed window.
+# AI-related: usr/share/mios/hyprland/hyprland.conf, usr/share/mios/quickshell/Notifications.qml,
+# usr/share/mios/quickshell/Config.qml, etc/systemd/user/mios-steam-bridge.service
+import argparse
+import json
+import os
+import re
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+STEAM_CLASS_PATTERN = re.compile(r"^(steam|Steam)$", re.IGNORECASE)
+STEAM_TOAST_PATTERN = re.compile(r"^notificationtoasts_.*", re.IGNORECASE)
+
+running = True
+
+
+def signal_handler(sig, frame):
+    global running
+    running = False
+
+
+def find_hyprland_socket() -> str | None:
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if signature:
+        sock_path = os.path.join(xdg_runtime, "hypr", signature, ".socket2.sock")
+        if os.path.exists(sock_path):
+            return sock_path
+
+    # Fallback search under $XDG_RUNTIME_DIR/hypr/
+    hypr_dir = os.path.join(xdg_runtime, "hypr")
+    if os.path.isdir(hypr_dir):
+        for entry in os.listdir(hypr_dir):
+            candidate = os.path.join(hypr_dir, entry, ".socket2.sock")
+            if os.path.exists(candidate):
+                return candidate
+    return None
+
+
+def extract_toast_info(address: str, title: str) -> tuple[str, str]:
+    summary = "Steam"
+    body = "Steam notification"
+
+    clean_addr = address.lower()
+    if not clean_addr.startswith("0x"):
+        clean_addr = f"0x{clean_addr}"
+
+    try:
+        proc = subprocess.run(
+            ["hyprctl", "clients", "-j"],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+        if proc.returncode == 0:
+            clients = json.loads(proc.stdout)
+            for c in clients:
+                c_addr = str(c.get("address", "")).lower()
+                if c_addr == clean_addr:
+                    c_title = c.get("title", "")
+                    if c_title and not STEAM_TOAST_PATTERN.match(c_title):
+                        body = c_title
+                    c_initial = c.get("initialTitle", "")
+                    if c_initial and not STEAM_TOAST_PATTERN.match(c_initial):
+                        body = c_initial
+                    break
+    except Exception:
+        pass
+
+    return summary, body
+
+
+def handle_event(line: str, dry_run: bool = False) -> dict | None:
+    line = line.strip()
+    if not line.startswith("openwindow>>"):
+        return None
+
+    data = line[len("openwindow>>"):]
+    parts = data.split(",", 3)
+    if len(parts) < 4:
+        return None
+
+    address, workspace, cls, title = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip()
+
+    if not (STEAM_CLASS_PATTERN.match(cls) and STEAM_TOAST_PATTERN.match(title)):
+        return None
+
+    summary, body = extract_toast_info(address, title)
+
+    if not dry_run:
+        # Dispatch to org.freedesktop.Notifications
+        try:
+            subprocess.run(
+                ["notify-send", "-a", "Steam", "-i", "steam", summary, body],
+                capture_output=True,
+                check=False,
+            )
+        except Exception as e:
+            sys.stderr.write(f"Failed to dispatch notify-send: {e}\n")
+
+        # Close the intercepted raw window cleanly
+        try:
+            clean_addr = address if address.startswith("0x") else f"0x{address}"
+            subprocess.run(
+                ["hyprctl", "dispatch", "closewindow", f"address:{clean_addr}"],
+                capture_output=True,
+                check=False,
+            )
+        except Exception as e:
+            sys.stderr.write(f"Failed to close toast window: {e}\n")
+
+    return {
+        "intercepted": True,
+        "address": address,
+        "class": cls,
+        "title": title,
+        "summary": summary,
+        "body": body,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="MiOS Steam Notification Bridge")
+    parser.add_argument("--test-event", help="Simulate a single Hyprland socket2 event line and exit")
+    parser.add_argument("--dry-run", action="store_true", help="Do not execute notify-send or hyprctl commands")
+    parser.add_argument("--once", action="store_true", help="Exit after intercepting the first matching event")
+    args = parser.parse_args()
+
+    if args.test_event:
+        result = handle_event(args.test_event, dry_run=args.dry_run)
+        print(json.dumps(result or {"intercepted": False}))
+        sys.exit(0 if result else 1)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    while running:
+        sock_path = find_hyprland_socket()
+        if not sock_path:
+            time.sleep(2.0)
+            continue
+
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(sock_path)
+            sock_file = sock.makefile("r", encoding="utf-8", errors="replace")
+
+            while running:
+                line = sock_file.readline()
+                if not line:
+                    break
+                res = handle_event(line, dry_run=args.dry_run)
+                if res and args.once:
+                    sys.exit(0)
+
+            sock.close()
+        except (ConnectionRefusedError, FileNotFoundError):
+            time.sleep(2.0)
+        except Exception as e:
+            sys.stderr.write(f"Bridge socket error: {e}\n")
+            time.sleep(2.0)
+
+
+if __name__ == "__main__":
+    main()
