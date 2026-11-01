@@ -24,6 +24,9 @@ Item {
     property real power: Glass.cornerPower
     property color borderColor: "transparent"
     property bool hairline: false            // a Glass.hairline outline in borderColor
+    property bool specular: false
+    property color specularColor: Glass.theme ? Glass.theme.withAlpha(Glass.theme.fg, 0.20) : "#33ffffff"
+    property color rimColor: Glass.rimHex ? (Glass.theme ? Glass.theme.withAlpha(Glass.rimHex, 0.45) : "#40ffffff") : "#40ffffff"
     readonly property real r: Math.max(0, Math.min(radius, width / 2, height / 2))
     readonly property bool circular: power <= 2.0001
     // the superellipse corner's cubic handle, as a fraction of the radius
@@ -35,19 +38,35 @@ Item {
         visible: surface.circular
         radius: surface.r
         color: surface.color
-        border.width: surface.hairline ? Glass.hairline : 0
-        border.color: surface.borderColor
+        border.width: (surface.hairline || surface.specular) ? Glass.hairline : 0
+        border.color: surface.specular ? surface.rimColor : surface.borderColor
+        clip: surface.specular
     }
 
     Rectangle {
         id: innerSpecular
         anchors.fill: parent
         anchors.margins: Glass.hairline
-        visible: surface.circular && surface.hairline && surface.r > Glass.hairline
+        visible: surface.circular && (surface.specular || surface.hairline) && surface.r > Glass.hairline
         radius: Math.max(0, surface.r - Glass.hairline)
         color: "transparent"
         border.width: Glass.hairline
-        border.color: Qt.rgba(1, 1, 1, 0.16)
+        border.color: surface.specular ? surface.specularColor : Qt.rgba(1, 1, 1, 0.16)
+    }
+
+    // Top specular highlight gradient conforming to rounded contour
+    Rectangle {
+        visible: surface.specular && surface.circular && surface.r > Glass.hairline
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: Glass.hairline
+        height: Math.min(surface.height / 2, 28)
+        radius: Math.max(0, surface.r - Glass.hairline)
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Glass.theme ? Glass.theme.withAlpha(Glass.theme.fg, 0.16) : "#28ffffff" }
+            GradientStop { position: 1.0; color: "transparent" }
+        }
     }
     Shape {
         anchors.fill: parent
@@ -55,8 +74,8 @@ Item {
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             fillColor: surface.color
-            strokeColor: surface.hairline ? surface.borderColor : "transparent"
-            strokeWidth: surface.hairline ? Glass.hairline : -1
+            strokeColor: (surface.hairline || surface.specular) ? (surface.specular ? surface.rimColor : surface.borderColor) : "transparent"
+            strokeWidth: (surface.hairline || surface.specular) ? Glass.hairline : -1
             startX: surface.r; startY: 0
             PathLine { x: surface.width - surface.r; y: 0 }
             PathCubic { x: surface.width; y: surface.r
