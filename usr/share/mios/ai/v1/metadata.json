@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4105,
-  "total_metadata_entries": 3376,
-  "total_hints": 3370,
+  "total_files_scanned": 4107,
+  "total_metadata_entries": 3378,
+  "total_hints": 3372,
   "total_functions_indexed": 2082,
-  "total_related_links": 6600,
+  "total_related_links": 6605,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7651,6 +7651,18 @@
         "usr/share/mios/greeter/",
         "usr/libexec/mios/mios-greeter-session",
         "tools/native/mios-gen/src/greeter.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-gui-shell-unify.py",
+      "hint": "Two-sided contract test suite verifying the comprehensive fix for all 6 GUI/Shell defects:",
+      "related": [
+        "usr/share/mios/quickshell/VirtualKeyboard.qml",
+        "usr/share/mios/quickshell/DockExpanded.qml"
       ],
       "functions": [],
       "doc": null,
@@ -39981,6 +39993,19 @@
       "related": [
         "/etc/mios/theme/theme.json",
         "usr/libexec/mios/mios-sync-theme"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/VirtualKeyboard.qml",
+      "hint": "Self-contained interactive on-screen keyboard for MiOS Dock and mobile surfaces.",
+      "related": [
+        "usr/share/mios/quickshell/DockExpanded.qml",
+        "usr/share/mios/quickshell/Sidebar.qml",
+        "usr/share/mios/quickshell/Glass.qml"
       ],
       "functions": [],
       "doc": null,
