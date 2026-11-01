@@ -29,6 +29,7 @@ QS.Scope {
     required property QtObject shellState
     property real viewportWidth: 0 // optional native nested output width
     property QtObject theme: Theme {}
+    property QtObject reveal: null
     readonly property var dockWindow: dock
     readonly property var phoneRect: dock.lampGeometry.phone_rect || [root.monX, root.monY, 48, 48]
 
