@@ -118,8 +118,89 @@ HIGH_RISK_CODE_VERBS = {
     "spawn_process",
 }
 
-# Default authorized local AI endpoints for Architectural Law 5 compliance
-DEFAULT_AUTHORIZED_AI_PORTS = [8700, 8500, 8520, 8600, 11450]
+# Service identities preserve the existing egress policy; only their resolved
+# ports vary. Other [ports] entries never become authorized by association.
+AUTHORIZED_AI_PORT_KEYS = ("agent_pipe", "llm_light", "llm_heavy", "pgvector", "win_llm_light")
+
+
+def _authorized_ai_ports(authorized_ports=None) -> List[int]:
+    """Resolve the egress allow-list strictly; an explicit empty list denies all."""
+    def validate(values):
+        if (not isinstance(values, (list, tuple, set, frozenset))
+                or any(type(value) is not int or not 1 <= value <= 65535 for value in values)):
+            raise ValueError("authorized AI ports must be integers in the range 1..65535")
+        return list(dict.fromkeys(values))
+
+    if authorized_ports is not None:
+        return validate(authorized_ports)
+
+    # These names are already emitted by the canonical environment projection.
+    overrides = {}
+    for key in AUTHORIZED_AI_PORT_KEYS:
+        name = "MIOS_PORTS_" + key.upper()
+        if name in os.environ:
+            value = os.environ[name]
+            if not re.fullmatch(r"[0-9]+", value):
+                raise ValueError(f"{name} must be a port integer")
+            overrides[key] = validate([int(value)])[0]
+    if len(overrides) == len(AUTHORIZED_AI_PORT_KEYS):
+        return validate(list(overrides.values()))
+
+    import tomllib
+    lib = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import mios_toml
+
+    # Use the shared layer order, overlay and category allocator, but never its
+    # forgiving reader: a malformed higher layer cannot fall back to a broader
+    # vendor allow-list at this security boundary.
+    layers = mios_toml.layer_paths()
+    merged = {}
+    for index, path in enumerate(layers):
+        # Missing host/user tiers are the documented vendor-default state.
+        # A present but unreadable/malformed tier is a configuration failure.
+        if not os.path.lexists(path) and index != 0:
+            continue
+        try:
+            with open(path, "rb") as fh:
+                mios_toml.deep_merge(merged, tomllib.load(fh))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"cannot resolve authorized AI ports from {path}") from exc
+    ports = merged.get("ports")
+    if not isinstance(ports, dict):
+        raise ValueError("authorized AI ports require the layered [ports] table")
+    for key in AUTHORIZED_AI_PORT_KEYS:
+        if key in ports:
+            validate([ports[key]])
+    categories = ports.get("categories", {})
+    if not isinstance(categories, dict):
+        raise ValueError("[ports.categories] must be a table")
+    for category in categories.values():
+        if not isinstance(category, dict):
+            raise ValueError("each port category must be a table")
+        for field in ("base", "stride"):
+            if field in category and type(category[field]) is not int:
+                raise ValueError(f"port category {field} must be an integer")
+        members, pinned = category.get("members", []), category.get("pinned", {})
+        if (not isinstance(members, list) or any(not isinstance(m, str) for m in members)
+                or not isinstance(pinned, dict)):
+            raise ValueError("port category members/pinned are malformed")
+        for key in AUTHORIZED_AI_PORT_KEYS:
+            if key in pinned:
+                validate([pinned[key]])
+    if "stack_id" in ports and type(ports["stack_id"]) is not int:
+        raise ValueError("[ports].stack_id must be an integer")
+    mios_toml.derive_ports(merged)
+    # Reuse canonical emission for stack offsets and port aliases, rather than
+    # interpreting raw [ports] values differently from running services.
+    exports = mios_toml.emit_exports(merged)
+    try:
+        values = [overrides[key] if key in overrides else
+                  int(exports["MIOS_PORTS_" + key.upper()]) for key in AUTHORIZED_AI_PORT_KEYS]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("an authorized AI service has no resolved port") from exc
+    return validate(values)
 
 
 # -----------------------------------------------------------------------------
@@ -560,7 +641,7 @@ class TetragonTracingPolicy:
         match_namespaces: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Compiles a Cilium Tetragon TracingPolicy specification with kprobe on sys_enter_connect."""
-        ports = authorized_ports or list(DEFAULT_AUTHORIZED_AI_PORTS)
+        ports = _authorized_ai_ports(authorized_ports)
         namespaces = match_namespaces or ["mios-agents", "podman-unprivileged", "coderun-sandbox"]
 
         policy = {
@@ -605,7 +686,7 @@ class TetragonTracingPolicy:
                                 "matchDestPorts": ports,
                                 "action": "Allow",
                             }
-                        ],
+                        ] if ports else [],
                     }
                 ]
             },
@@ -701,7 +782,7 @@ class TetragonQuarantineMonitor:
         mock_audit: bool = False,
         quarantine_sla_ms: float = 65.0,
     ) -> None:
-        self.authorized_ports = set(authorized_ports or DEFAULT_AUTHORIZED_AI_PORTS)
+        self.authorized_ports = set(_authorized_ai_ports(authorized_ports))
         self.quarantine_sla_ms = quarantine_sla_ms
         self.mock_audit = mock_audit
         self.audit_log_path = audit_log_path
@@ -716,7 +797,7 @@ class TetragonQuarantineMonitor:
         """Evaluates whether destination adheres to Architectural Law 5 (UNIFIED-AI-REDIRECTS)."""
         clean_ip = dest_ip.strip().lower()
         is_loopback = clean_ip in ("127.0.0.1", "::1", "localhost")
-        is_allowed_port = dest_port in self.authorized_ports
+        is_allowed_port = type(dest_port) is int and dest_port in self.authorized_ports
         return is_loopback and is_allowed_port
 
     def evaluate_connect(

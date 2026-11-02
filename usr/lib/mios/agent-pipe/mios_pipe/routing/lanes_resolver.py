@@ -108,7 +108,7 @@ def _lane_resolver():
                     or str(_ai.get("heavy_engine", "vllm"))).strip()
     _vllm_url = (os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM")
                  or _toml_section("nodes").get("local-vllm", {}).get("endpoint")
-                 or f"http://localhost:{os.environ.get('MIOS_PORTS_VLLM', '8520')}/v1").rstrip("/")
+                 or _TOOL_BACKEND_HEAVY).rstrip("/")
     _vllm_model = os.environ.get("MIOS_AGENT_PIPE_TOOL_BACKEND_VLLM_MODEL",
                                  _TOOL_BACKEND_HEAVY_MODEL)
     _cpu_port = os.environ.get("MIOS_PORTS_CPU_NODE", "8510")
@@ -136,10 +136,14 @@ def _lane_resolver():
     except Exception:  # noqa: BLE001 -- escalation is best-effort; never break lanes
         pass
 
+    heavy_endpoints = {
+        lanes[name].url.rstrip("/")
+        for name in (mios_lanes.HEAVY, "sglang", "vllm")
+    }
+
     async def _probe(url: str) -> bool:
-        if get_gpu_arbiter_state() != "AI_EXCLUSIVE":
-            if any(h in url for h in (":8520", ":11441", ":8530", "heavy", "vllm", "sglang")):
-                return False
+        if get_gpu_arbiter_state() != "AI_EXCLUSIVE" and url.rstrip("/") in heavy_endpoints:
+            return False
         client = await _get_client()
         r = await client.get(f"{url}/models", timeout=2.0)
         return r.status_code == 200

@@ -34,6 +34,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -459,6 +461,171 @@ class TestMilestoneM4TetragonQuarantine(unittest.TestCase):
         self.assertTrue(ver_restored["valid"], "Restored original chain must pass GREEN")
         self.assertEqual(ver_restored["status"], "verified")
 
+
+
+class TestAuthorizedAiPorts(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = find_file(["usr/lib/mios/agent-pipe/mios_isolation.py"])
+        spec = importlib.util.spec_from_file_location("mios_isolation_ports", path)
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="mios-isolation-ports-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.vendor = self.root / "vendor.toml"
+        self.host = self.root / "host.toml"
+        self.user = self.root / "user.toml"
+        self.vendor.write_text("""[ports]
+agent_pipe = 41010
+llm_light = 41011
+llm_heavy = 41012
+pgvector = 41013
+win_llm_light = 41014
+ssh = 41015
+searxng_internal = 41016
+[ports.categories.agent]
+base = 41010
+stride = 10
+members = ["agent_pipe"]
+""")
+        self.host.write_text("")
+        self.user.write_text("")
+        env = {key: value for key, value in os.environ.items() if not key.startswith("MIOS_")}
+        env.update(MIOS_VENDOR_TOML=str(self.vendor), MIOS_HOST_TOML=str(self.host),
+                   MIOS_USER_TOML=str(self.user), MIOS_VENDOR_TOML_D=str(self.root / "vendor.d"),
+                   MIOS_HOST_TOML_D=str(self.root / "host.d"), MIOS_USER_TOML_D=str(self.root / "user.d"))
+        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def monitor(self, ports=None):
+        return self.mod.TetragonQuarantineMonitor(authorized_ports=ports, audit_recorder=object())
+
+    def test_default_scope_only_intended_services_and_loopback(self):
+        monitor = self.monitor()
+        self.assertEqual(set(range(41010, 41015)), monitor.authorized_ports)
+        for port in range(41010, 41015):
+            for address in ("127.0.0.1", "::1", "localhost"):
+                self.assertTrue(monitor.is_destination_authorized(address, port))
+            self.assertFalse(monitor.is_destination_authorized("192.0.2.1", port))
+        for port in (41015, 41016, 11450, 11441, 8888, 8700, 8500, 8520, 8600):
+            self.assertFalse(monitor.is_destination_authorized("127.0.0.1", port), port)
+
+    def test_layered_categories_user_fragments_and_emitted_env_override(self):
+        self.host.write_text("[ports.categories.agent]\nbase = 42010\n")
+        self.user.write_text("[ports.categories.agent]\nbase = 43010\n")
+        dropin = self.root / "user.d"
+        dropin.mkdir()
+        (dropin / "10-local.toml").write_text("[ports.categories.agent]\nbase = 44010\n")
+        os.environ["MIOS_PORTS_LLM_LIGHT"] = "45011"
+        expected = {44010, 45011, 41012, 41013, 41014}
+        self.assertEqual(expected, self.monitor().authorized_ports)
+        policy = self.mod.TetragonTracingPolicy.compile_policy()
+        allowed = policy["spec"]["kprobes"][0]["exemptions"][0]
+        self.assertEqual(expected, set(allowed["matchDestPorts"]))
+        self.assertEqual(["127.0.0.1", "::1"], allowed["matchDestIP"])
+
+    def test_emitted_values_resolve_without_invented_defaults(self):
+        for index, key in enumerate(self.mod.AUTHORIZED_AI_PORT_KEYS):
+            os.environ["MIOS_PORTS_" + key.upper()] = str(46010 + index)
+        self.vendor.unlink()
+        self.assertEqual(set(range(46010, 46015)), self.monitor().authorized_ports)
+
+    def test_defaults_are_resolved_at_construction_not_cached(self):
+        self.assertIn(41011, self.monitor().authorized_ports)
+        os.environ["MIOS_PORTS_LLM_LIGHT"] = "47011"
+        self.assertNotIn(41011, self.monitor().authorized_ports)
+        self.assertIn(47011, self.monitor().authorized_ports)
+
+    def test_explicit_empty_list_denies_all_and_emits_no_allow_exemption(self):
+        monitor = self.monitor([])
+        self.assertEqual(set(), monitor.authorized_ports)
+        self.assertFalse(monitor.is_destination_authorized("127.0.0.1", 41010))
+        policy = self.mod.TetragonTracingPolicy.compile_policy(authorized_ports=[])
+        self.assertEqual([], policy["spec"]["kprobes"][0]["exemptions"])
+        self.assertEqual([{"action": "Sigkill"}],
+                         policy["spec"]["kprobes"][0]["selectors"][0]["matchActions"])
+
+    def test_explicit_ports_do_not_expand_to_defaults(self):
+        self.user.write_text("malformed = [")
+        self.assertEqual({49001}, self.monitor([49001]).authorized_ports)
+        self.assertFalse(self.monitor([49001]).is_destination_authorized("127.0.0.1", 41010))
+        self.assertEqual(set(), self.monitor([]).authorized_ports)
+
+    def test_malformed_explicit_ports_reject_policy_and_monitor(self):
+        for ports in ([True], [0], [-1], [65536], ["41010"], [41010.5], "41010"):
+            with self.subTest(ports=ports):
+                with self.assertRaises(ValueError):
+                    self.monitor(ports)
+                with self.assertRaises(ValueError):
+                    self.mod.TetragonTracingPolicy.compile_policy(authorized_ports=ports)
+
+    def test_boolean_destination_is_not_an_integer_port(self):
+        self.assertFalse(self.monitor([1]).is_destination_authorized("127.0.0.1", True))
+
+    def test_malformed_env_cannot_fall_back_to_vendor(self):
+        for value in ("", "bad", "-1", "0", "65536", "1.5", "true"):
+            with self.subTest(value=value):
+                os.environ["MIOS_PORTS_LLM_LIGHT"] = value
+                with self.assertRaises(ValueError):
+                    self.monitor()
+                with self.assertRaises(ValueError):
+                    self.mod.TetragonTracingPolicy.compile_policy()
+
+    def test_malformed_present_overlay_fails_but_absent_user_uses_vendor(self):
+        self.user.write_text("[ports\nllm_light = 49011")
+        with self.assertRaises(ValueError):
+            self.monitor()
+        self.user.unlink()
+        self.host.unlink()
+        self.assertEqual(set(range(41010, 41015)), self.monitor().authorized_ports)
+        self.vendor.unlink()
+        with self.assertRaises(ValueError):
+            self.monitor()
+
+    def test_stack_offsets_follow_canonical_emission(self):
+        self.vendor.write_text(self.vendor.read_text().replace("[ports]\n",
+                                                              "[ports]\nstack_id = 1\n"))
+        self.assertEqual(set(range(51010, 51015)), self.monitor().authorized_ports)
+        os.environ["MIOS_PORTS_LLM_LIGHT"] = "47011"
+        self.assertEqual({51010, 47011, 51012, 51013, 51014}, self.monitor().authorized_ports)
+
+    def test_invalid_stack_configuration_fails_closed(self):
+        original = self.vendor.read_text()
+        for value in ("true", '"1"', "3"):
+            self.vendor.write_text(original.replace("[ports]\n",
+                                                      f"[ports]\nstack_id = {value}\n"))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.monitor()
+
+    def test_invalid_ssot_types_and_category_allocation_fail_closed(self):
+        original = self.vendor.read_text()
+        for text in (original.replace("llm_light = 41011", 'llm_light = "41011"'),
+                     original.replace("llm_light = 41011", "llm_light = true"),
+                     original.replace("llm_light = 41011", "llm_light = 0"),
+                     original.replace("llm_light = 41011", "llm_light = 65536"),
+                     original.replace("llm_light = 41011\n", ""),
+                     original.replace("base = 41010", 'base = "41010"'),
+                     original.replace("base = 41010", "base = true"),
+                     original.replace("base = 41010", "base = 65536"),
+                     original.replace('members = ["agent_pipe"]', 'members = "agent_pipe"'),
+                     original + "[ports.categories.pin.pinned]\nwin_llm_light = false\n"):
+            with self.subTest(text=text):
+                self.vendor.write_text(text)
+                with self.assertRaises(ValueError):
+                    self.monitor()
+
+    def test_unreadable_overlay_fails_closed(self):
+        original_open = open
+        def deny(path, *args, **kwargs):
+            if os.fspath(path) == str(self.user):
+                raise PermissionError("planted unreadable overlay")
+            return original_open(path, *args, **kwargs)
+        with mock.patch("builtins.open", side_effect=deny), self.assertRaises(ValueError):
+            self.monitor()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
