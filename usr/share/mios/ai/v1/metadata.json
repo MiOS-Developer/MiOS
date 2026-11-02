@@ -4,7 +4,7 @@
   "total_metadata_entries": 3387,
   "total_hints": 3381,
   "total_functions_indexed": 2094,
-  "total_related_links": 6636,
+  "total_related_links": 6637,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -14484,9 +14484,10 @@
     },
     {
       "path": "tools/test_ci-suites.py",
-      "hint": "Sibling test for tools/ci-suites.py; proves the registry reader fails on the shapes it exists to catch.",
+      "hint": "Registry rejection and bounded producer controls for the shared CI workflow helpers.",
       "related": [
         "tools/ci-suites.py",
+        "tools/lib/ci-runtime.sh",
         "usr/share/mios/mios.toml"
       ],
       "functions": [],

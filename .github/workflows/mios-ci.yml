@@ -44,7 +44,7 @@ jobs:
     # resolved before any step can read the SSOT; tools/ci-suites.py --check
     # holds it equal to [ci.fedora].image.
     container:
-      image: ghcr.io/mios-developer/machine-os:6.1
+      image: ghcr.io/mios-developer/machine-os:6.2
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
