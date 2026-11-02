@@ -24,7 +24,7 @@ Image=ghcr.io/mostlygeek/llama-swap:cuda
 Label=org.opencontainers.image.title=mios-cpu-node
 Pod=mios-ai.pod
 User=827
-Volume=/usr/share/mios/llamacpp/models:/models:ro,Z
+Volume=/usr/share/mios/llamacpp/models:/models:ro
 Volume=/var/lib/mios/llamacpp/slots:/var/lib/mios/llamacpp/slots:Z
 
 [Install]

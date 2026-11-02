@@ -29,8 +29,8 @@ Label=org.opencontainers.image.documentation=https://github.com/mostlygeek/llama
 Mount=type=image,source=mios-micro.image,destination=/models-micro
 Pod=mios-ai.pod
 User=827
-Volume=/usr/share/mios/llamacpp/models:/models:ro,Z
-Volume=/usr/share/mios/llamacpp/mios-llm-light.yaml:/app/config.yaml:ro,Z
+Volume=/usr/share/mios/llamacpp/models:/models:ro
+Volume=/usr/share/mios/llamacpp/mios-llm-light.yaml:/app/config.yaml:ro
 Volume=/var/lib/mios/llamacpp/slots:/var/lib/mios/llamacpp/slots:Z
 
 [Install]
