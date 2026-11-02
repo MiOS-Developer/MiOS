@@ -16,7 +16,7 @@ Environment=POSTGRES_PASSWORD=mios
 Environment=POSTGRES_DB=mios
 Environment=PGDATA=/var/lib/postgresql/data/pgdata
 EnvironmentFile=/etc/mios/install.env
-Exec=postgres -c port=${MIOS_PORTS_PGVECTOR:-8600} -c listen_addresses=127.0.0.1 -c hnsw.iterative_scan=strict_order -c hnsw.max_scan_tuples=20000 -c hnsw.scan_mem_multiplier=1
+Exec=postgres -c port=${MIOS_PORTS_PGVECTOR} -c listen_addresses=127.0.0.1 -c hnsw.iterative_scan=strict_order -c hnsw.max_scan_tuples=20000 -c hnsw.scan_mem_multiplier=1
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=826
 Image=docker.io/pgvector/pgvector:pg18
