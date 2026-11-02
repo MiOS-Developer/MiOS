@@ -86,10 +86,11 @@ hl.env("XDG_SESSION_TYPE", "wayland")
 hl.env("XDG_SESSION_DESKTOP", "Hyprland")
 hl.env("GTK_MODULES", "unity-gtk-module")
 
--- MiOS global policy: native handles retain app shortcut inhibition by default; bypass_mod handles are escapes.
+-- MiOS global policy: ordinary handles respect app inhibition; bypass_mod and explicit global actions are escapes.
 local mios_native_hl = hl
 local mios_input_handles = {}
 local mios_input_bypass = "SUPER+CTRL"
+local mios_input_always = {["SUPER+space"]=true}
 local function mios_input_canonical(key)
  key=key:gsub('%s','')
  local mods,leaf={},nil
@@ -104,7 +105,7 @@ local function mios_input_canonical(key)
 end
 local function mios_input_is_bypass(key)
  local c=mios_input_canonical(key)
- return c:sub(1,#mios_input_bypass+1)==mios_input_bypass..'+'
+ return mios_input_always[c]==true or c:sub(1,#mios_input_bypass+1)==mios_input_bypass..'+'
 end
 local hl = setmetatable({}, {__index=mios_native_hl})
 hl.bind = function(key, dispatcher, flags)
@@ -278,7 +279,7 @@ end)
 mios_section("global-input", function()
  local policies={}
  local escapes={}
- local capture_fullscreen=true
+ local capture_fullscreen=false
  local capture_tag="mios-input-captured"
  local release_tag="mios-input-released"
  policies["SUPER+space"]={contexts={},passthrough={"vm-passthrough"}}

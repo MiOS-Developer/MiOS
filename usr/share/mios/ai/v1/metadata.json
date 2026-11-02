@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4111,
-  "total_metadata_entries": 3379,
-  "total_hints": 3373,
-  "total_functions_indexed": 2082,
-  "total_related_links": 6616,
+  "total_files_scanned": 4113,
+  "total_metadata_entries": 3381,
+  "total_hints": 3375,
+  "total_functions_indexed": 2085,
+  "total_related_links": 6623,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -13062,6 +13062,24 @@
         "mios-inputd.service"
       ],
       "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/sessions.rs",
+      "hint": "Validated controller ownership of explicit local or remote terminal panes; argv planning never falls back to host-global input.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.global.controller.sessions]",
+        "config.rs",
+        "runtime.rs",
+        "nav.rs"
+      ],
+      "functions": [
+        "validate",
+        "route_for_device",
+        "plan"
+      ],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false
@@ -40030,6 +40048,19 @@
       "related": [
         "/etc/mios/theme/theme.json",
         "usr/libexec/mios/mios-sync-theme"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/VirtualKeyboard.qml",
+      "hint": "Self-contained interactive on-screen keyboard for MiOS Dock and mobile surfaces.",
+      "related": [
+        "usr/share/mios/quickshell/DockExpanded.qml",
+        "usr/share/mios/quickshell/Sidebar.qml",
+        "usr/share/mios/quickshell/Glass.qml"
       ],
       "functions": [],
       "doc": null,

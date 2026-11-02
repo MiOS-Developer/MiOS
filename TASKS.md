@@ -17,8 +17,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1744 |
-| in_progress | 66 |
-| completed | 1844 |
+| in_progress | 65 |
+| completed | 1845 |
 | incomplete | 19 |
 | cancelled | 21 |
 | total | 3694 |
@@ -1373,7 +1373,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3501` dconf from SSOT, readable at runtime (WS-DESKTOP | P2 | M) -- pending · P2 · size M · depends_on task_3492, task_3493
 - `task_3624` M8: one tmux TUI desktop in every MiOS image -- a miosd applet rendered with ratatui inside tmux (WS-DESKTOP | P1 | XL) -- pending · P1 · size XL
 - `task_3693` Repair controller capture and independent local/remote/headless session routing -- completed · P0 · size L
-- `task_3694` Attach global dock input, double Guide, controller reticle and animated window feedback -- in_progress · P0 · size L
+- `task_3694` Attach global dock input, double Guide, controller reticle and animated window feedback -- completed · P0 · size L
 
 ### Epic task_3624
 
