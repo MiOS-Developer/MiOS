@@ -7291,6 +7291,10 @@ config     = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
 # to leave headroom on the box; SSOT-wired alongside ports.cpu_node
 # (was a DEAD ${MIOS_LLAMACPP_CPU_NODE_THREADS} placeholder, never in the render allowlist).
 cpu_node_threads = 14
+# Light-lane CPU budget, inherited by every llama-server child. One worker is
+# safe under a single-CPU affinity; raise only within the runtime CPU allowance.
+# This is an explicit budget, not an automatic affinity clamp.
+light_threads = 1
 bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
 
 
@@ -14682,6 +14686,7 @@ ContainerName = "mios-llm-light"
 Entrypoint = "/app/llama-swap"
 Environment = [
   "HOME=/var/lib/mios/llamacpp",
+  "LLAMA_ARG_THREADS=${MIOS_LLAMACPP_LIGHT_THREADS:-1}",
   "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64"
 ]
 EnvironmentFile = "/etc/mios/install.env"

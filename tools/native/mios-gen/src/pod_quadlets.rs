@@ -483,6 +483,21 @@ pub fn is_root_id(val: &str) -> bool {
     s == "0" || s == "root" || s.starts_with("0:") || s.starts_with("root:")
 }
 
+/// The light lane inherits this budget for generation and prompt processing.
+/// Reject upstream's zero/negative automatic-thread semantics before emitting a unit.
+fn validate_light_threads(doc: &toml::Value) -> Result<(), String> {
+    let Some(value) = doc
+        .get("llamacpp")
+        .and_then(|table| table.get("light_threads"))
+    else {
+        return Ok(());
+    };
+    match value.as_integer() {
+        Some(value) if value > 0 && i32::try_from(value).is_ok() => Ok(()),
+        _ => Err("[llamacpp].light_threads must be a positive 32-bit integer".into()),
+    }
+}
+
 pub fn validate_environment_entry(
     name: &str,
     unit_type: &str,
@@ -1103,6 +1118,7 @@ pub fn run_pod_quadlets(
         ));
     }
     let doc = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    validate_light_threads(&doc)?;
 
     let placeholders = load_placeholders(&doc);
     let sidecars = load_sidecars(&doc);
@@ -1433,6 +1449,58 @@ pub fn run_pod_quadlets(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn light_thread_budget_rejects_automatic_and_invalid_values() {
+        for value in ["0", "-1", "1.5", "\"2\"", "true", "2147483648"] {
+            let doc: toml::Value = format!("[llamacpp]\nlight_threads = {value}\n")
+                .parse()
+                .unwrap();
+            assert!(validate_light_threads(&doc).is_err(), "accepted {value}");
+        }
+        for value in [1, 3, 14, 2_147_483_647] {
+            let doc: toml::Value = format!("[llamacpp]\nlight_threads = {value}\n")
+                .parse()
+                .unwrap();
+            assert!(validate_light_threads(&doc).is_ok(), "rejected {value}");
+        }
+        let doc: toml::Value = "[llamacpp]\ncpu_node_threads = 14\n".parse().unwrap();
+        assert!(validate_light_threads(&doc).is_ok());
+    }
+
+    #[test]
+    fn light_thread_budget_reaches_only_the_light_environment() {
+        let source = include_str!("../../../../usr/share/mios/mios.toml");
+        for threads in [1, 3] {
+            let mut doc: toml::Value = source.parse().unwrap();
+            doc["llamacpp"]["light_threads"] = toml::Value::Integer(threads);
+            validate_light_threads(&doc).unwrap();
+            let exports = mios_resolver::emit::build_exports_map(&doc, 0);
+            let rendered = render_nested_quadlet(
+                "mios-llm-light",
+                &doc["containers"]["mios-llm-light"],
+                "container",
+                &load_privileged_root(&doc),
+                &load_grandfathered_credentials(&doc),
+                &load_secret_keys(&doc),
+                &load_placeholders(&doc),
+                &exports,
+                &load_sidecars(&doc),
+            )
+            .unwrap();
+            assert!(
+                rendered.contains(&format!("Environment=LLAMA_ARG_THREADS={threads}\n")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("LLAMA_ARG_THREADS_BATCH"));
+            assert_eq!(doc["llamacpp"]["cpu_node_threads"].as_integer(), Some(14));
+            for name in ["mios-cpu-node", "mios-llm-worker@"] {
+                if let Some(environment) = doc["containers"][name]["Container"].get("Environment") {
+                    assert!(!environment.to_string().contains("LLAMA_ARG_THREADS"));
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_shlex_split() {

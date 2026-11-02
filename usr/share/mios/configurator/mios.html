@@ -2067,6 +2067,8 @@
           </select>
           <input type="text" id="f-ai-model-custom" data-key="ai.model" data-custom-of="f-ai-model"
                  placeholder="custom model id (any OpenAI-compatible model tag, e.g. qwen3-coder:30b)" style="margin-top:4px; display:none">
+          <label for="f-llamacpp-light-threads">Light inference CPU threads (set within the service CPU allowance)</label>
+          <input type="number" id="f-llamacpp-light-threads" data-key="llamacpp.light_threads" data-type="int" min="1" max="2147483647" step="1" value="1">
           <label for="f-ai-embed">embed_model</label>
           <input type="text" id="f-ai-embed" data-key="ai.embed_model" placeholder="nomic-embed-text">
           <label for="f-ai-bake">bake_models (CSV; consumed by model prep scripts)</label>
