@@ -181,6 +181,40 @@ class FirstbootLatest(unittest.TestCase):
             server.server_close()
             worker.join(timeout=5)
 
+    def test_restrictive_service_umask_still_publishes_readable_verified_models(self):
+        with self.toml.open("a") as config:
+            config.write(f'\n[llamacpp]\nbake_models="lfm2-700m.gguf={REPO}:{FILE}"\n')
+        result = subprocess.run([sys.executable, str(FETCHER)], env=self._env(),
+                                capture_output=True, text=True, timeout=120,
+                                preexec_fn=lambda: os.umask(0o077))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        model = self.models / "lfm2-700m.gguf"
+        self.assertEqual(model.read_bytes(), self.weights)
+        self.assertEqual(model.stat().st_mode & 0o777, 0o640)
+        self.assertEqual((model.stat().st_uid, model.stat().st_gid),
+                         (self.models.stat().st_uid, self.models.stat().st_gid))
+        self.assertEqual((self.models / "models.tsv").stat().st_mode & 0o777, 0o640)
+        self.assertTrue((self.models / ".ready").exists())
+
+    def test_existing_verified_model_permissions_are_repaired_without_blob_download(self):
+        self.models.mkdir()
+        model = self.models / "lfm2-700m.gguf"
+        model.write_bytes(self.weights)
+        model.chmod(0o600)
+        ledger = self.models / "models.tsv"
+        ledger.write_text("name\tsource\tcommit\tsha256\trecorded_at\n" +
+                          f"lfm2-700m.gguf\thttps://huggingface.co/{REPO}/resolve/{COMMIT}/{FILE}\t" +
+                          f"{COMMIT}\t{hashlib.sha256(self.weights).hexdigest()}\tbuilt\n")
+        ledger.chmod(0o600)
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(model.read_bytes(), self.weights)
+        self.assertEqual(model.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(ledger.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(len(ledger.read_text().splitlines()), 2)
+        self.assertEqual(len(self.log.read_text().splitlines()), 1)
+        self.assertTrue((self.state / ".models-firstboot-done").exists())
+
     def test_host_layer_disables_pulls_without_retiring_retries(self):
         (self.t / "host.toml").write_text("[ai]\nfirstboot_pulls=false\n")
         result = self._run()

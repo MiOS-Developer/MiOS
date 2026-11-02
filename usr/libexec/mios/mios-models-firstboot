@@ -10,6 +10,7 @@ import json
 import re
 import time
 import tempfile
+import stat
 
 MODELS_DIR = pathlib.Path("/var/lib/mios/llamacpp/models")
 SENTINEL = pathlib.Path("/var/lib/mios/.models-firstboot-done")
@@ -82,6 +83,23 @@ def _resolve_hf(source):
     raise RuntimeError(f"{path} is not in {repo}@{commit}")
 
 
+def _publish_access(path, directory):
+    """Verified public model artifacts inherit their serving directory's reader identity."""
+    if os.name != "posix":
+        return
+    owner = directory.stat()
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        current = os.fstat(descriptor)
+        if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+            raise OSError("refusing a linked or nonregular model artifact")
+        if (current.st_uid, current.st_gid) != (owner.st_uid, owner.st_gid):
+            os.fchown(descriptor, owner.st_uid, owner.st_gid)
+        os.fchmod(descriptor, 0o640)
+    finally:
+        os.close(descriptor)
+
+
 def _record(name, source, commit, digest, directory=None):
     """Publish an idempotent provenance record under the single-writer lock."""
     ledger = (directory or MODELS_DIR) / LEDGER_NAME
@@ -90,6 +108,7 @@ def _record(name, source, commit, digest, directory=None):
     prior = ledger.read_text() if ledger.exists() else "name\tsource\tcommit\tsha256\trecorded_at\n"
     prefix = f"{name}\t{source}\t{commit}\t{digest}\t"
     if any(line.startswith(prefix) for line in prior.splitlines()):
+        _publish_access(ledger, ledger.parent)
         return
     entry = prefix + time.strftime("%Y-%m-%dT%H:%M:%S%z") + "\n"
     with tempfile.NamedTemporaryFile(mode="w", dir=ledger.parent, prefix=".models-ledger-", delete=False) as output:
@@ -101,6 +120,7 @@ def _record(name, source, commit, digest, directory=None):
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
+    _publish_access(temporary, ledger.parent)
     temporary.replace(ledger)
 
 
@@ -277,6 +297,7 @@ def _provision():
             continue
         if dest.is_file() and _sha256_file(dest) == digest:
             if not baked or name not in required:
+                _publish_access(dest, directory)
                 _record(name, source, commit, digest, directory)
             verified.add(name)
             continue
@@ -302,6 +323,7 @@ def _provision():
             part_dest.unlink(missing_ok=True)
             failures.append(name)
             continue
+        _publish_access(part_dest, directory)
         part_dest.replace(dest)
         _record(name, source, commit, actual, directory)
         verified.add(name)
