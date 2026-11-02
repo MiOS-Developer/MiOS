@@ -1,0 +1,12 @@
+[Unit]
+Description='MiOS' validated light inference backend projection
+After=mios-cdi-detect.service
+Wants=mios-cdi-detect.service
+Before=mios-llm-light.service
+
+[Service]
+Type=oneshot
+RuntimeDirectory=mios/light-backend
+RuntimeDirectoryPreserve=yes
+RemainAfterExit=no
+ExecStart=/usr/bin/mios-gen light-backend --apply --reload
