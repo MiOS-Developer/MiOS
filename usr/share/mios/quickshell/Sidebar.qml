@@ -344,7 +344,7 @@ QS.Scope {
         // "mios-dock-remote" where [desktop.mobile.remote_effects] applies (cheaper hyprglass preset, same look).
         WlrLayershell.namespace: Mobile.layerNamespace("mios-dock", root.screen ? root.screen.name : "")
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: (expanded && !root.oskWanted) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: expanded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         anchors.bottom: true
         margins.bottom: Math.round(Glass.gap * ui)
         visible: !reserveRebuild && ((root.revealed && (!root.fullscreen || root.fullscreenReveal)) || expanded || drawerProgress > 0)

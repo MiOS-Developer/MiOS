@@ -1,5 +1,7 @@
 // AI-hint: MiOS shell surfaces share one app drawer and follow compositor output hotplug.
 import QtQuick
+import QtQuick.Shapes
+import Quickshell.Wayland
 import Quickshell as QS
 import Quickshell.Hyprland
 import Quickshell.Io
@@ -339,6 +341,110 @@ QS.ShellRoot {
             MiOS.Sidebar { screen: modelData; shellState: workspaceState; reveal: edgeReveal }
             MiOS.Notifications { screen: modelData; bus: notifBus; reveal: edgeReveal }
             MiOS.Search { screen: modelData; outputName: modelData.name; shellState: workspaceState }
+            // One input-transparent feedback surface per local output; window borders are native shapes.
+            QS.PanelWindow {
+                id: captureGlow
+                screen: modelData
+                anchors.top: true
+                anchors.bottom: true
+                anchors.left: true
+                anchors.right: true
+                color: "transparent"
+                exclusiveZone: 0
+                exclusionMode: QS.ExclusionMode.Ignore
+                WlrLayershell.namespace: "mios-dock-capture-glow"
+                WlrLayershell.layer: WlrLayer.Overlay
+                WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+                mask: QS.Region { width: 0; height: 0 }
+                readonly property var settings: (MiOS.DockConfig.table.capture || {}).border_glow || ({})
+                readonly property real glowWidth: Number(settings.width_px)
+                readonly property int periodMs: isFinite(Number(settings.period_ms)) ? Math.max(0, Math.floor(Number(settings.period_ms))) : 0
+                readonly property color glowColor: settings.color || "transparent"
+                readonly property var monitor: Hyprland.monitorFor(screen)
+                readonly property bool localOutput: !!screen && !workspaceState.isRemoteOutput(screen.name)
+                    && !/^HEADLESS[-_]/i.test(screen.name)
+                readonly property bool capturedHere: (workspaceState.drawerOpen
+                    && (!workspaceState.drawerScreen || workspaceState.drawerScreen === screen.name))
+                    || (workspaceState.searchOpen
+                    && (!workspaceState.searchScreen || workspaceState.searchScreen === screen.name))
+                visible: localOutput && capturedHere && settings.enabled === true
+                    && isFinite(glowWidth) && glowWidth > 0 && periodMs > 0
+                property real phase: 0
+                NumberAnimation on phase {
+                    from: 0
+                    to: 360
+                    duration: Math.max(1, captureGlow.periodMs)
+                    loops: Animation.Infinite
+                    running: captureGlow.visible
+                }
+                function visibleWindowRects(monitor, viewportWidth, viewportHeight) {
+                    const output = []
+                    const list = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.toplevels.values : []
+                    const ox = monitor ? monitor.x : 0, oy = monitor ? monitor.y : 0
+                    for (const window of (list || [])) {
+                        const w = window ? window.lastIpcObject : null
+                        if (!w || !w.address || w.hidden === true || w.mapped === false
+                            || !w.at || w.at.length < 2 || !w.size || w.size.length < 2) continue
+                        const cls = String(w.class || "")
+                        const workspace = w.workspace ? String(w.workspace.name || "") : ""
+                        if (/^(quickshell|phosh-osk|stevia)/i.test(cls) || workspace.startsWith("special:")) continue
+                        const x = Number(w.at[0]) - ox, y = Number(w.at[1]) - oy
+                        const width = Number(w.size[0]), height = Number(w.size[1])
+                        if (![x, y, width, height].every(isFinite) || width <= 0 || height <= 0
+                            || x + width <= 0 || y + height <= 0 || x >= viewportWidth || y >= viewportHeight) continue
+                        output.push({address: String(w.address), x: x, y: y, width: width, height: height})
+                    }
+                    return output
+                }
+                readonly property var windowRects: visibleWindowRects(monitor, width, height)
+                Repeater {
+                    model: captureGlow.visible ? captureGlow.windowRects : []
+                    Shape {
+                        id: ring
+                        required property var modelData
+                        x: modelData.x
+                        y: modelData.y
+                        width: modelData.width
+                        height: modelData.height
+                        preferredRendererType: Shape.CurveRenderer
+                        readonly property real line: Math.min(captureGlow.glowWidth, width / 2, height / 2)
+                        readonly property real radius: Math.max(0.01, Math.min(MiOS.Glass.rounding, width / 2, height / 2))
+                        readonly property real innerRadius: Math.max(0.01, radius - line)
+                        ShapePath {
+                            strokeWidth: -1
+                            fillRule: ShapePath.OddEvenFill
+                            fillGradient: ConicalGradient {
+                                centerX: ring.width / 2
+                                centerY: ring.height / 2
+                                angle: captureGlow.phase
+                                GradientStop { position: 0; color: captureGlow.glowColor }
+                                GradientStop { position: 0.12; color: Qt.rgba(captureGlow.glowColor.r, captureGlow.glowColor.g, captureGlow.glowColor.b, 0.6) }
+                                GradientStop { position: 0.4; color: "transparent" }
+                                GradientStop { position: 0.9; color: "transparent" }
+                                GradientStop { position: 1; color: captureGlow.glowColor }
+                            }
+                            startX: ring.radius; startY: 0
+                            PathLine { x: ring.width - ring.radius; y: 0 }
+                            PathArc { x: ring.width; y: ring.radius; radiusX: ring.radius; radiusY: ring.radius }
+                            PathLine { x: ring.width; y: ring.height - ring.radius }
+                            PathArc { x: ring.width - ring.radius; y: ring.height; radiusX: ring.radius; radiusY: ring.radius }
+                            PathLine { x: ring.radius; y: ring.height }
+                            PathArc { x: 0; y: ring.height - ring.radius; radiusX: ring.radius; radiusY: ring.radius }
+                            PathLine { x: 0; y: ring.radius }
+                            PathArc { x: ring.radius; y: 0; radiusX: ring.radius; radiusY: ring.radius }
+                            PathMove { x: ring.line + ring.innerRadius; y: ring.line }
+                            PathLine { x: ring.width - ring.line - ring.innerRadius; y: ring.line }
+                            PathArc { x: ring.width - ring.line; y: ring.line + ring.innerRadius; radiusX: ring.innerRadius; radiusY: ring.innerRadius }
+                            PathLine { x: ring.width - ring.line; y: ring.height - ring.line - ring.innerRadius }
+                            PathArc { x: ring.width - ring.line - ring.innerRadius; y: ring.height - ring.line; radiusX: ring.innerRadius; radiusY: ring.innerRadius }
+                            PathLine { x: ring.line + ring.innerRadius; y: ring.height - ring.line }
+                            PathArc { x: ring.line; y: ring.height - ring.line - ring.innerRadius; radiusX: ring.innerRadius; radiusY: ring.innerRadius }
+                            PathLine { x: ring.line; y: ring.line + ring.innerRadius }
+                            PathArc { x: ring.line + ring.innerRadius; y: ring.line; radiusX: ring.innerRadius; radiusY: ring.innerRadius }
+                        }
+                    }
+                }
+            }
         }
     }
 }

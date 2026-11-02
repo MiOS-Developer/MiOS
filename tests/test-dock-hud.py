@@ -205,8 +205,55 @@ assert.deepStrictEqual(calls,['search','targets','windows','apps']);
     return errors
 
 
+def dock_capture_feedback_and_keyboard(ref=None):
+    config = read(f"{QS}/Config.qml", ref)
+    sidebar = read(f"{QS}/Sidebar.qml", ref)
+    required = ["id: captureGlow", "mask: QS.Region { width: 0; height: 0 }",
+                "WlrLayershell.keyboardFocus: WlrKeyboardFocus.None", "exclusionMode: QS.ExclusionMode.Ignore",
+                "function visibleWindowRects(monitor, viewportWidth, viewportHeight)", "ConicalGradient {",
+                "angle: captureGlow.phase", "ShapePath.OddEvenFill", "Shape.CurveRenderer",
+                "running: captureGlow.visible", "border_glow", "settings.width_px", "settings.period_ms",
+                "workspaceState.isRemoteOutput(screen.name)", "/^HEADLESS[-_]/i"]
+    errors = [f"missing capture feedback: {item}" for item in required if item not in config]
+    focus = re.search(r"WlrLayershell.keyboardFocus:s*(.+)", sidebar)
+    if not focus or "Exclusive" not in focus.group(1):
+        errors.append("expanded dock cannot receive keyboard focus with the on-screen keyboard enabled")
+    if errors:
+        return errors
+
+    start = config.index("function visibleWindowRects(")
+    brace = config.index("{", start)
+    depth, end = 1, brace + 1
+    while depth and end < len(config):
+        depth += (config[end] == "{") - (config[end] == "}")
+        end += 1
+    import json
+    script = r"""
+const assert=require('assert'),vm=require('vm');
+const visible=vm.runInNewContext('('+METHOD+')');
+const valid={address:'0x1',class:'Alacritty',at:[110,220],size:[200,100],workspace:{name:'1'}};
+const windows=[valid,
+ {...valid,address:'hidden',hidden:true},{...valid,address:'unmapped',mapped:false},
+ {...valid,address:'special',workspace:{name:'special:minimized'}},
+ {...valid,address:'keyboard',class:'phosh-osk-stevia'},{...valid,address:'shell',class:'quickshell'},
+ {...valid,address:'outside',at:[10000,20000]},{...valid,address:'zero',size:[0,10]},
+ {...valid,address:'bad',size:['invalid',10]}].map(lastIpcObject=>({lastIpcObject}));
+const monitor={x:100,y:200,activeWorkspace:{toplevels:{values:windows}}};
+const result=JSON.parse(JSON.stringify(visible(monitor,1920,1080)));
+assert.deepStrictEqual(result,[{address:'0x1',x:10,y:20,width:200,height:100}]);
+assert.deepStrictEqual(Array.from(visible(null,1920,1080)),[]);
+const ctx=vm.createContext({expanded:true,root:{oskWanted:true},WlrKeyboardFocus:{Exclusive:'exclusive',None:'none'}});
+assert.equal(vm.runInContext(FOCUS,ctx),'exclusive');
+ctx.expanded=false;assert.equal(vm.runInContext(FOCUS,ctx),'none');
+""".replace("METHOD", json.dumps(config[start:end])).replace("FOCUS", json.dumps(focus.group(1)))
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    if result.returncode:
+        errors.append("window filtering or keyboard attachment failed: " + result.stderr[-1200:])
+    return errors
+
+
 CONTRACTS = [grows_upward_at_bar_width, config_fallbacks_match_ssot, configurator_has_every_scalar, previews_capture_safe_and_flat,
-             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus]
+             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus, dock_capture_feedback_and_keyboard]
 
 
 class Positive(unittest.TestCase):
