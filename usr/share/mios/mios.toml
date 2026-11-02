@@ -17522,7 +17522,7 @@ placeholder = { vendor = "MiOS", app_id = "os.mios.portal", brand = "mios" }
 packages = [
   "git-core", "curl", "ca-certificates", "gnupg2", "tar", "xz", "unzip", "zip", "bzip2", "patch",
   "diffutils", "findutils", "which", "file", "procps-ng", "time", "util-linux", "m4", "perl", "make",
-  "python3", "python3-devel", "python3-pip", "nodejs", "npm", "ImageMagick",
+  "python3", "python3-devel", "python3-pip", "python3-pillow", "nodejs", "npm", "ImageMagick",
   "gcc", "gcc-c++", "clang", "clang-devel", "llvm", "lld", "nasm", "cbindgen", "rust", "cargo",
   "gtk3-devel", "dbus-glib-devel", "dbus-devel", "alsa-lib-devel", "pulseaudio-libs-devel",
   "libXt-devel", "libX11-devel", "libXext-devel", "libXrender-devel", "libXtst-devel",
@@ -17956,7 +17956,7 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # test-ukify-stage's real-compiler tier (ukify + the systemd-boot EFI stub; the
 # image's own kernel is the input). A suite that cannot run its live tier exits
 # 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
-packages = ["bubblewrap", "composefs", "systemd", "dotnet-sdk-8.0", "powershell",
+packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned"]
 
 [ci.tiers]

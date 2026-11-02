@@ -42,6 +42,35 @@ want 1 "wrapper: jobs above 6 is refused" env MIOS_VENDOR_TOML="$TMP/jobs.toml" 
 sed '/^\[desktop.portal.builder\]/,/^\[/ s/^lane = .*/lane = "turbo"/' "$ROOT/usr/share/mios/mios.toml" >"$TMP/lane.toml"
 want 1 "wrapper: an unknown lane is refused" env MIOS_VENDOR_TOML="$TMP/lane.toml" "$WRAP" config
 
+# Stop the real scoped wrapper immediately after it constructs runtime arguments.
+# Mock only the OS identity; no network, container build or privileged write occurs.
+cat >"$TMP/identity-hook.sh" <<'HOOK'
+id() {
+    case "${1:-}" in -u|-g) echo "$MIOS_TEST_UID" ;; *) command id "$@" ;; esac
+}
+set -T
+trap 'if [[ "$BASH_COMMAND" == "for v in "* ]]; then printf "%s\n" "${RUN_ARGS[@]}"; exit 0; fi' DEBUG
+HOOK
+mkdir -p "$TMP/work" "$TMP/runtime"
+cat >"$TMP/paths.toml" <<EOF
+[desktop.portal.builder]
+work_root = "$TMP/work"
+artifact_root = "$TMP/artifacts"
+EOF
+for test_uid in 0 1000; do
+    want 0 "wrapper: runtime arguments for uid $test_uid" env \
+        MIOS_HOST_TOML="$TMP/paths.toml" MIOS_PORTAL_BUILD_SCOPED=1 \
+        MIOS_PORTAL_BUILD_TS=test XDG_RUNTIME_DIR="$TMP/runtime" \
+        MIOS_TEST_UID="$test_uid" BASH_ENV="$TMP/identity-hook.sh" bash "$WRAP"
+    if [ "$test_uid" = 0 ]; then expected=host; forbidden=keep-id; else expected=keep-id; forbidden=host; fi
+    if grep -qx -- "--userns=$expected" "$TMP/out" && ! grep -qx -- "--userns=$forbidden" "$TMP/out"; then
+        ok "wrapper: uid $test_uid selects $expected and excludes $forbidden"
+    else
+        bad "wrapper: wrong user namespace for uid $test_uid"
+        cat "$TMP/out"
+    fi
+done
+
 # --- heavy.lock -----------------------------------------------------------------------------
 # shellcheck source=/usr/lib/mios/heavy-lock.sh
 . "$ROOT/usr/lib/mios/heavy-lock.sh"

@@ -74,3 +74,89 @@ mios_ci_verify_bootc_labels() {
     done
     echo "${image}: containers.bootc=1 ostree.bootable=1"
 }
+
+# Build Portal once in the bounded development environment. The image bake consumes
+# only stage-run's verified deliverable; no Gecko source/compiler enters that bake.
+mios_ci_build_portal() (
+    set -euo pipefail
+    local root state image overlay ts config bootstrap_packages icon_source
+    root="$(cd "${1:-.}" && pwd)"
+    state="${2:?usage: mios_ci_build_portal ROOT STATE_DIR}"
+    [[ ! -e "$state" ]] || { echo "Portal build state already exists: $state" >&2; exit 1; }
+    mkdir -p "$state"
+    state="$(cd "$state" && pwd)"
+    overlay="$state/paths.toml"
+    image="$(python3 "$root/tools/ci-suites.py" --fedora-image)"
+    # Read only vendor data: runner state must never inherit an operator's secrets.
+    config="$(MIOS_TOML_ROOT="$root" MIOS_VENDOR_TOML="$root/usr/share/mios/mios.toml" MIOS_HOST_TOML=/nonexistent \
+        MIOS_USER_TOML=/nonexistent "$root/usr/libexec/mios/mios-portal-build" config)"
+    eval "$config"
+    [[ "$PB_ICON_SRC" = /* && "$PB_ICON_SRC" != *"/../"* ]] || {
+        echo "Portal icon must be an absolute checkout path" >&2; exit 1;
+    }
+    icon_source="$root$PB_ICON_SRC"
+    [[ -f "$icon_source" ]] || { echo "Portal icon not found: $icon_source" >&2; exit 1; }
+    bootstrap_packages="$(python3 - "$root/usr/share/mios/mios.toml" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as source:
+    data = tomllib.load(source)
+assert "podman" in data["packages"]["devcontainer"]["pkgs"]
+print(" ".join(dict.fromkeys([*data["desktop"]["portal"]["builder"]["packages"], "podman"])))
+PY
+)"
+    python3 - "$root" "$overlay" <<'PY'
+import json, sys, tomllib
+from pathlib import Path
+root, output = Path(sys.argv[1]), Path(sys.argv[2])
+data = tomllib.loads((root / "usr/share/mios/mios.toml").read_text())
+builder = data["desktop"]["portal"]["builder"]
+paths = {
+    "containerfile_dir": str(root / builder["containerfile_dir"].lstrip("/")),
+    "product_tree": str(root / builder["product_tree"].lstrip("/")),
+    "heavy_lock": "/var/lib/mios-build/portal/heavy.lock",
+}
+output.write_text("[desktop.portal.builder]\n" + "".join(f"{k} = {json.dumps(v)}\n" for k, v in paths.items()))
+PY
+    # Existing containers belong to their owners: a name collision fails instead
+    # of stopping an unrelated build.
+    sudo podman run --detach --name podman-MiOS-DEV --privileged --user 0:0 \
+        --cgroupns private --systemd always --memory "$PB_SCOPE_MEM" \
+        --memory-swap "$PB_SCOPE_MEM" --cpus "$PB_CPUS" \
+        -v "$root:$root:rw" -v "$state:/var/lib/mios-build:rw" \
+        -v "$icon_source:$PB_ICON_SRC:ro" \
+        --workdir "$root" --entrypoint /sbin/init "$image"
+    trap 'sudo podman rm --force podman-MiOS-DEV >/dev/null' EXIT
+    ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    sudo podman exec \
+        -e MIOS_PORTAL_BOOTSTRAP_PACKAGES="$bootstrap_packages" \
+        -e MIOS_VENDOR_TOML="$root/usr/share/mios/mios.toml" \
+        -e MIOS_HOST_TOML=/var/lib/mios-build/paths.toml \
+        -e MIOS_USER_TOML=/nonexistent \
+        -e MIOS_THEME_ROOT="$root" -e MIOS_TOML_ROOT="$root" \
+        -e MIOS_PORTAL_BUILD_SCOPED=1 -e MIOS_PORTAL_BUILD_TS="$ts" \
+        -e XDG_RUNTIME_DIR=/run/mios-portal-build \
+        podman-MiOS-DEV bash --noprofile --norc -c '
+            set -euo pipefail
+            systemd-tmpfiles --create --prefix=/var/home --prefix=/var/roothome \
+                --prefix=/var/opt --prefix=/var/srv --prefix=/var/mnt --prefix=/var/usrlocal
+            # The canonical builder table supplies its dependencies. Podman is
+            # the development environment runtime from the existing package set.
+            set -f
+            # No Python is assumed in the machine OS before this install.
+            # shellcheck disable=SC2086
+            dnf install -y --setopt=install_weak_deps=False $MIOS_PORTAL_BOOTSTRAP_PACKAGES
+            mkdir -p /var/lib/mios-build/portal /var/lib/mios-build/artifacts/mios-portal "$XDG_RUNTIME_DIR"
+            config="$(./usr/libexec/mios/mios-portal-build config)"
+            eval "$config"
+            free_gb=$(( $(df --output=avail -k /var/lib/mios-build/portal | tail -1) / 1024 / 1024 ))
+            [[ "$free_gb" -ge "$PB_MIN_FREE_GB" ]] || { echo "Portal requires $PB_MIN_FREE_GB GB free" >&2; exit 1; }
+            . ./usr/lib/mios/heavy-lock.sh
+            mios_heavy_lock_exec "$PB_LOCK" systemd-run --scope --quiet --collect \
+                -p MemoryMax="$PB_SCOPE_MEM" -p MemorySwapMax="$PB_SCOPE_SWAP" -p Delegate=yes \
+                ./usr/libexec/mios/mios-portal-build build
+            ./usr/libexec/mios/mios-portal-tree stage-run \
+                --run "/var/lib/mios-build/artifacts/mios-portal/$MIOS_PORTAL_BUILD_TS" \
+                --out "$PWD/.staged-portal"
+        '
+    sudo chown -R "$(id -u):$(id -g)" "$root/.staged-portal"
+)

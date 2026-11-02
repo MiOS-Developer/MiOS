@@ -13,7 +13,8 @@ COPY VERSION               /ctx/VERSION
 COPY config/artifacts/     /ctx/config/artifacts/
 COPY tools/                /ctx/tools/
 COPY src/                  /ctx/src/
-# desk-038 F1: Minimal staged Portal artifact directory (never whole /artifacts symlink store)
+# Produced by mios-portal-tree stage-run after the off-image builder succeeds.
+# Required by universal phase 67; never copy the whole /artifacts symlink store.
 COPY .staged-portal/       /ctx/artifacts/portal/
 COPY MiOS.md               /ctx/rootmd/MiOS.md
 COPY AGENTS.md             /ctx/rootmd/AGENTS.md

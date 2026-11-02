@@ -163,7 +163,14 @@ STORE="$PB_WORK/storage"; RUNROOT="${XDG_RUNTIME_DIR:?}/mios-portal-build"
 mkdir -p "$STORE" "$RUNROOT" "$PB_WORK/work/inputs"
 PODMAN=(env -u CONTAINER_HOST -u DOCKER_HOST podman --root "$STORE" --runroot "$RUNROOT")
 RUN_ARGS=(--rm --cgroups=split --memory "$PB_CMEM" --memory-swap "$PB_CMEMSWAP" --cpus "$PB_CPUS"
-    --userns=keep-id --user "$(id -u):$(id -g)" -e HOME=/work/home)
+    --user "$(id -u):$(id -g)" -e HOME=/work/home)
+# Root already has the enclosing development container's namespace. keep-id
+# needs subordinate mappings and is for the host's unprivileged builder user.
+if [ "$(id -u)" -eq 0 ]; then
+    RUN_ARGS+=(--userns=host)
+else
+    RUN_ARGS+=(--userns=keep-id)
+fi
 for v in "${INPUT_VARS[@]}"; do RUN_ARGS+=(-e "$v"); done
 
 build_image() {

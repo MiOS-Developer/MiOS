@@ -22,10 +22,21 @@ env:
   PUBLISH: 'true'
 
 jobs:
+  # Complete publication before the job container is pulled. Pull requests use
+  # the existing mirror with a read-only token and still run the source gates.
+  machine-os-mirror:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/machine-os-mirror.yml
+    permissions:
+      contents: read
+      packages: write
+
   # Source-tree fitness functions. No built image is required, so drift fails a
   # change before the expensive bake. The suites come from [ci] in the SSOT and
   # are the same set .forgejo/workflows/build-mios.yml runs.
   drift-gate:
+    needs: machine-os-mirror
+    if: ${{ !cancelled() && (needs.machine-os-mirror.result == 'success' || (github.event_name == 'pull_request' && needs.machine-os-mirror.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     # The gate runs on the podman machine OS (Fedora CoreOS) that MiOS-DEV boots,
     # the lean CI harness, not on the runner's Ubuntu. (The dev container is the
@@ -33,13 +44,17 @@ jobs:
     # resolved before any step can read the SSOT; tools/ci-suites.py --check
     # holds it equal to [ci.fedora].image.
     container:
-      image: ghcr.io/mios-dev/machine-os:6.1
+      image: ghcr.io/mios-developer/machine-os:6.1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
       # tests/test-sandbox-seccomp.sh's live tier runs bwrap, which needs user
       # namespaces the default container seccomp/AppArmor profile denies. A
       # suite that cannot run it exits 77 and fails: it is never a pass.
       options: --privileged
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Bootstrap git and python
         # Before checkout: without git in the container, actions/checkout falls
@@ -193,8 +208,60 @@ jobs:
       - name: Drift-gate tier
         run: bash ./tests/run-suites.sh gate
 
+  # Portal is an off-image product. Both full-image consumers use this same
+  # successful, current-source artifact, including the smoke result and overlay.
+  portal-artifact:
+    needs: machine-os-mirror
+    if: ${{ !cancelled() && (needs.machine-os-mirror.result == 'success' || (github.event_name == 'pull_request' && needs.machine-os-mirror.result == 'skipped')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    permissions:
+      contents: read
+      packages: read
+    env:
+      MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reclaim runner disk
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Prepare the development runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_prepare_storage
+          echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and verify Portal in MiOS-DEV
+        run: |
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_build_portal . "$RUNNER_TEMP/mios-portal-build"
+
+      - name: Publish the verified Portal build context
+        uses: actions/upload-artifact@v4
+        with:
+          name: mios-portal-build-context
+          path: .staged-portal/
+          include-hidden-files: true
+          if-no-files-found: error
+
   build:
-    needs: drift-gate
+    needs: [drift-gate, portal-artifact]
+    if: ${{ !cancelled() && needs.drift-gate.result == 'success' && needs.portal-artifact.result == 'success' }}
     runs-on: ubuntu-24.04
     env:
       MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
@@ -225,7 +292,7 @@ jobs:
         # the lint and reports green.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman skopeo shellcheck
+          sudo apt-get install -y podman skopeo shellcheck python3-pil
           source ./tools/lib/ci-runtime.sh
           mios_ci_prepare_storage
 
@@ -243,6 +310,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Download the verified Portal build context
+        uses: actions/download-artifact@v4
+        with:
+          name: mios-portal-build-context
+          path: .staged-portal
+
+      - name: Verify the downloaded Portal artifact against this source
+        run: |
+          MIOS_THEME_ROOT="$PWD" MIOS_HOST_TOML=/nonexistent MIOS_USER_TOML=/nonexistent \
+            /usr/bin/python3 ./usr/libexec/mios/mios-portal-tree verify-run --run .staged-portal
 
       - name: Build the OCI image
         run: |
@@ -390,6 +468,8 @@ jobs:
   # drift-gate rather than after it, so a red source gate cannot hide whether
   # the image builds. Publishing stays in `build`, which still needs drift-gate.
   smoke-test:
+    needs: portal-artifact
+    if: ${{ !cancelled() && needs.portal-artifact.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -415,10 +495,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman
+          sudo apt-get install -y podman python3-pil
           source ./tools/lib/ci-runtime.sh
           mios_ci_prepare_storage
           echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Download the verified Portal build context
+        uses: actions/download-artifact@v4
+        with:
+          name: mios-portal-build-context
+          path: .staged-portal
+
+      - name: Verify the downloaded Portal artifact against this source
+        run: |
+          MIOS_THEME_ROOT="$PWD" MIOS_HOST_TOML=/nonexistent MIOS_USER_TOML=/nonexistent \
+            /usr/bin/python3 ./usr/libexec/mios/mios-portal-tree verify-run --run .staged-portal
 
       - name: Smoke build
         # The Containerfile's final layer runs bootc container lint.
@@ -461,8 +552,8 @@ jobs:
     permissions:
       contents: read
       packages: read
-    needs: artifact-plan
-    if: needs.artifact-plan.outputs.formats != '[]'
+    needs: [artifact-plan, portal-artifact]
+    if: ${{ !cancelled() && needs.artifact-plan.result == 'success' && needs.portal-artifact.result == 'success' && needs.artifact-plan.outputs.formats != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     strategy:
@@ -492,7 +583,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y podman qemu-system-x86 ovmf openssh-client
+          sudo apt-get install -y podman qemu-system-x86 ovmf openssh-client python3-pil
           source ./tools/lib/ci-runtime.sh
           mios_ci_prepare_storage
           echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -501,6 +592,17 @@ jobs:
 
       - name: Build miosd
         run: cargo build --locked --release --manifest-path ./src/mios-rs/Cargo.toml -p miosd
+
+      - name: Download the verified Portal build context
+        uses: actions/download-artifact@v4
+        with:
+          name: mios-portal-build-context
+          path: .staged-portal
+
+      - name: Verify the downloaded Portal artifact against this source
+        run: |
+          MIOS_THEME_ROOT="$PWD" MIOS_HOST_TOML=/nonexistent MIOS_USER_TOML=/nonexistent \
+            /usr/bin/python3 ./usr/libexec/mios/mios-portal-tree verify-run --run .staged-portal
 
       - name: Bake the image the disk is made from
         run: |

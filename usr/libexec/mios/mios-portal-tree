@@ -4,6 +4,8 @@
 """Stage the MiOS-Portal product tree for a build, and verify what a build produced.
 
   mios-portal-tree stage --out DIR --versions FILE [--lane LANE]
+  mios-portal-tree verify-run --run RUN_DIR
+  mios-portal-tree stage-run --run RUN_DIR --out DIR
   mios-portal-tree check-import --project DIR [--engine DIR]
   mios-portal-tree verify-stage --stage STAGE.json [--overlay DIR]
   mios-portal-tree verify-install --run RUN_DIR --dest DIR --binary NAME [--root-owned]
@@ -28,6 +30,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 _SELF = os.path.abspath(__file__)
 ROOT = os.environ.get("MIOS_THEME_ROOT") or os.path.abspath(os.path.join(os.path.dirname(_SELF), "..", "..", ".."))
@@ -311,6 +314,81 @@ def cmd_verify_stage(args):
     return 0
 
 
+
+def _verified_run(args):
+    """Validate the exact off-image deliverable before it becomes an OCI build context."""
+    run = os.path.abspath(args.run)
+    try:
+        with open(os.path.join(run, "manifest.json"), encoding="utf-8") as fh:
+            man = json.load(fh)
+        with open(os.path.join(run, "metrics.json"), encoding="utf-8") as fh:
+            metrics = json.load(fh)
+        pkg = man["package"]
+        filename, checksum, executable = pkg["file"], pkg["sha256"], pkg["executable"]
+        version = man["resolved"]["firefox"]
+        if (type(metrics["exit"]) is not int or metrics["exit"] != 0
+                or not isinstance(metrics["product"], str) or not metrics["product"].startswith("staged:")
+                or str(metrics["smoke"]) != "0"):
+            _die("builder metrics require exit 0, a staged product and smoke 0")
+        if (not isinstance(filename, str) or not filename or filename != os.path.basename(filename)
+                or filename in (".", "..") or any(c.isspace() for c in filename)
+                or not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum)
+                or not isinstance(executable, str) or not executable
+                or not isinstance(version, str) or not version):
+            _die("manifest.json package fields are incomplete or unsafe")
+        required = ["manifest.json", "metrics.json", "stage.json", filename]
+        for name in required:
+            path = os.path.join(run, name)
+            if os.path.islink(path) or not os.path.isfile(path):
+                _die(f"{name} must be a regular artifact file")
+        overlay = os.path.join(run, "install-overlay")
+        if os.path.islink(overlay) or not os.path.isdir(overlay):
+            _die("install-overlay must be an artifact directory")
+        for directory, dirs, files in os.walk(overlay):
+            for name in dirs + files:
+                path = os.path.join(directory, name)
+                if os.path.islink(path) or not (os.path.isdir(path) or os.path.isfile(path)):
+                    _die(f"unsafe artifact overlay entry: {path}")
+        tarball = os.path.join(run, filename)
+        if _sha256(tarball) != checksum:
+            _die(f"{filename} sha256 mismatch")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        _die(f"{run}: invalid Portal artifact: {exc}")
+    cmd_verify_stage(argparse.Namespace(stage=os.path.join(run, "stage.json"), overlay=overlay))
+    print(f"[mios-portal-tree] verify-run: staged Portal {version}, package sha256 {checksum}")
+    return filename
+
+
+def cmd_verify_run(args):
+    _verified_run(args)
+    return 0
+
+
+def cmd_stage_run(args):
+    """Export only a verified deliverable, never the artifact store or its logs."""
+    filename = _verified_run(args)
+    run, out = os.path.abspath(args.run), os.path.abspath(args.out)
+    if os.path.lexists(out):
+        _die(f"output already exists: {out}")
+    parent = os.path.dirname(out)
+    os.makedirs(parent, exist_ok=True)
+    temporary = tempfile.mkdtemp(prefix=".mios-portal-stage-", dir=parent)
+    try:
+        for name in ("manifest.json", "metrics.json", "stage.json", filename):
+            shutil.copyfile(os.path.join(run, name), os.path.join(temporary, name))
+            os.chmod(os.path.join(temporary, name), _FILE_MODE)
+        shutil.copytree(os.path.join(run, "install-overlay"), os.path.join(temporary, "install-overlay"))
+        # Recheck the copied bytes too; a changed input must not publish a partial context.
+        _verified_run(argparse.Namespace(run=temporary))
+        os.chmod(temporary, _DIR_MODE)
+        os.rename(temporary, out)
+    finally:
+        if os.path.exists(temporary):
+            shutil.rmtree(temporary)
+    print(f"[mios-portal-tree] stage-run: {out}")
+    return 0
+
+
 def _strip1(name):
     parts = name.split("/", 1)
     return parts[1] if len(parts) == 2 else ""
@@ -452,6 +530,11 @@ def main(argv=None):
     vs = sub.add_parser("verify-stage", help="an artifact's stage.json equals the stage of the current tree")
     vs.add_argument("--stage", required=True)
     vs.add_argument("--overlay", help="the artifact's install-overlay/, checked against the staged install/")
+    vr = sub.add_parser("verify-run", help="verify successful current-tree Portal artifact provenance and bytes")
+    vr.add_argument("--run", required=True)
+    sr = sub.add_parser("stage-run", help="export a verified off-image artifact as a minimal OCI context")
+    sr.add_argument("--run", required=True)
+    sr.add_argument("--out", required=True)
     vi = sub.add_parser("verify-install", help="an installed tree equals the artifact it came from")
     vi.add_argument("--run", required=True)
     vi.add_argument("--dest", required=True)
@@ -459,7 +542,8 @@ def main(argv=None):
     vi.add_argument("--root-owned", action="store_true")
     args = ap.parse_args(argv)
     return {"stage": cmd_stage, "check-import": cmd_check_import, "verify-stage": cmd_verify_stage,
-            "verify-install": cmd_verify_install}[args.cmd](args)
+            "verify-install": cmd_verify_install, "verify-run": cmd_verify_run,
+            "stage-run": cmd_stage_run}[args.cmd](args)
 
 
 if __name__ == "__main__":

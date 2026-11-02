@@ -142,6 +142,89 @@ class TestBakePortal(unittest.TestCase):
         self.assertIn(needle, r.stdout + r.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.f.dest, "mios-portal")), "a failed phase left an install")
 
+    def stage_run(self, source=None, output=None):
+        return subprocess.run(
+            [sys.executable, "-I", self.f.tool, "stage-run",
+             "--run", source or self.f.run_dir,
+             "--out", output or os.path.join(self.f.path, ".staged-portal")],
+            env=self.f.env(), capture_output=True, text=True, timeout=180)
+
+    def test_ci_context_exports_only_verified_deliverable(self):
+        with open(os.path.join(self.f.run_dir, "build.log"), "w") as fh:
+            fh.write("unrelated build log")
+        result = self.stage_run()
+        self.ok(result)
+        output = os.path.join(self.f.path, ".staged-portal")
+        with open(os.path.join(output, "manifest.json")) as fh:
+            manifest = json.load(fh)
+        self.assertEqual(set(os.listdir(output)), {
+            "manifest.json", "metrics.json", "stage.json", "install-overlay",
+            manifest["package"]["file"]})
+        self.assertEqual(sha256(os.path.join(output, manifest["package"]["file"])),
+                         manifest["package"]["sha256"])
+        self.ok(subprocess.run(
+            [sys.executable, "-I", self.f.tool, "verify-run", "--run", output],
+            env=self.f.env(), capture_output=True, text=True, timeout=180))
+
+    def test_ci_context_missing_artifact_fails_without_placeholder(self):
+        empty = os.path.join(self.f.path, "empty")
+        os.mkdir(empty)
+        self.fails(self.stage_run(source=empty), "invalid Portal artifact")
+        self.assertFalse(os.path.exists(os.path.join(self.f.path, ".staged-portal")))
+
+    def test_ci_context_requires_completed_staged_smoke(self):
+        for metrics in (
+            {"exit": 1, "product": "staged:/src/mios-portal", "smoke": "0"},
+            {"exit": 0, "product": "placeholder", "smoke": "0"},
+            {"exit": 0, "product": "staged:/src/mios-portal", "smoke": "skipped"},
+        ):
+            with self.subTest(metrics=metrics):
+                self.f.metrics(metrics)
+                self.fails(self.stage_run(), "builder metrics require")
+                self.assertFalse(os.path.exists(os.path.join(self.f.path, ".staged-portal")))
+
+    def test_ci_context_rejects_tampered_package(self):
+        with open(os.path.join(self.f.run_dir, "manifest.json")) as fh:
+            manifest = json.load(fh)
+        with open(os.path.join(self.f.run_dir, manifest["package"]["file"]), "ab") as fh:
+            fh.write(b"tampered")
+        self.fails(self.stage_run(), "sha256 mismatch")
+
+    def test_ci_context_rejects_external_package_symlink(self):
+        with open(os.path.join(self.f.run_dir, "manifest.json")) as fh:
+            manifest = json.load(fh)
+        package = os.path.join(self.f.run_dir, manifest["package"]["file"])
+        external = os.path.join(self.f.path, "external-package")
+        shutil.move(package, external)
+        os.symlink(external, package)
+        self.fails(self.stage_run(), "regular artifact file")
+
+    def test_ci_context_rejects_package_path_traversal(self):
+        path = os.path.join(self.f.run_dir, "manifest.json")
+        with open(path) as fh:
+            manifest = json.load(fh)
+        manifest["package"]["file"] = "../outside.tar.xz"
+        with open(path, "w") as fh:
+            json.dump(manifest, fh)
+        self.fails(self.stage_run(), "incomplete or unsafe")
+
+    def test_ci_context_rechecks_current_source_overlay(self):
+        path = os.path.join(self.f.run_dir, "install-overlay", "policies.json")
+        with open(path, "a") as fh:
+            fh.write("tampered")
+        self.fails(self.stage_run(), "difference(s)")
+        self.assertFalse(os.path.exists(os.path.join(self.f.path, ".staged-portal")))
+
+    def test_ci_context_preserves_existing_output(self):
+        output = os.path.join(self.f.path, ".staged-portal")
+        os.mkdir(output)
+        marker = os.path.join(output, "owner")
+        with open(marker, "w") as fh:
+            fh.write("preserve")
+        self.fails(self.stage_run(), "output already exists")
+        with open(marker) as fh:
+            self.assertEqual(fh.read(), "preserve")
+
     # ------------------------------------------------------------- positive controls
     def test_positive_installs_the_artifact_and_proves_it(self):
         r = self.f.phase()
