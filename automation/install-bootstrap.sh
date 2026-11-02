@@ -10,15 +10,15 @@ set -euo pipefail
 # layered resolver the image build, 11-user.sh and the Windows projection use) -- no private
 # TOML parser here. This tree's vendor file is used when present (fresh host before the overlay).
 # ${BASH_SOURCE[0]:-} -- unset when the script arrives on stdin (curl ... | bash), which set -u rejects.
-_MIOS_HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+_mios_bootstrap_here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 _mios_cred() { # mios-credential <args...>; empty output + non-zero when unavailable/unresolved
     local bin="" c
-    for c in "${_MIOS_HERE}/../usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
+    for c in "${_mios_bootstrap_here}/../usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
         [[ -f "$c" ]] && { bin="$c"; break; }
     done
     [[ -n "$bin" ]] || return 3
-    if [[ -z "${MIOS_VENDOR_TOML:-}${MIOS_TOML:-}${MIOS_TOML_ROOT:-}" && -f "${_MIOS_HERE}/../usr/share/mios/mios.toml" ]]; then
-        MIOS_VENDOR_TOML="${_MIOS_HERE}/../usr/share/mios/mios.toml" python3 "$bin" "$@"
+    if [[ -z "${MIOS_VENDOR_TOML:-}${MIOS_TOML:-}${MIOS_TOML_ROOT:-}" && -f "${_mios_bootstrap_here}/../usr/share/mios/mios.toml" ]]; then
+        MIOS_VENDOR_TOML="${_mios_bootstrap_here}/../usr/share/mios/mios.toml" python3 "$bin" "$@"
     else
         python3 "$bin" "$@"
     fi

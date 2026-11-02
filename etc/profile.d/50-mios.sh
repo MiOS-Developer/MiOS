@@ -568,9 +568,9 @@ while IFS='=' read -r _mios_k _mios_v; do
         theme) export XCURSOR_THEME="$_mios_v" ;;
         size) export XCURSOR_SIZE="$_mios_v" ;;
     esac
-done <<EOF_MIOS_CURSOR
+done <<eof_mios_profile_cursor_settings
 $_mios_cursor_env
-EOF_MIOS_CURSOR
+eof_mios_profile_cursor_settings
 _mios_cursor_env=$(/usr/bin/mios-toml-get graphics xcursor_path) || return 1
 _mios_xcursor_path=""
 _mios_rest="$_mios_cursor_env:"
