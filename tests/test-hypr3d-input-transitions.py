@@ -141,7 +141,9 @@ class Upstream(unittest.TestCase):
         d = os.path.join(self.tmp, "no-room-input")
         subprocess.run(["git", "-c", "safe.directory=*", "clone", "-q", UPSTREAM, d], check=True)
         for p in ssot()["desktop"]["hyprland"]["hypr3d"]["patches"]:
-            if p in (PATCH, ROOM_INPUT):
+            if p == PATCH:
+                break  # Later patches depend on this target and do not belong in its missing-prerequisite control.
+            if p == ROOM_INPUT:
                 continue
             subprocess.run(["git", "apply", os.path.join(ROOT, p)], cwd=d, check=True)
         r = subprocess.run(["git", "apply", "--check", os.path.join(ROOT, PATCH)], cwd=d, capture_output=True)

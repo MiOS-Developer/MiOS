@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4114,
-  "total_metadata_entries": 3382,
-  "total_hints": 3376,
-  "total_functions_indexed": 2085,
-  "total_related_links": 6625,
+  "total_files_scanned": 4116,
+  "total_metadata_entries": 3384,
+  "total_hints": 3378,
+  "total_functions_indexed": 2087,
+  "total_related_links": 6630,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7737,6 +7737,21 @@
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-hypr3d-dock-capture.py",
+      "hint": "Native room capture patch ordering and regression coverage gate; actual shader pixels and deterministic lease tests run through CTest in the private builder.",
+      "related": [
+        "usr/share/mios/hyprland/patches/hypr3d-mios-dock-capture.patch",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [
+        "added",
+        "DockCapture"
+      ],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -38650,6 +38665,19 @@
       "path": "usr/share/mios/hyprland/mios-keys.conf",
       "hint": "Generated from mios.toml [keybindings] by mios-unit-gen keybindings.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/hyprland/patches/hypr3d-mios-dock-capture.patch",
+      "hint": "Native dock capture glow uses the room window material, transformed mesh, rounded/curved SDF and existing depth ordering; bounded monotonic heartbeats fail closed.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.hyprland.hypr3d]",
+        "usr/share/mios/quickshell/Config.qml",
+        "tests/test-hypr3d-dock-capture.py"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
