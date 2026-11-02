@@ -7861,7 +7861,7 @@ dev_local_tag  = "localhost/mios-devcontainer:latest"
 machine_os_repo = "quay.io/podman/machine-os"
 # The 6.1 tag remains the MiOS-DEV bootstrap contract; update the disk-image
 # and OCI build paths together in a separate base upgrade.
-machine_os_tag  = "6.1"
+machine_os_tag  = "6.2"
 # The container images of machine_os_repo:machine_os_tag, digest-identical,
 # without the podman-machine disk images its index also lists (older
 # containerd, as in Codespaces, cannot parse those). Published by
@@ -11191,7 +11191,7 @@ allocation_unit     = 4096       # NTFS default cluster size
 [bootstrap.dev_vm]
 machine_name        = "MiOS-DEV"   # podman derives "podman-MiOS-DEV"
 wsl_distro          = "MiOS"        # the eventual MiOS WSL distro (built from the OCI image)
-base_image          = "quay.io/podman/machine-os:6.1"   # LOCKED base
+base_image          = "quay.io/podman/machine-os:6.2"   # LOCKED base
 # Maximalist allocation — the dev VM IS the builder, so it gets every CPU
 # core, every GB of RAM, every GB of free disk, and every GPU the host
 # offers (minus the host_reserve below). Set to "max" to auto-detect via
@@ -17966,7 +17966,7 @@ Pester = "6.0.1"
 # [image].machine_os_mirror -- the same image digests without the disk-image
 # entries older containerd cannot read. The dev container is NOT built from it:
 # .devcontainer/Containerfile is FROM [image].ref, the full MiOS image.
-image = "ghcr.io/mios-developer/machine-os:6.1"
+image = "ghcr.io/mios-developer/machine-os:6.2"
 # [packages.<set>] lists installed first; devcontainer is MiOS's development userspace.
 package_sets = ["devcontainer"]
 # Repo-config RPMs installed before any package. Fedora does not package
