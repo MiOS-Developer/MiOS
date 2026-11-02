@@ -289,7 +289,8 @@ def _provision():
             print(f"ERROR: refusing symbolic-link partial destination {name}")
             failures.append(name)
             continue
-        result = subprocess.run(["curl", "-fL", "-C", "-", "--retry", "3", "--max-time", "1800",
+        result = subprocess.run(["curl", "--http1.1", "-fL", "-C", "-", "--retry", "3",
+                                 "--retry-all-errors", "--max-time", "1800",
                                  "-o", str(part_dest), source])
         if result.returncode != 0:
             print(f"WARN: Failed to download {name} (curl exit {result.returncode})")

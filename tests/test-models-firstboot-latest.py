@@ -12,6 +12,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import http.server
+import socket
+import threading
+import shutil
 
 ROOT = pathlib.Path(os.environ.get("MIOS_TEST_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 FETCHER = ROOT / "usr/libexec/mios/mios-models-firstboot"
@@ -89,6 +93,93 @@ class FirstbootLatest(unittest.TestCase):
 
     def _run(self):
         return subprocess.run([sys.executable, str(FETCHER)], env=self._env(), capture_output=True, text=True, timeout=120)
+
+    def test_real_curl_retries_interrupted_range_without_publishing_partial_readiness(self):
+        payload = b"GGUF" + bytes(range(256)) * 64
+        digest = hashlib.sha256(payload).hexdigest()
+        state = {"attempts": 0, "ranges": []}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_):
+                pass
+
+            def do_GET(self):
+                if self.path.startswith("/api/models/"):
+                    body = json.dumps({"sha": COMMIT, "siblings": [
+                        {"rfilename": FILE, "lfs": {"sha256": digest}}
+                    ]}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                state["attempts"] += 1
+                requested = self.headers.get("Range", "")
+                state["ranges"].append(requested)
+                start = int(requested.removeprefix("bytes=").removesuffix("-")) if requested else 0
+                body = payload[start:]
+                self.send_response(206 if requested else 200)
+                if requested:
+                    self.send_header("Content-Range", f"bytes {start}-{len(payload)-1}/{len(payload)}")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if state["attempts"] == 1:
+                    self.wfile.write(body[:len(body)//2])
+                    self.wfile.flush()
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    return
+                self.wfile.write(body)
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            real_curl = shutil.which("curl", path=os.defpath)
+            self.assertIsNotNone(real_curl)
+            (self.t / "bin/curl").unlink()
+            (self.t / "bin/curl").symlink_to(real_curl)
+            with self.toml.open("a") as config:
+                config.write(f'\n[llamacpp]\nbake_models="lfm2-700m.gguf={REPO}:{FILE}"\n')
+            for recover in (True, False):
+                with self.subTest(recover=recover):
+                    directory = self.t / ("positive" if recover else "negative")
+                    models = directory / "models"
+                    models.mkdir(parents=True)
+                    (models / "lfm2-700m.gguf.part").write_bytes(payload[:1024])
+                    fetcher = FETCHER
+                    if not recover:
+                        fetcher = directory / "usr/libexec/mios/mios-models-firstboot"
+                        fetcher.parent.mkdir(parents=True)
+                        library = directory / "usr/lib/mios"
+                        library.parent.mkdir(parents=True)
+                        library.symlink_to(ROOT / "usr/lib/mios", target_is_directory=True)
+                        source = FETCHER.read_text()
+                        self.assertEqual(source.count('"--retry-all-errors", '), 1)
+                        fetcher.write_text(source.replace('"--retry-all-errors", ', "", 1))
+                    state.update(attempts=0, ranges=[])
+                    result = subprocess.run([sys.executable, str(fetcher)], env=self._env({
+                        "MIOS_HF_ENDPOINT": f"http://127.0.0.1:{server.server_port}",
+                        "MIOS_MODELS_DIR": str(models), "MIOS_MODELS_STATE_DIR": str(directory / "state"),
+                    }), capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(state["ranges"][0], "bytes=1024-")
+                    self.assertEqual((models / ".ready").exists(), recover)
+                    self.assertEqual((directory / "state/.models-firstboot-done").exists(), recover)
+                    if recover:
+                        self.assertGreaterEqual(state["attempts"], 2)
+                        self.assertEqual((models / "lfm2-700m.gguf").read_bytes(), payload)
+                        self.assertFalse((models / "lfm2-700m.gguf.part").exists())
+                    else:
+                        self.assertEqual(state["attempts"], 1)
+                        self.assertFalse((models / "lfm2-700m.gguf").exists())
+                        self.assertTrue((models / "lfm2-700m.gguf.part").exists())
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
 
     def test_host_layer_disables_pulls_without_retiring_retries(self):
         (self.t / "host.toml").write_text("[ai]\nfirstboot_pulls=false\n")
