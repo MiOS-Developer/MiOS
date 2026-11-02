@@ -259,6 +259,9 @@ class TestRunCapture(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="mios-xbox-capture-run.")
         self.d = doc()
         self.cfg = W.WorkerConfig.from_spec(self.d, os.path.join(self.tmp, "w"))
+        access = mock.patch.object(W, "_qemu_access")  # only the capture orchestration is under test here
+        access.start()
+        self.addCleanup(access.stop)
         self.cfg.boot_timeout_s = 5
         nv = os.path.join(self.tmp, "VARS.fd")
         open(nv, "w").close()
@@ -401,6 +404,7 @@ class TestStageCapture(unittest.TestCase):
 class TestWorkerXmlHardening(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-xbox-capture-xml.")
+        os.chmod(self.tmp, 0o755)  # the fixture ancestor is traversable; only owned descendants are changed
         self.cfg = W.WorkerConfig.from_spec(doc(), self.tmp)
 
     def tearDown(self):
@@ -420,37 +424,147 @@ class TestWorkerXmlHardening(unittest.TestCase):
             r = subprocess.run(["virt-xml-validate", p, "domain"], capture_output=True, text=True, timeout=120)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
-    def test_qemu_access_grants_traverse_and_rw_on_worker_files(self):
-        base = os.path.join(self.tmp, "var", "lib", "mios-build", "xbox", "build-1", "worker")
-        os.makedirs(base, mode=0o700)
-        cfg = W.WorkerConfig.from_spec(doc(), base)
-        for p in (cfg.overlay, cfg.exchange, cfg.nvram):
-            with open(p, "wb") as fh:
-                fh.write(b"x")
-            os.chmod(p, 0o600)
-        # Root's QEMU account lookup is deterministic, including lean test
-        # containers without a host libvirt account. Ownership stays mocked.
+    def _private_cfg(self, name="custom-storage"):
+        root = os.path.join(self.tmp, name)
+        work = os.path.join(root, "build", "worker")
+        os.makedirs(work, mode=0o700)
+        os.chmod(root, 0o700)
+        d = doc()
+        d["spec"]["build"]["work_root"] = root
+        cfg = W.WorkerConfig.from_spec(d, work)
+        for path in (cfg.overlay, cfg.exchange, cfg.nvram):
+            with open(path, "wb") as fh:
+                fh.write(b"fixture")
+            os.chmod(path, 0o600)
+        return cfg
+
+    @contextlib.contextmanager
+    def _root_identity(self):
         with mock.patch.object(W.os, "geteuid", return_value=0), \
                 mock.patch("pwd.getpwnam", return_value=SimpleNamespace(pw_uid=4242)), \
                 mock.patch("grp.getgrnam", return_value=SimpleNamespace(gr_gid=4343)), \
-                mock.patch.object(W.os, "chown") as chown:
+                mock.patch.object(W.os, "getgrouplist", return_value=[4343]):
+            yield
+
+    def test_qemu_access_grants_traverse_and_rw_on_worker_files(self):
+        cfg = self._private_cfg()
+        mutations = []
+        def chown(fd, uid, gid):
+            mutations.append((os.readlink(f"/proc/self/fd/{fd}"), uid, gid))
+        with self._root_identity(), mock.patch.object(W.os, "fchown", side_effect=chown):
             W._qemu_access(cfg)
-        self.assertEqual(chown.call_args_list,
-                         [mock.call(p, 4242, 4343) for p in (cfg.overlay, cfg.exchange, cfg.nvram)])
-        for p in (cfg.overlay, cfg.exchange, cfg.nvram):
-            self.assertEqual(oct(os.stat(p).st_mode & 0o777), "0o660")
+        self.assertEqual([row for row in mutations if row[1] == 4242],
+                         [(p, 4242, 4343) for p in (cfg.overlay, cfg.exchange, cfg.nvram)])
+        directories = [row for row in mutations if row[1] == -1]
+        self.assertEqual([p for p, _, _ in directories],
+                         [cfg.work_root, os.path.join(cfg.work_root, "build"), cfg.work_dir])
+        self.assertTrue(all(gid == 4343 for _, _, gid in directories))
+        for path, _, _ in directories:
+            self.assertTrue(os.stat(path).st_mode & 0o010)
+        self.assertEqual(os.stat(self.tmp).st_mode & 0o777, 0o755)
+        for path in (cfg.overlay, cfg.exchange, cfg.nvram):
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o660)
+
+    def test_qemu_validate_only_changes_no_permissions(self):
+        cfg = self._private_cfg()
+        with self._root_identity(), mock.patch.object(W.os, "fchown") as chown, \
+                mock.patch.object(W.os, "fchmod") as chmod:
+            W._qemu_access(cfg, validate_only=True)
+        chown.assert_not_called()
+        chmod.assert_not_called()
+        self.assertEqual(os.stat(cfg.work_root).st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(cfg.overlay).st_mode & 0o777, 0o600)
+
+    def test_qemu_access_rejects_escaped_root_before_any_vm_operation(self):
+        cfg = self._private_cfg()
+        cfg.work_dir = cfg.work_root + "-escape/worker"
+        runner = mock.Mock()
+        with self._root_identity(), mock.patch.object(W.os, "fchown") as chown, \
+                mock.patch.object(W.os, "fchmod") as chmod:
+            with self.assertRaisesRegex(W.WorkerError, "escapes"):
+                W.define(cfg, runner)
+        runner.assert_not_called()
+        chown.assert_not_called()
+        chmod.assert_not_called()
+
+    def test_qemu_access_rejects_symlinked_directory(self):
+        cfg = self._private_cfg()
+        outside = os.path.join(self.tmp, "outside")
+        os.mkdir(outside)
+        os.symlink(outside, os.path.join(cfg.work_root, "linked"))
+        cfg.work_dir = os.path.join(cfg.work_root, "linked", "worker")
+        with self._root_identity(), mock.patch.object(W.os, "fchown") as chown, \
+                mock.patch.object(W.os, "fchmod") as chmod:
+            with self.assertRaises(W.WorkerError):
+                W._qemu_access(cfg, validate_only=True)
+        chown.assert_not_called()
+        chmod.assert_not_called()
+
+    def test_qemu_access_rejects_symlinked_disk_or_nvram_before_writes(self):
+        for index, field in enumerate(("overlay", "nvram")):
+            cfg = self._private_cfg(f"storage-{index}")
+            target = os.path.join(self.tmp, f"base-{index}")
+            with open(target, "wb") as fh:
+                fh.write(b"unchanged base fixture")
+            path = getattr(cfg, field)
+            os.unlink(path)
+            os.symlink(target, path)
+            runner = mock.Mock()
+            with self.subTest(field=field), self._root_identity(), \
+                    mock.patch.object(W.os, "fchown") as chown, mock.patch.object(W.os, "fchmod") as chmod:
+                with self.assertRaises(W.WorkerError):
+                    W.define(cfg, runner)
+            runner.assert_not_called()
+            chown.assert_not_called()
+            chmod.assert_not_called()
+            with open(target, "rb") as fh:
+                self.assertEqual(fh.read(), b"unchanged base fixture")
+
+    def test_qemu_access_rejects_hardlinked_disk(self):
+        cfg = self._private_cfg()
+        outside = os.path.join(self.tmp, "base")
+        os.unlink(cfg.overlay)
+        with open(outside, "wb") as fh:
+            fh.write(b"base fixture")
+        os.link(outside, cfg.overlay)
+        with self._root_identity(), mock.patch.object(W.os, "fchown") as chown, \
+                mock.patch.object(W.os, "fchmod") as chmod:
+            with self.assertRaisesRegex(W.WorkerError, "unsafe worker file"):
+                W._qemu_access(cfg)
+        chown.assert_not_called()
+        chmod.assert_not_called()
+
+    def test_qemu_access_refuses_to_change_untraversable_ancestor(self):
+        cfg = self._private_cfg()
+        os.chmod(self.tmp, 0o700)
+        with self._root_identity(), mock.patch.object(W.os, "fchown") as chown, \
+                mock.patch.object(W.os, "fchmod") as chmod:
+            with self.assertRaisesRegex(W.WorkerError, "outside work_root"):
+                W._qemu_access(cfg)
+        chown.assert_not_called()
+        chmod.assert_not_called()
+        self.assertEqual(os.stat(self.tmp).st_mode & 0o777, 0o700)
+
+    def test_qemu_validation_does_not_create_missing_roots(self):
+        d = doc()
+        d["spec"]["build"]["work_root"] = os.path.join(self.tmp, "not-created")
+        cfg = W.WorkerConfig.from_spec(d, os.path.join(d["spec"]["build"]["work_root"], "worker"))
+        with self._root_identity(), mock.patch.object(W.os, "fchown") as chown, \
+                mock.patch.object(W.os, "fchmod") as chmod:
+            W._qemu_access(cfg, validate_only=True)
+        chown.assert_not_called()
+        chmod.assert_not_called()
+        self.assertFalse(os.path.exists(cfg.work_root))
 
     def test_nonroot_access_preserves_worker_file_permissions(self):
-        for p in (self.cfg.overlay, self.cfg.exchange, self.cfg.nvram):
-            with open(p, "wb") as fh:
-                fh.write(b"fixture")
-            os.chmod(p, 0o600)
+        cfg = self._private_cfg()
         with mock.patch.object(W.os, "geteuid", return_value=1000), \
-                mock.patch.object(W.os, "chown") as chown:
-            W._qemu_access(self.cfg)
+                mock.patch.object(W.os, "fchown") as chown, mock.patch.object(W.os, "fchmod") as chmod:
+            W._qemu_access(cfg)
         chown.assert_not_called()
-        for p in (self.cfg.overlay, self.cfg.exchange, self.cfg.nvram):
-            self.assertEqual(os.stat(p).st_mode & 0o777, 0o600)
+        chmod.assert_not_called()
+        for path in (cfg.overlay, cfg.exchange, cfg.nvram):
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
     def test_negative_planted_spice_audio_and_sockets(self):
         root = ET.fromstring(W.generate_worker_xml(BASE_XML, self.cfg))

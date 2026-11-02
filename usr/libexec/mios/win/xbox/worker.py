@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,7 @@ class WorkerConfig:
     transport: str
     op_timeout_s: int
     read_timeout_s: int
+    work_root: str = ""
 
     @classmethod
     def from_spec(cls, doc: Dict[str, Any], work_dir: str) -> "WorkerConfig":
@@ -87,7 +89,7 @@ class WorkerConfig:
                    boot_timeout_s=int(b["worker_boot_timeout_s"]), build_timeout_s=int(b["worker_build_timeout_s"]),
                    poll_s=int(b["worker_poll_s"]), guestfs_mem_mib=int(b["extract_memsize_mib"]),
                    winrm_port=int(p["winrm_port"]), transport=p["transport"], op_timeout_s=int(p["operation_timeout_s"]),
-                   read_timeout_s=int(p["read_timeout_s"]))
+                   read_timeout_s=int(p["read_timeout_s"]), work_root=os.path.abspath(b["work_root"]))
 
     @property
     def overlay(self) -> str:
@@ -316,6 +318,7 @@ def preflight(cfg: WorkerConfig, runner: Runner = _default_runner, mem: Callable
               wd: Callable[[], bool] = watchdog_inactive) -> None:
     if not wd():
         raise WorkerError("hardware watchdog is armed: refusing to start a VM")
+    _qemu_access(cfg, validate_only=True)
     virsh_file_access(cfg.work_dir, runner)
     for dom in (cfg.target, cfg.base):
         st = domstate(dom, runner)
@@ -345,6 +348,7 @@ def prepare_exchange(cfg: WorkerConfig, job_dir: str, runner: Callable[..., Tupl
     """Thin qcow2 -> GPT + one NTFS basic-data partition labelled MIOSXCHG -> copy the job tree in."""
     if not os.path.isdir(job_dir):
         raise WorkerError(f"job directory {job_dir} missing")
+    _qemu_access(cfg, validate_only=True)
     os.makedirs(cfg.work_dir, mode=0o700, exist_ok=True)
     if os.path.exists(cfg.exchange):
         os.unlink(cfg.exchange)
@@ -406,28 +410,80 @@ def extract(cfg: WorkerConfig, dest: str, runner: Callable[..., Tuple[int, str]]
 # lifecycle
 # ---------------------------------------------------------------------------
 
-def _qemu_access(cfg: WorkerConfig) -> None:
-    """Ensure the qemu libvirt runtime user (when running as root) can traverse to and write the worker images."""
+def _qemu_access(cfg: WorkerConfig, *, validate_only: bool = False) -> None:
+    """Grant QEMU access only inside the declared work root, through no-follow descriptors."""
     if os.geteuid() != 0:
         return
+    root, work = os.path.abspath(cfg.work_root), os.path.abspath(cfg.work_dir)
+    if not cfg.work_root or root == os.path.sep or os.path.commonpath((root, work)) != root:
+        raise WorkerError("worker directory escapes the configured work_root")
     try:
         import grp, pwd
         uid, gid = pwd.getpwnam("qemu").pw_uid, grp.getgrnam("qemu").gr_gid
-    except KeyError:
-        return
-    d = os.path.abspath(cfg.work_dir)
-    while d and d != "/" and d.startswith("/var/lib/mios-build"):
-        st = os.stat(d)
-        os.chown(d, st.st_uid, gid)
-        os.chmod(d, (st.st_mode & 0o777) | 0o710)
-        d = os.path.dirname(d)
-    for f in (cfg.overlay, cfg.exchange, cfg.nvram):
-        if os.path.exists(f):
-            os.chown(f, uid, gid)
-            os.chmod(f, 0o660)
+        groups = set(os.getgrouplist("qemu", gid))
+    except (KeyError, OSError) as exc:
+        raise WorkerError(f"cannot resolve the host QEMU account: {exc}") from None
+    def check_ancestor(entry: os.stat_result, path: str) -> None:
+        shift = 6 if entry.st_uid == uid else 3 if entry.st_gid in groups else 0
+        if not (entry.st_mode >> shift) & 1:
+            raise WorkerError(f"QEMU cannot traverse ancestor {path}; refusing to change it outside work_root")
+
+    descriptors: List[int] = []
+    directories: List[Tuple[int, os.stat_result]] = []
+    files: List[int] = []
+    root_owner = None
+    try:
+        current = os.open(os.path.sep, os.O_RDONLY | os.O_DIRECTORY)
+        descriptors.append(current)
+        check_ancestor(os.fstat(current), os.path.sep)
+        path = os.path.sep
+        for part in work.strip(os.path.sep).split(os.path.sep):
+            path = os.path.join(path, part)
+            try:
+                current = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+            except FileNotFoundError:
+                if validate_only:
+                    return  # every existing ancestor was checked; creation happens only after admission
+                raise
+            descriptors.append(current)
+            entry = os.fstat(current)
+            inside = os.path.commonpath((root, path)) == root
+            if not inside:
+                check_ancestor(entry, path)
+                continue
+            if path == root:
+                root_owner = entry.st_uid
+            if entry.st_uid not in (root_owner, os.geteuid()) or entry.st_mode & 0o022:
+                raise WorkerError(f"worker directory {path} is not privately owned")
+            directories.append((current, entry))
+        for name in (os.path.basename(cfg.overlay), os.path.basename(cfg.exchange), os.path.basename(cfg.nvram)):
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=current)
+            except FileNotFoundError:
+                continue
+            descriptors.append(fd)
+            entry = os.fstat(fd)
+            if (not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1
+                    or entry.st_uid not in (root_owner, os.geteuid(), uid)):
+                raise WorkerError(f"unsafe worker file {os.path.join(work, name)}")
+            files.append(fd)
+        if validate_only:
+            return
+        for fd, entry in directories:
+            os.fchown(fd, -1, gid)
+            os.fchmod(fd, stat.S_IMODE(entry.st_mode) | 0o010)
+        for fd in files:
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, 0o660)
+    except OSError as exc:
+        raise WorkerError(f"worker access under {root}: {exc}") from None
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
 
 
 def define(cfg: WorkerConfig, runner: Runner = _default_runner) -> str:
+    _qemu_access(cfg, validate_only=True)
     rc, base_xml = runner(["virsh", "-c", CONNECT, "dumpxml", "--inactive", cfg.base])
     if rc:
         raise WorkerError(f"cannot read the base domain {cfg.base} (read-only dumpxml): {base_xml[-200:]}")

@@ -21,6 +21,8 @@ import tarfile
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
+from unittest import mock
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -625,6 +627,9 @@ class TestWorker(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="mios-xbox-worker-test.")
         _, self.doc = Fixture.get()
         self.cfg = W.WorkerConfig.from_spec(self.doc, self.tmp)
+        access = mock.patch.object(W, "_qemu_access")  # permission ownership is exercised by the capture security suite
+        access.start()
+        self.addCleanup(access.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -876,6 +881,16 @@ class TestBuild(unittest.TestCase):
         os.makedirs(self.b.root)
         os.makedirs(self.b.reports)
         self.b.doc = self.doc
+        # Orchestration tests do not allocate an exchange disk. The storage
+        # admission contract has its own planted-capacity suite below.
+        capacity = mock.patch.object(
+            B.shutil, "disk_usage",
+            return_value=SimpleNamespace(free=self.doc["spec"]["build"]["exchange_disk_gib"] * 1024**3))
+        capacity.start()
+        self.addCleanup(capacity.stop)
+        access = mock.patch.object(W, "_qemu_access")  # these tests mock the VM, not host QEMU identities
+        access.start()
+        self.addCleanup(access.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -1038,6 +1053,7 @@ class TestBuild(unittest.TestCase):
         with mock.patch.object(B, "build_layers", lambda env=None: LAYERS), \
                 mock.patch.object(B.render_spec, "render", lambda merged, layers: copy.deepcopy(doc)), \
                 mock.patch.object(B.W, "virsh_file_access", probe), \
+                mock.patch.object(B.W, "_qemu_access"), \
                 mock.patch.object(B.Build, "new", classmethod(lambda cls, *a, **k: new(*a, **k))), \
                 mock.patch("os.geteuid", lambda: 0), mock.patch("os.execv", no_exec), mock.patch("os.execvp", no_exec), \
                 mock.patch.dict(os.environ, {B.SCOPED_ENV: "1"}), contextlib.redirect_stderr(io.StringIO()) as err:
@@ -1156,6 +1172,142 @@ class TestBuild(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # probe defaults (real SSOT spec, SSOT credentials, fail closed)
 # ---------------------------------------------------------------------------
+
+class TestStorageCapacity(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="mios-xbox-capacity-")
+        _, self.doc = Fixture.get()
+        self.x = self.doc["spec"]
+        self.x["build"]["work_root"] = os.path.join(self.tmp.name, "work", "not-created")
+        self.x["build"]["artifact_root"] = os.path.join(self.tmp.name, "artifacts", "not-created")
+        self.required = self.x["build"]["exchange_disk_gib"]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def usage(self, gib):
+        return SimpleNamespace(free=gib * 1024**3)
+
+    def test_missing_roots_probe_existing_parent_without_writing(self):
+        with mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required)) as probe:
+            result = B.storage_capacity(self.x)
+        self.assertEqual(result["required_gib"], self.required)
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(probe.call_args_list, [mock.call(self.tmp.name), mock.call(self.tmp.name)])
+        for name in ("work_root", "artifact_root"):
+            row = result["roots"][name]
+            self.assertEqual(row["existing_ancestor"], self.tmp.name)
+            self.assertTrue(row["sufficient"])
+            self.assertFalse(os.path.exists(self.x["build"][name]))
+
+    def test_work_and_artifact_filesystems_are_checked_independently(self):
+        work = os.path.join(self.tmp.name, "work")
+        artifacts = os.path.join(self.tmp.name, "artifacts")
+        os.mkdir(work)
+        os.mkdir(artifacts)
+        for low_root, low_parent in (("work_root", work), ("artifact_root", artifacts)):
+            with self.subTest(low_root=low_root), mock.patch.object(
+                    B.shutil, "disk_usage",
+                    side_effect=lambda p: self.usage(self.required - 1 if p == low_parent else self.required)):
+                result = B.storage_capacity(self.x)
+                self.assertEqual(len(result["blockers"]), 1, result)
+                self.assertIn(low_root, result["blockers"][0])
+                self.assertIn("exchange_disk_gib", result["blockers"][0])
+                with self.assertRaisesRegex(B.BuildError, "storage " + low_root):
+                    B.require_storage_capacity(self.x)
+
+    def test_capacity_requirement_uses_the_existing_exchange_budget(self):
+        self.x["build"]["exchange_disk_gib"] = self.required // 2
+        with mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required // 2)):
+            B.require_storage_capacity(self.x)
+            self.x["build"]["exchange_disk_gib"] = self.required
+            with self.assertRaisesRegex(B.BuildError, "exchange_disk_gib"):
+                B.require_storage_capacity(self.x)
+
+    def test_plan_reports_low_capacity_and_cli_rejects_blockers(self):
+        with mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required - 1)), \
+                mock.patch.object(B.W, "mem_available_gib", return_value=1024), \
+                mock.patch.object(B.W, "watchdog_inactive", return_value=True):
+            plan = B.plan(LAYERS, lambda *args, **kwargs: (0, "shut off\n"))
+        self.assertTrue(any(s.startswith("storage work_root") for s in plan["blockers"]))
+        self.assertTrue(any(s.startswith("storage artifact_root") for s in plan["blockers"]))
+        self.assertEqual(plan["storage"]["required_gib"], self.required)
+        plan["problems"] = []  # blockers alone must produce a nonzero CLI status
+        with mock.patch.object(B, "plan", return_value=plan), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(B.main(["plan"]), 2)
+
+    def test_low_capacity_precedes_virsh_probe_for_every_heavy_command(self):
+        with mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required - 1)), \
+                mock.patch.object(B.W, "virsh_file_access") as probe:
+            for command in ("capture", "stage", "service", "gate", "run"):
+                with self.subTest(command=command), self.assertRaisesRegex(B.BuildError, "storage"):
+                    B.host_preflight(command, self.x)
+            probe.assert_not_called()
+
+    def test_worker_path_validation_precedes_the_first_write_probe(self):
+        with mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required)), \
+                mock.patch.object(B.W, "_qemu_access", side_effect=W.WorkerError("fixture unsafe path")) as access, \
+                mock.patch.object(B.W, "virsh_file_access") as probe:
+            with self.assertRaisesRegex(B.BuildError, "fixture unsafe path"):
+                B.host_preflight("run", self.x)
+        access.assert_called_once()
+        cfg = access.call_args.args[0]
+        self.assertEqual(cfg.work_root, self.x["build"]["work_root"])
+        self.assertEqual(access.call_args.kwargs, {"validate_only": True})
+        probe.assert_not_called()
+
+    def test_main_refuses_before_exec_scope_or_build_directory(self):
+        with mock.patch.object(B, "build_layers", return_value=LAYERS), \
+                mock.patch.object(B.render_spec, "render", return_value=self.doc), \
+                mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required - 1)), \
+                mock.patch.object(B.os, "geteuid", return_value=0), \
+                mock.patch.object(B.os, "execv") as reexec, \
+                mock.patch.object(B.os, "execvp") as scope, \
+                mock.patch.object(B.W, "virsh_file_access") as probe, \
+                mock.patch.object(B.Build, "new") as new, \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(B.main(["run"]), 2)
+        self.assertIn("exchange_disk_gib", error.getvalue())
+        reexec.assert_not_called()
+        scope.assert_not_called()
+        probe.assert_not_called()
+        new.assert_not_called()
+
+    def test_resume_checks_recorded_work_and_actual_output_filesystems(self):
+        existing = os.path.join(self.tmp.name, "previous-build")
+        recorded_work = os.path.join(self.tmp.name, "previous-work")
+        os.mkdir(existing)
+        os.mkdir(recorded_work)
+        saved = copy.deepcopy(self.doc)
+        saved["spec"]["build"]["work_root"] = recorded_work
+        with open(os.path.join(existing, "xbox-spec.json"), "w") as fh:
+            json.dump(saved, fh)
+        for command in ("gate", "service"):
+            for low, key in ((existing, "artifact_root"), (recorded_work, "work_root")):
+                with self.subTest(command=command, low=key), \
+                        mock.patch.object(B, "build_layers", return_value=LAYERS), \
+                        mock.patch.object(B.render_spec, "render", return_value=self.doc), \
+                        mock.patch.object(B.os, "geteuid", return_value=0), \
+                        mock.patch.object(B.shutil, "disk_usage",
+                                          side_effect=lambda p: self.usage(self.required - 1 if p == low else self.required)), \
+                        mock.patch.object(B.os, "execv") as reexec, mock.patch.object(B.os, "execvp") as scope, \
+                        mock.patch.object(B.W, "virsh_file_access") as probe, \
+                        contextlib.redirect_stderr(io.StringIO()) as error:
+                    self.assertEqual(B.main([command, "--build-dir", existing]), 2)
+                self.assertIn(low, error.getvalue())
+                self.assertIn("storage " + key, error.getvalue())
+                reexec.assert_not_called()
+                scope.assert_not_called()
+                probe.assert_not_called()
+
+    def test_nondirectory_ancestor_is_a_clear_blocker(self):
+        with open(os.path.join(self.tmp.name, "work"), "w") as fh:
+            fh.write("fixture")
+        with mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required)):
+            result = B.storage_capacity(self.x)
+        self.assertFalse(result["roots"]["work_root"]["sufficient"])
+        self.assertIn("not a directory", result["blockers"][0].lower())
+
 
 class TestProbeDefaults(unittest.TestCase):
     def setUp(self):

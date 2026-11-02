@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: THE MiOS-Xbox image build entry (xb-15, XB-1..XB-4): render_spec (layered SSOT -> xbox-spec.json) -> resolve_latest (newest upstream, no pins -> build-manifest.json) -> fetch (download + verify every artefact) -> family (offline: the image's BuildBranch has a captured Start layout) -> answer (autounattend + SetupComplete chain + offline .reg + components from the SAME spec) -> conform rendered gate -> GPU-less worker over WinRM (UUP Dump converter + New-MiOSXboxImage.ps1 DISM servicing + ISO) -> read-only copy-out -> conform image gate -> build-<ts>/ manifest. Every stage fails closed; heavy stages run under the SSOT heavy lock in a MemoryMax scope; the worker never runs next to the target/base VM and never holds a GPU.
 # AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/worker.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, tests/test-mios-xbox-build.py
-# AI-functions: build_layers, plan, Build, host_preflight, stage_render, stage_resolve, stage_fetch, stage_family, stage_payload, stage_gate_rendered, stage_job, stage_worker, stage_gate_image, stage_manifest, run, main
+# AI-functions: build_layers, storage_capacity, require_storage_capacity, plan, Build, host_preflight, stage_render, stage_resolve, stage_fetch, stage_family, stage_payload, stage_gate_rendered, stage_job, stage_worker, stage_gate_image, stage_manifest, run, main
 """MiOS-Xbox build.
 
   build.py plan                      # validate SSOT, tree, tools, VM guards; writes nothing
@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -121,6 +122,53 @@ def _presence(path: str) -> str:
 
 
 
+def storage_capacity(x: Dict[str, Any]) -> Dict[str, Any]:
+    """Probe existing ancestors only: admission must not create the roots it checks."""
+    b = x["build"]
+    required = b["exchange_disk_gib"]
+    if isinstance(required, bool) or not isinstance(required, int) or required <= 0:
+        raise BuildError("[storage] windows.xbox.build.exchange_disk_gib must be a positive integer")
+    result: Dict[str, Any] = {"required_gib": required, "roots": {}, "blockers": []}
+    for key in ("work_root", "artifact_root"):
+        requested = b[key]
+        if not isinstance(requested, str) or not requested.strip():
+            raise BuildError(f"[storage] windows.xbox.build.{key} must be a nonempty path")
+        path = os.path.abspath(requested)
+        ancestor = path
+        row: Dict[str, Any] = {"path": path}
+        try:
+            while True:
+                try:
+                    entry = os.stat(ancestor)
+                    break
+                except FileNotFoundError:
+                    parent = os.path.dirname(ancestor)
+                    if parent == ancestor:
+                        raise
+                    ancestor = parent
+            if not stat.S_ISDIR(entry.st_mode):
+                raise OSError(f"{ancestor} is not a directory")
+            free = shutil.disk_usage(ancestor).free
+            row.update(existing_ancestor=ancestor, filesystem_device=entry.st_dev,
+                       free_bytes=free, free_gib=round(free / 1024**3, 1),
+                       sufficient=free >= required * 1024**3)
+            if not row["sufficient"]:
+                result["blockers"].append(
+                    f"storage {key} {path}: {free // 1024**3} GiB free on {ancestor} "
+                    f"< {required} GiB required by windows.xbox.build.exchange_disk_gib")
+        except OSError as exc:
+            row.update(existing_ancestor=ancestor, sufficient=False, error=str(exc))
+            result["blockers"].append(f"storage {key} {path}: cannot inspect {ancestor}: {exc}")
+        result["roots"][key] = row
+    return result
+
+
+def require_storage_capacity(x: Dict[str, Any]) -> None:
+    capacity = storage_capacity(x)
+    if capacity["blockers"]:
+        raise BuildError("[preflight] " + "; ".join(capacity["blockers"]))
+
+
 def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runner) -> Dict[str, Any]:
     """Everything that can be checked without writing or downloading. Raises BuildError on a hard fault."""
     layers = layers if layers is not None else build_layers()
@@ -177,6 +225,8 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
         blockers.append(f"MemAvailable {mem} GiB < {need} GiB (worker + headroom)")
     if not W.watchdog_inactive():
         blockers.append("hardware watchdog armed")
+    capacity = storage_capacity(x)
+    blockers.extend(capacity["blockers"])
     return {
         "schema": "mios-xbox-plan/1",
         "layers": layers,
@@ -198,6 +248,7 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
         "domains": states,
         "mem_available_gib": mem,
         "worker_needs_gib": need,
+        "storage": capacity,
         "watchdog_inactive": W.watchdog_inactive(),
         "problems": problems,
         "blockers": blockers,
@@ -559,9 +610,15 @@ VM_COMMANDS = ("capture", "stage", "service", "run")   # each drives (or is foll
 def host_preflight(command: str, x: Dict[str, Any], runner: W.Runner = W._default_runner) -> None:
     """Before any stage writes or downloads: this process context must be able to drive the worker (virsh reads
     the files the build writes). A refusal costs seconds here instead of the whole stage."""
+    if command == "plan":
+        return
+    require_storage_capacity(x)
     if command not in VM_COMMANDS:
         return
     try:
+        cfg = W.WorkerConfig.from_spec(
+            {"spec": x}, os.path.join(x["build"]["work_root"], "mios-xbox-access-probe"))
+        W._qemu_access(cfg, validate_only=True)
         W.virsh_file_access(x["build"]["work_root"], runner)
     except W.WorkerError as e:
         raise BuildError(f"[preflight] {e}") from None
@@ -588,11 +645,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         if a.command == "plan":
             p = plan(layers)
             print(json.dumps(p, indent=2, sort_keys=True))
-            return 2 if p["problems"] else 0
+            return 2 if p["problems"] or p["blockers"] else 0
         if os.geteuid() != 0:
             raise BuildError("stage/service/gate/run write root-only build artefacts and drive libvirt: run with sudo")
         merged = mios_toml.load_merged(layers)
         x = render_spec.render(merged, layers)["spec"]
+        # Reject before even the heavy-lock/scope handoff can create a file.
+        # host_preflight repeats admission inside the scope before build writes.
+        require_storage_capacity(x)
+        if a.build_dir:
+            existing = x
+            if a.command in ("service", "gate"):
+                try:
+                    existing = _json_read(os.path.join(a.build_dir, "xbox-spec.json"))["spec"]
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    raise BuildError(f"[preflight] cannot read existing build spec: {exc}") from None
+            # A resumed build keeps its recorded work root and explicit output
+            # directory, even when the operator has since moved the defaults.
+            effective = {**existing, "build": {**existing["build"], "artifact_root": os.path.abspath(a.build_dir)}}
+            require_storage_capacity(effective)
         py = x["probe"]["python"] if os.path.isfile(x["probe"]["python"]) else sys.executable
         # A venv interpreter may symlink the system executable. Its invocation
         # path selects site-packages, so resolving symlinks loses the venv.
