@@ -2132,7 +2132,7 @@ binaries = [
   "mios-resolver", "mios-size-ceiling", "mios-ssot-lint", "mios-task", "mios-toml-get",
   "mios-template-compile", "mios-template-conform", "mios-toolchain-pin",
   "mios-unit-gen", "mios-version-check", "xtask", "mios-gate", "mios-probe", "miosd",
-  "mios-install", "mios-gen", "mios-fanctl", "mios-displays", "mios-shot",
+  "mios-install", "mios-gen", "mios-fanctl", "mios-controls", "mios-displays", "mios-shot",
 ]
 install_dir = "/usr/bin"
 expose_bin = false

@@ -1098,6 +1098,14 @@ pub fn native_target_plan(
         return Err(format!("unsupported native platform {platform:?}"));
     }
     let config = resolved_native_config(root)?;
+    let metadata = native_workspace_metadata(root, &config)?;
+    plan_native_metadata(&config, &metadata, platform)
+}
+
+fn native_workspace_metadata(
+    root: &std::path::Path,
+    config: &NativeConfig,
+) -> Result<Vec<(String, NativeMetadata)>, String> {
     let mut metadata = Vec::new();
     for workspace in &config.workspaces {
         let output = std::process::Command::new("cargo")
@@ -1122,7 +1130,7 @@ pub fn native_target_plan(
             .map_err(|e| format!("invalid Cargo metadata for {workspace}: {e}"))?;
         metadata.push((workspace.clone(), data));
     }
-    plan_native_metadata(&config, &metadata, platform)
+    Ok(metadata)
 }
 
 #[cfg(test)]
@@ -1410,7 +1418,27 @@ compat_dirs = []
     #[test]
     fn shipped_ssot_matches_both_real_cargo_workspaces() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let plan = native_target_plan(&root, "linux").unwrap();
+        let config = resolved_native_config(&root).unwrap();
+        let metadata = native_workspace_metadata(&root, &config).unwrap();
+        assert_eq!(
+            metadata
+                .iter()
+                .map(|(workspace, _)| workspace.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tools/native", "src/mios-rs"]
+        );
+        let plan = plan_native_metadata(&config, &metadata, "linux").unwrap();
+        let controls = plan
+            .iter()
+            .find(|target| target.binary == "mios-controls")
+            .unwrap();
+        assert_eq!(controls.category, "cli");
+        assert_eq!(controls.install_dir, "/usr/bin");
+        assert_eq!(controls.compat_dirs, vec!["/usr/libexec/mios"]);
+        assert!(!controls.expose_bin);
+        let windows = plan_native_metadata(&config, &metadata, "windows").unwrap();
+        assert!(!windows.iter().any(|target| target.binary == "mios-controls"));
+        assert!(windows.iter().any(|target| target.binary == "mios-wallpaperd"));
         assert!(plan
             .iter()
             .any(|target| target.binary == "mios-render-quadlets"));
@@ -1419,6 +1447,23 @@ compat_dirs = []
             .any(|target| target.binary == "mios-node" && target.category == "daemons"));
         assert!(!plan.iter().any(|target| target.binary == "mios-wallpaperd"));
         assert!(plan.len() > 10);
+
+        // Reproduce the CI failure against real Cargo metadata, including the
+        // Windows plan: Linux-only executables still require classification.
+        let mut missing = native_document(&root).unwrap();
+        let cli = missing["build"]["native"]["categories"]["cli"]["binaries"]
+            .as_array_mut()
+            .unwrap();
+        let before = cli.len();
+        cli.retain(|name| name.as_str() != Some("mios-controls"));
+        assert_eq!(cli.len() + 1, before);
+        let incomplete = native_config_document(&missing).unwrap();
+        for platform in ["linux", "windows"] {
+            assert_eq!(
+                plan_native_metadata(&incomplete, &metadata, platform).unwrap_err(),
+                "Cargo executable mios-controls has no SSOT native category"
+            );
+        }
     }
 }
 
