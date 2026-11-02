@@ -1,9 +1,9 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4125,
-  "total_metadata_entries": 3386,
-  "total_hints": 3380,
-  "total_functions_indexed": 2088,
+  "total_files_scanned": 4126,
+  "total_metadata_entries": 3387,
+  "total_hints": 3381,
+  "total_functions_indexed": 2094,
   "total_related_links": 6636,
   "entries": [
     {
@@ -38,6 +38,15 @@
     {
       "path": ".containerignore",
       "hint": "Paths kept out of container build contexts: worktrees, dev-loop state, editor and agent dotfolders, Rust targets and Python caches.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": ".devcontainer/Containerfile",
+      "hint": "The MiOS devcontainer is the MiOS image plus account and container wiring.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -11616,7 +11625,11 @@
         "tools/sync-bootstrap.py"
       ],
       "functions": [
-        "tracked"
+        "tracked",
+        "tracked_modes",
+        "native_install_paths",
+        "rooted_target",
+        "rooted_resolve"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -31350,6 +31363,8 @@
       ],
       "functions": [
         "build_layers",
+        "storage_capacity",
+        "require_storage_capacity",
         "plan",
         "Build",
         "host_preflight",
