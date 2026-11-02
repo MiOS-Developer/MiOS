@@ -75,6 +75,12 @@ mios_ci_verify_bootc_labels() {
     echo "${image}: containers.bootc=1 ostree.bootable=1"
 }
 
+# Every CI producer shares the vendor CPU floor and the runner's effective limits.
+mios_ci_require_cpus() {
+    local root="${1:?usage: mios_ci_require_cpus ROOT ALLOCATION}" requested="${2-}"
+    MIOS_DRIFT_ROOT="$root" MIOS_ROOT="$root" python3 "$root/tools/ci-suites.py" --require-cpus "$requested"
+}
+
 # Build Portal once in the bounded development environment. The image bake consumes
 # only stage-run's verified deliverable; no Gecko source/compiler enters that bake.
 mios_ci_build_portal() (
@@ -86,17 +92,17 @@ mios_ci_build_portal() (
     workspace=/ctx
     state="${2:?usage: mios_ci_build_portal ROOT STATE_DIR}"
     [[ ! -e "$state" ]] || { echo "Portal build state already exists: $state" >&2; exit 1; }
-    mkdir -p "$state"
-    state="$(cd "$state" && pwd)"
-    # Buildah puts context-overlay upper/work directories in /var/tmp. Keep
-    # those on the runner filesystem rather than the development image overlay.
-    mkdir -m 1777 "$state/tmp"
-    overlay="$state/paths.toml"
     image="$(python3 "$root/tools/ci-suites.py" --fedora-image)"
     # Read only vendor data: runner state must never inherit an operator's secrets.
     config="$(MIOS_TOML_ROOT="$root" MIOS_VENDOR_TOML="$root/usr/share/mios/mios.toml" MIOS_HOST_TOML=/nonexistent \
         MIOS_USER_TOML=/nonexistent "$root/usr/libexec/mios/mios-portal-build" config)"
     eval "$config"
+    mios_ci_require_cpus "$root" "${PB_CPUS:-}"
+    mkdir -p "$state"
+    state="$(cd "$state" && pwd)"
+    # Buildah context-overlay upper/work stays on the runner filesystem.
+    mkdir -m 1777 "$state/tmp"
+    overlay="$state/paths.toml"
     [[ "$PB_ICON_SRC" = /* && "$PB_ICON_SRC" != *"/../"* ]] || {
         echo "Portal icon must be an absolute checkout path" >&2; exit 1;
     }

@@ -12,6 +12,8 @@ import io
 import json
 import os
 import shutil
+import shlex
+from fractions import Fraction
 import subprocess
 import sys
 import tempfile
@@ -604,23 +606,126 @@ class TestCanonicalInputs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'MIOS_A_X_Y'):
             self.resolver.input_aliases({'a': {'x_y': 1, 'x': {'y': 2}}})
 
+@unittest.skipIf(os.name == "nt", "Linux cgroup and affinity admission")
+class TestCpuCapacity(unittest.TestCase):
+    def _probe(self, *, limits, affinity=8, unified=True, member="/job/child",
+               mount_root="/", visible=True):
+        with tempfile.TemporaryDirectory(prefix="mios cpu quota ") as tmp:
+            base = Path(tmp)
+            mountpoint = base / "cgroup"
+            mountpoint.mkdir()
+            for relative, values in limits.items():
+                directory = mountpoint / relative
+                directory.mkdir(parents=True, exist_ok=True)
+                for name, text in values.items():
+                    (directory / name).write_text(text)
+            cgroup, mountinfo = base / "cgroup.txt", base / "mountinfo.txt"
+            controller = "" if unified else "cpu,cpuacct"
+            cgroup.write_text(f"0:{controller}:{member}\n")
+            escaped = str(mountpoint).replace(" ", "\\040")
+            filesystem = "cgroup2" if unified else "cgroup"
+            options = "rw" if unified else "rw,cpu,cpuacct"
+            if not visible:
+                filesystem = "tmpfs"
+            mountinfo.write_text(f"42 35 0:29 {mount_root} {escaped} rw - {filesystem} cgroup {options}\n")
+            return MOD._effective_cpu_capacity(affinity=range(affinity),
+                                               cgroup_file=cgroup, mountinfo_file=mountinfo)
+
+    def test_parent_cgroup_quota_caps_a_larger_child_limit(self):
+        available = self._probe(limits={
+            "": {"cpu.max": "max 100000"},
+            "job": {"cpu.max": "200000 100000"},
+            "job/child": {"cpu.max": "800000 100000"},
+        })
+        self.assertEqual(available, 2)
+
+    def test_fractional_cpu_quota_is_not_rounded_up_to_four(self):
+        available = self._probe(limits={
+            "": {"cpu.max": "max 100000"},
+            "job/child": {"cpu.max": "350000 100000"},
+        })
+        self.assertEqual(available, Fraction(7, 2))
+
+    def test_affinity_can_be_stricter_than_the_quota(self):
+        self.assertEqual(self._probe(affinity=2, limits={
+            "job/child": {"cpu.max": "800000 100000"},
+        }), 2)
+
+    def test_v1_quota_and_period_are_honored(self):
+        available = self._probe(unified=False, limits={
+            "": {"cpu.cfs_quota_us": "-1", "cpu.cfs_period_us": "100000"},
+            "job/child": {"cpu.cfs_quota_us": "250000", "cpu.cfs_period_us": "100000"},
+        })
+        self.assertEqual(available, Fraction(5, 2))
+
+    def test_mount_root_and_escaped_mountpoint_map_the_current_namespace(self):
+        self.assertEqual(self._probe(member="/visible/child", mount_root="/visible", limits={
+            "": {"cpu.max": "400000 100000"},
+            "child": {"cpu.max": "max 100000"},
+        }), 4)
+
+    def test_malformed_quota_fails_closed(self):
+        for text in ("bad", "0 100000", "400000 0", "nan 100000"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                self._probe(limits={"job/child": {"cpu.max": text}})
+
+    def test_v1_missing_period_is_not_unlimited(self):
+        with self.assertRaisesRegex(ValueError, "period is missing"):
+            self._probe(unified=False, limits={"job/child": {"cpu.cfs_quota_us": "200000"}})
+
+    def test_hidden_cpu_controller_is_not_an_affinity_only_success(self):
+        with self.assertRaisesRegex(ValueError, "limits are not visible"):
+            self._probe(visible=False, limits={"job/child": {}})
+
+    def test_quota_permission_failure_is_not_unlimited(self):
+        with tempfile.TemporaryDirectory(prefix="mios-cpu-denial-") as tmp:
+            directory = Path(tmp)
+            original = Path.read_text
+            def read(path, *args, **kwargs):
+                if path == directory / "cpu.max":
+                    raise PermissionError("planted CPU quota denial")
+                return original(path, *args, **kwargs)
+            with mock.patch.object(Path, "read_text", read):
+                with self.assertRaisesRegex(ValueError, "planted CPU quota denial"):
+                    MOD._quota_capacity(directory, True)
+
+    def test_empty_affinity_and_nonrooted_membership_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "affinity is empty"):
+            self._probe(affinity=0, limits={})
+        with self.assertRaisesRegex(ValueError, "rooted kernel path"):
+            self._probe(member="/../escape", limits={})
+
+
 @unittest.skipIf(os.name == "nt", "the Portal producer runs in POSIX MiOSDEV")
 class TestPortalRuntimeContext(unittest.TestCase):
     """Execute the CI producer with a private runtime that rejects overlay-backed temp."""
 
-    def _run_producer(self, *, omit_temp_mount=False, runtime_failure=False, collision=False):
+    def _run_producer(self, *, omit_temp_mount=False, runtime_failure=False, collision=False,
+                      requested_cpus="4", minimum="4", host_cpus=4):
         with tempfile.TemporaryDirectory(prefix="mios-portal-context-") as tmp:
             base = Path(tmp)
             root, state, calls = base / "checkout", base / "private state", base / "calls.jsonl"
             files = {
-                "tools/ci-suites.py": "print('localhost/mios-fixture:latest')\n",
+                "tools/ci-suites.py": f"""import importlib.util, sys
+from fractions import Fraction
+if sys.argv[1:] == ["--fedora-image"]:
+    print("localhost/mios-fixture:latest")
+else:
+    spec = importlib.util.spec_from_file_location("mios_ci_fixture", {str(Path(_HERE, "ci-suites.py"))!r})
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module._effective_cpu_capacity = lambda: Fraction({str(host_cpus)!r})
+    sys.exit(module.main(sys.argv[1:]))
+""",
                 "usr/share/mios/mios.toml": (
+                    ('' if minimum is None else f'[bootstrap.dev_vm]\nminimum_cpus={minimum}\n') +
                     '[packages.devcontainer]\npkgs=["podman"]\n'
                     '[desktop.portal.builder]\npackages=["fixture-package"]\n'
                     'containerfile_dir="/usr/share/mios/portal-build"\n'
                     'product_tree="/src/mios-portal"\n'),
                 "usr/libexec/mios/mios-portal-build": (
-                    "#!/bin/sh\nprintf '%s\\n' PB_ICON_SRC=/icon.svg PB_SCOPE_MEM=2G PB_CPUS=1\n"),
+                    "#!/bin/sh\nprintf '%s\\n' PB_ICON_SRC=/icon.svg PB_SCOPE_MEM=2G " +
+                    shlex.quote("PB_CPUS=" + shlex.quote(str(requested_cpus))) + "\n"),
                 "icon.svg": "<svg/>\n",
             }
             for rel, content in files.items():
@@ -669,6 +774,7 @@ if args[:2] == ["podman", "exec"]:
                                      "mios-portal-fixture", str(source), str(root), str(state)],
                                     env=env, text=True, capture_output=True, timeout=10)
             history = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+            result.state_created = state.exists()
             return result, history, (state / "owner").read_text() if collision else None
 
     def test_disk_backed_temp_preserves_bounded_runtime_and_completes(self):
@@ -677,7 +783,7 @@ if args[:2] == ["podman", "exec"]:
         run = next(row for row in calls if row[:2] == ["podman", "run"])
         self.assertEqual(run[run.index("--memory") + 1], "2G")
         self.assertEqual(run[run.index("--memory-swap") + 1], "2G")
-        self.assertEqual(run[run.index("--cpus") + 1], "1")
+        self.assertEqual(run[run.index("--cpus") + 1], "4")
         self.assertEqual(run[run.index("--user") + 1], "0:0")
         self.assertTrue(any(row[:2] == ["podman", "exec"] for row in calls))
         self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
@@ -696,6 +802,53 @@ if args[:2] == ["podman", "exec"]:
         self.assertIn("inner builder failed", result.stderr)
         self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
         self.assertFalse(any(row[0] == "chown" for row in calls))
+
+    def test_two_cpu_allocation_is_rejected_before_runtime_or_state_creation(self):
+        result, calls, _ = self._run_producer(requested_cpus="2", host_cpus=8)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("below required minimum 4", result.stderr)
+        self.assertEqual(calls, [])
+        self.assertFalse(result.state_created)
+
+    def test_effective_host_below_four_is_rejected_before_runtime(self):
+        for available in (2, 3, Fraction(3999, 1000)):
+            with self.subTest(available=available):
+                result, calls, _ = self._run_producer(host_cpus=available)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("effective host CPU capacity", result.stderr)
+                self.assertEqual(calls, [])
+                self.assertFalse(result.state_created)
+
+    def test_missing_or_malformed_minimum_is_not_a_four_cpu_default(self):
+        for minimum in (None, "true", '"4"', "3", "4.5", '"four"'):
+            with self.subTest(minimum=minimum):
+                result, calls, _ = self._run_producer(minimum=minimum)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("minimum_cpus must be an integer of at least four", result.stderr)
+                self.assertEqual(calls, [])
+                self.assertFalse(result.state_created)
+
+    def test_invalid_or_fractionally_below_floor_allocations_are_rejected(self):
+        for requested in ("3.999", "nan", "-4", "4;not-a-command", ""):
+            with self.subTest(requested=requested):
+                result, calls, _ = self._run_producer(requested_cpus=requested)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("CPU admission rejected", result.stderr)
+                self.assertEqual(calls, [])
+
+    def test_a_higher_vendor_floor_is_consumed_without_changing_memory(self):
+        result, calls, _ = self._run_producer(minimum="6", requested_cpus="6", host_cpus=8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = next(row for row in calls if row[:2] == ["podman", "run"])
+        self.assertEqual(run[run.index("--cpus") + 1], "6")
+        self.assertEqual(run[run.index("--memory") + 1], "2G")
+        self.assertEqual(run[run.index("--memory-swap") + 1], "2G")
+
+    def test_numeric_podman_allocation_preserves_the_requested_value(self):
+        result, calls, _ = self._run_producer(requested_cpus="4.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = next(row for row in calls if row[:2] == ["podman", "run"])
+        self.assertEqual(run[run.index("--cpus") + 1], "4.0")
 
     def test_existing_private_state_is_preserved_without_runtime_calls(self):
         result, calls, owner = self._run_producer(collision=True)

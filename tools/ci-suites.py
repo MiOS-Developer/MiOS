@@ -2,6 +2,7 @@
 # AI-hint: Resolves the [ci] suite registry for the runners and fails when a tracked suite is neither registered in a tier nor exempted.
 # AI-related: usr/share/mios/mios.toml, tests/run-suites.sh, automation/98-drift-checks.sh
 import fnmatch
+from fractions import Fraction
 import os
 import re
 import sys
@@ -41,6 +42,130 @@ def _load(root: str) -> dict:
 def _load_packages(root: str) -> dict:
     with open(os.path.join(root, "usr/share/mios/mios.toml"), "rb") as fh:
         return tomllib.load(fh).get("packages") or {}
+
+
+def _cpu_minimum(root: str) -> int:
+    with open(Path(root, "usr/share/mios/mios.toml"), "rb") as source:
+        data = tomllib.load(source)
+    bootstrap = data.get("bootstrap")
+    vm = bootstrap.get("dev_vm") if isinstance(bootstrap, dict) else None
+    minimum = vm.get("minimum_cpus") if isinstance(vm, dict) else None
+    if type(minimum) is not int or minimum < 4:
+        raise ValueError("bootstrap.dev_vm.minimum_cpus must be an integer of at least four")
+    return minimum
+
+
+def _quota_capacity(path: Path, unified: bool):
+    """A missing quota file means this visible cgroup has no CPU controller limit."""
+    try:
+        if unified:
+            fields = path.joinpath("cpu.max").read_text().split()
+            if len(fields) != 2:
+                raise ValueError("cpu.max must contain quota and period")
+            quota, period = fields[0], int(fields[1])
+            if period <= 0:
+                raise ValueError("CPU period must be positive")
+            if quota == "max":
+                return None
+            quota = int(quota)
+        else:
+            quota = int(path.joinpath("cpu.cfs_quota_us").read_text())
+            try:
+                period = int(path.joinpath("cpu.cfs_period_us").read_text())
+            except FileNotFoundError as error:
+                raise ValueError("CPU quota exists but its period is missing") from error
+            if quota == -1 and period > 0:
+                return None
+        if quota <= 0 or period <= 0:
+            raise ValueError("CPU quota and period must be positive")
+        return Fraction(quota, period)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as error:
+        raise ValueError(f"cannot establish CPU quota at {path}: {error}") from error
+
+
+def _effective_cpu_capacity(*, affinity=None,
+                            cgroup_file=Path("/proc/self/cgroup"),
+                            mountinfo_file=Path("/proc/self/mountinfo")):
+    """Kernel affinity plus all visible ancestor quotas, including fractional CPUs."""
+    if affinity is None:
+        try:
+            affinity = os.sched_getaffinity(0)
+        except AttributeError:
+            count = os.cpu_count()
+            if count is None:
+                raise ValueError("cannot establish host CPU capacity") from None
+            affinity = range(count)
+    capacity = Fraction(len(affinity))
+    if capacity <= 0:
+        raise ValueError("host CPU affinity is empty")
+    try:
+        memberships = {}
+        for line in cgroup_file.read_text().splitlines():
+            _, controllers, membership = line.split(":", 2)
+            for controller in controllers.split(","):
+                memberships[controller] = membership
+        mounts = mountinfo_file.read_text().splitlines()
+    except (OSError, ValueError) as error:
+        raise ValueError(f"cannot establish CPU cgroup membership: {error}") from error
+    needs_quota_view = "" in memberships or "cpu" in memberships
+    matched = False
+    decode = lambda text: re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)
+    for line in mounts:
+        before, separator, after = line.partition(" - ")
+        if not separator:
+            continue
+        left, right = before.split(), after.split()
+        if len(left) < 6 or len(right) < 3:
+            continue
+        unified = right[0] == "cgroup2"
+        if not unified and not (right[0] == "cgroup" and "cpu" in right[2].split(",")):
+            continue
+        membership = memberships.get("" if unified else "cpu")
+        if membership is None:
+            continue
+        mount_root, mountpoint = Path(decode(left[3])), Path(decode(left[4]))
+        member = Path(membership)
+        if not member.is_absolute() or ".." in member.parts:
+            raise ValueError("CPU cgroup membership is not a rooted kernel path")
+        try:
+            relative = member.relative_to(mount_root)
+        except ValueError:
+            continue
+        current = mountpoint / relative
+        if not current.is_dir():
+            raise ValueError(f"CPU cgroup directory is unavailable: {current}")
+        matched = True
+        while True:
+            quota = _quota_capacity(current, unified)
+            if quota is not None:
+                capacity = min(capacity, quota)
+            if current == mountpoint:
+                break
+            current = current.parent
+    if needs_quota_view and not matched:
+        raise ValueError("CPU cgroup limits are not visible; cannot verify the minimum allocation")
+    return capacity
+
+
+def cmd_require_cpus(root: str, requested: str) -> int:
+    """Reject invalid allocation before a caller creates a container or VM."""
+    try:
+        minimum = _cpu_minimum(root)
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", requested):
+            raise ValueError("CPU allocation must be a finite positive number")
+        allocation = Fraction(requested)
+        if allocation < minimum:
+            raise ValueError(f"CPU allocation {requested} is below required minimum {minimum}")
+        available = _effective_cpu_capacity()
+        if available < minimum:
+            raise ValueError(f"effective host CPU capacity {float(available):g} is below required minimum {minimum}")
+    except (OSError, ValueError, TypeError) as error:
+        print(f"CPU admission rejected: {error}", file=sys.stderr)
+        return 1
+    print(f"[ci-cpu] minimum={minimum} requested={requested} effective_host={float(available):g}")
+    return 0
 
 def _tokens(value, name: str) -> list:
     if not isinstance(value, list) or any(
@@ -413,6 +538,11 @@ def suite_timeout(ci: dict):
 
 def main(argv: list) -> int:
     root = _root()
+    if "--require-cpus" in argv:
+        if len(argv) != 2 or argv[0] != "--require-cpus":
+            print("usage: ci-suites.py --require-cpus <allocation>", file=sys.stderr)
+            return 2
+        return cmd_require_cpus(root, argv[1])
     try:
         ci = _load(root)
     except (OSError, ValueError) as exc:
@@ -456,7 +586,7 @@ def main(argv: list) -> int:
             return cmd_list(root, ci, argv[i + 1])
         if a.startswith("--tier="):
             return cmd_list(root, ci, a.split("=", 1)[1])
-    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout",
+    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation>",
           file=sys.stderr)
     return 2
 
