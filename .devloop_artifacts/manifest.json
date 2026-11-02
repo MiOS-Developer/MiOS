@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-10-30T21:17:44.738884+00:00",
-  "total_artifacts": 95,
+  "last_updated": "2026-11-02T17:51:18.463346+00:00",
+  "total_artifacts": 99,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "85717dc5b26c354b240ffbf8ccb6a845904be0c075df31fef91c67ffaf4f74d0",
-      "size_bytes": 29350,
+      "sha256": "3035709d301996b61da48b8f67bfbe16c101cc128e04a7e2765a94f24e7af05b",
+      "size_bytes": 29908,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -19,7 +19,9 @@
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
         "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
         "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
-        "camera_physical_client_verified": false
+        "camera_physical_client_verified": false,
+        "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
+        "ci_registry_scoped_tests": 58
       }
     },
     {
@@ -72,8 +74,8 @@
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "ac7d4d4f05dce1436a88b0898c86d08589f60c8e359dfd964a97d67c4cf304b7",
-      "size_bytes": 1039243,
+      "sha256": "d9844fa7a13b6aa88141eedf0c06dd96de7f75dc19d65b5ab0003553bb33278f",
+      "size_bytes": 1109830,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -85,7 +87,9 @@
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
         "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
         "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
-        "camera_physical_client_verified": false
+        "camera_physical_client_verified": false,
+        "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
+        "ci_registry_scoped_tests": 58
       }
     },
     {
@@ -1170,6 +1174,50 @@
         "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
         "camera_physical_client_verified": false
       }
+    },
+    {
+      "path": ".github/workflows/machine-os-mirror.yml",
+      "artifact_type": "config",
+      "created_at": "2026-11-02T17:51:18.463346+00:00",
+      "metadata": {
+        "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
+        "ci_registry_scoped_tests": 58
+      },
+      "sha256": "f72c462617b8b4413774e3651f22857bb1fc2f0623e5b314e40d6378e7d9f246",
+      "size_bytes": 1959
+    },
+    {
+      "path": "tests/test-code-server-bake.py",
+      "artifact_type": "test",
+      "created_at": "2026-11-02T17:51:18.463346+00:00",
+      "metadata": {
+        "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
+        "ci_registry_scoped_tests": 58
+      },
+      "sha256": "b0eddbb2f831dc88853ed9393367c004cea705c0731e787fa786128a969ad5c2",
+      "size_bytes": 34987
+    },
+    {
+      "path": "tests/test-machine-os-mirror.py",
+      "artifact_type": "test",
+      "created_at": "2026-11-02T17:51:18.463346+00:00",
+      "metadata": {
+        "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
+        "ci_registry_scoped_tests": 58
+      },
+      "sha256": "6670c9c078ee7dc975154625d341c86dcb9b1981e53c7d744c86ec456a49a2ae",
+      "size_bytes": 12338
+    },
+    {
+      "path": "tools/mirror-machine-os.sh",
+      "artifact_type": "script",
+      "created_at": "2026-11-02T17:51:18.463346+00:00",
+      "metadata": {
+        "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
+        "ci_registry_scoped_tests": 58
+      },
+      "sha256": "f09e36274cc7aa730a0fe3e3020eb3be940415336853d35a93e3300e3ad4e99e",
+      "size_bytes": 4505
     }
   ]
 }

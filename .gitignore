@@ -1109,3 +1109,4 @@ usr/share/mios/virtio/*.iso
 
 !/usr/share/mios/hyprland/patches/hypr3d-mios-dock-capture.patch
 !/tests/test-hypr3d-dock-capture.py
+!tests/test-machine-os-mirror.py

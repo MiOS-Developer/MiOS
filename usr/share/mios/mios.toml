@@ -2737,6 +2737,14 @@ type = "sigstoreSigned"
 key_paths = ["/usr/share/pki/containers/mios-cosign.pub", "/usr/share/pki/containers/mios-cosign-backup.pub"]
 signed_identity = "matchRepository"
 
+# The transferred publisher must not fall through to the permissive default.
+[[security.sigstore.scopes]]
+transport = "docker"
+scope = "ghcr.io/mios-developer"
+type = "sigstoreSigned"
+key_paths = ["/usr/share/pki/containers/mios-cosign.pub", "/usr/share/pki/containers/mios-cosign-backup.pub"]
+signed_identity = "matchRepository"
+
 [security.privileged_quadlets]
 max_privileged_root = 13
 root = [
@@ -7840,17 +7848,23 @@ base_no_nvidia = "ghcr.io/ublue-os/ucore-hci:stable"
 # bootc-image-builder image (BIB). Used inside MiOS-DEV to convert the
 # OCI image into qcow2/raw/iso/vhdx etc. for Hyper-V, QEMU, USB sticks.
 bib            = "quay.io/centos-bootc/bootc-image-builder:latest"
-name           = "ghcr.io/mios-dev/mios"
+# The publisher follows the repository owner. The pull ref above stays on
+# the released target until the new tag is published and operator-key verified.
+name           = "ghcr.io/mios-developer/mios"
 tag            = "latest"
 local_tag      = "localhost/mios:latest"
 dev_local_tag  = "localhost/mios-devcontainer:latest"
 machine_os_repo = "quay.io/podman/machine-os"
+# The 6.1 tag remains the MiOS-DEV bootstrap contract; update the disk-image
+# and OCI build paths together in a separate base upgrade.
 machine_os_tag  = "6.1"
 # The container images of machine_os_repo:machine_os_tag, digest-identical,
 # without the podman-machine disk images its index also lists (older
 # containerd, as in Codespaces, cannot parse those). Published by
 # tools/mirror-machine-os.sh; MiOS-DEV still boots the upstream disk images.
-machine_os_mirror = "ghcr.io/mios-dev/machine-os"
+# GHCR package ownership does not follow repository transfers. Publish in
+# the current repository organization with its repository-scoped token.
+machine_os_mirror = "ghcr.io/mios-developer/machine-os"
 
 [bootc_install]
 # Read by mios-install and `mios-unit-gen bootc-install` (ADR-0014).
@@ -17944,7 +17958,7 @@ Pester = "6.0.1"
 # [image].machine_os_mirror -- the same image digests without the disk-image
 # entries older containerd cannot read. The dev container is NOT built from it:
 # .devcontainer/Containerfile is FROM [image].ref, the full MiOS image.
-image = "ghcr.io/mios-dev/machine-os:6.1"
+image = "ghcr.io/mios-developer/machine-os:6.1"
 # [packages.<set>] lists installed first; devcontainer is MiOS's development userspace.
 package_sets = ["devcontainer"]
 # Repo-config RPMs installed before any package. Fedora does not package

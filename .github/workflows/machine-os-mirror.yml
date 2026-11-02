@@ -1,5 +1,5 @@
-# AI-hint: Publishes [image].machine_os_mirror, the container-only and digest-identical copy of the podman machine OS that the MiOS dev image and the drift-gate container build FROM.
-# AI-related: tools/mirror-machine-os.sh, usr/share/mios/mios.toml
+# AI-hint: Publishes the SSOT container-only machine OS mirror before dependent CI container jobs can pull it.
+# AI-related: tools/mirror-machine-os.sh, usr/share/mios/mios.toml, .github/workflows/mios-ci.yml
 name: machine-os-mirror
 
 on:
@@ -9,26 +9,47 @@ on:
       - usr/share/mios/mios.toml
       - tools/mirror-machine-os.sh
       - .github/workflows/machine-os-mirror.yml
-  # Upstream re-pushes a stable tag for its point releases.
+  # Upstream re-pushes the SSOT stable tag for its point releases.
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      image:
+        description: Published and digest-verified SSOT machine OS mirror reference
+        value: ${{ jobs.mirror.outputs.image }}
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   mirror:
+    # Read-only pull-request validation consumes the existing mirror; it never
+    # runs this publisher, even if a caller forgets its own event condition.
+    if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    # Shared by standalone and reusable callers; keep the first publisher
+    # running so dependent CI jobs cannot race an unpublished image.
+    concurrency:
+      group: machine-os-mirror-${{ github.repository }}
+      cancel-in-progress: false
+    outputs:
+      image: ${{ steps.mirror.outputs.image }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Log in to ghcr.io
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: podman login ghcr.io -u "${{ github.actor }}" --password-stdin <<< "$GH_TOKEN"
+          REGISTRY_ACTOR: ${{ github.actor }}
+        run: printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$REGISTRY_ACTOR" --password-stdin
 
-      - name: Mirror the container images
+      - name: Mirror and verify the container images
+        id: mirror
+        # A new GHCR package is private by default. The caller uses its
+        # repository token for authenticated pulls; visibility is unchanged.
         run: bash ./tools/mirror-machine-os.sh .

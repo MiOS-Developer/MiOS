@@ -343,7 +343,9 @@ class TestDevImageWiring(unittest.TestCase):
 
     def setUp(self):
         with open(TOML, "rb") as f:
-            self.ref = tomllib.load(f)["image"]["ref"]
+            data = tomllib.load(f)
+            self.ref = data["image"]["ref"]
+            self.ci_ref = data["ci"]["fedora"]["image"]
         self.ci = _load_ci_suites()
 
     def test_dev_containerfile_is_the_image(self):
@@ -356,7 +358,7 @@ class TestDevImageWiring(unittest.TestCase):
             "a hand-built code-server": cf + "RUN rpm -Uvh https://example.invalid/code-server-4.0.0-amd64.rpm\n",
             "a toolchain": cf + "RUN rustup-init -y\n",
             "a hardcoded image": cf.replace("FROM ${MIOS_IMAGE_REF}", "FROM " + self.ref),
-            "the CI harness": cf.replace("FROM ${MIOS_IMAGE_REF}", "FROM ghcr.io/mios-dev/machine-os:6.1"),
+            "the CI harness": cf.replace("FROM ${MIOS_IMAGE_REF}", "FROM " + self.ci_ref),
             "a stale default": cf.replace("MIOS_IMAGE_REF=" + self.ref, "MIOS_IMAGE_REF=ghcr.io/mios-dev/mios:0.2.4"),
             "files from the context": cf + "COPY usr/ /usr/\n",
         }
@@ -438,11 +440,11 @@ class TestOsImageProvides(unittest.TestCase):
                 self.assertNotEqual(rust_toolchain_violations(s, c), [], name)
 
     def test_login_env_puts_the_image_toolchain_first(self):
-        """etc/profile.d/mios-env.sh: RUSTUP_HOME and the proxies' PATH come from the SSOT
+        """The tracked etc/profile.d/50-mios.sh consolidation: RUSTUP_HOME and the proxies' PATH come from the SSOT
         homes only when that toolchain exists; otherwise the environment is untouched."""
         if not shutil.which("sh"):
             self.skipTest("POSIX sh is required")
-        src = _read(os.path.join(ROOT, "etc/profile.d/mios-env.sh"))
+        src = _read(os.path.join(ROOT, "etc/profile.d/50-mios.sh"))
         fn = re.search(r"(?ms)^_mios_rust_env\(\) \{.*?^\}", src).group(0)
         with tempfile.TemporaryDirectory() as tmp:
             root = _bash_directory(tmp)
