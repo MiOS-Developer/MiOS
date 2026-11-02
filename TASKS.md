@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1744 |
-| in_progress | 65 |
-| completed | 1846 |
+| in_progress | 67 |
+| completed | 1847 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3695 |
+| total | 3698 |
 
 0 record(s) carry at least one override.
 
@@ -4411,6 +4411,14 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3493` Collapse duplicate appearance names; remove literals (WS-ZEROHC | P2 | M) -- pending · P2 · size M · depends_on task_3488
 - `task_3583` [headscale].server_url and listen_addr derive from [metal.mesh] and [ports], with an override (WS-ZEROHC | P2 | S) -- pending · P2 · size S
 - `task_3587` Two shipped units restate SSOT values: mios-agents.service's lane-B model and mios-cockpit-link.socket's port hint (WS-ZEROHC | P2 | S) -- pending · P2 · size S
+
+## ci
+
+### No epic
+
+- `task_3696` Restore exhaustive SSOT native executable catalog coverage -- completed · owner mios-ci-native-catalog · P0 · size S
+- `task_3697` Stage verified portal artifacts before CI image builds -- in_progress · owner mios-ci-portal-staging · P0 · size M
+- `task_3698` Publish machine OS mirror under the current repository organization -- in_progress · owner mios-ci-registry · P0 · size M
 
 ## test-coverage
 

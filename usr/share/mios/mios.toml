@@ -18279,6 +18279,8 @@ unit = [
     "tests/test-hypr3d-spawn.py",
     "tests/test-hypr3d-crt.py",
     "tests/test-hypr3d-controller.py",
+    "tests/test-hypr3d-dock-capture.py",
+    "tests/test-gui-shell-unify.py",
     "tests/test-hypr3d-room-input.py",
     "tests/test-hypr3d-room-input-live.py",
     "tests/test-window-fps.py",
