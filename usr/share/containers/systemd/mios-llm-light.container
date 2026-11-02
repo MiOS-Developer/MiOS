@@ -13,6 +13,7 @@ AddDevice=nvidia.com/gpu=all
 ContainerName=mios-llm-light
 Entrypoint=/app/llama-swap
 Environment=HOME=/var/lib/mios/llamacpp
+Environment=LLAMA_ARG_THREADS=1
 Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64
 EnvironmentFile=/etc/mios/install.env
 Exec=--config /app/config.yaml --listen 0.0.0.0:${MIOS_PORTS_LLM_LIGHT}

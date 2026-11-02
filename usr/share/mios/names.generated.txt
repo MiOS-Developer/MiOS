@@ -2919,6 +2919,7 @@ llamacpp.slot_dir  MIOS_LLAMACPP_SLOT_DIR
 llamacpp.models_dir  MIOS_LLAMACPP_MODELS_DIR
 llamacpp.config  MIOS_LLAMACPP_CONFIG
 llamacpp.cpu_node_threads  MIOS_LLAMACPP_CPU_NODE_THREADS
+llamacpp.light_threads  MIOS_LLAMACPP_LIGHT_THREADS
 llamacpp.bake_models  MIOS_LLAMACPP_BAKE_MODELS
 enhanced_session.enabled  MIOS_ENHANCED_SESSION_ENABLED
 enhanced_session.port  MIOS_ENHANCED_SESSION_PORT

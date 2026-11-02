@@ -3491,6 +3491,7 @@ _mios_input MIOS_PATHS_LIBEXEC_DIR MIOS_LIBEXEC_DIR || { return 1 2>/dev/null ||
 _mios_input MIOS_SERVICES_LLAMACPP_GID MIOS_LLAMACPP_GID || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_SERVICES_LLAMACPP_GID:=827}"
 [ -n "${MIOS_LLAMACPP_GID+x}" ] || MIOS_LLAMACPP_GID="${MIOS_SERVICES_LLAMACPP_GID:-}"
+: "${MIOS_LLAMACPP_LIGHT_THREADS:=1}"
 : "${MIOS_LLAMACPP_MODELS_DIR:=/usr/share/mios/llamacpp/models}"
 : "${MIOS_LLAMACPP_SLOT_DIR:=/var/lib/mios/llamacpp/slots}"
 _mios_input MIOS_SERVICES_LLAMACPP_UID MIOS_LLAMACPP_UID || { return 1 2>/dev/null || exit 1; }

@@ -3297,6 +3297,7 @@ $script:MIOS_LLAMACPP_CONFIG = if ($env:MIOS_LLAMACPP_CONFIG) { $env:MIOS_LLAMAC
 $script:MIOS_LLAMACPP_ENABLE = if ($env:MIOS_LLAMACPP_ENABLE) { $env:MIOS_LLAMACPP_ENABLE } else { 'true' }
 $script:MIOS_SERVICES_LLAMACPP_GID = if ($env:MIOS_SERVICES_LLAMACPP_GID) { $env:MIOS_SERVICES_LLAMACPP_GID } else { Resolve-MiosInput -Canonical 'MIOS_SERVICES_LLAMACPP_GID' -Aliases @('MIOS_LLAMACPP_GID') -Default (827) }
 $script:MIOS_LLAMACPP_GID = if ($env:MIOS_LLAMACPP_GID) { $env:MIOS_LLAMACPP_GID } else { "$($script:MIOS_SERVICES_LLAMACPP_GID)" }
+$script:MIOS_LLAMACPP_LIGHT_THREADS = if ($env:MIOS_LLAMACPP_LIGHT_THREADS) { $env:MIOS_LLAMACPP_LIGHT_THREADS } else { 1 }
 $script:MIOS_LLAMACPP_MODELS_DIR = if ($env:MIOS_LLAMACPP_MODELS_DIR) { $env:MIOS_LLAMACPP_MODELS_DIR } else { '/usr/share/mios/llamacpp/models' }
 $script:MIOS_LLAMACPP_SLOT_DIR = if ($env:MIOS_LLAMACPP_SLOT_DIR) { $env:MIOS_LLAMACPP_SLOT_DIR } else { '/var/lib/mios/llamacpp/slots' }
 $script:MIOS_SERVICES_LLAMACPP_UID = if ($env:MIOS_SERVICES_LLAMACPP_UID) { $env:MIOS_SERVICES_LLAMACPP_UID } else { Resolve-MiosInput -Canonical 'MIOS_SERVICES_LLAMACPP_UID' -Aliases @('MIOS_LLAMACPP_UID') -Default (827) }
