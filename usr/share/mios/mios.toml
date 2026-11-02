@@ -19530,6 +19530,7 @@ enabled = true
 color = "#F35C15"                  # palette cursor orange; only the captured local output
 width_px = 4
 period_ms = 2400
+lease_ms = 1000                  # native room feedback expires if the shell heartbeat stops
 
 [desktop.dock.previews]
 enabled = true                    # previews of the session's windows (open and minimized) in the expanded dock and the hover popup

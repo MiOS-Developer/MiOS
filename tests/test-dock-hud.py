@@ -291,8 +291,138 @@ ctx.appName='';assert.equal(shown(),false);
     return errors
 
 
+def native_room_capture_feedback(ref=None):
+    config = read(f"{QS}/Config.qml", ref)
+    required = ["function feedbackSpec(", "function feedbackLua(", "function feedbackReply(",
+                "function flatFeedbackAllowed(", "function queueNativeFeedback(", "function pumpNativeFeedback(",
+                "function finishNativeFeedback(", "function timeoutNativeFeedback(", "id: captureFeedback",
+                "running: shellRoot.feedbackBusy", "captureFeedback.signal(9)", "dock_capture_feedback",
+                "shellRoot.flatFeedbackAllowed(shellRoot.feedbackNow)", "queueNativeFeedback(snapshot)",
+                "Component.onDestruction: shellRoot.publishInputState(true)", "id: feedbackExpiry", "feedbackExpiry.restart()"]
+    errors = [f"native room feedback missing: {item}" for item in required if item not in config]
+    if "on_state" in config:
+        errors.append("native feedback must not replace the compositor's state callback")
+    glow = ssot(ref).get("desktop", {}).get("dock", {}).get("capture", {}).get("border_glow", {})
+    lease = glow.get("lease_ms")
+    if not isinstance(lease, int) or isinstance(lease, bool) or not 100 <= lease <= 10000:
+        errors.append("native room feedback lease is not bounded in the SSOT")
+    html = read("usr/share/mios/configurator/mios.html", ref)
+    lease_input = re.search(r'<input[^>]*data-key="desktop\.dock\.capture\.border_glow\.lease_ms"[^>]*>', html)
+    if not lease_input or 'min="100"' not in lease_input[0] or 'max="10000"' not in lease_input[0]:
+        errors.append("native room feedback lease configurator bounds missing")
+    if errors:
+        return errors
+
+    def method(name):
+        start = config.index("function " + name + "(")
+        brace = config.index("{", start)
+        depth, end = 1, brace + 1
+        while depth and end < len(config):
+            depth += (config[end] == "{") - (config[end] == "}")
+            end += 1
+        return config[start:end]
+
+    import json
+    names = ["feedbackSpec", "feedbackLua", "feedbackReply", "flatFeedbackAllowed",
+             "queueNativeFeedback", "pumpNativeFeedback", "finishNativeFeedback", "timeoutNativeFeedback"]
+    methods = json.dumps({name: method(name) for name in names})
+    script = r"""
+const assert=require('assert'),vm=require('vm');
+const methods=METHODS;
+let now=100, callbacks=[],commands=[],killed=0,expiryRestarts=0;
+const ctx=vm.createContext({
+ feedbackSettings:{enabled:true,color:'#F35C15',width_px:4,period_ms:2400},feedbackLeaseMs:1000,
+ feedbackDesired:'',feedbackQueued:'',feedbackPending:'',feedbackBusy:false,feedbackConfirmed:false,
+ feedbackRoom:false,feedbackSequence:0,feedbackAcceptedAt:0,feedbackNow:0,
+ Date:{now:()=>now},Qt:{callLater(fn){callbacks.push(fn);}},feedbackExpiry:{restart(){expiryRestarts++;}},
+ captureFeedback:{running:false,reply:'',expired:false,signal(sig){assert.equal(sig,9);killed++;this.running=false;}}
+});
+Object.defineProperty(ctx.captureFeedback,'command',{set(argv){commands.push(argv);this.argv=argv;},get(){return this.argv;}});
+for(const [name,source] of Object.entries(methods))ctx[name]=vm.runInContext('('+source+')',ctx);
+ctx.shellRoot=ctx;
+const open=output=>({open:true,output});
+const pump=()=>{const pending=callbacks;callbacks=[];for(const fn of pending)fn();};
+const complete=reply=>{ctx.captureFeedback.running=false;ctx.captureFeedback.reply=reply;ctx.finishNativeFeedback();pump();};
+const reply=(mode,id=ctx.feedbackSequence)=>'MIOS_DOCK_CAPTURE_FEEDBACK:'+id+':'+mode;
+assert.equal(ctx.flatFeedbackAllowed(now),false,'initial room status is unknown');
+ctx.queueNativeFeedback(open('A'));
+assert.equal(commands.length,1);assert.equal(ctx.feedbackBusy,true);
+assert.equal(ctx.flatFeedbackAllowed(now),false,'opening cannot flash flat rectangles before a reply');
+// Heartbeats coalesce and the newest close replaces every pending active request.
+ctx.queueNativeFeedback(open('A'));ctx.queueNativeFeedback(open('B'));ctx.queueNativeFeedback({open:false,output:''});
+assert.equal(commands.length,1);assert.equal(JSON.parse(ctx.feedbackQueued).active,false);
+complete(reply('flat',1));
+assert.equal(ctx.feedbackConfirmed,false,'old active reply cannot acknowledge a newer close');
+assert.equal(commands.length,2);assert.equal(JSON.parse(ctx.feedbackPending).active,false);
+complete(reply('room',2));assert.equal(ctx.flatFeedbackAllowed(now),false);
+ctx.queueNativeFeedback(open('C'));complete(reply('flat'));
+assert.equal(ctx.flatFeedbackAllowed(now),true,'fresh native 2D confirmation enables the flat fallback');
+assert.equal(expiryRestarts,1,'native confirmation must arm its own expiry even when heartbeat is slower than lease');
+const accepted=now;now+=1000;assert.equal(ctx.flatFeedbackAllowed(now),false,'confirmation expires with the native lease');
+now=accepted-1;assert.equal(ctx.flatFeedbackAllowed(now),false,'clock rollback is not a fresh reply');
+now=accepted+1;ctx.queueNativeFeedback(open('C'));complete(reply('room'));
+assert.equal(ctx.flatFeedbackAllowed(now),false,'room scene and morph never use flat geometry');
+ctx.queueNativeFeedback(open('C'));complete(reply('flat'));
+assert.equal(ctx.flatFeedbackAllowed(now),true);
+ctx.queueNativeFeedback(open('C'));ctx.timeoutNativeFeedback();
+assert.equal(killed,1);assert.equal(ctx.flatFeedbackAllowed(now),false,'timeout revokes prior flat confirmation');
+complete(reply('flat'));assert.equal(ctx.feedbackConfirmed,false,'late timed-out reply cannot resurrect feedback');
+// Failed process creation may never emit exited; the deadline still releases the slot and keeps only the newest close.
+ctx.queueNativeFeedback(open('D'));ctx.captureFeedback.running=false;
+ctx.queueNativeFeedback({open:false,output:''});ctx.timeoutNativeFeedback();pump();
+assert.equal(JSON.parse(ctx.feedbackPending).active,false);assert.equal(ctx.feedbackBusy,true);
+complete(reply('flat'));assert.equal(ctx.feedbackConfirmed,false);
+ctx.queueNativeFeedback(open('E'));complete(reply('flat',ctx.feedbackSequence-1));
+assert.equal(ctx.feedbackConfirmed,false,'wrong request marker is stale');
+ctx.queueNativeFeedback(open('E'));complete('not a native reply');
+assert.equal(ctx.feedbackConfirmed,false);
+assert.equal(ctx.feedbackReply(reply('flat')+'\n'+reply('room'),ctx.feedbackSequence),'','ambiguous reply rejected');
+assert.equal(ctx.feedbackReply('x'.repeat(8193),ctx.feedbackSequence),'','unbounded reply rejected');
+const valid=ctx.feedbackSpec(open('HDMI-"quoted\\output'));
+assert.equal(valid.active,true);assert.equal(valid.lease_ms,1000);
+for(const bad of ['', 'bad\noutput', 'bad\0output'])assert.equal(ctx.feedbackSpec(open(bad)).active,false);
+for(const [key,bad] of [['width_px',0],['width_px',33],['width_px',NaN],['period_ms',99],['period_ms',20001],['period_ms',100.5],['color','red'],['color','#12345']]){
+ const old=ctx.feedbackSettings[key];ctx.feedbackSettings[key]=bad;
+ assert.equal(ctx.feedbackSpec(open('C')).active,false,key+' must be validated');
+ ctx.feedbackSettings[key]=old;
+}
+ctx.feedbackLeaseMs=0;assert.equal(ctx.feedbackSpec(open('C')).active,false);ctx.feedbackLeaseMs=1000;
+ctx.feedbackSettings.color='#F35C157F';assert.equal(ctx.feedbackSpec(open('C')).active,true);
+const query=ctx.feedbackLua(JSON.stringify(valid),7),off=ctx.feedbackLua(JSON.stringify({active:false}),8);
+assert.equal(ctx.feedbackReply(query,7),'','echoed request expression is not a reply marker');
+console.log(JSON.stringify({query,off,output:valid.output}));
+""".replace("METHODS", methods)
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    if result.returncode:
+        return ["native feedback state-machine behavior failed: " + result.stderr[-1600:]]
+    output = json.loads(result.stdout)
+    import shutil
+    lua = shutil.which("luajit") or shutil.which("lua")
+    if not lua:
+        return ["native feedback Lua verification requires a Lua interpreter"]
+    cases = [
+        ("native room", "hl={plugin={hypr3d={dock_capture_feedback=function(c) assert(c.active and c.output==OUTPUT and c.width_px==4 and c.period_ms==2400 and c.lease_ms==1000);return true end}}}", output["query"], "7:room"),
+        ("native 2D", "hl={plugin={hypr3d={dock_capture_feedback=function(c)return false end}}}", output["query"], "7:flat"),
+        ("absent plugin", "hl={plugin={}}", output["query"], "7:flat"),
+        ("old plugin 2D", "hl={plugin={hypr3d={active=function()return false end}}}", output["query"], "7:flat"),
+        ("old plugin room", "hl={plugin={hypr3d={active=function()return true end}}}", output["query"], "7:room"),
+        ("old plugin unknown", "hl={plugin={hypr3d={}}}", output["query"], None),
+        ("API failed", "hl={plugin={hypr3d={dock_capture_feedback=function()error('refused')end,active=function()return false end}}}", output["query"], None),
+        ("API malformed", "hl={plugin={hypr3d={dock_capture_feedback=function()return 'false' end}}}", output["query"], None),
+        ("cleanup", "hl={plugin={hypr3d={dock_capture_feedback=function(c)assert(c.active==false and c.output==nil and c.color==nil);return true end}}}", output["off"], "8:room"),
+    ]
+    for name, setup, query, expected in cases:
+        body = setup.replace("OUTPUT", json.dumps(output["output"])) + "\nlocal ok,reply=pcall(function() " + query + " end)\nassert(not ok)\n"
+        body += ("assert(reply==" + json.dumps("MIOS_DOCK_CAPTURE_FEEDBACK:" + expected) + ")"
+                 if expected else "assert(not tostring(reply):find('MIOS_DOCK_CAPTURE_FEEDBACK:',1,true))")
+        result = subprocess.run([lua, "-"], input=body, capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            errors.append("native feedback Lua case " + name + " failed: " + result.stderr[-800:])
+    return errors
+
+
 CONTRACTS = [grows_upward_at_bar_width, config_fallbacks_match_ssot, configurator_has_every_scalar, previews_capture_safe_and_flat,
-             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus, dock_capture_feedback_and_keyboard, shell_input_attachment_lifecycle]
+             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus, dock_capture_feedback_and_keyboard, shell_input_attachment_lifecycle, native_room_capture_feedback]
 
 
 class Positive(unittest.TestCase):

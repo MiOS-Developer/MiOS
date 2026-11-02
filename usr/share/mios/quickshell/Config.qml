@@ -19,8 +19,129 @@ QS.ShellRoot {
         const value = Number(MiOS.DockConfig.table.input_state_interval_ms)
         return isFinite(value) && value > 0 ? Math.max(1, Math.min(250, Math.floor(value))) : 0
     }
+    readonly property var feedbackSettings: (MiOS.DockConfig.table.capture || {}).border_glow || ({})
+    readonly property int feedbackLeaseMs: {
+        const value = Number(feedbackSettings.lease_ms)
+        return isFinite(value) && Math.floor(value) === value && value >= 100 && value <= 10000 ? value : 0
+    }
+    readonly property int feedbackTimeoutMs: Math.max(100, Math.min(250, feedbackLeaseMs))
+    property string feedbackDesired: ""
+    property string feedbackQueued: ""
+    property string feedbackPending: ""
+    property bool feedbackBusy: false
+    property bool feedbackConfirmed: false
+    property bool feedbackRoom: false
+    property real feedbackSequence: 0
+    property real feedbackAcceptedAt: 0
+    property real feedbackNow: 0
+    onFeedbackSettingsChanged: if (workspaceState && captureFeedback) shellRoot.publishInputState(false)
+
+    function feedbackSpec(snapshot) {
+        const cfg = feedbackSettings
+        const output = String(snapshot.output || "")
+        const color = String(cfg.color || "")
+        const width = Number(cfg.width_px), period = Number(cfg.period_ms)
+        const valid = output !== "" && !/[\x00-\x1f\x7f]/.test(output)
+            && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color)
+            && isFinite(width) && width > 0 && width <= 32
+            && isFinite(period) && Math.floor(period) === period && period >= 100 && period <= 20000
+            && feedbackLeaseMs > 0
+        return snapshot.open === true && cfg.enabled === true && valid
+            ? {active: true, output: output, color: color, width_px: width, period_ms: period, lease_ms: feedbackLeaseMs}
+            : {active: false}
+    }
+    function feedbackLua(spec, sequence) {
+        const cfg = JSON.parse(spec)
+        let fields = "{active=" + (cfg.active ? "true" : "false")
+        if (cfg.active) fields += ",output=" + JSON.stringify(cfg.output) + ",color=" + JSON.stringify(cfg.color)
+            + ",width_px=" + cfg.width_px + ",period_ms=" + cfg.period_ms + ",lease_ms=" + cfg.lease_ms
+        fields += "}"
+        // Only a reply produced by this request carries the complete marker. An echoed expression cannot match it.
+        return "(function() local p=hl.plugin and hl.plugin.hypr3d;local room=false;"
+            + "if p then local f=p.dock_capture_feedback;"
+            + "if type(f)=='function' then local ok,v=pcall(f," + fields + ");"
+            + "if not ok or type(v)~='boolean' then error('MiOS capture feedback unavailable',0) end;room=v;"
+            + "elseif type(p.active)=='function' then local ok,v=pcall(p.active);"
+            + "if not ok or type(v)~='boolean' then error('MiOS room status unavailable',0) end;room=v;"
+            + "else error('MiOS room status unavailable',0) end end;"
+            + "error('MIOS_DOCK_CAPTURE_FEEDBACK:'.." + JSON.stringify(String(sequence)) + "..':'..(room and 'room' or 'flat'),0) end)()"
+    }
+    function feedbackReply(text, sequence) {
+        const value = String(text || "")
+        if (value.length > 8192) return ""
+        const matches = value.match(new RegExp("MIOS_DOCK_CAPTURE_FEEDBACK:" + sequence + ":(room|flat)\\b", "g"))
+        return matches && matches.length === 1 ? (matches[0].endsWith(":room") ? "room" : "flat") : ""
+    }
+    function flatFeedbackAllowed(now) {
+        return feedbackConfirmed && !feedbackRoom && feedbackPending === feedbackDesired
+            && feedbackLeaseMs > 0 && now >= feedbackAcceptedAt && now - feedbackAcceptedAt < feedbackLeaseMs
+    }
+    function queueNativeFeedback(snapshot) {
+        feedbackNow = Date.now()
+        const desired = JSON.stringify(feedbackSpec(snapshot))
+        if (desired !== feedbackDesired || !JSON.parse(desired).active) feedbackConfirmed = false
+        feedbackDesired = desired
+        feedbackQueued = desired
+        pumpNativeFeedback()
+    }
+    function pumpNativeFeedback() {
+        if (feedbackBusy || captureFeedback.running || feedbackQueued === "") return
+        feedbackPending = feedbackQueued
+        feedbackQueued = ""
+        feedbackSequence += 1
+        captureFeedback.reply = ""
+        captureFeedback.expired = false
+        feedbackBusy = true
+        captureFeedback.command = ["/usr/bin/hyprctl", "eval", feedbackLua(feedbackPending, feedbackSequence)]
+        captureFeedback.running = true
+    }
+    function finishNativeFeedback() {
+        const reply = feedbackReply(captureFeedback.reply, feedbackSequence)
+        feedbackNow = Date.now()
+        feedbackConfirmed = !captureFeedback.expired && feedbackPending === feedbackDesired
+            && JSON.parse(feedbackPending).active && reply !== ""
+        if (feedbackConfirmed) {
+            feedbackRoom = reply === "room"
+            feedbackAcceptedAt = feedbackNow
+            feedbackExpiry.restart()
+        }
+        feedbackBusy = false
+        Qt.callLater(shellRoot.pumpNativeFeedback)
+    }
+    function timeoutNativeFeedback() {
+        feedbackConfirmed = false
+        captureFeedback.expired = true
+        if (captureFeedback.running) captureFeedback.signal(9)
+        else {
+            // Failed process creation has no exited signal; the deadline also releases that request slot.
+            feedbackBusy = false
+            Qt.callLater(shellRoot.pumpNativeFeedback)
+        }
+    }
     function publishInputState(closed) {
-        if (inputStatePath && workspaceState) inputStateFile.setText(JSON.stringify(workspaceState.inputSnapshot(closed)) + "\n")
+        if (!workspaceState) return
+        const snapshot = workspaceState.inputSnapshot(closed)
+        if (inputStatePath) inputStateFile.setText(JSON.stringify(snapshot) + "\n")
+        queueNativeFeedback(snapshot)
+    }
+    Process {
+        id: captureFeedback
+        property string reply: ""
+        property bool expired: false
+        stdout: StdioCollector { onStreamFinished: captureFeedback.reply += text.slice(0, 8193) }
+        stderr: StdioCollector { onStreamFinished: captureFeedback.reply += text.slice(0, 8193) }
+        onExited: shellRoot.finishNativeFeedback()
+    }
+    Timer {
+        interval: shellRoot.feedbackTimeoutMs
+        running: shellRoot.feedbackBusy
+        repeat: false
+        onTriggered: shellRoot.timeoutNativeFeedback()
+    }
+    Timer {
+        id: feedbackExpiry
+        interval: Math.max(1, shellRoot.feedbackLeaseMs)
+        onTriggered: shellRoot.feedbackConfirmed = false
     }
     FileView {
         id: inputStateFile
@@ -371,7 +492,8 @@ QS.ShellRoot {
                     && (!workspaceState.drawerScreen || workspaceState.drawerScreen === outputScope.outputName))
                     || (workspaceState.searchOpen
                     && (!workspaceState.searchScreen || workspaceState.searchScreen === outputScope.outputName))
-                visible: localOutput && capturedHere && settings.enabled === true
+                visible: localOutput && capturedHere && shellRoot.flatFeedbackAllowed(shellRoot.feedbackNow)
+                    && settings.enabled === true
                     && isFinite(glowWidth) && glowWidth > 0 && periodMs > 0
                 property real phase: 0
                 NumberAnimation on phase {
