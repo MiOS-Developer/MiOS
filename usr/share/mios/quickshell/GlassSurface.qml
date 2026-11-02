@@ -43,12 +43,11 @@ Item {
         clip: surface.specular
     }
 
-    // Inner contour-following specular highlight border
     Rectangle {
         id: innerSpecular
-        visible: (surface.specular || surface.hairline) && surface.circular && surface.r > Glass.hairline
         anchors.fill: parent
         anchors.margins: Glass.hairline
+        visible: surface.circular && (surface.specular || surface.hairline) && surface.r > Glass.hairline
         radius: Math.max(0, surface.r - Glass.hairline)
         color: "transparent"
         border.width: Glass.hairline

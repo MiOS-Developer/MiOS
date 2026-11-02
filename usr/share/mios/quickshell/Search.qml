@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell as QS
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 
 QS.PanelWindow {
     id: searchWindow
@@ -42,8 +43,15 @@ QS.PanelWindow {
     exclusiveZone: 0
     WlrLayershell.namespace: "mios-search"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: requestedOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: (requestedOpen && (searchWindow.activeFocus || input.activeFocus)) ? WlrKeyboardFocus.Exclusive : (requestedOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
     color: "transparent"
+    Keys.onEscapePressed: searchWindow.shellState.searchOpen = false
+
+    HyprlandFocusGrab {
+        windows: [searchWindow]
+        active: searchWindow.requestedOpen
+        onCleared: searchWindow.shellState.searchOpen = false
+    }
 
     function activate(row) {
         if (!row) return
@@ -90,9 +98,10 @@ QS.PanelWindow {
     GlassSurface {
         id: box
         anchors.fill: parent
-        // the island's glass (GlassSurface: Glass.corner rule and fill), no outline (hyprglass draws the rim)
-        color: Glass.fill
-        clip: true
+        radius: Glass.radius
+        color: searchWindow.theme.withAlpha(Glass.fillHex, searchWindow.theme.panelOpacity)
+        hairline: true
+        borderColor: searchWindow.theme.outlineColor
         Column {
             anchors.fill: parent
             anchors.margins: Glass.panelPad

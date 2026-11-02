@@ -74,8 +74,12 @@ Singleton {
                     let response = ({})
                     try { response = JSON.parse(result) } catch (e) {}
                     if (code === 0 && response.ok && response.desktop_file) {
-                        if (outputName)
-                            DockLamp.recordLaunch(entry, outputName, iconRect)
+                        const targetOutput = outputName || (Quickshell.screens.length ? Quickshell.screens[0].name : "")
+                        const r = (Array.isArray(iconRect) && iconRect.length === 4 && iconRect.some(x => x > 0))
+                            ? iconRect
+                            : [936, 1016, 48, 48]
+                        if (targetOutput)
+                            DockLamp.recordLaunch(entry, targetOutput, r)
                         if (entry.runInTerminal) {
                             const terminal = launches.cfg.terminal_command || []
                             if (!terminal.length) launches.failed(entry, "The application terminal is not configured.")
@@ -85,10 +89,13 @@ Singleton {
                             // GIO handles D-Bus activation and desktop field
                             // codes; execute() omits some of these.
                             let argv = [launches.cfg.desktop_launcher_program || "gio", "launch", response.desktop_file]
+                            let envArgs = ["XDG_CURRENT_DESKTOP=Hyprland:GNOME:Phosh"]
                             if (response.unset_environment && response.unset_environment.length) {
                                 let prefix = [launches.cfg.environment_program || "env"]
                                 response.unset_environment.forEach(name => { prefix.push("-u"); prefix.push(name) })
-                                argv = prefix.concat(argv)
+                                argv = prefix.concat(envArgs).concat(argv)
+                            } else {
+                                argv = [launches.cfg.environment_program || "env"].concat(envArgs).concat(argv)
                             }
                             // Decouple dispatch from the pipe-collecting preflight Process
                             const dispatchJob = dispatchFactory.createObject(launches, {entry: entry, command: argv})

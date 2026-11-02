@@ -5,9 +5,9 @@
 // AI-related: usr/share/mios/mios.toml [desktop.hyprland].bindings, tools/native/mios-gen/src/global_bindings.rs, usr/libexec/mios/mios-sync-theme
 import QtQuick
 import Quickshell as QS
-import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 
 QS.PanelWindow {
     id: keymap
@@ -41,8 +41,9 @@ QS.PanelWindow {
         readonly property int columns: Math.max(2, Math.ceil((keymap.theme.keymap || []).length / 24))
         implicitWidth: grid.implicitWidth + 2 * Glass.panelPad
         implicitHeight: title.implicitHeight + grid.implicitHeight + 2 * Glass.panelPad + Glass.gap
-        // the island's glass (GlassSurface) at the notification legibility alpha; no outline (hyprglass draws the rim)
         color: keymap.theme.withAlpha(Glass.fillHex, keymap.theme.notificationOpacity)
+        hairline: true
+        borderColor: keymap.theme.outlineColor
         focus: keymap.open
         Keys.onEscapePressed: keymap.open = false
 
@@ -66,7 +67,7 @@ QS.PanelWindow {
             columnSpacing: 2 * Glass.gap
             rowSpacing: Glass.inset
             // Column-major halves so the list reads top-to-bottom in each column.
-            readonly property var gridRows: {
+            readonly property var rows: {
                 const k = keymap.theme.keymap || []
                 const half = Math.ceil(k.length / card.columns)
                 const out = []
@@ -78,7 +79,7 @@ QS.PanelWindow {
                 return out
             }
             Repeater {
-                model: grid.gridRows
+                model: grid.rows
                 delegate: Text {
                     required property var modelData
                     required property int index

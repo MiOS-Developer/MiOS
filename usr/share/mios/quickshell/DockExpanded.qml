@@ -375,10 +375,13 @@ FocusScope {
                     anchors.fill: parent
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    cursorShape: Qt.PointingHandCursor
                     onClicked: mouse => {
                         if (mouse.button === Qt.RightButton) { ex.dockRoot.openAppMenu(tile.modelData, tile); return }
-                        ex.dockRoot.launch(tile.modelData, null)
+                        const pt = tile.mapToItem(null, 0, 0)
+                        const winLeft = Math.round(ex.screen ? (ex.screen.width - ex.width) / 2 : 0)
+                        const winTop = Math.round(ex.screen ? (ex.screen.height - ex.height - Glass.gap) : 0)
+                        const rect = [winLeft + pt.x, winTop + pt.y, Math.round(tile.width), Math.round(tile.height)]
+                        ex.dockRoot.launch(tile.modelData, rect)
                     }
                 }
                 Timer { id: tipDelay; interval: DockConfig.tooltipDelay; running: tileHit.containsMouse || tile.focused; onTriggered: tip.show(tile) }
@@ -416,6 +419,17 @@ FocusScope {
             font.family: ex.theme.fontFamily
             font.pixelSize: ex.theme.fontSize
         }
+    }
+
+    VirtualKeyboard {
+        id: oskKeyboard
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: DockConfig.oskHeight
+        visible: ex.oskShown
+        theme: ex.theme
+        targetInput: search.activeFocus ? search : null
     }
 
     // Controller / scripted navigation (mios-inputd quickshell: actions): `quickshell ipc call dock <fn>`.
