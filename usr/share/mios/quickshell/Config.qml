@@ -333,7 +333,9 @@ QS.ShellRoot {
     QS.Variants {
         model: QS.Quickshell.screens
         QS.Scope {
+            id: outputScope
             required property var modelData
+            readonly property string outputName: modelData ? modelData.name : ""
             // Fullscreen edge reveal shared by the top row and the dock of this output.
             MiOS.EdgeReveal { id: edgeReveal; screen: modelData }
             MiOS.AppMenu { screen: modelData; shellState: workspaceState; reveal: edgeReveal }
@@ -344,7 +346,7 @@ QS.ShellRoot {
             // One input-transparent feedback surface per local output; window borders are native shapes.
             QS.PanelWindow {
                 id: captureGlow
-                screen: modelData
+                screen: outputScope.modelData
                 anchors.top: true
                 anchors.bottom: true
                 anchors.left: true
@@ -360,13 +362,15 @@ QS.ShellRoot {
                 readonly property real glowWidth: Number(settings.width_px)
                 readonly property int periodMs: isFinite(Number(settings.period_ms)) ? Math.max(0, Math.floor(Number(settings.period_ms))) : 0
                 readonly property color glowColor: settings.color || "transparent"
-                readonly property var monitor: Hyprland.monitorFor(screen)
-                readonly property bool localOutput: !!screen && !workspaceState.isRemoteOutput(screen.name)
-                    && !/^HEADLESS[-_]/i.test(screen.name)
+                // Output identity belongs to the variants model, independent of this window's visibility.
+                readonly property var monitor: Hyprland.monitorFor(outputScope.modelData)
+                readonly property bool localOutput: outputScope.outputName !== ""
+                    && !workspaceState.isRemoteOutput(outputScope.outputName)
+                    && !/^HEADLESS[-_]/i.test(outputScope.outputName)
                 readonly property bool capturedHere: (workspaceState.drawerOpen
-                    && (!workspaceState.drawerScreen || workspaceState.drawerScreen === screen.name))
+                    && (!workspaceState.drawerScreen || workspaceState.drawerScreen === outputScope.outputName))
                     || (workspaceState.searchOpen
-                    && (!workspaceState.searchScreen || workspaceState.searchScreen === screen.name))
+                    && (!workspaceState.searchScreen || workspaceState.searchScreen === outputScope.outputName))
                 visible: localOutput && capturedHere && settings.enabled === true
                     && isFinite(glowWidth) && glowWidth > 0 && periodMs > 0
                 property real phase: 0

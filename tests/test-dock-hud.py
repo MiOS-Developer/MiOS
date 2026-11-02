@@ -213,8 +213,13 @@ def dock_capture_feedback_and_keyboard(ref=None):
                 "function visibleWindowRects(monitor, viewportWidth, viewportHeight)", "ConicalGradient {",
                 "angle: captureGlow.phase", "ShapePath.OddEvenFill", "Shape.CurveRenderer",
                 "running: captureGlow.visible", "border_glow", "settings.width_px", "settings.period_ms",
-                "workspaceState.isRemoteOutput(screen.name)", "/^HEADLESS[-_]/i"]
+                "id: outputScope", "screen: outputScope.modelData", "Hyprland.monitorFor(outputScope.modelData)",
+                "workspaceState.isRemoteOutput(outputScope.outputName)", "/^HEADLESS[-_]/i"]
     errors = [f"missing capture feedback: {item}" for item in required if item not in config]
+    glow = config[config.find("id: captureGlow"):]
+    captured = re.search(r"readonly property bool capturedHere:([\s\S]*?)\n\s*visible:", glow)
+    if not captured or "screen.name" in captured.group(1) or captured.group(1).count("outputScope.outputName") != 2:
+        errors.append("capture visibility depends on mutable panel screen instead of stable output identity")
     focus = re.search(r"WlrLayershell.keyboardFocus:s*(.+)", sidebar)
     if not focus or "Exclusive" not in focus.group(1):
         errors.append("expanded dock cannot receive keyboard focus with the on-screen keyboard enabled")
