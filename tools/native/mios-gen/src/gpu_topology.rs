@@ -565,6 +565,649 @@ pub fn boot_display_report(
     })
 }
 
+/// Explicit serving policy; discovery cannot change the selected backend.
+#[derive(Debug)]
+struct LightSettings {
+    backend: String,
+    image: String,
+    device: String,
+    layers: String,
+    profile: String,
+    drivers: Vec<String>,
+    dropin: PathBuf,
+    cuda_information: PathBuf,
+    lock: PathBuf,
+    cache: PathBuf,
+}
+
+fn light_string<'a>(table: &'a Value, key: &str) -> Result<&'a str, String> {
+    table
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && !s.chars().any(char::is_control))
+        .ok_or_else(|| {
+            format!("light backend {key} must be a nonempty string without control characters")
+        })
+}
+
+fn light_settings(data: &Value) -> Result<LightSettings, String> {
+    let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
+    let _threads = llama
+        .get("light_threads")
+        .and_then(Value::as_integer)
+        .and_then(|n| i32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or("llamacpp.light_threads must be a positive 32-bit integer")?;
+    let slot = light_string(llama, "slot_dir")?;
+    let slot = Path::new(slot);
+    if !slot.is_absolute()
+        || slot == Path::new("/")
+        || slot
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        || !slot
+            .to_string_lossy()
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+    {
+        return Err("llamacpp.slot_dir must be a single absolute mounted directory".into());
+    }
+    let cache = slot.join("cache");
+    let backend = light_string(llama, "light_backend")?;
+    if !matches!(backend, "cpu" | "cuda" | "vulkan") {
+        return Err(format!(
+            "unknown light backend {backend:?}; expected cpu, cuda or vulkan"
+        ));
+    }
+    let settings = llama
+        .get("light_backends")
+        .and_then(|b| b.get(backend))
+        .ok_or_else(|| format!("missing [llamacpp.light_backends.{backend}]"))?;
+    let key = light_string(settings, "image_key")?;
+    if data
+        .get("image")
+        .is_some_and(|image| image.get(key).is_some())
+    {
+        return Err(format!("misplaced image.{key}; move the explicit value to canonical image.sidecars.{key} before applying"));
+    }
+    let image = data
+        .get("image")
+        .and_then(|image| image.get("sidecars"))
+        .and_then(|images| images.get(key))
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing image.sidecars.{key} for light backend {backend}"))?;
+    if image.is_empty()
+        || image.starts_with('-')
+        || !image
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._:@-".contains(&c))
+    {
+        return Err(format!(
+            "image.sidecars.{key} is not a single OCI image reference"
+        ));
+    }
+    let device = light_string(settings, "device")?;
+    if !device
+        .bytes()
+        .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+    {
+        return Err("light backend device must be a single device identifier".into());
+    }
+    let prefix = match backend {
+        "cuda" => Some("CUDA"),
+        "vulkan" => Some("Vulkan"),
+        _ => None,
+    };
+    if prefix.is_some_and(|prefix| {
+        !device
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|c| c.is_ascii_digit()))
+    }) {
+        return Err(
+            "GPU backend device must name its actual CUDA/Vulkan device, not none/software".into(),
+        );
+    }
+    let layers = light_string(settings, "gpu_layers")?;
+    if (backend == "cpu" && (layers != "0" || device != "none"))
+        || (backend != "cpu" && layers != "all" && !layers.parse::<u32>().is_ok_and(|n| n > 0))
+    {
+        return Err(
+            "CPU requires device=none/gpu_layers=0; GPU layers must be all or a positive integer"
+                .into(),
+        );
+    }
+    let drivers = settings
+        .get("drivers")
+        .and_then(Value::as_array)
+        .ok_or("light backend drivers must be a string array")?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|s| {
+                    !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                })
+                .map(str::to_owned)
+                .ok_or_else(|| "invalid light backend driver name".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if backend != "cpu" && drivers.is_empty() {
+        return Err("GPU light backend must declare eligible bound drivers".into());
+    }
+    let runtime = llama
+        .get("light_runtime")
+        .ok_or("missing [llamacpp.light_runtime]")?;
+    let dropin = PathBuf::from(light_string(runtime, "dropin")?);
+    if dropin.parent()
+        != Some(Path::new(
+            "/etc/containers/systemd/mios-llm-light.container.d",
+        ))
+        || !dropin.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy();
+            name.starts_with("30-")
+                && name.ends_with(".conf")
+                && !name.chars().any(char::is_whitespace)
+        })
+    {
+        return Err(
+            "light dropin must be a 30-*.conf in the light container's /etc dropin directory"
+                .into(),
+        );
+    }
+    let cuda_information = PathBuf::from(light_string(runtime, "cuda_information_dir")?);
+    if !cuda_information.is_absolute()
+        || cuda_information
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("CUDA information directory must be an absolute rooted path".into());
+    }
+    let lock = PathBuf::from(light_string(runtime, "lock")?);
+    if lock.parent() != Some(Path::new("/run/mios/light-backend"))
+        || lock.file_name() != Some(std::ffi::OsStr::new("lock"))
+    {
+        return Err("light backend lock must be /run/mios/light-backend/lock".into());
+    }
+    let profile = light_string(llama, "light_gpu_profile")?;
+    if profile != "auto" && !profiles(data).is_some_and(|p| p.contains_key(profile)) {
+        return Err(format!("unknown light GPU hardware profile {profile:?}"));
+    }
+    Ok(LightSettings {
+        backend: backend.into(),
+        image: image.into(),
+        device: device.into(),
+        layers: layers.into(),
+        profile: profile.into(),
+        drivers,
+        dropin,
+        cuda_information,
+        lock,
+        cache,
+    })
+}
+
+fn light_gpu(
+    data: &Value,
+    root: &Path,
+    setting: &str,
+    cmdline: &str,
+    gpus: &[Gpu],
+) -> Result<(String, Gpu), String> {
+    let profile = if setting == "auto" {
+        let booted = running_profile(data, None, cmdline)?;
+        handoff_profile(data, root, &booted, gpus).unwrap_or(booted)
+    } else {
+        setting.to_owned()
+    };
+    if let Some(gpu) = profile_gpu(gpus, root, data, &profile) {
+        return Ok((profile, gpu));
+    }
+    let cfg = profiles(data)
+        .and_then(|p| p.get(&profile))
+        .ok_or_else(|| format!("unknown hardware profile {profile:?}"))?;
+    let explicit_pci = cfg
+        .get("pci")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.is_empty());
+    let existing_pci_file = cfg
+        .get("pci_file")
+        .and_then(Value::as_str)
+        .is_some_and(|path| {
+            path.starts_with('/') && root.join(path.trim_start_matches('/')).exists()
+        });
+    if explicit_pci || existing_pci_file {
+        return Err(format!(
+            "selected light GPU profile {profile} is absent or has an invalid PCI identity"
+        ));
+    }
+    let alias = light_string(cfg, "device")?;
+    if !alias.starts_with("/dev/dri/")
+        || Path::new(alias)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("hardware profile device must be a rooted DRM alias".into());
+    }
+    let card = fs::canonicalize(root.join(alias.trim_start_matches('/')))
+        .map_err(|e| format!("selected GPU alias {alias} is unavailable: {e}"))?;
+    let gpu = gpus
+        .iter()
+        .find(|g| fs::canonicalize(&g.card).ok().as_ref() == Some(&card))
+        .cloned()
+        .ok_or_else(|| format!("{alias} does not identify a discovered DRM card"))?;
+    Ok((profile, gpu))
+}
+
+#[derive(Debug)]
+struct LightDevice {
+    path: PathBuf,
+    gid: u32,
+}
+
+/// Metadata collected from stat(2) and sysfs; no external facts/bypass mode is exposed.
+#[derive(Clone)]
+struct LightRenderIdentity {
+    path: PathBuf,
+    dri: PathBuf,
+    character: bool,
+    device_number: String,
+    kernel_number: String,
+    pci: String,
+    driver: String,
+    gid: u32,
+}
+
+fn validate_light_render(
+    gpu: &Gpu,
+    drivers: &[String],
+    facts: LightRenderIdentity,
+) -> Result<LightDevice, String> {
+    if !valid_pci(&gpu.pci) || gpu.driver == "vfio-pci" || !drivers.contains(&gpu.driver) {
+        return Err(format!(
+            "selected GPU {} is not bound to an eligible driver ({})",
+            gpu.pci, gpu.driver
+        ));
+    }
+    let name = facts
+        .path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("invalid DRM render name")?;
+    if facts.path.parent() != Some(facts.dri.as_path()) || numbered(name, "renderD").is_none() {
+        return Err("render node does not resolve inside the configured DRM directory".into());
+    }
+    if !facts.character {
+        return Err("selected render path is not a character device".into());
+    }
+    if facts.kernel_number.trim() != facts.device_number
+        || facts.pci != gpu.pci
+        || facts.driver != gpu.driver
+    {
+        return Err(
+            "DRM node metadata does not match the selected kernel PCI device/driver".into(),
+        );
+    }
+    Ok(LightDevice {
+        path: facts.path,
+        gid: facts.gid,
+    })
+}
+
+/// Stat the resolved node and compare it to the selected kernel PCI/driver.
+#[cfg(unix)]
+fn light_render_device(gpu: &Gpu, host: &Host, drivers: &[String]) -> Result<LightDevice, String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let render = gpu
+        .render
+        .as_ref()
+        .ok_or("selected GPU has no render node")?;
+    let path = fs::canonicalize(render).map_err(|e| format!("render node is unavailable: {e}"))?;
+    let dri =
+        fs::canonicalize(host.dri).map_err(|e| format!("DRM directory is unavailable: {e}"))?;
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("invalid DRM render name")?;
+    let metadata =
+        fs::metadata(&path).map_err(|e| format!("render metadata is unreadable: {e}"))?;
+    let device = host.sys.join(name).join("device");
+    let facts = LightRenderIdentity {
+        path: path.clone(),
+        dri,
+        character: metadata.file_type().is_char_device(),
+        device_number: format!(
+            "{}:{}",
+            rustix::fs::major(metadata.rdev()),
+            rustix::fs::minor(metadata.rdev())
+        ),
+        kernel_number: fs::read_to_string(host.sys.join(name).join("dev"))
+            .map_err(|e| format!("DRM kernel device identity is unreadable: {e}"))?,
+        pci: link_name(&device),
+        driver: link_name(&device.join("driver")),
+        gid: metadata.gid(),
+    };
+    validate_light_render(gpu, drivers, facts)
+}
+
+#[cfg(not(unix))]
+fn light_render_device(
+    _gpu: &Gpu,
+    _host: &Host,
+    _drivers: &[String],
+) -> Result<LightDevice, String> {
+    Err("light GPU projection requires Linux device metadata".into())
+}
+
+#[cfg(unix)]
+fn light_cuda_device(
+    root: &Path,
+    data: &Value,
+    cfg: &LightSettings,
+    gpu: &Gpu,
+) -> Result<(String, u32), String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    if gpu.driver != "nvidia" {
+        return Err("CUDA requires the selected GPU to be bound to the NVIDIA driver".into());
+    }
+    let info = root
+        .join(
+            cfg.cuda_information
+                .strip_prefix("/")
+                .map_err(|e| e.to_string())?,
+        )
+        .join(&gpu.pci)
+        .join("information");
+    let info = fs::read_to_string(info)
+        .map_err(|e| format!("selected NVIDIA information is unavailable: {e}"))?;
+    let field = |key: &str| {
+        info.lines().find_map(|line| {
+            line.split_once(':')
+                .filter(|(name, _)| name.trim() == key)
+                .map(|(_, value)| value.trim())
+        })
+    };
+    let minor = field("Device Minor")
+        .and_then(|s| s.parse::<u32>().ok())
+        .ok_or("selected NVIDIA Device Minor is missing or invalid")?;
+    let metadata = fs::metadata(root.join(format!("dev/nvidia{minor}")))
+        .map_err(|e| format!("selected NVIDIA device node is unavailable: {e}"))?;
+    if !metadata.file_type().is_char_device() {
+        return Err("selected NVIDIA device is not a character device".into());
+    }
+    let device = root.join(format!(
+        "sys/dev/char/{}:{}/device",
+        rustix::fs::major(metadata.rdev()),
+        rustix::fs::minor(metadata.rdev())
+    ));
+    if link_name(&device) != gpu.pci {
+        return Err("NVIDIA device node does not match the selected GPU PCI identity".into());
+    }
+    let selection = data
+        .get("gpu")
+        .and_then(|g| g.get("cdi"))
+        .and_then(|c| c.get("nvidia"))
+        .and_then(|c| c.get("device"))
+        .and_then(Value::as_str)
+        .ok_or("gpu.cdi.nvidia.device is missing")?;
+    let (kind, requested) = selection
+        .split_once('=')
+        .ok_or("invalid configured NVIDIA CDI selection")?;
+    if kind.is_empty()
+        || !kind
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(&c))
+        || !(requested == "all"
+            || requested == minor.to_string()
+            || field("GPU UUID") == Some(requested))
+    {
+        return Err("configured NVIDIA CDI device does not match the selected GPU".into());
+    }
+    // Source-wide '=all' narrows to the selected card; VFIO cards never pass validation.
+    Ok((format!("{kind}={minor}"), metadata.gid()))
+}
+
+#[cfg(not(unix))]
+fn light_cuda_device(
+    _root: &Path,
+    _data: &Value,
+    _cfg: &LightSettings,
+    _gpu: &Gpu,
+) -> Result<(String, u32), String> {
+    Err("CUDA projection requires Linux device metadata".into())
+}
+
+#[derive(Debug, Clone)]
+pub struct LightBackendPlan {
+    pub backend: String,
+    pub image: String,
+    pub profile: Option<String>,
+    pub pci: Option<String>,
+    pub output: PathBuf,
+    pub contents: String,
+}
+
+impl LightBackendPlan {
+    pub fn to_json(&self, changed: bool) -> Json {
+        json!({"backend":self.backend,"image":self.image,"profile":self.profile,"pci":self.pci,
+            "output":self.output,"contents":self.contents,"changed":changed})
+    }
+}
+
+pub fn light_backend_plan(
+    root: &Path,
+    data: &Value,
+    host: &Host,
+    cmdline: &str,
+) -> Result<LightBackendPlan, String> {
+    let cfg = light_settings(data)?;
+    let mut devices = Vec::new();
+    let mut groups = Vec::new();
+    let mut profile = None;
+    let mut pci = None;
+    if cfg.backend != "cpu" {
+        let gpus = inventory(host);
+        let (selected, gpu) = light_gpu(data, root, &cfg.profile, cmdline, &gpus)?;
+        let render = light_render_device(&gpu, host, &cfg.drivers)?;
+        if cfg.backend == "vulkan" {
+            let path = render
+                .path
+                .strip_prefix(root)
+                .map_err(|_| "render node escapes the selected root")?;
+            devices.push(format!("/{}", path.display()));
+            groups.push(render.gid);
+        } else {
+            let (device, gid) = light_cuda_device(root, data, &cfg, &gpu)?;
+            devices.push(device);
+            groups.extend([render.gid, gid]);
+        }
+        profile = Some(selected);
+        pci = Some(gpu.pci);
+    }
+    groups.sort();
+    groups.dedup();
+    let mut contents = format!("# AI-hint: Native light backend projection from layered mios.toml and verified kernel device metadata.\n[Container]\nImage={}\nAddDevice=\nGroupAdd=\n",cfg.image);
+    for device in devices {
+        contents.push_str(&format!("AddDevice={device}\n"));
+    }
+    for group in groups {
+        contents.push_str(&format!("GroupAdd={group}\n"));
+    }
+    contents.push_str(&format!(
+        "Environment=LLAMA_ARG_DEVICE={}\nEnvironment=LLAMA_ARG_N_GPU_LAYERS={}\n",
+        cfg.device, cfg.layers
+    ));
+    contents.push_str(&format!(
+        "Environment=XDG_CACHE_HOME={}\n",
+        cfg.cache.display()
+    ));
+    Ok(LightBackendPlan {
+        backend: cfg.backend,
+        image: cfg.image,
+        profile,
+        pci,
+        output: root.join(cfg.dropin.strip_prefix("/").map_err(|e| e.to_string())?),
+        contents,
+    })
+}
+
+/// Output parents and targets cannot be redirected by host symlinks.
+fn light_output_parents(root: &Path, output: &Path) -> Result<(), String> {
+    let relative = output
+        .strip_prefix(root)
+        .map_err(|_| "light output escapes the selected root")?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err("light output contains an invalid path component".into());
+        }
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(format!(
+                    "light output symlink is forbidden: {}",
+                    current.display()
+                ))
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("light output is unreadable: {error}")),
+        }
+    }
+    Ok(())
+}
+
+pub fn apply_light_backend(root: &Path, plan: &LightBackendPlan) -> Result<bool, String> {
+    use std::io::Write;
+    light_output_parents(root, &plan.output)?;
+    let existing = read_light_output(&plan.output)?;
+    if let Some(contents) = existing.as_ref() {
+        if contents.lines().next() != plan.contents.lines().next() {
+            return Err("existing light dropin lacks the native ownership header; preserve it and reconcile explicitly".into());
+        }
+    }
+    if existing.as_deref() == Some(&plan.contents) {
+        return Ok(false);
+    }
+    let parent = plan.output.parent().ok_or("light output has no parent")?;
+    fs::create_dir_all(parent).map_err(|e| format!("cannot create light dropin directory: {e}"))?;
+    light_output_parents(root, &plan.output)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    temporary
+        .write_all(plan.contents.as_bytes())
+        .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644))
+            .map_err(|e| e.to_string())?;
+    }
+    temporary.as_file().sync_all().map_err(|e| e.to_string())?;
+    temporary.persist(&plan.output).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+fn read_light_output(path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("existing light output is unreadable: {error}")),
+    }
+}
+
+fn lock_light_backend(root: &Path, path: &Path) -> Result<fs::File, String> {
+    let path = root.join(path.strip_prefix("/").map_err(|e| e.to_string())?);
+    light_output_parents(root, &path)?;
+    fs::create_dir_all(path.parent().ok_or("lock has no parent")?).map_err(|e| e.to_string())?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+    }
+    let file = options
+        .open(&path)
+        .map_err(|e| format!("cannot open light backend lock: {e}"))?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("light backend lock is not a regular file".into());
+    }
+    file.try_lock()
+        .map_err(|e| format!("light backend reconciliation lock unavailable: {e}"))?;
+    Ok(file)
+}
+
+/// Roll back a failed reload so the next attempt must retry it; no false applied state.
+fn apply_light_with_reload(
+    root: &Path,
+    plan: &LightBackendPlan,
+    reload: &mut dyn FnMut() -> Result<(), String>,
+) -> Result<bool, String> {
+    light_output_parents(root, &plan.output)?;
+    let previous = read_light_output(&plan.output)?;
+    let changed = apply_light_backend(root, plan)?;
+    if changed {
+        if let Err(error) = reload() {
+            if read_light_output(&plan.output)?.as_deref() == Some(&plan.contents) {
+                if let Some(contents) = previous {
+                    let mut prior = plan.clone();
+                    prior.contents = contents;
+                    apply_light_backend(root, &prior)?;
+                } else {
+                    fs::remove_file(&plan.output)
+                        .map_err(|e| format!("cannot roll back failed light reload: {e}"))?;
+                }
+            }
+            return Err(error);
+        }
+    }
+    Ok(changed)
+}
+
+pub fn reconcile_light_backend(root: &Path, apply: bool, reload: bool) -> Result<Json, String> {
+    if reload && (!apply || root != Path::new("/")) {
+        return Err("--reload requires --apply on the live root".into());
+    }
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let settings = light_settings(&data)?;
+    let _lock = if apply {
+        Some(lock_light_backend(root, &settings.lock)?)
+    } else {
+        None
+    };
+    let dri = root.join("dev/dri");
+    let sys = root.join("sys/class/drm");
+    let cmdline = fs::read_to_string(root.join("proc/cmdline")).unwrap_or_default();
+    let plan = light_backend_plan(
+        root,
+        &data,
+        &Host {
+            dri: &dri,
+            sys: &sys,
+        },
+        &cmdline,
+    )?;
+    let changed = if reload {
+        apply_light_with_reload(root, &plan, &mut || {
+            let status = std::process::Command::new("systemctl")
+                .arg("daemon-reload")
+                .status()
+                .map_err(|e| format!("cannot reload systemd: {e}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("systemd daemon-reload failed: {status}"))
+            }
+        })?
+    } else {
+        apply && apply_light_backend(root, &plan)?
+    };
+    Ok(plan.to_json(changed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,6 +1269,298 @@ mod tests {
             .unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn light_cpu_plan_is_device_free_and_apply_is_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let data = ssot();
+        let dri = root.path().join("absent-dri");
+        let sys = root.path().join("absent-sys");
+        let plan = light_backend_plan(
+            root.path(),
+            &data,
+            &Host {
+                dri: &dri,
+                sys: &sys,
+            },
+            "",
+        )
+        .unwrap();
+        assert_eq!(plan.backend, "cpu");
+        assert!(plan.image.ends_with(":cpu"));
+        assert!(plan.contents.contains("AddDevice=\nGroupAdd=\n"));
+        assert!(!plan.contents.contains("AddDevice=/dev/"));
+        assert!(plan.contents.contains("LLAMA_ARG_DEVICE=none"));
+        assert!(!root.path().join("etc").exists(), "planning wrote files");
+        assert!(apply_light_backend(root.path(), &plan).unwrap());
+        let before = fs::metadata(&plan.output).unwrap().modified().unwrap();
+        assert!(!apply_light_backend(root.path(), &plan).unwrap());
+        assert_eq!(
+            before,
+            fs::metadata(&plan.output).unwrap().modified().unwrap()
+        );
+    }
+
+    #[test]
+    fn light_render_identity_binds_one_real_node_and_derives_its_group() {
+        let gpu = Gpu {
+            card: "/dev/dri/card9".into(),
+            render: Some("/dev/dri/renderD211".into()),
+            pci: "0000:09:00.0".into(),
+            driver: "amdgpu".into(),
+            boot_vga: false,
+        };
+        let facts = LightRenderIdentity {
+            path: "/dev/dri/renderD211".into(),
+            dri: "/dev/dri".into(),
+            character: true,
+            device_number: "226:211".into(),
+            kernel_number: "226:211\n".into(),
+            pci: gpu.pci.clone(),
+            driver: gpu.driver.clone(),
+            gid: 581,
+        };
+        let drivers = vec!["amdgpu".into()];
+        let validated = validate_light_render(&gpu, &drivers, facts.clone()).unwrap();
+        assert_eq!(validated.path, Path::new("/dev/dri/renderD211"));
+        assert_eq!(validated.gid, 581, "do not hardcode a host render gid");
+        for fault in 0..6 {
+            let mut bad = facts.clone();
+            match fault {
+                0 => bad.character = false,
+                1 => bad.kernel_number = "226:128".into(),
+                2 => bad.pci = "0000:01:00.0".into(),
+                3 => bad.driver = "nvidia".into(),
+                4 => bad.path = "/tmp/renderD211".into(),
+                _ => bad.path = "/dev/dri/card9".into(),
+            }
+            assert!(
+                validate_light_render(&gpu, &drivers, bad).is_err(),
+                "accepted fault{fault}"
+            );
+        }
+        let mut vfio = gpu.clone();
+        vfio.driver = "vfio-pci".into();
+        assert!(validate_light_render(&vfio, &["vfio-pci".into()], facts.clone()).is_err());
+        assert!(validate_light_render(&gpu, &["nvidia".into()], facts).is_err());
+    }
+
+    #[test]
+    fn light_backend_rejects_unknown_policies_and_output_injection() {
+        let source = ssot();
+        for fault in 0..7 {
+            let mut data = source.clone();
+            match fault {
+                0 => data["llamacpp"]["light_backend"] = Value::String("typo".into()),
+                1 => {
+                    data["llamacpp"]["light_gpu_profile"] = Value::String("missing-profile".into())
+                }
+                2 => {
+                    data["llamacpp"]["light_backends"]["cpu"]["device"] =
+                        Value::String("none\nAddDevice=/dev/kfd".into())
+                }
+                3 => {
+                    data["image"]["sidecars"]["llm_light_cpu"] =
+                        Value::String("image\n[Service]\nExecStart=unsafe".into())
+                }
+                4 => {
+                    data["llamacpp"]["light_runtime"]["dropin"] =
+                        Value::String("/etc/other.conf".into())
+                }
+                5 => {
+                    data["llamacpp"]["light_runtime"]["lock"] =
+                        Value::String("/tmp/arbitrary".into())
+                }
+                _ => {
+                    data["llamacpp"]["light_backends"]["cpu"]["gpu_layers"] =
+                        Value::String("all".into())
+                }
+            }
+            assert!(light_settings(&data).is_err(), "accepted fault{fault}");
+        }
+    }
+
+    #[test]
+    fn light_rejects_a_misplaced_image_pin_instead_of_replacing_it_with_a_default() {
+        let mut data = ssot();
+        data["image"].as_table_mut().unwrap().insert(
+            "llm_light_cpu".into(),
+            Value::String("registry.test/explicit@sha256:deadbeef".into()),
+        );
+        let error = light_settings(&data).unwrap_err();
+        assert!(
+            error.contains("canonical image.sidecars.llm_light_cpu"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn light_profile_never_substitutes_an_available_other_gpu() {
+        let fixture = fixture();
+        let (dri, sys) = fixture_host(fixture.path());
+        let gpus = inventory(&Host {
+            dri: &dri,
+            sys: &sys,
+        });
+        let data = ssot();
+        let (profile, gpu) = light_gpu(
+            &data,
+            fixture.path(),
+            "auto",
+            "mios.desktop.gpu=igpu",
+            &gpus,
+        )
+        .unwrap();
+        assert_eq!(profile, "igpu");
+        assert_eq!(gpu.driver, "amdgpu");
+        let other: Vec<_> = gpus.into_iter().filter(|g| g.driver == "nvidia").collect();
+        assert!(light_gpu(&data, fixture.path(), "igpu", "", &other).is_err());
+    }
+
+    #[test]
+    fn light_reload_failure_restores_prior_output_and_retries() {
+        let root = tempfile::tempdir().unwrap();
+        let data = ssot();
+        let absent = root.path().join("absent");
+        let plan = light_backend_plan(
+            root.path(),
+            &data,
+            &Host {
+                dri: &absent,
+                sys: &absent,
+            },
+            "",
+        )
+        .unwrap();
+        let result = apply_light_with_reload(root.path(), &plan, &mut || {
+            Err("planted reload denial".into())
+        });
+        assert!(result.is_err());
+        assert!(
+            !plan.output.exists(),
+            "failed reload left an applied-looking file"
+        );
+        let mut calls = 0;
+        assert!(apply_light_with_reload(root.path(), &plan, &mut || {
+            calls += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert_eq!(calls, 1);
+        assert!(!apply_light_with_reload(root.path(), &plan, &mut || {
+            calls += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert_eq!(calls, 1, "unchanged projection reloaded systemd");
+        let before = fs::read_to_string(&plan.output).unwrap();
+        let mut changed = plan.clone();
+        changed.contents.push_str("# changed\n");
+        assert!(apply_light_with_reload(root.path(), &changed, &mut || Err(
+            "planted failure".into()
+        ))
+        .is_err());
+        assert_eq!(fs::read_to_string(&plan.output).unwrap(), before);
+    }
+
+    #[test]
+    fn light_shader_cache_stays_below_the_configured_private_slot_mount() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = ssot();
+        data["llamacpp"]["slot_dir"] = Value::String("/srv/mios-private/slots".into());
+        let absent = root.path().join("absent");
+        let plan = light_backend_plan(
+            root.path(),
+            &data,
+            &Host {
+                dri: &absent,
+                sys: &absent,
+            },
+            "",
+        )
+        .unwrap();
+        assert!(plan
+            .contents
+            .ends_with("Environment=XDG_CACHE_HOME=/srv/mios-private/slots/cache\n"));
+        assert!(!plan.contents.contains("/var/lib/mios/llamacpp/.cache"));
+        data["llamacpp"]["slot_dir"] = Value::String("/".into());
+        assert!(light_settings(&data).is_err());
+    }
+
+    #[test]
+    fn light_refuses_unmanaged_or_unreadable_existing_output() {
+        let root = tempfile::tempdir().unwrap();
+        let data = ssot();
+        let absent = root.path().join("absent");
+        let plan = light_backend_plan(
+            root.path(),
+            &data,
+            &Host {
+                dri: &absent,
+                sys: &absent,
+            },
+            "",
+        )
+        .unwrap();
+        fs::create_dir_all(plan.output.parent().unwrap()).unwrap();
+        fs::write(&plan.output, "# operator-owned\n[Container]\n").unwrap();
+        assert!(apply_light_backend(root.path(), &plan).is_err());
+        assert_eq!(
+            fs::read_to_string(&plan.output).unwrap(),
+            "# operator-owned\n[Container]\n"
+        );
+        fs::write(&plan.output, [0xff]).unwrap();
+        assert!(apply_light_backend(root.path(), &plan).is_err());
+        assert_eq!(fs::read(&plan.output).unwrap(), [0xff]);
+    }
+
+    #[test]
+    fn light_output_and_lock_refuse_redirects_and_conflicting_writers() {
+        let root = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let data = ssot();
+        let absent = root.path().join("absent");
+        let plan = light_backend_plan(
+            root.path(),
+            &data,
+            &Host {
+                dri: &absent,
+                sys: &absent,
+            },
+            "",
+        )
+        .unwrap();
+        fs::create_dir_all(root.path().join("etc/containers")).unwrap();
+        symlink(target.path(), root.path().join("etc/containers/systemd")).unwrap();
+        assert!(apply_light_backend(root.path(), &plan).is_err());
+        assert!(fs::read_dir(target.path()).unwrap().next().is_none());
+        let cfg = light_settings(&data).unwrap();
+        let lock = lock_light_backend(root.path(), &cfg.lock).unwrap();
+        assert!(lock_light_backend(root.path(), &cfg.lock).is_err());
+        drop(lock);
+        assert!(lock_light_backend(root.path(), &cfg.lock).is_ok());
+    }
+
+    #[test]
+    fn light_native_service_is_required_before_start_and_revalidates() {
+        let data = ssot();
+        let unit = &data["units"]["mios-light-backend.service"];
+        assert_eq!(unit["Service"]["Type"].as_str(), Some("oneshot"));
+        assert_eq!(unit["Service"]["RemainAfterExit"].as_str(), Some("no"));
+        assert!(unit["Service"]["ExecStart"]
+            .as_str()
+            .unwrap()
+            .ends_with("light-backend --apply --reload"));
+        let light = &data["containers"]["mios-llm-light"]["Unit"];
+        assert_eq!(
+            light["Requires"].as_str(),
+            Some("mios-light-backend.service")
+        );
+        assert!(light["After"]
+            .as_str()
+            .unwrap()
+            .contains("mios-light-backend.service"));
     }
 
     #[test]

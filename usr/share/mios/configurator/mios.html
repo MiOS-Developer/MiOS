@@ -2067,6 +2067,14 @@
           </select>
           <input type="text" id="f-ai-model-custom" data-key="ai.model" data-custom-of="f-ai-model"
                  placeholder="custom model id (any OpenAI-compatible model tag, e.g. qwen3-coder:30b)" style="margin-top:4px; display:none">
+          <label for="f-llamacpp-light-backend">Light inference backend</label>
+          <select id="f-llamacpp-light-backend" data-key="llamacpp.light_backend">
+            <option value="cpu">CPU</option>
+            <option value="cuda">CUDA</option>
+            <option value="vulkan">Vulkan</option>
+          </select>
+          <label for="f-llamacpp-light-gpu-profile">GPU hardware profile (auto uses the running desktop profile)</label>
+          <input type="text" id="f-llamacpp-light-gpu-profile" data-key="llamacpp.light_gpu_profile" value="auto">
           <label for="f-llamacpp-light-threads">Light inference CPU threads (set within the service CPU allowance)</label>
           <input type="number" id="f-llamacpp-light-threads" data-key="llamacpp.light_threads" data-type="int" min="1" max="2147483647" step="1" value="1">
           <label for="f-ai-embed">embed_model</label>

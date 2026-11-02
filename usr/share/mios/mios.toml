@@ -7282,6 +7282,19 @@ enable            = false
 rpm_mirror_dir    = "/usr/share/mios/vendored/rpm-mirror"
 fallback_to_online = true
 
+[units."mios-light-backend.service".Unit]
+Description = "'MiOS' validated light inference backend projection"
+After = "mios-cdi-detect.service"
+Wants = "mios-cdi-detect.service"
+Before = "mios-llm-light.service"
+
+[units."mios-light-backend.service".Service]
+Type = "oneshot"
+RuntimeDirectory = "mios/light-backend"
+RuntimeDirectoryPreserve = "yes"
+RemainAfterExit = "no"
+ExecStart = "/usr/bin/mios-gen light-backend --apply --reload"
+
 [llamacpp]
 enable     = true   # additive + gated; flip on after GGUFs baked + verified live
 slot_dir   = "/var/lib/mios/llamacpp/slots"
@@ -7295,8 +7308,35 @@ cpu_node_threads = 14
 # safe under a single-CPU affinity; raise only within the runtime CPU allowance.
 # This is an explicit budget, not an automatic affinity clamp.
 light_threads = 1
+# Explicit serving backend; CPU remains valid without any GPU or CDI devices.
+light_backend = "cpu"
+# auto uses the running desktop hardware profile; an explicit profile must exist.
+light_gpu_profile = "auto"
 bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
 
+
+[llamacpp.light_runtime]
+dropin = "/etc/containers/systemd/mios-llm-light.container.d/30-mios-light-backend.conf"
+cuda_information_dir = "/proc/driver/nvidia/gpus"
+lock = "/run/mios/light-backend/lock"
+
+[llamacpp.light_backends.cpu]
+image_key = "llm_light_cpu"
+device = "none"
+gpu_layers = "0"
+drivers = []
+
+[llamacpp.light_backends.cuda]
+image_key = "llm_light"
+device = "CUDA0"
+gpu_layers = "all"
+drivers = ["nvidia"]
+
+[llamacpp.light_backends.vulkan]
+image_key = "llm_light_vulkan"
+device = "Vulkan0"
+gpu_layers = "all"
+drivers = ["amdgpu", "i915", "xe", "nvidia", "nouveau"]
 
 [enhanced_session]
 enabled    = true
@@ -10437,6 +10477,8 @@ pgvector           = "docker.io/pgvector/pgvector:pg18"   # pgvector floats per 
 # mios-llm-light lane image. The upstream llama-swap proxy (FOSS, MIT) bundles
 # llama-server + on-demand model swap. Tag carries the CUDA build; verify version.
 llm_light          = "ghcr.io/mostlygeek/llama-swap:cuda"
+llm_light_cpu      = "ghcr.io/mostlygeek/llama-swap:cpu"
+llm_light_vulkan   = "ghcr.io/mostlygeek/llama-swap:vulkan"
 # AdGuard Home -- open-source (GPLv3) DNS sinkhole + recursive resolver. Single
 # Go binary container; serves DNS on :53 and the web UI/API on :3053.
 adguard            = "docker.io/adguard/adguardhome:latest"
@@ -14682,7 +14724,7 @@ Description = "'MiOS' heavy lane, SGLang engine (OpenAI /v1, HiCache CPU KV-offl
 # Static /usr data stays at its image label. Firstboot labels verified mutable
 # model targets container_ro_file_t:s0; Podman must not privately relabel a
 # symlink inode or attempt writes to a baked, immutable /usr seed.
-AddDevice = "${MIOS_GPU_CDI_NVIDIA_DEVICE:-nvidia.com/gpu=all}"
+AddDevice = ""
 ContainerName = "mios-llm-light"
 Entrypoint = "/app/llama-swap"
 Environment = [
@@ -14725,10 +14767,27 @@ RestartSec = "10s"
 TimeoutStartSec = "1800s"
 
 [containers.mios-llm-light.Unit]
-After = "network-online.target mios-cdi-detect.service mios-webtools-firstboot.service"
+After = "network-online.target mios-cdi-detect.service mios-light-backend.service mios-webtools-firstboot.service"
+Requires = "mios-light-backend.service"
 ConditionPathExists = "/usr/share/mios/llamacpp/models/.ready"
 Description = "'MiOS' LLM-Light (llama.cpp multi-model + KV-paging lane, served via the upstream llama-swap proxy, FOSS)"
 Wants = "network-online.target"
+
+[containers.mios-llm-light.engine]
+select = "llamacpp.light_backend"
+
+[containers.mios-llm-light.engine.cpu.Container]
+Image = "${MIOS_LLM_LIGHT_CPU_IMAGE:-ghcr.io/mostlygeek/llama-swap:cpu}"
+Environment = ["LLAMA_ARG_DEVICE=${MIOS_LLAMACPP_LIGHT_BACKENDS_CPU_DEVICE:-none}", "LLAMA_ARG_N_GPU_LAYERS=${MIOS_LLAMACPP_LIGHT_BACKENDS_CPU_GPU_LAYERS:-0}"]
+
+[containers.mios-llm-light.engine.cuda.Container]
+Image = "${MIOS_LLM_LIGHT_IMAGE:-ghcr.io/mostlygeek/llama-swap:cuda}"
+Environment = ["LLAMA_ARG_DEVICE=${MIOS_LLAMACPP_LIGHT_BACKENDS_CUDA_DEVICE:-CUDA0}", "LLAMA_ARG_N_GPU_LAYERS=${MIOS_LLAMACPP_LIGHT_BACKENDS_CUDA_GPU_LAYERS:-all}"]
+
+[containers.mios-llm-light.engine.vulkan.Container]
+Image = "${MIOS_LLM_LIGHT_VULKAN_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}"
+Environment = ["LLAMA_ARG_DEVICE=${MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_DEVICE:-Vulkan0}", "LLAMA_ARG_N_GPU_LAYERS=${MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_GPU_LAYERS:-all}"]
+
 
 [containers."mios-llm-worker@".Container]
 AddDevice = "${MIOS_GPU_CDI_NVIDIA_DEVICE:-nvidia.com/gpu=all}"

@@ -66,6 +66,17 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Plan or apply the light inference backend from validated GPU metadata.
+    LightBackend {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Atomically write the light-only host Quadlet dropin; otherwise plan only.
+        #[arg(long)]
+        apply: bool,
+        /// Reload systemd after a changed live projection; never restart services.
+        #[arg(long, requires = "apply")]
+        reload: bool,
+    },
     /// Render the complete native Linux/Windows dashboard from live layered SSOT.
     Dashboard {
         #[arg(long)]
@@ -2494,6 +2505,20 @@ fn main() -> ExitCode {
                     }
                     Err(msg) => Err((msg, 1)),
                 },
+            )
+        }
+        Commands::LightBackend {
+            root,
+            apply,
+            reload,
+        } => {
+            let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            (
+                "light-backend",
+                "etc/containers/systemd/mios-llm-light.container.d/30-*.conf",
+                gpu_topology::reconcile_light_backend(&root, apply, reload)
+                    .map(|report| println!("{report}"))
+                    .map_err(|message| (message, 1)),
             )
         }
         Commands::PodQuadlets { root, check, list } => {
