@@ -79,8 +79,11 @@ mios_ci_verify_bootc_labels() {
 # only stage-run's verified deliverable; no Gecko source/compiler enters that bake.
 mios_ci_build_portal() (
     set -euo pipefail
-    local root state image overlay ts config bootstrap_packages icon_source
+    local root state image overlay ts config bootstrap_packages icon_source workspace
     root="$(cd "${1:-.}" && pwd)"
+    # The source context uses the same internal path as the OCI build. A host
+    # /home path cannot be a mount target before ostree tmpfiles creates /var/home.
+    workspace=/ctx
     state="${2:?usage: mios_ci_build_portal ROOT STATE_DIR}"
     [[ ! -e "$state" ]] || { echo "Portal build state already exists: $state" >&2; exit 1; }
     mkdir -p "$state"
@@ -104,15 +107,15 @@ assert "podman" in data["packages"]["devcontainer"]["pkgs"]
 print(" ".join(dict.fromkeys([*data["desktop"]["portal"]["builder"]["packages"], "podman"])))
 PY
 )"
-    python3 - "$root" "$overlay" <<'PY'
+    python3 - "$root" "$overlay" "$workspace" <<'PY'
 import json, sys, tomllib
 from pathlib import Path
-root, output = Path(sys.argv[1]), Path(sys.argv[2])
+root, output, workspace = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 data = tomllib.loads((root / "usr/share/mios/mios.toml").read_text())
 builder = data["desktop"]["portal"]["builder"]
 paths = {
-    "containerfile_dir": str(root / builder["containerfile_dir"].lstrip("/")),
-    "product_tree": str(root / builder["product_tree"].lstrip("/")),
+    "containerfile_dir": str(workspace / builder["containerfile_dir"].lstrip("/")),
+    "product_tree": str(workspace / builder["product_tree"].lstrip("/")),
     "heavy_lock": "/var/lib/mios-build/portal/heavy.lock",
 }
 output.write_text("[desktop.portal.builder]\n" + "".join(f"{k} = {json.dumps(v)}\n" for k, v in paths.items()))
@@ -122,17 +125,17 @@ PY
     sudo podman run --detach --name podman-MiOS-DEV --privileged --user 0:0 \
         --cgroupns private --systemd always --memory "$PB_SCOPE_MEM" \
         --memory-swap "$PB_SCOPE_MEM" --cpus "$PB_CPUS" \
-        -v "$root:$root:rw" -v "$state:/var/lib/mios-build:rw" \
+        -v "$root:$workspace:rw" -v "$state:/var/lib/mios-build:rw" \
         -v "$icon_source:$PB_ICON_SRC:ro" \
-        --workdir "$root" --entrypoint /sbin/init "$image"
+        --workdir "$workspace" --entrypoint /sbin/init "$image"
     trap 'sudo podman rm --force podman-MiOS-DEV >/dev/null' EXIT
     ts="$(date -u +%Y%m%dT%H%M%SZ)"
     sudo podman exec \
         -e MIOS_PORTAL_BOOTSTRAP_PACKAGES="$bootstrap_packages" \
-        -e MIOS_VENDOR_TOML="$root/usr/share/mios/mios.toml" \
+        -e MIOS_VENDOR_TOML="$workspace/usr/share/mios/mios.toml" \
         -e MIOS_HOST_TOML=/var/lib/mios-build/paths.toml \
         -e MIOS_USER_TOML=/nonexistent \
-        -e MIOS_THEME_ROOT="$root" -e MIOS_TOML_ROOT="$root" \
+        -e MIOS_THEME_ROOT="$workspace" -e MIOS_TOML_ROOT="$workspace" \
         -e MIOS_PORTAL_BUILD_SCOPED=1 -e MIOS_PORTAL_BUILD_TS="$ts" \
         -e XDG_RUNTIME_DIR=/run/mios-portal-build \
         podman-MiOS-DEV bash --noprofile --norc -c '
