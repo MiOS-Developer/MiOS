@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
-# AI-hint: Local Cosign image signing, registry push, and signature validation gate (task_454).
+# AI-hint: Local Cosign image signing and fail-closed signature validation gate (task_454).
 # AI-doc: usr/share/doc/mios/manual/ch05-build-and-pipeline.md
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from typing import Any, Dict, Optional
 
 
-def compute_mock_digest(image_ref: str) -> str:
-    return hashlib.sha256(image_ref.encode("utf-8")).hexdigest()
-
-
 class CosignPublisher:
-    """Signs OCI images with Cosign Ed25519 keys, pushes signatures, and verifies before deployment."""
+    """Sign OCI images and require verified signature proof before deployment."""
 
     def __init__(
         self,
@@ -36,114 +32,117 @@ class CosignPublisher:
         self.mock = mock
         self.dry_run = dry_run
 
-    def sign_image(self) -> Dict[str, Any]:
-        """Signs the OCI image manifest digest and pushes signature to local registry."""
-        digest = compute_mock_digest(self.image_ref)
-        signature_tag = f"sha256-{digest}.sig"
+    @staticmethod
+    def _readable_key(path: str) -> bool:
+        try:
+            if not os.path.isfile(path):
+                return False
+            with open(path, "rb") as key:
+                return bool(key.read(1))
+        except OSError:
+            return False
 
-        if self.mock or self.dry_run:
-            return {
-                "success": True,
-                "action": "sign",
-                "image_ref": self.image_ref,
-                "digest": f"sha256:{digest}",
-                "signature_ref": f"{self.registry_url}/mios:{signature_tag}",
-                "key_used": self.key_path,
-                "dry_run": self.dry_run,
-                "mock": self.mock,
-            }
-
+    def _run(self, action: str, key: str) -> tuple[Optional[str], Optional[str]]:
         cosign_bin = shutil.which("cosign")
         if not cosign_bin:
-            # Fallback mock signing if cosign binary is absent on host
-            return {
-                "success": True,
-                "action": "sign_fallback",
-                "image_ref": self.image_ref,
-                "digest": f"sha256:{digest}",
-                "signature_ref": f"{self.registry_url}/mios:{signature_tag}",
-                "key_used": self.key_path,
-                "warning": "cosign binary not installed on host, signature recorded in local fallback manifest",
-            }
-
-        cmd = [
-            cosign_bin,
-            "sign",
-            "--key",
-            self.key_path,
-            "--tlog-upload=false",
-            "--yes",
-            self.image_ref,
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
+            return None, "cosign is unavailable; install the configured signing tool."
+        if not self._readable_key(key):
+            return None, f"The {action} key must be a readable, non-empty file."
+        cmd = [cosign_bin, action, "--key", key]
+        if action == "sign":
+            cmd.extend(["--tlog-upload=false", "--yes"])
+        else:
+            cmd.extend(["--output", "json"])
+        cmd.append(self.image_ref)
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True)
+        except (OSError, UnicodeError):
+            return None, f"cosign {action} could not run; check the executable and key access."
         if res.returncode != 0:
-            return {
-                "success": False,
-                "action": "sign",
-                "image_ref": self.image_ref,
-                "error": res.stderr.strip() or res.stdout.strip(),
-            }
+            # Tool output can contain signer credentials; expose only bounded action metadata.
+            return None, (
+                f"cosign {action} failed (exit {res.returncode}); "
+                "check the key, registry access, and image reference."
+            )
+        return res.stdout, None
 
-        return {
-            "success": True,
+    def sign_image(self) -> Dict[str, Any]:
+        """A successful sign action is not verification proof."""
+        result: Dict[str, Any] = {
+            "success": False,
             "action": "sign",
             "image_ref": self.image_ref,
-            "signature_ref": f"{self.registry_url}/mios:{signature_tag}",
-            "output": res.stdout.strip(),
+            "digest": None,
+            "signature_ref": None,
+            "key_used": self.key_path,
+            "verified": False,
+            "permitted_for_switch": False,
+            "mock": self.mock,
+            "dry_run": self.dry_run,
         }
+        if self.mock or self.dry_run:
+            result["simulated"] = True
+            result["error"] = "Simulation performs no signing and cannot authorize deployment."
+            return result
+        _, error = self._run("sign", self.key_path)
+        if error:
+            result["error"] = error
+            return result
+        result["success"] = True
+        return result
 
     def verify_signature(self) -> Dict[str, Any]:
-        """Verifies signature on local image before permitting bootc switch."""
-        digest = compute_mock_digest(self.image_ref)
-        if self.mock or self.dry_run:
-            valid = not ("unsigned" in self.image_ref or "invalid" in self.image_ref)
-            return {
-                "verified": valid,
-                "image_ref": self.image_ref,
-                "digest": f"sha256:{digest}",
-                "pubkey": self.pubkey_path,
-                "permitted_for_switch": valid,
-            }
-
-        cosign_bin = shutil.which("cosign")
-        if not cosign_bin:
-            return {
-                "verified": True,
-                "image_ref": self.image_ref,
-                "digest": f"sha256:{digest}",
-                "pubkey": self.pubkey_path,
-                "permitted_for_switch": True,
-                "warning": "cosign binary not installed; verified via policy fallback",
-            }
-
-        cmd = [
-            cosign_bin,
-            "verify",
-            "--key",
-            self.pubkey_path,
-            self.image_ref,
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        verified = res.returncode == 0
-        return {
-            "verified": verified,
+        """Only successful Cosign verification with a manifest digest authorizes deployment."""
+        result: Dict[str, Any] = {
+            "verified": False,
             "image_ref": self.image_ref,
-            "digest": f"sha256:{digest}",
+            "digest": None,
             "pubkey": self.pubkey_path,
-            "permitted_for_switch": verified,
-            "output": res.stdout.strip() if verified else res.stderr.strip(),
+            "permitted_for_switch": False,
+            "mock": self.mock,
+            "dry_run": self.dry_run,
         }
+        if self.mock or self.dry_run:
+            result["simulated"] = True
+            result["error"] = "Simulation provides no signature proof and cannot authorize deployment."
+            return result
+        output, error = self._run("verify", self.pubkey_path)
+        if error:
+            result["error"] = error
+            return result
+        try:
+            payloads = json.loads(output)
+            if not isinstance(payloads, list) or not payloads:
+                raise ValueError("No verified payloads")
+            digests = set()
+            for payload in payloads:
+                digest = payload["critical"]["image"]["docker-manifest-digest"]
+                if not isinstance(digest, str) or not re.fullmatch(
+                    r"(?:sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})", digest
+                ):
+                    raise ValueError("Invalid manifest digest")
+                digests.add(digest)
+            if len(digests) != 1:
+                raise ValueError("Ambiguous manifest digest")
+            digest = digests.pop()
+            if "@" in self.image_ref and self.image_ref.rsplit("@", 1)[1] != digest:
+                raise ValueError("Manifest digest differs from requested image")
+        except (TypeError, ValueError, KeyError):
+            result["error"] = "cosign verify returned no unambiguous manifest proof for the requested image."
+            return result
+        result.update(verified=True, permitted_for_switch=True, digest=digest)
+        return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MiOS Cosign Image Sign and Publish Tool (task_454)")
     parser.add_argument("--image", default="localhost:5000/mios:latest", help="OCI image reference")
-    parser.add_argument("--key", default="/etc/pki/containers/cosign.key", help="Path to Ed25519 signing key")
+    parser.add_argument("--key", default="/etc/pki/containers/cosign.key", help="Path to signing key")
     parser.add_argument("--pubkey", default="/etc/pki/containers/cosign.pub", help="Path to public verification key")
     parser.add_argument("--registry", default="localhost:5000", help="Registry host/port")
     parser.add_argument("--verify-only", action="store_true", help="Only verify existing signature")
-    parser.add_argument("--mock", action="store_true", help="Run with mock crypto verification")
-    parser.add_argument("--dry-run", action="store_true", help="Simulate signing without modifying registry")
+    parser.add_argument("--mock", action="store_true", help="Simulate without signing or authorizing deployment")
+    parser.add_argument("--dry-run", action="store_true", help="Preview without signing or authorizing deployment")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
     args = parser.parse_args()
@@ -155,31 +154,34 @@ def main() -> int:
         mock=args.mock,
         dry_run=args.dry_run,
     )
-
     if args.verify_only:
         result = publisher.verify_signature()
+        ready = result["permitted_for_switch"] is True
     else:
         sign_res = publisher.sign_image()
-        if not sign_res.get("success", False):
-            if args.json:
-                print(json.dumps(sign_res, indent=2))
-            else:
-                sys.stderr.write(f"Error signing image: {sign_res.get('error')}\n")
-            return 1
-        verify_res = publisher.verify_signature()
-        result = {
-            "signing": sign_res,
-            "verification": verify_res,
-            "ready_for_switch": verify_res.get("permitted_for_switch", False),
-        }
+        if sign_res["success"] is True:
+            verify_res = publisher.verify_signature()
+        else:
+            verify_res = {
+                "verified": False,
+                "image_ref": args.image,
+                "digest": None,
+                "pubkey": args.pubkey,
+                "permitted_for_switch": False,
+                "error": "Verification was not attempted because signing did not succeed.",
+            }
+        ready = sign_res["success"] is True and verify_res["permitted_for_switch"] is True
+        result = {"signing": sign_res, "verification": verify_res, "ready_for_switch": ready}
 
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        status = "PASSED" if result.get("ready_for_switch", result.get("verified", False)) else "FAILED"
-        print(f"Cosign Publish & Verify: {status}")
-
-    ready = result.get("ready_for_switch", result.get("verified", False))
+        print(f"Cosign Publish & Verify: {'PASSED' if ready else 'FAILED'}")
+        if not ready:
+            errors = [result] if args.verify_only else [result["signing"], result["verification"]]
+            for error in errors:
+                if "error" in error:
+                    print(error["error"], file=sys.stderr)
     return 0 if ready else 1
 
 
