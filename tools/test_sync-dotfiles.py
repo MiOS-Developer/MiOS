@@ -405,12 +405,49 @@ def test_edge_settings_projected():
         check("edge: exit 3 names the key", "[theme.edge] lacks code_server_density" in out, True)
 
 
+def test_missing_workspace_is_projected_without_overwriting_user_fields():
+    with tempfile.TemporaryDirectory(prefix="mios-workspace-projection-") as tmp:
+        root = os.path.join(tmp, "MiOS")
+        boot = _fixture(root)
+        path = os.path.join(root, "x.code-workspace")
+        os.unlink(path)
+        rc, out = _run(root, boot, "--check", "--client-surfaces")
+        check("workspace: missing declared surface is red", rc, 1)
+        check("workspace: missing file is named", "MiOS/x.code-workspace: client-portable surface" in out, True)
+        check("workspace: check mode creates nothing", os.path.exists(path), False)
+        check("workspace: canonical apply creates missing surface", _run(root, boot, "--client-surfaces")[0], 0)
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        check("workspace: folders derive from SSOT", doc["folders"], [{"name": "MiOS", "path": "."}])
+        check("workspace: portable settings derive from SSOT", doc["settings"].get("editor.fontSize"), 15)
+        check("workspace: desktop-only settings stay excluded", "window.titleBarStyle" in doc["settings"], False)
+        check("workspace: generated workspace checks green", _run(root, boot, "--check", "--client-surfaces")[0], 0)
+        before = open(path, "rb").read()
+        check("workspace: repeated projection succeeds", _run(root, boot, "--client-surfaces")[0], 0)
+        check("workspace: repeated projection is byte-identical", open(path, "rb").read(), before)
+        doc["settings"]["editor.wordWrap"] = "on"
+        doc["tasks"] = {"version": "2.0.0", "tasks": []}
+        doc["folders"] = []
+        _write(path, json.dumps(doc, indent=2) + "\n")
+        check("workspace: stale folders repair", _run(root, boot, "--client-surfaces")[0], 0)
+        with open(path, encoding="utf-8") as fh:
+            repaired = json.load(fh)
+        check("workspace: user settings survive repair", repaired["settings"].get("editor.wordWrap"), "on")
+        check("workspace: user tasks survive repair", repaired.get("tasks"), doc["tasks"])
+        check("workspace: folder repair uses SSOT", repaired["folders"], [{"name": "MiOS", "path": "."}])
+        dev = os.path.join(root, ".devcontainer/devcontainer.json")
+        os.unlink(dev)
+        check("workspace: missing launch configuration checks red", _run(root, boot, "--check", "--client-surfaces")[0], 1)
+        _run(root, boot, "--client-surfaces")
+        check("workspace: launch configuration is not fabricated", os.path.exists(dev), False)
+
+
 def main() -> int:
     for fn in (test_prune_then_check_both_ways, test_unregistered_key_refused_at_the_source,
                test_rewrite_keeps_surface_mode, test_new_surface_gets_umask_mode, test_empty_partition_fails_loud,
                test_forward_ports_projection, test_container_env_projection, test_user_and_host_projection,
                test_stale_stylesheet_copy_refused,
-               test_edge_settings_projected):
+               test_edge_settings_projected, test_missing_workspace_is_projected_without_overwriting_user_fields):
         fn()
     for f in FAILED:
         print("FAIL " + f, file=sys.stderr)

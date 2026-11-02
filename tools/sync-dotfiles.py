@@ -281,10 +281,14 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
         if not os.path.isfile(dst):
             if repo_root == REPO_ROOT:
                 drift.append((label, "client-portable surface named by [dotfiles.vscode] is missing"))
-            # else: degrade open -- the sibling repo is not checked out here
-            continue
-        with open(dst, "r", encoding="utf-8") as f:
-            doc = json.load(f)
+            # Only the local workspace is wholly projectable from the SSOT.
+            # Devcontainer launch configuration and absent siblings stay owned.
+            if check or repo_root != REPO_ROOT or not rel_target.endswith(".code-workspace"):
+                continue
+            doc = {}
+        else:
+            with open(dst, "r", encoding="utf-8") as f:
+                doc = json.load(f)
         parent = _get_in(doc, key_path[:-1])
         existing = parent.get(key_path[-1], {})
         if not isinstance(existing, dict):
