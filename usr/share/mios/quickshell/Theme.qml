@@ -175,6 +175,8 @@ QtObject {
     // Helper: hex "#RRGGBB" + alpha 0..1 -> "#AARRGGBB" for Qt color props.
     function withAlpha(hex, alpha) {
         const a = Math.round(alpha * 255).toString(16).padStart(2, "0")
-        return "#" + a + hex.replace("#", "")
+        // QML color values stringify to hex; replace an existing alpha channel when present.
+        const rgb = String(hex).replace(/^#/, "").slice(-6)
+        return "#" + a + rgb
     }
 }

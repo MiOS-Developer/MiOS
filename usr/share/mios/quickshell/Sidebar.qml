@@ -224,7 +224,7 @@ QS.Scope {
         if (on) {
             oskUnfoldTimer.restart()
         } else {
-            Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "false"])
+            QS.Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "false"])
         }
     }
     FileView {
@@ -240,7 +240,7 @@ QS.Scope {
         interval: 350
         repeat: false
         onTriggered: {
-            Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "true"])
+            QS.Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0", "sm.puri.OSK0", "SetVisible", "b", "true"])
         }
     }
     // The keyboard runs only while the dock is expanded with the toggle on, placed by `mios-gen dock osk` inside the
@@ -443,6 +443,7 @@ QS.Scope {
         }
 
         function rectForEntry(entry) {
+            const g = dock.lampGeometry
             const targetId = entry ? DockLamp.stripDesktop(entry.id || entry.appId || "") : ""
             const entryId = entry ? String(entry.id || "") : ""
             const outName = root.screen ? root.screen.name : ""
