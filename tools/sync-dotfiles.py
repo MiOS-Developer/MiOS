@@ -270,7 +270,7 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
     devcontainer.json / *.code-workspace settings block and PRUNE every
     [dotfiles.vscode] desktop-only / User-only / unregistered key already there.
     SSOT keys win on conflict; any surface-only key (installer-specific zenMode.*
-    tuning) survives. A devcontainer.json's forwardPorts array, remoteUser,
+    tuning) survives. A devcontainer.json's forwardPorts array, remoteUser/build account,
     hostRequirements and the containerEnv entries in dc_owned are owned. Returns [(label, reason)] -- one line per key and file, so
     --check names exactly what is wrong where."""
     pruned = pruned_keys(pol)
@@ -316,7 +316,16 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
                 if doc.get(key) != dc_owned[key]:
                     reasons.append(f"{key} {doc.get(key)!r} differs from the {source} projection {dc_owned[key]!r}")
                     owned_stale = True
+            build = doc.get("build")
+            if not isinstance(build, dict) or not isinstance(build.get("args", {}), dict):
+                raise SystemExit(_fatal(f"{rel_target} needs a build object with an args object for the canonical account", EXIT_BAD_POLICY))
+            build_args = build.get("args", {})
+            if build_args.get("MIOS_IDENTITY_USERNAME") != dc_owned["remoteUser"]:
+                reasons.append(f"build.args.MIOS_IDENTITY_USERNAME {build_args.get('MIOS_IDENTITY_USERNAME')!r} "
+                               f"differs from the [identity].username projection {dc_owned['remoteUser']!r}")
+                owned_stale = True
             if owned_stale:
+                doc["build"] = dict(build, args=dict(build_args, MIOS_IDENTITY_USERNAME=dc_owned["remoteUser"]))
                 doc["forwardPorts"] = list(fwd)
                 doc["containerEnv"] = dict(cenv, **env)
                 doc["remoteUser"] = dc_owned["remoteUser"]

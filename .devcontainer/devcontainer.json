@@ -3,7 +3,10 @@
   "name": "MiOS Agentic AIOS & CI/CD Builder Harness",
   "build": {
     "dockerfile": "Containerfile",
-    "context": "."
+    "context": ".",
+    "args": {
+      "MIOS_IDENTITY_USERNAME": "user"
+    }
   },
   "init": true,
   "containerEnv": {

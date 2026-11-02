@@ -5,6 +5,7 @@
 import hashlib
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from pathlib import Path
 import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -654,6 +656,236 @@ class TestBuilders(unittest.TestCase):
                                ("theme.edge", "code_server_perimeter_px"): 0})
             self.assertNotEqual(r.returncode, 0, img)
             self.assertIn(f"'{img}' has no pinned tag", r.stderr)
+
+
+class TestDevcontainerAccountProvisioning(unittest.TestCase):
+    """Run the real Containerfile account flow with a private passwd/tool boundary."""
+
+    def _script(self):
+        text = _read(DEV_CF)
+        return re.search(r"(?ms)^RUN (.*?)(?=^ENV )", text).group(1).replace("\\\n", " ")
+
+    def _run(self, requested="user", image_user="user", users=None, declared=True, fail=""):
+        with tempfile.TemporaryDirectory(prefix="mios-devcontainer-account-") as tmp:
+            root = Path(tmp)
+            tools = root / "bin"
+            tools.mkdir()
+            sudoers = root / "sudoers.d"
+            sudoers.mkdir()
+            state = root / "accounts.json"
+            state.write_text(json.dumps({"users": users or {}, "calls": []}))
+            dispatcher = tools / "account-tool"
+            dispatcher.write_text("#!" + sys.executable + "\n" + r'''
+import json,os,shlex,sys
+from pathlib import Path
+p=Path(os.environ["MIOS_ACCOUNT_STATE"])
+s=json.loads(p.read_text()); command=Path(sys.argv[0]).name; args=sys.argv[1:]
+s["calls"].append([command,*args])
+def save(): p.write_text(json.dumps(s))
+def add(user): s["users"][user]={"uid":1000,"group":user,"home":"/var/home/"+user}
+if command==os.environ.get("MIOS_ACCOUNT_FAIL"): save();raise SystemExit(7)
+if command=="mios-subuid-alloc":
+    if args[0]=="--user": print(args[1]+":100000:65536")
+elif command=="mios-toml-get":
+    print(os.environ["MIOS_IMAGE_USER"] if args[-1]=="username" else "/bin/bash")
+elif command=="getent":
+    kind,name=args
+    found=next(((u,v) for u,v in s["users"].items() if (v["group"] if kind=="group" else u)==name or str(v["uid"])==name),None)
+    if not found: save();raise SystemExit(2)
+    u,v=found
+    print(f'{u}:x:{v["uid"]}:1000:fixture:{v["home"]}:/bin/bash' if kind=="passwd" else f'{v["group"]}:x:1000:')
+elif command=="id":
+    u=args[-1]
+    if u not in s["users"]: save();raise SystemExit(1)
+    print(s["users"][u]["group"] if args[0]=="-gn" else s["users"][u]["uid"])
+elif command=="systemd-sysusers":
+    if args==["-"]:
+        add(shlex.split(sys.stdin.read())[1])
+    elif os.environ["MIOS_DECLARED"]=="1":
+        add(os.environ["MIOS_IMAGE_USER"])
+elif command=="usermod":
+    user=args[args.index("--login")+1];old=args[-1]
+    s["users"][user]=s["users"].pop(old);s["users"][user]["home"]=args[args.index("--home")+1]
+elif command=="groupmod":
+    old=args[-1];new=args[args.index("--new-name")+1]
+    for v in s["users"].values():
+        if v["group"]==old:v["group"]=new
+elif command=="setpriv":
+    user=args[args.index("--reuid")+1]
+    assert s["users"][user]["uid"]==1000
+    assert (Path(os.environ["MIOS_ACCOUNT_SUDOERS"])/"90-mios-devcontainer").read_text().startswith(user+" ALL=")
+save()
+''')
+            dispatcher.chmod(0o755)
+            for name in ("mios-toml-get", "getent", "id", "systemd-sysusers", "systemd-tmpfiles",
+                         "usermod", "groupmod", "chage", "install", "cp", "chown", "visudo", "setpriv", "sudo", "mios-subuid-alloc"):
+                (tools / name).symlink_to(dispatcher.name)
+            script = self._script().replace("/usr/libexec/mios/mios-toml-get", str(tools / "mios-toml-get"))
+            script = script.replace("/usr/libexec/mios/mios-subuid-alloc", str(tools / "mios-subuid-alloc"))
+            script = script.replace("/etc/sudoers.d", str(sudoers))
+            script = script.replace("/etc/subuid", str(root / "subuid")).replace("/etc/subgid", str(root / "subgid"))
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                       MIOS_IDENTITY_USERNAME=requested, MIOS_IMAGE_USER=image_user,
+                       MIOS_ACCOUNT_STATE=str(state), MIOS_ACCOUNT_SUDOERS=str(sudoers),
+                       MIOS_DECLARED="1" if declared else "0", MIOS_ACCOUNT_FAIL=fail)
+            result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+            return result, json.loads(state.read_text())
+
+    def test_missing_account_is_materialized_before_nonroot_selection(self):
+        result, state = self._run()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(1000, state["users"]["user"]["uid"])
+        names = [c[0] for c in state["calls"]]
+        self.assertLess(names.index("systemd-sysusers"), max(i for i, name in enumerate(names) if name == "getent"))
+        self.assertEqual("setpriv", names[-1])
+        self.assertIn("USER 1000", _read(DEV_CF))
+
+    def test_source_identity_replaces_only_the_known_stale_image_identity(self):
+        result, state = self._run(requested="developer", image_user="image-user")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertNotIn("image-user", state["users"])
+        self.assertEqual(1000, state["users"]["developer"]["uid"])
+        self.assertEqual("developer", state["users"]["developer"]["group"])
+
+    def test_missing_sysusers_declaration_still_provisions_canonical_identity(self):
+        result, state = self._run(requested="developer", declared=False)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(1000, state["users"]["developer"]["uid"])
+
+    def test_existing_canonical_account_is_preserved_without_replaying_sysusers(self):
+        users = {"developer": {"uid": 1000, "group": "custom-group", "home": "/home/developer"}}
+        result, state = self._run(requested="developer", image_user="image-user", users=users, declared=False)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(users, state["users"])
+        self.assertNotIn("usermod", [c[0] for c in state["calls"]])
+        self.assertNotIn("systemd-sysusers", [c[0] for c in state["calls"]])
+
+    def test_invalid_or_root_identity_is_rejected_before_account_changes(self):
+        for name in ("root", "bad user", "0", "-option", "UPPER"):
+            with self.subTest(name=name):
+                result, state = self._run(requested=name)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual(["mios-toml-get"], [c[0] for c in state["calls"]])
+
+    def test_unrelated_uid_owner_is_not_renamed(self):
+        users = {"someone-else": {"uid": 1000, "group": "someone-else", "home": "/home/someone-else"}}
+        result, state = self._run(users=users, declared=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("unrelated account", result.stderr)
+        self.assertNotIn("usermod", [c[0] for c in state["calls"]])
+
+    def test_wrong_uid_and_failed_account_or_sudo_setup_fail(self):
+        users = {"user": {"uid": 2000, "group": "user", "home": "/home/user"}}
+        result, _ = self._run(users=users, declared=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("must own UID 1000", result.stderr)
+        for command in ("systemd-sysusers", "visudo", "setpriv", "sudo", "mios-subuid-alloc"):
+            with self.subTest(command=command):
+                result, _ = self._run(fail=command)
+                self.assertNotEqual(0, result.returncode)
+
+    def test_both_profiles_pass_the_same_user_selected_for_attach(self):
+        for rel in (".devcontainer/devcontainer.json", ".devcontainer/artifact-builder/devcontainer.json"):
+            doc = json.loads(_read(os.path.join(ROOT, rel)))
+            self.assertEqual(doc["remoteUser"], doc["build"]["args"]["MIOS_IDENTITY_USERNAME"])
+            self.assertNotEqual("root", doc["remoteUser"])
+
+
+class TestCloudContainerAccountReuse(unittest.TestCase):
+    """A stale container or missing canonical account cannot reach lifecycle hooks."""
+
+    def _run(self, container_image="sha256:current", account=True, uid="1000", configured="user"):
+        source = _read(os.path.join(ROOT, ".devcontainer/cloud-shell/bootstrap.sh"))
+        functions = "\n".join(re.search(rf"(?ms)^{name}\(\) \{{.*?^\}}", source).group(0)
+                              for name in ("container_account", "up"))
+        with tempfile.TemporaryDirectory(prefix="mios-cloud-account-") as tmp:
+            env = dict(os.environ, TROOT=tmp, TSTATE=os.path.join(tmp, "state"),
+                       CALLS=os.path.join(tmp, "calls"), HOOKS=os.path.join(tmp, "hooks"),
+                       CONTAINER_IMAGE=container_image, ACCOUNT="1" if account else "0",
+                       ACCOUNT_UID=uid, CONFIGURED_USER=configured)
+            harness = r'''
+set -euo pipefail
+ROOT="$TROOT"; STATE="$TSTATE"; CONFIG=fixture; RT=mock_runtime
+log() { :; }
+die() { echo "$*" >&2; exit 1; }
+require_root_checkout() { :; }
+select_runtime() { :; }
+select_config() { :; }
+preflight() { :; }
+pull_image() { :; }
+container_name() { echo mios-private-test; }
+ssot() { [[ "$*" == "--vendor identity username" ]] && echo user; }
+need() {
+    case "$*" in
+        "identity username") echo user ;;
+        "image ref") echo registry.invalid/mios:latest ;;
+        "image dev_local_tag") echo localhost/mios-devcontainer:test ;;
+        "workspace root") echo /workspaces ;;
+        "workspace primary") echo MiOS ;;
+        *) return 2 ;;
+    esac
+}
+dc_json() {
+    case "$1" in
+        remoteUser) echo "$CONFIGURED_USER" ;;
+        workspaceFolder) echo /workspaces ;;
+        *) return 2 ;;
+    esac
+}
+mock_runtime() {
+    printf '%s\n' "$*" >> "$CALLS"
+    case "$1:$2" in
+        build:*) return 0 ;;
+        container:inspect) [[ "$3" != --format ]] || echo "$CONTAINER_IMAGE"; return 0 ;;
+        image:inspect) echo sha256:current ;;
+        start:*) return 0 ;;
+        exec:*)
+            [[ "$ACCOUNT" == 1 ]] || { echo "no matching entries in passwd file" >&2; return 126; }
+            echo "$ACCOUNT_UID" ;;
+        *) return 2 ;;
+    esac
+}
+lifecycle() { echo "$1" >> "$HOOKS"; }
+status() { :; }
+'''
+            result = subprocess.run(["bash", "-c", harness + functions + "\nup\n"], env=env,
+                                    capture_output=True, text=True)
+            calls = Path(env["CALLS"]).read_text() if Path(env["CALLS"]).exists() else ""
+            hooks = Path(env["HOOKS"]).read_text().splitlines() if Path(env["HOOKS"]).exists() else []
+            created = Path(env["TSTATE"], "lifecycle.created").exists()
+            return result, calls, hooks, created
+
+    def test_current_image_and_account_reach_both_lifecycle_hooks(self):
+        result, calls, hooks, created = self._run()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(["postCreateCommand", "postStartCommand"], hooks)
+        self.assertTrue(created)
+        self.assertIn("--build-arg MIOS_IDENTITY_USERNAME=user", calls)
+        self.assertIn("--build-arg MIOS_IMAGE_REF=registry.invalid/mios:latest", calls)
+        self.assertIn("exec -u user mios-private-test id -u", calls)
+        self.assertNotIn("exec -u root", calls)
+
+    def test_stale_image_is_preserved_and_rejected_before_start(self):
+        result, calls, hooks, created = self._run(container_image="sha256:older")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("older image", result.stderr)
+        self.assertNotIn("start ", calls)
+        self.assertFalse(hooks or created)
+        self.assertFalse(any(calls.startswith(action) for action in ("rm ", "stop ", "rename ")))
+
+    def test_missing_account_reports_rebuild_without_lifecycle_success(self):
+        result, _, hooks, created = self._run(account=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("cannot select canonical user", result.stderr)
+        self.assertFalse(hooks or created)
+
+    def test_root_or_wrong_uid_never_reaches_lifecycle(self):
+        for kwargs in (dict(configured="root"), dict(configured="stale-user"), dict(uid="0"), dict(uid="2000")):
+            with self.subTest(kwargs=kwargs):
+                result, calls, hooks, created = self._run(**kwargs)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(hooks or created)
+                self.assertNotIn("exec -u root", calls)
 
 
 def main():

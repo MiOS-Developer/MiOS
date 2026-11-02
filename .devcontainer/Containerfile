@@ -1,39 +1,72 @@
-# The MiOS dev container IS the MiOS image. Codespaces, a local devcontainer, the
-# Claude Code / Codex cloud environments and Cloud Shell all run [image].ref, the
-# image every other MiOS deployment boots, so every MiOS component and feature is
-# here because it is in MiOS. This file adds only what a container runtime needs
-# where a booted MiOS has systemd: the /var targets tmpfiles.d and first boot
-# create. It installs nothing; a component missing here is missing from MiOS and
-# belongs in the OS pipeline (Containerfile, automation/, [packages.*]).
-#
-# Mirrored byte-identical into mios-bootstrap and -dev-loop; edit it HERE only.
-# Gates: [bootstrap.sync].mirror_files via tools/sync-bootstrap.py --check (Law 15),
-# tests/test_devcontainer_mirror.py in -dev-loop, and tools/ci-suites.py --check,
-# which holds the ARG default equal to [image].ref and refuses any install here.
-#
-# `miosd image-build` ([build.images.devcontainer].build_args) passes the image it
-# has just built, [image].local_tag, so a local build layers on current source.
+# AI-hint: The MiOS devcontainer is the MiOS image plus account and container wiring.
+# The OS pipeline owns packages, toolchains and payloads. This stage materializes
+# boot-time account/tmpfiles state before an editor or lifecycle command attaches.
+# Mirrored byte-identical into mios-bootstrap and -dev-loop; edit this source only.
 ARG MIOS_IMAGE_REF=ghcr.io/mios-dev/mios:latest
 FROM ${MIOS_IMAGE_REF}
 
-# A container never boots: create the ostree /var link targets (/home, /root,
-# /opt, /srv, /mnt, /usr/local) and the home of the image's own [identity] user,
-# which first boot creates on a booted MiOS. That user is the devcontainer's
-# remoteUser (tools/sync-dotfiles.py projects it from the same key).
+# The checkout projects this from [identity].username together with remoteUser.
+# Direct image builds default to the baked image's canonical identity.
+ARG MIOS_IDENTITY_USERNAME
+USER 0
 RUN set -euo pipefail; \
+    image_user="$(env -u MIOS_IDENTITY_USERNAME /usr/libexec/mios/mios-toml-get identity username)"; \
+    user="${MIOS_IDENTITY_USERNAME:-$image_user}"; renamed_from=""; \
+    case "$user" in ''|root|[0-9-]*|*[!a-z0-9_-]*) \
+        echo "[devcontainer] ERROR: canonical identity must be a non-root Linux user name" >&2; exit 1 ;; esac; \
     systemd-tmpfiles --create --prefix=/var/home --prefix=/var/roothome --prefix=/var/opt \
         --prefix=/var/srv --prefix=/var/mnt --prefix=/var/usrlocal; \
-    user="$(/usr/libexec/mios/mios-toml-get identity username)"; \
-    entry="$(getent passwd "$user")" \
-        || { echo "[devcontainer] ERROR: [identity].username '${user}' is not a user of this MiOS image" >&2; exit 1; }; \
-    home="$(printf '%s\n' "$entry" | cut -d: -f6)"; \
-    if [ ! -d "$home" ]; then \
-        install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$home"; \
-        cp -a /etc/skel/. "$home/"; \
-        chown -R "$user:$(id -gn "$user")" "$home"; \
+    if ! getent passwd "$user" >/dev/null; then systemd-sysusers; fi; \
+    if ! getent passwd "$user" >/dev/null; then \
+        owner="$(getent passwd 1000 | cut -d: -f1 || true)"; \
+        if [ -n "$owner" ]; then \
+            [ "$owner" = "$image_user" ] && [ "$owner" != root ] \
+                || { echo "[devcontainer] ERROR: UID 1000 belongs to an unrelated account; rebuild the base image with the canonical identity" >&2; exit 1; }; \
+            usermod --login "$user" --home "/var/home/$user" --move-home "$owner"; renamed_from="$owner"; \
+            group="$(id -gn "$user")"; \
+            if [ "$group" = "$owner" ] && ! getent group "$user" >/dev/null; then \
+                groupmod --new-name "$user" "$group"; \
+            fi; \
+        else \
+            shell="$(/usr/libexec/mios/mios-toml-get identity shell)"; \
+            [ -x "$shell" ] || { echo "[devcontainer] ERROR: canonical login shell is unavailable in the base image" >&2; exit 1; }; \
+            printf 'u %s 1000 "MiOS developer" /var/home/%s %s\n' "$user" "$user" "$shell" | systemd-sysusers -; \
+        fi; \
     fi; \
-    install -d -m 0755 /workspaces
+    entry="$(getent passwd "$user")" \
+        || { echo "[devcontainer] ERROR: canonical account provisioning failed" >&2; exit 1; }; \
+    [ "$(id -u "$user")" = 1000 ] \
+        || { echo "[devcontainer] ERROR: canonical developer account must own UID 1000" >&2; exit 1; }; \
+    account_home="$(printf '%s\n' "$entry" | cut -d: -f6)"; \
+    case "$account_home" in /home/*|/var/home/*) ;; *) \
+        echo "[devcontainer] ERROR: canonical developer home is invalid" >&2; exit 1 ;; esac; \
+    if [ ! -d "$account_home" ]; then \
+        install -d -m 0700 -o "$user" -g "$(id -gn "$user")" "$account_home"; \
+        cp -a /etc/skel/. "$account_home/"; \
+        chown -R "$user:$(id -gn "$user")" "$account_home"; \
+    fi; \
+    sub_line="$(/usr/libexec/mios/mios-subuid-alloc --user "$user" --uid 1000)"; \
+    for subfile in /etc/subuid /etc/subgid; do \
+        touch "$subfile"; \
+        if [ -n "$renamed_from" ]; then \
+            awk -F: -v old="$renamed_from" -v new="$user" 'BEGIN { OFS=":" } $1==old { $1=new } { print }' "$subfile" > "$subfile.new"; \
+            chmod 0644 "$subfile.new"; mv -f "$subfile.new" "$subfile"; \
+        fi; \
+        if ! awk -F: -v user="$user" '$1==user || $1=="1000" { found=1 } END { exit !found }' "$subfile"; then \
+            printf '%s\n' "$sub_line" >> "$subfile"; \
+        fi; \
+    done; \
+    /usr/libexec/mios/mios-subuid-alloc --check; \
+    chage -I -1 -E -1 -M -1 -d -1 "$user"; \
+    install -d -m 0755 /etc/sudoers.d; \
+    install -d -m 0755 -o "$user" -g "$(id -gn "$user")" /workspaces; \
+    printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$user" > /etc/sudoers.d/90-mios-devcontainer; \
+    chmod 0440 /etc/sudoers.d/90-mios-devcontainer; \
+    visudo -cf /etc/sudoers.d/90-mios-devcontainer; \
+    sudo -n -l -U "$user" >/dev/null; \
+    setpriv --reuid "$user" --regid "$(id -gn "$user")" --init-groups -- /usr/bin/true
 
 ENV MIOS_DEVCONTAINER=1
+USER 1000
 WORKDIR /workspaces
 CMD ["/bin/bash", "-l"]

@@ -247,14 +247,17 @@ ca_bundle() {
 # Run the devcontainer: build the thin image (a pull of [image].ref), create the
 # container from the devcontainer.json, run postCreate once and postStart on every start.
 up() {
-    local ref dev name user wsf wsroot primary uid gid repo src ca line target
+    local ref dev name user wsf wsroot primary uid gid repo src ca line target canonical selected_image container_image
     require_root_checkout; select_runtime; select_config
     ref="$(need image ref)"; dev="$(need image dev_local_tag)"; name="$(container_name)"
+    user="$(dc_json remoteUser)"; wsf="$(dc_json workspaceFolder)"
+    canonical="$(ssot --vendor identity username)"
+    [[ -n "$user" && "$user" != root && -n "$wsf" ]] || die "$CONFIG needs a non-root remoteUser and workspaceFolder"
+    [[ "$user" == "$canonical" ]] || die "$CONFIG remoteUser differs from [identity].username; re-project the devcontainer before rebuilding"
     preflight
     pull_image
-    "$RT" build -f "$ROOT/.devcontainer/Containerfile" -t "$dev" "$ROOT/.devcontainer" >&2
-    user="$(dc_json remoteUser)"; wsf="$(dc_json workspaceFolder)"
-    [[ -n "$user" && -n "$wsf" ]] || die "$CONFIG names no remoteUser or workspaceFolder"
+    "$RT" build --build-arg "MIOS_IMAGE_REF=$ref" --build-arg "MIOS_IDENTITY_USERNAME=$user" \
+        -f "$ROOT/.devcontainer/Containerfile" -t "$dev" "$ROOT/.devcontainer" >&2
     wsroot="$(need workspace root)"; primary="$(need workspace primary)"
     if ! "$RT" container inspect "$name" >/dev/null 2>&1; then
         uid="$("$RT" run --rm --entrypoint id "$dev" -u "$user")"; gid="$("$RT" run --rm --entrypoint id "$dev" -g "$user")"
@@ -295,7 +298,12 @@ up() {
         rm -f "$STATE/lifecycle.created"
         log "created container $name from $dev ($CONFIG)"
     fi
+    selected_image="$("$RT" image inspect --format '{{.Id}}' "$dev")"
+    container_image="$("$RT" container inspect --format '{{.Image}}' "$name")"
+    [[ "${selected_image#sha256:}" == "${container_image#sha256:}" ]] \
+        || die "existing container $name uses an older image; preserve its state and recreate it from $dev (workspace bind mounts remain intact)"
     "$RT" start "$name" >/dev/null
+    container_account "$name" "$user"
     install -d -m 0755 "$STATE"
     rm -f "$STATE/lifecycle.failed"
     if [[ ! -f "$STATE/lifecycle.created" ]]; then
@@ -305,10 +313,22 @@ up() {
     status
 }
 
+# Validate through the same non-root runtime selection used by attachment. No
+# root execution or post-create repair can substitute for this account existing.
+container_account() {
+    local name="$1" user="$2" uid
+    [[ -n "$user" && "$user" != root && "$user" == "$(ssot --vendor identity username)" ]] \
+        || die "configured remoteUser is not the canonical non-root identity; re-project before attachment"
+    uid="$("$RT" exec -u "$user" "$name" id -u)" \
+        || die "container $name cannot select canonical user $user; rebuild the devcontainer, not the recovery image"
+    [[ "$uid" == 1000 ]] || die "container $name canonical developer account is not UID 1000; rebuild its account wiring"
+}
+
 lifecycle() {
     local cmd user wsf
     cmd="$(dc_json "$1")"; [[ -n "$cmd" ]] || return 0
     user="$(dc_json remoteUser)"; wsf="$(dc_json workspaceFolder)"
+    container_account "$(container_name)" "$user"
     log "$1 as $user in $wsf: $cmd"
     if ! "$RT" exec -u "$user" -w "$wsf" "$(container_name)" bash -lc "$cmd"; then
         echo "$1 failed; rerun: bash $SELF up" > "$STATE/lifecycle.failed"
@@ -330,6 +350,7 @@ enter() {
         status >/dev/null || { status; exit 3; }
     fi
     name="$(container_name)"
+    container_account "$name" "$(dc_json remoteUser)"
     wsroot="$(need workspace root)"; primary="$(need workspace primary)"
     if [[ "$PWD" == "$ROOT" || "$PWD" == "$ROOT/"* ]]; then
         wd="$wsroot/$primary${PWD#"$ROOT"}"

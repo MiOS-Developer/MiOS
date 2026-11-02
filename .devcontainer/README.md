@@ -8,21 +8,47 @@ Container connection, including GitHub Codespaces.
 
 ## One image, every environment
 
-`Containerfile` is the only MiOS development image definition. mios-bootstrap
-and -dev-loop carry byte-identical copies of it in their own `.devcontainer/`,
-gated here by `[bootstrap.sync].mirror_files` (`tools/sync-bootstrap.py --check`)
-and in -dev-loop by `tests/test_devcontainer_mirror.py`; edit it here and copy
-it, never the mirrors. Built from a context that is not a MiOS checkout, it
-shallow-clones MiOS (`ARG MIOS_REF`, default `main`) and reads the package set
-from the clone, so each repo builds it from its own root and runs this
-directory's lifecycle from `/workspaces/MiOS`. Codespaces and Cloud Shell
-(`cloud-shell/bootstrap.sh`) use the same `devcontainer.json`, and the hosted
-cloud-session projection (-dev-loop `cloud-fedora-setup.sh`) builds this file
-unedited and commits its lifecycle into the image. The dnf package set
-is `[packages.devcontainer]` in `usr/share/mios/mios.toml`, resolved at build
-time by `automation/lib/packages.sh`; change it there, not here. The Antigravity
-CLI is baked in, and a build that cannot install it fails instead of shipping
-without it.
+`Containerfile` layers only account and container wiring on `[image].ref`.
+Packages, toolchains and application payloads belong to the OS pipeline.
+mios-bootstrap and -dev-loop carry byte-identical copies of this Containerfile;
+edit this source and synchronize its mirrors.
+
+The checkout's `[identity].username` projects both `remoteUser` and
+`build.args.MIOS_IDENTITY_USERNAME`. The build materializes sysusers before
+requiring the account, preserves UID 1000, initializes its home and workspace,
+and validates noninteractive development sudo policy. A known image identity can be
+renamed to the selected checkout identity while keeping its UID and group
+membership. Subordinate UID/GID mappings follow that account for rootless
+container builds. An unrelated account occupying UID 1000 fails the build.
+The development session runs as that account, never as root.
+
+## Recovering a missing-account startup
+
+An error such as `unable to find user user: no matching entries in passwd file`
+occurs before post-create commands can run. Creating an account in
+`postCreateCommand` cannot repair that attach path. The recovery container is a
+separate fallback environment; its account list does not describe the failed
+MiOS image.
+
+Keep source changes and required files under `/workspaces`, update the checkout
+to the repaired configuration, then perform a full container rebuild. A
+reconnect or start of an existing container keeps its old passwd database and
+image metadata. GitHub documents that a rebuild preserves the workspace; state
+outside that workspace needs to be saved separately.
+[Codespaces rebuild documentation](https://docs.github.com/en/codespaces/developing-in-a-codespace/rebuilding-the-container-in-a-codespace)
+
+From an authenticated operator terminal, a full rebuild can also be requested
+for the selected codespace:
+
+```sh
+gh codespace rebuild --codespace <codespace-name> --full
+```
+
+The cloud-shell launcher checks the selected image and account before running
+lifecycle commands. It refuses an existing container made from an older image
+and leaves that container intact. Preserve its non-workspace state before
+recreating it from the rebuilt image; the source checkout remains in its bind
+mount.
 
 ## Development-safe MiOS core
 

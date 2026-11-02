@@ -92,7 +92,7 @@ def _fixture(root, desktop_only=DESKTOP_ONLY):
     _write(os.path.join(root, ".dotfiles/code-server/settings.json"), json.dumps(SSOT, indent=2) + "\n")
     _write(os.path.join(root, "usr/share/mios/keybindings/vscode-settings.json"), "{}\n")
     stale = dict(SSOT, **{"vscode_custom_css.policy": True, "zenMode.showTabs": "none"})
-    dev = {"name": "fx", "containerEnv": {"MIOS_AI_ENDPOINT": "http://127.0.0.1:8080/v1", "MIOS_AI_ROLE": "builder"},
+    dev = {"name": "fx", "build": {"dockerfile": "Containerfile", "args": {"KEEP_ME": "preserved"}}, "containerEnv": {"MIOS_AI_ENDPOINT": "http://127.0.0.1:8080/v1", "MIOS_AI_ROLE": "builder"},
            "customizations": {"vscode": {"settings": stale}}, "forwardPorts": [8080, 11450]}
     _write(os.path.join(root, ".devcontainer/devcontainer.json"), json.dumps(dev, indent=2) + "\n")
     _write(os.path.join(root, "x.code-workspace"), json.dumps({"folders": [], "settings": stale}, indent=2) + "\n")
@@ -321,11 +321,28 @@ def test_user_and_host_projection():
         for label, repo in (("MiOS", root), ("bootstrap", boot)):
             dev = json.load(open(os.path.join(repo, ".devcontainer/devcontainer.json"), encoding="utf-8"))
             check(f"user: {label} remoteUser", dev.get("remoteUser"), "fx-user")
+            check(f"user: {label} build account", dev["build"]["args"].get("MIOS_IDENTITY_USERNAME"), "fx-user")
+            check(f"user: {label} unrelated build args survive", dev["build"]["args"].get("KEEP_ME"), "preserved")
             check(f"host: {label} hostRequirements", dev.get("hostRequirements"),
                   {"cpus": 8, "memory": "32gb", "storage": "64gb"})
         ws = json.load(open(os.path.join(root, "x.code-workspace"), encoding="utf-8"))
         check("user: a workspace file gets none", "remoteUser" in ws or "hostRequirements" in ws, False)
         check("user: green after projection", _run(root, boot, "--check", "--client-surfaces")[0], 0)
+        # Account provisioning must track identity changes before attach, independently of remoteUser drift.
+        p = os.path.join(root, ".devcontainer/devcontainer.json")
+        dev = json.load(open(p, encoding="utf-8"))
+        dev["build"]["args"]["MIOS_IDENTITY_USERNAME"] = "stale-user"
+        _write(p, json.dumps(dev, indent=2) + "\n")
+        rc, out = _run(root, boot, "--check", "--client-surfaces")
+        check("user: stale build account alone is drift", rc == 1 and "build.args.MIOS_IDENTITY_USERNAME 'stale-user' differs" in out, True)
+        check("user: stale build account repairs", _run(root, boot, "--client-surfaces")[0], 0)
+        _write(os.path.join(root, "usr/share/mios/mios.toml"), _toml(DESKTOP_ONLY, identity='[identity]\nusername = "another-user"\n'))
+        check("user: nondefault identity reprojects", _run(root, boot, "--client-surfaces")[0], 0)
+        for repo in (root, boot):
+            dev = json.load(open(os.path.join(repo, ".devcontainer/devcontainer.json"), encoding="utf-8"))
+            check("user: attach/build identities change together", (dev["remoteUser"], dev["build"]["args"]["MIOS_IDENTITY_USERNAME"]), ("another-user", "another-user"))
+        _write(os.path.join(root, "usr/share/mios/mios.toml"), _toml(DESKTOP_ONLY))
+        check("user: restore fixture identity", _run(root, boot, "--client-surfaces")[0], 0)
         # A planted literal (the retired mios-dev user, the old 32 GB host) is drift again.
         p = os.path.join(root, ".devcontainer/devcontainer.json")
         dev = json.load(open(p, encoding="utf-8"))
