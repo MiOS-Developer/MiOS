@@ -19699,3 +19699,18 @@ RestartSec = '2s'
 
 [user_units."mios-launcher.service".Install]
 WantedBy = 'default.target'
+
+[units."mios-agent-pipe.socket".Unit]
+comment = "# AI-hint: Systemd socket activation unit for agent-pipe zero-downtime handoff (task_486, task_2719)\n# AI-doc: usr/share/doc/mios/manual/ch87-socket-activation-handoff.md"
+Description = 'MiOS Agent-Pipe Zero-Downtime Socket Activation'
+Documentation = 'man:agent-pipe(1) file:///usr/share/doc/mios/manual/ch87-socket-activation-handoff.md'
+PartOf = 'mios-agent-pipe.service'
+
+[units."mios-agent-pipe.socket".Socket]
+ListenStream = ['${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_AGENT_PIPE:-8700}', '/run/mios/agent-pipe.sock']
+SocketMode = '0660'
+Backlog = '128'
+Service = 'mios-agent-pipe.service'
+
+[units."mios-agent-pipe.socket".Install]
+WantedBy = 'sockets.target'
