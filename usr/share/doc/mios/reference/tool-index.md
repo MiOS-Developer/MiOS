@@ -84,7 +84,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-conductor` | stub |
 | `usr/libexec/mios/mios-configurator-launch` | Opens the unified MiOS Settings surface. PRIMARY target is the configurator embedded in the MiOS Portal at /configure on the `agent_pipe` port (probed with curl); only when the Portal is unreachable... |
 | `usr/libexec/mios/mios-core-sched` | Manages Linux core scheduling cookies (PR_SCHED_CORE via prctl) for hardware SMT sibling isolation across multi-tenant workloads, with graceful fallback. |
-| `usr/libexec/mios/mios-cosign-publish` | Local Cosign image signing, registry push, and signature validation gate (task_454). |
+| `usr/libexec/mios/mios-cosign-publish` | Local Cosign image signing and fail-closed signature validation gate (task_454). |
 | `usr/libexec/mios/mios-cpu-gemm` | Hardware-calibrated CPU vectorized GEMM auto-tuner and SIMD kernel dispatcher (task_728). |
 | `usr/libexec/mios/mios-crash-parse` | Crash diagnostic parser and pre-panic timeline reconstruction (task_460). |
 | `usr/libexec/mios/mios-crawl` | Python script providing a thin client to the local crawl4ai service to fetch and convert web pages into LLM-ready markdown, used by agents to ground responses in actual content rather than search... |

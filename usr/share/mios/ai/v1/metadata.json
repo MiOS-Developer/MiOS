@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4117,
-  "total_metadata_entries": 3385,
-  "total_hints": 3379,
+  "total_files_scanned": 4125,
+  "total_metadata_entries": 3386,
+  "total_hints": 3380,
   "total_functions_indexed": 2088,
-  "total_related_links": 6635,
+  "total_related_links": 6636,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -5976,6 +5976,17 @@
       "has_shebang": false
     },
     {
+      "path": "tests/golden/manpages/usr/share/mios/mios.toml",
+      "hint": "Fixed manpage golden input; changes require deliberate expected-page review.",
+      "related": [
+        "tests/golden/README.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "tests/greeter/mock_greetd.py",
       "hint": "Mock greetd IPC server for testing the MiOS glass greeter without touching the real greetd.",
       "related": [
@@ -6932,7 +6943,7 @@
     },
     {
       "path": "tests/test-cosign-publish.py",
-      "hint": "Automated unit test suite for local Cosign image signing and registry push gate (task_454).",
+      "hint": "Cosign signing and fail-closed verification CLI regression tests using isolated mock tools.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md",
@@ -8814,7 +8825,7 @@
     },
     {
       "path": "tests/test-mios-xbox-boot-r1.py",
-      "hint": "Two-sided tests for the runtime FAILs of the MiOS-Xbox round-1 debug boot (build-20261023T224037Z in a GPU-less transient VM, xbox-m1/boot-round-1.md): AutoLogon persistence cannot be finished at SetupComplete (Windows transfers the answer-file AutoLogon + LogonCount only at the first sign-in) so the SYSTEM Verify task deletes AutoLogonCount and the SetupComplete step defers to it; the desktop hive's DEFAULT_USER values that the first sign-in overwrites are re-applied by Verify (Set-MiOSUserValue / Merge-MiOSKv); the Hydrate stage (desktop user) writes under %LOCALAPPDATA%\\MiOS because the SYSTEM state dir is read-only for users; the OS-control server survives an invalid console at logon (Write-Host \"The handle is invalid\"); the per-request agent relay is shipped but never registered as a task (components.ship invocation); probe.py authenticates WinRM as the elevation admin (the desktop account is a standard user) and re-executes under its pywinrm venv even when the venv python is a symlink. Every positive control has a negative control (the code the round-1 image ran, or HEAD). No network, no VM.",
+      "hint": "Two-sided tests for the runtime FAILs of the MiOS-Xbox round-1 debug boot (build-20261023T224037Z in a GPU-less transient VM, xbox-m1/boot-round-1.md): AutoLogon persistence cannot be finished at SetupComplete (Windows transfers the answer-file AutoLogon + LogonCount only at the first sign-in) so the SYSTEM Verify task deletes AutoLogonCount and the SetupComplete step defers to it; the desktop hive's DEFAULT_USER values that the first sign-in overwrites are re-applied by Verify (Set-MiOSUserValue / Merge-MiOSKv); the Hydrate stage (desktop user) writes under %LOCALAPPDATA%\\MiOS because the SYSTEM state dir is read-only for users; the OS-control server survives an invalid console at logon (Write-Host \"The handle is invalid\"); the per-request agent relay is shipped but never registered as a task (components.ship invocation); probe.py authenticates WinRM as the elevation admin (the desktop account is a standard user) and re-executes under its pywinrm venv even when the venv python is a symlink. Every positive control has a negative control (a deterministic planted round-1 defect). No network, no VM.",
       "related": [
         "usr/libexec/mios/win/xbox/answer.py",
         "usr/libexec/mios/win/xbox/render_spec.py",
@@ -25924,7 +25935,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-cosign-publish",
-      "hint": "Local Cosign image signing, registry push, and signature validation gate (task_454).",
+      "hint": "Local Cosign image signing and fail-closed signature validation gate (task_454).",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch05-build-and-pipeline.md",
@@ -41162,7 +41173,7 @@
     },
     {
       "path": "usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1",
-      "hint": "MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\\: guest spec, payload, drivers, UUP set, capability FOD set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), drops the UUP set once the media exists, then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\\; on success the scratch (work\\) is removed and the exchange volume re-TRIMmed before status done, so the thin exchange disk gives its space back before the host copies the ISO out. status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.",
+      "hint": "MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\\: guest spec, payload, drivers, UUP set, capability FOD set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), drops the UUP set once the media exists, then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\\; on success the scratch (work\\) is removed and the exchange volume re-TRIMmed before status done, so the thin exchange disk gives its space back before the host copies the ISO out. the converter must exit zero and its stdout/stderr remain in out\\ for failed-image diagnosis; status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.",
       "related": [
         "usr/libexec/mios/win/xbox/worker.py",
         "usr/libexec/mios/win/xbox/build.py",
