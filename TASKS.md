@@ -16,8 +16,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1744 |
-| in_progress | 68 |
+| pending | 1743 |
+| in_progress | 69 |
 | completed | 1847 |
 | incomplete | 19 |
 | cancelled | 21 |
@@ -4353,7 +4353,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### Epic task_3524
 
-- `task_3553` Q9 / Q12: MiOS-Xbox builds to SSOT specs from UUP Dump with DISM, Autounattend and XMLs on both the Linux and Windows pipelines, and is boot-tested (WS-XBOX | P1 | L) -- pending · P1 · size L
+- `task_3553` Q9 / Q12: MiOS-Xbox builds to SSOT specs from UUP Dump with DISM, Autounattend and XMLs on both the Linux and Windows pipelines, and is boot-tested (WS-XBOX | P1 | L) -- in_progress · owner mios-xbox-continuation · P1 · size L
 
 ### Epic task_3596
 
