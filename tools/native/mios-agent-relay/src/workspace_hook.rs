@@ -5,6 +5,7 @@ use super::{workspace, workspace_tmux};
 use serde_json::{json, Value};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
@@ -43,31 +44,30 @@ pub struct Flight {
 impl Flight {
     /// None when another pass holds the window (the caller has been recorded as a pending rerun).
     pub fn acquire(dir: &Path, key: &str) -> Result<Option<Flight>, String> {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder
             .create(dir)
             .map_err(|e| format!("{}: {e}", dir.display()))?;
         let lock_path = dir.join(format!("{key}.lock"));
         let dirty = dir.join(format!("{key}.dirty"));
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let lock = options
             .open(&lock_path)
             .map_err(|e| format!("{}: {e}", lock_path.display()))?;
         match lock.try_lock() {
             Ok(()) => Ok(Some(Flight { _lock: lock, dirty })),
             Err(fs::TryLockError::WouldBlock) => {
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .mode(0o600)
-                    .open(&dirty)
-                    .map_err(|e| e.to_string())?;
+                let mut options = OpenOptions::new();
+                options.write(true).create(true).truncate(true);
+                #[cfg(unix)]
+                options.mode(0o600);
+                options.open(&dirty).map_err(|e| e.to_string())?;
                 Ok(None)
             }
             Err(fs::TryLockError::Error(e)) => Err(e.to_string()),
@@ -193,12 +193,11 @@ fn log(msg: &str) {
     {
         let _ = fs::rename(&path, path.with_extension("log.1"));
     }
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(&path)
-    {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    if let Ok(mut f) = options.open(&path) {
         let _ = writeln!(f, "{msg}");
     }
 }
@@ -514,6 +513,27 @@ mod tests {
             Flight::acquire(d.path(), "other").unwrap().is_some(),
             "windows are independent"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn single_flight_state_is_private_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().join("private-flight");
+        let first = Flight::acquire(&dir, "w").unwrap().unwrap();
+        assert!(Flight::acquire(&dir, "w").unwrap().is_none());
+        for (path, mode) in [
+            (dir.clone(), 0o700),
+            (dir.join("w.lock"), 0o600),
+            (dir.join("w.dirty"), 0o600),
+        ] {
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                mode
+            );
+        }
+        assert!(first.take_dirty());
     }
 
     #[test]
