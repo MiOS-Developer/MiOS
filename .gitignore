@@ -1106,3 +1106,6 @@ usr/share/mios/virtio/*.iso
 
 # Runtime resolver databases and downloaded filter state stay on the host.
 /var/lib/mios/adguard/data/
+
+!/usr/share/mios/hyprland/patches/hypr3d-mios-dock-capture.patch
+!/tests/test-hypr3d-dock-capture.py

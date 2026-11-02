@@ -71,8 +71,8 @@ class Patch(unittest.TestCase):
     def test_ssot_trails_the_room_input_patch(self):
         patches = ssot()["desktop"]["hyprland"]["hypr3d"]["patches"]
         self.assertEqual(patches.count(PATCH), 1)
-        self.assertEqual(patches[-1], PATCH, "the input-transitions patch is the trailing delta")
-        self.assertEqual(patches[-2], ROOM_INPUT, "it is rebased onto the room-input patch")
+        self.assertEqual(patches[-2], PATCH, "the input-transitions patch immediately precedes capture feedback")
+        self.assertEqual(patches[-3], ROOM_INPUT, "it is rebased onto the room-input patch")
 
     def test_header(self):
         head = read(PATCH).split("\ndiff --git", 1)[0]
