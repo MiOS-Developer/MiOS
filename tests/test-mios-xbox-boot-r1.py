@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided tests for the runtime FAILs of the MiOS-Xbox round-1 debug boot (build-20261023T224037Z in a GPU-less transient VM, xbox-m1/boot-round-1.md): AutoLogon persistence cannot be finished at SetupComplete (Windows transfers the answer-file AutoLogon + LogonCount only at the first sign-in) so the SYSTEM Verify task deletes AutoLogonCount and the SetupComplete step defers to it; the desktop hive's DEFAULT_USER values that the first sign-in overwrites are re-applied by Verify (Set-MiOSUserValue / Merge-MiOSKv); the Hydrate stage (desktop user) writes under %LOCALAPPDATA%\MiOS because the SYSTEM state dir is read-only for users; the OS-control server survives an invalid console at logon (Write-Host "The handle is invalid"); the per-request agent relay is shipped but never registered as a task (components.ship invocation); probe.py authenticates WinRM as the elevation admin (the desktop account is a standard user) and re-executes under its pywinrm venv even when the venv python is a symlink. Every positive control has a negative control (the code the round-1 image ran, or HEAD). No network, no VM.
+# AI-hint: Two-sided tests for the runtime FAILs of the MiOS-Xbox round-1 debug boot (build-20261023T224037Z in a GPU-less transient VM, xbox-m1/boot-round-1.md): AutoLogon persistence cannot be finished at SetupComplete (Windows transfers the answer-file AutoLogon + LogonCount only at the first sign-in) so the SYSTEM Verify task deletes AutoLogonCount and the SetupComplete step defers to it; the desktop hive's DEFAULT_USER values that the first sign-in overwrites are re-applied by Verify (Set-MiOSUserValue / Merge-MiOSKv); the Hydrate stage (desktop user) writes under %LOCALAPPDATA%\MiOS because the SYSTEM state dir is read-only for users; the OS-control server survives an invalid console at logon (Write-Host "The handle is invalid"); the per-request agent relay is shipped but never registered as a task (components.ship invocation); probe.py authenticates WinRM as the elevation admin (the desktop account is a standard user) and re-executes under its pywinrm venv even when the venv python is a symlink. Every positive control has a negative control (a deterministic planted round-1 defect). No network, no VM.
 # AI-related: usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1, usr/share/mios/windows/mios-oscontrol-server.ps1, usr/share/mios/mios.toml, src/mios-rs/miosd/src/fhs_sync.rs (cargo tests), tests/test-mios-xbox-provisioning.py
 """Run: python3 -I tests/test-mios-xbox-boot-r1.py -v   (temp dirs only; no network, no VM)"""
 
@@ -9,9 +9,7 @@ import copy
 import importlib.util
 import json
 import os
-import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -44,13 +42,6 @@ OLD_AUTOLOGON_STEP = """    $wl = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\Curre
 def _rd(p: str) -> str:
     with open(p, encoding="utf-8-sig") as fh:
         return fh.read()
-
-
-def _git_head(rel: str):
-    if not shutil.which("git"):
-        return None
-    r = subprocess.run(["git", "-C", ROOT, "show", f"HEAD:{rel}"], capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 and r.stdout else None
 
 
 def _pwsh(script_text: str, tmp: str, env=None):
@@ -166,18 +157,23 @@ class TestVerifyReconcile(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_static_reconcile_precedes_the_record(self):
-        t = _rd(PROV)
+    def _assert_reconcile_precedes_record(self, t):
         verify = t.split("# Verify (SYSTEM)", 1)[1]
+        self.assertIn("Remove-ItemProperty -Path $wlPath -Name 'AutoLogonCount'", verify)
         self.assertLess(verify.index("Remove-ItemProperty -Path $wlPath -Name 'AutoLogonCount'"), verify.index("$autologon = [ordered]"))
         self.assertIn("[string](Get-Prop $w0 'DefaultUserName') -eq $deskName", verify)
         self.assertIn("Set-MiOSUserValue $uroot $it", verify)
         self.assertIn("user_defaults = $userDefaults", verify)
         self.assertIn("persisted_at = $persistedAt", verify)
-        head = _git_head("usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1")
-        if head is not None:   # negative: the code the round-1 image ran never deleted AutoLogonCount or touched the hive
-            self.assertNotIn("Set-MiOSUserValue", head)
-            self.assertNotIn("-Name 'AutoLogonCount'", head)
+
+    def test_static_reconcile_precedes_the_record(self):
+        current = _rd(PROV)
+        self._assert_reconcile_precedes_record(current)
+        for required in ("Set-MiOSUserValue $uroot $it", "Remove-ItemProperty -Path $wlPath -Name 'AutoLogonCount'"):
+            with self.subTest(omitted=required):
+                self.assertIn(required, current)
+                with self.assertRaises(AssertionError):
+                    self._assert_reconcile_precedes_record(current.replace(required, "# omitted reconcile"))
 
     def test_pwsh_user_values_both_sides(self):
         fns = _ps_functions(_rd(PROV), ["Merge-MiOSKv", "Set-MiOSUserValue"], self.tmp)
@@ -278,11 +274,12 @@ class TestHydrateOutputDir(unittest.TestCase):
             self.assertEqual(json.load(fh)["pending"], ["Microsoft.GamingServices"])
         self.assertTrue(os.path.isfile(os.path.join(self.local, "MiOS", "provision-hydrate.log")))
         self.assertEqual(sorted(os.listdir(self.state)), ["xbox-spec.json"])
-        head = _git_head("usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1")
-        if head is None:
-            self.skipTest("no git HEAD for the negative control")
+        current = _rd(PROV)
+        outdir = "$OutDir = if ($Stage -eq 'Hydrate') { Join-Path $env:LOCALAPPDATA 'MiOS' } else { $StateDir }"
+        self.assertIn(outdir, current)
+        planted = current.replace(outdir, "$OutDir = $StateDir")
         shutil.rmtree(os.path.join(self.local, "MiOS"))
-        r = self._run(head)   # negative: the round-1 stage wrote its record into the read-only SYSTEM dir and died
+        r = self._run(planted)  # deterministic negative: writes into the read-only SYSTEM directory
         self.assertIn("HYDRATE-RC=False", r.stdout, r.stdout + r.stderr)
         self.assertRegex(r.stderr + r.stdout, r"(?i)denied|unauthori[sz]ed")
         self.assertFalse(os.path.exists(os.path.join(self.local, "MiOS", "hydrate-state.json")))
@@ -310,10 +307,11 @@ class TestOsControlConsole(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="mios-xbox-r1-osc.")
         try:
             self.assertEqual(self._run(_rd(OSC), tmp), "SURVIVED")
-            head = _git_head("usr/share/mios/windows/mios-oscontrol-server.ps1")
-            if head is None:
-                self.skipTest("no git HEAD for the negative control")
-            out = self._run(head.lstrip("\ufeff"), tmp)   # negative: the round-1 server exited 1 at every logon
+            current = _rd(OSC)
+            guarded = "try { Write-Host $Text -ForegroundColor $Color -ErrorAction Stop } catch { }"
+            self.assertIn(guarded, current)
+            planted = current.replace(guarded, "Write-Host $Text -ForegroundColor $Color -ErrorAction Stop")
+            out = self._run(planted, tmp)  # deterministic negative: invalid console kills the server
             self.assertTrue(out.startswith("DIED:") and "handle is invalid" in out, out)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -372,13 +370,17 @@ class TestProbeAccount(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-xbox-r1-probe.")
         self.new = _load(PROBE, "probe_r1_new")
-        head = _git_head("usr/libexec/mios/win/xbox/probe.py")
-        self.old = None
-        if head is not None:
-            p = os.path.join(self.tmp, "probe_head.py")
-            with open(p, "w") as fh:
-                fh.write(head)
-            self.old = _load(p, "probe_r1_head")
+        current = _rd(PROBE)
+        role_order = 'for role in ("admin", "desktop"):'
+        self.assertIn(role_order, current)
+        self.assertIn("os.path.abspath(py) != os.path.abspath(sys.executable)", current)
+        planted = current.replace(role_order, 'for role in ("desktop",):').replace(
+            "os.path.abspath(py) != os.path.abspath(sys.executable)",
+            "os.path.realpath(py) != os.path.realpath(sys.executable)")
+        path = os.path.join(self.tmp, "probe_planted.py")
+        with open(path, "w") as fh:
+            fh.write(planted)
+        self.old = _load(path, "probe_r1_planted")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -388,8 +390,6 @@ class TestProbeAccount(unittest.TestCase):
         self.assertEqual(self.new._credentials({"users": {"desktop": {"name": "user", "password": "d"}}}), ("user", "d"))
         with self.assertRaises(Exception):
             self.new._credentials({"users": {"desktop": {"name": "user"}}})
-        if self.old is None:
-            self.skipTest("no git HEAD for the negative control")
         # negative: the round-1 probe signed WinRM in as the standard desktop user (InvalidCredentialsError)
         self.assertEqual(self.old._credentials(self.DOC), ("user", "d-secret"))
 
@@ -419,8 +419,6 @@ class TestProbeAccount(unittest.TestCase):
             return calls
 
         self.assertEqual(attempt(self.new), [venv_py])
-        if self.old is None:
-            self.skipTest("no git HEAD for the negative control")
         self.assertEqual(attempt(self.old), [], "the round-1 probe compared realpaths and never re-executed")
 
 

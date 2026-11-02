@@ -36,10 +36,15 @@ mios_toml = render_spec.mios_toml
 FIXTURE_USER = "fixture-admin"
 FIXTURE_PASSWORD = "fixture-Cred-7f3a"  # test fixture, not a real credential
 
+with open(os.path.join(_HERE, "fixtures", "mios-xbox", "fixture-identity.toml"), "rb") as _fixture_source:
+    FIXTURE_SSH_KEY = tomllib.load(_fixture_source)["auth"]["existing_ssh_key"]
+
 FIXTURE_LAYER = f'''
 [identity]
 username = "{FIXTURE_USER}"
 default_password = "{FIXTURE_PASSWORD}"
+[auth]
+existing_ssh_key = "{FIXTURE_SSH_KEY}"
 '''
 HOST_LAYER = '''
 [windows.xbox.preferences]

@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
@@ -426,10 +428,29 @@ class TestWorkerXmlHardening(unittest.TestCase):
             with open(p, "wb") as fh:
                 fh.write(b"x")
             os.chmod(p, 0o600)
-        W._qemu_access(cfg)
-        if os.geteuid() == 0:
-            for p in (cfg.overlay, cfg.exchange, cfg.nvram):
-                self.assertEqual(oct(os.stat(p).st_mode & 0o777), "0o660")
+        # Root's QEMU account lookup is deterministic, including lean test
+        # containers without a host libvirt account. Ownership stays mocked.
+        with mock.patch.object(W.os, "geteuid", return_value=0), \
+                mock.patch("pwd.getpwnam", return_value=SimpleNamespace(pw_uid=4242)), \
+                mock.patch("grp.getgrnam", return_value=SimpleNamespace(gr_gid=4343)), \
+                mock.patch.object(W.os, "chown") as chown:
+            W._qemu_access(cfg)
+        self.assertEqual(chown.call_args_list,
+                         [mock.call(p, 4242, 4343) for p in (cfg.overlay, cfg.exchange, cfg.nvram)])
+        for p in (cfg.overlay, cfg.exchange, cfg.nvram):
+            self.assertEqual(oct(os.stat(p).st_mode & 0o777), "0o660")
+
+    def test_nonroot_access_preserves_worker_file_permissions(self):
+        for p in (self.cfg.overlay, self.cfg.exchange, self.cfg.nvram):
+            with open(p, "wb") as fh:
+                fh.write(b"fixture")
+            os.chmod(p, 0o600)
+        with mock.patch.object(W.os, "geteuid", return_value=1000), \
+                mock.patch.object(W.os, "chown") as chown:
+            W._qemu_access(self.cfg)
+        chown.assert_not_called()
+        for p in (self.cfg.overlay, self.cfg.exchange, self.cfg.nvram):
+            self.assertEqual(os.stat(p).st_mode & 0o777, 0o600)
 
     def test_negative_planted_spice_audio_and_sockets(self):
         root = ET.fromstring(W.generate_worker_xml(BASE_XML, self.cfg))

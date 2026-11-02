@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import stat
@@ -1087,6 +1088,63 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("sudo", err.getvalue())
 
+    def test_image_gate_refuses_failed_worker_even_with_valid_old_iso(self):
+        from unittest import mock
+        out = os.path.join(self.b.out, "out")
+        os.makedirs(out)
+        iso_name = self.doc["spec"]["build"]["iso_name"]
+        iso = os.path.join(out, iso_name)
+        _wr(iso, "fixture-iso")
+        _wr(os.path.join(out, "result.json"),
+            json.dumps({"status": "done", "iso": {"sha256": A._sha256(iso)}}))
+        status_path = os.path.join(out, "status.json")
+        with mock.patch.object(B, "_iso_gate", return_value=0) as image_gate:
+            for status in ({"stage": "convert", "status": "failed"}, {"stage": "convert", "status": "done"}):
+                _wr(status_path, json.dumps(status))
+                with self.subTest(status=status), self.assertRaisesRegex(B.BuildError, "stale or partial"):
+                    B.stage_gate_image(self.b)
+                self.assertTrue(os.path.isfile(iso))
+                image_gate.assert_not_called()
+            _wr(status_path, json.dumps({"stage": "done", "status": "done"}))
+            result = B.stage_gate_image(self.b)
+            self.assertEqual(result["iso"], os.path.join(self.b.root, iso_name))
+            self.assertTrue(os.path.isfile(result["iso"]))
+            image_gate.assert_called_once()
+
+    def test_main_reexecs_into_symlinked_venv_before_any_host_mutation(self):
+        from unittest import mock
+        class StopExec(Exception):
+            pass
+        doc = copy.deepcopy(self.doc)
+        real = os.path.realpath(sys.executable)
+        venv_py = os.path.join(self.tmp, "venv", "bin", "python")
+        os.makedirs(os.path.dirname(venv_py))
+        os.symlink(real, venv_py)
+        doc["spec"]["probe"]["python"] = venv_py
+        for current in (real, venv_py):
+            with self.subTest(interpreter=current), \
+                    mock.patch.object(B, "build_layers", return_value=LAYERS), \
+                    mock.patch.object(B.render_spec, "render", return_value=doc), \
+                    mock.patch("os.geteuid", return_value=0), \
+                    mock.patch.object(B.sys, "executable", current), \
+                    mock.patch.object(B.os, "execv", side_effect=StopExec) as reexec, \
+                    mock.patch.object(B.os, "execvp", side_effect=StopExec) as scope, \
+                    mock.patch.object(B, "host_preflight") as preflight, \
+                    mock.patch.object(B.Build, "new") as new, \
+                    mock.patch.dict(os.environ):
+                os.environ.pop(B.SCOPED_ENV, None)
+                with self.assertRaises(StopExec):
+                    B.main(["run"])
+                if current == real:
+                    reexec.assert_called_once_with(
+                        venv_py, [venv_py, "-I", os.path.abspath(B.__file__), "run"])
+                    scope.assert_not_called()
+                else:
+                    reexec.assert_not_called()
+                    scope.assert_called_once()  # already in the venv: proceed to bounded scope
+                preflight.assert_not_called()
+                new.assert_not_called()
+
     def test_scoped_argv_uses_heavy_lock_and_memory_cap(self):
         argv = B._scoped_argv(["run"], self.doc["spec"])
         self.assertEqual(argv[:4], ["flock", "-w", "600", self.doc["spec"]["build"]["heavy_lock"]])
@@ -1210,7 +1268,7 @@ class TestPowerShell(unittest.TestCase):
 
     # The worker job on mocks (robocopy, the converter, Optimize-Volume, a stub servicing script): the UUP set is gone
     # before servicing starts, the scratch is gone and the volume re-TRIMmed before status done, out\ is kept; a failed
-    # job keeps its scratch. HEAD's job script is the negative control (build-20261023T224037Z: 5.6 GB left).
+    # job keeps its scratch. Planted cleanup omissions are deterministic negative controls.
     _JOB_MOCKS = r"""
 $ErrorActionPreference = 'Stop'
 $global:trims = @()
@@ -1222,11 +1280,14 @@ function robocopy.exe {
     $global:LASTEXITCODE = 1
 }
 function Start-Process {
-    param($FilePath, $ArgumentList, $WorkingDirectory, [switch]$Wait, [switch]$PassThru, $WindowStyle)
+    param($FilePath, $ArgumentList, $WorkingDirectory, [switch]$Wait, [switch]$PassThru, $WindowStyle,
+          $RedirectStandardOutput, $RedirectStandardError)
+    if ($RedirectStandardOutput) { Set-Content -LiteralPath $RedirectStandardOutput -Value 'converter stdout fixture' }
+    if ($RedirectStandardError) { Set-Content -LiteralPath $RedirectStandardError -Value 'converter stderr fixture' }
     $m = Join-Path $WorkingDirectory 'ISOFOLDER\sources'
     New-Item -ItemType Directory -Force -Path $m | Out-Null
     Set-Content -LiteralPath (Join-Path $m 'install.wim') -Value 'wim'
-    [pscustomobject]@{ ExitCode = 0 }
+    [pscustomobject]@{ ExitCode = $(if ($env:CONVERTER_FAIL) { 9 } else { 0 }) }
 }
 function Optimize-Volume { param($DriveLetter, [switch]$ReTrim) if ($ReTrim) { $global:trims += [string]$DriveLetter } }
 & $env:JOB_SCRIPT -Root $env:JOB_ROOT
@@ -1245,7 +1306,7 @@ Set-Content -LiteralPath $OutIso -Value 'iso'
 Set-Content -LiteralPath $ResultPath -Value '{"status":"done"}'
 """
 
-    def _run_job(self, script_text: str, fail: bool = False):
+    def _run_job(self, script_text: str, fail: bool = False, converter_fail: bool = False, seed_stale: bool = False):
         import subprocess
         root = tempfile.mkdtemp(prefix="mios-xbox-job.", dir=self.tmp)
         job = os.path.join(root, "job")
@@ -1259,12 +1320,18 @@ Set-Content -LiteralPath $ResultPath -Value '{"status":"done"}'
         _wr(os.path.join(job, "New-MiOSXboxImage.ps1"), self._STUB)
         script = os.path.join(job, "MiOS-Xbox-Worker.ps1")
         _wr(script, script_text)
-        env = {**os.environ, "JOB_SCRIPT": script, "JOB_ROOT": root, **({"STUB_FAIL": "1"} if fail else {})}
+        if seed_stale:
+            os.makedirs(os.path.join(root, "out"))
+            _wr(os.path.join(root, "out", "MiOS-Xbox.iso"), "previous-iso")
+            _wr(os.path.join(root, "out", "result.json"), '{"status":"done"}')
+        env = {**os.environ, "JOB_SCRIPT": script, "JOB_ROOT": root, **({"STUB_FAIL": "1"} if fail else {}),
+               **({"CONVERTER_FAIL": "1"} if converter_fail else {})}
         r = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", self._JOB_MOCKS], capture_output=True,
                            text=True, timeout=300, env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         out = os.path.join(root, "out")
-        seen = _json(os.path.join(out, "seen.json"))
+        seen_path = os.path.join(out, "seen.json")
+        seen = _json(seen_path) if os.path.isfile(seen_path) else {}
         trims = _rd(os.path.join(root, "trims.txt")) if os.path.exists(os.path.join(root, "trims.txt")) else ""
         return _json(os.path.join(out, "status.json")), seen, os.path.isdir(os.path.join(root, "work")), out, trims
 
@@ -1277,6 +1344,8 @@ Set-Content -LiteralPath $ResultPath -Value '{"status":"done"}'
         self.assertFalse(work_left)                                          # scratch gone before done
         self.assertTrue(os.path.isfile(os.path.join(out, "MiOS-Xbox.iso")))   # out\ (what the host copies) kept
         self.assertTrue(trims)                                               # exchange volume re-TRIMmed
+        self.assertIn("stdout fixture", _rd(os.path.join(out, "converter.stdout.log")))
+        self.assertIn("stderr fixture", _rd(os.path.join(out, "converter.stderr.log")))
         # a failed job keeps its scratch for diagnosis and is reported failed, not done
         st, _, work_left, _, trims = self._run_job(_rd(os.path.join(BUILD_PS, "MiOS-Xbox-Worker.ps1")), fail=True)
         self.assertEqual((st["stage"], st["status"]), ("service", "failed"), st)
@@ -1284,19 +1353,45 @@ Set-Content -LiteralPath $ResultPath -Value '{"status":"done"}'
         self.assertTrue(work_left)
         self.assertFalse(trims)
 
-    def test_worker_job_negative_control_head_kept_everything(self):
+    def test_worker_rejects_converter_failure_even_with_partial_media(self):
         if not shutil.which("pwsh"):
             self.skipTest("pwsh not installed")
-        import subprocess
-        r = subprocess.run(["git", "-C", ROOT, "show", "HEAD:usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1"],
-                           capture_output=True, text=True)
-        if r.returncode:
-            self.skipTest("no git HEAD")
-        if "Optimize-Volume" in r.stdout:
-            self.skipTest("HEAD already carries the scratch cleanup")
-        st, seen, work_left, _, trims = self._run_job(r.stdout)
+        st, seen, work_left, out, trims = self._run_job(
+            _rd(os.path.join(BUILD_PS, "MiOS-Xbox-Worker.ps1")), converter_fail=True)
+        self.assertEqual((st["stage"], st["status"]), ("convert", "failed"), st)
+        self.assertIn("UUP converter failed (exit 9", st["error"])
+        self.assertEqual(seen, {}, "servicing must not consume partial converted media")
+        self.assertTrue(work_left, "failed conversion keeps scratch for diagnosis")
+        self.assertFalse(trims)
+        self.assertFalse(os.path.exists(os.path.join(out, "MiOS-Xbox.iso")))
+        self.assertIn("stdout fixture", _rd(os.path.join(out, "converter.stdout.log")))
+        self.assertIn("stderr fixture", _rd(os.path.join(out, "converter.stderr.log")))
+
+    def test_worker_refuses_existing_iso_without_overwriting_it(self):
+        if not shutil.which("pwsh"):
+            self.skipTest("pwsh not installed")
+        st, seen, _, out, trims = self._run_job(
+            _rd(os.path.join(BUILD_PS, "MiOS-Xbox-Worker.ps1")), seed_stale=True)
+        self.assertEqual((st["stage"], st["status"]), ("start", "failed"), st)
+        self.assertIn("refusing to reuse an earlier build", st["error"])
+        self.assertEqual(seen, {})
+        self.assertFalse(trims)
+        self.assertEqual(_rd(os.path.join(out, "MiOS-Xbox.iso")), "previous-iso")
+        self.assertEqual(_json(os.path.join(out, "result.json")), {"status": "done"})
+
+    def test_worker_job_negative_planted_cleanup_keeps_everything(self):
+        if not shutil.which("pwsh"):
+            self.skipTest("pwsh not installed")
+        current = _rd(os.path.join(BUILD_PS, "MiOS-Xbox-Worker.ps1"))
+        planted, count = re.subn(r"(?m)^\s*try \{ Remove-Item -LiteralPath \$uups [^\n]+\n", "\n", current)
+        self.assertEqual(count, 1)
+        for line in ("        Remove-Item -LiteralPath $work -Recurse -Force\n",
+                     "        Optimize-Volume -DriveLetter ($Root.Substring(0, 1)) -ReTrim | Out-Null\n"):
+            self.assertIn(line, planted)
+            planted = planted.replace(line, "")
+        st, seen, work_left, _, trims = self._run_job(planted)
         self.assertEqual(st["status"], "done", st)
-        self.assertTrue(seen["uup_set_present"])   # the detector bites: the old job serviced next to the UUP set
+        self.assertTrue(seen["uup_set_present"])  # planted defect: servicing still shares the UUP set
         self.assertTrue(work_left)
         self.assertFalse(trims)
 

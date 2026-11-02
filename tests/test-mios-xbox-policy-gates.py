@@ -423,10 +423,8 @@ class TestItem7TrustAnchors(unittest.TestCase):
         self.assertIsNone(NOTSIGNED_BYPASS_RE.search(_rd(IMAGE_PS)))
         # negative controls: the old bypass is recognised, and a signed installer without a signer is refused
         self.assertIsNotNone(NOTSIGNED_BYPASS_RE.search("if ($s.Status -eq 'NotSigned' -and $Signer -eq 'Red Hat') { return }"))
-        head = subprocess.run(["git", "-C", ROOT, "show", "HEAD:usr/share/mios/windows/build/New-MiOSXboxImage.ps1"],
-                              capture_output=True, text=True, timeout=60)
-        if head.returncode == 0:
-            self.assertIsNotNone(NOTSIGNED_BYPASS_RE.search(head.stdout), "the R3 worker bypass should be detectable")
+        planted = _rd(IMAGE_PS) + "\nif ($s.Status -eq 'NotSigned' -and $Signer -eq 'Red Hat') { return }\n"
+        self.assertIsNotNone(NOTSIGNED_BYPASS_RE.search(planted), "a planted trust bypass must be detected")
         noisy = copy.deepcopy(inputs)
         noisy["installers"]["webview2"]["signer"] = ""
         with self.assertRaisesRegex(A.PayloadError, "no Authenticode signer"):

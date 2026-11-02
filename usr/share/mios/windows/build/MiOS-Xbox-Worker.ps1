@@ -1,4 +1,4 @@
-# AI-hint: MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\: guest spec, payload, drivers, UUP set, capability FOD set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), drops the UUP set once the media exists, then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\; on success the scratch (work\) is removed and the exchange volume re-TRIMmed before status done, so the thin exchange disk gives its space back before the host copies the ISO out. status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.
+# AI-hint: MiOS-Xbox build job on the GPU-less worker (xb-15): runs as SYSTEM from the exchange volume the host prepared (job\: guest spec, payload, drivers, UUP set, capability FOD set, converter, Start assets, job.json), converts the verified UUP set with UUP Dump's Windows converter (ConvertConfig.ini rendered from the SSOT), drops the UUP set once the media exists, then New-MiOSXboxImage.ps1 services the media and masters the ISO into out\; on success the scratch (work\) is removed and the exchange volume re-TRIMmed before status done, so the thin exchange disk gives its space back before the host copies the ISO out. the converter must exit zero and its stdout/stderr remain in out\ for failed-image diagnosis; status.json (stage/status/error) is what the host polls over WinRM; nothing here talks to the network.
 # AI-related: usr/libexec/mios/win/xbox/worker.py, usr/libexec/mios/win/xbox/build.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1
 #Requires -Version 5.1
 [CmdletBinding()]
@@ -22,6 +22,15 @@ $stage = 'start'
 try {
     $j = Get-Content -LiteralPath (Join-Path $job 'job.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($j.schema -ne 'mios-xbox-job/1') { throw 'job.json is not a mios-xbox-job/1 document' }
+    $isoName = [string]$j.iso_name
+    if ([string]::IsNullOrWhiteSpace($isoName) -or $isoName -match '[\\/:]' -or $isoName -in @('.', '..')) {
+        throw 'job.json iso_name must be a filename'
+    }
+    foreach ($previous in @($isoName, 'result.json')) {
+        if (Test-Path -LiteralPath (Join-Path $out $previous)) {
+            throw "out\$previous already exists: refusing to reuse an earlier build; prepare a fresh exchange"
+        }
+    }
 
     $stage = 'convert'; Set-Status $stage 'running'
     $conv = Join-Path $work 'converter'
@@ -34,7 +43,12 @@ try {
     if ($LASTEXITCODE -ge 8) { throw "staging the UUP set failed ($LASTEXITCODE)" }
     $entry = Join-Path $conv ([string]$j.converter_entry)
     if (-not (Test-Path -LiteralPath $entry)) { throw "converter entry $($j.converter_entry) missing" }
-    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', ('"{0}"' -f $entry)) -WorkingDirectory $conv -Wait -PassThru -WindowStyle Hidden
+    $converterOut = Join-Path $out 'converter.stdout.log'
+    $converterErr = Join-Path $out 'converter.stderr.log'
+    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', ('"{0}"' -f $entry)) -WorkingDirectory $conv -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $converterOut -RedirectStandardError $converterErr
+    if ($p.ExitCode -ne 0) {
+        throw "UUP converter failed (exit $($p.ExitCode); see out\converter.stdout.log and out\converter.stderr.log)"
+    }
     $media = Join-Path $conv 'ISOFOLDER'
     if (-not (Test-Path -LiteralPath (Join-Path $media 'sources\install.wim')) -and -not (Test-Path -LiteralPath (Join-Path $media 'sources\install.esd'))) {
         $cand = Get-ChildItem -Path $conv -Directory | Where-Object { (Test-Path (Join-Path $_.FullName 'sources\install.wim')) -or (Test-Path (Join-Path $_.FullName 'sources\install.esd')) } | Select-Object -First 1

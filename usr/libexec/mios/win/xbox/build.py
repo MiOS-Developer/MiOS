@@ -462,6 +462,9 @@ def _iso_gate(b: Build, iso: str, report: str, index: int = 0) -> int:
 
 def stage_gate_image(b: Build) -> Dict[str, Any]:
     x = b.spec()["spec"]
+    status = _json_read(os.path.join(_out(b), "status.json"))
+    if status.get("stage") != "done" or status.get("status") != "done":
+        raise BuildError("[gate-image] worker did not complete; refusing stale or partial output")
     res = _json_read(os.path.join(_out(b), "result.json"))
     iso_src = os.path.join(_out(b), x["build"]["iso_name"])
     if res.get("status") != "done" or not os.path.isfile(iso_src):
@@ -591,7 +594,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         merged = mios_toml.load_merged(layers)
         x = render_spec.render(merged, layers)["spec"]
         py = x["probe"]["python"] if os.path.isfile(x["probe"]["python"]) else sys.executable
-        if os.path.realpath(sys.executable) != os.path.realpath(py):
+        # A venv interpreter may symlink the system executable. Its invocation
+        # path selects site-packages, so resolving symlinks loses the venv.
+        if os.path.abspath(sys.executable) != os.path.abspath(py):
             os.execv(py, [py, "-I", os.path.abspath(__file__), *argv])
         if os.environ.get(SCOPED_ENV) != "1":
             os.execvp("flock", _scoped_argv(argv, x))

@@ -512,28 +512,18 @@ class ResolveLatestTest(unittest.TestCase):
         r, err, waits, n = self._fetch_seq(rl, [(404, {}, b"")])
         self.assertEqual((n, waits), (1, []))                                     # other 4xx: no retry
 
-    def test_rate_limit_negative_control_head_gave_up_within_seconds(self):
-        import subprocess
-        g = subprocess.run(["git", "-C", _ROOT, "show", "HEAD:usr/libexec/mios/win/xbox/resolve_latest.py"],
-                           capture_output=True, text=True)
-        if g.returncode or "RATE_LIMIT_WAITS_S" in g.stdout:
-            self.skipTest("no git HEAD, or HEAD already has the 429 budget")
-        d = tempfile.mkdtemp(prefix="rl-head.")
+    def test_rate_limit_negative_planted_empty_budget_gives_up_at_once(self):
+        seq = [(429, {"Retry-After": "7"}, b""), (429, {}, b""), (429, {}, b""), (200, {}, b"{}")]
+        http, waits = FakeHttp({("GET", self.U429): list(seq)}), []
+        budget = rl.RATE_LIMIT_WAITS_S
         try:
-            p = os.path.join(d, "resolve_latest_head.py")
-            with open(p, "w", encoding="utf-8") as fh:
-                fh.write(g.stdout)
-            sp = importlib.util.spec_from_file_location("resolve_latest_head", p)
-            head = importlib.util.module_from_spec(sp)
-            sp.loader.exec_module(head)
-            seq = [(429, {"Retry-After": "7"}, b""), (429, {}, b""), (429, {}, b""), (200, {}, b"{}")]
-            http, waits = FakeHttp({("GET", self.U429): list(seq)}), []
-            with self.assertRaises(head.ResolveError):
-                head._fetch(http, self.U429, sleep=waits.append)
-            self.assertLess(sum(waits), 10)    # the observed failure: three 429s within ~6 s
+            rl.RATE_LIMIT_WAITS_S = ()  # deterministic defect: the recoverable burst has no retry budget
+            with self.assertRaises(rl.ResolveError):
+                rl._fetch(http, self.U429, sleep=waits.append)
         finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
+            rl.RATE_LIMIT_WAITS_S = budget
+        self.assertEqual(len(http.calls), 1)
+        self.assertEqual(waits, [])
 
     # Build 20261024T044408Z (stage re-run): fetchupd.php?ring=Dev answered HTTP 400 at 05:35:25Z and 200 a minute
     # later. UUP Dump reports a failed live Windows Update request as 400 + {"response": {"error": ...}}; the resolver
@@ -564,28 +554,17 @@ class ResolveLatestTest(unittest.TestCase):
         self.assertEqual((len(http.calls), waits), (1, []))
         self.assertIn("WU_REQUEST_FAILED", str(cm.exception))
 
-    def test_uup_api_400_negative_control_head_gave_up_at_once(self):
-        import subprocess
-        g = subprocess.run(["git", "-C", _ROOT, "show", "HEAD:usr/libexec/mios/win/xbox/resolve_latest.py"],
-                           capture_output=True, text=True)
-        if g.returncode or "UUP_API_RETRY" in g.stdout:
-            self.skipTest("no git HEAD, or HEAD already retries the UUP Dump API's 400")
-        d = tempfile.mkdtemp(prefix="rl-head.")
+    def test_uup_api_400_negative_planted_no_retry_policy_gives_up_at_once(self):
+        http = FakeHttp({("GET", self.U400): [self.WU_FAILED, (200, {}, b"{}")]})
+        policy = rl.UUP_API_RETRY
         try:
-            p = os.path.join(d, "resolve_latest_head.py")
-            with open(p, "w", encoding="utf-8") as fh:
-                fh.write(g.stdout)
-            sp = importlib.util.spec_from_file_location("resolve_latest_head", p)
-            head = importlib.util.module_from_spec(sp)
-            sp.loader.exec_module(head)
-            http = FakeHttp({("GET", self.U400): [self.WU_FAILED, (200, {}, b"{}")]})
-            with self.assertRaises(head.ResolveError) as cm:
-                head._fetch(http, self.U400, tries=5, sleep=lambda s: None)
-            self.assertEqual(len(http.calls), 1)                   # the observed failure: no second try
-            self.assertNotIn("WU_REQUEST_FAILED", str(cm.exception))   # and no reason in the message
+            rl.UUP_API_RETRY = ()  # deterministic defect: the UUP transient status has no opt-in retry
+            with self.assertRaises(rl.ResolveError) as cm:
+                rl._fetch(http, self.U400, tries=5, sleep=lambda s: None, retry=rl.UUP_API_RETRY)
         finally:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
+            rl.UUP_API_RETRY = policy
+        self.assertEqual(len(http.calls), 1)
+        self.assertIn("WU_REQUEST_FAILED", str(cm.exception))
 
     def test_http_client_keeps_a_bounded_error_body(self):
         import http.server

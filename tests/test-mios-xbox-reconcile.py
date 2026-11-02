@@ -32,14 +32,6 @@ def _rd(p: str) -> str:
         return fh.read()
 
 
-def _git_head(rel: str):
-    """The HEAD version of a tracked file (the pre-fix code), or None outside a git checkout."""
-    if not shutil.which("git"):
-        return None
-    r = subprocess.run(["git", "-C", ROOT, "show", f"HEAD:{rel}"], capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 and r.stdout else None
-
-
 def _pwsh(script_text: str, tmp: str, env=None):
     path = os.path.join(tmp, "t.ps1")
     with open(path, "w", encoding="utf-8") as fh:
@@ -80,19 +72,21 @@ class TestFalseOkGate(P.PayloadBase):
         self.assertNotIn("deny.false-ok-step", ids)
         self.assertEqual(rc, 0, sorted(ids))
 
-    def test_negative_head_stage_literals_are_denied(self):
-        head = _git_head("usr/libexec/mios/win/xbox/answer.py")
-        if head is None:
-            self.skipTest("no git checkout")
-        lines = [m.group(1).replace("\\\\", "\\") for m in re.finditer(r'"((?:[^"\\]|\\.)*SilentlyContinue(?:[^"\\]|\\.)*)"', head)]
+    def test_negative_planted_stage_literals_are_denied(self):
+        lines = [
+            "Set-Service -Name sshd -StartupType Automatic -ErrorAction SilentlyContinue",
+            "Start-Service -Name sshd -ErrorAction SilentlyContinue",
+            "Restart-Service -Name sshd -ErrorAction SilentlyContinue",
+            "Enable-NetFirewallRule -Name 'RemoteDesktop-UserMode-In-TCP' -ErrorAction SilentlyContinue",
+            "Set-NetFirewallRule -Name 'MiOS-RDP' -Enabled True -EA 0",
+            "Start-Service -Name qemu-ga -ErrorAction Ignore",
+            "Start-Service -Name looking-glass-host -EA 0",
+            "New-Service -Name 'MiOS' -BinaryPathName 'x.exe' -ErrorAction SilentlyContinue",
+        ]
         hits = _gate_script("\n".join(lines), self.STAGE)
-        txt = " | ".join(h.source for h in hits)
-        self.assertGreaterEqual(len(hits), 8, txt)   # sshd_service x3, rdp_firewall x2, mios_daemons, qemu-ga/LG starts
-        joined = "\n".join(lines)
-        for old in ("Set-Service -Name sshd -StartupType Automatic -ErrorAction SilentlyContinue",
-                    "Enable-NetFirewallRule -Name 'RemoteDesktop-UserMode-In-TCP' -ErrorAction SilentlyContinue"):
-            self.assertIn(old, joined)
-            self.assertEqual(len(_gate_script(old, self.STAGE)), 1, old)
+        self.assertEqual(len(hits), len(lines), " | ".join(h.source for h in hits))
+        for line in lines:
+            self.assertEqual(len(_gate_script(line, self.STAGE)), 1, line)
 
     def test_negative_planted_line_fails_the_rendered_gate(self):
         d = self.copy_payload()
@@ -138,13 +132,16 @@ class TestReachabilityAndCleanup(P.PayloadBase):
         self.assertIn(f"Wait-MiOSListen {port} 'WinRM'", s)
         self.assertLess(s.index("New-NetFirewallRule -Name 'MiOS-WinRM-HTTP'"), s.index("Wait-MiOSListen"))
 
-    def test_negative_head_winrm_and_rdp_had_no_listener_proof(self):
-        head = _git_head("usr/libexec/mios/win/xbox/answer.py")
-        if head is None:
-            self.skipTest("no git checkout")
-        self.assertNotIn("Wait-MiOSListen", head)
-        self.assertIn("Invoke-MiOSStep 'rdp_firewall'", head)
-        self.assertRegex(head, r'"    Enable-PSRemoting -SkipNetworkProfileCheck -Force \| Out-Null",')   # unguarded
+    def test_negative_planted_listener_proof_is_missing(self):
+        for name in ("rdp", "winrm"):
+            current = self.step(name)
+            def check(step):
+                self.assertRegex(step, r"Wait-MiOSListen (?:[0-9]+|\$rdpPort) '(?:WinRM|Remote Desktop)'")
+            check(current)
+            planted, count = re.subn(r"Wait-MiOSListen [^\n]+", "# omitted listener proof", current)
+            self.assertEqual(count, 1)
+            with self.subTest(stage=name), self.assertRaises(AssertionError):
+                check(planted)
 
     def test_positive_looking_glass_host_start_failure_is_logged_not_swallowed(self):
         s = self.step("looking_glass_host")
@@ -209,8 +206,7 @@ class TestReachabilityAndCleanup(P.PayloadBase):
         self.assertEqual(out["up"], "ok")
         self.assertEqual(out["down"], "failed: Down is not listening on TCP 4343 after 3 s")
 
-    def test_verify_record_carries_listeners_and_answer_cache(self):
-        prov = _rd(os.path.join(BUILD_PS, "MiOS-Xbox.Provision.ps1"))
+    def _assert_verify_record_carries_listeners_and_answer_cache(self, prov):
         verify = prov.split("# Verify (SYSTEM)", 1)[1]   # Verify reconciles AutoLogonCount + user defaults (round-1), so no longer read-only
         self.assertIn("$names += 'sshd', 'TermService', 'WinRM'", verify)
         self.assertIn("listening = $listen; answer_file_cache = @($answerCache)", verify)
@@ -218,19 +214,23 @@ class TestReachabilityAndCleanup(P.PayloadBase):
             self.assertIn(key, verify)
         retry = prov.split("if ($Stage -eq 'Retry') {", 1)[1].split("\n}\n", 1)[0]
         self.assertNotRegex(retry, r"Start-Service[^\n]*SilentlyContinue")
-        head = _git_head("usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1")
-        if head is not None:   # negative: the pre-fix Verify recorded neither listeners nor the answer-file cache
-            self.assertNotIn("answer_file_cache", head)
-            self.assertNotIn("Get-NetTCPConnection", head)
+    def test_verify_record_carries_listeners_and_answer_cache(self):
+        current = _rd(os.path.join(BUILD_PS, "MiOS-Xbox.Provision.ps1"))
+        self._assert_verify_record_carries_listeners_and_answer_cache(current)
+        planted = current.replace("answer_file_cache = @($answerCache)", "answer_file_cache_missing = @($answerCache)")
+        with self.assertRaises(AssertionError):
+            self._assert_verify_record_carries_listeners_and_answer_cache(planted)
 
-    def test_guest_tool_retry_also_runs_once_after_setup(self):
-        s = self.step("guest_tools_retry")
+    def _assert_guest_tool_retry_also_runs_once_after_setup(self, s):
         self.assertIn("$t = New-ScheduledTaskTrigger -AtStartup", s)
         self.assertIn("$t2 = New-ScheduledTaskTrigger -Once -At ([DateTime]::Now.AddMinutes(3))", s)
         self.assertIn("-Trigger @($t, $t2)", s)
-        head = _git_head("usr/libexec/mios/win/xbox/answer.py")
-        if head is not None:   # negative: HEAD had no retry at all (a failed MSI was lost)
-            self.assertNotIn("guest_tools_retry", head)
+    def test_guest_tool_retry_also_runs_once_after_setup(self):
+        current = self.step("guest_tools_retry")
+        self._assert_guest_tool_retry_also_runs_once_after_setup(current)
+        planted = current.replace("-Trigger @($t, $t2)", "-Trigger $t")
+        with self.assertRaises(AssertionError):
+            self._assert_guest_tool_retry_also_runs_once_after_setup(planted)
 
     def test_ssh_setup_waits_for_the_listener(self):
         s = _rd(os.path.join(ROOT, "usr", "share", "mios", "windows", "mios-ssh-setup.ps1"))
@@ -250,13 +250,10 @@ class TestOfflineTimeZone(P.PayloadBase):
         guest = json.loads(_rd(os.path.join(self.pay, "ProgramData", "MiOS", "xbox-spec.json")))
         self.assertEqual(guest["region"]["timezone"], self.doc["region"]["timezone"])   # the worker reads it here
 
-    def test_negative_head_servicing_left_the_stock_zone(self):
-        head = _git_head("usr/share/mios/windows/build/New-MiOSXboxImage.ps1")
-        if head is None:
-            self.skipTest("no git checkout")
-        self.assertFalse(_tz_baked(head))
+    def test_negative_planted_servicing_omits_or_delays_the_zone(self):
         late = _rd(os.path.join(BUILD_PS, "New-MiOSXboxImage.ps1"))
         block = re.search(r"\n    \$tz = .*?Say \"offline default time zone \$tz\"\n", late, re.S).group(0)
+        self.assertFalse(_tz_baked(late.replace(block, "\n")), "a missing offline zone is rejected")
         moved = late.replace(block, "\n").replace("    Say 'offline registry imported'\n", "    Say 'offline registry imported'\n" + block)
         self.assertFalse(_tz_baked(moved), "a zone set after the hives are loaded is not accepted")
 
@@ -356,12 +353,13 @@ class TestSwtpmLocalCa(unittest.TestCase):
             if r.returncode == 0 and row:   # the package's own declaration: drwxr-x--- tss root
                 self.assertEqual((row[0][0], row[0][2], row[0][3]), ("drwxr-x---", "tss", "root"))
 
-    def test_negative_head_line_is_rejected(self):
-        head = _git_head("usr/lib/tmpfiles.d/50-mios.conf")
-        if head is None:
-            self.skipTest("no git checkout")
-        self.assertFalse(_swtpm_line_ok(head))
-        self.assertFalse(_swtpm_line_ok("d /var/lib/swtpm-localca      0755 root root -\n"))
+    def test_negative_planted_line_is_rejected(self):
+        current = _rd(TMPFILES)
+        planted, count = re.subn(r"(?m)^d\s+/var/lib/swtpm-localca\s+[^\n]+",
+                                  "d /var/lib/swtpm-localca 0755 root root -", current)
+        self.assertEqual(count, 1)
+        self.assertFalse(_swtpm_line_ok(planted))
+        self.assertFalse(_swtpm_line_ok("d /var/lib/swtpm-localca 0750 root tss -\n"))
 
 
 if __name__ == "__main__":
