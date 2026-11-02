@@ -53,6 +53,20 @@ client resize drives layout selection. A failed creation removes only the panes
 created by that attempt. CLI installation supplies neither provider login nor
 model readiness; an installed client can still require either before doing work.
 
+A worker launch verifies the selected local model with
+`mios-ai-config --root / --probe-inference`. The check requires a completed
+Responses stream with text from that exact model, within
+`[mcp.tmux].timeout_s`; an advertised catalog, empty reply, truncated result or
+substituted model is insufficient. `--probe` checks only the model catalog.
+Local `--help` and `--version` commands skip inference and client projection.
+
+Day-0 finalization applies system presets and global user presets so the
+operator's launcher broker is enabled on the first user session. Incomplete AI
+and model provisioning services return to the inactive state for their retry
+timers. Model provisioning serializes writers, validates required weights before
+publishing readiness, and preserves baked immutable seeds. The launcher condition
+is projected from `[identity].username`.
+
 HTTP clients must call `mios_tmux_session_open`, keep its opaque capability
 private, and supply `session` on terminal calls. This is explicit because modern
 stateless MCP HTTP requests share the application's lifespan. Capabilities expire

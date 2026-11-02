@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4105,
-  "total_metadata_entries": 3376,
-  "total_hints": 3370,
+  "total_files_scanned": 4111,
+  "total_metadata_entries": 3379,
+  "total_hints": 3373,
   "total_functions_indexed": 2082,
-  "total_related_links": 6600,
+  "total_related_links": 6616,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -725,15 +725,6 @@
     {
       "path": "MiOS.md",
       "hint": "The primary system identity and core instruction set for MiOS agents.",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
-      "path": "PROJECT.md",
-      "hint": "Project brief: gateway context budgeting, the Windows low-power iGPU desktop and static Rust consolidation across the Windows/WSL boundary.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -9236,6 +9227,18 @@
       "path": "tests/test-node.py",
       "hint": "Consolidated WS-NODE edge-mesh suite: CRDT/GC, cgroups pinning, watchdog, Wasm sandbox+hardware, BLE bootstrap, buffer pool, capabilities, discovery, overlay, scheduler, wire codec, mesh logs, M1/M2 adversarial.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-notifications-glass-unify.py",
+      "hint": "Two-sided automated test suite for MiOS Notification System Unification & Glass Specular Highlights.",
+      "related": [
+        "usr/share/mios/quickshell/Keymap.qml",
+        "usr/share/mios/quickshell/Config.qml"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -20875,9 +20878,16 @@
     {
       "path": "usr/lib/systemd/system/mios-ai-firstboot.service",
       "hint": "Systemd unit that executes the mios-ai-firstboot script to provision the AI agent virtual environment and download llama.cpp GGUF models if the .ai-firstboot-done sentinel is missing.",
-      "related": [],
+      "related": [
+        "72-hermes-agent.sh",
+        "/usr/libexec/mios/mios-ai-firstboot",
+        "mios-ai-firstboot",
+        "mios-dev",
+        "mios-llm-light.service",
+        "network-online.target"
+      ],
       "functions": [],
-      "doc": "usr/share/doc/mios/manual/system.md",
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -21823,10 +21833,25 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-models-firstboot.service",
-      "hint": "FBM first-boot large-model provisioner unit (oneshot, sentinel-guarded, degrade-open). Runs mios-models-firstboot once at first boot to fetch [ai].firstboot_models GGUFs; enabled via 90-mios.preset.",
-      "related": [],
+      "hint": "Provision and verify the layered Day-0 light-lane fleet and optional models; retry incomplete downloads through the timer.",
+      "related": [
+        "/usr/libexec/mios/mios-models-firstboot",
+        "mios-models-firstboot.timer"
+      ],
       "functions": [],
-      "doc": "usr/share/doc/mios/manual/system.md",
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-models-firstboot.timer",
+      "hint": "Retry incomplete verified Day-0 model provisioning without blocking boot.",
+      "related": [
+        "mios-models-firstboot.service",
+        "/var/lib/mios/.models-firstboot-done"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -27343,7 +27368,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-models-firstboot",
-      "hint": "FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml; a Hugging Face `resolve/<rev>` source floats: the revision is resolved to its current commit and the upstream-published LFS sha256, the file is fetched from that immutable commit, VERIFIED (streamed, chunked) and recorded in <models>/models.tsv; a part file that mismatches is discarded and an entry with no provable digest is refused, never installed unverified. Writes a sentinel so it never re-runs. Degrades open: every failure path exits 0 so a pull can never block boot.",
+      "hint": "FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml; a Hugging Face `resolve/<rev>` source floats: the revision is resolved to its current commit and the upstream-published LFS sha256, the file is fetched from that immutable commit, VERIFIED (streamed, chunked) and recorded in <models>/models.tsv; a part file that mismatches is discarded and an entry with no provable digest is refused, never installed unverified. Writes a sentinel only when the entire configured fleet is verified; the timer retries incomplete runs. Degrades open: every failure path exits 0 so a pull can never block boot.",
       "related": [
         "mios-models",
         "mios-models-firstboot.service",
@@ -28327,6 +28352,18 @@
       "path": "usr/libexec/mios/mios-stage-oci-archive",
       "hint": "Stages built mios oci-archive tarball to /mnt/mios-repo/mios-latest.tar for tools/install.sh (task_1203)",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-steam-notify-bridge",
+      "hint": "Daemon bridging raw Steam XWayland toast windows to native MiOS Glass notifications.",
+      "related": [
+        "usr/share/mios/hyprland/hyprland.conf",
+        "usr/share/mios/quickshell/Notifications.qml"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -39840,6 +39877,18 @@
       "related": [
         "usr/share/mios/quickshell/Notifications.qml",
         "usr/share/mios/quickshell/Config.qml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/quickshell/NotificationCenter.qml",
+      "hint": "MiOS Notification Center & History Tray. Displays persistent notification",
+      "related": [
+        "usr/share/mios/quickshell/NotifModel.qml",
+        "usr/share/mios/quickshell/Notifications.qml"
       ],
       "functions": [],
       "doc": null,

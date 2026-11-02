@@ -1,0 +1,13 @@
+# AI-hint: Retry incomplete verified Day-0 model provisioning without blocking boot.
+# AI-related: mios-models-firstboot.service, /var/lib/mios/.models-firstboot-done
+[Unit]
+Description=Retry first-boot model provisioning
+ConditionPathExists=!/var/lib/mios/.models-firstboot-done
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=10min
+Unit=mios-models-firstboot.service
+
+[Install]
+WantedBy=timers.target

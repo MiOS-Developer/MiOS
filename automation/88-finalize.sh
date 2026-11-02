@@ -7,7 +7,11 @@ set -euo pipefail
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-systemctl preset-all 2>/dev/null || true
+# Apply both managers offline in the image. System presets never enable the
+# operator's launcher broker or desktop user units; ignoring this left Day-0
+# tools without their broker socket even though the user preset said enabled.
+systemctl --no-reload preset-all
+systemctl --global --no-reload preset-all
 
 systemctl set-default multi-user.target 2>/dev/null || true
 

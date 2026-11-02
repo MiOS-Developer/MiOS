@@ -796,6 +796,7 @@ usr/lib/systemd/user-preset/*
 usr/lib/systemd/system/*
 !/usr/lib/systemd/system/mios-*.service
 !/usr/lib/systemd/system/mios-*.timer
+!/usr/lib/systemd/system/mios-models-firstboot.timer
 !/usr/lib/systemd/system/mios-*.target
 !/usr/lib/systemd/system/mios-*.path
 !/usr/lib/systemd/system/mios-*.socket

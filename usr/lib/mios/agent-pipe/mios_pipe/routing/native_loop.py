@@ -287,7 +287,7 @@ async def _respond_native_loop_direct(
     refined: Optional[dict], *, streaming: bool, chat_id: str, model: str,
     session_id: Optional[str], last_user_text: str, persona_system: str,
     messages: list, request=None, emit=None, tool_choice=None,
-    force_delegate=None, target_agents=None, **kwargs
+    force_delegate=None, target_agents=None, persist_response: bool = True, **kwargs
 ) -> Any:
     """Native agentic tool-loop: mios-heavy + the full MiOS tool surface, one
     standard call->tool_calls->execute->repeat loop, then polish. The model routes
@@ -553,7 +553,9 @@ async def _respond_native_loop_direct(
                         refined, streaming=False, chat_id=chat_id, model=model,
                         session_id=session_id, last_user_text=last_user_text,
                         persona_system=persona_system, messages=messages,
-                        request=request, emit=_q.put_nowait, tool_choice=tool_choice)
+                        request=request, emit=_q.put_nowait, tool_choice=tool_choice,
+                        force_delegate=force_delegate, target_agents=target_agents,
+                        persist_response=persist_response, **kwargs)
                 except Exception as _e:  # noqa: BLE001
                     _holder["err"] = str(_e)
                 finally:
@@ -586,6 +588,15 @@ async def _respond_native_loop_direct(
                                           detail=_s.get("detail"))
             await _wtask
             _resp = _holder.get("resp")
+            if _holder.get("err") or getattr(_resp, "status_code", 200) >= 400:
+                try:
+                    _error = json.loads(bytes(_resp.body).decode("utf-8"))["error"]
+                except Exception:
+                    _error = {"message": "The configured inference backend is unavailable",
+                              "type": "server_error", "code": "inference_unavailable"}
+                yield f"data: {json.dumps({'error': _error})}\n\n".encode("utf-8")
+                yield _sse_done()
+                return
             _content = ""
             try:
                 _b = _loads_lenient(bytes(_resp.body).decode("utf-8"))
@@ -774,7 +785,8 @@ async def _respond_native_loop_direct(
             try:
                 _fb = {"model": REFINE_MODEL, "messages": _m2, "stream": False,
                        "chat_template_kwargs": {"enable_thinking": False}}
-                _fr = await _c.post(f"{REFINE_ENDPOINT}/v1/chat/completions",
+                _fallback_base = REFINE_ENDPOINT.rstrip("/").removesuffix("/v1")
+                _fr = await _c.post(f"{_fallback_base}/v1/chat/completions",
                                     content=json.dumps(_fb).encode("utf-8"),
                                     timeout=NATIVE_LOOP_TIMEOUT_S)
                 _fch = (_fr.json().get("choices") or [])
@@ -882,11 +894,17 @@ async def _respond_native_loop_direct(
             if _live_streamed and emit is not None:
                 emit({"content": _append})
             log.info("native-loop: appended %d real source(s)", len(_refs))
-    try:
-        _store_knowledge(query=last_user_text, answer=_ans,
-                         session_id=session_id, tool_history=[])
-    except Exception:  # noqa: BLE001
-        log.warning("Failed to store knowledge", exc_info=True)
+    if not _ans or not _ans.strip():
+        return JSONResponse(status_code=503, content={"error": {
+            "message": "The configured inference backends returned no output",
+            "type": "server_error", "code": "inference_unavailable",
+        }})
+    if persist_response:
+        try:
+            _store_knowledge(query=last_user_text, answer=_ans,
+                             session_id=session_id, tool_history=[])
+        except Exception:  # noqa: BLE001
+            log.warning("Failed to store knowledge", exc_info=True)
     log.info("native-loop: %d tool-calls fired %s, %dB answer",
              len(_fired), _fired[:8], len(_ans))
     if streaming:
@@ -913,7 +931,7 @@ async def _respond_native_loop_direct(
 async def _respond_local_state(
     refined: Optional[dict], *, streaming: bool, chat_id: str, model: str,
     session_id: Optional[str], last_user_text: str, persona_system: str = "",
-    emit=None, grounding_override: Optional[str] = None,
+    emit=None, grounding_override: Optional[str] = None, persist_response: bool = True,
 ) -> Any:
     """Deterministic local-state answer: run the local READ tools, enumerate
     faithfully, STOP. Returns a Response, or None to fall through to the normal
@@ -931,7 +949,7 @@ async def _respond_local_state(
                         refined, streaming=False, chat_id=chat_id, model=model,
                         session_id=session_id, last_user_text=last_user_text,
                         persona_system=persona_system, emit=_lq.put_nowait,
-                        grounding_override=grounding_override)
+                        grounding_override=grounding_override, persist_response=persist_response)
                 except Exception as _e:  # noqa: BLE001
                     _holder["err"] = str(_e)
                 finally:
@@ -979,7 +997,7 @@ async def _respond_local_state(
                 session_id=session_id, last_user_text=last_user_text,
                 persona_system=persona_system,
                 messages=[{"role": "user", "content": last_user_text}],
-                request=None)
+                request=None, persist_response=persist_response)
             async for _chunk in _nl.body_iterator:
                 yield _chunk
         return StreamingResponse(_stream_ls(), media_type="text/event-stream")
@@ -1008,10 +1026,11 @@ async def _respond_local_state(
     answer = await _format_local_state(last_user_text, grounding, persona_system)
     if not answer:
         return None
-    _store_knowledge(query=last_user_text, answer=answer,
-                     session_id=session_id, tool_history=[])
-    _write_skill_md_fire(query=last_user_text, answer=answer,
-                         tool_history=[], session_id=session_id)
+    if persist_response:
+        _store_knowledge(query=last_user_text, answer=answer,
+                         session_id=session_id, tool_history=[])
+        _write_skill_md_fire(query=last_user_text, answer=answer,
+                             tool_history=[], session_id=session_id)
     return JSONResponse(content={
         "id": chat_id, "object": "chat.completion", "created": int(time.time()),
         "model": model,

@@ -3678,3 +3678,16 @@ Shared native application preflight and all dock/drawer/search call sites are LI
 ## 2026-10-30T21:17:44.738884+00:00 — mios-obs-camera-format-publication
 
 Native NV12 output replaces the I420 format unsupported by OBS32.1.1 PipeWire camera input. Real advertised format readiness gates idle capture; decoded timing normalized; readable sanitized client labels.72 regular/four source-preparation/two codec/seven native graph and consumer cases pass. LIVE 59e6e1fd9e0ed155d9fcd6fd30d754824cd49a2f7733f13ccee8999ea8eed1d2, idle listener-only update preserved current primary/apps/geometry. Physical OBS preview pending; unrelated audio/MIDI camera-dropdown filtering remains open. Evidence in mios-camera-obs-* under /var/lib/mios-build/rdp-delivery.
+
+## 2026-11-01 — mios-day0-startup
+
+Repair Day-0 startup contracts in isolated mios-day0-startup. Three registered
+review/implementation lanes independently verified gateway, model provisioning,
+and native readiness behavior. Changes cover strict Responses success/failure/
+incomplete events, parallel tool history, storage preference propagation, exact
+model readiness, verified serialized provisioning with retry-safe markers,
+global user presets, and operator identity projection. Existing root contributions
+remain outside this lane. Native configuration and unit projection tests, real
+offline preset enablement, provisioning controls, MCP tests, and SDK event
+validation provide the verification evidence. Full OCI build/boot validation and
+live activation are separate pending checks; no deployment or push performed.

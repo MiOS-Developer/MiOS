@@ -744,7 +744,8 @@ pub struct PrivilegedUnitsRoster {
 ///   * `${NAME}` outside Exec*= -- systemd would hand the daemon the literal;
 ///   * `${NAME:-default}` ANYWHERE -- systemd never expands it, Exec*= included;
 /// where NAME is `MIOS_PORTS_<key>` / `MIOS_PORT_<key>` ([ports].<key> +
-/// stack_id * 10000) or `MIOS_NETWORK_<key>` ([network].<key>). A bare `${NAME}`
+/// stack_id * 10000), `MIOS_NETWORK_<key>` ([network].<key>), or
+/// `MIOS_IDENTITY_USERNAME` ([identity].username). A bare `${NAME}`
 /// on an Exec*= line stays: that is a runtime reference systemd expands from
 /// the unit's environment. A name the SSOT does not declare is left as written,
 /// and `unexpandable_placeholders` turns what survives into a gate failure.
@@ -763,6 +764,11 @@ fn resolve_port_placeholders(key: &str, value: &str, ssot: Option<&toml::Value>)
         .unwrap_or(0)
         * 10000;
     let lookup = |name: &str| -> Option<String> {
+        if name == "MIOS_IDENTITY_USERNAME" {
+            let username = ssot.get("identity")?.get("username")?.as_str()?;
+            return (!username.trim().is_empty() && !username.chars().any(char::is_control))
+                .then(|| username.to_owned());
+        }
         if let Some(k) = name
             .strip_prefix("MIOS_PORTS_")
             .or_else(|| name.strip_prefix("MIOS_PORT_"))

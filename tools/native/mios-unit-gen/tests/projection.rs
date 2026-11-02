@@ -857,3 +857,27 @@ fn test_reimport_of_every_faithful_unit_round_trips() {
             .unwrap_or_else(|e| panic!("{name}: {e}"));
     }
 }
+
+#[test]
+fn launcher_condition_uses_the_configured_operator() {
+    for username in ["mios", "operator-custom"] {
+        let source = format!(
+            r#"[identity]
+username = "{username}"
+[user_units."mios-launcher.service".Unit]
+ConditionUser = "${{MIOS_IDENTITY_USERNAME}}"
+"#
+        );
+        let rendered = mios_unit_gen::render_user_units(&source).unwrap();
+        let unit = &rendered["mios-launcher.service"];
+        assert!(unit.contains(&format!("ConditionUser={username}\n")));
+        assert!(mios_unit_gen::unexpandable_placeholders(unit).is_empty());
+    }
+    let missing = r#"[user_units."mios-launcher.service".Unit]
+ConditionUser = "${MIOS_IDENTITY_USERNAME}"
+"#;
+    let rendered = mios_unit_gen::render_user_units(missing).unwrap();
+    assert!(
+        !mios_unit_gen::unexpandable_placeholders(&rendered["mios-launcher.service"]).is_empty()
+    );
+}

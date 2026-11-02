@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 from typing import Any, Dict, List
 from unittest import mock
@@ -1190,6 +1191,57 @@ class TestAgentCliCatalog(unittest.TestCase):
                     cred.startswith("sk-") or "secret" in cred.lower(),
                     f"Credential '{cred}' looks like a literal secret, not a variable name",
                 )
+
+
+class TestLaunchAgentReadiness(unittest.TestCase):
+    """A real launch must prove inference; local metadata needs no backend."""
+
+    def run_launch(self, arguments, *, ready=True, timeout=3):
+        server = _load_mios_mcp_server_module()
+        cfg = {"tools": [{"name": "local-agent", "kind": "native"}], "linux_prefix": "/fixture"}
+        exports = {"MIOS_AI_ENDPOINT": "http://localhost:8700/v1", "MIOS_AI_AGENT_MODEL": "brain"}
+        with mock.patch.object(server, "_agent_cli_config", return_value=cfg), \
+             mock.patch.object(server.mios_toml, "emit_exports", return_value=exports), \
+             mock.patch.object(server.mios_toml, "load_merged", return_value={"mcp": {"tmux": {"timeout_s": timeout}}}), \
+             mock.patch.object(server, "_project_agent_clients") as project, \
+             mock.patch.object(server.os, "access", return_value=True), \
+             mock.patch.object(server.subprocess, "run", return_value=types.SimpleNamespace(returncode=0 if ready else 2, stderr="inference unavailable")) as probe, \
+             mock.patch.object(server.subprocess, "call", return_value=0) as launch, \
+             mock.patch.object(sys, "argv", ["server", "--launch-agent", "local-agent", *arguments]), \
+             mock.patch.dict(os.environ, {}, clear=True):
+            try:
+                result = server.main()
+            except (RuntimeError, ValueError) as error:
+                result = error
+            return result, probe, launch, project
+
+    def test_launch_requires_completed_inference_and_configured_budget(self):
+        result, probe, launch, project = self.run_launch(["work"])
+        self.assertEqual(result, 0)
+        self.assertIn("--probe-inference", probe.call_args.args[0])
+        self.assertEqual(probe.call_args.kwargs["timeout"], 13)
+        project.assert_called_once()
+        launch.assert_called_once_with(["/fixture/native/local-agent", "work"])
+
+    def test_unavailable_inference_does_not_launch_or_project(self):
+        result, probe, launch, project = self.run_launch(["work"], ready=False)
+        self.assertIsInstance(result, RuntimeError)
+        launch.assert_not_called()
+        project.assert_not_called()
+
+    def test_metadata_commands_do_not_need_or_invoke_inference(self):
+        for argument in ("--version", "-v", "--help", "-h"):
+            result, probe, launch, project = self.run_launch([argument])
+            self.assertEqual(result, 0)
+            probe.assert_not_called()
+            project.assert_not_called()
+            launch.assert_called_once()
+
+    def test_invalid_inference_budget_fails_before_probe(self):
+        result, probe, launch, project = self.run_launch(["work"], timeout=0)
+        self.assertIsInstance(result, ValueError)
+        probe.assert_not_called()
+        launch.assert_not_called()
 
 
 class TestNestedWorkflowDynamicResolution(unittest.IsolatedAsyncioTestCase):

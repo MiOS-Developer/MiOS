@@ -32,7 +32,7 @@ Documentation=man:mios-launcher-daemon
 # exactly ONE instance owns the socket. ('mios' = MIOS_IDENTITY_USERNAME, the operator;
 # render from MIOS_IDENTITY_USERNAME if that default ever changes.) Operator-hit
 # 2026-06-06: multi-broker invisible launches recurring after WSL restarts.
-ConditionUser=mios
+ConditionUser=user
 
 [Service]
 Type=simple

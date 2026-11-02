@@ -129,7 +129,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-luks-rotate.timer` | `usr/lib/systemd/system` | Monthly Automated LUKS2 Disk Encryption Key Rotation Timer |
 | `mios-mcp.service` | `usr/lib/systemd/system` | MiOS' Agent Context Service (MCP) |
 | `mios-mdns-mesh.service` | `usr/lib/systemd/system` | MiOS Zero-Configuration mDNS Peer Discovery & WireGuard Peering Daemon |
-| `mios-models-firstboot.service` | `usr/lib/systemd/system` | First-boot Large-model Provisioner |
+| `mios-models-firstboot.service` | `usr/lib/systemd/system` | First-boot model provisioner |
+| `mios-models-firstboot.timer` | `usr/lib/systemd/system` | Retry first-boot model provisioning |
 | `mios-mok-enroll.service` | `usr/lib/systemd/system` | MiOS' first-boot MOK enrollment for Secure Boot UKI trust |
 | `mios-node.container` | `usr/share/containers/systemd` | MiOS' Distributed Edge Micro-Node Quadlet Service |
 | `mios-node.service` | `usr/lib/systemd/system` | MiOS ('My OS') Distributed Edge Micro-Node Runtime Daemon |
@@ -179,6 +180,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-skills-miner.service` | `usr/lib/systemd/system` | MiOS' Phase C.2 Sequential Pattern Mining over tool_call history |
 | `mios-skills-miner.timer` | `usr/lib/systemd/system` | MiOS' Phase C.2 skill-miner cadence (sequential pattern mining) |
 | `mios-sriov-init.service` | `usr/lib/systemd/system` | MiOS' Universal SR-IOV Initialization |
+| `mios-steam-bridge.service` | `usr/lib/systemd/user` | MiOS Steam Notification Bridge |
 | `mios-suggestion-refresh.service` | `usr/lib/systemd/system` | MiOS' starter-chip refresh (revolving suggestions) |
 | `mios-suggestion-refresh.timer` | `usr/lib/systemd/system` | MiOS' starter-chip refresh cadence |
 | `mios-swarm-pack-firstboot.service` | `usr/lib/systemd/system` | MiOS' swarm small-model pack arming (gpu_profile=swarm only) |
@@ -230,5 +232,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (222 unit(s)) -->
+<!-- derived from tracked unit files (224 unit(s)) -->
 <!-- /MIOS-GEN:units -->

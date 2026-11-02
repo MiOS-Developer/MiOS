@@ -128,7 +128,6 @@ drift = [
   "mios-adguard-firstboot.service",
   "mios-agent-pipe.service",
   "mios-agents.service",
-  "mios-ai-firstboot.service",
   "mios-ai-firstboot.timer",
   "mios-aios-refresh.timer",
   "mios-bound-images-firstboot.service",
@@ -160,7 +159,6 @@ drift = [
   "mios-k3s-worker.target",
   "mios-libexec-perms.path",
   "mios-mcp.service",
-  "mios-models-firstboot.service",
   "mios-opencode-gateway.service",
   "mios-pgvector-backup.service",
   "mios-pgvector-backup.timer",
@@ -780,7 +778,7 @@ comment = "# AI-hint: Memory floor for the login session scope that holds the pr
 MemoryLow = "4G"
 
 [units."user@.service.d/10-mios-memory.conf".Service]
-comment = "# AI-hint: Memory floor for the user manager (shell, portals, apps); its children share it through memory_recursiveprot.\n# AI-related: usr/share/mios/mios.toml, mios-shell.service.d/10-mios-memory.conf"
+comment = "# AI-hint: Memory floor for the user manager (shell, portals, apps); its children share it through memory_recursiveprot.\n# AI-related: usr/share/mios/mios.toml, usr/lib/systemd/user/mios-shell.service.d/10-mios-memory.conf"
 MemoryLow = "6G"
 
 [units."mios-gpu-pv-detect.service".Unit]
@@ -855,7 +853,7 @@ comment3 = "# Retry is owned by mios-ai-firstboot.timer (OnBootSec + OnUnitInact
 
 [units."mios-ai-firstboot.service".Service]
 Type = "oneshot"
-RemainAfterExit = "yes"
+RemainAfterExit = "no"
 comment = "# Cap a hung fetch (multi-GB model download) at 10min so it can't wedge the unit\n# forever; the timer re-fires the run afterwards. (Was 2400s.)"
 TimeoutStartSec = "1800"
 EnvironmentFile = "-/etc/mios/install.env"
@@ -931,7 +929,8 @@ WantedBy = "multi-user.target"
 
 
 [units."mios-models-firstboot.service".Unit]
-Description = "First-boot Large-model Provisioner"
+comment = "# AI-hint: Provision and verify the layered Day-0 light-lane fleet and optional models; retry incomplete downloads through the timer.\n# AI-related: /usr/libexec/mios/mios-models-firstboot, mios-models-firstboot.timer"
+Description = "First-boot model provisioner"
 After = "network-online.target"
 Wants = "network-online.target"
 ConditionPathExists = "!/var/lib/mios/.models-firstboot-done"
@@ -939,14 +938,23 @@ ConditionPathExists = "!/var/lib/mios/.models-firstboot-done"
 [units."mios-models-firstboot.service".Service]
 Type = "oneshot"
 ExecStart = "/usr/libexec/mios/mios-models-firstboot"
-RemainAfterExit = "yes"
 TimeoutStartSec = "10800"
-comment = "# Degrade-open: never block boot on a failed pull"
-SuccessExitStatus = "0 1 2 3"
 
 [units."mios-models-firstboot.service".Install]
 WantedBy = "multi-user.target"
 
+[units."mios-models-firstboot.timer".Unit]
+comment = "# AI-hint: Retry incomplete verified Day-0 model provisioning without blocking boot.\n# AI-related: mios-models-firstboot.service, /var/lib/mios/.models-firstboot-done"
+Description = "Retry first-boot model provisioning"
+ConditionPathExists = "!/var/lib/mios/.models-firstboot-done"
+
+[units."mios-models-firstboot.timer".Timer]
+OnBootSec = "2min"
+OnUnitInactiveSec = "10min"
+Unit = "mios-models-firstboot.service"
+
+[units."mios-models-firstboot.timer".Install]
+WantedBy = "timers.target"
 
 [units."mios-shell-session-gc.service".Unit]
 comment = "# AI-hint: SHELL-01 idle reaper for the persistent PTY substrate -- kills tmux sessions idle past [shell_session].idle_s so a long-lived shell plane cannot accumulate unbounded state.\n# AI-related: /usr/libexec/mios/mios-shell-session, mios-shell-session-gc.timer, /usr/share/mios/mios.toml [shell_session]"
@@ -19174,7 +19182,7 @@ WantedBy = "mios-desktop.target"
 # GTK org.gtk.Menus / dbusmenu menus to $XDG_RUNTIME_DIR/mios/appmenu.json for the top bar and owns
 # com.canonical.AppMenu.Registrar.
 [user_units."mios-shell.service.d/10-mios-memory.conf".Service]
-comment = "# AI-hint: Memory floor for the desktop shell so agent processes in app.slice cannot claim its share of the user manager's protection.\n# AI-related: usr/share/mios/mios.toml, user@.service.d/10-mios-memory.conf"
+comment = "# AI-hint: Memory floor for the desktop shell so agent processes in app.slice cannot claim its share of the user manager's protection.\n# AI-related: usr/share/mios/mios.toml, usr/lib/systemd/system/user@.service.d/10-mios-memory.conf"
 MemoryLow = "2G"
 
 [user_units."mios-appmenu.service".Unit]
@@ -19585,3 +19593,22 @@ actions = [{id="window",name="Open as a window",exec="/usr/bin/mios-gen nested-s
 # AI-hint: Native pinned PiP maximize/fullscreen restores the previous pin and geometry.
 [desktop.hyprland.config.binds]
 allow_pin_fullscreen = true
+
+[user_units."mios-launcher.service".Unit]
+comment = "# AI-hint: Systemd user unit for the mios-launcher-daemon; acts as a privileged broker that listens on a Unix socket to execute GUI applications with the operator's environment (WSLg/Wayland) for agents lacking execution rights.\n# AI-doc: usr/share/doc/mios/manual/user.md"
+comment_1 = "# /usr/lib/systemd/user/mios-launcher.service\n#\n# Operator-side launcher broker. Runs in user@<uid>.service so it\n# inherits the operator's WSLg env (WAYLAND_DISPLAY,\n# WSL2_GUI_APPS_ENABLED=1, WSL_INTEROP, DBUS_SESSION_BUS_ADDRESS,\n# the live wayland socket on /run/user/<uid>/wayland-0). Listens on\n# a unix socket the agent (mios-hermes) can write launch requests\n# to, dispatching them as the operator with the right environment.\n#\n# Why this exists: mios-hermes (uid 820) cannot exec\n# /mnt/c/Windows/System32/*.exe (mode 0544 owned by mios:mios via\n# WSL metadata; even root chmod fails because Windows ACL blocks\n# the xattr write). The broker is the operator's standing service\n# that DOES have exec access; the agent posts launch requests to\n# its socket from any context.\n#\n# Operator directive 2026-05-15: \"MiOS-Agents should be able to do\n# this all again!! FIX!!! JUST CREATE universal Launching tools/\n# skills for launching applications anywhere in any environment(s)\n# (cross-platform)\"."
+Description = "'MiOS' launcher broker (operator-side)"
+Documentation = 'man:mios-launcher-daemon'
+comment_2 = "#\n# Run ONLY in the OPERATOR's user manager. The broker binds the shared\n# /run/mios-launcher/launcher.sock; if root's (uid 0) or a second user's\n# (uid 1000) user manager ALSO starts it they contend for that socket, and\n# whichever wins launches GUI apps in the WRONG session (root -> invisible,\n# then the window dies). ConditionUser gates the broker to the operator so\n# exactly ONE instance owns the socket. ('mios' = MIOS_IDENTITY_USERNAME, the operator;\n# render from MIOS_IDENTITY_USERNAME if that default ever changes.) Operator-hit\n# 2026-06-06: multi-broker invisible launches recurring after WSL restarts."
+ConditionUser = "${MIOS_IDENTITY_USERNAME}"
+
+[user_units."mios-launcher.service".Service]
+Type = 'simple'
+comment_1 = "# mios-launch + the verbs it shells to (flatpak-launch, mios-gui, mios-os-control)\n# live in /usr/libexec/mios, which is NOT on the default systemd-user PATH -- so the\n# broker got \"mios-launch: command not found\" (exit 127) and EVERY app launch failed\n# (operator 2026-06-05 \"open epiphany\"). Put libexec + the mios shim dir on PATH."
+Environment = 'PATH=/usr/libexec/mios:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin'
+ExecStart = '/usr/libexec/mios/mios-launcher-daemon'
+Restart = 'on-failure'
+RestartSec = '2s'
+
+[user_units."mios-launcher.service".Install]
+WantedBy = 'default.target'
