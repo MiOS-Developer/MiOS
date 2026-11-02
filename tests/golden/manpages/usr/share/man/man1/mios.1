@@ -1,0 +1,25 @@
+.TH MIOS 1 "" "MiOS 0.3.0" "MiOS Manual"
+.SH NAME
+mios \- the MiOS verb dispatcher
+.SH SYNOPSIS
+.B mios
+.I verb
+.SH DESCRIPTION
+MiOS exposes its capabilities as verbs. Every verb below is declared
+in the single source of truth and has its own page: run
+.B man mios\-verb
+for any of them.
+.SH VERBS
+.TP
+.B verify
+Verify the Day\-0 image.
+.SH FILES
+.TP
+.I /usr/share/mios/mios.toml
+The single source of truth.
+.TP
+.I /usr/share/doc/mios/manual/
+The distilled prose manual.
+.SH SEE ALSO
+.BR mios.toml (5),
+.BR mios (7)

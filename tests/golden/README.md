@@ -269,14 +269,20 @@ $ mios-gen render-globals --check
 
 ### render-manpages
 
+Image manpages are generated during the build and are not tracked in a clean
+checkout. This case uses the fixed input and five committed expected pages in
+`manpages/`, generated with the canonical renderer and reviewed together. Tests
+compare those bytes without regenerating the fixture. The fixture includes a
+verb, variant naming, explicit smoke-page coverage, version, and manual prose.
+
 ```console
 $ mios-gen render-manpages --root [CWD]/nonexistent --check
 ? 1
 Error: generate-render-manpages: render-manpages: [CWD]/nonexistent/usr/share/mios/mios.toml could not be read: [..]
 
-$ mios-gen render-manpages --check --validate
-[render-manpages] [..] page(s) rendered and validated
-[render-manpages] [..] page(s) verified
+$ mios-gen render-manpages --root [CWD]/tests/golden/manpages --check --validate
+[render-manpages] 5 page(s) rendered and validated
+[render-manpages] 5 page(s) verified
 ```
 
 ### render-ports

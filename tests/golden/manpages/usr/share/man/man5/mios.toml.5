@@ -1,0 +1,28 @@
+.TH MIOS.TOML 5 "" "MiOS 0.3.0" "MiOS Configuration"
+.SH NAME
+mios.toml \- the MiOS single source of truth
+.SH DESCRIPTION
+Every MiOS surface is projected from this file: units, ports, themes,
+container definitions, verbs and the installers. Editing a
+projection by hand is undone by the next build; edit the table
+here instead.
+.SH SECTIONS
+.TP
+.B [testing]
+table with 1 key(s)
+.TP
+.B [variants]
+table with 2 key(s)
+.TP
+.B [verbs]
+table with 1 key(s)
+.SH FILES
+.TP
+.I /usr/share/mios/mios.toml
+The vendor copy that ships in the image.
+.TP
+.I /etc/mios/mios.toml
+Host overrides, layered over the vendor copy.
+.SH SEE ALSO
+.BR mios (1),
+.BR mios (7)

@@ -1,0 +1,24 @@
+# AI-hint: Fixed manpage golden input; changes require deliberate expected-page review.
+# AI-related: tests/golden/README.md
+[verbs.verify]
+description = "Verify the Day-0 image."
+surface = "host"
+
+[variants.entries.desktop]
+title = "MiOS Desktop"
+status = "partial"
+summary = "A fixed fixture for the immutable workstation."
+target = "workstation"
+
+[variants.naming]
+title_pattern = "MiOS Purpose"
+key_pattern = "mios-purpose"
+
+[testing.smoke_components]
+manpages = [
+  "usr/share/man/man1/mios.1",
+  "usr/share/man/man1/mios-verify.1",
+  "usr/share/man/man5/mios.toml.5",
+  "usr/share/man/man7/mios.7",
+  "usr/share/man/man7/mios-variants.7",
+]
