@@ -391,3 +391,21 @@ disable mios-kvmfr-load.service
 disable mios-pg-replica.service
 disable mios-waydroid-init.service
 disable mios-wol-proxy.service
+
+# Explicit decisions for boot diagnostics, native desktop policy and on-demand helpers.
+# Read-only framebuffer/DRM evidence for each boot.
+enable mios-boot-display-report.service
+# Apply the SSOT console palette before getty and the display manager.
+enable mios-console-theme.service
+# Continuous FHS/topology synchronization is core runtime infrastructure.
+enable mios-fhs-sync.service
+# Reconcile [remote.rdp] policy; disabled RDP closes stale openings as well.
+enable mios-rdp-firewall.service
+# The SSOT attaches the enforcement plane to multi-user/default; its unit conditions
+# keep unsupported WSL/container substrates inert.
+enable mios-enforcer.service
+# Removable-media upgrades and automatic reboot require an explicit operator action.
+disable mios-offline-upgrade.service
+# Privileged helpers are instantiated by the RDP sockets, never enabled at boot.
+disable mios-rdp-priv@.service
+disable mios-rdp-usb@.service

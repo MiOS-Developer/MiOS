@@ -4562,7 +4562,13 @@ def check_unit_dependency_closure() -> int:
         'pacemaker.service', 'k3s-agent.service', 'cryptsetup.target', 'redis.service',
         'sysinit.target', 'greenboot-healthcheck.service', 'ostree-remount.service',
         'ostree-prepare-root.service', 'waydroid-container.service', 'wslg-x11.service',
-        'wslg-wayland.service', 'ceph.target', 'slices.target', 'graphical-session.target'
+        'wslg-wayland.service', 'ceph.target', 'slices.target', 'graphical-session.target',
+        # Fedora greetd owns greetd.service; preserve greeter ordering without
+        # treating arbitrary display-manager service names as external units.
+        'greetd.service',
+        # Fedora systemd owns getty-pre.target and modprobe@.service. Only the
+        # cdc_acm instance used by ventulusd is registered, not every modprobe name.
+        'getty-pre.target', 'modprobe@cdc_acm.service'
     }
     known_units.update(well_known)
 

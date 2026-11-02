@@ -4551,6 +4551,27 @@ UNIT
     rm -f "$probe"
     _neg_gate check_unit_dependency_closure \
         || die "check_unit_dependency_closure failed after restoration"
+
+    # Exact external registrations resolve real package units, not spelling variants
+    # or arbitrary instances of the module-loading template.
+    printf '[Unit]\nAfter=greetd.service getty-pre.target modprobe@cdc_acm.service\n' > "$probe"
+    _neg_gate check_unit_dependency_closure \
+        || { rm -f "$probe"; die "registered external dependencies failed: $_NEG_GATE_OUT"; }
+    local bad_dependency
+    for bad_dependency in "greetd-""missing.service" "getty-pre-""missing.target" "modprobe@cdc_acm_""missing.service"; do
+        printf '[Unit]\nAfter=%s\n' "$bad_dependency" > "$probe"
+        if _neg_gate check_unit_dependency_closure; then
+            rm -f "$probe"
+            die "check_unit_dependency_closure accepted unregistered $bad_dependency"
+        fi
+        if [[ "$_NEG_GATE_OUT" != *"$bad_dependency"* ]]; then
+            rm -f "$probe"
+            die "dependency failure omitted $bad_dependency: $_NEG_GATE_OUT"
+        fi
+    done
+    rm -f "$probe"
+    _neg_gate check_unit_dependency_closure \
+        || die "check_unit_dependency_closure failed after external-unit probes"
     log "check_unit_dependency_closure negative test passed"
 }
 
