@@ -2556,8 +2556,11 @@ def main() -> int:
         os.environ.setdefault("MIOS_AI_ENDPOINT", endpoint)
         os.environ.setdefault("MIOS_AI_GATEWAY_MODEL", exports["MIOS_AI_AGENT_MODEL"])
         inspection = len(sys.argv[3:]) == 1 and sys.argv[3] in {"--version", "-v", "--help", "-h"}
-        if not inspection:
-            # Do not launch a worker against an absent route or a different model.
+        backend = row.get("runtime_backend", "cloud" if row.get("kind") == "cloud" else "local")
+        if not isinstance(backend, str) or backend not in {"local", "cloud"}:
+            raise ValueError("Agent runtime_backend must be local or cloud")
+        if not inspection and backend == "local":
+            # Do not launch a local worker against an absent route or a different model.
             # A model catalog is not proof that the Day-0 backend can answer.
             # Use the existing bounded worker budget; never start services here.
             readiness_timeout = mios_toml.load_merged()["mcp"]["tmux"]["timeout_s"]
@@ -2567,8 +2570,9 @@ def main() -> int:
                                        capture_output=True, text=True, timeout=readiness_timeout + 10)
             if readiness.returncode:
                 raise RuntimeError(readiness.stderr.strip() or "Local AI route is not ready")
-        os.environ.setdefault("OPENAI_BASE_URL", endpoint)
-        os.environ.setdefault("OPENAI_API_BASE", endpoint)
+        if backend == "local":
+            os.environ.setdefault("OPENAI_BASE_URL", endpoint)
+            os.environ.setdefault("OPENAI_API_BASE", endpoint)
         ui = None
         if os.environ.get("TMUX") and os.environ.get("TMUX_PANE"):
             ui = _human_tmux_context(os.environ["TMUX"].rsplit(",", 2)[0], os.environ["TMUX_PANE"])

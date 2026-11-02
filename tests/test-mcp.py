@@ -1196,9 +1196,12 @@ class TestAgentCliCatalog(unittest.TestCase):
 class TestLaunchAgentReadiness(unittest.TestCase):
     """A real launch must prove inference; local metadata needs no backend."""
 
-    def run_launch(self, arguments, *, ready=True, timeout=3):
+    def run_launch(self, arguments, *, ready=True, timeout=3, backend=None, kind="native", environment=None):
         server = _load_mios_mcp_server_module()
-        cfg = {"tools": [{"name": "local-agent", "kind": "native"}], "linux_prefix": "/fixture"}
+        row = {"name": "local-agent", "kind": kind}
+        if backend is not None:
+            row["runtime_backend"] = backend
+        cfg = {"tools": [row], "linux_prefix": "/fixture"}
         exports = {"MIOS_AI_ENDPOINT": "http://localhost:8700/v1", "MIOS_AI_AGENT_MODEL": "brain"}
         with mock.patch.object(server, "_agent_cli_config", return_value=cfg), \
              mock.patch.object(server.mios_toml, "emit_exports", return_value=exports), \
@@ -1208,12 +1211,40 @@ class TestLaunchAgentReadiness(unittest.TestCase):
              mock.patch.object(server.subprocess, "run", return_value=types.SimpleNamespace(returncode=0 if ready else 2, stderr="inference unavailable")) as probe, \
              mock.patch.object(server.subprocess, "call", return_value=0) as launch, \
              mock.patch.object(sys, "argv", ["server", "--launch-agent", "local-agent", *arguments]), \
-             mock.patch.dict(os.environ, {}, clear=True):
+             mock.patch.dict(os.environ, environment or {}, clear=True):
             try:
                 result = server.main()
             except (RuntimeError, ValueError) as error:
                 result = error
+            launch.environment = dict(os.environ)
             return result, probe, launch, project
+
+    def test_cloud_runtime_launches_without_local_inference(self):
+        result, probe, launch, project = self.run_launch(["work"], backend="cloud", ready=False)
+        self.assertEqual(result, 0)
+        probe.assert_not_called()
+        project.assert_called_once()
+        launch.assert_called_once_with(["/fixture/native/local-agent", "work"])
+        self.assertNotIn("OPENAI_BASE_URL", launch.environment)
+        self.assertNotIn("OPENAI_API_BASE", launch.environment)
+
+    def test_cloud_runtime_preserves_operator_endpoint(self):
+        endpoint = "https://operator.invalid/v1"
+        result, probe, launch, project = self.run_launch(
+            ["work"], backend="cloud", ready=False, environment={"OPENAI_BASE_URL": endpoint})
+        self.assertEqual(result, 0)
+        probe.assert_not_called()
+        self.assertEqual(launch.environment["OPENAI_BASE_URL"], endpoint)
+        self.assertNotIn("OPENAI_API_BASE", launch.environment)
+
+    def test_invalid_runtime_backend_fails_before_probe_or_launch(self):
+        for backend in ("unknown", 1, []):
+            with self.subTest(backend=backend):
+                result, probe, launch, project = self.run_launch(["work"], backend=backend)
+                self.assertIsInstance(result, ValueError)
+                probe.assert_not_called()
+                launch.assert_not_called()
+                project.assert_not_called()
 
     def test_launch_requires_completed_inference_and_configured_budget(self):
         result, probe, launch, project = self.run_launch(["work"])
