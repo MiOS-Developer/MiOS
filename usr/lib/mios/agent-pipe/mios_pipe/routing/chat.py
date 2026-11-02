@@ -661,7 +661,8 @@ async def chat_completions_logic(request: Request) -> Any:
         messages = filtered_messages
         body["messages"] = messages
 
-    if str(body.get("tool_choice") or "").strip().lower() == "none":
+    _tools_disabled = str(body.get("tool_choice") or "").strip().lower() == "none"
+    if _tools_disabled:
         body.pop("tools", None)
         body.pop("tool_choice", None)
         log.info("tool_choice: 'none' -> stripped tool definitions; 0 tool tokens for plain chat")
@@ -896,7 +897,7 @@ async def chat_completions_logic(request: Request) -> Any:
     _client_env_var.set(_client_env(body, request.headers))
     _rok_hdr = (request.headers.get("x-mios-reasoning-ok") or "").strip().lower()
     _reasoning_ok = None if not _rok_hdr else (_rok_hdr not in {"false", "0", "no"})
-    _routed_domain_var.set(await _route_domain(last_user_text))
+    _routed_domain_var.set(None)
     _mflags = body.get("mios_flags")
     _mflags = _mflags if isinstance(_mflags, dict) else {}
     _force_council = bool(_mflags.get("force_council"))
@@ -930,27 +931,26 @@ async def chat_completions_logic(request: Request) -> Any:
         log.info("vision: image turn -> %s", VISION_MODEL)
         return await _vision_complete(body, streaming, chat_id, model)
 
-    if CLIENT_TOOLS_PASSTHROUGH and _has_client_tools(body):
-        if _INGRESS_KEY:
-            _auth = (request.headers.get("authorization") or "")
-            if _auth.removeprefix("Bearer ").strip() != _INGRESS_KEY:
-                return JSONResponse(
-                    content={"error": {"message": "unauthorized",
-                                       "type": "invalid_request_error"}},
-                    status_code=401)
-        _ct_user = ""
-        for _m in reversed(body.get("messages") or []):
-            if isinstance(_m, dict) and _m.get("role") == "user" and isinstance(_m.get("content"), str):
-                _ct_user = _m["content"]
-                break
-        _ct_det = _deterministic_action_route(_ct_user) if _ct_user else None
-        if _ct_det and str(_ct_det.get("tool") or "") in _FASTPATH_VERBS:
-            log.info("client-tools: deterministic OS-action %s -> SERVER-SIDE "
-                     "fast-path (bypassing client-tools hybrid)", _ct_det["tool"])
-            return await _respond_os_control(
-                _ct_det["tool"], _ct_det.get("args") or {}, _ct_det,
-                streaming=streaming, chat_id=chat_id, model=model,
-                session_id=None, last_user_text=_ct_user, persona_system="")
+    _client_tools_turn = CLIENT_TOOLS_PASSTHROUGH and _has_client_tools(body)
+    if _client_tools_turn and _INGRESS_KEY:
+        _auth = request.headers.get("authorization") or ""
+        if _auth.removeprefix("Bearer ").strip() != _INGRESS_KEY:
+            return JSONResponse(content={"error": {"message": "unauthorized",
+                                "type": "invalid_request_error"}}, status_code=401)
+    # Reuse the conservative SSOT parser before route/refine inference. The
+    # existing dispatcher still enforces permissions, quotas and desktop policy.
+    _exact_action = None
+    if not (_incoming_turn or _force_council or _force_delegate
+            or _autonomous or replay_mode or _tools_disabled):
+        _exact_action = _deterministic_action_route(last_user_text)
+    if _exact_action and str(_exact_action.get("tool") or "") in _FASTPATH_VERBS:
+        return await _respond_os_control(
+            _exact_action["tool"], _exact_action.get("args") or {}, _exact_action,
+            streaming=streaming, chat_id=chat_id, model=model, session_id=None,
+            last_user_text=last_user_text, persona_system=_persona_system)
+    _routed_domain_var.set(await _route_domain(last_user_text))
+    if _client_tools_turn:
+        _ct_user = last_user_text
         if not _incoming_turn and _ct_user and _routed_domain_var.get(None) == "web":
             try:
                 _refined = await refine_intent(_ct_user)

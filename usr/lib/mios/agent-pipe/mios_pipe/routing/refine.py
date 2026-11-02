@@ -593,6 +593,10 @@ async def refine_intent(user_text: str,
                         on_token: Optional[Callable[[str, bool], Any]] = None) -> Optional[dict]:
     if not REFINE_ENABLED or not user_text or not user_text.strip():
         return None
+    deterministic = _deterministic_action_route(user_text)
+    if (deterministic and deterministic.get("tool") in _FASTPATH_VERBS
+            and deterministic.get("intent") == "dispatch"):
+        return deterministic
     agents_summary = "\n".join(
         f"  - {n}: role={c.get('role','?')} "
         f"strengths={','.join(c.get('strengths') or [])[:80]}"

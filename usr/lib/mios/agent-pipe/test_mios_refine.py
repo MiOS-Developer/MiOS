@@ -292,12 +292,35 @@ def t_critic_refine():
           _call(long_raw, {"act": "ask", "confidence": 0.95, "content": "  "})
           == long_raw)
 
+def t_deterministic_before_inference():
+    import importlib
+    from unittest.mock import patch
+    target = importlib.import_module("mios_pipe.routing.refine")
+    action = {"intent": "dispatch", "tool": "launch_app", "args": {"name": "OBS"},
+              "_deterministic": True}
+    with patch.object(target, "_deterministic_action_route", return_value=action), \
+         patch.object(_FAKE, "AsyncClient", side_effect=AssertionError("inference must not run")):
+        result = asyncio.run(mr.refine_intent("open OBS"))
+    check("refine exact parser runs before any model transport", result == action, repr(result))
+    factory = _FAKE.AsyncClient
+    calls = []
+    def counted(*a, **k):
+        calls.append(True)
+        return factory(*a, **k)
+    unregistered = dict(action, tool="delete_file")
+    with patch.object(target, "_deterministic_action_route", return_value=unregistered), \
+         patch.object(_FAKE, "AsyncClient", side_effect=counted):
+        _run("explain how to configure OBS", json.dumps({"intent": "chat", "reply": "normal path"}))
+    check("unregistered/destructive parser output cannot bypass inference", bool(calls))
+
+
 def main():
     _configure()
     t_salvage_corpus()
     t_refine_envelope()
     t_cutoffs_ssot()
     t_critic_refine()
+    t_deterministic_before_inference()
     print(f"\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

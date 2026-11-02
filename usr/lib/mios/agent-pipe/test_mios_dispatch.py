@@ -838,6 +838,58 @@ def test_prompt_injection_ssot_defaults():
     assert sec.get("provenance_taint") is True, f"expected true, got {sec.get('provenance_taint')}"
     print("[PASS] prompt-injection defenses ship in audit mode with provenance_taint = true (task_3563 / Q17)")
 
+def test_launcher_receipt_preserved_without_fabricated_verification():
+    import json
+    from unittest.mock import AsyncMock, patch
+    _base_configure()
+    mios_dispatch.configure(verb_catalog={"launch_app": {"cmd": "mios-launch {name!}"}})
+
+    async def run_case(code):
+        payload = {"exit_code": code, "stdout": "", "stderr": "fixture launcher diagnostic",
+                   "operator_context": {"id": "fixture", "platform": "linux",
+                                        "session_id": "fixture", "backend": "hyprland"}}
+        class BrokerSocket:
+            def __init__(self):
+                self.sent = False
+                self.closed = False
+            def settimeout(self, value):
+                pass
+            def connect(self, path):
+                assert path == "/nonexistent/launcher.sock"
+            def sendall(self, data):
+                assert data.startswith(b"CAPTURE_JSON: ")
+            def recv(self, size):
+                if self.sent:
+                    return b""
+                self.sent = True
+                return json.dumps(payload).encode()
+            def close(self):
+                self.closed = True
+        broker = BrokerSocket()
+        with patch.object(mios_dispatch.os.path, "exists", return_value=True), \
+             patch.object(mios_dispatch._socket, "socket", return_value=broker), \
+             patch.object(mios_dispatch, "_dispatch_pdp_reason", return_value=None), \
+             patch.object(mios_dispatch, "_dispatch_quota_reason", return_value=None), \
+             patch.object(mios_dispatch, "_validate_enum_args", return_value=None), \
+             patch.object(mios_dispatch, "_hitl_block_reason", return_value=None), \
+             patch.object(mios_dispatch, "_hitl_gate", new=AsyncMock(return_value=None)), \
+             patch.object(mios_dispatch, "_session_is_tainted", new=AsyncMock(return_value=(False, ""))), \
+             patch.object(mios_dispatch, "_sandbox_wrap_cmd", side_effect=lambda t,c,p,**k: (c,None)):
+            result = await mios_dispatch._dispatch_mios_verb_inner(
+                "launch_app", {"name": "OBS"}, session_id=None)
+        assert result["output"] == "", result
+        assert result["operator_context"] == payload["operator_context"], result
+        assert result["stderr"] == payload["stderr"], result
+        assert result["exit_code"] == code and result["success"] == (code == 0), result
+        assert broker.closed
+    for code in (0, 1, 126):
+        asyncio.run(run_case(code))
+    print("[PASS] launcher stdout/stderr/exit preserved; no invented window verification")
+
+
+test_launcher_receipt_preserved_without_fabricated_verification()
+
+
 def _run_all_folded_dispatch_suites():
     test_host_origin_middleware()
     test_socket_unit_loopback_only()

@@ -84,27 +84,34 @@ def main():
           m._window_delta_text(m._window_diff(before, before))
           == "no visible window change detected")
 
-    fired = {"success": True, "output": "launching org.gnome.Epiphany", "exit_code": 0}
+    destination = {"id": "fixture-windows", "platform": "windows",
+                   "session_id": "fixture", "backend": "win32"}
+    for snapshot in (before, after_opened, after_none):
+        snapshot["targets"] = {destination["id"]: destination}
+        for window in snapshot["windows"]:
+            window["_execution_target_id"] = destination["id"]
+    fired = {"success": True, "output": json.dumps(
+        {"execution_target": destination}), "exit_code": 0}
     verdict_ok = m._verify_os_action(
-        "open_app", {"app": "epiphany"}, fired, before, after_opened, d_open)
-    check("launch with a NEW window verifies TRUE (count-delta, name-agnostic)",
+        "open_app", {"app": "sample app"}, fired, before, after_opened, d_open)
+    check("launch verifies the matching window on its actual session",
           verdict_ok is True)
 
     d_none = m._window_diff(before, after_none)
     verdict_none = m._verify_os_action(
-        "open_app", {"app": "epiphany"}, fired, before, after_none, d_none)
+        "open_app", {"app": "sample app"}, fired, before, after_none, d_none)
     check("launch that fired but opened NO window verifies FALSE (anti-fabrication)",
           verdict_none is False,
           "exit-0 fire must NOT be claimed a success without a window")
 
     blind = {"ok": False, "count": 0, "windows": []}
     verdict_blind = m._verify_os_action(
-        "open_app", {"app": "epiphany"}, fired, blind, blind,
+        "open_app", {"app": "sample app"}, fired, blind, blind,
         m._window_diff(blind, blind))
     check("blind enumeration fails action verification (fail-closed)",
           verdict_blind is False)
 
-    close_res = {"success": True, "output": "", "exit_code": 0}
+    close_res = dict(fired)
     v_close = m._verify_os_action(
         "close_window", {"title": "Sample App"}, close_res,
         after_opened, before, m._window_diff(after_opened, before))
@@ -119,7 +126,7 @@ def main():
     v_tab = m._verify_os_action(
         "open_url", {"url": "https://example.com"}, tab_res,
         before, after_none, m._window_diff(before, after_none))
-    check("open_url verify is TRUE for already-running tab opens", v_tab is True)
+    check("tab receipt alone does not verify the destination window", v_tab is False)
 
     m.configure(
         fastpath_verbs=frozenset({"open_app", "schedule"}),
@@ -462,11 +469,202 @@ urllib.request.urlopen = open_response
             self.assertEqual(result.returncode, 1, result.stderr)
 
 
+class OSActionResponseContracts(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from unittest.mock import AsyncMock
+        _install_stubs()
+        self.m = importlib.import_module("mios_pipe.routing.oscontrol")
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.before = {"ok": True, "count": 1, "windows": [{"id": "shell", "title": "Terminal"}]}
+        self.after = {"ok": True, "count": 2, "windows": [
+            *self.before["windows"], {"id": "obs", "title": "OBS Studio"}]}
+        self.destination = {"id": "fixture-linux", "platform": "linux",
+                            "session_id": "fixture", "backend": "hyprland"}
+        for snapshot in (self.before, self.after):
+            snapshot["targets"] = {self.destination["id"]: self.destination}
+            for window in snapshot["windows"]:
+                window["_execution_target_id"] = self.destination["id"]
+        self.result = {"success": True, "exit_code": 0,
+                       "output": json.dumps({"dispatched": True, "confirmed": False,
+                                             "execution_target": self.destination}),
+                       "stderr": "dispatch accepted"}
+        self.dispatch = AsyncMock(return_value=self.result)
+        self.enumerate = AsyncMock(side_effect=[self.before, self.after])
+        self.polish, self.satisfaction = AsyncMock(return_value="invented success"), AsyncMock()
+        self.process = AsyncMock(return_value=True)
+        self.stack.enter_context(patch.multiple(self.m,
+            _OS_CONTROL_ACTION_VERBS=frozenset({"open_app", "focus_window", "close_window"}),
+            _LAUNCH_VERBS=frozenset({"open_app", "open_url"}), OS_CONTROL_LAUNCH_VERIFY_S=0,
+            dispatch_mios_verb=self.dispatch, _enumerate_windows=self.enumerate,
+            polish_response=self.polish, _inline_satisfaction_check=self.satisfaction,
+            _proc_present=self.process, _center_windows=AsyncMock(return_value=[]),
+            _conv_key_var=types.SimpleNamespace(get=lambda: None), _index_window_event=lambda *a: None,
+            _db_create=lambda *a, **k: "SQL", _db_post=lambda *a: None, _db_fire=lambda *a: None,
+            DCI_ENABLED=False, _loads_lenient=json.loads, _load_oscontrol_endpoints=lambda: [],
+            JSONResponse=lambda **k: types.SimpleNamespace(body=json.dumps(k["content"]).encode()),
+            StreamingResponse=lambda iterator, **k: types.SimpleNamespace(body_iterator=iterator),
+            _sse_chunk=lambda text, **k: text.encode(), _sse_done=lambda: b"",
+            _sse_status=lambda **k: b"", _sse_status_phase=lambda **k: b""))
+
+    async def respond(self, tool="open_app", streaming=False):
+        response = await self.m._respond_os_control(tool, {"name": "OBS"}, None,
+            streaming=streaming, chat_id="fixture", model="fixture", session_id=None,
+            last_user_text="open OBS")
+        if streaming:
+            return b"".join([chunk async for chunk in response.body_iterator]).decode()
+        return json.loads(response.body)["choices"][0]["message"]["content"]
+
+    def envelope(self, text):
+        return json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
+
+    async def test_failed_launcher_has_clear_result_without_model_or_process_fallback(self):
+        self.result.update(success=False, exit_code=1, stderr="MiOS launch: obsstudio")
+        text = await self.respond()
+        self.assertIn("I couldn't open OBS", text.split("<details", 1)[0])
+        envelope = self.envelope(text)
+        self.assertEqual(envelope["tool_result"], self.result)
+        self.assertFalse(envelope["window_change"]["verified"])
+        self.assertEqual(self.enumerate.await_count, 1)
+        self.polish.assert_not_awaited()
+        self.satisfaction.assert_not_awaited()
+        self.process.assert_not_awaited()
+
+    async def test_success_without_window_is_unverified_even_with_existing_process(self):
+        self.enumerate.side_effect = [{"ok": False, "count": 0, "windows": []}] * 2
+        text = await self.respond()
+        self.assertIn("couldn't verify its window", text.split("<details", 1)[0])
+        self.assertFalse(self.envelope(text)["window_change"]["verified"])
+        self.assertTrue(self.envelope(text)["tool_result"]["success"])
+        self.process.assert_not_awaited()
+        self.polish.assert_not_awaited()
+
+    async def test_verified_window_has_grounded_success_and_keeps_stderr(self):
+        text = await self.respond()
+        self.assertIn("OBS is open; its window was verified", text)
+        self.assertTrue(self.envelope(text)["window_change"]["verified"])
+        self.assertEqual(self.envelope(text)["tool_result"]["stderr"], "dispatch accepted")
+        self.polish.assert_not_awaited()
+        self.satisfaction.assert_not_awaited()
+
+    async def test_denied_focus_is_not_retried_or_converted_into_launch(self):
+        self.result.update(success=False, exit_code=126, stderr="human approval required")
+        text = await self.respond(tool="focus_window")
+        self.assertIn("failed", text.split("<details", 1)[0])
+        self.assertEqual(self.dispatch.await_count, 1)
+        self.assertEqual(self.dispatch.await_args.args[0], "focus_window")
+        self.assertEqual(self.envelope(text)["tool_result"]["exit_code"], 126)
+
+    async def test_streaming_failure_contains_human_failure(self):
+        self.result.update(success=False, exit_code=1)
+        text = await self.respond(streaming=True)
+        self.assertIn("I couldn't open OBS", text)
+        self.assertFalse(self.envelope(text)["window_change"]["verified"])
+
+    async def test_streaming_exception_does_not_claim_completion(self):
+        self.dispatch.side_effect = RuntimeError("fixture failure")
+        text = await self.respond(streaming=True)
+        self.assertIn("couldn't complete or verify", text)
+        self.assertNotIn("action completed", text)
+
+    async def test_failed_or_contradictory_command_cannot_verify_new_window(self):
+        for success in (False, True):
+            self.assertFalse(self.m._verify_os_action("open_app", {"name": "OBS"},
+                {"success": success, "exit_code": 1}, self.before, self.after,
+                self.m._window_diff(self.before, self.after)))
+
+    async def test_unrelated_session_cannot_verify_launch(self):
+        other = dict(self.destination, id="fixture-windows", platform="windows")
+        self.result["output"] = json.dumps({"execution_target": other})
+        text = await self.respond()
+        self.assertFalse(self.envelope(text)["window_change"]["verified"])
+        self.assertIn("couldn't verify", text.split("<details", 1)[0])
+        self.assertEqual(self.envelope(text)["window_change"]["after_count"], 0)
+
+    async def test_unrelated_app_on_same_session_does_not_verify_launch(self):
+        self.after["windows"][-1]["title"] = "Unrelated application"
+        text = await self.respond()
+        self.assertFalse(self.envelope(text)["window_change"]["verified"])
+        self.assertIn("couldn't verify", text.split("<details", 1)[0])
+
+    async def test_unverified_unrelated_window_is_not_recorded_or_centered(self):
+        self.after["windows"][-1]["title"] = "Unrelated application"
+        with patch.object(self.m, "_record_last_opened_window") as record:
+            await self.respond()
+        record.assert_not_called()
+        self.m._center_windows.assert_not_awaited()
+
+    async def test_native_probe_with_conflicting_operator_identity_is_unavailable(self):
+        other = dict(self.destination, session_id="different")
+        snapshot, _ = await self.snapshot({"success": True, "exit_code": 0,
+            "operator_context": other, "output": json.dumps({
+                "local": True, "execution_target": self.destination, "windows": []})})
+        self.assertFalse(snapshot["ok"])
+        self.assertIn("differs from its operator context", " ".join(snapshot["errors"]))
+
+    async def test_missing_destination_is_unverified_despite_new_local_window(self):
+        self.result["output"] = '{"dispatched":true,"confirmed":false}'
+        text = await self.respond()
+        self.assertFalse(self.envelope(text)["window_change"]["verified"])
+        self.assertIn("couldn't verify", text.split("<details", 1)[0])
+
+    async def test_same_target_id_with_different_session_is_unverified(self):
+        other = dict(self.destination, session_id="different")
+        self.result["output"] = json.dumps({"execution_target": other})
+        text = await self.respond()
+        self.assertFalse(self.envelope(text)["window_change"]["verified"])
+
+    async def snapshot(self, result):
+        self.stack.close()
+        from unittest.mock import AsyncMock
+        dispatch = AsyncMock(return_value=result)
+        with patch.object(self.m, "dispatch_mios_verb", dispatch), \
+             patch.object(self.m, "_loads_lenient", json.loads), \
+             patch.object(self.m, "_load_oscontrol_endpoints", return_value=[]), \
+             patch.object(self.m, "OS_CONTROL_ENUM_RETRY", 0), \
+             patch.object(self.m.os.path, "exists", return_value=False):
+            value = await self.m._enumerate_windows()
+        return value, dispatch
+
+    async def test_linux_probe_valid_empty_is_successful_without_retries(self):
+        snapshot, dispatch = await self.snapshot(
+            {"success": True, "exit_code": 0, "output": '{"windows":[]}'})
+        self.assertTrue(snapshot["ok"])
+        self.assertEqual(snapshot["count"], 0)
+        self.assertEqual([call.args[0] for call in dispatch.await_args_list], ["cu_window_list"])
+
+    async def test_native_probe_can_bind_its_authoritative_operator_context(self):
+        snapshot, _ = await self.snapshot({"success": True, "exit_code": 0,
+            "operator_context": self.destination,
+            "output": '{"local":true,"windows":[{"id":"obs","title":"OBS"}]}'})
+        self.assertEqual(snapshot["targets"], {self.destination["id"]: self.destination})
+
+    async def test_forwarded_probe_cannot_borrow_local_operator_identity(self):
+        snapshot, _ = await self.snapshot({"success": True, "exit_code": 0,
+            "operator_context": self.destination,
+            "output": '{"local":false,"windows":[{"id":"obs","title":"OBS"}]}'})
+        self.assertEqual(snapshot["targets"], {})
+        self.assertFalse(self.m._target_snapshot(snapshot, self.destination)["ok"])
+
+    async def test_probe_failure_preserves_diagnostic(self):
+        snapshot, _ = await self.snapshot({"success": False, "exit_code": 1,
+            "output": '{"windows":[]}', "stderr": "Wayland unavailable"})
+        self.assertFalse(snapshot["ok"])
+        self.assertIn("Wayland unavailable", " ".join(snapshot["errors"]))
+
+    async def test_native_window_identity_does_not_change_with_title(self):
+        before = {"windows": [{"id": "0x1", "title": "OBS", "_source": "linux"}]}
+        after = {"windows": [{"id": "0x1", "title": "OBS Studio", "_source": "linux"}]}
+        self.assertEqual(self.m._window_diff(before, after), {"opened": [], "closed": []})
+
+
 def _run_all_folded_oscontrol_suites():
     rc = _run_extra_launch()
     if rc not in (None, 0):
         sys.exit(f"Folded test suite failed: exit code {rc}")
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ClientContracts))
+    suite = unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(case)
+                                for case in (ClientContracts, OSActionResponseContracts)])
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful():
         sys.exit(1)
 

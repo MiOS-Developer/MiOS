@@ -100,8 +100,6 @@ _OSCONTROL_ENDPOINTS_CACHE: Optional[list] = None
 
 def _load_oscontrol_endpoints() -> list:
     global _OSCONTROL_ENDPOINTS_CACHE
-    if _OSCONTROL_ENDPOINTS_CACHE is not None:
-        return _OSCONTROL_ENDPOINTS_CACHE
     try:
         import mios_db_config
         sec = mios_db_config.section(None, "os_control")
@@ -134,86 +132,114 @@ def _load_oscontrol_endpoints() -> list:
         _OSCONTROL_ENDPOINTS_CACHE = []
         return []
 
-async def _remote_enumerate_windows_one(ep: dict,
-                                        timeout_s: float = 3.5) -> list:
-    """GET <url>/windows on one Windows-native executor + normalise the
-    result into the [{hwnd,title,proc,pid,x,y,w,h,_source}] shape the
-    rest of the verify path expects. Errors -> []."""
-    url = ep.get("url") or ""
-    if not url:
-        return []
+def _execution_target(data: dict) -> Optional[dict]:
+    """Only an authoritative receipt can identify the actual destination session."""
+    target = data.get("execution_target") if isinstance(data, dict) else None
+    keys = ("id", "platform", "session_id", "backend")
+    if not isinstance(target, dict) or not all(
+            isinstance(target.get(key), str) and target[key].strip() for key in keys):
+        return None
+    return {key: target[key].strip() for key in keys}
+
+def _receipt_target(result: dict) -> Optional[dict]:
+    try:
+        return _execution_target(json.loads(result.get("output") or ""))
+    except (TypeError, ValueError):
+        return None
+
+def _target_snapshot(snapshot: dict, target: Optional[dict]) -> dict:
+    snapshot = snapshot or {}
+    known = (snapshot.get("targets") or {}).get((target or {}).get("id"))
+    available = bool(snapshot.get("ok") and target and known == target)
+    windows = [window for window in snapshot.get("windows") or []
+               if available and window.get("_execution_target_id") == target["id"]]
+    errors = list(snapshot.get("errors") or [])
+    if not available:
+        errors.append("The launch destination session could not be matched to this window probe")
+    return dict(snapshot, ok=available, count=len(windows), windows=windows, errors=errors)
+
+def _probe_windows(data: dict, source: str) -> dict:
+    if (not isinstance(data, dict) or not isinstance(data.get("windows"), list)
+            or data.get("ok") is False or data.get("success") is False):
+        raise ValueError("window probe returned no successful windows array")
+    target = _execution_target(data)
+    return {"ok": True, "execution_target": target,
+            "windows": [dict(window, _source=source,
+                             _execution_target_id=(target or {}).get("id"))
+                        for window in data["windows"] if isinstance(window, dict)]}
+
+async def _remote_enumerate_windows_one(ep: dict, timeout_s: float = 3.5) -> dict:
+    """Keep endpoint failures distinct from a valid empty desktop snapshot."""
     label = ep.get("label") or "remote"
     try:
         client = await _get_client()
-        r = await client.get(url + "/windows", timeout=timeout_s)
-        if r.status_code != 200:
-            return []
-        d = r.json()
-    except Exception as e:  # noqa: BLE001
-        log.debug("remote window probe %s failed: %s", label, e)
-        return []
-    wins = (d or {}).get("windows") or []
-    if not isinstance(wins, list):
-        return []
-    norm: list = []
-    for w in wins:
-        if not isinstance(w, dict):
-            continue
-        wcopy = dict(w)
-        wcopy.setdefault("_source", label)
-        norm.append(wcopy)
-    return norm
+        response = await client.get((ep.get("url") or "") + "/windows", timeout=timeout_s)
+        if response.status_code != 200:
+            raise ValueError(f"HTTP {response.status_code}")
+        return _probe_windows(response.json(), label)
+    except Exception as error:
+        log.debug("remote window probe %s failed: %s", label, error)
+        return {"ok": False, "windows": [], "error": f"{label}: {error}"}
 
 async def _enumerate_windows() -> dict:
-    async def _local() -> list:
+    async def _local(verb: str, source: str) -> dict:
         try:
-            res = await dispatch_mios_verb("list_windows", {})
-            raw = (res.get("output") or "").strip()
-            data = _loads_lenient(raw) if raw else {}
-            wins = data.get("windows") if isinstance(data, dict) else None
-            wins = wins if isinstance(wins, list) else []
-            out: list = []
-            for w in wins:
-                if isinstance(w, dict):
-                    wcopy = dict(w)
-                    wcopy.setdefault("_source", "wsl")
-                    out.append(wcopy)
-            return out
-        except Exception as e:  # noqa: BLE001
-            log.debug("local window enumerate failed: %s", e)
-            return []
+            result = await dispatch_mios_verb(verb, {})
+            if not _command_succeeded(result):
+                raise ValueError(result.get("stderr") or f"exit {result.get('exit_code')}")
+            data = _loads_lenient((result.get("output") or "").strip())
+            if isinstance(data, dict) and data.get("local") is True:
+                context = _execution_target({"execution_target": result.get("operator_context")})
+                stated = _execution_target(data)
+                if context and stated and context != stated:
+                    raise ValueError("native probe target differs from its operator context")
+                if context and not stated:
+                    data = dict(data, execution_target=context)
+            return _probe_windows(data, source)
+        except Exception as error:
+            log.debug("%s window enumeration failed: %s", source, error)
+            return {"ok": False, "windows": [], "error": f"{source}: {error}"}
 
-    async def _snapshot_once() -> tuple:
-        endpoints = _load_oscontrol_endpoints()
-        tasks = [asyncio.create_task(_local())]
-        for ep in endpoints:
-            tasks.append(asyncio.create_task(_remote_enumerate_windows_one(ep)))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        merged: list = []
-        any_ok = False
-        for r in results:
-            if isinstance(r, list):
-                if r:
-                    any_ok = True
-                merged.extend(r)
-        return any_ok, merged
+    async def _snapshot_once() -> dict:
+        probes = []
+        if os.name != "nt":
+            probes.append(("computer-use", _local("cu_window_list", "computer-use")))
+        if os.name == "nt" or os.path.exists("/mnt/c/Windows/System32/tasklist.exe"):
+            probes.append(("wsl", _local("list_windows", "wsl")))
+        probes.extend((ep.get("label") or "remote", _remote_enumerate_windows_one(ep))
+                      for ep in _load_oscontrol_endpoints())
+        tasks = {asyncio.create_task(probe): label for label, probe in probes}
+        done, pending = await asyncio.wait(tasks, timeout=OS_CONTROL_ENUM_TIMEOUT_S)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        windows, errors, sources, targets = [], [], {}, {}
+        for task, label in tasks.items():
+            if task not in done:
+                sources[label] = False
+                errors.append(f"{label}: window probe timed out")
+                continue
+            result = task.result()
+            sources[label] = bool(result.get("ok"))
+            windows.extend(result.get("windows") or [])
+            target = result.get("execution_target")
+            if result.get("ok") and target:
+                targets[target["id"]] = target
+            if result.get("error"):
+                errors.append(str(result["error"]))
+        return {"ok": any(sources.values()), "count": len(windows), "windows": windows,
+                "sources": sources, "errors": errors, "targets": targets}
 
-    any_ok, merged = False, []
-    for _attempt in range(max(1, OS_CONTROL_ENUM_RETRY + 1)):
-        try:
-            any_ok, merged = await asyncio.wait_for(
-                _snapshot_once(), timeout=OS_CONTROL_ENUM_TIMEOUT_S)
-        except Exception as e:  # noqa: BLE001 -- timeout or gather failure -> empty
-            log.debug("window snapshot attempt %d failed: %s", _attempt, e)
-            any_ok, merged = False, []
-        if merged:
+    snapshot = {}
+    for attempt in range(max(1, OS_CONTROL_ENUM_RETRY + 1)):
+        snapshot = await _snapshot_once()
+        if snapshot["ok"]:
             break
-        if _attempt < OS_CONTROL_ENUM_RETRY:
-            log.info("window enumeration empty (count:0) -> re-enumerate "
-                     "(attempt %d/%d); a live desktop always has >=1 window",
-                     _attempt + 1, OS_CONTROL_ENUM_RETRY)
+        if attempt < OS_CONTROL_ENUM_RETRY:
+            log.info("window enumeration unavailable -> retry %d/%d",
+                     attempt + 1, OS_CONTROL_ENUM_RETRY)
             await asyncio.sleep(OS_CONTROL_ENUM_RETRY_SETTLE_S)
-    return {"ok": any_ok, "count": len(merged), "windows": merged}
+    return snapshot
 
 def _window_key(w: dict) -> tuple:
     """Stable identity for diffing snapshots: prefer hwnd, else (title, proc)."""
@@ -221,8 +247,10 @@ def _window_key(w: dict) -> tuple:
         return ("?", str(w))
     hw = w.get("hwnd")
     if hw not in (None, "", 0):
-        return ("hwnd", str(hw))
-    return ("tp", str(w.get("title", "")), str(w.get("proc", "")))
+        return (w.get("_execution_target_id") or w.get("_source"), "hwnd", str(hw))
+    if w.get("id") not in (None, "", 0):
+        return (w.get("_execution_target_id") or w.get("_source"), "id", str(w["id"]))
+    return (w.get("_source"), "tp", str(w.get("title", "")), str(w.get("proc", "")))
 
 def _window_diff(before: dict, after: dict) -> dict:
     """opened = windows in AFTER not in BEFORE; closed = the reverse."""
@@ -286,7 +314,8 @@ def _os_target(args: dict) -> str:
                or args.get("url") or "").strip().lower()
 
 def _win_hay(w: dict) -> str:
-    return (str(w.get("title", "")) + " " + str(w.get("proc", ""))).lower()
+    return " ".join(str(w.get(key) or "") for key in
+                    ("title", "proc", "class", "app_id", "initialClass")).lower()
 
 async def _center_windows(wins: list) -> list:
     eps = {e.get("label"): e.get("url")
@@ -376,34 +405,52 @@ async def _proc_present(patterns: list) -> bool:
                 pass
     return False
 
+def _command_succeeded(result: dict) -> bool:
+    try:
+        return bool(result.get("success")) and int(result.get("exit_code", -1)) == 0
+    except (TypeError, ValueError):
+        return False
+
+def _action_outcome(tool: str, args: dict, result: dict, verified: bool) -> str:
+    target = str(args.get("name") or args.get("app") or args.get("title")
+                 or args.get("url") or "the requested target").strip()
+    if not _command_succeeded(result):
+        action = f"open {target}" if tool in _LAUNCH_VERBS else tool.replace("_", " ")
+        return f"I couldn't {action}. The command failed (exit code {result.get('exit_code', 'unknown')})."
+    if not verified:
+        if tool in _LAUNCH_VERBS:
+            return (f"The launch command for {target} succeeded, but I couldn't verify its window. "
+                    "I can't confirm that it opened.")
+        return f"I couldn't verify that {tool.replace('_', ' ')} took effect for {target}."
+    if tool in _LAUNCH_VERBS:
+        return f"{target} is open; its window was verified."
+    return f"Verified: {tool.replace('_', ' ')} took effect for {target}."
+
 def _verify_os_action(tool: str, args: dict, result: dict,
                       before: dict, after: dict, wdiff: dict) -> bool:
-    """Did the OS-control action ACTUALLY take effect ('the
-    pipeline VERIFIES TRUE and re-attempts')? Grounded in the window-enumeration
-    diff when available; falls back to _proc_present at call-site when enumeration is
-    BLIND (executor not wired -> count:0 both sides, can't diff)."""
-    ok = bool(result.get("success"))
+    """A failed command or unavailable window probe cannot verify an action."""
+    ok = _command_succeeded(result)
+    if not ok:
+        return False
+    if tool in _LAUNCH_VERBS or tool == "close_window":
+        destination = _receipt_target(result)
+        before, after = (_target_snapshot(before, destination),
+                         _target_snapshot(after, destination))
+        wdiff = _window_diff(before, after)
     target = _os_target(args)
     bc = (before or {}).get("count", 0)
     ac = (after or {}).get("count", 0)
     blind = (bc == 0 and ac == 0)
     if tool in _LAUNCH_VERBS:
-        if blind:
-            return False  # blind enum cannot verify window; fallback to call-site _proc_present
+        if not (after or {}).get("ok") or blind:
+            return False
         wins = (after or {}).get("windows") or []
-        if ac > bc or wdiff.get("opened"):
-            return True
-        _out = (result.get("output") or "") + " " + (result.get("stderr") or "")
-        if "already_running" in _out and "true" in _out:
-            return True
-        if "tab-opened" in _out and '"success": true' in _out:
-            return True
         if target and any(target in _win_hay(w) for w in wins):
             return True
         return False
     if tool == "close_window":
-        if blind:
-            return False  # blind enum cannot verify window closure; fallback to call-site _proc_present
+        if not (before or {}).get("ok") or not (after or {}).get("ok") or blind:
+            return False
         wins = (after or {}).get("windows") or []
         if target:
             return not any(target in _win_hay(w) for w in wins)  # gone == success
@@ -476,7 +523,7 @@ async def _respond_os_control(
                 _b = _loads_lenient(bytes(_resp.body).decode("utf-8"))
                 _content = _b["choices"][0]["message"]["content"]
             except Exception:  # noqa: BLE001
-                _content = "The OS-control action completed."
+                _content = "I couldn't complete or verify the OS-control action."
             yield _sse_chunk("", chat_id=chat_id, model=model, role="assistant")
             yield _sse_chunk(_content, chat_id=chat_id, model=model)
             yield _sse_status_phase(chat_id=chat_id, model=model,
@@ -512,8 +559,8 @@ async def _respond_os_control(
                                 log.info("standalone pc_type: context-focused and resolved hwnd %s for last-opened window %r before typing", _hw, _lw)
             except Exception as _ex:  # noqa: BLE001
                 log.warning("failed to resolve target hwnd for standalone pc_type: %s", _ex)
-    _action = tool in _OS_CONTROL_ACTION_VERBS
     _is_launch = tool in _LAUNCH_VERBS
+    _action = tool in _OS_CONTROL_ACTION_VERBS or _is_launch
     _before = _after = None
     _wdiff: dict = {}
     result: dict = {}
@@ -524,29 +571,32 @@ async def _respond_os_control(
         _before = await _enumerate_windows()
         result = await dispatch_mios_verb(tool, _args, session_id=session_id)
         _deadline = time.monotonic() + OS_CONTROL_LAUNCH_VERIFY_S
-        _proc_pats = _launch_proc_patterns(_args, result)
-        while True:
+        while _command_succeeded(result):
             _tries += 1
             _emit("🔍", "checking it opened")
             _after = await _enumerate_windows()
             _wdiff = _window_diff(_before, _after)
             _win_verdict = _verify_os_action(
                 tool, _args, result, _before, _after, _wdiff)
-            _enum_blind = ((_before or {}).get("count", 0) == 0
-                           and (_after or {}).get("count", 0) == 0)
-            _verified = (_win_verdict
-                         or (_enum_blind and await _proc_present(_proc_pats)))
+            _verified = _win_verdict
             if _verified or time.monotonic() >= _deadline:
                 break
             log.info("os-control %s not yet confirmed (poll %d) -> wait %.1fs",
                      tool, _tries, OS_CONTROL_LAUNCH_POLL_S)
             await asyncio.sleep(OS_CONTROL_LAUNCH_POLL_S)
-        if _wdiff.get("opened"):
-            _emit("🎯", "centering it")
-            _ctr = await _center_windows(_wdiff["opened"])
-            if _ctr:
-                log.info("auto-centered launched window(s): %s", ", ".join(_ctr))
-        _record_last_opened_window(_wdiff)
+        destination = _receipt_target(result)
+        _before, _after = (_target_snapshot(_before, destination),
+                          _target_snapshot(_after, destination))
+        _wdiff = _window_diff(_before, _after)
+        if _verified:
+            matching = [window for window in _wdiff.get("opened") or []
+                        if _os_target(_args) and _os_target(_args) in _win_hay(window)]
+            if matching:
+                _emit("🎯", "centering it")
+                _ctr = await _center_windows(matching)
+                if _ctr:
+                    log.info("auto-centered launched window(s): %s", ", ".join(_ctr))
+                _record_last_opened_window({"opened": matching})
     else:
         _emit("🪟", (f"{tool.replace('_window', '').replace('_', ' ').strip()} "
                      f"{_os_target(_args)}").strip())
@@ -559,32 +609,20 @@ async def _respond_os_control(
             _wdiff = _window_diff(_before, _after) if _action else {}
             _verified = (_verify_os_action(tool, _args, result, _before, _after, _wdiff)
                          if _action else bool(result.get("success")))
-            if _verified or not _action:
+            if _verified or not _action or not _command_succeeded(result):
                 break
             if _i < _attempts - 1:
                 log.info("os-control %s NOT verified (try %d/%d) -> re-attempt",
                          tool, _tries, _attempts)
                 await asyncio.sleep(OS_CONTROL_RETRY_SETTLE_S)
-    ok = bool(result.get("success"))
-    _eff_ok = _verified if _action else ok
-    _launch_pending = bool(_is_launch and ok and not _verified)
-    _focus_launched = False
-    if tool == "focus_window" and not _eff_ok:
-        _t = str(_args.get("title") or _args.get("app")
-                 or _args.get("name") or "").strip()
-        if _t:
-            log.info("smart-focus: '%s' not running -> launch to foreground", _t)
-            _before = await _enumerate_windows()
-            result = await dispatch_mios_verb("open_app", {"name": _t},
-                                              session_id=session_id)
-            _after = await _enumerate_windows()
-            _wdiff = _window_diff(_before, _after)
-            _verified = _verify_os_action("open_app", {"app": _t}, result,
-                                          _before, _after, _wdiff)
-            ok = bool(result.get("success"))
-            _eff_ok = _verified
-            _focus_launched = True
+    ok = _command_succeeded(result)
+    _eff_ok = ok and _verified if _action else ok
     if _action:
+        if tool == "close_window":
+            destination = _receipt_target(result)
+            _before, _after = (_target_snapshot(_before, destination),
+                              _target_snapshot(_after, destination))
+            _wdiff = _window_diff(_before, _after)
         _index_window_event(tool, _args, _before, _after, _wdiff, session_id)
     _row = {
         "tool": tool,
@@ -608,7 +646,7 @@ async def _respond_os_control(
             "function": {"name": tool, "arguments": _args},
         },
         "tool_result": {
-            "success": ok,
+            "success": bool(result.get("success")),
             "output": (result.get("output") or "")[:2000],
             "stderr": (result.get("stderr") or "")[:2000],
             "exit_code": int(result.get("exit_code", -1)),
@@ -617,7 +655,12 @@ async def _respond_os_control(
     if _action:
         envelope["window_change"] = {
             "verified": bool(_verified),
+            "execution_target": _receipt_target(result),
             "attempts": _tries,
+            "before_available": bool((_before or {}).get("ok")),
+            "after_available": bool((_after or {}).get("ok")),
+            "before_errors": (_before or {}).get("errors") or [],
+            "after_errors": (_after or {}).get("errors") or [],
             "before_count": (_before or {}).get("count", 0),
             "after_count": (_after or {}).get("count", 0),
             "opened": [str(w.get("title") or w.get("proc") or "")
@@ -625,10 +668,10 @@ async def _respond_os_control(
             "closed": [str(w.get("title") or w.get("proc") or "")
                        for w in _wdiff.get("closed", []) if isinstance(w, dict)],
         }
-    if DCI_ENABLED:
+    if DCI_ENABLED and not _action:
         _db_fire(critic_then_maybe_flow(last_user_text, envelope,
                                         session_id=session_id))
-    symbol = ("✅" if _eff_ok else ("🚀" if _launch_pending else "⚠️"))
+    symbol = "✅" if _eff_ok else "⚠️"
     envelope_block = (
         f"<details type=\"tool_calls\" done=\"true\">\n"
         f"<summary>{symbol} `{tool}`</summary>\n\n"
@@ -639,6 +682,16 @@ async def _respond_os_control(
         "intended_outcome": f"perform the {tool} action the operator asked for",
         "refined_text": last_user_text,
     }
+    if _action or not ok:
+        # The observed command/window facts already determine this result. A
+        # second inference can delay or contradict it; always render it directly.
+        rendered = _action_outcome(tool, _args, result, _eff_ok) + "\n\n" + envelope_block
+        _emit(symbol, "result ready")
+        return JSONResponse(content={
+            "id": chat_id, "object": "chat.completion", "created": int(time.time()),
+            "model": model, "choices": [{"index": 0, "message": {
+                "role": "assistant", "content": rendered}, "finish_reason": "stop"}],
+        })
     await _inline_satisfaction_check(session_id, _refined_for_polish)
     _out = (result.get("output") or "").strip()
     _err = (result.get("stderr") or "").strip()
@@ -646,33 +699,12 @@ async def _respond_os_control(
         f"exit_code={int(result.get('exit_code', -1))}\n"
         f"stdout:\n{_out[:1500]}\n"
         + (f"stderr:\n{_err[:600]}\n" if _err else ""))
-    if _action:
-        _polish_src += (
-            f"window_enumeration: before={(_before or {}).get('count', 0)} open, "
-            f"after={(_after or {}).get('count', 0)} open; "
-            f"{_window_delta_text(_wdiff)}\n"
-            f"verified={bool(_verified)} after {_tries} attempt(s)\n")
-        if _focus_launched:
-            _polish_src += ("smart_focus: the window was NOT already open, so it "
-                            "was LAUNCHED to the foreground (report that it "
-                            "wasn't running and you opened it).\n")
-        if _launch_pending:
-            _polish_src += ("launch_fired_pending: the launch COMMAND SUCCEEDED "
-                            "(the app/game was told to start) but its window has "
-                            "NOT appeared within the short verify window -- this "
-                            "is NORMAL for Steam/Store GAMES, which load over "
-                            "30-60s. Report this as STARTING / LAUNCHING (e.g. "
-                            "'<app> is launching via Steam -- it may take a moment "
-                            "to appear'), which is NOT a failure.\n")
     _emit(symbol, "writing the result")
     polished_raw = await polish_response(
         "The OS-control verb `" + tool + "` ran (result below). Reply in 1-3 "
         "short sentences with exactly: (1) SUCCESS or failure -- grounded in "
         "`verified` (verified=True means it took effect; if False after the "
-        "retries, say it did NOT and do not claim success -- EXCEPT when "
-        "`launch_fired_pending` is present, which means the launch DID fire and "
-        "the app/game is still LOADING: report it as STARTING/LAUNCHING, NOT a "
-        "failure); (2) the key DETAILS "
+        "retries, say it did NOT and do not claim success); (2) the key DETAILS "
         "(what opened/closed/was focused, the app/window name); (3) one or two "
         "natural FOLLOW-UPS the operator might want next (e.g. focus it, move "
         "it, close it, open another). No preamble, no invented coordinates, no "

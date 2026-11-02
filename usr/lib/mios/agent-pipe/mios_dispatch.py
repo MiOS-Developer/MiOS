@@ -768,16 +768,15 @@ async def _dispatch_mios_verb_inner_raw(
         v_tainted, v_reason = _classify_verb_taint(tool, args)
         _out = (j.get("stdout") or "")[:6000]
         _err = (j.get("stderr") or "")[:2000]
-        if tool in _LAUNCH_VERBS and exit_code == 0:
-            if not _out.strip():
-                _tgt = args.get("name") or args.get("app") or args.get("url") or tool
-                _out = f"Launched {_tgt} (verified)."
-            _err = ""
         return {
             "success": exit_code == 0,
             "tool": tool, "args": args,
             "output": _out,
             "stderr": _err,
+            **({"operator_context": {key: value for key, value in j["operator_context"].items()
+                                     if key in ("id", "platform", "session_id", "backend")
+                                     and isinstance(value, str)}}
+               if isinstance(j.get("operator_context"), dict) else {}),
             "exit_code": exit_code,
             "latency_ms": latency_ms,
             "tainted": v_tainted,

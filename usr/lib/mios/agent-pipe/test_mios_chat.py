@@ -200,6 +200,54 @@ def _run(body, headers=None):
     CALLS.clear()
     return asyncio.run(mios_chat.chat_completions_logic(FakeRequest(body, headers)))
 
+def _test_exact_action_fastpath():
+    from mios_pipe.routing import routing as routes
+    with mock.patch.multiple(routes, _FASTPATH_VERBS=frozenset({"open_app"}),
+            _LAUNCH_TRIGGERS=frozenset({"open", "launch"}), _LAUNCH_FILLERS=[],
+            _LAUNCH_LEAD_WORDS=frozenset(), _LAUNCH_TRAIL_WORDS=frozenset(),
+            _COMPOUND_ACTION_ALT="", _COMPOUND_CONNECTIVE_ALT="and|then|with|in|on|to"):
+        parser = routes._deterministic_action_route
+        for streaming in (False, True):
+            _wire_common(_deterministic_action_route=parser,
+                         _route_domain=_ahandler("domain", None))
+            response = _run({"messages": [{"role": "user", "content": "open OBS"}],
+                             "stream": streaming})
+            check(f"exact launch bypasses all inference (stream={streaming})",
+                  response is S_OS and CALLS == ["os_control"], repr(CALLS))
+        for query in ("open OBS and delete files", "delete OBS", "how do I open OBS?",
+                      "please explain how to configure OBS"):
+            _wire_common(_deterministic_action_route=parser,
+                         _route_domain=_ahandler("domain", None), SWARM_DECOMPOSE_MIN_WORDS=100,
+                         refine_intent=_ahandler("refine", {"intent": "chat", "reply": "normal path"}))
+            _run({"messages": [{"role": "user", "content": query}]})
+            check(f"ambiguous/destructive request keeps normal path: {query}",
+                  "os_control" not in CALLS and "domain" in CALLS and "refine" in CALLS, repr(CALLS))
+        _wire_common(_deterministic_action_route=parser, _has_client_tools=lambda b: True,
+                     _INGRESS_KEY="fixture-key", _route_domain=_ahandler("domain", None))
+        response = _run({"messages": [{"role": "user", "content": "open OBS"}],
+                         "tools": [{"type": "function"}]})
+        check("exact client-tools launch still requires ingress authentication",
+              getattr(response, "status_code", None) == 401 and not CALLS, repr(CALLS))
+        response = _run({"messages": [{"role": "user", "content": "open OBS"}],
+                         "tools": [{"type": "function"}]},
+                        {"Authorization": "Bearer fixture-key"})
+        check("authenticated exact client-tools launch takes native path",
+              response is S_OS and CALLS == ["os_control"], repr(CALLS))
+        for flags in ({"force_council": True}, {"force_delegate": True}):
+            _wire_common(_deterministic_action_route=parser, _has_client_tools=lambda b: True)
+            response = _run({"messages": [{"role": "user", "content": "open OBS"}],
+                             "tools": [{"type": "function"}], "mios_flags": flags})
+            check(f"explicit routing override suppresses early action: {flags}",
+                  response is S_CLIENT and "os_control" not in CALLS, repr(CALLS))
+        _wire_common(_deterministic_action_route=parser,
+                     _has_client_tools=lambda b: bool(b.get("tools")),
+                     refine_intent=_ahandler("refine", {"intent": "chat", "reply": "normal path"}))
+        _run({"messages": [{"role": "user", "content": "open OBS"}],
+              "tools": [{"type": "function"}], "tool_choice": "none"})
+        check("tool_choice none suppresses early side effects",
+              "os_control" not in CALLS and "refine" in CALLS, repr(CALLS))
+
+
 def main():
     _wire_common()
     r = _run({"model": "m"})
@@ -236,6 +284,8 @@ def main():
     check("trivial chat -> short-circuit reply, no heavy handler",
           reply == "hi there" and not (heavy & set(CALLS)),
           f"reply={reply!r} calls={CALLS}")
+
+    _test_exact_action_fastpath()
 
     _test_responses_api()
 
