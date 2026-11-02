@@ -26,6 +26,8 @@ QS.PanelWindow {
     required property QtObject shellState
     property QtObject theme: Theme {}
     readonly property var bar: theme.topbar || ({})
+    // The reveal scope owns the output even while this layer window is unmapped.
+    readonly property var outputScreen: reveal && reveal.screen ? reveal.screen : screen
     readonly property var top: ToplevelManager.activeToplevel
     readonly property string appId: top ? top.appId : ""
     readonly property string appAddress: {
@@ -75,7 +77,7 @@ QS.PanelWindow {
     // The tab has priority over the pills, also when it hangs inside a fullscreen window (INSET 1) under the
     // overlaid row; the status island and dock have priority over the tab.
     readonly property var tab: theme.hyprbars || ({})
-    readonly property var hyprMonitor: screen ? Hyprland.monitorFor(screen) : null
+    readonly property var hyprMonitor: outputScreen ? Hyprland.monitorFor(outputScreen) : null
     property var tabs: ({})   // address -> {x, y, w, h}, raised protruding tabs only
     function onTabEvent(data) {
         const f = String(data).split(",")
@@ -157,10 +159,10 @@ QS.PanelWindow {
     exclusiveZone: 0
     exclusionMode: QS.ExclusionMode.Ignore   // the true top edge, same row as the status island
     // Mobile outputs ([desktop.mobile]) carry the app menu on the window shoulder dot, not here.
-    visible: appName !== "" && bar.app_menu !== false && (typeof shellState.topbarShown !== "function" || shellState.topbarShown("app_menu")) && !(screen && Mobile.isMobile(screen.name)) && (!overFullscreen || reveal.topShown)
+    visible: appName !== "" && bar.app_menu !== false && (typeof shellState.topbarShown !== "function" || shellState.topbarShown("app_menu")) && !(outputScreen && Mobile.isMobile(outputScreen.name)) && (!overFullscreen || reveal.topShown)
     // Never runs under the island: what does not fit before it is clipped.
-    readonly property var island: ShellGeometry.islands[screen ? screen.name : ""] || null
-    readonly property real maxWidth: Math.max(1, island ? island.x - rowLeft - Glass.gap : screen.width / 2 - rowLeft)
+    readonly property var island: ShellGeometry.islands[outputScreen ? outputScreen.name : ""] || null
+    readonly property real maxWidth: Math.max(1, island ? island.x - rowLeft - Glass.gap : (outputScreen ? outputScreen.width / 2 : 0) - rowLeft)
     implicitWidth: Math.max(1, Math.min(Math.ceil(pills.implicitWidth), Math.floor(maxWidth)))
     implicitHeight: Glass.bar
     color: "transparent"
@@ -451,7 +453,7 @@ QS.PanelWindow {
 
     IpcHandler {
         target: "appmenu"
-        enabled: !Hyprland.focusedMonitor || !menus.screen || Hyprland.focusedMonitor.name === menus.screen.name
+        enabled: !Hyprland.focusedMonitor || !menus.outputScreen || Hyprland.focusedMonitor.name === menus.outputScreen.name
         function openMenu(index: int): void { menus.openMenu = index }
         function close(): void { menus.openMenu = -1 }
         function key(name: string): bool { return menus.navigate(name) }

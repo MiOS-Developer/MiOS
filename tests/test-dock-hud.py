@@ -257,8 +257,42 @@ ctx.expanded=false;assert.equal(vm.runInContext(FOCUS,ctx),'none');
     return errors
 
 
+def shell_input_attachment_lifecycle(ref=None):
+    search = read(f"{QS}/Search.qml", ref)
+    menu = read(f"{QS}/AppMenu.qml", ref)
+    errors = []
+    if re.search(r"^    Keys\.onEscapePressed:", search, re.M):
+        errors.append("Search attaches Keys to its non-Item panel window")
+    if "            Keys.onEscapePressed: searchWindow.shellState.searchOpen = false" not in search:
+        errors.append("Search input lost its Escape handler")
+    output = re.search(r"readonly property var outputScreen:\s*(.+)", menu)
+    visible = re.search(r"^    visible:\s*(.+)", menu, re.M)
+    if not output or not visible or "outputScreen" not in visible.group(1) or "screen.name" in visible.group(1):
+        errors.append("AppMenu visibility depends on mutable panel screen")
+    if errors:
+        return errors
+    import json
+    script = r"""
+const assert=require('assert'),vm=require('vm');
+const ctx=vm.createContext({reveal:{screen:{name:'LOCAL',width:1920},topShown:false},
+ appName:'Terminal',bar:{app_menu:true},shellState:{topbarShown:()=>true},overFullscreen:false,
+ Mobile:{isMobile:()=>false}});
+Object.defineProperty(ctx,'screen',{get(){throw Error('mutable window screen evaluated');}});
+ctx.outputScreen=vm.runInContext(OUTPUT,ctx);assert.equal(ctx.outputScreen.name,'LOCAL');
+const shown=()=>vm.runInContext(VISIBLE,ctx);
+assert.equal(shown(),true);ctx.bar.app_menu=false;assert.equal(shown(),false);ctx.bar.app_menu=true;
+ctx.Mobile.isMobile=()=>true;assert.equal(shown(),false);ctx.Mobile.isMobile=()=>false;
+ctx.overFullscreen=true;assert.equal(shown(),false);ctx.reveal.topShown=true;assert.equal(shown(),true);
+ctx.appName='';assert.equal(shown(),false);
+""".replace("OUTPUT", json.dumps(output.group(1))).replace("VISIBLE", json.dumps(visible.group(1)))
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    if result.returncode:
+        errors.append("AppMenu lifecycle-independent visibility failed: " + result.stderr[-1200:])
+    return errors
+
+
 CONTRACTS = [grows_upward_at_bar_width, config_fallbacks_match_ssot, configurator_has_every_scalar, previews_capture_safe_and_flat,
-             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus, dock_capture_feedback_and_keyboard]
+             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus, dock_capture_feedback_and_keyboard, shell_input_attachment_lifecycle]
 
 
 class Positive(unittest.TestCase):

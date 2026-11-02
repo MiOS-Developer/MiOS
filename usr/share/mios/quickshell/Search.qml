@@ -45,7 +45,6 @@ QS.PanelWindow {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: (requestedOpen && (searchWindow.activeFocus || input.activeFocus)) ? WlrKeyboardFocus.Exclusive : (requestedOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
     color: "transparent"
-    Keys.onEscapePressed: searchWindow.shellState.searchOpen = false
 
     HyprlandFocusGrab {
         windows: [searchWindow]
