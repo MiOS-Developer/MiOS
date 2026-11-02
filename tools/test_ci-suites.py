@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-# AI-hint: Sibling test for tools/ci-suites.py; proves the registry reader fails on the shapes it exists to catch.
-# AI-related: tools/ci-suites.py, usr/share/mios/mios.toml
-"""Each case is a mutation the checker must reject.
+# AI-hint: Registry rejection and bounded producer controls for the shared CI workflow helpers.
+# AI-related: tools/ci-suites.py, tools/lib/ci-runtime.sh, usr/share/mios/mios.toml
+"""Reject broken registries and exercise producer success, failure and cleanup.
 
-A checker that passes on a deliberately broken registry is the defect this
-whole registry exists to prevent, so every assertion here is a red, not a green.
+Runtime fixtures execute the shared shell producer without starting host services.
 """
 import contextlib
 import copy
 import importlib.util
 import io
+import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -602,6 +603,107 @@ class TestCanonicalInputs(unittest.TestCase):
     def test_lexical_collisions_fail(self):
         with self.assertRaisesRegex(ValueError, 'MIOS_A_X_Y'):
             self.resolver.input_aliases({'a': {'x_y': 1, 'x': {'y': 2}}})
+
+@unittest.skipIf(os.name == "nt", "the Portal producer runs in POSIX MiOSDEV")
+class TestPortalRuntimeContext(unittest.TestCase):
+    """Execute the CI producer with a private runtime that rejects overlay-backed temp."""
+
+    def _run_producer(self, *, omit_temp_mount=False, runtime_failure=False, collision=False):
+        with tempfile.TemporaryDirectory(prefix="mios-portal-context-") as tmp:
+            base = Path(tmp)
+            root, state, calls = base / "checkout", base / "private state", base / "calls.jsonl"
+            files = {
+                "tools/ci-suites.py": "print('localhost/mios-fixture:latest')\n",
+                "usr/share/mios/mios.toml": (
+                    '[packages.devcontainer]\npkgs=["podman"]\n'
+                    '[desktop.portal.builder]\npackages=["fixture-package"]\n'
+                    'containerfile_dir="/usr/share/mios/portal-build"\n'
+                    'product_tree="/src/mios-portal"\n'),
+                "usr/libexec/mios/mios-portal-build": (
+                    "#!/bin/sh\nprintf '%s\\n' PB_ICON_SRC=/icon.svg PB_SCOPE_MEM=2G PB_CPUS=1\n"),
+                "icon.svg": "<svg/>\n",
+            }
+            for rel, content in files.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            (root / "usr/libexec/mios/mios-portal-build").chmod(0o755)
+            helper = Path(_ROOT, "tools/lib/ci-runtime.sh").read_text()
+            if omit_temp_mount:
+                mount = '-v "$state/tmp:/var/tmp:rw" '
+                self.assertEqual(helper.count(mount), 1)
+                helper = helper.replace(mount, "")
+            source = base / "runtime.sh"
+            source.write_text(helper)
+            shim = base / "bin"
+            shim.mkdir()
+            sudo = shim / "sudo"
+            sudo.write_text(f"""#!{sys.executable}
+import json, pathlib, sys
+calls = pathlib.Path({str(calls)!r})
+args = sys.argv[1:]
+with calls.open("a") as output:
+    output.write(json.dumps(args) + "\\n")
+history = [json.loads(line) for line in calls.read_text().splitlines()]
+if args[:2] == ["podman", "exec"]:
+    run = next(row for row in history if row[:2] == ["podman", "run"])
+    mounts = [run[i+1] for i, value in enumerate(run[:-1]) if value == "-v"]
+    temp = [item for item in mounts if item.endswith(":/var/tmp:rw")]
+    if not temp:
+        print("Error: mounting an overlay over build context directory: invalid argument", file=sys.stderr)
+        sys.exit(86)
+    path = pathlib.Path(temp[0].rsplit(":", 2)[0])
+    assert path.is_dir() and path.parent == pathlib.Path({str(state)!r})
+    assert path.stat().st_mode & 0o7777 == 0o1777
+    if {runtime_failure!r}:
+        print("fixture: inner builder failed", file=sys.stderr)
+        sys.exit(43)
+    pathlib.Path({str(root / ".staged-portal")!r}).mkdir()
+""")
+            sudo.chmod(0o755)
+            if collision:
+                state.mkdir()
+                (state / "owner").write_text("preserve")
+            env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
+            result = subprocess.run(["bash", "-c", 'source "$1"; mios_ci_build_portal "$2" "$3"',
+                                     "mios-portal-fixture", str(source), str(root), str(state)],
+                                    env=env, text=True, capture_output=True, timeout=10)
+            history = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+            return result, history, (state / "owner").read_text() if collision else None
+
+    def test_disk_backed_temp_preserves_bounded_runtime_and_completes(self):
+        result, calls, _ = self._run_producer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = next(row for row in calls if row[:2] == ["podman", "run"])
+        self.assertEqual(run[run.index("--memory") + 1], "2G")
+        self.assertEqual(run[run.index("--memory-swap") + 1], "2G")
+        self.assertEqual(run[run.index("--cpus") + 1], "1")
+        self.assertEqual(run[run.index("--user") + 1], "0:0")
+        self.assertTrue(any(row[:2] == ["podman", "exec"] for row in calls))
+        self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
+        self.assertTrue(any(row[0] == "chown" for row in calls))
+
+    def test_missing_temp_bind_reproduces_context_failure_and_cleans_owned_container(self):
+        result, calls, _ = self._run_producer(omit_temp_mount=True)
+        self.assertEqual(result.returncode, 86, result.stderr)
+        self.assertIn("mounting an overlay over build context", result.stderr)
+        self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
+        self.assertFalse(any(row[0] == "chown" for row in calls))
+
+    def test_inner_failure_stays_nonzero_and_cleans_owned_container(self):
+        result, calls, _ = self._run_producer(runtime_failure=True)
+        self.assertEqual(result.returncode, 43, result.stderr)
+        self.assertIn("inner builder failed", result.stderr)
+        self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
+        self.assertFalse(any(row[0] == "chown" for row in calls))
+
+    def test_existing_private_state_is_preserved_without_runtime_calls(self):
+        result, calls, owner = self._run_producer(collision=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Portal build state already exists", result.stderr)
+        self.assertEqual(owner, "preserve")
+        self.assertEqual(calls, [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

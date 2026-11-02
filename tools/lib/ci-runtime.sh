@@ -88,6 +88,9 @@ mios_ci_build_portal() (
     [[ ! -e "$state" ]] || { echo "Portal build state already exists: $state" >&2; exit 1; }
     mkdir -p "$state"
     state="$(cd "$state" && pwd)"
+    # Buildah puts context-overlay upper/work directories in /var/tmp. Keep
+    # those on the runner filesystem rather than the development image overlay.
+    mkdir -m 1777 "$state/tmp"
     overlay="$state/paths.toml"
     image="$(python3 "$root/tools/ci-suites.py" --fedora-image)"
     # Read only vendor data: runner state must never inherit an operator's secrets.
@@ -126,7 +129,7 @@ PY
         --cgroupns private --systemd always --memory "$PB_SCOPE_MEM" \
         --memory-swap "$PB_SCOPE_MEM" --cpus "$PB_CPUS" \
         -v "$root:$workspace:rw" -v "$state:/var/lib/mios-build:rw" \
-        -v "$icon_source:$PB_ICON_SRC:ro" \
+        -v "$state/tmp:/var/tmp:rw" -v "$icon_source:$PB_ICON_SRC:ro" \
         --workdir "$workspace" --entrypoint /sbin/init "$image"
     trap 'sudo podman rm --force podman-MiOS-DEV >/dev/null' EXIT
     ts="$(date -u +%Y%m%dT%H%M%SZ)"
