@@ -101,6 +101,7 @@ _resolve_toml()
 _install_stubs()
 import mios_chat  # noqa: E402 -- after stubs so the import succeeds on a bare checkout
 
+_REAL_PLAIN_CHAT_COMPLETE = mios_chat._plain_chat_complete
 _REAL_BUDGET_ADMIT = mios_chat._budget_admit
 _REAL_BUDGET_RELEASE = mios_chat._budget_release_inflight
 
@@ -139,7 +140,7 @@ class FakeKernel:
     def managers(self):
         return {"scheduler": True, "memory": True}
 
-S_VISION, S_CLIENT, S_OS, S_NATIVE, S_LOCAL, S_DAG = (object() for _ in range(6))
+S_VISION, S_CLIENT, S_OS, S_NATIVE, S_LOCAL, S_DAG, S_PLAIN = (object() for _ in range(7))
 
 def _wire_common(**over):
     """Fresh ContextVars + safe stubs for every dep the precedence paths touch.
@@ -184,6 +185,7 @@ def _wire_common(**over):
         _messages_have_image=lambda msgs: False,
         _has_client_tools=lambda body: False,
         _deterministic_action_route=lambda text: None,
+        _plain_chat_complete=_ahandler("plain", S_PLAIN),
         _vision_complete=_ahandler("vision", S_VISION),
         _client_tools_complete=_ahandler("client_tools", S_CLIENT),
         _respond_os_control=_ahandler("os_control", S_OS),
@@ -245,7 +247,7 @@ def _test_exact_action_fastpath():
         _run({"messages": [{"role": "user", "content": "open OBS"}],
               "tools": [{"type": "function"}], "tool_choice": "none"})
         check("tool_choice none suppresses early side effects",
-              "os_control" not in CALLS and "refine" in CALLS, repr(CALLS))
+              CALLS == ["plain"], repr(CALLS))
 
 
 def main():
@@ -814,74 +816,208 @@ def _test_developer_role():
 
 def _test_tool_choice_none_stripping():
     import mios_vision
-    captured_bodies = []
-    _wire_common(
-        _has_client_tools=mios_vision._has_client_tools,
-        _client_tools_complete=_ahandler("client_tools", S_CLIENT),
-        refine_intent=_ahandler("refine", {"intent": "chat", "reply": "plain chat reply"}),
-        _scratchpad_key=lambda b, cid: (captured_bodies.append(dict(b)), cid)[1],
-    )
-    # Positive control: tool_choice == "none" strips tools and routes to plain chat (0 tool tokens)
-    r_pos = _run({
-        "model": "m",
-        "messages": [{"role": "user", "content": "hello"}],
-        "tools": [{"type": "function", "function": {"name": "test_tool"}}],
-        "tool_choice": "none"
-    })
-    check("tool_choice: 'none' -> client_tools skipped (plain chat)",
-          "client_tools" not in CALLS and "refine" in CALLS,
-          f"calls={CALLS}")
-    check("tool_choice: 'none' -> tools stripped from body",
-          len(captured_bodies) >= 1 and all("tools" not in b for b in captured_bodies),
-          f"body={captured_bodies}")
-    check("tool_choice: 'none' -> tool_choice stripped from body",
-          len(captured_bodies) >= 1 and all("tool_choice" not in b for b in captured_bodies),
-          f"body={captured_bodies}")
+    for choice in ("none", " None "):
+        _wire_common(_has_client_tools=mios_vision._has_client_tools)
+        result = _run({"model": "selected", "messages": [{"role": "user", "content": "open OBS"}],
+                       "tools": [{"type": "function", "function": {"name": "test_tool"}}],
+                       "tool_choice": choice})
+        check(f"explicit {choice!r} skips the entire agent/tool graph",
+              result is S_PLAIN and CALLS == ["plain"], repr(CALLS))
+    _wire_common(_has_client_tools=mios_vision._has_client_tools)
+    result = _run({"messages": [{"role": "user", "content": "use my tools"}],
+                   "tools": [{"type": "function", "function": {"name": "test_tool"}}],
+                   "tool_choice": "auto"})
+    check("tool_choice auto retains the client tool path", result is S_CLIENT, repr(CALLS))
+    _wire_common(_INGRESS_KEY="fixture-key")
+    result = _run({"messages": [{"role": "user", "content": "hello"}], "tool_choice": "none"})
+    check("plain API still enforces configured ingress authentication",
+          result.status_code == 401 and not CALLS)
+    result = _run({"messages": [{"role": "user", "content": "hello"}], "tool_choice": "none"},
+                  {"Authorization": "Bearer fixture-key"})
+    check("authenticated plain API reaches the direct relay",
+          result is S_PLAIN and CALLS == ["plain"])
 
-    # Positive control (case-insensitive stripped): ' None '
-    captured_ci_bodies = []
-    _wire_common(
-        _has_client_tools=mios_vision._has_client_tools,
-        _client_tools_complete=_ahandler("client_tools", S_CLIENT),
-        refine_intent=_ahandler("refine", {"intent": "chat", "reply": "plain chat reply"}),
-        _scratchpad_key=lambda b, cid: (captured_ci_bodies.append(dict(b)), cid)[1],
-    )
-    r_pos_ci = _run({
-        "model": "m",
-        "messages": [{"role": "user", "content": "hello"}],
-        "tools": [{"type": "function", "function": {"name": "test_tool"}}],
-        "tool_choice": " None "
-    })
-    check("tool_choice: ' None ' (case-insensitive) -> client_tools skipped",
-          "client_tools" not in CALLS and "refine" in CALLS,
-          f"calls={CALLS}")
-    check("tool_choice: ' None ' -> tools stripped from body",
-          len(captured_ci_bodies) >= 1 and all("tools" not in b for b in captured_ci_bodies),
-          f"body={captured_ci_bodies}")
+    class Reply:
+        def __init__(self, payload, status=200, chunks=()):
+            self.payload, self.status_code, self.parts = payload, status, chunks
+            self.closed, self.read = False, False
+        def json(self):
+            return self.payload
+        async def aread(self):
+            self.read = True
+        async def aclose(self):
+            self.closed = True
+        async def aiter_bytes(self):
+            for chunk in self.parts:
+                if isinstance(chunk, Exception):
+                    raise chunk
+                yield chunk
 
-    # Negative control: tool_choice == "auto" retains tools and routes to client_tools
-    auto_bodies = []
-    async def _async_client_tools(b, *a, **k):
-        auto_bodies.append(dict(b))
-        CALLS.append("client_tools")
-        return S_CLIENT
+    completion = {"id": "chatcmpl-fixture", "object": "chat.completion", "model": "selected",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"},
+                     "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}}
 
-    _wire_common(
-        _has_client_tools=mios_vision._has_client_tools,
-        _client_tools_complete=_async_client_tools,
-    )
-    r_neg = _run({
-        "model": "m",
-        "messages": [{"role": "user", "content": "hello"}],
-        "tools": [{"type": "function", "function": {"name": "test_tool"}}],
-        "tool_choice": "auto"
-    })
-    check("tool_choice: 'auto' -> client_tools passthrough",
-          CALLS == ["client_tools"],
-          f"calls={CALLS}")
-    check("tool_choice: 'auto' -> tools and tool_choice retained in body",
-          len(auto_bodies) == 1 and "tools" in auto_bodies[0] and auto_bodies[0].get("tool_choice") == "auto",
-          f"body={auto_bodies}")
+    class Client:
+        def __init__(self):
+            self.calls = []
+            self.reply = Reply(completion)
+            self.failure = None
+        async def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if self.failure:
+                raise self.failure
+            return self.reply
+        def build_request(self, method, url, **kwargs):
+            return method, url, kwargs
+        async def send(self, request, **kwargs):
+            self.calls.append((request[1], request[2]))
+            if self.failure:
+                raise self.failure
+            return self.reply
+
+    client = Client()
+    async def get_client():
+        return client
+    def forbidden(*args, **kwargs):
+        raise AssertionError("plain request entered session/tool preparation")
+    releases = []
+    async def release(token):
+        releases.append(token)
+    def wire(**over):
+        defaults = dict(BACKEND="http://backend.invalid/v1", BACKEND_MODEL="default",
+            _BACKEND_KEY="", _get_client=get_client,
+            _plain_chat_complete=_REAL_PLAIN_CHAT_COMPLETE,
+            _scratchpad_rehydrate=forbidden, _maybe_run_pending_approval=forbidden,
+            _budget_release_inflight=release)
+        defaults.update(over)
+        _wire_common(**defaults)
+
+    body = {"model": "selected", "messages": [{"role": "user", "content": "Reply with OK"}],
+        "tool_choice": "none", "tools": [{"type": "function"}], "max_tokens": 8,
+        "stop": ["END"], "temperature": 0, "store": False, "mios_flags": {"force_tool": True}}
+    wire()
+    result = _run(body)
+    url, posted = client.calls[-1]
+    payload = posted["json"]
+    check("plain backend receives selected model, limits, stop and storage contract",
+          url == "http://backend.invalid/v1/chat/completions"
+          and payload["model"] == "selected" and payload["max_tokens"] == 8
+          and payload["stop"] == ["END"] and payload["store"] is False
+          and payload["temperature"] == 0 and not payload["stream"])
+    check("plain backend receives no tools or internal routing controls",
+          not any(key in payload for key in ("tools", "tool_choice", "mios_flags"))
+          and CALLS == ["budget_admit"], repr(CALLS))
+    check("plain JSON completion remains unchanged", result.content == completion
+          and result.status_code == 200 and releases == [None])
+
+    wire(_INGRESS_KEY="fixture-key", _BACKEND_KEY="backend-fixture")
+    from mios_pipe.kernel import config as config_module
+    with mock.patch.object(config_module, "_AUTH_HOSTPORTS", {"backend.invalid"}):
+        _run(body, {"Authorization": "Bearer fixture-key"})
+    check("plain relay uses backend credential, never ingress credential",
+          client.calls[-1][1]["headers"].get("Authorization") == "Bearer backend-fixture")
+    wire(_BACKEND_KEY="backend-fixture")
+    with mock.patch.object(config_module, "_AUTH_HOSTPORTS", set()):
+        _run(body)
+    check("plain relay does not send credentials to unregistered backend origins",
+          "Authorization" not in client.calls[-1][1]["headers"])
+
+    rejected = {"error": {"message": "selected model unavailable", "type": "invalid_request_error"}}
+    client.reply = Reply(rejected, 404)
+    wire()
+    result = _run(body)
+    check("plain backend HTTP errors preserve status and error envelope",
+          result.status_code == 404 and result.content == rejected)
+    stream_error = Reply(rejected, 404)
+    client.reply = stream_error
+    result = _run(dict(body, stream=True))
+    check("plain stream preflight preserves HTTP failure and closes upstream",
+          result.status_code == 404 and result.content == rejected
+          and stream_error.closed and stream_error.read)
+
+    wire()
+    data = b'data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n'
+    stream = Reply(None, chunks=(data[:19], data[19:]))
+    client.reply = stream
+    result = _run(dict(body, stream=True))
+    async def consume(response):
+        return b"".join([chunk async for chunk in response.body_iterator])
+    received = asyncio.run(consume(result))
+    check("plain stream preserves exact upstream SSE bytes and releases resources",
+          received == data and stream.closed and result.media_type == "text/event-stream")
+
+    interrupted = Reply(None, chunks=(data, data))
+    client.reply = interrupted
+    result = _run(dict(body, stream=True))
+    async def interrupt(response):
+        await anext(response.body_iterator)
+        await response.body_iterator.aclose()
+    before_release = len(releases)
+    asyncio.run(interrupt(result))
+    check("plain stream cancellation closes upstream and releases its admission",
+          interrupted.closed and len(releases) == before_release + 1)
+
+    broken = Reply(None, chunks=(RuntimeError("fixture stream failure"),))
+    client.reply = broken
+    result = _run(dict(body, stream=True))
+    received = asyncio.run(consume(result))
+    check("plain midstream failure emits error and closes instead of inventing success",
+          b'"error"' in received and b"inference_unavailable" in received
+          and b"[DONE]" in received and broken.closed)
+    client.failure = RuntimeError("fixture transport failure")
+    result = _run(body)
+    check("plain transport failure is unavailable, never a canned success",
+          result.status_code == 502 and result.content["error"]["code"] == "inference_unavailable")
+    client.failure = None
+    before = len(client.calls)
+    wire(_budget_admit=_ahandler("budget_admit", (False, "fixture exhausted")))
+    result = _run(body)
+    check("plain API preserves budget rejection without contacting inference",
+          result.status_code == 429 and len(client.calls) == before)
+
+    # Exercise the existing Responses translation and typed SSE through the
+    # actual chat route; only the transport boundary is private.
+    client.reply = Reply(completion)
+    wire()
+    CALLS.clear()
+    class Bridge:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, url, **kwargs):
+            reply = await mios_chat.chat_completions_logic(
+                FakeRequest(kwargs["json"], kwargs.get("headers")))
+            return _RespHttpxResp(reply.content, reply.status_code)
+    response_body = {"model": "selected", "input": "Reply with OK", "tool_choice": "none",
+                     "max_output_tokens": 8, "stop": ["END"], "store": False}
+    from mios_pipe.routing import chat as chat_module
+    with mock.patch.object(chat_module, "httpx", types.SimpleNamespace(AsyncClient=Bridge)):
+        result = asyncio.run(mios_chat.responses_api_logic(FakeRequest(response_body)))
+        check("Responses plain path retains output limit, stop, selected model and no planning",
+              result.content["output_text"] == "OK" and client.calls[-1][1]["json"]["max_tokens"] == 8
+              and client.calls[-1][1]["json"]["stop"] == ["END"]
+              and client.calls[-1][1]["json"]["store"] is False
+              and CALLS == ["budget_admit"], repr(CALLS))
+        CALLS.clear()
+        result = asyncio.run(mios_chat.responses_api_logic(
+            FakeRequest(dict(response_body, stream=True))))
+        events = [json.loads(line[6:]) for line in asyncio.run(consume(result)).decode().splitlines()
+                  if line.startswith("data: ")]
+        check("Responses plain SSE has typed completion and skips planning",
+              events[-1]["type"] == "response.completed" and CALLS == ["budget_admit"])
+        if _SDK_EVENT_ADAPTER is not None:
+            for event in events:
+                _SDK_EVENT_ADAPTER.validate_python(event)
+            check("Responses plain SSE validates against strict SDK wire models", True)
+        client.reply = Reply(rejected, 404)
+        result = asyncio.run(mios_chat.responses_api_logic(FakeRequest(response_body)))
+        check("Responses plain backend error preserves failure status",
+              result.status_code == 404 and result.content == rejected)
+
 
 def _test_memory_compaction_tools():
     import mios_tokenize

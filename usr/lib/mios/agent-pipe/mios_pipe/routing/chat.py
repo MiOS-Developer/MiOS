@@ -610,6 +610,77 @@ async def _budget_release_inflight(turn_token: Optional[str]) -> None:
     except Exception:  # noqa: BLE001
         log.debug("budget inflight release failed for %s", turn_token, exc_info=True)
 
+async def _plain_chat_complete(body: dict) -> Any:
+    """Relay an explicitly tool-free request without planning or tool execution."""
+    chat_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    autonomous = bool(metadata.get("mios_autonomous"))
+    source = (str(metadata.get("mios_source") or metadata.get("rule_id")
+                  or metadata.get("schedule_id") or metadata.get("cron_id") or "autonomous")
+              if autonomous else None)
+    turn_token = chat_id if source else None
+    admitted, reason = await _budget_admit(_scratchpad_key(body, chat_id), source, turn_token)
+    if not admitted:
+        return JSONResponse(status_code=429, content={"error": {
+            "message": reason, "type": "rate_limit_error", "code": "budget_exhausted"}})
+    payload = dict(body)
+    for key in ("tools", "tool_choice", "parallel_tool_calls", "mios_flags", "_allow_write", "num_ctx"):
+        payload.pop(key, None)
+    payload["model"] = body.get("model") or BACKEND_MODEL
+    streaming = bool(payload.get("stream", False))
+    payload["stream"] = streaming
+    headers = {"Content-Type": "application/json"}
+    from mios_config import _AUTH_HOSTPORTS
+    if _BACKEND_KEY and str(BACKEND).split("://")[-1].split("/")[0] in _AUTH_HOSTPORTS:
+        headers["Authorization"] = f"Bearer {_BACKEND_KEY}"
+    upstream = None
+    stream_owned = False
+    try:
+        if not BACKEND:
+            raise ValueError("no inference backend is configured")
+        client = await _get_client()
+        url = f"{BACKEND.rstrip('/')}/chat/completions"
+        if not streaming:
+            reply = await client.post(url, json=payload, headers=headers)
+            return JSONResponse(content=reply.json(), status_code=reply.status_code)
+        request = client.build_request("POST", url, json=payload, headers=headers)
+        upstream = await client.send(request, stream=True)
+        if upstream.status_code >= 400:
+            await upstream.aread()
+            return JSONResponse(content=upstream.json(), status_code=upstream.status_code)
+
+        async def chunks():
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    yield chunk
+            except Exception:
+                log.exception("plain inference stream failed")
+                yield ("data: " + json.dumps({"error": {
+                    "message": "The inference backend stream failed",
+                    "type": "server_error", "code": "inference_unavailable"}})
+                    + "\n\ndata: [DONE]\n\n").encode()
+            finally:
+                try:
+                    await upstream.aclose()
+                finally:
+                    await _budget_release_inflight(turn_token)
+
+        stream_owned = True
+        return StreamingResponse(chunks(), media_type="text/event-stream")
+    except Exception:
+        log.exception("plain inference relay failed")
+        return JSONResponse(status_code=502, content={"error": {
+            "message": "The configured inference backend is unavailable",
+            "type": "server_error", "code": "inference_unavailable"}})
+    finally:
+        if not stream_owned:
+            try:
+                if upstream is not None:
+                    await upstream.aclose()
+            finally:
+                await _budget_release_inflight(turn_token)
+
+
 async def chat_completions_logic(request: Request) -> Any:
     try:
         body_bytes = await request.body()
@@ -630,6 +701,18 @@ async def chat_completions_logic(request: Request) -> Any:
                                "type": "invalid_request_error",
                                "param": "messages", "code": None}},
             status_code=400)
+
+    # Explicit tool-free API requests do not enter the agent routing graph or
+    # consume pending desktop approvals. The ingress middleware remains in force.
+    if str(body.get("tool_choice") or "").strip().lower() == "none":
+        if _INGRESS_KEY:
+            authorization = request.headers.get("authorization") or ""
+            if authorization.removeprefix("Bearer ").strip() != _INGRESS_KEY:
+                return JSONResponse(status_code=401, content={"error": {
+                    "message": "unauthorized", "type": "invalid_request_error"}})
+        _record_active.set(False)
+        _replay_active.set(False)
+        return await _plain_chat_complete(body)
 
     gateway_cfg = _toml_section("gateway") or {}
     meta = body.get("metadata") or {}
@@ -660,12 +743,6 @@ async def chat_completions_logic(request: Request) -> Any:
             filtered_messages.append(m)
         messages = filtered_messages
         body["messages"] = messages
-
-    _tools_disabled = str(body.get("tool_choice") or "").strip().lower() == "none"
-    if _tools_disabled:
-        body.pop("tools", None)
-        body.pop("tool_choice", None)
-        log.info("tool_choice: 'none' -> stripped tool definitions; 0 tool tokens for plain chat")
 
     last_user_text = _extract_last_user_text(messages)
     _clean_user = _strip_owui_scaffold(last_user_text)
@@ -941,7 +1018,7 @@ async def chat_completions_logic(request: Request) -> Any:
     # existing dispatcher still enforces permissions, quotas and desktop policy.
     _exact_action = None
     if not (_incoming_turn or _force_council or _force_delegate
-            or _autonomous or replay_mode or _tools_disabled):
+            or _autonomous or replay_mode):
         _exact_action = _deterministic_action_route(last_user_text)
     if _exact_action and str(_exact_action.get("tool") or "") in _FASTPATH_VERBS:
         return await _respond_os_control(
@@ -1370,7 +1447,7 @@ async def responses_api_logic(request: Request) -> Any:
         cc_payload["store"] = body["store"]
     if body.get("max_output_tokens") is not None:
         cc_payload["max_tokens"] = body["max_output_tokens"]
-    for key in ("temperature", "top_p", "parallel_tool_calls"):
+    for key in ("temperature", "top_p", "parallel_tool_calls", "stop"):
         if key in body:
             cc_payload[key] = body[key]
 
