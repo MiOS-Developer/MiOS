@@ -14,7 +14,7 @@ echo "[MiOS SystemRescue Firstboot] Enabling SSH + remote access + live connecti
 #     Render-Sysrescue.ps1 (build-time layered SSOT), (2) a flashed mios.toml parsed live
 #     (runtime SSOT, section-scoped). There is NO built-in default: when neither yields a
 #     credential, no password is set and no login account is created (fail closed, logged).
-MIOS_USER=""; MIOS_PASS=""; ROOT_PASS=""; MIOS_HEADER=1
+MIOS_USER=""; _mios_sysrescue_password=""; ROOT_PASS=""; MIOS_HEADER=1
 # (1) rendered env -- beside autorun0 at the ar_source partition root (dirname $0), then the
 #     usual auto-mount points as fallbacks.
 for _env in "$(dirname "$0")/mios-sysrescue.env" /mnt/*/mios-sysrescue.env \
@@ -23,7 +23,7 @@ for _env in "$(dirname "$0")/mios-sysrescue.env" /mnt/*/mios-sysrescue.env \
     if [ -r "$_env" ]; then . "$_env" 2>/dev/null || true; break; fi
 done
 [ -n "${MIOS_SR_USER:-}" ]   && MIOS_USER="$MIOS_SR_USER"
-[ -n "${MIOS_SR_PASS:-}" ]   && { MIOS_PASS="$MIOS_SR_PASS"; ROOT_PASS="$MIOS_SR_PASS"; }
+[ -n "${MIOS_SR_PASS:-}" ]   && { _mios_sysrescue_password="$MIOS_SR_PASS"; ROOT_PASS="$MIOS_SR_PASS"; }
 [ -n "${MIOS_SR_HEADER:-}" ] && MIOS_HEADER="$MIOS_SR_HEADER"
 # (2) fall back to a flashed mios.toml if the env was not rendered: [field.sysrescue] first,
 #     then [identity] (username / default_password) -- the same chain Render-Sysrescue uses.
@@ -34,17 +34,17 @@ _toml_get() { # <file> <section> <key> -> value of a "quoted" key inside exactly
                 if (index(l, key) == 1) { r = substr(l, length(key) + 1)
                     if (r ~ /^[[:space:]]*=/ && match(r, /"[^"]*"/)) { print substr(r, RSTART + 1, RLENGTH - 2); exit } } }' "$1"
 }
-if [ -z "$MIOS_USER" ] || [ -z "$MIOS_PASS" ]; then
+if [ -z "$MIOS_USER" ] || [ -z "$_mios_sysrescue_password" ]; then
     for _t in /run/archiso/bootmnt/mios.toml /run/archiso/bootmnt/Documents/mios.toml /mnt/*/mios.toml /root/mios.toml; do
         [ -r "$_t" ] || continue
         _u=$(_toml_get "$_t" field.sysrescue username); [ -n "$_u" ] || _u=$(_toml_get "$_t" identity username)
         _p=$(_toml_get "$_t" field.sysrescue password); [ -n "$_p" ] || _p=$(_toml_get "$_t" identity default_password)
         [ -z "$MIOS_USER" ] && [ -n "$_u" ] && MIOS_USER="$_u"
-        [ -z "$MIOS_PASS" ] && [ -n "$_p" ] && { MIOS_PASS="$_p"; ROOT_PASS="$_p"; }
+        [ -z "$_mios_sysrescue_password" ] && [ -n "$_p" ] && { _mios_sysrescue_password="$_p"; ROOT_PASS="$_p"; }
         break
     done
 fi
-if [ -z "$MIOS_USER" ] || [ -z "$MIOS_PASS" ]; then
+if [ -z "$MIOS_USER" ] || [ -z "$_mios_sysrescue_password" ]; then
     echo "[MiOS SystemRescue Firstboot] ERROR: no SSOT credential (mios-sysrescue.env or mios.toml [field.sysrescue]/[identity] username + password) -- NOT setting any password or creating a login account." >&2
 fi
 
@@ -61,13 +61,13 @@ X11Forwarding yes
 EOF
 
 # 3. Users + passwords + sudo permissions
-if [ -n "$MIOS_USER" ] && [ -n "$MIOS_PASS" ]; then
+if [ -n "$MIOS_USER" ] && [ -n "$_mios_sysrescue_password" ]; then
     echo "root:${ROOT_PASS}" | chpasswd 2>/dev/null || true
     if ! id "${MIOS_USER}" &>/dev/null; then
         useradd -m -G wheel -s /bin/bash "${MIOS_USER}" 2>/dev/null || true
     fi
     usermod -aG wheel "${MIOS_USER}" 2>/dev/null || true
-    echo "${MIOS_USER}:${MIOS_PASS}" | chpasswd 2>/dev/null || true
+    echo "${MIOS_USER}:${_mios_sysrescue_password}" | chpasswd 2>/dev/null || true
 fi
 # passwordless sudo for wheel (live diagnostic env -- convenience for remote admin)
 echo '%wheel ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/10-mios-wheel 2>/dev/null || true
@@ -98,7 +98,7 @@ FW=\$( [ -d /sys/firmware/efi ] && echo UEFI || echo BIOS )
 printf '%s\n' "\${b}=======================================================================\${r}"
 printf '%s\n' "\${g}  MiOS  |  SystemRescue Live Diagnostic + Remote Environment\${r}"
 printf '%s\n' "\${b}=======================================================================\${r}"
-printf '  %sSSH%s      : %s (port %s)   login: %sroot%s / %s%s%s  |  %s%s%s / %s\n' "\$y" "\$r" "\$SSHST" "\$SSHPORT" "\$g" "\$r" "\$g" "${MIOS_USER}" "\$r" "\$g" "${MIOS_USER}" "\$r" "${MIOS_PASS}"
+printf '  %sSSH%s      : %s (port %s)   login: %sroot%s / %s%s%s  |  %s%s%s / %s\n' "\$y" "\$r" "\$SSHST" "\$SSHPORT" "\$g" "\$r" "\$g" "${MIOS_USER}" "\$r" "\$g" "${MIOS_USER}" "\$r" "${_mios_sysrescue_password}"
 printf '  %sConnect%s  : %sssh ${MIOS_USER}@<ip>%s   (any IP below; sudo is passwordless)\n' "\$y" "\$r" "\$b" "\$r"
 printf '  %sHost%s     : %s   firmware: %s\n' "\$y" "\$r" "\$HOSTN" "\$FW"
 printf '  %sIPv4%s     : %s\n' "\$y" "\$r" "\$IPS"

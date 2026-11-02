@@ -504,12 +504,12 @@ class TestSysrescueAutorun(unittest.TestCase):
     def _cred_block(self, path: str) -> str:
         with open(path, encoding="utf-8") as fh:
             txt = fh.read()
-        a = txt.index("MIOS_USER=\"\"; MIOS_PASS=\"\"")
+        a = txt.index('MIOS_USER=""')
         b = txt.index("# 1. SSH host keys")
         return txt[a:b]
 
     def _run(self, block: str, d: str):
-        prog = "set -euo pipefail\n" + block + '\nprintf "%s|%s\\n" "$MIOS_USER" "$MIOS_PASS"\n'
+        prog = "set -euo pipefail\n" + block + '\nprintf "%s|%s\\n" "$MIOS_USER" "${_mios_sysrescue_password-${MIOS_PASS-}}"\n'
         return subprocess.run(["bash", "-c", prog, os.path.join(d, "autorun0")],
                               capture_output=True, text=True, timeout=30)
 
@@ -519,7 +519,7 @@ class TestSysrescueAutorun(unittest.TestCase):
                 continue
             with self.subTest(path=path):
                 block = self._cred_block(path)
-                self.assertNotRegex(block, r'MIOS_(USER|PASS)="mios"')
+                self.assertNotRegex(block, r'(?:MIOS_USER|MIOS_PASS|_mios_sysrescue_password)="mios"')
                 d = tempfile.mkdtemp(prefix="mios-sr-")
                 try:
                     with open(os.path.join(d, "mios-sysrescue.env"), "w") as fh:
