@@ -1,0 +1,753 @@
+# AI-hint: Native dock capture glow uses the room window material, transformed mesh, rounded/curved SDF and existing depth ordering; bounded monotonic heartbeats fail closed.
+# AI-related: usr/share/mios/mios.toml [desktop.hyprland.hypr3d], usr/share/mios/quickshell/Config.qml, tests/test-hypr3d-dock-capture.py
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -188,3 +188,10 @@
+  add_test(NAME mios-face-viewer COMMAND mios-face-viewer)
+  set_tests_properties(mios-face-viewer PROPERTIES TIMEOUT 5)
+ endif()
++
++if(BUILD_TESTING)
++ target_compile_definitions(mios-bsp-regression PRIVATE MIOS_GL_SCENE_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/src/Render/GLScene.cpp")
++ add_executable(mios-dock-capture-feedback tests/mios-dock-capture-feedback.cpp)
++ add_test(NAME mios-dock-capture-feedback COMMAND mios-dock-capture-feedback)
++ set_tests_properties(mios-dock-capture-feedback PROPERTIES TIMEOUT 5)
++endif()
+diff --git a/src/Input/DockCaptureFeedback.hpp b/src/Input/DockCaptureFeedback.hpp
+new file mode 100644
+--- /dev/null
++++ b/src/Input/DockCaptureFeedback.hpp
+@@ -0,0 +1,90 @@
++// AI-hint: Pure monotonic lease and style validation for native room-plane dock capture feedback.
++// AI-related: src/main.cpp dock_capture_feedback, src/Render/GLScene.cpp
++#pragma once
++#include <array>
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <optional>
++#include <string>
++#include <string_view>
++
++namespace MiosDockCapture {
++using Clock = std::chrono::steady_clock;
++inline bool physicalOutput(std::string_view name) {
++    if (name.empty() || name.size() > 128) return false;
++    for (const unsigned char c : name) if (c < 32 || c > 126) return false;
++    constexpr std::string_view headless = "headless";
++    if (name.size() >= headless.size()) {
++        bool same = true;
++        for (size_t i = 0; i < headless.size(); ++i) {
++            const unsigned char c = name[i];
++            same = same && (c == headless[i] || c == headless[i] - 'a' + 'A');
++        }
++        if (same) return false;
++    }
++    return true;
++}
++inline std::optional<std::array<float,4>> color(std::string_view text) {
++    if ((text.size() != 7 && text.size() != 9) || text[0] != '#') return {};
++    std::array<float,4> result{0.f,0.f,0.f,1.f};
++    const auto digit=[](char c)->int {
++        if (c >= '0' && c <= '9') return c-'0';
++        if (c >= 'a' && c <= 'f') return c-'a'+10;
++        if (c >= 'A' && c <= 'F') return c-'A'+10;
++        return -1;
++    };
++    for (size_t i=0; i<(text.size()-1)/2; ++i) {
++        const int hi=digit(text[1+i*2]), lo=digit(text[2+i*2]);
++        if (hi<0 || lo<0) return {};
++        result[i]=static_cast<float>(hi*16+lo)/255.f;
++    }
++    return result;
++}
++// Entering and leaving morphs are room scenes too; fullscreen native passthrough is flat.
++inline bool sceneVisible(bool active, float transition, bool morphing, bool entering, bool in2D) {
++    return active && !in2D && (transition>0.f || morphing || entering);
++}
++// Evaluated in render.pre before the compositor submits any overlay surfaces.
++inline bool suppressFlatLayer(std::string_view layerNamespace, std::string_view output,
++                              std::string_view roomOutput, bool roomVisible) {
++    return layerNamespace=="mios-dock-capture-glow" && physicalOutput(output) &&
++           output==roomOutput && roomVisible;
++}
++// Remove only our multiplicative factor; preserve fade state and unrelated factors.
++template <class Factors, class Token>
++inline bool removeFactor(Factors& factors,const Token* token) {
++    const auto found=std::find_if(factors.begin(),factors.end(),[&](const auto& factor) {return factor.get()==token;});
++    if (found==factors.end()) return false;
++    factors.erase(found);return true;
++}
++struct Feedback {
++    bool active = false;
++    std::string output;
++    std::array<float,4> rgba{};
++    float widthPx = 0.f;
++    int periodMs = 0;
++    Clock::time_point deadline{}, phaseOrigin{};
++    bool clear() { const bool was=active; active=false; return was; }
++    bool live(Clock::time_point now) const { return active && now<deadline; }
++    bool expire(Clock::time_point now) { return active && now>=deadline ? clear() : false; }
++    bool update(std::string_view nextOutput, std::string_view nextColor, double width,
++                double period, double lease, Clock::time_point now) {
++        const auto parsed=color(nextColor);
++        if (!physicalOutput(nextOutput) || !parsed || !std::isfinite(width) || width<=0.0 || width>32.0
++            || !std::isfinite(period) || period<100.0 || period>20000.0 || std::floor(period)!=period
++            || !std::isfinite(lease) || lease<100.0 || lease>10000.0 || std::floor(lease)!=lease) {
++            clear(); return false;
++        }
++        if (!live(now) || output!=nextOutput) phaseOrigin=now;
++        active=true; output=nextOutput; rgba=*parsed; widthPx=static_cast<float>(width);
++        periodMs=static_cast<int>(period); deadline=now+std::chrono::milliseconds(static_cast<int>(lease));
++        return true;
++    }
++    float pulse(Clock::time_point now) const {
++        if (!live(now)) return 0.f;
++        const double phase=std::chrono::duration<double,std::milli>(now-phaseOrigin).count()/periodMs;
++        return static_cast<float>(0.35+0.65*(0.5+0.5*std::sin(phase*6.283185307179586)));
++    }
++};
++}
+diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+--- a/src/Render/GLScene.hpp
++++ b/src/Render/GLScene.hpp
+@@ -141,6 +141,8 @@
+         // logical px l/t/r/b -- the 3D face keeps these and drops the drop shadow) and
+         // the opacity the client was composited with (the desktop's transmission).
+         std::array<float,4> glassDeco{0.f,0.f,0.f,0.f};
++        std::array<float,4> dockCaptureColor{};
++        std::array<float,2> dockCaptureGlow{}; // logical width, lease pulse
+         float glassWindowAlpha = 1.0f;
+         float alpha = 1.0f;
+         bool crtEnabled = false;
+@@ -553,6 +555,7 @@
+     int m_glassLiveWallpaper = -1, m_panoramaLiveWallpaper = -1;
+     int m_glassUV = -1, m_glassViewport = -1;
+     int m_glassSurface = -1, m_glassMetrics = -1;
++    int m_dockCaptureColor = -1, m_dockCaptureGlow = -1;
+     int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
+     int m_sceneTexSharp = -1; // MiOS retina spawn
+     int m_outTransform = 0, m_blitOutTransform = -1; // MiOS rotated outputs
+diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+--- a/src/Render/GLScene.cpp
++++ b/src/Render/GLScene.cpp
+@@ -133,6 +133,8 @@
+     std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
+     std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
+     std::array<float, 4> glassDeco{0.f, 0.f, 0.f, 0.f}; // MiOS: solid decoration extents
++    std::array<float,4> dockCaptureColor{};
++    std::array<float,2> dockCaptureGlow{};
+     float glassWindowAlpha = 1.0f;                       // MiOS: the client's composite opacity
+ };
+ 
+@@ -160,6 +162,8 @@
+     front.glassMetrics = back.glassMetrics = poly.glassMetrics;
+     front.glassDeco = back.glassDeco = poly.glassDeco;
+     front.glassWindowAlpha = back.glassWindowAlpha = poly.glassWindowAlpha;
++    front.dockCaptureColor = back.dockCaptureColor = poly.dockCaptureColor;
++    front.dockCaptureGlow = back.dockCaptureGlow = poly.dockCaptureGlow;
+     hasFront = hasBack = false;
+ 
+     const size_t COUNT = poly.verts.size();
+@@ -610,6 +614,8 @@
+ uniform vec4 uGlassSurface;
+ uniform vec4 uGlassMetrics;
+ uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
++uniform vec4 uDockCaptureColor;
++uniform vec2 uDockCaptureGlow; // width in the window's logical pixels, pulse strength
+ uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
+ uniform vec2 uControls; // per-window reveal and configured horizontal inset
+ uniform vec4 uControlStyle[12];
+@@ -1258,6 +1264,25 @@
+     return vec4((1.0 - h) * ((1.0 - s) * L * b + F), 1.0 - (1.0 - h) * (1.0 - s) * (1.0 - b));
+ }
+ 
++// The same rounded material SDF and interpolated mesh UVs as the window face.
++// No screen-space bounds, extra quad, depth change or second texture capture.
++vec4 miosDockCapture(vec4 base, vec2 coord) {
++    if (uDockCaptureGlow.y<=0.0 || uTextured==0 || uGlassWall!=0) return base;
++    fullSize=max(uGlassMetrics.xy,vec2(1.0));
++    invFullSize=1.0/fullSize; glassBoxSizePx=fullSize; radii=vec4(uGlassMetrics.z);
++    float sd=getCornerSDF(coord);
++    float pixel=max(fwidth(sd),0.001);
++    float coverage=clamp(0.5-sd/pixel,0.0,1.0);
++    float inside=max(-sd,0.0);
++    float width=max(uDockCaptureGlow.x,0.001);
++    float rim=1.0-smoothstep(max(width-pixel,0.0),width+pixel,inside);
++    float halo=0.22*exp(-inside/max(width*1.75,0.001));
++    float a=clamp(max(rim,halo)*coverage*uDockCaptureColor.a*uDockCaptureGlow.y*uColor.a,0.0,1.0);
++    float combined=a+base.a*(1.0-a);
++    vec3 rgb=combined>0.00001 ? (uDockCaptureColor.rgb*a+base.rgb*base.a*(1.0-a))/combined : vec3(0.0);
++    return vec4(rgb,combined);
++}
++
+ void main() {
+     if (uTextured != 0 && uGlassWall != 0) {
+         vec4 t=texSS(uTexture, vUV);
+@@ -1399,10 +1424,18 @@
+             float dissolveGlow = clamp(1.0 - abs(v_texcoord.y) * 3.5, 0.0, 1.0) * abs(lampP);
+             rgb = mix(rgb, bevelColor, dissolveGlow * 0.65);
+         }
+-        fragColor = vec4(uPremult != 0 ? rgb * a : rgb, a);
++        vec4 feedback=miosDockCapture(vec4(rgb,a),edge_coord);
++        fragColor = vec4(uPremult != 0 ? feedback.rgb * feedback.a : feedback.rgb, feedback.a);
+         return;
+     }
+     vec4 c = uTextured != 0 ? texSS(uTexture, vUV) * uColor : uColor;
++
++    if (uDockCaptureGlow.y>0.0 && uTextured!=0) {
++        vec2 capture=(vUV-uGlassUV.xy)/uGlassUV.zw;
++        capture.y=1.0-capture.y;
++        vec2 coord=(capture-uGlassSurface.xy)/uGlassSurface.zw;
++        c=miosDockCapture(c,coord);
++    }
+ 
+     // Premultiplied mode (the 2D<->3D view morph): the scene buffer holds
+     // color-already-multiplied-by-alpha, so the composite can stack the
+@@ -1771,6 +1804,8 @@
+     m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
+     m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
+     m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
++    m_dockCaptureColor = glGetUniformLocation(m_sceneProgram, "uDockCaptureColor");
++    m_dockCaptureGlow = glGetUniformLocation(m_sceneProgram, "uDockCaptureGlow");
+     m_controls = glGetUniformLocation(m_sceneProgram, "uControls");
+     m_controlStyle = glGetUniformLocation(m_sceneProgram, "uControlStyle[0]");
+     m_crtCurvature = glGetUniformLocation(m_sceneProgram, "uCrtCurvature");
+@@ -2309,6 +2344,7 @@
+     float r, float g, float b, float a
+ ) {
+     glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+ 
+     glUniformMatrix4fv(
+         m_sceneMVP,
+@@ -2838,6 +2874,7 @@
+     // Lines, not triangles, and translucent: the grid is the visual floor and
+     // sits just above the solid ground quad so the two never z-fight.
+     glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+ 
+     glUniformMatrix4fv(
+         m_sceneMVP,
+@@ -3168,6 +3205,8 @@
+         slab.front.glassMetrics = window.glassMetrics;
+         slab.front.glassDeco = window.glassDeco;
+         slab.front.glassWindowAlpha = window.glassWindowAlpha;
++        slab.front.dockCaptureColor = window.dockCaptureColor;
++        slab.front.dockCaptureGlow = window.dockCaptureGlow;
+         slab.front.glassUV = {window.u0, window.v0,
+                              window.u1 - window.u0, window.v1 - window.v0};
+ 
+@@ -3212,6 +3251,8 @@
+             slab.back.glassMetrics = slab.front.glassMetrics;
+             slab.back.glassDeco = slab.front.glassDeco;
+             slab.back.glassWindowAlpha = slab.front.glassWindowAlpha;
++            slab.back.dockCaptureColor = slab.front.dockCaptureColor;
++            slab.back.dockCaptureGlow = slab.front.dockCaptureGlow;
+             slab.back.glassUV = slab.front.glassUV;
+ 
+             for (int c = 0; c < 4; ++c) {
+@@ -3374,6 +3415,7 @@
+     }
+ 
+     glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+     glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, vp.m.data());
+     glUniform4f(m_sceneUVRect, 0.f, 0.f, 1.f, 1.f);
+     glUniform1i(m_sceneTexture, 0);
+@@ -3459,6 +3501,8 @@
+                ordered[j].glassMetrics == ordered[i].glassMetrics &&
+                ordered[j].glassDeco == ordered[i].glassDeco &&
+                ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha &&
++               ordered[j].dockCaptureColor == ordered[i].dockCaptureColor &&
++               ordered[j].dockCaptureGlow == ordered[i].dockCaptureGlow &&
+                ordered[j].crtEnabled == ordered[i].crtEnabled &&
+                ordered[j].controls == ordered[i].controls &&
+                ordered[j].controlStyle == ordered[i].controlStyle)
+@@ -3564,6 +3608,7 @@
+             }
+             }
+             glUseProgram(m_sceneProgram);
++            glUniform2f(m_dockCaptureGlow,0.f,0.f);
+             glBindVertexArray(m_polyVAO);
+             glBindBuffer(GL_ARRAY_BUFFER, m_polyVBO);
+             glViewport(0, 0, m_sceneWidth, m_sceneHeight);
+@@ -3576,6 +3621,24 @@
+             glActiveTexture(GL_TEXTURE0);
+             glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
+         }
++        const auto& feedback=ordered[i];
++        const bool captureFeedback=feedback.owner!=0 && !feedback.glassWall &&
++            feedback.glassMetrics[3]>.5f && feedback.dockCaptureGlow[1]>0.f &&
++            std::abs(uv[2])>1e-6f && std::abs(uv[3])>1e-6f &&
++            feedback.glassSurface[2]>0.f && feedback.glassSurface[3]>0.f;
++        if (captureFeedback) {
++            glUniform4f(m_glassUV,uv[0],uv[1],uv[2],uv[3]);
++            const auto& surface=feedback.glassSurface;
++            const auto& metrics=feedback.glassMetrics;
++            glUniform4f(m_glassSurface,surface[0],surface[1],surface[2],surface[3]);
++            glUniform4f(m_glassMetrics,metrics[0],metrics[1],metrics[2],metrics[3]);
++            glUniform2f(m_controls,feedback.controls[0],feedback.controls[1]);
++            glUniform4fv(m_controlStyle,12,feedback.controlStyle.data());
++            const auto& deco=feedback.glassDeco;
++            glUniform4f(m_glassDeco,deco[0],deco[1],deco[2],deco[3]);
++            glUniform4fv(m_dockCaptureColor,1,feedback.dockCaptureColor.data());
++            glUniform2f(m_dockCaptureGlow,feedback.dockCaptureGlow[0],feedback.dockCaptureGlow[1]);
++        } else glUniform2f(m_dockCaptureGlow,0.f,0.f);
+         glDrawArrays(GL_TRIANGLES, 0,
+                      static_cast<GLint>(verts.size() / 5));
+ 
+@@ -3584,6 +3647,7 @@
+ 
+     glUniform1i(m_glassFace, 0);
+     glUniform1i(m_glassWall, 0);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+     // MiOS frame rate: a due frame drops the slots no batch used (closed or hidden windows).
+     if (GLASS_DUE && m_glassFps > 0.f) {
+         for (auto it = m_glassSlots.begin(); it != m_glassSlots.end();) {
+@@ -3661,6 +3725,7 @@
+         addRect(verts, -halfTX, -outerY, halfTX, -innerY);
+ 
+         glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+ 
+         const Mat4 IDENTITY = Mat4::identity();
+         glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
+@@ -3764,6 +3829,7 @@
+         }
+ 
+         glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+ 
+         const Mat4 IDENTITY = Mat4::identity();
+         glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
+@@ -3808,6 +3874,7 @@
+         }
+ 
+         glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+ 
+         const Mat4 IDENTITY = Mat4::identity();
+         glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
+@@ -3934,6 +4001,7 @@
+     }
+ 
+     glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+ 
+     const Mat4 IDENTITY = Mat4::identity();
+     glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
+@@ -4071,6 +4139,7 @@
+         Mat4::scale(Vec3{2.0f / width, -2.0f / height, 1.0f});
+ 
+     glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+     glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, ORTHO.m.data());
+     glUniform4f(m_sceneUVRect, 0.f, 0.f, 1.f, 1.f);
+     glUniform1i(m_sceneTextured, 0);
+@@ -4308,6 +4377,7 @@
+ 
+     // Everything after the windows (F3 HUD text) draws straight again.
+     glUseProgram(m_sceneProgram);
++    glUniform2f(m_dockCaptureGlow,0.f,0.f);
+     glUniform1i(m_scenePremult, 0);
+ 
+     glDepthMask(GL_TRUE);
+diff --git a/src/main.cpp b/src/main.cpp
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1,9 +1,12 @@
++#include "Input/DockCaptureFeedback.hpp"
+ #include "World/PipGeometry.hpp"
+ #include "World/FaceViewer.hpp"
+ #include <sys/wait.h>
+ #include <cerrno>
+ #include <hyprland/src/plugins/PluginAPI.hpp>
+ #include <hyprland/src/plugins/PluginSystem.hpp>
++#include <hyprland/src/animation/AnimationManager.hpp>
++#include <hyprland/src/desktop/view/LayerSurface.hpp>
+ #include <dlfcn.h>
+ #include <spawn.h>
+ #include <cstring>
+@@ -113,6 +116,8 @@
+ static Compat::CWindowCapture g_environmentCapture;
+ 
+ static bool g_active = false;
++static MiosDockCapture::Feedback g_dockCaptureFeedback;
++static bool g_dockCapturePainted = false;
+ 
+ static float g_transition = 0.0f;
+ static float g_transitionTarget = 0.0f;
+@@ -1489,6 +1494,83 @@
+     return g_monitor;
+ }
+ 
++// Per-output room visibility includes both transition directions, not only input ownership.
++static bool dockCaptureSceneVisible(std::string_view output = {}) {
++    if (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()) return false;
++    const auto mon=targetMonitor();
++    return mon && MiosDockCapture::physicalOutput(mon->m_name) &&
++        (output.empty() || output==mon->m_name) &&
++        MiosDockCapture::sceneVisible(g_active,g_transition,g_viewMorph!=EViewMorph::None,
++                                     g_transitionTarget>0.f,g_fsPhase==EFullscreenPhase::In2D);
++}
++// A separate multiplicative alpha factor hides only the flat feedback layer.
++// Native fade values, goals and callbacks are never modified. Weak references
++// prevent this bookkeeping from extending a layer's Wayland lifetime.
++struct DockCaptureLayerFactor {PHLLSREF layer;CAnimatedVariable<float>* factor=nullptr;};
++static std::vector<DockCaptureLayerFactor> g_dockCaptureLayerFactors;
++static void clearDockCaptureLayerFactors() {
++    for (auto& item:g_dockCaptureLayerFactors)
++        if (const auto layer=item.layer.lock()) {
++            if (MiosDockCapture::removeFactor(layer->alpha().all(),item.factor) && g_pHyprRenderer)
++                if (const auto mon=layer->m_monitor.lock();mon && MiosDockCapture::physicalOutput(mon->m_name))
++                    g_pHyprRenderer->damageMonitor(mon);
++        }
++    g_dockCaptureLayerFactors.clear();
++}
++static void syncDockCaptureLayerFactors(const PHLMONITOR& mon) {
++    const auto room=targetMonitor();
++    std::erase_if(g_dockCaptureLayerFactors,[&](auto& item) {
++        const auto layer=item.layer.lock();
++        const auto output=layer?layer->m_monitor.lock():nullptr;
++        const bool keep=layer && output && room &&
++            MiosDockCapture::suppressFlatLayer(layer->m_namespace,output->m_name,room->m_name,
++                                               dockCaptureSceneVisible(output->m_name));
++        if (keep) {
++            const auto& factors=layer->alpha().all();
++            if (std::any_of(factors.begin(),factors.end(),[&](const auto& f){return f.get()==item.factor;})) return false;
++        }
++        if (layer) MiosDockCapture::removeFactor(layer->alpha().all(),item.factor);
++        return true;
++    });
++    if (!mon || !room || !dockCaptureSceneVisible(mon->m_name) || !Animation::mgr()) return;
++    for (const auto& list:mon->m_layerSurfaceLayers) for (const auto& ref:list) {
++        const auto layer=ref.lock();
++        if (!layer || !layer->m_mapped || layer->m_monitor.lock()!=mon ||
++            !MiosDockCapture::suppressFlatLayer(layer->m_namespace,mon->m_name,room->m_name,true)) continue;
++        if (std::any_of(g_dockCaptureLayerFactors.begin(),g_dockCaptureLayerFactors.end(),
++            [&](const auto& item){return item.layer.lock()==layer;})) continue;
++        auto& factors=layer->alpha().all();
++        if (factors.empty() || !factors.front()) continue;
++        PHLANIMVAR<float> zero;
++        Animation::mgr()->createAnimation(0.f,zero,factors.front()->getConfig().lock(),AVARDAMAGE_NONE);
++        // Allocate bookkeeping first: a failed vector growth cannot leave an unowned factor.
++        g_dockCaptureLayerFactors.push_back({layer,zero.get()});
++        factors.push_back(std::move(zero));
++    }
++}
++static void clearDockCaptureFeedback() {
++    g_dockCaptureFeedback.clear();
++    if (g_dockCapturePainted) damageCurrentMonitor();
++    g_dockCapturePainted=false;
++}
++static void applyDockCaptureFeedback(const PHLMONITOR& mon) {
++    const auto now=MiosDockCapture::Clock::now();
++    const bool expired=g_dockCaptureFeedback.expire(now);
++    if (expired && g_dockCapturePainted) damageCurrentMonitor();
++    const bool visible=mon && mon->m_name==g_dockCaptureFeedback.output &&
++        dockCaptureSceneVisible(g_dockCaptureFeedback.output) && g_dockCaptureFeedback.live(now) &&
++        g_dockCaptureFeedback.rgba[3]>0.f;
++    bool painted=false;
++    for (auto& window:g_renderWindows) {
++        window.dockCaptureColor={};window.dockCaptureGlow={};
++        if (!visible || !window.texture || window.alpha<=0.f || window.glassMetrics[3]<=.5f) continue;
++        window.dockCaptureColor=g_dockCaptureFeedback.rgba;
++        window.dockCaptureGlow={g_dockCaptureFeedback.widthPx,g_dockCaptureFeedback.pulse(now)};
++        painted=true;
++    }
++    g_dockCapturePainted=painted;
++}
++
+ // Where the crosshair sits in logical coordinates: the centre of the monitor
+ // the view is built for. The pointer is pinned around this point, and the
+ // picking ray is independent of the cursor and comes from the camera.
+@@ -1779,6 +1861,9 @@
+         g_framePump = makeShared<CEventLoopTimer>(
+             std::nullopt,
+             [](SP<CEventLoopTimer> self, void*) {
++                if (g_dockCaptureFeedback.expire(MiosDockCapture::Clock::now()) && g_dockCapturePainted) {
++                    damageCurrentMonitor();g_dockCapturePainted=false;
++                }
+                 if (!g_active) {
+                     self->updateTimeout(std::nullopt);
+                     return;
+@@ -6387,6 +6472,7 @@
+     // poses (same slot the fullscreen animation occupies -- the two never
+     // run together, applyViewMorph lands instantly when a FS phase starts).
+     applyViewMorph(MON);
++    applyDockCaptureFeedback(MON);
+ 
+     // Normal client interaction is a virtual pointer located exactly at the
+     // crosshair. It is updated every frame after camera motion, so buttons,
+@@ -8540,6 +8626,54 @@
+ // own state, which a config reload would lose.
+ // Whether the effect pane is currently represented by a room capture. Native
+ // fullscreen passthrough owns 2D composition and needs its real overlay visible.
++// A minimal false clears before validating any other payload field.
++static int luaDockCaptureFeedback(lua_State* L) {
++    const auto fail=[&](const char* message)->int {
++        clearDockCaptureFeedback();
++        return luaL_error(L,"hypr3d.dock_capture_feedback: %s",message);
++    };
++    if (lua_gettop(L)!=1 || lua_type(L,1)!=LUA_TTABLE) return fail("expected one options table");
++    const auto field=[&](const char* key) {lua_pushstring(L,key);lua_rawget(L,1);};
++    field("active");
++    if (lua_type(L,-1)!=LUA_TBOOLEAN) {lua_pop(L,1);return fail("active must be boolean");}
++    const bool active=lua_toboolean(L,-1);lua_pop(L,1);
++    if (!active) {
++        clearDockCaptureFeedback();
++        lua_pushboolean(L,dockCaptureSceneVisible());return 1;
++    }
++    std::string_view output,color;
++    for (auto pair:{std::pair{"output",&output},std::pair{"color",&color}}) {
++        field(pair.first);
++        if (lua_type(L,-1)!=LUA_TSTRING) {lua_pop(L,1);return fail("output and color must be strings");}
++        size_t size=0;const char* text=lua_tolstring(L,-1,&size);
++        const bool outputField=pair.second==&output;
++        if ((outputField && (size==0 || size>128)) || (!outputField && size!=7 && size!=9)) {
++            lua_pop(L,1);return fail("invalid output or color length");
++        }
++        *pair.second=std::string_view(text,size);lua_pop(L,1);
++    }
++    field("width_px");
++    if (lua_type(L,-1)!=LUA_TNUMBER) {lua_pop(L,1);return fail("width_px must be finite");}
++    const double width=lua_tonumber(L,-1);lua_pop(L,1);
++    field("period_ms");
++    if (!lua_isinteger(L,-1)) {lua_pop(L,1);return fail("period_ms must be integer");}
++    const double period=static_cast<double>(lua_tointeger(L,-1));lua_pop(L,1);
++    field("lease_ms");
++    if (!lua_isinteger(L,-1)) {lua_pop(L,1);return fail("lease_ms must be integer");}
++    const double lease=static_cast<double>(lua_tointeger(L,-1));lua_pop(L,1);
++    bool present=false;
++    if (State::monitorState()) for (const auto& mon:State::monitorState()->monitors())
++        if (mon && mon->m_name==output && MiosDockCapture::physicalOutput(mon->m_name)) {present=true;break;}
++    if (!present || !g_dockCaptureFeedback.update(output,color,width,period,lease,MiosDockCapture::Clock::now()))
++        return fail("invalid output, color, width (0..32], period (100..20000), or lease (100..10000)");
++    bool visibleWindow=false;
++    if (dockCaptureSceneVisible(output) && g_dockCaptureFeedback.rgba[3]>0.f)
++        for (const auto& window:g_renderWindows)
++            visibleWindow=visibleWindow || (window.texture && window.alpha>0.f && window.glassMetrics[3]>.5f);
++    if (g_dockCapturePainted || visibleWindow) damageCurrentMonitor();
++    lua_pushboolean(L,dockCaptureSceneVisible(output));return 1;
++}
++
+ static int luaEffectInRoom(lua_State* L) {
+     lua_pushboolean(L,g_active && g_transition>0.f && g_fsPhase!=EFullscreenPhase::In2D);
+     return 1;
+@@ -10853,6 +10987,9 @@
+     }))
+         throw std::runtime_error("[hypr3d] failed to register Lua posture");
+ 
++    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "dock_capture_feedback", luaDockCaptureFeedback))
++        throw std::runtime_error("[hypr3d] failed to register Lua dock_capture_feedback");
++
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "input_owner", [](lua_State* L) -> int {
+         const auto W=g_appInputWindow.lock();
+         lua_pushinteger(L,appOwnsInput() ? static_cast<lua_Integer>(Compat::windowId(W)) : 0);
+@@ -10993,6 +11130,7 @@
+             [](PHLMONITOR mon) {
+                 try {
+                     onRenderPre(mon);
++                    if (!g_capturing) syncDockCaptureLayerFactors(mon);
+                 } catch (const std::exception& e) {
+                     dumpErrorNow(std::string{"renderPre: "} + e.what());
+                 } catch (...) {
+@@ -11100,6 +11238,7 @@
+ }
+ 
+ APICALL EXPORT void PLUGIN_EXIT() {
++    clearDockCaptureLayerFactors();
+     // No event may call back into an unmapped plugin, even after a failed reload.
+     if (g_crtPickerPid > 0) // MiOS room input: the picker child never outlives the plugin
+         kill(-g_crtPickerPid, SIGTERM);
+diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCompat.cpp
+--- a/src/HyprlandCompat/WindowsCompat.cpp
++++ b/src/HyprlandCompat/WindowsCompat.cpp
+@@ -139,7 +139,7 @@
+         for (const auto& LSREF : LAYERLIST) {
+             const auto LS = LSREF.lock();
+ 
+-            if (!LS || !LS->visible() || LS->m_layer == LAYER_BACKGROUND ||
++            if (!LS || LS->m_namespace=="mios-dock-capture-glow" || !LS->visible() || LS->m_layer == LAYER_BACKGROUND ||
+                 (underLayers && LS->m_layer != LAYER_BOTTOM))
+                 continue;
+ 
+diff --git a/tests/mios-dock-capture-feedback.cpp b/tests/mios-dock-capture-feedback.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/mios-dock-capture-feedback.cpp
+@@ -0,0 +1,77 @@
++// AI-hint: Deterministic clock, fail-closed validation and enter/exit visibility regression tests.
++// AI-related: src/Input/DockCaptureFeedback.hpp, src/main.cpp dock_capture_feedback
++#include "../src/Input/DockCaptureFeedback.hpp"
++#include <iostream>
++#include <limits>
++#include <memory>
++#include <vector>
++#include <stdexcept>
++using namespace MiosDockCapture;
++static void require(bool ok,const char* label) {if (!ok) throw std::runtime_error(label);}
++int main() {
++    const auto t=Clock::time_point{}+std::chrono::seconds(100);
++    Feedback f;
++    const auto valid=[&](Clock::time_point now=Clock::time_point{}) {return f.update("DP-1","#Ff8000",2,1000,1000,now==Clock::time_point{}?t:now);};
++    require(valid(),"valid style");
++    require(f.rgba[0]==1.f && f.rgba[3]==1.f,"RGB defaults opaque");
++    require(f.live(t+std::chrono::milliseconds(999)),"lease before deadline");
++    require(!f.live(t+std::chrono::milliseconds(1000)),"deadline exclusive");
++    const auto origin=f.phaseOrigin;
++    const auto quarter=t+std::chrono::milliseconds(250);
++    const float phase=f.pulse(quarter);
++    require(valid(quarter),"heartbeat");
++    require(f.phaseOrigin==origin && std::abs(f.pulse(quarter)-phase)<0.00001f,"heartbeat preserves phase");
++    require(f.live(t+std::chrono::milliseconds(1249)),"heartbeat extends lease");
++    require(f.expire(t+std::chrono::milliseconds(1250)) && !f.active,"lease clears at deadline");
++    require(!f.expire(t+std::chrono::milliseconds(1251)),"expiry idempotent");
++    require(valid() && f.clear() && !f.live(t),"explicit clear");
++    require(!f.clear(),"clear idempotent");
++    require(valid() && f.update("HDMI-A-1","#11223380",32,20000,10000,quarter),"upper bounds");
++    require(f.phaseOrigin==quarter && std::abs(f.rgba[3]-128.f/255.f)<0.00001f,"output change resets phase RGBA");
++    require(f.update("DP-1","#00000000",0.001,100,100,t),"lower bounds transparent valid");
++    for (const auto output:{"","HEADLESS-1","headless-2","HeAdLeSs","DP\n1"}) {
++        require(valid(),"restore output");require(!f.update(output,"#ffffff",2,1000,1000,t) && !f.active,"invalid output clears");
++    }
++    require(!physicalOutput(std::string(129,'X')) && !physicalOutput(std::string("DP-1\0X",6)),"bounded printable output");
++    for (const auto style:{"ffffff","#fff","#gg0000","#fffffffff","#12345z","#112233xx"}) {
++        require(valid(),"restore color");require(!f.update("DP-1",style,2,1000,1000,t) && !f.active,"invalid color clears");
++    }
++    for (const double width:{0.,-1.,32.001,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}) {
++        require(valid(),"restore width");require(!f.update("DP-1","#ffffff",width,1000,1000,t) && !f.active,"invalid width clears");
++    }
++    for (const double period:{99.,20001.,100.5,std::numeric_limits<double>::infinity()}) {
++        require(valid(),"restore period");require(!f.update("DP-1","#ffffff",2,period,1000,t) && !f.active,"invalid period clears");
++    }
++    for (const double lease:{99.,10001.,100.5,std::numeric_limits<double>::quiet_NaN()}) {
++        require(valid(),"restore lease");require(!f.update("DP-1","#ffffff",2,1000,lease,t) && !f.active,"invalid lease clears");
++    }
++    require(sceneVisible(true,1.f,false,false,false),"room visible");
++    require(sceneVisible(true,0.f,true,false,false),"exit morph visible");
++    require(sceneVisible(true,0.f,false,true,false),"enter before first frame visible");
++    require(!sceneVisible(true,1.f,true,true,true),"native fullscreen flat");
++    require(!sceneVisible(false,1.f,true,true,false),"inactive flat");
++    require(!sceneVisible(true,0.f,false,false,false),"closed transition flat");
++    require(valid(),"restore pulse");
++    require(std::abs(f.pulse(t)-f.pulse(t+std::chrono::milliseconds(1000)))>0.1f,"expired pulse zero");
++    require(f.update("DP-1","#ffffff",2,1000,10000,t),"long lease");
++    require(std::abs(f.pulse(t)-f.pulse(t+std::chrono::milliseconds(1000)))<0.00001f,"periodic pulse");
++    // The old heartbeat-only path does not suppress this first render frame.
++    require(suppressFlatLayer("mios-dock-capture-glow","DP-1","DP-1",true),"same-frame layer suppression before shell heartbeat");
++    require(!suppressFlatLayer("mios-dock","DP-1","DP-1",true),"other layers preserved");
++    require(!suppressFlatLayer("mios-dock-capture-glow","DP-2","DP-1",true),"foreign output preserved");
++    require(!suppressFlatLayer("mios-dock-capture-glow","DP-1","DP-1",false),"native fullscreen preserved");
++    require(!suppressFlatLayer("mios-dock-capture-glow","HEADLESS-1","HEADLESS-1",true),"headless excluded");
++    require(suppressFlatLayer("mios-dock-capture-glow","DP-1","DP-1",sceneVisible(true,0,true,false,false)),"exit morph suppresses flat layer");
++    require(suppressFlatLayer("mios-dock-capture-glow","DP-1","DP-1",sceneVisible(true,0,false,true,false)),"enter morph suppresses flat layer");
++    std::vector<std::unique_ptr<float>> factors;
++    factors.push_back(std::make_unique<float>(.6f));const auto* fade=factors.back().get();
++    factors.push_back(std::make_unique<float>(0.f));const auto* ours=factors.back().get();
++    factors.push_back(std::make_unique<float>(.8f));const auto* other=factors.back().get();
++    require(removeFactor(factors,ours),"owned zero factor removed");
++    require(factors.size()==2 && factors[0].get()==fade && factors[1].get()==other,"factor identity preserves native fade and later foreign factors");
++    require(*factors[0]==.6f && *factors[1]==.8f,"no native fade goal/value changes");
++    require(!removeFactor(factors,ours) && factors.size()==2,"stale factor token harmless");
++    *factors[0]=0.f; // native unmap/fade is never restored to an earlier alpha.
++    require(!removeFactor(factors,ours) && *factors[0]==0.f,"unmapped layer never revived");
++    std::cout<<"dock capture validation, lease, pulse and morph regressions passed\n";
++}
+diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+--- a/tests/mios-bsp-regression.cpp
++++ b/tests/mios-bsp-regression.cpp
+@@ -3,6 +3,8 @@
+ #include "../src/Render/GLScene.cpp"
+ 
+ #include <stdexcept>
++#include <fstream>
++#include <iterator>
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
+ 
+@@ -146,6 +148,64 @@
+     glDeleteProgram(program);
+     glDeleteShader(vs);
+     glDeleteShader(fs);
++    // Exercise the actual material shader, including rounded clipping and resets.
++    const GLuint captureVS=compileShader(GL_VERTEX_SHADER,R"GLSL(#version 300 es
++precision highp float;
++uniform vec2 coord;
++out vec2 vUV;
++out vec3 vWorldPosition;
++void main() {
++ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));
++ gl_Position=vec4(p*2.0-1.0,0.0,1.0);
++ vUV=coord;vWorldPosition=vec3(0.0);
++}
++)GLSL");
++    std::ifstream materialSource(MIOS_GL_SCENE_SOURCE);
++    require(materialSource.good());
++    const std::string materialText{std::istreambuf_iterator<char>(materialSource),std::istreambuf_iterator<char>()};
++    const std::string marker="sceneFragmentShader = R\"GLSL(";
++    const auto shaderBegin=materialText.find(marker);
++    require(shaderBegin!=std::string::npos);
++    const auto shaderStart=shaderBegin+marker.size();
++    const auto shaderEnd=materialText.find(")GLSL\";",shaderStart);
++    require(shaderEnd!=std::string::npos);
++    const auto materialShader=materialText.substr(shaderStart,shaderEnd-shaderStart);
++    const GLuint captureFS=compileShader(GL_FRAGMENT_SHADER,materialShader.c_str());
++    require(captureVS && captureFS);
++    const GLuint captureProgram=linkProgram(captureVS,captureFS);
++    require(captureProgram);
++    glUseProgram(captureProgram);
++    GLuint blackTexture=0;glGenTextures(1,&blackTexture);glBindTexture(GL_TEXTURE_2D,blackTexture);
++    const std::array<unsigned char,4> black{0,0,0,255};
++    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,black.data());
++    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
++    const auto uniform=[&](const char* name) {return glGetUniformLocation(captureProgram,name);};
++    glUniform1i(uniform("uTexture"),0);glUniform1i(uniform("uTextured"),1);
++    glUniform4f(uniform("uColor"),1,1,1,1);
++    glUniform4f(uniform("uGlassUV"),0,0,1,1);glUniform4f(uniform("uGlassSurface"),0,0,1,1);
++    glUniform4f(uniform("uGlassMetrics"),640,400,24,1);
++    glUniform4f(uniform("uDockCaptureColor"),1,0,0,1);
++    glUniform2f(uniform("uDockCaptureGlow"),4,1);
++    const auto capturePixel=[&](float x,float y) {
++        glUniform2f(uniform("coord"),x,y);glDrawArrays(GL_TRIANGLES,0,3);
++        std::array<unsigned char,4> pixel{};
++        glReadPixels(0,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel.data());
++        require(glGetError()==GL_NO_ERROR);return pixel;
++    };
++    require(capturePixel(.001f,.5f)[0]>240); // exact logical left border
++    require(capturePixel(.5f,.5f)[0]<2); // centre does not become a frame fill
++    require(capturePixel(.001f,.001f)[0]<2); // rounded corner clips the glow
++    glUniform4f(uniform("uDockCaptureColor"),1,0,0,0);
++    require(capturePixel(.001f,.5f)[0]<2); // transparent operator style
++    glUniform4f(uniform("uDockCaptureColor"),1,0,0,1);
++    glUniform2f(uniform("uDockCaptureGlow"),0,0);
++    require(capturePixel(.001f,.5f)[0]<2); // clearing frame has no residual uniforms
++    glUniform1i(uniform("uTextured"),0);glUniform4f(uniform("uColor"),0,0,1,1);
++    glUniform2f(uniform("uDockCaptureGlow"),4,1);
++    require(capturePixel(.001f,.5f)==std::array<unsigned char,4>{0,0,255,255}); // HUD/background unaffected
++    glDeleteTextures(1,&blackTexture);glDeleteProgram(captureProgram);
++    glDeleteShader(captureVS);glDeleteShader(captureFS);
+     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+     eglDestroyContext(display, context);
+     eglDestroySurface(display, surface);
+@@ -199,6 +259,8 @@
+     warped.glassUV = {0.1f, 0.2f, 0.8f, 0.6f};
+     warped.glassSurface = {0.05f, 0.05f, 0.9f, 0.9f};
+     warped.glassMetrics = {640.f, 400.f, 24.f, 1.f};
++    warped.dockCaptureColor={1.f,.5f,0.f,1.f};
++    warped.dockCaptureGlow={3.f,.7f};
+     // Rounding/clipping can leave the fourth vertex off the plane selected
+     // from the first triangle. The splitter must still leave the input set.
+     warped.verts = {{{0,0,0},0,0}, {{1,0,0},1,0},
+@@ -234,6 +296,8 @@
+         require(p->glassSurface == warped.glassSurface);
+         require(p->glassMetrics == warped.glassMetrics);
+         require(p->controlStyle == warped.controlStyle);
++        require(p->dockCaptureColor == warped.dockCaptureColor);
++        require(p->dockCaptureGlow == warped.dockCaptureGlow);
+         for (const auto& v : p->verts)
+             require(v.u >= 0.f && v.u <= 1.f && v.v >= 0.f && v.v <= 1.f);
+     }
