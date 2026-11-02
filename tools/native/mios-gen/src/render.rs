@@ -7381,7 +7381,7 @@ pub mod hyprglass_build {
                 assert!(compatibility_pin(&bad, "hypr3d", "0.56.2").is_err(), "{key}");
             }
             let mut bad = p.clone();
-            bad["compatibility"]["typo"] = Value::Boolean(true);
+            bad["compatibility"].as_table_mut().unwrap().insert("typo".into(), Value::Boolean(true));
             assert!(compatibility_pin(&bad, "hypr3d", "0.56.2").unwrap_err().contains("unknown field"));
         }
         #[test]
