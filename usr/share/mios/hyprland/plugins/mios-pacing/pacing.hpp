@@ -16,6 +16,55 @@
 namespace MiosPacing {
     using Clock = std::chrono::steady_clock;
 
+    // A 2D controller cursor is a lease, not a new global theme. Physical
+    // motion yields its shape immediately; a later controller motion may
+    // resume it while the owner still refreshes the lease.
+    enum class ECursorEffect { None, Apply, Clear };
+    struct SCursorLease {
+        bool armed = false, overridden = false;
+        std::string shape, device;
+        Clock::time_point deadline{};
+        struct SUpdate { bool valid; ECursorEffect effect; };
+
+        ECursorEffect release() {
+            const bool was = overridden;
+            overridden = false;
+            return was ? ECursorEffect::Clear : ECursorEffect::None;
+        }
+        ECursorEffect disable() {
+            armed = false;
+            return release();
+        }
+        SUpdate refresh(std::string_view nextShape, std::string_view nextDevice, int leaseMs, Clock::time_point now) {
+            const bool validShape = !nextShape.empty() && nextShape.size() <= 64 && nextShape.find_first_not_of(
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") == std::string_view::npos;
+            bool validDevice = !nextDevice.empty() && nextDevice.size() <= 128;
+            for (const unsigned char c : nextDevice)
+                validDevice = validDevice && c >= 32 && c < 127;
+            if (!validShape || !validDevice || leaseMs < 1 || leaseMs > 10000)
+                return {false, disable()};
+            const auto effect = shape != nextShape || device != nextDevice ? release() : ECursorEffect::None;
+            shape = nextShape;
+            device = nextDevice;
+            armed = true;
+            deadline = now + std::chrono::milliseconds(leaseMs);
+            return {true, effect};
+        }
+        ECursorEffect expire(Clock::time_point now) {
+            return armed && now >= deadline ? disable() : ECursorEffect::None;
+        }
+        ECursorEffect motion(std::string_view source, Clock::time_point now) {
+            if (!armed || now >= deadline)
+                return disable();
+            if (source != device)
+                return release();
+            if (overridden)
+                return ECursorEffect::None;
+            overridden = true;
+            return ECursorEffect::Apply;
+        }
+    };
+
     struct SGate {
         Clock::time_point next{};
         bool              primed = false;

@@ -36,10 +36,12 @@ enum Operation {
         tmux_socket: PathBuf,
     },
     Replay,
+    /// Print the physical Linux VT shared by stdin and this process's controlling tty.
+    ConsoleVt,
     /// I3 (C-18): run a VT tmux client on a pty; while it has mouse mode on, gpm (or evdev pointer) events reach it as
     /// SGR 1006 reports. The VT itself never enters mouse reporting.
     ConsoleBridge {
-        /// The VT number gpm routes by (default: fd 0's /dev/tty<N>).
+        /// The VT number gpm routes by (default: stdin's physical controlling VT).
         #[arg(long)]
         vt: Option<u32>,
         /// Pointer source override: gpm, evdev or off (default: the SSOT's controller.console.mouse).
@@ -193,6 +195,12 @@ fn run() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if let Operation::FixturePad { layout } = &args.command {
         return mios_inputd::linux::fixture_pad(layout);
+    }
+    #[cfg(target_os = "linux")]
+    if matches!(args.command, Operation::ConsoleVt) {
+        let vt = mios_inputd::console::own_vt().ok_or("stdin is not this process's controlling Linux VT")?;
+        println!("{vt}");
+        return Ok(());
     }
     let (global, legacy) = GlobalConfig::load(args.root.as_deref())?;
     #[cfg(target_os = "linux")]

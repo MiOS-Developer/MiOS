@@ -8,6 +8,9 @@
 # safe across every MiOS shape.
 enable mios-wsl-theme-bridge.service
 
+# Controller ownership follows logind and explicit session routes on graphical and text logins.
+enable mios-inputd.service
+
 # WSLg-only graphical-session.target activator. Without this, the
 # user-systemd graphical-session.target stays INACTIVE because no
 # gnome-session.service exists to pull it in -- which then fails

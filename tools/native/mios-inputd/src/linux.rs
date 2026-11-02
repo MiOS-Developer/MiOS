@@ -452,8 +452,11 @@ impl VirtualDevice {
         )
     }
     pub fn pointer() -> io::Result<Self> {
+        Self::pointer_named(&format!("{VIRTUAL_PREFIX}-pointer"))
+    }
+    pub fn pointer_named(name:&str) -> io::Result<Self> {
         Self::create(
-            &format!("{VIRTUAL_PREFIX}-pointer"),
+            name,
             InputId {
                 bustype: 3,
                 ..InputId::default()

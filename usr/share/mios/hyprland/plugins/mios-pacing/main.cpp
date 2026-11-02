@@ -39,6 +39,8 @@
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/values/types/BoolValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
@@ -72,6 +74,11 @@
 #include <unordered_map>
 #include <vector>
 
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
+
 namespace {
     HANDLE         PHANDLE         = nullptr;
     CFunctionHook* g_hook          = nullptr;
@@ -79,6 +86,10 @@ namespace {
     CFunctionHook* g_notifHook     = nullptr;
     CFunctionHook* g_notifDrawHook = nullptr;
     CFunctionHook* g_captureHook   = nullptr;
+    CFunctionHook* g_cursorMotionHook = nullptr;
+    CFunctionHook* g_cursorWarpHook = nullptr;
+    MiosPacing::SCursorLease g_cursor;
+    SP<CEventLoopTimer> g_cursorTimer;
     bool           g_exiting       = false;
     using origOnFrame              = void (*)(void*);
     using origSurfaceFrame         = void (*)(void*, const Time::steady_tp&);
@@ -92,6 +103,76 @@ namespace {
     );
     using origNotifDraw            = void (*)(Notification::CNotificationOverlay*, PHLMONITOR);
     using origCaptureToplevel      = void (*)(CToplevelExportClient*, uint32_t, int32_t, PHLWINDOW);
+    using origMouseMoved = void (*)(CInputManager*, IPointer::SMotionEvent);
+    using origMouseWarp = void (*)(CInputManager*, IPointer::SMotionAbsoluteEvent);
+
+    void cursorEffect(MiosPacing::ECursorEffect effect) {
+        using namespace Pointer::Cursor;
+        if (!overrideController)
+            return;
+        if (effect == MiosPacing::ECursorEffect::Apply)
+            overrideController->setOverride(g_cursor.shape, CURSOR_OVERRIDE_UNKNOWN);
+        else if (effect == MiosPacing::ECursorEffect::Clear)
+            overrideController->unsetOverride(CURSOR_OVERRIDE_UNKNOWN);
+    }
+
+    void hkCursorMotion(CInputManager* manager, IPointer::SMotionEvent event) {
+        const bool ours = !g_exiting && event.device &&
+            (event.device->m_deviceName == g_cursor.device || event.device->m_hlName == g_cursor.device);
+        // Yield before the compositor handles physical input, so its normal
+        // client cursor request wins. Controller movement sets the shape after
+        // normal focus processing and never consumes or changes motion.
+        if (!ours)
+            cursorEffect(g_cursor.motion({}, MiosPacing::Clock::now()));
+        reinterpret_cast<origMouseMoved>(g_cursorMotionHook->m_original)(manager, event);
+        if (ours)
+            cursorEffect(g_cursor.motion(g_cursor.device, MiosPacing::Clock::now()));
+    }
+
+    void hkCursorWarp(CInputManager* manager, IPointer::SMotionAbsoluteEvent event) {
+        cursorEffect(g_cursor.motion({}, MiosPacing::Clock::now()));
+        reinterpret_cast<origMouseWarp>(g_cursorWarpHook->m_original)(manager, event);
+    }
+
+    // The input owner arms this only for its 2D cursor mode and refreshes the
+    // lease from the same context poll which stops routing on loss of focus.
+    // false is also used on 3D entry, mode-off and orderly service shutdown.
+    int luaControllerCursor(lua_State* state) {
+        if (lua_type(state, 1) != LUA_TBOOLEAN) {
+            cursorEffect(g_cursor.disable());
+            if (g_cursorTimer)
+                g_cursorTimer->updateTimeout(std::nullopt);
+            return luaL_error(state, "controller_cursor: enabled must be boolean");
+        }
+        if (!lua_toboolean(state, 1)) {
+            cursorEffect(g_cursor.disable());
+            if (g_cursorTimer)
+                g_cursorTimer->updateTimeout(std::nullopt);
+            lua_pushboolean(state, true);
+            return 1;
+        }
+        if (g_exiting || !g_cursorMotionHook || !g_cursorWarpHook || !g_cursorTimer)
+            return luaL_error(state, "controller_cursor: native pointer hooks unavailable");
+        if (lua_type(state, 2) != LUA_TSTRING || lua_type(state, 3) != LUA_TSTRING || !lua_isinteger(state, 4)) {
+            cursorEffect(g_cursor.disable());
+            g_cursorTimer->updateTimeout(std::nullopt);
+            return luaL_error(state, "controller_cursor: expected shape, device and integer lease");
+        }
+        size_t shapeSize = 0, deviceSize = 0;
+        const char* shape = luaL_checklstring(state, 2, &shapeSize);
+        const char* device = luaL_checklstring(state, 3, &deviceSize);
+        const lua_Integer lease = luaL_checkinteger(state, 4);
+        const auto update = g_cursor.refresh({shape, shapeSize}, {device, deviceSize},
+            lease >= 1 && lease <= 10000 ? static_cast<int>(lease) : 0, MiosPacing::Clock::now());
+        cursorEffect(update.effect);
+        if (!update.valid) {
+            g_cursorTimer->updateTimeout(std::nullopt);
+            return luaL_error(state, "controller_cursor: invalid shape, device or lease (1..10000 ms)");
+        }
+        g_cursorTimer->updateTimeout(std::chrono::milliseconds(lease));
+        lua_pushboolean(state, true);
+        return 1;
+    }
 
     struct {
         SP<Config::Values::CBoolValue>   enabled;
@@ -590,7 +671,9 @@ namespace {
         out += std::format("],\"capture_guard\":{{\"enabled\":{},\"hooked\":{},\"passed\":{},\"refused\":{{\"no_window\":{},\"unmapped\":{},\"no_output\":{}}},\"pending\":{}}}",
                            g_cfg.captureGuard->value() ? "true" : "false", g_captureHook ? "true" : "false", g_guard.passed, g_guard.noWindow, g_guard.unmapped,
                            g_guard.noOutput, g_refused.size());
-        return out + ",\"window\":" + windowJson() + "}";
+        return out + std::format(",\"controller_cursor\":{{\"available\":{},\"armed\":{},\"overridden\":{}}}",
+            g_cursorMotionHook && g_cursorWarpHook && g_cursorTimer ? "true" : "false",
+            g_cursor.armed ? "true" : "false", g_cursor.overridden ? "true" : "false") + ",\"window\":" + windowJson() + "}";
     }
 
     std::string hyprctl(eHyprCtlOutputFormat, std::string request) {
@@ -715,6 +798,40 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addNotification(PHANDLE, "[mios-pacing] CToplevelExportClient::captureToplevel not found: window previews are unguarded",
                                      CHyprColor{1.0, 0.6, 0.2, 1.0}, 8000);
 
+    // Optional device-aware cursor shape support. Match the exact public SDK
+    // signatures; a future ABI change leaves the feature unavailable rather
+    // than guessing a callback ABI or interfering with other input owners.
+    for (const auto& match : HyprlandAPI::findFunctionsByName(PHANDLE, "onMouseMoved")) {
+        if (match.demangled.find("CInputManager::onMouseMoved(IPointer::SMotionEvent)") != std::string::npos) {
+            g_cursorMotionHook = HyprlandAPI::createFunctionHook(PHANDLE, match.address, reinterpret_cast<void*>(&hkCursorMotion));
+            break;
+        }
+    }
+    for (const auto& match : HyprlandAPI::findFunctionsByName(PHANDLE, "onMouseWarp")) {
+        if (match.demangled.find("CInputManager::onMouseWarp(IPointer::SMotionAbsoluteEvent)") != std::string::npos) {
+            g_cursorWarpHook = HyprlandAPI::createFunctionHook(PHANDLE, match.address, reinterpret_cast<void*>(&hkCursorWarp));
+            break;
+        }
+    }
+    for (auto** hook : {&g_cursorMotionHook, &g_cursorWarpHook}) {
+        if (*hook && !(*hook)->hook()) {
+            HyprlandAPI::removeFunctionHook(PHANDLE, *hook);
+            *hook = nullptr;
+        }
+    }
+    g_cursorTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer> self, void*) {
+        const auto now = MiosPacing::Clock::now();
+        cursorEffect(g_cursor.expire(now));
+        if (g_cursor.armed)
+            self->updateTimeout(std::max(g_cursor.deadline - now,
+                std::chrono::duration_cast<MiosPacing::Clock::duration>(std::chrono::milliseconds(1))));
+    }, nullptr);
+    g_pEventLoopManager->addTimer(g_cursorTimer);
+    if (!HyprlandAPI::addLuaFunction(PHANDLE, "mios_pacing", "controller_cursor", luaControllerCursor)) {
+        g_pEventLoopManager->removeTimer(g_cursorTimer);
+        g_cursorTimer.reset();
+    }
+
     g_listeners.push_back(Event::bus()->m_events.render.pre.listen([](PHLMONITOR mon) {
         if (g_exiting || !mon)
             return;
@@ -736,6 +853,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_exiting = true;
+    cursorEffect(g_cursor.disable());
+    if (g_cursorTimer && g_pEventLoopManager)
+        g_pEventLoopManager->removeTimer(g_cursorTimer);
+    g_cursorTimer.reset();
     releaseWallpapers(); // the hooks are still installed here; with g_exiting they pass straight through
     g_listeners.clear();
     g_focused.listeners.clear();

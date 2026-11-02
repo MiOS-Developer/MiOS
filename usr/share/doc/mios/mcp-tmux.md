@@ -271,3 +271,93 @@ Sources: [tmux-mcp upstream](https://github.com/MadAppGang/tmux-mcp),
 [tmux manual](https://man7.org/linux/man-pages/man1/tmux.1.html),
 [Windows Terminal CLI](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments),
 [per-monitor DPI](https://learn.microsoft.com/en-us/windows/win32/hidpi/dpi-awareness-context).
+
+
+## Controller session assignments
+
+The user service `mios-inputd.service` is preset for `default.target`, so
+controller navigation starts on graphical and text logins. Local VT detection
+uses the kernel controlling-tty identity; `/dev/console` and `/dev/tty`
+aliases work only when they resolve to that same physical VT. SSH PTYs are not
+treated as local consoles.
+
+Fullscreen keeps navigation by default
+(`keybindings.global.controller.capture_fullscreen = false`). North/Triangle/Y
+captures the focused window on press. Holding it upgrades that capture to
+fullscreen; releasing the button does not submit a second capture. A held
+L3+R3 releases capture. The capture transaction reads current focus, and its
+receipt pins the hold upgrade to the selected window even when a cursor click
+precedes the context poll.
+
+For multiple controllers and local or SSH tmux sessions, edit
+`keybindings.global.controller.sessions` in the configurator or the layered
+TOML. Each assignment names explicit controller paths, a socket, the exact
+session name and an initial stable pane ID:
+
+```toml
+[[keybindings.global.controller.sessions]]
+name = "player-two"
+controllers = ["/dev/input/by-id/pad-event-joystick"]
+socket = "/tmp/tmux-1000/default"
+session = "work"
+pane = "%4"
+# ssh_host = "workstation" # omit for a local target
+```
+
+Replace the example paths and identities with the target's actual values.
+Use stable by-id paths for reconnects. `mios-inputd map` shows the validated
+assignments. SSH uses the operator's existing host configuration and
+noninteractive authentication; inputd does not enroll hosts or acquire
+credentials.
+
+Assigned controllers emit navigation only to their target. They never drive
+the desktop's keyboard, pointer, capture actions or raw gamepad clone. Every
+controller has an independent focus cursor and bounded command queue. Target
+session identity is checked before dispatch; server or window changes require
+rebinding rather than falling back to another target. Expired input is dropped,
+and unplugging, unassigning, shutdown or losing the active seat cancels queued
+work. Ambiguous aliases reserve only the affected controller without sending
+its input elsewhere.
+
+Detached panes support terminal keys, pane focus and copy-mode paging.
+Client-specific operations such as menus, prefix-table keys, popups and client
+session switching require an attached-client transport and currently return an
+explicit error for these pane assignments. SSH routing transports tmux
+navigation; raw gamepad forwarding to remote graphical applications uses the
+existing device-forwarding or nested-session path.
+
+
+Captured terminals retain navigation through
+`keybindings.global.controller.capture_navigation_contexts = ["terminal"]`.
+The capture receipt identifies the selected window process and its actual tmux
+client and pane. Pending input is cancelled on release, focus loss, target loss
+or seat changes. Existing tagged captures recover through a fresh read-only
+target query after a daemon restart. Menus and session switching use the
+verified attached client; detached assignments continue to use explicit panes.
+
+## Global dock input and controller pointer
+
+A clean double Guide opens the local dock; the interval and action are
+`controller.guide_double_press_ms` and `guide_double_press_action`. Single
+Guide actions wait for that interval, while holds and Guide chords cancel the
+pending tap. The dock action remains available on Super+Space and
+Ctrl+Super+Space through `keybindings.global.always_active_actions`.
+
+The shell publishes a short, atomic input lease in its private runtime
+directory. While the dock or search surface has focus, controller arrows,
+Enter, Escape, Tab and context-menu keys go to that surface. Raw gamepad input,
+window capture and pending terminal delivery behind the dock are suppressed.
+Closing the shell, an expired lease, or a failed compositor query detaches
+shell input. Text consoles and explicitly assigned headless controllers retain
+their own navigation.
+
+The expanded dock takes keyboard focus even when its on-screen keyboard is
+enabled. App, window, portability and PiP controls share that same input
+surface. A click-through border animation on the captured local output shows
+when it owns input; tune `desktop.dock.capture.border_glow` in the configurator.
+
+In 2D cursor mode, the native compositor hook uses
+`controller.cursor_shape` for motion from `controller.virtual_pointer`.
+Physical mouse motion restores its cursor immediately. Mode changes, shutdown
+and the bounded lease release the override. The existing 3D aim renderer is
+unchanged.

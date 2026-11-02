@@ -29,7 +29,53 @@ vm.runInContext('renderPathBanner()', ctx);
 process.stdout.write(JSON.stringify({emitted,banner:banner.innerHTML}));
 '''
 
+ROUNDTRIP_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(input.path, 'utf8');
+const ctx = {sections: input.sections};
+vm.createContext(ctx);
+for (const name of ['parseToml', 'parseTomlValue', 'emitToml', 'emitTomlValue']) {
+  const match = html.match(new RegExp('^function '+name+'\\([^\\n]*\\n[\\s\\S]*?^}', 'm'));
+  if (!match) throw new Error('Missing function '+name);
+  vm.runInContext(match[0], ctx);
+}
+const toml = vm.runInContext('emitToml(sections)', ctx);
+ctx.toml = toml;
+const reparsed = vm.runInContext('parseToml(toml)', ctx);
+process.stdout.write(JSON.stringify({toml, reparsed}));
+'''
+
 class TestConfiguratorSecurity(unittest.TestCase):
+    def test_session_arrays_roundtrip_without_capturing_controller_flags(self):
+        routes = json.loads(r'''[
+          {"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],
+           "socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},
+          {"name":"player-two","controllers":["/dev/input/event2","/dev/input/by-id/controller-two-event-joystick"],
+           "socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}
+        ]''')
+        # The session array deliberately precedes scalar and ordinary-array
+        # fields, matching the SSOT insertion order that exposed this bug.
+        # Cover both the known-section loop and trailing-section preservation.
+        for section, key in [('keybindings.global.controller', 'sessions'),
+                             ('autounattend', 'accounts')]:
+            with self.subTest(section=section):
+                values = {key: routes, 'exclusive_grab': True, 'capture': False,
+                          'context_stale_ms': 2500, 'labels': ['first', 'second'],
+                          'disabled_devices': []}
+                result = subprocess.run(['node', '-e', ROUNDTRIP_NODE], input=json.dumps({
+                    'path': str(ROOT / 'usr/share/mios/configurator/mios.html'),
+                    'sections': {section: values}}), capture_output=True, text=True,
+                    check=True, timeout=15)
+                output = json.loads(result.stdout)
+                standard = tomllib.loads(output['toml'])
+                for part in section.split('.'):
+                    standard = standard[part]
+                self.assertEqual(standard, values)
+                self.assertEqual(output['reparsed'][section], values)
+                self.assertNotIn('ssh_host', standard[key][0])
+                self.assertEqual(standard[key][1]['ssh_host'], 'operator@blade-two')
+
     def test_toml_strings_and_arrays_preserve_literal_paths_and_controls(self):
         samples = ['C:\\new\\tools\\MiOS', 'quote " then \\ slash', 'line\n\t\r\b\f\x00',
                    ['C:\\new', 'a", injected = "value', 'tab\tand\\slash']]

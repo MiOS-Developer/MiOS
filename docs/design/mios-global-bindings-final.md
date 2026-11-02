@@ -12,7 +12,7 @@ Labels:
 - Status of a behavior: **[K]** kept, **[F]** fix, **[N]** new.
 - Step tags (§7): S0, G1, U1, I1, I2, I3, I4, P1, GT, M1. A behavior tagged with a step is DECLARED in the patch but commented out, and becomes IMPLEMENTED when that step lands.
 
-**I1 as landed (operator decision 2026-10-29, supersedes O-1/O-4 defaults for the controller):** capture and release are identical for every window kind. No class list (`game`, `vm-passthrough`) captures the controller; those classes only scope keyboard passthrough. inputd's controller owner is `app` only for `app-capture` (fullscreen==2, `capture_tag` or the room `input_owner`, each cancelled by `release_tag`). The legacy daemon unit has no `[Install]`.
+**I1 as landed (operator decision 2026-10-29, supersedes O-1/O-4 defaults for the controller):** capture and release are identical for every window kind. No class list (`game`, `vm-passthrough`) captures the controller; those classes only scope keyboard passthrough. inputd's controller owner is `app` only for `app-capture` (`capture_tag` or the room `input_owner`, each cancelled by `release_tag`; fullscreen==2 additionally captures only when the operator opts into `capture_fullscreen`). The legacy daemon unit has no `[Install]`.
 
 **I2 as landed** (tools/native/mios-inputd/src/nav.rs, router.rs, runtime.rs; tests: router `nav_contract`, tests/test-inputd-nav.py, tests/test-inputd-nav-live.py). Differences from the text below:
 - Every uncaptured window navigates alike (operator decision): `nav.contexts` maps `game` and `vm-passthrough` to `desktop` too, and `cursor_mode_contexts` lists every uncaptured context. A class never decides who gets the controller.
@@ -298,7 +298,7 @@ Invariants. Each one is enforced by the listed change and tested in tests.md.
 |---|---|---|
 | INV-1 | A captured window receives every controller input except the `toggle_chord` hold (release) and `mode_override_chord` (half-capture). In half-capture only the sticks and LT/RT become host pointer input. Every button, Guide included, still reaches the app, and Start or the chord returns to full capture. | C-01 (R-01) |
 | INV-2 | Keyboard: in app-capture and vm-passthrough, exactly the chords on `bypass_mod` reach the host. | C-36 (R-27), hyprland.lua:319 |
-| INV-3 | North takes ownership (tap = capture, hold = fullscreen+capture) wherever a compositor runs. A held toggle_chord is the only release, and it undoes a fullscreen that the bridge set. | C-02, existing router.rs:426-430, 696-712 |
+| INV-3 | North takes ownership on press; holding upgrades the same capture to fullscreen wherever a compositor runs. A held toggle_chord is the only release, and it undoes a fullscreen that the bridge set. | C-02, existing router.rs:426-430, 696-712 |
 | INV-4 | Capture state is compositor state (tags plus input_owner), read by **one** predicate in Lua and inputd. `release_tag` never demotes the vm-passthrough or game class contexts. | C-02, C-35 (R-02, R-03) |
 | INV-5 | Exactly one axis sink per frame (App, Room, Nav or Pointer). | C-04 |
 | INV-6 | On any change of context, profile, owner, Guide press or SYN_DROPPED: cancel tap/hold timers and auto-repeat, and release every held virtual-keyboard key. Nav state is per device. | C-08 (R-04) |
@@ -416,3 +416,20 @@ After S0: regenerate the projections (globals.sh/ps1, names registry, env baseli
 | RB fires ShaderGlass while an app is captured | (a) Half-capture: router.rs:440 sets captured=false and router.rs:553 runs legacy_action. (b) After a held L3+R3 the Lua still sees fullscreen==2 (hyprland.lua:305) while inputd has released it (router.rs:314-321, 188). (c) The app was never captured. | C-01; C-02 + C-35; O-1 + North tap + C-32 OSD |
 | Left stick moves game and camera | No healthy native path does both. Paths that can: the legacy recovery daemon (main.rs:91-92), or a transient override drop on focus change | C-05; C-03; C-04 |
 | VT mouse (gpm) does not reach tmux | inputd does not run without the desktop (mios-inputd.service:3,20); tmux mouse on TERM=linux is PLAUSIBLE | C-16 + C-07 + C-30, and the C-18 console bridge (landed I3) |
+
+
+### Controller repair: session boundaries
+
+Fullscreen geometry keeps navigation by default; North captures on press, and
+its hold upgrades the confirmed target without replaying North or resetting
+held application controls. The capture worker resolves focus in its atomic Lua
+transaction and returns the selected identity to the router. Notices run on a
+separate bounded worker.
+
+`keybindings.global.controller.sessions` assigns each listed physical node to
+one exact local or SSH tmux session. Separate controller workers and pane
+cursors isolate players; each worker checks session identity and pins server
+and window identity. A route never falls back to desktop input. Unassigned
+pads retain the local logind/nested-session ownership rules. See
+[controller session assignments](../../usr/share/doc/mios/mcp-tmux.md#controller-session-assignments)
+for configuration and supported pane operations.
