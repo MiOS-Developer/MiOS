@@ -290,10 +290,19 @@ pub mod process {
     /// Registers SIGTERM and SIGINT to store true into the provided AtomicBool.
     #[cfg(unix)]
     pub fn register_stop_signals(stop: &'static std::sync::atomic::AtomicBool) {
-        STOP_SIGNAL_TARGET.store(stop as *const _ as *mut _, std::sync::atomic::Ordering::SeqCst);
+        STOP_SIGNAL_TARGET.store(
+            stop as *const _ as *mut _,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         unsafe {
-            libc::signal(libc::SIGTERM, on_stop_signal as *const () as libc::sighandler_t);
-            libc::signal(libc::SIGINT, on_stop_signal as *const () as libc::sighandler_t);
+            libc::signal(
+                libc::SIGTERM,
+                on_stop_signal as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGINT,
+                on_stop_signal as *const () as libc::sighandler_t,
+            );
         }
     }
 

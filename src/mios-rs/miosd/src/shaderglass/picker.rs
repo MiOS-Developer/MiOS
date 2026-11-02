@@ -78,13 +78,25 @@ impl Request {
 }
 
 /// The selection line for `req`, or None (expired, writer gone, target not offered).
-pub fn answer(req: &Request, windows: &[ShareWindow], now: u64, writer_alive: bool, allow_token: bool) -> Option<String> {
+pub fn answer(
+    req: &Request,
+    windows: &[ShareWindow],
+    now: u64,
+    writer_alive: bool,
+    allow_token: bool,
+) -> Option<String> {
     if now > req.expires_ms || !writer_alive {
         return None;
     }
     let want = parse_address(&req.target)?;
-    let w = windows.iter().find(|w| w.address == want && w.address != 0)?;
-    Some(format!("[SELECTION]{}/window:{}", if allow_token { "r" } else { "" }, w.handle))
+    let w = windows
+        .iter()
+        .find(|w| w.address == want && w.address != 0)?;
+    Some(format!(
+        "[SELECTION]{}/window:{}",
+        if allow_token { "r" } else { "" },
+        w.handle
+    ))
 }
 
 pub fn pid_alive(pid: u32) -> bool {
@@ -100,7 +112,10 @@ pub fn write_request(runtime: &Path, req: &Request) -> Result<PathBuf, String> {
     let dir = requests_dir(runtime);
     super::ensure_private_dir(&dir)?;
     let path = dir.join(format!("{:020}-{}.json", now_ms(), std::process::id()));
-    super::write_private(&path, &serde_json::to_vec(&req.to_json()).map_err(|e| e.to_string())?)?;
+    super::write_private(
+        &path,
+        &serde_json::to_vec(&req.to_json()).map_err(|e| e.to_string())?,
+    )?;
     Ok(path)
 }
 
@@ -125,7 +140,13 @@ pub fn claim(runtime: &Path, windows: &[ShareWindow], allow_token: bool) -> Opti
             .and_then(|v| Request::from_json(&v));
         let _ = std::fs::remove_file(&claimed);
         if let Some(req) = req {
-            if let Some(line) = answer(&req, windows, now_ms(), pid_alive(req.supervisor_pid), allow_token) {
+            if let Some(line) = answer(
+                &req,
+                windows,
+                now_ms(),
+                pid_alive(req.supervisor_pid),
+                allow_token,
+            ) {
                 return Some(line);
             }
         }
@@ -151,10 +172,14 @@ pub fn retire_request(
     token_seed: Option<(u64, u64)>,
     cancel: bool,
 ) -> Result<bool, String> {
-    if !request.try_exists().map_err(|e| format!("{}: {e}", request.display()))? {
+    if !request
+        .try_exists()
+        .map_err(|e| format!("{}: {e}", request.display()))?
+    {
         return Ok(true);
     }
-    let restored = token_file.and_then(token_generation)
+    let restored = token_file
+        .and_then(token_generation)
         .is_some_and(|generation| Some(generation) != token_seed);
     if !cancel && !restored {
         return Ok(false);
@@ -168,9 +193,17 @@ pub fn retire_request(
 
 /// The restore token for a target: the stored one for its class when it was issued for this very window,
 /// or when the class has only this one window (xdph restores a window by handle, else by class).
-pub fn choose_token(store: &Json, class: &str, target: &str, windows_of_class: usize) -> Option<String> {
+pub fn choose_token(
+    store: &Json,
+    class: &str,
+    target: &str,
+    windows_of_class: usize,
+) -> Option<String> {
     let e = store.get(class)?;
-    let token = e.get("token")?.as_str().filter(|t| !t.is_empty() && t.len() < 512)?;
+    let token = e
+        .get("token")?
+        .as_str()
+        .filter(|t| !t.is_empty() && t.len() < 512)?;
     let same = e.get("address").and_then(Json::as_str) == Some(target);
     (same || windows_of_class == 1).then(|| token.to_owned())
 }
@@ -182,17 +215,34 @@ pub fn remember_token(store: &mut Json, class: &str, target: &str, token: &str) 
     if !store.is_object() {
         *store = json!({});
     }
-    let changed = store.get(class).and_then(|e| e.get("token")).and_then(Json::as_str) != Some(token)
-        || store.get(class).and_then(|e| e.get("address")).and_then(Json::as_str) != Some(target);
+    let changed = store
+        .get(class)
+        .and_then(|e| e.get("token"))
+        .and_then(Json::as_str)
+        != Some(token)
+        || store
+            .get(class)
+            .and_then(|e| e.get("address"))
+            .and_then(Json::as_str)
+            != Some(target);
     if let Some(map) = store.as_object_mut() {
-        map.insert(class.to_owned(), json!({"token": token, "address": target, "saved_ms": now_ms()}));
+        map.insert(
+            class.to_owned(),
+            json!({"token": token, "address": target, "saved_ms": now_ms()}),
+        );
     }
     changed
 }
 
 /// xdph.conf from [desktop.hyprland.xdph] (hyprlang).
-pub fn xdph_conf(allow_token_by_default: bool, custom_picker_binary: &str) -> Result<String, String> {
-    if custom_picker_binary.chars().any(|c| c.is_control() || c == '#' || c == '{' || c == '}') {
+pub fn xdph_conf(
+    allow_token_by_default: bool,
+    custom_picker_binary: &str,
+) -> Result<String, String> {
+    if custom_picker_binary
+        .chars()
+        .any(|c| c.is_control() || c == '#' || c == '{' || c == '}')
+    {
         return Err("desktop.hyprland.xdph.custom_picker_binary must be a plain path".into());
     }
     let mut out = String::from(
@@ -238,13 +288,22 @@ pub fn class_counts(clients: &[Json]) -> BTreeMap<String, usize> {
 mod tests {
     use super::*;
 
-    const LIST: &str = "12345[HC>]kitty[HT>]~/src[HE>]94211842195456[HA>]678[HC>]zen[HT>]Docs [HE>]0[HA>]";
+    const LIST: &str =
+        "12345[HC>]kitty[HT>]~/src[HE>]94211842195456[HA>]678[HC>]zen[HT>]Docs [HE>]0[HA>]";
 
     #[test]
     fn parses_xdph_window_list() {
         let w = parse_sharing_list(LIST);
         assert_eq!(w.len(), 2);
-        assert_eq!(w[0], ShareWindow { handle: 12345, class: "kitty".into(), title: "~/src".into(), address: 94211842195456 });
+        assert_eq!(
+            w[0],
+            ShareWindow {
+                handle: 12345,
+                class: "kitty".into(),
+                title: "~/src".into(),
+                address: 94211842195456
+            }
+        );
         assert_eq!(w[1].address, 0);
         assert!(parse_sharing_list("").is_empty());
         assert!(parse_sharing_list("garbage[HA>]1[HC>]x[HA>]").is_empty());
@@ -257,15 +316,35 @@ mod tests {
     fn answers_only_a_live_unexpired_request_for_an_offered_window() {
         let w = parse_sharing_list(LIST);
         let target = format!("0x{:x}", 94211842195456u64);
-        let req = Request { target: target.clone(), expires_ms: 1_000, supervisor_pid: 1 };
-        assert_eq!(answer(&req, &w, 500, true, true).as_deref(), Some("[SELECTION]r/window:12345"));
-        assert_eq!(answer(&req, &w, 500, true, false).as_deref(), Some("[SELECTION]/window:12345"));
+        let req = Request {
+            target: target.clone(),
+            expires_ms: 1_000,
+            supervisor_pid: 1,
+        };
+        assert_eq!(
+            answer(&req, &w, 500, true, true).as_deref(),
+            Some("[SELECTION]r/window:12345")
+        );
+        assert_eq!(
+            answer(&req, &w, 500, true, false).as_deref(),
+            Some("[SELECTION]/window:12345")
+        );
         assert_eq!(answer(&req, &w, 1_001, true, true), None, "expired");
         assert_eq!(answer(&req, &w, 500, false, true), None, "writer gone");
-        let other = Request { target: "0x1".into(), ..req.clone() };
-        assert_eq!(answer(&other, &w, 500, true, true), None, "target not offered");
+        let other = Request {
+            target: "0x1".into(),
+            ..req.clone()
+        };
+        assert_eq!(
+            answer(&other, &w, 500, true, true),
+            None,
+            "target not offered"
+        );
         // An address xdph could not map (0) never matches.
-        let zero = Request { target: "0".into(), ..req };
+        let zero = Request {
+            target: "0".into(),
+            ..req
+        };
         assert_eq!(answer(&zero, &w, 500, true, true), None);
     }
 
@@ -275,16 +354,33 @@ mod tests {
         let w = parse_sharing_list(LIST);
         let me = std::process::id();
         // A stale request first (expired), then a good one: the good one answers, both are consumed.
-        let stale = Request { target: "0x1".into(), expires_ms: 1, supervisor_pid: me };
+        let stale = Request {
+            target: "0x1".into(),
+            expires_ms: 1,
+            supervisor_pid: me,
+        };
         write_request(dir.path(), &stale).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let good = Request { target: format!("0x{:x}", 94211842195456u64), expires_ms: now_ms() + 60_000, supervisor_pid: me };
+        let good = Request {
+            target: format!("0x{:x}", 94211842195456u64),
+            expires_ms: now_ms() + 60_000,
+            supervisor_pid: me,
+        };
         let p = write_request(dir.path(), &good).unwrap();
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
-        assert_eq!(claim(dir.path(), &w, true).as_deref(), Some("[SELECTION]r/window:12345"));
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            claim(dir.path(), &w, true).as_deref(),
+            Some("[SELECTION]r/window:12345")
+        );
         assert_eq!(claim(dir.path(), &w, true), None, "used once");
-        assert_eq!(std::fs::read_dir(requests_dir(dir.path())).unwrap().count(), 0);
+        assert_eq!(
+            std::fs::read_dir(requests_dir(dir.path())).unwrap().count(),
+            0
+        );
         // No request directory at all: nothing to answer (the stock picker runs).
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(claim(empty.path(), &w, true), None);
@@ -294,10 +390,25 @@ mod tests {
     fn tokens_are_reused_only_for_the_same_window_or_a_single_window_class() {
         let mut store = json!({});
         assert!(remember_token(&mut store, "kitty", "0xa", "tok-1"));
-        assert!(!remember_token(&mut store, "kitty", "0xa", "tok-1"), "unchanged");
-        assert_eq!(choose_token(&store, "kitty", "0xa", 3).as_deref(), Some("tok-1"), "same window");
-        assert_eq!(choose_token(&store, "kitty", "0xb", 1).as_deref(), Some("tok-1"), "only window of its class");
-        assert_eq!(choose_token(&store, "kitty", "0xb", 2), None, "ambiguous: the portal would restore another window");
+        assert!(
+            !remember_token(&mut store, "kitty", "0xa", "tok-1"),
+            "unchanged"
+        );
+        assert_eq!(
+            choose_token(&store, "kitty", "0xa", 3).as_deref(),
+            Some("tok-1"),
+            "same window"
+        );
+        assert_eq!(
+            choose_token(&store, "kitty", "0xb", 1).as_deref(),
+            Some("tok-1"),
+            "only window of its class"
+        );
+        assert_eq!(
+            choose_token(&store, "kitty", "0xb", 2),
+            None,
+            "ambiguous: the portal would restore another window"
+        );
         assert_eq!(choose_token(&store, "zen", "0xa", 1), None);
         assert!(!remember_token(&mut store, "kitty", "0xa", "bad\ntoken"));
         let mut junk = json!([1, 2]);
@@ -309,7 +420,9 @@ mod tests {
     fn xdph_conf_projection_and_picker_args() {
         let c = xdph_conf(true, "/usr/libexec/mios/mios-share-picker").unwrap();
         assert!(c.contains("screencopy {\n    allow_token_by_default = true\n    custom_picker_binary = /usr/libexec/mios/mios-share-picker\n}\n"), "{c}");
-        assert!(!xdph_conf(false, "").unwrap().contains("custom_picker_binary"));
+        assert!(!xdph_conf(false, "")
+            .unwrap()
+            .contains("custom_picker_binary"));
         assert!(xdph_conf(true, "/x}\nscreencopy {").is_err());
         let a = |v: &[&str]| picker_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         assert_eq!(a(&["--allow-token"]), (false, true));
@@ -327,13 +440,18 @@ mod tests {
         std::fs::write(&token, "same-token").unwrap();
         let seed = token_generation(&token);
         assert!(seed.is_some());
-        assert!(!retire_request(&request, Some(&token), seed, false).unwrap(),
-                "mapping alone must not release an unconsumed request");
+        assert!(
+            !retire_request(&request, Some(&token), seed, false).unwrap(),
+            "mapping alone must not release an unconsumed request"
+        );
         std::fs::write(&replacement, "same-token").unwrap();
         std::fs::rename(&replacement, &token).unwrap();
         assert_ne!(token_generation(&token), seed);
         assert!(retire_request(&request, Some(&token), seed, false).unwrap());
-        assert!(!request.exists(), "a later picker must not claim the restored session's request");
+        assert!(
+            !request.exists(),
+            "a later picker must not claim the restored session's request"
+        );
     }
 
     #[test]
@@ -341,16 +459,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let request = dir.path().join("mios-pick.json");
         std::fs::write(&request, "{}").unwrap();
-        assert!(!retire_request(&request, None, None, false).unwrap(),
-                "without tokens only picker consumption can release a live request");
-        assert!(retire_request(&request, None, None, true).unwrap(),
-                "closing a pane cancels its request before the next launch");
+        assert!(
+            !retire_request(&request, None, None, false).unwrap(),
+            "without tokens only picker consumption can release a live request"
+        );
+        assert!(
+            retire_request(&request, None, None, true).unwrap(),
+            "closing a pane cancels its request before the next launch"
+        );
         assert!(!request.exists());
-        assert!(retire_request(&request, None, None, false).unwrap(),
-                "a consumed request opens the gate");
+        assert!(
+            retire_request(&request, None, None, false).unwrap(),
+            "a consumed request opens the gate"
+        );
         std::fs::create_dir(&request).unwrap();
-        assert!(retire_request(&request, None, None, true).is_err(),
-                "cleanup failure must hold the launch gate closed");
+        assert!(
+            retire_request(&request, None, None, true).is_err(),
+            "cleanup failure must hold the launch gate closed"
+        );
         assert!(request.is_dir());
     }
 }

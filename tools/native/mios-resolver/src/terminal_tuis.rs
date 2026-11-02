@@ -69,7 +69,10 @@ fn get<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
 }
 
 fn string(v: &Value, path: &str) -> Result<String, String> {
-    get(v, path)?.as_str().map(str::to_owned).ok_or_else(|| format!("{path} must be a string"))
+    get(v, path)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{path} must be a string"))
 }
 
 fn strings(v: &Value, path: &str) -> Result<Vec<String>, String> {
@@ -77,14 +80,21 @@ fn strings(v: &Value, path: &str) -> Result<Vec<String>, String> {
         .as_array()
         .ok_or_else(|| format!("{path} must be an array of strings"))?
         .iter()
-        .map(|s| s.as_str().map(str::to_owned).ok_or_else(|| format!("{path} must contain only strings")))
+        .map(|s| {
+            s.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{path} must contain only strings"))
+        })
         .collect()
 }
 
 /// Shown text: printable ASCII (the Linux console font and every tmux quoting level) without quotes,
 /// `#`, braces, `$` or backslash.
 fn plain(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 60 && s.bytes().all(|b| (0x20..0x7f).contains(&b) && !b"'\"#{}$\\".contains(&b))
+    !s.is_empty()
+        && s.len() <= 60
+        && s.bytes()
+            .all(|b| (0x20..0x7f).contains(&b) && !b"'\"#{}$\\".contains(&b))
 }
 
 fn percent(s: &str) -> bool {
@@ -121,7 +131,9 @@ pub fn launcher(merged: &Value) -> Result<Launcher, String> {
         return Err("terminal.tui_launcher.app_target must be session or new".into());
     }
     if !percent(&l.popup_width) || !percent(&l.popup_height) {
-        return Err("terminal.tui_launcher.popup_width/popup_height must be percentages 1%..100%".into());
+        return Err(
+            "terminal.tui_launcher.popup_width/popup_height must be percentages 1%..100%".into(),
+        );
     }
     if l.sections.is_empty() || l.sections.iter().any(|s| !valid_id(s)) {
         return Err("terminal.tui_launcher.sections must be non-empty [a-z0-9-] ids".into());
@@ -133,19 +145,26 @@ pub fn launcher(merged: &Value) -> Result<Launcher, String> {
 }
 
 fn valid_id(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    !s.is_empty()
+        && s.len() <= 32
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// Every `[[terminal.tuis]]` row, validated, in SSOT order.
 pub fn catalog(merged: &Value) -> Result<Vec<Tui>, String> {
     let sections = strings(merged, "terminal.tui_launcher.sections")?;
-    let rows = get(merged, "terminal.tuis")?.as_array().ok_or("[[terminal.tuis]] must be an array of tables")?;
+    let rows = get(merged, "terminal.tuis")?
+        .as_array()
+        .ok_or("[[terminal.tuis]] must be an array of tables")?;
     let mut out: Vec<Tui> = Vec::new();
     for (i, r) in rows.iter().enumerate() {
         let id = string(r, "id").map_err(|e| format!("terminal.tuis[{i}]: {e}"))?;
         let at = |e: String| format!("terminal.tuis {id}: {e}");
         if !valid_id(&id) || out.iter().any(|t| t.id == id) {
-            return Err(format!("terminal.tuis[{i}]: duplicate or invalid id {id:?}"));
+            return Err(format!(
+                "terminal.tuis[{i}]: duplicate or invalid id {id:?}"
+            ));
         }
         let label = string(r, "label").map_err(at)?;
         if !plain(&label) {
@@ -153,7 +172,9 @@ pub fn catalog(merged: &Value) -> Result<Vec<Tui>, String> {
         }
         let section = string(r, "section").map_err(at)?;
         if !sections.contains(&section) {
-            return Err(at(format!("section {section:?} is not in terminal.tui_launcher.sections")));
+            return Err(at(format!(
+                "section {section:?} is not in terminal.tui_launcher.sections"
+            )));
         }
         let mode = match string(r, "mode").map_err(at)?.as_str() {
             "popup" => Mode::Popup,
@@ -161,21 +182,35 @@ pub fn catalog(merged: &Value) -> Result<Vec<Tui>, String> {
             "float" => Mode::Float,
             other => return Err(at(format!("mode {other:?} must be popup, window or float"))),
         };
-        let vt_ok = get(r, "vt_ok").ok().map(|v| v.as_bool().ok_or("vt_ok must be a boolean")).transpose().map_err(|e| at(e.into()))?.unwrap_or(true);
-        let hold = get(r, "hold").ok().map(|v| v.as_bool().ok_or("hold must be a boolean")).transpose().map_err(|e| at(e.into()))?.unwrap_or(false);
+        let vt_ok = get(r, "vt_ok")
+            .ok()
+            .map(|v| v.as_bool().ok_or("vt_ok must be a boolean"))
+            .transpose()
+            .map_err(|e| at(e.into()))?
+            .unwrap_or(true);
+        let hold = get(r, "hold")
+            .ok()
+            .map(|v| v.as_bool().ok_or("hold must be a boolean"))
+            .transpose()
+            .map_err(|e| at(e.into()))?
+            .unwrap_or(false);
         if hold && mode != Mode::Popup {
             return Err(at("hold is only valid for mode = \"popup\"".into()));
         }
         let argv = strings(r, "argv").map_err(at)?;
         if !argv_ok(&argv) {
-            return Err(at("argv must be a non-empty argv without control characters".into()));
+            return Err(at(
+                "argv must be a non-empty argv without control characters".into(),
+            ));
         }
         let argv_vt = match r.get("argv_vt") {
             None => None,
             Some(_) => {
                 let v = strings(r, "argv_vt").map_err(at)?;
                 if !argv_ok(&v) {
-                    return Err(at("argv_vt must be a non-empty argv without control characters".into()));
+                    return Err(at(
+                        "argv_vt must be a non-empty argv without control characters".into(),
+                    ));
                 }
                 if !vt_ok {
                     return Err(at("argv_vt requires vt_ok = true".into()));
@@ -183,7 +218,16 @@ pub fn catalog(merged: &Value) -> Result<Vec<Tui>, String> {
                 Some(v)
             }
         };
-        out.push(Tui { id, label, section, mode, vt_ok, hold, argv, argv_vt });
+        out.push(Tui {
+            id,
+            label,
+            section,
+            mode,
+            vt_ok,
+            hold,
+            argv,
+            argv_vt,
+        });
     }
     Ok(out)
 }
@@ -234,13 +278,19 @@ mod tests {
 
     #[test]
     fn the_shipped_ssot_catalogue_validates() {
-        let ssot: Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let ssot: Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
         let cat = catalog(&ssot).unwrap();
         assert!(cat.len() >= 10);
         assert!(launcher(&ssot).unwrap().enabled);
         // Heavy TUIs never default to a popup (popups share no per-pane OOM scope).
         for heavy in ["btop", "ncdu", "nvtop", "yazi", "ranger", "mc"] {
-            assert_ne!(cat.iter().find(|t| t.id == heavy).unwrap().mode, Mode::Popup, "{heavy}");
+            assert_ne!(
+                cat.iter().find(|t| t.id == heavy).unwrap().mode,
+                Mode::Popup,
+                "{heavy}"
+            );
         }
     }
 
@@ -252,7 +302,13 @@ mod tests {
         assert_eq!(cat[0].argv_for(false), ["btop"]);
         let all = |_: &str| true;
         assert_eq!(visible(&cat, false, all).len(), 2);
-        assert_eq!(visible(&cat, true, all).iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["btop"]);
+        assert_eq!(
+            visible(&cat, true, all)
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            ["btop"]
+        );
         let only_btop = |a: &str| a == "btop";
         assert_eq!(visible(&cat, false, only_btop).len(), 1);
         assert!(!is_installed("/nonexistent/x") && !is_installed("relative/x"));
@@ -263,12 +319,33 @@ mod tests {
     fn validation_errors_name_the_row() {
         for (bad, why) in [
             (OK.replace("id = \"gone\"", "id = \"btop\""), "duplicate"),
-            (OK.replace("label = \"Missing\"", "label = \"it's\""), "plain ASCII"),
-            (OK.replace("section = \"mios\"", "section = \"nope\""), "not in"),
-            (OK.replace("mode = \"popup\"", "mode = \"tab\""), "popup, window or float"),
-            (OK.replace("argv = [\"/nonexistent/x\"]", "argv = []"), "non-empty"),
-            (OK.replace("mode = \"window\"", "mode = \"window\"\nhold = true"), "hold"),
-            (OK.replace("argv_vt = [\"btop\", \"-t\"]", "argv_vt = [\"btop\"]\nvt_ok = false"), "vt_ok"),
+            (
+                OK.replace("label = \"Missing\"", "label = \"it's\""),
+                "plain ASCII",
+            ),
+            (
+                OK.replace("section = \"mios\"", "section = \"nope\""),
+                "not in",
+            ),
+            (
+                OK.replace("mode = \"popup\"", "mode = \"tab\""),
+                "popup, window or float",
+            ),
+            (
+                OK.replace("argv = [\"/nonexistent/x\"]", "argv = []"),
+                "non-empty",
+            ),
+            (
+                OK.replace("mode = \"window\"", "mode = \"window\"\nhold = true"),
+                "hold",
+            ),
+            (
+                OK.replace(
+                    "argv_vt = [\"btop\", \"-t\"]",
+                    "argv_vt = [\"btop\"]\nvt_ok = false",
+                ),
+                "vt_ok",
+            ),
         ] {
             let err = catalog(&doc(&bad)).unwrap_err();
             assert!(err.contains(why), "{why}: {err}");

@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 fn same(a: &Rect, b: &Rect) -> bool {
-    (a.x - b.x).abs() < 1.0 && (a.y - b.y).abs() < 1.0 && (a.w - b.w).abs() < 1.0 && (a.h - b.h).abs() < 1.0
+    (a.x - b.x).abs() < 1.0
+        && (a.y - b.y).abs() < 1.0
+        && (a.w - b.w).abs() < 1.0
+        && (a.h - b.h).abs() < 1.0
 }
 
 /// One HUD layer observed on one output: (output name/namespace key, rect, output logical height).
@@ -23,10 +26,17 @@ pub struct HudTracker {
 }
 
 impl HudTracker {
-    pub fn update(&mut self, samples: &[Sample], now: Instant, settle: Duration, max_height_frac: f64) {
+    pub fn update(
+        &mut self,
+        samples: &[Sample],
+        now: Instant,
+        settle: Duration,
+        max_height_frac: f64,
+    ) {
         self.seen.retain(|k, _| samples.iter().any(|s| &s.key == k));
         // A HUD that is gone (auto-hidden dock) no longer constrains PiPs.
-        self.settled.retain(|k, _| samples.iter().any(|s| &s.key == k));
+        self.settled
+            .retain(|k, _| samples.iter().any(|s| &s.key == k));
         for s in samples {
             let since = match self.seen.get(&s.key) {
                 Some((r, t)) if same(r, &s.rect) => *t,
@@ -50,7 +60,11 @@ mod tests {
     use super::*;
 
     fn s(h: f64) -> Vec<Sample> {
-        vec![Sample { key: "DP-3/mios-dock".into(), rect: Rect::new(700.0, 1080.0 - 8.0 - h, 512.0, h), output_height: 1080.0 }]
+        vec![Sample {
+            key: "DP-3/mios-dock".into(),
+            rect: Rect::new(700.0, 1080.0 - 8.0 - h, 512.0, h),
+            output_height: 1080.0,
+        }]
     }
 
     const SETTLE: Duration = Duration::from_millis(250);
@@ -68,10 +82,18 @@ mod tests {
         for hh in [120.0, 400.0, 800.0, 980.0] {
             t += Duration::from_millis(16);
             h.update(&s(hh), t, SETTLE, 0.25);
-            assert_eq!(h.rects()[0].h, 56.0, "mid-morph frame {hh} must not constrain PiPs");
+            assert_eq!(
+                h.rects()[0].h,
+                56.0,
+                "mid-morph frame {hh} must not constrain PiPs"
+            );
         }
         h.update(&s(980.0), t + Duration::from_secs(5), SETTLE, 0.25);
-        assert_eq!(h.rects()[0].h, 56.0, "an open full-pane drawer is not a HUD bar");
+        assert_eq!(
+            h.rects()[0].h,
+            56.0,
+            "an open full-pane drawer is not a HUD bar"
+        );
         // closing: a brief small frame does not settle until it holds
         h.update(&s(60.0), t + Duration::from_secs(6), SETTLE, 0.25);
         assert_eq!(h.rects()[0].h, 56.0);
@@ -86,8 +108,15 @@ mod tests {
         h.update(&s(72.0), t0 + Duration::from_secs(1), SETTLE, 0.25);
         assert_eq!(h.rects()[0].h, 56.0);
         h.update(&s(72.0), t0 + Duration::from_secs(1) + SETTLE, SETTLE, 0.25);
-        assert_eq!(h.rects()[0].h, 72.0, "a taller but still bar-sized dock is adopted after it holds");
+        assert_eq!(
+            h.rects()[0].h,
+            72.0,
+            "a taller but still bar-sized dock is adopted after it holds"
+        );
         h.update(&[], t0 + Duration::from_secs(2), SETTLE, 0.25);
-        assert!(h.rects().is_empty(), "auto-hidden dock no longer constrains PiPs");
+        assert!(
+            h.rects().is_empty(),
+            "auto-hidden dock no longer constrains PiPs"
+        );
     }
 }

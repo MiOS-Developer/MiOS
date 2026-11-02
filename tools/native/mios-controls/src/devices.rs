@@ -47,7 +47,9 @@ pub const FIXTURE_PREFIX: &str = "mios-input-fixture-";
 impl Device {
     /// The evdev node name (eventN) from the handlers line.
     pub fn event(&self) -> Option<&str> {
-        self.handlers.split_whitespace().find(|h| h.starts_with("event") && h[5..].bytes().all(|b| b.is_ascii_digit()))
+        self.handlers
+            .split_whitespace()
+            .find(|h| h.starts_with("event") && h[5..].bytes().all(|b| b.is_ascii_digit()))
     }
     pub fn is_virtual(&self) -> bool {
         self.name.starts_with(VIRTUAL_PREFIX)
@@ -63,7 +65,13 @@ impl Device {
         families
             .iter()
             .find(|f| f.vendors.contains(&self.vendor) && self.vendor != 0)
-            .or_else(|| families.iter().find(|f| f.name_hints.iter().any(|h| !h.is_empty() && lname.contains(h.as_str()))))
+            .or_else(|| {
+                families.iter().find(|f| {
+                    f.name_hints
+                        .iter()
+                        .any(|h| !h.is_empty() && lname.contains(h.as_str()))
+                })
+            })
             .or_else(|| families.iter().find(|f| f.id == "generic"))
             .unwrap_or(&families[0])
     }
@@ -105,7 +113,10 @@ impl Family {
             vendors: Vec::new(),
             name_hints: Vec::new(),
             layout: "offset".into(),
-            labels: labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             vt_labels: BTreeMap::new(),
         }
     }
@@ -113,12 +124,20 @@ impl Family {
     /// [[desktop.controls.pad_families]]; a missing or empty list degrades to the built-in generic family.
     pub fn from_ssot(merged: &Value) -> Vec<Family> {
         let mut out = Vec::new();
-        for f in at(merged, "desktop.controls.pad_families").and_then(Value::as_array).into_iter().flatten() {
+        for f in at(merged, "desktop.controls.pad_families")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let s = |k: &str| f.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
             let map = |k: &str| -> BTreeMap<String, String> {
                 f.get(k)
                     .and_then(Value::as_table)
-                    .map(|t| t.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned()))).collect())
+                    .map(|t| {
+                        t.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+                            .collect()
+                    })
                     .unwrap_or_default()
             };
             let id = s("id");
@@ -126,11 +145,25 @@ impl Family {
                 continue;
             }
             out.push(Family {
-                title: if s("title").is_empty() { id.clone() } else { s("title") },
+                title: if s("title").is_empty() {
+                    id.clone()
+                } else {
+                    s("title")
+                },
                 id,
-                vendors: str_list(f.get("vendors")).iter().filter_map(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok()).collect(),
-                name_hints: str_list(f.get("name_hints")).into_iter().map(|h| h.to_ascii_lowercase()).collect(),
-                layout: if s("layout") == "symmetric" { "symmetric".into() } else { "offset".into() },
+                vendors: str_list(f.get("vendors"))
+                    .iter()
+                    .filter_map(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+                    .collect(),
+                name_hints: str_list(f.get("name_hints"))
+                    .into_iter()
+                    .map(|h| h.to_ascii_lowercase())
+                    .collect(),
+                layout: if s("layout") == "symmetric" {
+                    "symmetric".into()
+                } else {
+                    "offset".into()
+                },
                 labels: map("labels"),
                 vt_labels: map("vt_labels"),
             });
@@ -150,7 +183,11 @@ impl Family {
         }
         match self.labels.get(button) {
             Some(v) if !ascii || v.is_ascii() => v.clone(),
-            _ => Family::generic().labels.get(button).cloned().unwrap_or_else(|| button.trim_start_matches("BTN_").to_owned()),
+            _ => Family::generic()
+                .labels
+                .get(button)
+                .cloned()
+                .unwrap_or_else(|| button.trim_start_matches("BTN_").to_owned()),
         }
     }
 }
@@ -160,7 +197,9 @@ pub fn bits(bitmap: &str) -> BTreeSet<u16> {
     let words: Vec<&str> = bitmap.split_whitespace().collect();
     let mut out = BTreeSet::new();
     for (idx, word) in words.iter().rev().enumerate() {
-        let Ok(w) = u64::from_str_radix(word, 16) else { continue };
+        let Ok(w) = u64::from_str_radix(word, 16) else {
+            continue;
+        };
         for b in 0..64 {
             if w >> b & 1 == 1 {
                 if let Ok(code) = u16::try_from(idx * 64 + b) {
@@ -175,7 +214,13 @@ pub fn bits(bitmap: &str) -> BTreeSet<u16> {
 pub fn parse(text: &str) -> Vec<Device> {
     let mut out = Vec::new();
     for block in text.split("\n\n") {
-        let (mut name, mut handlers, mut keys, mut abs, mut rel) = (String::new(), String::new(), String::new(), String::new(), String::new());
+        let (mut name, mut handlers, mut keys, mut abs, mut rel) = (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
         let (mut vendor, mut product) = (0u16, 0u16);
         // A device name may carry a newline (USB product strings such as "OBINS OBINS\nAnnePro2 Keyboard"): the
         // quoted value then continues on the next lines until its closing quote; they join with a space.
@@ -184,7 +229,9 @@ pub fn parse(text: &str) -> Vec<Device> {
             if open_name {
                 let part = line.trim();
                 open_name = !part.ends_with('"');
-                name = format!("{name} {}", part.trim_end_matches('"')).trim().to_owned();
+                name = format!("{name} {}", part.trim_end_matches('"'))
+                    .trim()
+                    .to_owned();
             } else if let Some(n) = line.strip_prefix("N: Name=") {
                 let n = n.trim();
                 open_name = n.starts_with('"') && (n.len() == 1 || !n.ends_with('"'));
@@ -221,19 +268,33 @@ pub fn parse(text: &str) -> Vec<Device> {
             if keys.contains(&KEY_A) && kbd {
                 kinds.push(Kind::Keyboard);
             }
-            if keys.contains(&BTN_LEFT) && (rel.contains(&REL_X) || handlers.split_whitespace().any(|h| h.starts_with("mouse"))) {
+            if keys.contains(&BTN_LEFT)
+                && (rel.contains(&REL_X)
+                    || handlers.split_whitespace().any(|h| h.starts_with("mouse")))
+            {
                 kinds.push(Kind::Mouse);
             }
         }
         for kind in kinds {
-            out.push(Device { name: name.clone(), kind, handlers: handlers.clone(), vendor, product, keys: keys.clone(), abs: abs.clone(), rel: rel.clone() });
+            out.push(Device {
+                name: name.clone(),
+                kind,
+                handlers: handlers.clone(),
+                vendor,
+                product,
+                keys: keys.clone(),
+                abs: abs.clone(),
+                rel: rel.clone(),
+            });
         }
     }
     out
 }
 
 pub fn scan() -> Vec<Device> {
-    std::fs::read_to_string("/proc/bus/input/devices").map(|t| parse(&t)).unwrap_or_default()
+    std::fs::read_to_string("/proc/bus/input/devices")
+        .map(|t| parse(&t))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -252,7 +313,10 @@ mod tests {
         assert_eq!((d[0].vendor, d[0].product), (0x045e, 0x028e));
         assert_eq!(d[1].kind, Kind::Keyboard);
         assert_eq!(d[2].kind, Kind::Mouse);
-        assert!(d[2].has(0x113) && d[2].has(0x114) && !d[2].has(0x115), "side and extra buttons from the KEY map");
+        assert!(
+            d[2].has(0x113) && d[2].has(0x114) && !d[2].has(0x115),
+            "side and extra buttons from the KEY map"
+        );
         assert!(d[2].rel.contains(&8), "REL_WHEEL");
         assert!(!kinds.iter().any(|(_, n)| *n == "Power Button"));
     }
@@ -272,7 +336,10 @@ mod tests {
         assert_eq!(d.len(), 2, "{d:?}");
         assert_eq!(d[0].name, "OBINS OBINS AnnePro2 Keyboard");
         assert_eq!(d[0].kind, Kind::Keyboard);
-        assert_eq!(d[1].name, "AT Translated Set 2 keyboard", "a one-line name is unchanged");
+        assert_eq!(
+            d[1].name, "AT Translated Set 2 keyboard",
+            "a one-line name is unchanged"
+        );
     }
 
     #[test]
@@ -288,7 +355,11 @@ mod tests {
         assert_eq!(ps.layout, "symmetric");
         assert_eq!(ps.label("BTN_SOUTH", false), "\u{2715}");
         assert_eq!(ps.label("BTN_SOUTH", true), "X", "the VT gets ASCII");
-        assert_eq!(ps.label("BTN_EAST", true), "E", "unlabelled buttons fall back to generic");
+        assert_eq!(
+            ps.label("BTN_EAST", true),
+            "E",
+            "unlabelled buttons fall back to generic"
+        );
         let mut generic_pad = d[0].clone();
         generic_pad.vendor = 0x2dc8;
         generic_pad.name = "8BitDo Pro 2".into();

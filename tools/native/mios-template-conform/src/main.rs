@@ -120,7 +120,13 @@ fn candidate_files(root: &Path, ignore_dirs: &HashSet<&str>) -> Vec<PathBuf> {
     let git = std::process::Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
         .stderr(std::process::Stdio::null())
         .output();
     if let (true, Ok(out)) = (is_toplevel, git) {
@@ -179,7 +185,11 @@ fn run_conformance(
             .map_err(|e| format!("template '{tname}' serialization error: {e}"))?;
         let match_str = match tcfg.get("match").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s,
-            _ => return Err(format!("template '{tname}' is missing a non-empty 'match' regex")),
+            _ => {
+                return Err(format!(
+                    "template '{tname}' is missing a non-empty 'match' regex"
+                ))
+            }
         };
         let re = Regex::new(match_str)
             .map_err(|e| format!("template '{tname}' has invalid regex {match_str:?}: {e}"))?;
@@ -255,13 +265,19 @@ fn run_conformance(
         };
 
         checked_count += 1;
-        if !compiled_templates.iter().any(|ct| ct.pattern.is_match(&rel_path)) {
+        if !compiled_templates
+            .iter()
+            .any(|ct| ct.pattern.is_match(&rel_path))
+        {
             continue;
         }
         if meta.len() > MAX_CHECKED_FILE_BYTES {
             unconforming.push((
                 rel_path.clone(),
-                format!("File too large to check ({} bytes > {MAX_CHECKED_FILE_BYTES})", meta.len()),
+                format!(
+                    "File too large to check ({} bytes > {MAX_CHECKED_FILE_BYTES})",
+                    meta.len()
+                ),
             ));
             continue;
         }
@@ -326,7 +342,10 @@ fn run_conformance(
     }
 
     if checked_count == 0 {
-        return Err(format!("no files checked in {} (checked=0)", root_path.display()));
+        return Err(format!(
+            "no files checked in {} (checked=0)",
+            root_path.display()
+        ));
     }
 
     println!(
@@ -918,12 +937,21 @@ mod tests {
         .unwrap();
         fs::write(dir.join("src/ok.py"), "# AI-hint: fine\n").unwrap();
         // ungoverned 4 GiB sparse file: must never be read (it would take 4 GiB of memory)
-        fs::File::create(dir.join("data/disk.img")).unwrap().set_len(4 << 30).unwrap();
+        fs::File::create(dir.join("data/disk.img"))
+            .unwrap()
+            .set_len(4 << 30)
+            .unwrap();
         // governed but oversized sparse file: reported, not read
-        fs::File::create(dir.join("src/huge.py")).unwrap().set_len(9 << 20).unwrap();
+        fs::File::create(dir.join("src/huge.py"))
+            .unwrap()
+            .set_len(9 << 20)
+            .unwrap();
         let (checked, unconforming, _) = run_conformance(&dir, None).unwrap();
         assert_eq!(checked, 4, "every regular file is counted");
-        assert_eq!(unconforming, 1, "only the oversized governed file is flagged");
+        assert_eq!(
+            unconforming, 1,
+            "only the oversized governed file is flagged"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1141,7 +1169,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("mios_tmpl_{tag}_{}_{now}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("mios_tmpl_{tag}_{}_{now}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

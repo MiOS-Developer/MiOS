@@ -23,9 +23,15 @@ pub fn prefix_dir(cfg: &Config) -> PathBuf {
 /// The environment of every Wine process for this prefix: (set, remove).
 pub fn env(cfg: &Config, token_file: Option<&Path>) -> (Vec<(String, String)>, Vec<&'static str>) {
     let mut set = vec![
-        ("WINEPREFIX".to_owned(), prefix_dir(cfg).display().to_string()),
+        (
+            "WINEPREFIX".to_owned(),
+            prefix_dir(cfg).display().to_string(),
+        ),
         ("WINEDEBUG".to_owned(), cfg.wine.debug.clone()),
-        ("MIOS_WINECAP_SOURCE_TYPES".to_owned(), cfg.capture.source_types.clone()),
+        (
+            "MIOS_WINECAP_SOURCE_TYPES".to_owned(),
+            cfg.capture.source_types.clone(),
+        ),
         ("MIOS_WINECAP_CURSOR".to_owned(), cfg.capture.cursor.clone()),
         // Keep the Win32 client/swapchain aligned with the compositor-owned pane.
         ("MIOS_WINECAP_FIT_WINDOW".to_owned(), "1".to_owned()),
@@ -42,9 +48,16 @@ pub fn env(cfg: &Config, token_file: Option<&Path>) -> (Vec<(String, String)>, V
         set.push(("WINEDLLOVERRIDES".to_owned(), overrides));
     }
     if let Some(t) = token_file {
-        set.push(("MIOS_WINECAP_TOKEN_FILE".to_owned(), t.display().to_string()));
+        set.push((
+            "MIOS_WINECAP_TOKEN_FILE".to_owned(),
+            t.display().to_string(),
+        ));
     }
-    if let Some(v) = dxvk_filter(cfg, std::env::var("AQ_DRM_DEVICES").ok().as_deref(), Path::new("/sys/class/drm")) {
+    if let Some(v) = dxvk_filter(
+        cfg,
+        std::env::var("AQ_DRM_DEVICES").ok().as_deref(),
+        Path::new("/sys/class/drm"),
+    ) {
         set.push(("DXVK_FILTER_DEVICE_NAME".to_owned(), v.to_owned()));
     }
     // Wine prefers winex11 whenever DISPLAY is set; without it winewayland.drv takes the session.
@@ -60,7 +73,11 @@ pub fn env(cfg: &Config, token_file: Option<&Path>) -> (Vec<(String, String)>, V
 /// DXVK renders where the frames are composited instead of copying every frame across PRIME from another
 /// GPU. Derived at run time from sysfs (nothing about the hardware lives in the SSOT); None leaves DXVK's own
 /// choice (gpu = "any", wined3d, no AQ_DRM_DEVICES, an unknown vendor).
-pub fn dxvk_filter(cfg: &Config, aq_drm_devices: Option<&str>, sys_drm: &Path) -> Option<&'static str> {
+pub fn dxvk_filter(
+    cfg: &Config,
+    aq_drm_devices: Option<&str>,
+    sys_drm: &Path,
+) -> Option<&'static str> {
     if cfg.wine.d3d != D3d::Dxvk || cfg.wine.gpu != Gpu::Compositor {
         return None;
     }
@@ -109,7 +126,12 @@ pub fn ensure_prefix(cfg: &Config) -> Result<bool, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| format!("{}: {e} (install [packages.shaderglass])", cfg.wine.wineboot))?;
+        .map_err(|e| {
+            format!(
+                "{}: {e} (install [packages.shaderglass])",
+                cfg.wine.wineboot
+            )
+        })?;
     let started = Instant::now();
     loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
@@ -137,7 +159,12 @@ pub fn ensure_prefix(cfg: &Config) -> Result<bool, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| format!("{}: {e} (install [packages.shaderglass])", wineserver.display()))?;
+        .map_err(|e| {
+            format!(
+                "{}: {e} (install [packages.shaderglass])",
+                wineserver.display()
+            )
+        })?;
     loop {
         if server.try_wait().map_err(|e| e.to_string())?.is_some() {
             break;
@@ -160,7 +187,13 @@ pub fn profile_text(profile: &[(String, String)]) -> String {
     for (k, v) in profile {
         let q: String = v
             .chars()
-            .flat_map(|c| if c == '"' || c == '\\' { vec!['\\', c] } else { vec![c] })
+            .flat_map(|c| {
+                if c == '"' || c == '\\' {
+                    vec!['\\', c]
+                } else {
+                    vec![c]
+                }
+            })
             .collect();
         out += &format!("{k} \"{q}\"\r\n");
     }
@@ -209,22 +242,46 @@ mod tests {
 
     #[test]
     fn profile_lines_are_quoted_like_std_quoted() {
-        let p = vec![("ShaderName".to_owned(), "crt-geom".to_owned()), ("X".to_owned(), "a\"b\\c".to_owned())];
-        assert_eq!(profile_text(&p), "ShaderName \"crt-geom\"\r\nX \"a\\\"b\\\\c\"\r\n");
+        let p = vec![
+            ("ShaderName".to_owned(), "crt-geom".to_owned()),
+            ("X".to_owned(), "a\"b\\c".to_owned()),
+        ];
+        assert_eq!(
+            profile_text(&p),
+            "ShaderName \"crt-geom\"\r\nX \"a\\\"b\\\\c\"\r\n"
+        );
     }
 
     #[test]
     fn gpu_vendor_word_follows_the_compositors_first_drm_device() {
         let d = tempfile::tempdir().unwrap();
         let sys = d.path().join("sys");
-        for (card, vendor) in [("card1", "0x1002\n"), ("card2", "0x10de\n"), ("card3", "0x1234\n")] {
+        for (card, vendor) in [
+            ("card1", "0x1002\n"),
+            ("card2", "0x10de\n"),
+            ("card3", "0x1234\n"),
+        ] {
             std::fs::create_dir_all(sys.join(card).join("device")).unwrap();
             std::fs::write(sys.join(card).join("device/vendor"), vendor).unwrap();
         }
-        assert_eq!(gpu_vendor_word("/dev/dri/card2:/dev/dri/card1", &sys), Some("NVIDIA"));
-        assert_eq!(gpu_vendor_word("/dev/dri/card1:/dev/dri/card2", &sys), Some("AMD"));
-        assert_eq!(gpu_vendor_word("/dev/dri/card3", &sys), None, "unknown vendor: DXVK chooses");
-        assert_eq!(gpu_vendor_word("/dev/dri/card9", &sys), None, "no sysfs node");
+        assert_eq!(
+            gpu_vendor_word("/dev/dri/card2:/dev/dri/card1", &sys),
+            Some("NVIDIA")
+        );
+        assert_eq!(
+            gpu_vendor_word("/dev/dri/card1:/dev/dri/card2", &sys),
+            Some("AMD")
+        );
+        assert_eq!(
+            gpu_vendor_word("/dev/dri/card3", &sys),
+            None,
+            "unknown vendor: DXVK chooses"
+        );
+        assert_eq!(
+            gpu_vendor_word("/dev/dri/card9", &sys),
+            None,
+            "no sysfs node"
+        );
         assert_eq!(gpu_vendor_word("", &sys), None);
         assert_eq!(gpu_vendor_word("card2", &sys), None, "not a device path");
         // A by-path symlink (its name has colons) resolves to its card node.
@@ -233,7 +290,10 @@ mod tests {
         std::fs::write(dev.join("card2"), b"").unwrap();
         let link = dev.join("by-path/pci-0000:01:00.0-card");
         std::os::unix::fs::symlink(dev.join("card2"), &link).unwrap();
-        assert_eq!(gpu_vendor_word(&format!("{}:/dev/dri/card1", link.display()), &sys), Some("NVIDIA"));
+        assert_eq!(
+            gpu_vendor_word(&format!("{}:/dev/dri/card1", link.display()), &sys),
+            Some("NVIDIA")
+        );
     }
 
     #[test]
@@ -242,6 +302,9 @@ mod tests {
         std::fs::create_dir_all(d.path().join("drive_c/users/Public")).unwrap();
         assert!(local_appdata(d.path()).is_none(), "Public is not a user");
         std::fs::create_dir_all(d.path().join("drive_c/users/someone")).unwrap();
-        assert_eq!(local_appdata(d.path()).unwrap(), d.path().join("drive_c/users/someone/AppData/Local"));
+        assert_eq!(
+            local_appdata(d.path()).unwrap(),
+            d.path().join("drive_c/users/someone/AppData/Local")
+        );
     }
 }

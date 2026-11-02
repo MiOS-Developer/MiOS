@@ -18,7 +18,16 @@ use std::process::Command;
 
 const CATALOG: &str = "usr/share/mios/ai/v1/metadata.json";
 /// mios_comments._SKIP_DIRS: never descended by the index-less walk.
-const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "__pycache__", ".venv", ".rustup", ".cargo", "output"];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    ".rustup",
+    ".cargo",
+    "output",
+];
 
 /// Python str.isspace(): Unicode White_Space plus the four information separators.
 fn py_space(c: char) -> bool {
@@ -35,7 +44,18 @@ fn splitlines(text: &str) -> Vec<&str> {
     let mut start = 0;
     let mut chars = text.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
-        let boundary = matches!(c, '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}');
+        let boundary = matches!(
+            c,
+            '\n' | '\r'
+                | '\u{0b}'
+                | '\u{0c}'
+                | '\u{1c}'
+                | '\u{1d}'
+                | '\u{1e}'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
+        );
         if boundary {
             out.push(&text[start..i]);
             let mut end = i + c.len_utf8();
@@ -60,8 +80,12 @@ fn head_text(path: &Path) -> std::io::Result<String> {
     let mut buf = Vec::new();
     // 8192 characters are at most 32768 bytes; a little more keeps a CRLF or a
     // multi-byte sequence at the cut from decoding differently.
-    fs::File::open(path)?.take(8192 * 4 + 8).read_to_end(&mut buf)?;
-    let decoded = String::from_utf8_lossy(&buf).replace("\r\n", "\n").replace('\r', "\n");
+    fs::File::open(path)?
+        .take(8192 * 4 + 8)
+        .read_to_end(&mut buf)?;
+    let decoded = String::from_utf8_lossy(&buf)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     Ok(decoded.chars().take(8192).collect())
 }
 
@@ -79,7 +103,12 @@ impl Patterns {
             Regex::new(&format!(r"(?i)^[#/<!;\-*\s\x1c-\x1f]*{tag}:[\s\x1c-\x1f]*(.+?)(?:[\s\x1c-\x1f]*-->)?[\s\x1c-\x1f]*$"))
                 .expect("static AI header pattern")
         };
-        Patterns { hint: p("AI-hint"), related: p("AI-related"), functions: p("AI-functions"), doc: p("AI-doc") }
+        Patterns {
+            hint: p("AI-hint"),
+            related: p("AI-related"),
+            functions: p("AI-functions"),
+            doc: p("AI-doc"),
+        }
     }
 }
 
@@ -100,13 +129,22 @@ fn comment_style(rel: &str) -> &'static str {
 }
 
 fn list(raw: &str) -> Vec<String> {
-    py_strip(raw).split(',').map(py_strip).filter(|s| !s.is_empty()).map(str::to_string).collect()
+    py_strip(raw)
+        .split(',')
+        .map(py_strip)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// The header entry of one file, or None when it carries no AI-* header.
 fn extract(p: &Patterns, content: &str, rel: &str) -> Option<Value> {
-    let (mut hint, mut related, mut functions, mut doc): (Option<String>, Vec<String>, Vec<String>, Option<String>) =
-        (None, Vec::new(), Vec::new(), None);
+    let (mut hint, mut related, mut functions, mut doc): (
+        Option<String>,
+        Vec<String>,
+        Vec<String>,
+        Option<String>,
+    ) = (None, Vec::new(), Vec::new(), None);
     for line in splitlines(content).into_iter().take(60) {
         // Each tag is taken once, first match wins, and a matched line is not
         // offered to the tags after it -- the Python leg's `continue`.
@@ -157,40 +195,77 @@ pub fn tracked_file_modes(root: &Path) -> Result<BTreeMap<String, String>, Strin
     if fs::symlink_metadata(root.join(".git")).is_err() {
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else { continue };
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let Ok(kind) = entry.file_type() else { continue };
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
                 // os.walk files a link to a directory under dirnames and never
                 // descends it; every other link is a file named 120000.
-                let is_dir = if kind.is_symlink() { path.is_dir() } else { kind.is_dir() };
+                let is_dir = if kind.is_symlink() {
+                    path.is_dir()
+                } else {
+                    kind.is_dir()
+                };
                 if is_dir {
-                    if !kind.is_symlink() && !SKIP_DIRS.contains(&name.as_str()) && !name.starts_with('.') {
+                    if !kind.is_symlink()
+                        && !SKIP_DIRS.contains(&name.as_str())
+                        && !name.starts_with('.')
+                    {
                         stack.push(path);
                     }
                     continue;
                 }
-                let rel = path.strip_prefix(root).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
-                modes.insert(rel, if kind.is_symlink() { "120000" } else { "100644" }.to_string());
+                let rel = path
+                    .strip_prefix(root)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                modes.insert(
+                    rel,
+                    if kind.is_symlink() {
+                        "120000"
+                    } else {
+                        "100644"
+                    }
+                    .to_string(),
+                );
             }
         }
         return Ok(modes);
     }
     let mut git = Command::new("git");
-    git.args(["-c", "safe.directory=*", "-c", "core.ignorecase=false", "ls-files", "--stage", "-z"]).current_dir(root);
+    git.args([
+        "-c",
+        "safe.directory=*",
+        "-c",
+        "core.ignorecase=false",
+        "ls-files",
+        "--stage",
+        "-z",
+    ])
+    .current_dir(root);
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             git.env_remove(key);
         }
     }
-    let out = git.output().map_err(|_| "cannot read the tracked source index".to_string())?;
+    let out = git
+        .output()
+        .map_err(|_| "cannot read the tracked source index".to_string())?;
     if !out.status.success() {
         return Err("cannot read the tracked source index".into());
     }
-    let text = String::from_utf8(out.stdout).map_err(|e| format!("tracked paths are not UTF-8: {e}"))?;
+    let text =
+        String::from_utf8(out.stdout).map_err(|e| format!("tracked paths are not UTF-8: {e}"))?;
     for record in text.split('\0').filter(|r| !r.is_empty()) {
-        let (meta, rel) = record.split_once('\t').ok_or_else(|| format!("malformed index record: {record}"))?;
+        let (meta, rel) = record
+            .split_once('\t')
+            .ok_or_else(|| format!("malformed index record: {record}"))?;
         let mut fields = meta.split_whitespace();
         let (mode, stage) = (fields.next().unwrap_or(""), fields.nth(1).unwrap_or(""));
         if stage != "0" {
@@ -216,7 +291,9 @@ pub fn catalog(root: &Path) -> Result<Value, String> {
             Ok(m) if m.is_file() => {}
             _ => continue,
         }
-        let Ok(content) = head_text(&full) else { continue };
+        let Ok(content) = head_text(&full) else {
+            continue;
+        };
         if let Some(entry) = extract(&patterns, &content, rel) {
             hints += u64::from(entry["hint"].as_str().is_some_and(|h| !h.is_empty()));
             funcs += entry["functions"].as_array().map_or(0, |a| a.len() as u64);
@@ -226,8 +303,14 @@ pub fn catalog(root: &Path) -> Result<Value, String> {
     }
     let mut top = serde_json::Map::new();
     top.insert("format".into(), Value::from("openai_strict_schema_v1"));
-    top.insert("total_files_scanned".into(), Value::from(tracked.len() as u64));
-    top.insert("total_metadata_entries".into(), Value::from(entries.len() as u64));
+    top.insert(
+        "total_files_scanned".into(),
+        Value::from(tracked.len() as u64),
+    );
+    top.insert(
+        "total_metadata_entries".into(),
+        Value::from(entries.len() as u64),
+    );
     top.insert("total_hints".into(), Value::from(hints));
     top.insert("total_functions_indexed".into(), Value::from(funcs));
     top.insert("total_related_links".into(), Value::from(related));
@@ -317,11 +400,18 @@ fn short(v: Option<&Value>) -> String {
 pub fn diff_entries(tracked: &Value, fresh: &Value) -> Vec<String> {
     let mut lines = Vec::new();
     let empty = serde_json::Map::new();
-    let (t, f) = (tracked.as_object().unwrap_or(&empty), fresh.as_object().unwrap_or(&empty));
+    let (t, f) = (
+        tracked.as_object().unwrap_or(&empty),
+        fresh.as_object().unwrap_or(&empty),
+    );
     let keys: std::collections::BTreeSet<&String> = t.keys().chain(f.keys()).collect();
     for key in keys {
         if key != "entries" && t.get(key) != f.get(key) {
-            lines.push(format!("field {key}: tracked={} fresh={}", short(t.get(key)), short(f.get(key))));
+            lines.push(format!(
+                "field {key}: tracked={} fresh={}",
+                short(t.get(key)),
+                short(f.get(key))
+            ));
         }
     }
     let by_path = |v: Option<&Value>| -> BTreeMap<String, Value> {
@@ -364,31 +454,47 @@ pub fn run(root: &Path, export: Option<&Path>, check_fresh: bool) -> Result<Stri
     let entries = fresh["total_metadata_entries"].as_u64().unwrap_or(0);
     if check_fresh {
         let path = root.join(CATALOG);
-        let on_disk = fs::read(&path).map_err(|e| format!("[ai-metadata] FAIL: {CATALOG} is unreadable ({e}); nothing was compared.\n"))?;
+        let on_disk = fs::read(&path).map_err(|e| {
+            format!("[ai-metadata] FAIL: {CATALOG} is unreadable ({e}); nothing was compared.\n")
+        })?;
         if on_disk == body.as_bytes() {
             return Ok(format!("[ai-metadata] PASS: {CATALOG} is byte-identical to a fresh export ({entries} entries).\n"));
         }
-        let mut msg = format!("[ai-metadata] FAIL: {CATALOG} is stale -- it differs from a fresh export.\n");
+        let mut msg =
+            format!("[ai-metadata] FAIL: {CATALOG} is stale -- it differs from a fresh export.\n");
         let details = match serde_json::from_slice::<Value>(&on_disk) {
             Ok(tracked) => diff_entries(&tracked, &fresh),
             Err(e) => vec![format!("tracked file is not valid JSON: {e}")],
         };
-        let details = if details.is_empty() { vec!["same parsed content, different bytes (formatting drift)".to_string()] } else { details };
+        let details = if details.is_empty() {
+            vec!["same parsed content, different bytes (formatting drift)".to_string()]
+        } else {
+            details
+        };
         for line in details.iter().take(40) {
             msg.push_str(&format!("    {line}\n"));
         }
         if details.len() > 40 {
             msg.push_str(&format!("    ... and {} more\n", details.len() - 40));
         }
-        msg.push_str("  Regenerate with: mios-gen sync --root . (or mios-gen ai-metadata --root .)\n");
+        msg.push_str(
+            "  Regenerate with: mios-gen sync --root . (or mios-gen ai-metadata --root .)\n",
+        );
         return Err(msg);
     }
-    let target = export.map(Path::to_path_buf).unwrap_or_else(|| root.join(CATALOG));
+    let target = export
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join(CATALOG));
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("[ai-metadata] FAIL: {}: {e}\n", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("[ai-metadata] FAIL: {}: {e}\n", parent.display()))?;
     }
-    crate::greeter::write_atomic(&target, &body).map_err(|e| format!("[ai-metadata] FAIL: {e}\n"))?;
-    Ok(format!("[ai-metadata] Exported metadata catalog to {} ({entries} entries)\n", target.display()))
+    crate::greeter::write_atomic(&target, &body)
+        .map_err(|e| format!("[ai-metadata] FAIL: {e}\n"))?;
+    Ok(format!(
+        "[ai-metadata] Exported metadata catalog to {} ({entries} entries)\n",
+        target.display()
+    ))
 }
 
 #[cfg(test)]
@@ -407,7 +513,8 @@ mod tests {
 
     #[test]
     fn json_matches_python_dumps_indent_2() {
-        let v: Value = serde_json::json!({"a": [], "b": [1, {"c": null}], "d": "é\u{1F600}\u{7f}\"\\\n"});
+        let v: Value =
+            serde_json::json!({"a": [], "b": [1, {"c": null}], "d": "é\u{1F600}\u{7f}\"\\\n"});
         assert_eq!(
             render(&v),
             "{\n  \"a\": [],\n  \"b\": [\n    1,\n    {\n      \"c\": null\n    }\n  ],\n  \"d\": \"\\u00e9\\ud83d\\ude00\\u007f\\\"\\\\\\n\"\n}"
@@ -416,7 +523,10 @@ mod tests {
 
     #[test]
     fn splitlines_follows_python() {
-        assert_eq!(splitlines("a\nb\r\nc\rd\u{0b}e\u{2028}f\n"), ["a", "b", "c", "d", "e", "f"]);
+        assert_eq!(
+            splitlines("a\nb\r\nc\rd\u{0b}e\u{2028}f\n"),
+            ["a", "b", "c", "d", "e", "f"]
+        );
         assert_eq!(splitlines("a\n\nb"), ["a", "", "b"]);
         assert!(splitlines("").is_empty());
     }
@@ -442,7 +552,10 @@ mod tests {
 
     #[test]
     fn check_fresh_names_the_moved_header_and_writes_nothing() {
-        let dir = fixture(&[("a.rs", "// AI-hint: one\n"), ("b.md", "<!-- AI-hint: two -->\n")]);
+        let dir = fixture(&[
+            ("a.rs", "// AI-hint: one\n"),
+            ("b.md", "<!-- AI-hint: two -->\n"),
+        ]);
         // Without a git index the catalog counts itself, so the second export is the stable one.
         run(dir.path(), None, false).unwrap();
         let out = run(dir.path(), None, false).unwrap();
@@ -452,6 +565,10 @@ mod tests {
         fs::write(dir.path().join("a.rs"), "// AI-hint: moved\n").unwrap();
         let err = run(dir.path(), None, true).unwrap_err();
         assert!(err.contains("entry a.rs: differs in hint"), "{err}");
-        assert_eq!(fs::read(dir.path().join(CATALOG)).unwrap(), committed, "check-fresh wrote the catalog");
+        assert_eq!(
+            fs::read(dir.path().join(CATALOG)).unwrap(),
+            committed,
+            "check-fresh wrote the catalog"
+        );
     }
 }

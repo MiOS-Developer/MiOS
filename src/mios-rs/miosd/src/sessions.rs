@@ -14,7 +14,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
+    MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -97,13 +98,27 @@ pub struct NestedSession {
 
 #[derive(Clone, Debug, PartialEq)]
 enum Choice {
-    Attach { node: usize, session: String },
-    AttachNested { socket: String, session: String, tmux_root: Option<String> },
-    New { node: usize },
-    NewNested { socket: String, tmux_root: Option<String> },
+    Attach {
+        node: usize,
+        session: String,
+    },
+    AttachNested {
+        socket: String,
+        session: String,
+        tmux_root: Option<String>,
+    },
+    New {
+        node: usize,
+    },
+    NewNested {
+        socket: String,
+        tmux_root: Option<String>,
+    },
     /// The MiOS AI workspace ([keybindings].terminal_session) when it is not running yet.
     Workspace,
-    App { id: String },
+    App {
+        id: String,
+    },
     Shell,
 }
 
@@ -135,11 +150,16 @@ fn text<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
 }
 
 fn string(v: &Value, path: &str) -> Result<String, String> {
-    text(v, path)?.as_str().map(str::to_owned).ok_or_else(|| format!("{path} must be a string"))
+    text(v, path)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{path} must be a string"))
 }
 
 fn integer(v: &Value, path: &str) -> Result<i64, String> {
-    text(v, path)?.as_integer().ok_or_else(|| format!("{path} must be an integer"))
+    text(v, path)?
+        .as_integer()
+        .ok_or_else(|| format!("{path} must be an integer"))
 }
 
 pub(crate) fn color(hex: &str) -> Color {
@@ -150,15 +170,30 @@ pub(crate) fn color(hex: &str) -> Color {
 
 fn config(root: &Path) -> Result<Config, String> {
     let v = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
-    let ssh = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"].iter().any(|k| std::env::var(k).is_ok_and(|v| !v.is_empty()));
-    let console = mios_unit_gen::tmux_os::console_client(&v, &std::env::var("TERM").unwrap_or_default(), ssh)?;
+    let ssh = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
+        .iter()
+        .any(|k| std::env::var(k).is_ok_and(|v| !v.is_empty()));
+    let console = mios_unit_gen::tmux_os::console_client(
+        &v,
+        &std::env::var("TERM").unwrap_or_default(),
+        ssh,
+    )?;
     let launcher = mios_resolver::terminal_tuis::launcher(&v)?;
     let catalog = mios_resolver::terminal_tuis::catalog(&v)?;
     let apps = if launcher.enabled {
-        mios_resolver::terminal_tuis::visible(&catalog, console, mios_resolver::terminal_tuis::is_installed)
-            .into_iter()
-            .map(|t| App { id: t.id.clone(), label: t.label.clone(), section: t.section.clone(), mode: t.mode.as_str().into() })
-            .collect()
+        mios_resolver::terminal_tuis::visible(
+            &catalog,
+            console,
+            mios_resolver::terminal_tuis::is_installed,
+        )
+        .into_iter()
+        .map(|t| App {
+            id: t.id.clone(),
+            label: t.label.clone(),
+            section: t.section.clone(),
+            mode: t.mode.as_str().into(),
+        })
+        .collect()
     } else {
         Vec::new()
     };
@@ -175,12 +210,22 @@ fn config(root: &Path) -> Result<Config, String> {
         default_session: string(&v, "keybindings.terminal_session")?,
         node_os,
         node_glob: string(&v, "terminal.sessions.node_host_glob")?,
-        ssh_user: if user.is_empty() { std::env::var("USER").unwrap_or_default() } else { user },
+        ssh_user: if user.is_empty() {
+            std::env::var("USER").unwrap_or_default()
+        } else {
+            user
+        },
         ssh_port: integer(&v, "terminal.sessions.ssh_port")?,
         ssh_timeout: integer(&v, "terminal.sessions.ssh_timeout_s")?,
         palette: if console {
             // The kernel console has 8/16 colours: RGB would collapse; mios-controls uses the same set.
-            [Color::Black, Color::White, Color::Yellow, Color::Gray, Color::DarkGray]
+            [
+                Color::Black,
+                Color::White,
+                Color::Yellow,
+                Color::Gray,
+                Color::DarkGray,
+            ]
         } else {
             [
                 color(&string(&v, "colors.bg").unwrap_or_default()),
@@ -198,7 +243,10 @@ fn config(root: &Path) -> Result<Config, String> {
 
 /// Internal sessions (float shells, worker parking) are never offered for attaching.
 fn visible_sessions(c: &Config, sessions: Vec<Session>) -> Vec<Session> {
-    sessions.into_iter().filter(|s| !mios_unit_gen::tmux_os::is_hidden_session(&c.hidden, &s.name)).collect()
+    sessions
+        .into_iter()
+        .filter(|s| !mios_unit_gen::tmux_os::is_hidden_session(&c.hidden, &s.name))
+        .collect()
 }
 
 fn parse_sessions(out: &str) -> Vec<Session> {
@@ -246,8 +294,18 @@ fn run_bounded(cmd: &mut Command, deadline: Instant) -> Result<Output, String> {
             buf
         })
     };
-    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let out = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let err = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -262,7 +320,11 @@ fn run_bounded(cmd: &mut Command, deadline: Instant) -> Result<Output, String> {
         let _ = child.wait();
         return Err("timed out".into());
     };
-    Ok(Output { status, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
+    Ok(Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
 }
 
 /// POSIX shell single-quoting: `'` becomes `'\''`, so any string is one literal word.
@@ -279,7 +341,10 @@ fn local_sessions(c: &Config) -> Result<Vec<Session>, String> {
     )
     .map_err(|e| format!("tmux: {e}"))?;
     // No server yet is an empty list, not an error.
-    Ok(visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&out.stdout))))
+    Ok(visible_sessions(
+        c,
+        parse_sessions(&String::from_utf8_lossy(&out.stdout)),
+    ))
 }
 
 fn ssh_args(c: &Config, address: &str) -> Vec<String> {
@@ -305,13 +370,24 @@ fn remote_sessions(c: &Config, address: &str, deadline: Instant) -> Result<Vec<S
         shell_quote(&c.socket),
         shell_quote(FORMAT)
     );
-    let out = run_bounded(Command::new("ssh").args(ssh_args(c, address)).arg(remote), deadline)
-        .map_err(|e| format!("ssh: {e}"))?;
+    let out = run_bounded(
+        Command::new("ssh").args(ssh_args(c, address)).arg(remote),
+        deadline,
+    )
+    .map_err(|e| format!("ssh: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().last().unwrap_or("unreachable").trim().to_owned());
+        return Err(err
+            .lines()
+            .last()
+            .unwrap_or("unreachable")
+            .trim()
+            .to_owned());
     }
-    Ok(visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&out.stdout))))
+    Ok(visible_sessions(
+        c,
+        parse_sessions(&String::from_utf8_lossy(&out.stdout)),
+    ))
 }
 
 /// Deadline for one whole tailnet sweep (see PEER_DEADLINE_GRACE).
@@ -321,12 +397,22 @@ fn peer_deadline(c: &Config) -> Duration {
 
 /// This node only (bounded; shown before any peer answers).
 fn local_node(c: &Config) -> Node {
-    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default().trim().to_owned();
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
     let (sessions, error) = match local_sessions(c) {
         Ok(s) => (s, None),
         Err(e) => (Vec::new(), Some(e)),
     };
-    Node { name: host, address: String::new(), local: true, online: true, error, sessions }
+    Node {
+        name: host,
+        address: String::new(),
+        local: true,
+        online: true,
+        error,
+        sessions,
+    }
 }
 
 fn nested_sessions_dir() -> std::path::PathBuf {
@@ -335,12 +421,17 @@ fn nested_sessions_dir() -> std::path::PathBuf {
     } else if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
         std::path::PathBuf::from(rt).join("mios/nested-sessions")
     } else {
-        std::path::PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })).join("mios/nested-sessions")
+        std::path::PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
+            .join("mios/nested-sessions")
     }
 }
 
 fn launcher_pid_alive(entry: &serde_json::Value) -> bool {
-    let Some(pid) = entry.get("launcher_pid").and_then(|v| v.as_u64()).map(|p| p as u32) else {
+    let Some(pid) = entry
+        .get("launcher_pid")
+        .and_then(|v| v.as_u64())
+        .map(|p| p as u32)
+    else {
         return false;
     };
     if pid == 0 {
@@ -349,7 +440,10 @@ fn launcher_pid_alive(entry: &serde_json::Value) -> bool {
     if let Some(expected_start) = entry.get("launcher_start").and_then(|v| v.as_u64()) {
         if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
             if let Some((_, rest)) = stat.rsplit_once(')') {
-                let actual_start = rest.split_whitespace().nth(19).and_then(|f| f.parse::<u64>().ok());
+                let actual_start = rest
+                    .split_whitespace()
+                    .nth(19)
+                    .and_then(|f| f.parse::<u64>().ok());
                 return actual_start == Some(expected_start);
             }
         }
@@ -382,9 +476,18 @@ fn discover_nested(c: &Config) -> Vec<NestedSession> {
         if !launcher_pid_alive(&val) {
             continue;
         }
-        let seat = val.get("seat").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-        let user = val.get("user").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-        let target = val.get("target")
+        let seat = val
+            .get("seat")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned();
+        let user = val
+            .get("user")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned();
+        let target = val
+            .get("target")
             .or_else(|| val.get("layout"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -395,25 +498,42 @@ fn discover_nested(c: &Config) -> Vec<NestedSession> {
             std::fs::read_to_string(desc_path)
                 .ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|d| d.get("tmux_socket").and_then(|v| v.as_str()).map(str::to_owned))
-                .unwrap_or_else(|| if !seat.is_empty() { format!("mios-nested-{seat}") } else { "mios-nested".to_owned() })
+                .and_then(|d| {
+                    d.get("tmux_socket")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| {
+                    if !seat.is_empty() {
+                        format!("mios-nested-{seat}")
+                    } else {
+                        "mios-nested".to_owned()
+                    }
+                })
         } else if !seat.is_empty() {
             format!("mios-nested-{seat}")
         } else {
             "mios-nested".to_owned()
         };
-        let tmux_root = val.get("runtime")
+        let tmux_root = val
+            .get("runtime")
             .and_then(|v| v.as_str())
             .map(|r| format!("{r}/tmux"))
             .filter(|p| std::path::Path::new(p).exists())
-            .or_else(|| val.get("tmux_root").and_then(|v| v.as_str()).map(str::to_owned));
+            .or_else(|| {
+                val.get("tmux_root")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            });
 
         let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
         let mut cmd = Command::new("tmux");
         cmd.env("TMUX_TMPDIR", root)
-           .args(["-L", &tmux_socket, "list-sessions", "-F", FORMAT]);
+            .args(["-L", &tmux_socket, "list-sessions", "-F", FORMAT]);
         let sessions = match run_bounded(&mut cmd, Instant::now() + LOCAL_DEADLINE) {
-            Ok(output) => visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&output.stdout))),
+            Ok(output) => {
+                visible_sessions(c, parse_sessions(&String::from_utf8_lossy(&output.stdout)))
+            }
             Err(_) => Vec::new(),
         };
 
@@ -460,10 +580,14 @@ fn remote_nodes(c: &Config, deadline: Instant) -> Vec<Node> {
         .and_then(|j| j.get("Peer").and_then(|p| p.as_object().cloned()))
         .map(|m| m.into_iter().map(|(_, p)| p).collect())
         .unwrap_or_default();
-    let field = |p: &serde_json::Value, k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or("").to_owned();
+    let field =
+        |p: &serde_json::Value, k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or("").to_owned();
     let mut remote: Vec<Node> = peers
         .iter()
-        .filter(|p| c.node_os.iter().any(|o| *o == field(p, "OS")) && glob(&c.node_glob, &field(p, "HostName")))
+        .filter(|p| {
+            c.node_os.iter().any(|o| *o == field(p, "OS"))
+                && glob(&c.node_glob, &field(p, "HostName"))
+        })
         .map(|p| Node {
             name: peer_name(&field(p, "DNSName"), &field(p, "HostName")),
             address: field(p, "DNSName").trim_end_matches('.').to_owned(),
@@ -501,7 +625,8 @@ fn spawn_remote(c: &Config) -> mpsc::Receiver<Vec<Node>> {
 // disables ISIG, but a parent, `kill` or a hung-up ssh/tty still delivers them).
 
 static SAVED_TERMIOS: OnceLock<libc::termios> = OnceLock::new();
-const RESTORE_SIGNALS: [libc::c_int; 4] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT];
+const RESTORE_SIGNALS: [libc::c_int; 4] =
+    [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT];
 /// Leave the alternate screen, show the cursor (what ratatui::restore does, async-signal-safe).
 const RESTORE_SEQ: &[u8] = b"\x1b[?1049l\x1b[?25h";
 
@@ -559,7 +684,14 @@ impl Drop for TermGuard {
     }
 }
 
-fn rows(nodes: &[Node], querying: bool, apps: &[App], nested: &[NestedSession], workspace: Option<&str>, g: &Glyphs) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+fn rows(
+    nodes: &[Node],
+    querying: bool,
+    apps: &[App],
+    nested: &[NestedSession],
+    workspace: Option<&str>,
+    g: &Glyphs,
+) -> Vec<(Option<Choice>, Line<'static>, Style)> {
     let mut out = Vec::new();
     for (i, n) in nodes.iter().enumerate() {
         let state = if n.local {
@@ -571,26 +703,45 @@ fn rows(nodes: &[Node], querying: bool, apps: &[App], nested: &[NestedSession], 
         } else {
             n.address.clone()
         };
-        out.push((None, Line::from(format!("{}{}{state}", n.name, g.sep)), Style::default().add_modifier(Modifier::BOLD)));
+        out.push((
+            None,
+            Line::from(format!("{}{}{state}", n.name, g.sep)),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
         for s in &n.sessions {
             let mark = if s.attached { "attached" } else { "detached" };
             out.push((
-                Some(Choice::Attach { node: i, session: s.name.clone() }),
+                Some(Choice::Attach {
+                    node: i,
+                    session: s.name.clone(),
+                }),
                 Line::from(format!("    {}   {} window(s), {mark}", s.name, s.windows)),
                 Style::default(),
             ));
         }
         if i == 0 {
             if let Some(name) = workspace.filter(|w| !n.sessions.iter().any(|s| s.name == *w)) {
-                out.push((Some(Choice::Workspace), Line::from(format!("    + MiOS AI workspace ({name})")), Style::default()));
+                out.push((
+                    Some(Choice::Workspace),
+                    Line::from(format!("    + MiOS AI workspace ({name})")),
+                    Style::default(),
+                ));
             }
         }
         if n.online && n.error.is_none() {
-            out.push((Some(Choice::New { node: i }), Line::from("    + new bare Tmux-OS session"), Style::default()));
+            out.push((
+                Some(Choice::New { node: i }),
+                Line::from("    + new bare Tmux-OS session"),
+                Style::default(),
+            ));
         }
         // This node's TUIs follow its own block at once, so tailnet rows arriving later never move them.
         if i == 0 && !apps.is_empty() {
-            out.push((None, Line::from(format!("TUI apps{}this node", g.sep)), Style::default().add_modifier(Modifier::BOLD)));
+            out.push((
+                None,
+                Line::from(format!("TUI apps{}this node", g.sep)),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
             for a in apps {
                 out.push((
                     Some(Choice::App { id: a.id.clone() }),
@@ -601,14 +752,34 @@ fn rows(nodes: &[Node], querying: bool, apps: &[App], nested: &[NestedSession], 
         }
     }
     if !nested.is_empty() {
-        out.push((None, Line::from(format!("Nested sessions{}this node", g.sep)), Style::default().add_modifier(Modifier::BOLD)));
+        out.push((
+            None,
+            Line::from(format!("Nested sessions{}this node", g.sep)),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
         for n in nested {
-            let label = if !n.seat.is_empty() { format!("seat {}", n.seat) } else { format!("socket {}", n.tmux_socket) };
+            let label = if !n.seat.is_empty() {
+                format!("seat {}", n.seat)
+            } else {
+                format!("socket {}", n.tmux_socket)
+            };
             let mut meta = Vec::new();
-            if !n.target.is_empty() { meta.push(n.target.clone()); }
-            if !n.user.is_empty() { meta.push(format!("user:{}", n.user)); }
-            let info = if meta.is_empty() { label } else { format!("{label} ({})", meta.join(", ")) };
-            out.push((None, Line::from(format!("    {info}")), Style::default().add_modifier(Modifier::DIM)));
+            if !n.target.is_empty() {
+                meta.push(n.target.clone());
+            }
+            if !n.user.is_empty() {
+                meta.push(format!("user:{}", n.user));
+            }
+            let info = if meta.is_empty() {
+                label
+            } else {
+                format!("{label} ({})", meta.join(", "))
+            };
+            out.push((
+                None,
+                Line::from(format!("    {info}")),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
             for s in &n.sessions {
                 let mark = if s.attached { "attached" } else { "detached" };
                 out.push((
@@ -617,7 +788,10 @@ fn rows(nodes: &[Node], querying: bool, apps: &[App], nested: &[NestedSession], 
                         session: s.name.clone(),
                         tmux_root: n.tmux_root.clone(),
                     }),
-                    Line::from(format!("        {}   {} window(s), {mark}", s.name, s.windows)),
+                    Line::from(format!(
+                        "        {}   {} window(s), {mark}",
+                        s.name, s.windows
+                    )),
                     Style::default(),
                 ));
             }
@@ -632,15 +806,27 @@ fn rows(nodes: &[Node], querying: bool, apps: &[App], nested: &[NestedSession], 
         }
     }
     if querying {
-        out.push((None, Line::from(format!("tailnet nodes{}querying{}", g.sep, g.more)), Style::default().add_modifier(Modifier::DIM)));
+        out.push((
+            None,
+            Line::from(format!("tailnet nodes{}querying{}", g.sep, g.more)),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
     }
-    out.push((Some(Choice::Shell), Line::from("Plain shell (no tmux)"), Style::default()));
+    out.push((
+        Some(Choice::Shell),
+        Line::from("Plain shell (no tmux)"),
+        Style::default(),
+    ));
     out
 }
 
 /// Index of the selected row for the next frame: the remembered choice where it still is (rows may shift
 /// when tailnet peers arrive), else the default session, else the first selectable row.
-fn select_index(table: &[(Option<Choice>, Line<'static>, Style)], remembered: Option<&Choice>, default_session: &str) -> Option<usize> {
+fn select_index(
+    table: &[(Option<Choice>, Line<'static>, Style)],
+    remembered: Option<&Choice>,
+    default_session: &str,
+) -> Option<usize> {
     remembered
         .and_then(|want| table.iter().position(|r| r.0.as_ref() == Some(want)))
         .or_else(|| table.iter().position(|r| matches!(&r.0, Some(Choice::Attach { session, .. }) if session == default_session)))
@@ -649,8 +835,18 @@ fn select_index(table: &[(Option<Choice>, Line<'static>, Style)], remembered: Op
 
 /// Keyboard/controller navigation over selectable rows: arrows, PgUp/PgDn, Home/End, BackTab (next section;
 /// Tab is "new session" so the controller's West button reaches it, FINAL.md C-33), and `e` (first TUI app).
-fn navigate(table: &[(Option<Choice>, Line<'static>, Style)], cur: usize, key: KeyCode, page: usize) -> usize {
-    let selectable: Vec<usize> = table.iter().enumerate().filter(|r| r.1 .0.is_some()).map(|r| r.0).collect();
+fn navigate(
+    table: &[(Option<Choice>, Line<'static>, Style)],
+    cur: usize,
+    key: KeyCode,
+    page: usize,
+) -> usize {
+    let selectable: Vec<usize> = table
+        .iter()
+        .enumerate()
+        .filter(|r| r.1 .0.is_some())
+        .map(|r| r.0)
+        .collect();
     let first_after = |i: usize| selectable.iter().copied().find(|&s| s > i);
     let last_before = |i: usize| selectable.iter().rev().copied().find(|&s| s < i);
     let section_starts: Vec<usize> = table
@@ -664,12 +860,26 @@ fn navigate(table: &[(Option<Choice>, Line<'static>, Style)], cur: usize, key: K
     match key {
         KeyCode::Down | KeyCode::Char('j') => first_after(cur).unwrap_or(cur),
         KeyCode::Up | KeyCode::Char('k') => last_before(cur).unwrap_or(cur),
-        KeyCode::PageDown => selectable.get((pos + page).min(selectable.len().saturating_sub(1))).copied().unwrap_or(cur),
-        KeyCode::PageUp => selectable.get(pos.saturating_sub(page)).copied().unwrap_or(cur),
+        KeyCode::PageDown => selectable
+            .get((pos + page).min(selectable.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(cur),
+        KeyCode::PageUp => selectable
+            .get(pos.saturating_sub(page))
+            .copied()
+            .unwrap_or(cur),
         KeyCode::Home => selectable.first().copied().unwrap_or(cur),
         KeyCode::End => selectable.last().copied().unwrap_or(cur),
-        KeyCode::BackTab => section_starts.iter().copied().find(|&s| s > cur).or_else(|| section_starts.first().copied()).unwrap_or(cur),
-        KeyCode::Char('e') => table.iter().position(|r| matches!(r.0, Some(Choice::App { .. }))).unwrap_or(cur),
+        KeyCode::BackTab => section_starts
+            .iter()
+            .copied()
+            .find(|&s| s > cur)
+            .or_else(|| section_starts.first().copied())
+            .unwrap_or(cur),
+        KeyCode::Char('e') => table
+            .iter()
+            .position(|r| matches!(r.0, Some(Choice::App { .. })))
+            .unwrap_or(cur),
         _ => cur,
     }
 }
@@ -700,32 +910,63 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        let table = rows(&nodes, pending.is_some(), &c.apps, &nested, Some(&c.default_session), g);
-        state.select(select_index(&table, remembered.as_ref(), &c.default_session));
+        let table = rows(
+            &nodes,
+            pending.is_some(),
+            &c.apps,
+            &nested,
+            Some(&c.default_session),
+            g,
+        );
+        state.select(select_index(
+            &table,
+            remembered.as_ref(),
+            &c.default_session,
+        ));
         let items: Vec<ListItem> = table
             .iter()
             .map(|(choice, line, style)| {
-                let base = if choice.is_none() { style.fg(accent) } else { style.fg(fg) };
+                let base = if choice.is_none() {
+                    style.fg(accent)
+                } else {
+                    style.fg(fg)
+                };
                 ListItem::new(line.clone()).style(base)
             })
             .collect();
         let mut list_area = Rect::default();
         terminal
             .draw(|f| {
-                let [body, help] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
+                let [body, help] =
+                    Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
                 list_area = body;
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_type(if c.console { BorderType::Plain } else { BorderType::Rounded })
+                    .border_type(if c.console {
+                        BorderType::Plain
+                    } else {
+                        BorderType::Rounded
+                    })
                     .border_style(Style::default().fg(subtle))
-                    .title(Span::styled(" MiOS sessions ", Style::default().fg(accent).add_modifier(Modifier::BOLD)))
+                    .title(Span::styled(
+                        " MiOS sessions ",
+                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                    ))
                     .style(Style::default().bg(bg).fg(fg));
                 let list = List::new(items)
                     .block(block)
-                    .highlight_style(Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD))
+                    .highlight_style(
+                        Style::default()
+                            .bg(accent)
+                            .fg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    )
                     .highlight_symbol(g.pick);
                 f.render_stateful_widget(list, body, &mut state);
-                f.render_widget(Paragraph::new(g.help).style(Style::default().fg(muted).bg(bg)), help);
+                f.render_widget(
+                    Paragraph::new(g.help).style(Style::default().fg(muted).bg(bg)),
+                    help,
+                );
             })
             .map_err(|e| e.to_string())?;
         if !event::poll(Duration::from_millis(250)).map_err(|e| e.to_string())? {
@@ -756,11 +997,15 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 MouseEventKind::ScrollDown => navigate(&table, cur, KeyCode::Down, page),
                 MouseEventKind::ScrollUp => navigate(&table, cur, KeyCode::Up, page),
                 MouseEventKind::Down(MouseButton::Left) => {
-                    let inside = m.column > list_area.x && m.row > list_area.y && m.row + 1 < list_area.y + list_area.height;
+                    let inside = m.column > list_area.x
+                        && m.row > list_area.y
+                        && m.row + 1 < list_area.y + list_area.height;
                     let row = state.offset() + m.row.saturating_sub(list_area.y + 1) as usize;
                     if inside && table.get(row).is_some_and(|r| r.0.is_some()) {
                         // A second click on the same row within half a second opens it.
-                        activate = last_click.is_some_and(|(r, t)| r == row && t.elapsed() < Duration::from_millis(500));
+                        activate = last_click.is_some_and(|(r, t)| {
+                            r == row && t.elapsed() < Duration::from_millis(500)
+                        });
                         last_click = Some((row, Instant::now()));
                         row
                     } else {
@@ -784,19 +1029,31 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
 
 fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
     let err = match choice {
-        Choice::Attach { node, session } if nodes[node].local => Command::new(TERMINAL).args(["--session", &session]).exec(),
-        Choice::AttachNested { socket, session, tmux_root } => {
+        Choice::Attach { node, session } if nodes[node].local => {
+            Command::new(TERMINAL).args(["--session", &session]).exec()
+        }
+        Choice::AttachNested {
+            socket,
+            session,
+            tmux_root,
+        } => {
             let mut cmd = Command::new("tmux");
             let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
-            cmd.env("TMUX_TMPDIR", root).args(["-L", &socket, "attach-session", "-t", &session]).exec()
+            cmd.env("TMUX_TMPDIR", root)
+                .args(["-L", &socket, "attach-session", "-t", &session])
+                .exec()
         }
         Choice::Workspace => Command::new(TERMINAL).args(["--action", "ai"]).exec(),
-        Choice::App { id } => Command::new(TERMINAL).args(["--app", &id, "--console", if c.console { "1" } else { "0" }]).exec(),
+        Choice::App { id } => Command::new(TERMINAL)
+            .args(["--app", &id, "--console", if c.console { "1" } else { "0" }])
+            .exec(),
         Choice::New { node } if nodes[node].local => Command::new(TERMINAL).arg("--new").exec(),
         Choice::NewNested { socket, tmux_root } => {
             let mut cmd = Command::new("tmux");
             let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
-            cmd.env("TMUX_TMPDIR", root).args(["-L", &socket, "new-session"]).exec()
+            cmd.env("TMUX_TMPDIR", root)
+                .args(["-L", &socket, "new-session"])
+                .exec()
         }
         Choice::Attach { node, session } => Command::new("ssh")
             .arg("-t")
@@ -810,7 +1067,10 @@ fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
             .exec(),
         Choice::Shell => {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-            Command::new(shell).arg("-l").env("MIOS_SKIP_MOTD", "1").exec()
+            Command::new(shell)
+                .arg("-l")
+                .env("MIOS_SKIP_MOTD", "1")
+                .exec()
         }
     };
     format!("exec failed: {err}")
@@ -822,7 +1082,10 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
     if list {
         let nested = discover_nested(&c);
         let out = serde_json::json!({ "nodes": discover(&c), "nested": nested, "apps": c.apps });
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
     let (choice, nodes) = pick(&c)?;
@@ -833,8 +1096,14 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
 mod tests {
     #[test]
     fn peer_name_uses_unique_tailnet_name() {
-        assert_eq!(super::peer_name("fedora-1.tail1234.ts.net.", "fedora"), "fedora-1");
-        assert_eq!(super::peer_name("fedora-2.tail1234.ts.net.", "fedora"), "fedora-2");
+        assert_eq!(
+            super::peer_name("fedora-1.tail1234.ts.net.", "fedora"),
+            "fedora-1"
+        );
+        assert_eq!(
+            super::peer_name("fedora-2.tail1234.ts.net.", "fedora"),
+            "fedora-2"
+        );
     }
 
     #[test]
@@ -879,8 +1148,11 @@ mod tests {
 
     #[test]
     fn bounded_run_returns_output_of_a_fast_child() {
-        let out = run_bounded(Command::new("sh").args(["-c", "echo hi; echo err >&2"]), Instant::now() + Duration::from_secs(5))
-            .expect("fast child completes");
+        let out = run_bounded(
+            Command::new("sh").args(["-c", "echo hi; echo err >&2"]),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .expect("fast child completes");
         assert!(out.status.success());
         assert_eq!(out.stdout, b"hi\n");
         assert_eq!(out.stderr, b"err\n");
@@ -890,9 +1162,16 @@ mod tests {
     fn bounded_run_kills_a_hung_peer_at_the_deadline() {
         // A peer that never answers (sh holding a grandchild sleep) is killed, group and all.
         let start = Instant::now();
-        let r = run_bounded(Command::new("sh").args(["-c", "sleep 30; echo late"]), start + Duration::from_millis(300));
+        let r = run_bounded(
+            Command::new("sh").args(["-c", "sleep 30; echo late"]),
+            start + Duration::from_millis(300),
+        );
         assert_eq!(r.unwrap_err(), "timed out");
-        assert!(start.elapsed() < Duration::from_secs(3), "deadline not honoured: {:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "deadline not honoured: {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
@@ -907,7 +1186,10 @@ mod tests {
     }
 
     fn through_sh(word: &str) -> String {
-        let out = Command::new("sh").args(["-c", &format!("printf %s {word}")]).output().unwrap();
+        let out = Command::new("sh")
+            .args(["-c", &format!("printf %s {word}")])
+            .output()
+            .unwrap();
         String::from_utf8(out.stdout).unwrap()
     }
 
@@ -919,7 +1201,8 @@ mod tests {
 
     #[test]
     fn shell_quote_neutralises_hostile_remote_session_names() {
-        let canary = std::env::temp_dir().join(format!("mios-sessions-canary-{}", std::process::id()));
+        let canary =
+            std::env::temp_dir().join(format!("mios-sessions-canary-{}", std::process::id()));
         let hostile = format!("x'; touch {}; echo '$(id)`id`", canary.display());
         assert_eq!(through_sh(&shell_quote(&hostile)), hostile);
         assert!(!canary.exists(), "quoted session name executed a command");
@@ -946,24 +1229,61 @@ mod tests {
 
     #[test]
     fn rows_show_a_querying_marker_while_peers_are_pending() {
-        let local = Node { name: "here".into(), address: String::new(), local: true, online: true, error: None, sessions: vec![] };
-        assert!(rows(std::slice::from_ref(&local), true, &[], &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
-        assert!(!rows(&[local], false, &[], &[], None, &UNICODE).iter().any(|r| r.1.to_string().contains("querying")));
+        let local = Node {
+            name: "here".into(),
+            address: String::new(),
+            local: true,
+            online: true,
+            error: None,
+            sessions: vec![],
+        };
+        assert!(
+            rows(std::slice::from_ref(&local), true, &[], &[], None, &UNICODE)
+                .iter()
+                .any(|r| r.1.to_string().contains("querying"))
+        );
+        assert!(!rows(&[local], false, &[], &[], None, &UNICODE)
+            .iter()
+            .any(|r| r.1.to_string().contains("querying")));
     }
 
     #[test]
     fn rows_offer_new_session_only_on_reachable_nodes_and_always_a_shell() {
         let node = |online: bool, error: Option<String>| Node {
-            name: "n".into(), address: "n.ts".into(), local: false, online, error, sessions: vec![],
+            name: "n".into(),
+            address: "n.ts".into(),
+            local: false,
+            online,
+            error,
+            sessions: vec![],
         };
-        let table = rows(&[node(true, None), node(false, None), node(true, Some("denied".into()))], false, &[], &[], None, &UNICODE);
-        let news = table.iter().filter(|r| matches!(r.0, Some(Choice::New { .. }))).count();
+        let table = rows(
+            &[
+                node(true, None),
+                node(false, None),
+                node(true, Some("denied".into())),
+            ],
+            false,
+            &[],
+            &[],
+            None,
+            &UNICODE,
+        );
+        let news = table
+            .iter()
+            .filter(|r| matches!(r.0, Some(Choice::New { .. })))
+            .count();
         assert_eq!(news, 1);
         assert!(matches!(table.last().unwrap().0, Some(Choice::Shell)));
     }
 
     fn app(id: &str) -> App {
-        App { id: id.into(), label: id.into(), section: "system".into(), mode: "window".into() }
+        App {
+            id: id.into(),
+            label: id.into(),
+            section: "system".into(),
+            mode: "window".into(),
+        }
     }
 
     fn local(sessions: &[&str]) -> Node {
@@ -973,22 +1293,60 @@ mod tests {
             local: true,
             online: true,
             error: None,
-            sessions: sessions.iter().map(|n| Session { name: (*n).into(), windows: 1, attached: false }).collect(),
+            sessions: sessions
+                .iter()
+                .map(|n| Session {
+                    name: (*n).into(),
+                    windows: 1,
+                    attached: false,
+                })
+                .collect(),
         }
     }
 
     fn peer(name: &str) -> Node {
-        Node { name: name.into(), address: format!("{name}.ts"), local: false, online: true, error: None, sessions: vec![] }
+        Node {
+            name: name.into(),
+            address: format!("{name}.ts"),
+            local: false,
+            online: true,
+            error: None,
+            sessions: vec![],
+        }
     }
 
     #[test]
     fn app_rows_follow_this_node_and_never_move_when_peers_arrive() {
         let apps = [app("btop"), app("top")];
-        let before = rows(&[local(&["mios"])], true, &apps, &[], Some("mios"), &UNICODE);
-        let after = rows(&[local(&["mios"]), peer("a"), peer("b")], false, &apps, &[], Some("mios"), &UNICODE);
-        let pos = |t: &[(Option<Choice>, Line<'static>, Style)], id: &str| t.iter().position(|r| r.0 == Some(Choice::App { id: id.into() })).unwrap();
+        let before = rows(
+            &[local(&["mios"])],
+            true,
+            &apps,
+            &[],
+            Some("mios"),
+            &UNICODE,
+        );
+        let after = rows(
+            &[local(&["mios"]), peer("a"), peer("b")],
+            false,
+            &apps,
+            &[],
+            Some("mios"),
+            &UNICODE,
+        );
+        let pos = |t: &[(Option<Choice>, Line<'static>, Style)], id: &str| {
+            t.iter()
+                .position(|r| r.0 == Some(Choice::App { id: id.into() }))
+                .unwrap()
+        };
         assert_eq!(pos(&before, "btop"), pos(&after, "btop"));
-        assert!(pos(&after, "top") < after.iter().position(|r| matches!(r.0, Some(Choice::New { node: 1 }))).unwrap());
+        assert!(
+            pos(&after, "top")
+                < after
+                    .iter()
+                    .position(|r| matches!(r.0, Some(Choice::New { node: 1 })))
+                    .unwrap()
+        );
         assert!(matches!(after.last().unwrap().0, Some(Choice::Shell)));
     }
 
@@ -997,18 +1355,44 @@ mod tests {
         let apps = [app("btop")];
         let before = rows(&[local(&[])], true, &apps, &[], None, &UNICODE);
         let shell = Choice::Shell;
-        let after = rows(&[local(&[]), peer("a"), peer("b")], false, &apps, &[], None, &UNICODE);
+        let after = rows(
+            &[local(&[]), peer("a"), peer("b")],
+            false,
+            &apps,
+            &[],
+            None,
+            &UNICODE,
+        );
         let i = select_index(&after, Some(&shell), "mios").unwrap();
         assert_eq!(after[i].0, Some(Choice::Shell));
-        assert_ne!(select_index(&before, Some(&shell), "mios"), Some(i), "the row index did shift");
+        assert_ne!(
+            select_index(&before, Some(&shell), "mios"),
+            Some(i),
+            "the row index did shift"
+        );
     }
 
     #[test]
     fn hidden_sessions_are_filtered_and_the_ai_workspace_is_offered_when_missing() {
         let c = cfg(3);
-        let visible = visible_sessions(&c, parse_sessions("mios\t2\t1\nmios-float-3\t1\t0\nmios-workspace-4\t1\t0\ntmux-os\t1\t0\n"));
-        assert_eq!(visible.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["mios", "tmux-os"]);
-        let without = rows(&[local(&["tmux-os"])], false, &[], &[], Some("mios"), &UNICODE);
+        let visible = visible_sessions(
+            &c,
+            parse_sessions(
+                "mios\t2\t1\nmios-float-3\t1\t0\nmios-workspace-4\t1\t0\ntmux-os\t1\t0\n",
+            ),
+        );
+        assert_eq!(
+            visible.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["mios", "tmux-os"]
+        );
+        let without = rows(
+            &[local(&["tmux-os"])],
+            false,
+            &[],
+            &[],
+            Some("mios"),
+            &UNICODE,
+        );
         assert!(without.iter().any(|r| r.0 == Some(Choice::Workspace)));
         let with = rows(&[local(&["mios"])], false, &[], &[], Some("mios"), &UNICODE);
         assert!(!with.iter().any(|r| r.0 == Some(Choice::Workspace)));
@@ -1017,19 +1401,65 @@ mod tests {
     #[test]
     fn controller_vocabulary_navigates_rows_and_sections() {
         let apps = [app("btop"), app("top"), app("vim")];
-        let t = rows(&[local(&["mios", "tmux-os"])], false, &apps, &[], Some("mios"), &UNICODE);
+        let t = rows(
+            &[local(&["mios", "tmux-os"])],
+            false,
+            &apps,
+            &[],
+            Some("mios"),
+            &UNICODE,
+        );
         let at = |c: Choice| t.iter().position(|r| r.0.as_ref() == Some(&c)).unwrap();
-        let mios = at(Choice::Attach { node: 0, session: "mios".into() });
-        assert_eq!(navigate(&t, mios, KeyCode::Down, 5), at(Choice::Attach { node: 0, session: "tmux-os".into() }));
-        assert_eq!(navigate(&t, mios, KeyCode::Up, 5), mios, "Up at the top stays");
+        let mios = at(Choice::Attach {
+            node: 0,
+            session: "mios".into(),
+        });
+        assert_eq!(
+            navigate(&t, mios, KeyCode::Down, 5),
+            at(Choice::Attach {
+                node: 0,
+                session: "tmux-os".into()
+            })
+        );
+        assert_eq!(
+            navigate(&t, mios, KeyCode::Up, 5),
+            mios,
+            "Up at the top stays"
+        );
         assert_eq!(navigate(&t, mios, KeyCode::End, 5), at(Choice::Shell));
         assert_eq!(navigate(&t, at(Choice::Shell), KeyCode::Home, 5), mios);
-        assert_eq!(navigate(&t, mios, KeyCode::Char('e'), 5), at(Choice::App { id: "btop".into() }));
-        assert_eq!(navigate(&t, mios, KeyCode::BackTab, 5), at(Choice::App { id: "btop".into() }), "Shift-Tab jumps to the next section");
-        assert_eq!(navigate(&t, at(Choice::App { id: "btop".into() }), KeyCode::BackTab, 5), at(Choice::Shell));
-        assert_eq!(navigate(&t, at(Choice::Shell), KeyCode::BackTab, 5), mios, "wraps to the first section");
-        assert_eq!(navigate(&t, mios, KeyCode::Tab, 5), mios, "Tab is handled by pick() as new session");
-        assert_eq!(navigate(&t, mios, KeyCode::PageDown, 2), at(Choice::New { node: 0 }));
+        assert_eq!(
+            navigate(&t, mios, KeyCode::Char('e'), 5),
+            at(Choice::App { id: "btop".into() })
+        );
+        assert_eq!(
+            navigate(&t, mios, KeyCode::BackTab, 5),
+            at(Choice::App { id: "btop".into() }),
+            "Shift-Tab jumps to the next section"
+        );
+        assert_eq!(
+            navigate(
+                &t,
+                at(Choice::App { id: "btop".into() }),
+                KeyCode::BackTab,
+                5
+            ),
+            at(Choice::Shell)
+        );
+        assert_eq!(
+            navigate(&t, at(Choice::Shell), KeyCode::BackTab, 5),
+            mios,
+            "wraps to the first section"
+        );
+        assert_eq!(
+            navigate(&t, mios, KeyCode::Tab, 5),
+            mios,
+            "Tab is handled by pick() as new session"
+        );
+        assert_eq!(
+            navigate(&t, mios, KeyCode::PageDown, 2),
+            at(Choice::New { node: 0 })
+        );
         assert_eq!(navigate(&t, at(Choice::Shell), KeyCode::PageUp, 100), mios);
         for r in &t {
             assert!(r.0.is_some() || r.1.to_string().contains("this node"));
@@ -1038,7 +1468,14 @@ mod tests {
 
     #[test]
     fn console_rows_and_help_are_ascii() {
-        let t = rows(&[local(&["mios"]), peer("a")], true, &[app("btop")], &[], Some("mios"), &ASCII);
+        let t = rows(
+            &[local(&["mios"]), peer("a")],
+            true,
+            &[app("btop")],
+            &[],
+            Some("mios"),
+            &ASCII,
+        );
         for r in &t {
             assert!(r.1.to_string().is_ascii(), "{}", r.1);
         }
@@ -1059,7 +1496,11 @@ mod tests {
             "tmux_socket": "mios-nested-seat-1",
             "launcher_pid": my_pid,
         });
-        std::fs::write(dir.join("seat-1.json"), serde_json::to_string(&live_json).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("seat-1.json"),
+            serde_json::to_string(&live_json).unwrap(),
+        )
+        .unwrap();
         let dead_json = serde_json::json!({
             "seat": "seat-dead",
             "user": "mios",
@@ -1067,7 +1508,11 @@ mod tests {
             "tmux_socket": "mios-nested-seat-dead",
             "launcher_pid": 99999999,
         });
-        std::fs::write(dir.join("seat-dead.json"), serde_json::to_string(&dead_json).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("seat-dead.json"),
+            serde_json::to_string(&dead_json).unwrap(),
+        )
+        .unwrap();
 
         std::env::set_var("MIOS_NESTED_SESSIONS_DIR", dir.to_str().unwrap());
         let c = cfg(3);
@@ -1090,13 +1535,32 @@ mod tests {
             target: "pip".into(),
             tmux_socket: "mios-nested-p1".into(),
             tmux_root: None,
-            sessions: vec![Session { name: "main".into(), windows: 1, attached: true }],
+            sessions: vec![Session {
+                name: "main".into(),
+                windows: 1,
+                attached: true,
+            }],
         }];
-        let t = rows(&[local(&["mios"])], false, &[], &nested, Some("mios"), &UNICODE);
-        assert!(t.iter().any(|r| r.1.to_string().contains("Nested sessions")), "Nested sessions header present");
-        assert!(t.iter().any(|r| r.1.to_string().contains("seat p1")), "seat p1 metadata present");
+        let t = rows(
+            &[local(&["mios"])],
+            false,
+            &[],
+            &nested,
+            Some("mios"),
+            &UNICODE,
+        );
+        assert!(
+            t.iter()
+                .any(|r| r.1.to_string().contains("Nested sessions")),
+            "Nested sessions header present"
+        );
+        assert!(
+            t.iter().any(|r| r.1.to_string().contains("seat p1")),
+            "seat p1 metadata present"
+        );
         assert!(t.iter().any(|r| matches!(&r.0, Some(Choice::AttachNested { socket, session, .. }) if socket == "mios-nested-p1" && session == "main")));
-        assert!(t.iter().any(|r| matches!(&r.0, Some(Choice::NewNested { socket, .. }) if socket == "mios-nested-p1")));
+        assert!(t.iter().any(
+            |r| matches!(&r.0, Some(Choice::NewNested { socket, .. }) if socket == "mios-nested-p1")
+        ));
     }
 }
-

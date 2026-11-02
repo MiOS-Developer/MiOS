@@ -50,7 +50,9 @@ impl DriftCtx {
                         .trim()
                         .replace('\\', "/");
                     let root_str = root.to_string_lossy().replace('\\', "/");
-                    toplevel.trim_end_matches('/').eq_ignore_ascii_case(root_str.trim_end_matches('/'))
+                    toplevel
+                        .trim_end_matches('/')
+                        .eq_ignore_ascii_case(root_str.trim_end_matches('/'))
                 }
                 _ => false,
             };

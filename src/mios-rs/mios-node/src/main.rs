@@ -257,17 +257,32 @@ mod cli_tests {
 
     #[test]
     fn offload_requires_a_real_bytecode_file() {
-        let result = Cli::try_parse_from(["mios-node", "offload", "--target-addr", "127.0.0.1:9999"]);
-        assert_eq!(result.unwrap_err().kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let result =
+            Cli::try_parse_from(["mios-node", "offload", "--target-addr", "127.0.0.1:9999"]);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
         let parsed = Cli::try_parse_from([
-            "mios-node", "offload", "--target-addr", "127.0.0.1:9999", "--wasm-file", "fixture.wasm",
-        ]).unwrap();
-        assert!(matches!(parsed.command, Some(Commands::Offload { wasm_file, .. }) if wasm_file == "fixture.wasm"));
+            "mios-node",
+            "offload",
+            "--target-addr",
+            "127.0.0.1:9999",
+            "--wasm-file",
+            "fixture.wasm",
+        ])
+        .unwrap();
+        assert!(
+            matches!(parsed.command, Some(Commands::Offload { wasm_file, .. }) if wasm_file == "fixture.wasm")
+        );
     }
 
     #[test]
     fn default_invocation_does_not_execute_the_demo() {
         assert!(Cli::try_parse_from(["mios-node"]).is_err());
-        assert!(matches!(Cli::try_parse_from(["mios-node", "demo"]).unwrap().command, Some(Commands::Demo)));
+        assert!(matches!(
+            Cli::try_parse_from(["mios-node", "demo"]).unwrap().command,
+            Some(Commands::Demo)
+        ));
     }
 }

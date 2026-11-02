@@ -251,11 +251,18 @@ fn in_a_checkout_only_owned_units_are_scanned() {
         "usr/lib/systemd/system/*\n!usr/lib/systemd/system/mios-*.service\n",
     )
     .unwrap();
-    fs::write(d.path().join("usr/lib/systemd/system/virtsecretd.service"), FOREIGN).unwrap();
+    fs::write(
+        d.path().join("usr/lib/systemd/system/virtsecretd.service"),
+        FOREIGN,
+    )
+    .unwrap();
     git(d.path(), &["init", "-q"]);
     git(d.path(), &["add", "."]);
     let (code, out) = run(d.path());
-    assert_eq!(code, 0, "an ignored foreign unit must not be scanned: {out}");
+    assert_eq!(
+        code, 0,
+        "an ignored foreign unit must not be scanned: {out}"
+    );
 
     fs::write(
         d.path().join("usr/lib/systemd/system/mios-new.service"),
@@ -263,8 +270,14 @@ fn in_a_checkout_only_owned_units_are_scanned() {
     )
     .unwrap();
     let (code, out) = run(d.path());
-    assert_eq!(code, 1, "an untracked, non-ignored MiOS unit must be scanned: {out}");
-    assert!(out.contains("mios-new.service:MIOS_API_KEY=abcd1234"), "{out}");
+    assert_eq!(
+        code, 1,
+        "an untracked, non-ignored MiOS unit must be scanned: {out}"
+    );
+    assert!(
+        out.contains("mios-new.service:MIOS_API_KEY=abcd1234"),
+        "{out}"
+    );
 }
 
 /// Outside a checkout there is no ownership record, so every unit is scanned:
@@ -273,7 +286,11 @@ fn in_a_checkout_only_owned_units_are_scanned() {
 fn outside_a_checkout_every_unit_is_scanned() {
     let d = tempfile::tempdir().unwrap();
     tree(d.path(), &["Environment=POSTGRES_PASSWORD=mios"], &[PIN]);
-    fs::write(d.path().join("usr/lib/systemd/system/virtsecretd.service"), FOREIGN).unwrap();
+    fs::write(
+        d.path().join("usr/lib/systemd/system/virtsecretd.service"),
+        FOREIGN,
+    )
+    .unwrap();
     let (code, out) = run(d.path());
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("VIRTSECRETD_ARGS"), "{out}");

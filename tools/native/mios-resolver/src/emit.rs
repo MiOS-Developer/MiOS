@@ -360,7 +360,7 @@ overridden = "y"
         let exports = build_exports_map(&val, 0);
         assert!(exports.contains_key("MIOS_AI_ENDPOINT")); // kept by emit_keep
         assert!(!exports.contains_key("MIOS_AI_RANDOM_SETTING")); // suppressed
-        // The rules are the tree's own: without the table nothing is suppressed.
+                                                                  // The rules are the tree's own: without the table nothing is suppressed.
         let bare: Value = toml::from_str(ai).unwrap();
         assert!(build_exports_map(&bare, 0).contains_key("MIOS_AI_RANDOM_SETTING"));
     }
@@ -370,10 +370,15 @@ overridden = "y"
         let units = "[units.\"x.service\".Unit]\nDescription = \"d\"\n[ports]\nhttp = 80\n";
         let bare: Value = toml::from_str(units).unwrap();
         assert!(build_exports_map(&bare, 0).contains_key("MIOS_UNITS_X_SERVICE_UNIT_DESCRIPTION"));
-        let ruled: Value =
-            toml::from_str(&format!("{units}[generation.walk]\nexcluded_sections = [\"units\"]\n")).unwrap();
+        let ruled: Value = toml::from_str(&format!(
+            "{units}[generation.walk]\nexcluded_sections = [\"units\"]\n"
+        ))
+        .unwrap();
         let exports = build_exports_map(&ruled, 0);
-        assert!(!exports.keys().any(|k| k.starts_with("MIOS_UNITS_")), "{exports:?}");
+        assert!(
+            !exports.keys().any(|k| k.starts_with("MIOS_UNITS_")),
+            "{exports:?}"
+        );
         assert_eq!(exports["MIOS_PORTS_HTTP"], "80");
     }
 }
@@ -787,7 +792,10 @@ pub mod emit_shell {
     /// canonical exports, the MIOS_PG_BIND_ADDR derivation and every ${MIOS_*}
     /// reference resolved. `mios-gen env-snapshot` renders this same map, so
     /// the committed environment baseline and a login shell can never differ.
-    pub fn shell_exports(merged: &Value, stack_offset: i64) -> std::collections::BTreeMap<String, String> {
+    pub fn shell_exports(
+        merged: &Value,
+        stack_offset: i64,
+    ) -> std::collections::BTreeMap<String, String> {
         let mut exports = build_exports_map(merged, stack_offset);
 
         if !exports.contains_key("MIOS_PG_BIND_ADDR") {
@@ -805,7 +813,12 @@ pub mod emit_shell {
                 .unwrap_or("0.0.0.0");
             exports.insert(
                 "MIOS_PG_BIND_ADDR".to_string(),
-                if is_loopback { loopback_addr } else { bind_all_addr }.to_string(),
+                if is_loopback {
+                    loopback_addr
+                } else {
+                    bind_all_addr
+                }
+                .to_string(),
             );
         }
 

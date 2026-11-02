@@ -45,15 +45,24 @@ pub fn mode_label(enable: Option<u64>) -> (String, bool) {
 
 pub fn fan_rows(fans: &Value, headers: &Value) -> Vec<FanRow> {
     let empty = Vec::new();
-    let hdrs = headers.get("headers").and_then(Value::as_array).unwrap_or(&empty);
+    let hdrs = headers
+        .get("headers")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
     let mut rows: Vec<FanRow> = fans
         .get("fans")
         .and_then(Value::as_array)
         .unwrap_or(&empty)
         .iter()
         .map(|f| {
-            let id = f.get("id").and_then(Value::as_str).unwrap_or("?").to_string();
-            let h = hdrs.iter().find(|h| h.get("id").and_then(Value::as_str) == Some(id.as_str()));
+            let id = f
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
+            let h = hdrs
+                .iter()
+                .find(|h| h.get("id").and_then(Value::as_str) == Some(id.as_str()));
             let role = h
                 .and_then(|h| h.get("role"))
                 .and_then(Value::as_str)
@@ -108,9 +117,21 @@ pub fn sensor_rows(sensors: &Value) -> Vec<SensorRow> {
         .unwrap_or(&empty)
         .iter()
         .map(|s| SensorRow {
-            kind: s.get("kind").and_then(Value::as_str).unwrap_or("?").to_string(),
-            chip: s.get("chip_name").and_then(Value::as_str).unwrap_or("?").to_string(),
-            label: s.get("label").and_then(Value::as_str).unwrap_or("?").to_string(),
+            kind: s
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string(),
+            chip: s
+                .get("chip_name")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string(),
+            label: s
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string(),
             value_c: s.get("value_c").and_then(Value::as_f64),
         })
         .collect();
@@ -121,7 +142,9 @@ pub fn sensor_rows(sensors: &Value) -> Vec<SensorRow> {
 }
 
 pub fn duty_bar(pct: Option<u64>, width: usize) -> String {
-    let Some(p) = pct else { return "-".repeat(width) };
+    let Some(p) = pct else {
+        return "-".repeat(width);
+    };
     let filled = ((p.min(100) as usize) * width + 50) / 100;
     format!("{}{}", "#".repeat(filled), ".".repeat(width - filled))
 }
@@ -130,8 +153,14 @@ pub fn active_profile(active: &Value) -> String {
     if active.get("active").and_then(Value::as_bool) == Some(true) {
         format!(
             "{} ({})",
-            active.get("profile_id").and_then(Value::as_str).unwrap_or("?"),
-            active.get("profile_name").and_then(Value::as_str).unwrap_or("")
+            active
+                .get("profile_id")
+                .and_then(Value::as_str)
+                .unwrap_or("?"),
+            active
+                .get("profile_name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
         )
     } else {
         "none (every header on firmware control)".into()
@@ -145,7 +174,10 @@ mod tests {
 
     #[test]
     fn shortens_hwmon_ids() {
-        assert_eq!(short_header("hwmon:nct6799:nct6775.656:pwm4:pwm4"), "nct6799/pwm4");
+        assert_eq!(
+            short_header("hwmon:nct6799:nct6775.656:pwm4:pwm4"),
+            "nct6799/pwm4"
+        );
         assert_eq!(short_header("openfan:ch00"), "openfan:ch00");
     }
 
@@ -183,6 +215,9 @@ mod tests {
     #[test]
     fn profile_label() {
         assert!(active_profile(&json!({"active":false})).starts_with("none"));
-        assert_eq!(active_profile(&json!({"active":true,"profile_id":"a","profile_name":"A"})), "a (A)");
+        assert_eq!(
+            active_profile(&json!({"active":true,"profile_id":"a","profile_name":"A"})),
+            "a (A)"
+        );
     }
 }

@@ -1955,13 +1955,26 @@ fn render_and_check_refuse_title_status_contradiction() {
 
     // Negative control 1: render must fail with exit code 1
     let o = run(&d, &["render"]);
-    assert_eq!(o.code, 1, "render must exit 1 on title/status contradiction: {}", o.text);
+    assert_eq!(
+        o.code, 1,
+        "render must exit 1 on title/status contradiction: {}",
+        o.text
+    );
     assert!(o.text.contains("title/status contradiction"), "{}", o.text);
-    assert!(o.text.contains("status is 'pending' but title claims 'DONE'"), "{}", o.text);
+    assert!(
+        o.text
+            .contains("status is 'pending' but title claims 'DONE'"),
+        "{}",
+        o.text
+    );
 
     // Negative control 2: check must fail with exit code 1
     let c = run(&d, &["check"]);
-    assert_eq!(c.code, 1, "check must exit 1 on title/status contradiction: {}", c.text);
+    assert_eq!(
+        c.code, 1,
+        "check must exit 1 on title/status contradiction: {}",
+        c.text
+    );
     assert!(c.text.contains("title/status contradiction"), "{}", c.text);
 
     // Positive control: mark completed with verification_evidence
@@ -1972,8 +1985,15 @@ fn render_and_check_refuse_title_status_contradiction() {
     });
 
     let o2 = run(&d, &["render"]);
-    assert_eq!(o2.code, 0, "render must succeed once reconciled: {}", o2.text);
+    assert_eq!(
+        o2.code, 0,
+        "render must succeed once reconciled: {}",
+        o2.text
+    );
     let c2 = run(&d, &["check"]);
-    assert_eq!(c2.code, 0, "check must succeed once reconciled: {}", c2.text);
+    assert_eq!(
+        c2.code, 0,
+        "check must succeed once reconciled: {}",
+        c2.text
+    );
 }
-

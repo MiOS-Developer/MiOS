@@ -19,9 +19,18 @@ impl Glyphs {
     /// ASCII labels on TERM=linux.
     pub fn for_term(setting: &str, term: &str) -> Self {
         match setting {
-            "ascii" => Glyphs { ascii_lines: true, ascii_labels: true },
-            "unicode" => Glyphs { ascii_lines: false, ascii_labels: false },
-            _ => Glyphs { ascii_lines: false, ascii_labels: term == "linux" },
+            "ascii" => Glyphs {
+                ascii_lines: true,
+                ascii_labels: true,
+            },
+            "unicode" => Glyphs {
+                ascii_lines: false,
+                ascii_labels: false,
+            },
+            _ => Glyphs {
+                ascii_lines: false,
+                ascii_labels: term == "linux",
+            },
         }
     }
     pub fn arrow(&self, dir: &str) -> &'static str {
@@ -51,7 +60,14 @@ pub struct El {
 
 impl El {
     fn new(input: &str, label: &str, x0: u16, y0: u16, x1: u16, y1: u16) -> Self {
-        Self { input: input.into(), label: label.into(), x0, y0, x1, y1 }
+        Self {
+            input: input.into(),
+            label: label.into(),
+            x0,
+            y0,
+            x1,
+            y1,
+        }
     }
 }
 
@@ -95,7 +111,13 @@ fn line_glyph(mask: u8, ascii: bool) -> &'static str {
 
 /// Paint boxed elements (offset by `area`, clipped to it) with shared borders resolved into proper junctions.
 /// Returns the screen rectangle of every input element (for mouse hits).
-pub fn paint(buf: &mut Buffer, area: Rect, els: &[El], g: Glyphs, look: &dyn Fn(&str) -> Look) -> Vec<(Rect, String)> {
+pub fn paint(
+    buf: &mut Buffer,
+    area: Rect,
+    els: &[El],
+    g: Glyphs,
+    look: &dyn Fn(&str) -> Look,
+) -> Vec<(Rect, String)> {
     let (w, h) = (area.width as usize, area.height as usize);
     if w == 0 || h == 0 {
         return Vec::new();
@@ -119,7 +141,13 @@ pub fn paint(buf: &mut Buffer, area: Rect, els: &[El], g: Glyphs, look: &dyn Fn(
             continue;
         }
         for x in e.x0..=e.x1 {
-            let hm = if x == e.x0 { R } else if x == e.x1 { L } else { L | R };
+            let hm = if x == e.x0 {
+                R
+            } else if x == e.x1 {
+                L
+            } else {
+                L | R
+            };
             mark(x, e.y0, hm | if x == e.x0 || x == e.x1 { D } else { 0 }, l);
             mark(x, e.y1, hm | if x == e.x0 || x == e.x1 { U } else { 0 }, l);
         }
@@ -136,7 +164,8 @@ pub fn paint(buf: &mut Buffer, area: Rect, els: &[El], g: Glyphs, look: &dyn Fn(
             }
             let style = owner[y * w + x].map(|(_, s)| s).unwrap_or_default();
             if let Some(cell) = buf.cell_mut((area.x + x as u16, area.y + y as u16)) {
-                cell.set_symbol(line_glyph(m, g.ascii_lines)).set_style(style);
+                cell.set_symbol(line_glyph(m, g.ascii_lines))
+                    .set_style(style);
             }
         }
     }
@@ -150,7 +179,9 @@ pub fn paint(buf: &mut Buffer, area: Rect, els: &[El], g: Glyphs, look: &dyn Fn(
         let ly = e.y0 + (e.y1 - e.y0) / 2;
         for y in e.y0 + 1..e.y1 {
             for x in e.x0 + 1..e.x1 {
-                if let Some(cell) = buf.cell_mut((area.x.saturating_add(x), area.y.saturating_add(y))) {
+                if let Some(cell) =
+                    buf.cell_mut((area.x.saturating_add(x), area.y.saturating_add(y)))
+                {
                     if (x as usize) < w && (y as usize) < h {
                         cell.set_symbol(" ").set_style(l.label);
                     }
@@ -177,7 +208,12 @@ pub fn paint(buf: &mut Buffer, area: Rect, els: &[El], g: Glyphs, look: &dyn Fn(
 }
 
 /// A flat drawing (no borders) for tiny areas: each element's label at its top-left, styled as its look.
-pub fn paint_flat(buf: &mut Buffer, area: Rect, els: &[El], look: &dyn Fn(&str) -> Look) -> Vec<(Rect, String)> {
+pub fn paint_flat(
+    buf: &mut Buffer,
+    area: Rect,
+    els: &[El],
+    look: &dyn Fn(&str) -> Look,
+) -> Vec<(Rect, String)> {
     let mut hits = Vec::new();
     for e in els.iter().filter(|e| !e.input.is_empty()) {
         if e.x0 >= area.width || e.y0 >= area.height {
@@ -188,7 +224,10 @@ pub fn paint_flat(buf: &mut Buffer, area: Rect, els: &[El], look: &dyn Fn(&str) 
         let text = format!("{label:<width$}", width = width as usize);
         let l = look(&e.input);
         buf.set_string(area.x + e.x0, area.y + e.y0, text, l.label);
-        hits.push((Rect::new(area.x + e.x0, area.y + e.y0, width, 1), e.input.clone()));
+        hits.push((
+            Rect::new(area.x + e.x0, area.y + e.y0, width, 1),
+            e.input.clone(),
+        ));
     }
     hits
 }
@@ -226,32 +265,103 @@ impl KbdSize {
 /// The ANSI keyboard: main block (60q), navigation cluster (62..74q) and numpad (76..92q).
 pub fn keyboard_caps(size: KbdSize) -> Vec<Cap> {
     let mut v = Vec::new();
-    let mut put = |label: &'static str, token: &'static str, xq: u16, row: u16, wq: u16| v.push(Cap { label, token, xq, row, wq });
+    let mut put = |label: &'static str, token: &'static str, xq: u16, row: u16, wq: u16| {
+        v.push(Cap {
+            label,
+            token,
+            xq,
+            row,
+            wq,
+        })
+    };
     put("Esc", "escape", 0, 0, 4);
-    let fkeys = [("F1", "f1"), ("F2", "f2"), ("F3", "f3"), ("F4", "f4"), ("F5", "f5"), ("F6", "f6"), ("F7", "f7"), ("F8", "f8"), ("F9", "f9"), ("F10", "f10"), ("F11", "f11"), ("F12", "f12")];
+    let fkeys = [
+        ("F1", "f1"),
+        ("F2", "f2"),
+        ("F3", "f3"),
+        ("F4", "f4"),
+        ("F5", "f5"),
+        ("F6", "f6"),
+        ("F7", "f7"),
+        ("F8", "f8"),
+        ("F9", "f9"),
+        ("F10", "f10"),
+        ("F11", "f11"),
+        ("F12", "f12"),
+    ];
     for (i, (l, t)) in fkeys.iter().enumerate() {
         let group = i as u16 / 4;
         put(l, t, 8 + group * 18 + (i as u16 % 4) * 4, 0, 4);
     }
-    let r1 = [("`", "grave"), ("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5"), ("6", "6"), ("7", "7"), ("8", "8"), ("9", "9"), ("0", "0"), ("-", "minus"), ("=", "equal")];
+    let r1 = [
+        ("`", "grave"),
+        ("1", "1"),
+        ("2", "2"),
+        ("3", "3"),
+        ("4", "4"),
+        ("5", "5"),
+        ("6", "6"),
+        ("7", "7"),
+        ("8", "8"),
+        ("9", "9"),
+        ("0", "0"),
+        ("-", "minus"),
+        ("=", "equal"),
+    ];
     for (i, (l, t)) in r1.iter().enumerate() {
         put(l, t, i as u16 * 4, 1, 4);
     }
     put("Bksp", "backspace", 52, 1, 8);
     put("Tab", "tab", 0, 2, 6);
-    let r2 = [("Q", "q"), ("W", "w"), ("E", "e"), ("R", "r"), ("T", "t"), ("Y", "y"), ("U", "u"), ("I", "i"), ("O", "o"), ("P", "p"), ("[", "bracketleft"), ("]", "bracketright")];
+    let r2 = [
+        ("Q", "q"),
+        ("W", "w"),
+        ("E", "e"),
+        ("R", "r"),
+        ("T", "t"),
+        ("Y", "y"),
+        ("U", "u"),
+        ("I", "i"),
+        ("O", "o"),
+        ("P", "p"),
+        ("[", "bracketleft"),
+        ("]", "bracketright"),
+    ];
     for (i, (l, t)) in r2.iter().enumerate() {
         put(l, t, 6 + i as u16 * 4, 2, 4);
     }
     put("\\", "backslash", 54, 2, 6);
     put("Caps", "caps_lock", 0, 3, 7);
-    let r3 = [("A", "a"), ("S", "s"), ("D", "d"), ("F", "f"), ("G", "g"), ("H", "h"), ("J", "j"), ("K", "k"), ("L", "l"), (";", "semicolon"), ("'", "apostrophe")];
+    let r3 = [
+        ("A", "a"),
+        ("S", "s"),
+        ("D", "d"),
+        ("F", "f"),
+        ("G", "g"),
+        ("H", "h"),
+        ("J", "j"),
+        ("K", "k"),
+        ("L", "l"),
+        (";", "semicolon"),
+        ("'", "apostrophe"),
+    ];
     for (i, (l, t)) in r3.iter().enumerate() {
         put(l, t, 7 + i as u16 * 4, 3, 4);
     }
     put("Enter", "return", 51, 3, 9);
     put("Shift", "SHIFT", 0, 4, 9);
-    let r4 = [("Z", "z"), ("X", "x"), ("C", "c"), ("V", "v"), ("B", "b"), ("N", "n"), ("M", "m"), (",", "comma"), (".", "period"), ("/", "slash")];
+    let r4 = [
+        ("Z", "z"),
+        ("X", "x"),
+        ("C", "c"),
+        ("V", "v"),
+        ("B", "b"),
+        ("N", "n"),
+        ("M", "m"),
+        (",", "comma"),
+        (".", "period"),
+        ("/", "slash"),
+    ];
     for (i, (l, t)) in r4.iter().enumerate() {
         put(l, t, 9 + i as u16 * 4, 4, 4);
     }
@@ -331,7 +441,16 @@ pub fn keyboard_elements(w: u16, h: u16, g: Glyphs) -> Option<(Vec<El>, KbdSize)
         let col = |xq: u16| (xq as f32 * s).round() as u16;
         let els = keyboard_caps(size)
             .iter()
-            .map(|c| El::new(&cap_input(c), &cap_label(c, g), col(c.xq), c.row * 2, col(c.xq + c.wq), c.row * 2 + 2))
+            .map(|c| {
+                El::new(
+                    &cap_input(c),
+                    &cap_label(c, g),
+                    col(c.xq),
+                    c.row * 2,
+                    col(c.xq + c.wq),
+                    c.row * 2 + 2,
+                )
+            })
             .collect();
         return Some((els, size));
     }
@@ -347,7 +466,14 @@ pub fn keyboard_flat(w: u16, h: u16, g: Glyphs) -> Vec<El> {
         .map(|c| {
             let x0 = (c.xq as f32 * s).floor() as u16;
             let x1 = ((c.xq + c.wq) as f32 * s).floor() as u16;
-            El::new(&cap_input(c), &cap_label(c, g), x0, c.row * gap, x1.saturating_sub(1).max(x0 + 1), c.row * gap)
+            El::new(
+                &cap_input(c),
+                &cap_label(c, g),
+                x0,
+                c.row * gap,
+                x1.saturating_sub(1).max(x0 + 1),
+                c.row * gap,
+            )
         })
         .collect()
 }
@@ -408,7 +534,9 @@ pub fn shifted(c: char) -> Option<(String, bool)> {
         '?' => "slash",
         '~' => "grave",
         c if c.is_ascii_uppercase() => return Some((c.to_ascii_lowercase().to_string(), true)),
-        c if c.is_ascii_graphic() => return Some((key_alias(&c.to_ascii_lowercase().to_string()), false)),
+        c if c.is_ascii_graphic() => {
+            return Some((key_alias(&c.to_ascii_lowercase().to_string()), false))
+        }
         ' ' => return Some(("space".into(), false)),
         _ => return None,
     };
@@ -438,7 +566,9 @@ pub fn typed_char(token: &str, shift: bool) -> Option<char> {
     if plain.is_ascii_lowercase() {
         return Some(plain.to_ascii_uppercase());
     }
-    "!@#$%^&*()_+{}|:\"<>?~".chars().find(|c| shifted(*c).is_some_and(|(b, s)| s && b == token))
+    "!@#$%^&*()_+{}|:\"<>?~"
+        .chars()
+        .find(|c| shifted(*c).is_some_and(|(b, s)| s && b == token))
 }
 
 /// A tmux key name as (prefix modifiers, base token, shift): `H` -> ([], h, true), `C-x` -> ([CTRL], x, false).
@@ -477,7 +607,11 @@ pub fn tmux_to_key(key: &str) -> Option<(Vec<&'static str>, String, bool)> {
     if let Some((t, s)) = named {
         return Some((mods, t.into(), s || shift));
     }
-    if let Some(n) = rest.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).filter(|n| (1..=12).contains(n)) {
+    if let Some(n) = rest
+        .strip_prefix('F')
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (1..=12).contains(n))
+    {
         return Some((mods, format!("f{n}"), shift));
     }
     let mut chars = rest.chars();
@@ -518,7 +652,10 @@ pub fn mouse_input(token: &str) -> Option<String> {
         "mouse_down" => Some("mouse:wheel_down".into()),
         "mouse_left" => Some("mouse:wheel_left".into()),
         "mouse_right" => Some("mouse:wheel_right".into()),
-        t => t.strip_prefix("mouse:").filter(|n| n.parse::<u16>().is_ok()).map(|n| format!("mouse:{n}")),
+        t => t
+            .strip_prefix("mouse:")
+            .filter(|n| n.parse::<u16>().is_ok())
+            .map(|n| format!("mouse:{n}")),
     }
 }
 
@@ -552,7 +689,12 @@ pub fn mouse_name(input: &str) -> String {
         Some("wheel_down") => "wheel down".into(),
         Some("wheel_left") => "wheel tilt left".into(),
         Some("wheel_right") => "wheel tilt right".into(),
-        Some(n) => n.parse::<u16>().ok().and_then(|c| MOUSE_BUTTONS.iter().find(|b| b.0 == c)).map(|b| b.2.to_string()).unwrap_or_else(|| format!("button {n}")),
+        Some(n) => n
+            .parse::<u16>()
+            .ok()
+            .and_then(|c| MOUSE_BUTTONS.iter().find(|b| b.0 == c))
+            .map(|b| b.2.to_string())
+            .unwrap_or_else(|| format!("button {n}")),
         None => input.into(),
     }
 }
@@ -587,13 +729,42 @@ pub const PAD_H: u16 = 17;
 
 /// Every controller input the drawing can select: buttons, d-pad and stick directions.
 pub const PAD_INPUTS: &[&str] = &[
-    "BTN_TL2", "BTN_TR2", "BTN_TL", "BTN_TR", "BTN_SELECT", "BTN_MODE", "BTN_START", "BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH", "BTN_DPAD_UP", "BTN_DPAD_LEFT",
-    "BTN_DPAD_RIGHT", "BTN_DPAD_DOWN", "BTN_THUMBL", "LS_UP", "LS_LEFT", "LS_RIGHT", "LS_DOWN", "BTN_THUMBR", "RS_UP", "RS_LEFT", "RS_RIGHT", "RS_DOWN",
+    "BTN_TL2",
+    "BTN_TR2",
+    "BTN_TL",
+    "BTN_TR",
+    "BTN_SELECT",
+    "BTN_MODE",
+    "BTN_START",
+    "BTN_NORTH",
+    "BTN_WEST",
+    "BTN_EAST",
+    "BTN_SOUTH",
+    "BTN_DPAD_UP",
+    "BTN_DPAD_LEFT",
+    "BTN_DPAD_RIGHT",
+    "BTN_DPAD_DOWN",
+    "BTN_THUMBL",
+    "LS_UP",
+    "LS_LEFT",
+    "LS_RIGHT",
+    "LS_DOWN",
+    "BTN_THUMBR",
+    "RS_UP",
+    "RS_LEFT",
+    "RS_RIGHT",
+    "RS_DOWN",
 ];
 
 /// A plus-shaped cluster of 5x3 boxes around (cx, cy): up, left, (center), right, down.
 fn cluster(out: &mut Vec<El>, cx: u16, cy: u16, ids: [&str; 5], labels: [String; 5]) {
-    let pos = [(cx - 2, cy - 2, cx + 2, cy), (cx - 6, cy, cx - 2, cy + 2), (cx - 2, cy, cx + 2, cy + 2), (cx + 2, cy, cx + 6, cy + 2), (cx - 2, cy + 2, cx + 2, cy + 4)];
+    let pos = [
+        (cx - 2, cy - 2, cx + 2, cy),
+        (cx - 6, cy, cx - 2, cy + 2),
+        (cx - 2, cy, cx + 2, cy + 2),
+        (cx + 2, cy, cx + 6, cy + 2),
+        (cx - 2, cy + 2, cx + 2, cy + 4),
+    ];
     for (i, (x0, y0, x1, y1)) in pos.into_iter().enumerate() {
         if ids[i].is_empty() && labels[i].is_empty() {
             continue;
@@ -617,11 +788,51 @@ pub fn pad_elements(fam: &Family, sx: u16, g: Glyphs) -> Vec<El> {
         El::new("BTN_MODE", &l("BTN_MODE"), 24, 5, 31, 7),
         El::new("BTN_START", &l("BTN_START"), 31, 5, 40, 7),
     ];
-    let (stick_l, dpad, stick_r) = if fam.layout == "symmetric" { ((19, 10), (10, 7), (36, 10)) } else { ((10, 7), (19, 10), (36, 10)) };
-    cluster(&mut v, stick_l.0, stick_l.1, ["LS_UP", "LS_LEFT", "BTN_THUMBL", "LS_RIGHT", "LS_DOWN"], [a("up"), a("left"), l("BTN_THUMBL"), a("right"), a("down")]);
-    cluster(&mut v, dpad.0, dpad.1, ["BTN_DPAD_UP", "BTN_DPAD_LEFT", "", "BTN_DPAD_RIGHT", "BTN_DPAD_DOWN"], [a("up"), a("left"), String::new(), a("right"), a("down")]);
-    cluster(&mut v, stick_r.0, stick_r.1, ["RS_UP", "RS_LEFT", "BTN_THUMBR", "RS_RIGHT", "RS_DOWN"], [a("up"), a("left"), l("BTN_THUMBR"), a("right"), a("down")]);
-    cluster(&mut v, 46, 7, ["BTN_NORTH", "BTN_WEST", "", "BTN_EAST", "BTN_SOUTH"], [l("BTN_NORTH"), l("BTN_WEST"), String::new(), l("BTN_EAST"), l("BTN_SOUTH")]);
+    let (stick_l, dpad, stick_r) = if fam.layout == "symmetric" {
+        ((19, 10), (10, 7), (36, 10))
+    } else {
+        ((10, 7), (19, 10), (36, 10))
+    };
+    cluster(
+        &mut v,
+        stick_l.0,
+        stick_l.1,
+        ["LS_UP", "LS_LEFT", "BTN_THUMBL", "LS_RIGHT", "LS_DOWN"],
+        [a("up"), a("left"), l("BTN_THUMBL"), a("right"), a("down")],
+    );
+    cluster(
+        &mut v,
+        dpad.0,
+        dpad.1,
+        [
+            "BTN_DPAD_UP",
+            "BTN_DPAD_LEFT",
+            "",
+            "BTN_DPAD_RIGHT",
+            "BTN_DPAD_DOWN",
+        ],
+        [a("up"), a("left"), String::new(), a("right"), a("down")],
+    );
+    cluster(
+        &mut v,
+        stick_r.0,
+        stick_r.1,
+        ["RS_UP", "RS_LEFT", "BTN_THUMBR", "RS_RIGHT", "RS_DOWN"],
+        [a("up"), a("left"), l("BTN_THUMBR"), a("right"), a("down")],
+    );
+    cluster(
+        &mut v,
+        46,
+        7,
+        ["BTN_NORTH", "BTN_WEST", "", "BTN_EAST", "BTN_SOUTH"],
+        [
+            l("BTN_NORTH"),
+            l("BTN_WEST"),
+            String::new(),
+            l("BTN_EAST"),
+            l("BTN_SOUTH"),
+        ],
+    );
     if sx > 1 {
         for e in &mut v {
             e.x0 *= sx;
@@ -644,16 +855,67 @@ pub fn pad_flat(fam: &Family, g: Glyphs) -> Vec<El> {
             x += w + 1;
         }
     };
-    row(0, vec![("BTN_TL2", l("BTN_TL2")), ("BTN_TL", l("BTN_TL")), ("BTN_TR", l("BTN_TR")), ("BTN_TR2", l("BTN_TR2"))]);
-    row(1, vec![("BTN_SELECT", l("BTN_SELECT")), ("BTN_MODE", l("BTN_MODE")), ("BTN_START", l("BTN_START"))]);
-    row(2, vec![("BTN_DPAD_UP", format!("D{}", a("up"))), ("BTN_DPAD_LEFT", format!("D{}", a("left"))), ("BTN_DPAD_RIGHT", format!("D{}", a("right"))), ("BTN_DPAD_DOWN", format!("D{}", a("down")))]);
-    row(3, vec![("BTN_NORTH", l("BTN_NORTH")), ("BTN_WEST", l("BTN_WEST")), ("BTN_EAST", l("BTN_EAST")), ("BTN_SOUTH", l("BTN_SOUTH"))]);
-    row(4, vec![("BTN_THUMBL", l("BTN_THUMBL")), ("LS_UP", format!("L{}", a("up"))), ("LS_LEFT", format!("L{}", a("left"))), ("LS_RIGHT", format!("L{}", a("right"))), ("LS_DOWN", format!("L{}", a("down")))]);
-    row(5, vec![("BTN_THUMBR", l("BTN_THUMBR")), ("RS_UP", format!("R{}", a("up"))), ("RS_LEFT", format!("R{}", a("left"))), ("RS_RIGHT", format!("R{}", a("right"))), ("RS_DOWN", format!("R{}", a("down")))]);
-    v.into_iter().map(|mut e| {
-        e.input = format!("pad:{}", e.input);
-        e
-    }).collect()
+    row(
+        0,
+        vec![
+            ("BTN_TL2", l("BTN_TL2")),
+            ("BTN_TL", l("BTN_TL")),
+            ("BTN_TR", l("BTN_TR")),
+            ("BTN_TR2", l("BTN_TR2")),
+        ],
+    );
+    row(
+        1,
+        vec![
+            ("BTN_SELECT", l("BTN_SELECT")),
+            ("BTN_MODE", l("BTN_MODE")),
+            ("BTN_START", l("BTN_START")),
+        ],
+    );
+    row(
+        2,
+        vec![
+            ("BTN_DPAD_UP", format!("D{}", a("up"))),
+            ("BTN_DPAD_LEFT", format!("D{}", a("left"))),
+            ("BTN_DPAD_RIGHT", format!("D{}", a("right"))),
+            ("BTN_DPAD_DOWN", format!("D{}", a("down"))),
+        ],
+    );
+    row(
+        3,
+        vec![
+            ("BTN_NORTH", l("BTN_NORTH")),
+            ("BTN_WEST", l("BTN_WEST")),
+            ("BTN_EAST", l("BTN_EAST")),
+            ("BTN_SOUTH", l("BTN_SOUTH")),
+        ],
+    );
+    row(
+        4,
+        vec![
+            ("BTN_THUMBL", l("BTN_THUMBL")),
+            ("LS_UP", format!("L{}", a("up"))),
+            ("LS_LEFT", format!("L{}", a("left"))),
+            ("LS_RIGHT", format!("L{}", a("right"))),
+            ("LS_DOWN", format!("L{}", a("down"))),
+        ],
+    );
+    row(
+        5,
+        vec![
+            ("BTN_THUMBR", l("BTN_THUMBR")),
+            ("RS_UP", format!("R{}", a("up"))),
+            ("RS_LEFT", format!("R{}", a("left"))),
+            ("RS_RIGHT", format!("R{}", a("right"))),
+            ("RS_DOWN", format!("R{}", a("down"))),
+        ],
+    );
+    v.into_iter()
+        .map(|mut e| {
+            e.input = format!("pad:{}", e.input);
+            e
+        })
+        .collect()
 }
 
 /// Prefix pad element inputs with `pad:` (the drawing uses bare evdev names).
@@ -668,7 +930,12 @@ pub fn pad_ids(mut els: Vec<El>) -> Vec<El> {
 
 /// The nearest element in a direction (spatial navigation of a drawing by arrows, d-pad or stick).
 pub fn neighbour(els: &[El], from: &str, dx: i32, dy: i32) -> Option<String> {
-    let center = |e: &El| ((e.x0 as i32 + e.x1 as i32) * 5, (e.y0 as i32 + e.y1 as i32) * 5);
+    let center = |e: &El| {
+        (
+            (e.x0 as i32 + e.x1 as i32) * 5,
+            (e.y0 as i32 + e.y1 as i32) * 5,
+        )
+    };
     let cur = els.iter().find(|e| e.input == from)?;
     let (cx, cy) = center(cur);
     els.iter()
@@ -683,7 +950,11 @@ pub fn neighbour(els: &[El], from: &str, dx: i32, dy: i32) -> Option<String> {
             // an element that shares the current one's span across the move is straight ahead and always wins over a
             // diagonal one: rows of staggered keys (q -> a, not q -> Super below it; a -> Caps, never up to q) and
             // columns of pad buttons. Only when nothing is straight ahead does the nearest diagonal element count.
-            let overlaps = if dy != 0 { e.x0 < cur.x1 && cur.x0 < e.x1 } else { e.y0 < cur.y1 && cur.y0 < e.y1 };
+            let overlaps = if dy != 0 {
+                e.x0 < cur.x1 && cur.x0 < e.x1
+            } else {
+                e.y0 < cur.y1 && cur.y0 < e.y1
+            };
             let off = (ddx * dy).abs() + (ddy * dx).abs();
             let across = if overlaps { 0 } else { off };
             // ties (two keys straight ahead) go to the one whose centre is closest across the move
@@ -699,7 +970,14 @@ mod tests {
 
     fn text(buf: &Buffer) -> String {
         let a = buf.area;
-        (0..a.height).map(|y| (0..a.width).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>() + "\n").collect()
+        (0..a.height)
+            .map(|y| {
+                (0..a.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
     }
 
     #[test]
@@ -708,8 +986,14 @@ mod tests {
             if ["SUPER", "CTRL", "ALT", "SHIFT"].contains(&c.token) {
                 continue;
             }
-            let n = mios_resolver::keybindings::normalize_chord(&format!("SUPER+{}", c.token), "\0").unwrap();
-            assert_eq!(n, format!("SUPER+{}", c.token), "the drawing token is the normalized key");
+            let n =
+                mios_resolver::keybindings::normalize_chord(&format!("SUPER+{}", c.token), "\0")
+                    .unwrap();
+            assert_eq!(
+                n,
+                format!("SUPER+{}", c.token),
+                "the drawing token is the normalized key"
+            );
         }
     }
 
@@ -717,7 +1001,12 @@ mod tests {
     fn main_block_rows_are_fifteen_units_wide() {
         let caps = keyboard_caps(KbdSize::Main);
         for row in 0..6 {
-            let end = caps.iter().filter(|c| c.row == row).map(|c| c.xq + c.wq).max().unwrap();
+            let end = caps
+                .iter()
+                .filter(|c| c.row == row)
+                .map(|c| c.xq + c.wq)
+                .max()
+                .unwrap();
             assert_eq!(end, 60, "row {row}");
         }
         assert_eq!(keyboard_caps(KbdSize::Full).len(), 104, "ANSI 104 keys");
@@ -725,86 +1014,185 @@ mod tests {
 
     #[test]
     fn keyboard_fits_and_degrades_by_width() {
-        let g = Glyphs { ascii_lines: false, ascii_labels: false };
+        let g = Glyphs {
+            ascii_lines: false,
+            ascii_labels: false,
+        };
         assert_eq!(keyboard_elements(140, 13, g).unwrap().1, KbdSize::Full);
         assert_eq!(keyboard_elements(80, 13, g).unwrap().1, KbdSize::Tenkeyless);
         assert_eq!(keyboard_elements(50, 13, g).unwrap().1, KbdSize::Main);
         assert!(keyboard_elements(40, 13, g).is_none());
-        assert!(keyboard_elements(140, 12, g).is_none(), "boxes need 13 rows");
+        assert!(
+            keyboard_elements(140, 12, g).is_none(),
+            "boxes need 13 rows"
+        );
     }
 
     #[test]
     fn shared_borders_become_junctions_and_ascii_on_request() {
-        let els = vec![El::new("a", "A", 0, 0, 4, 2), El::new("b", "B", 4, 0, 8, 2), El::new("c", "C", 0, 2, 4, 4)];
+        let els = vec![
+            El::new("a", "A", 0, 0, 4, 2),
+            El::new("b", "B", 4, 0, 8, 2),
+            El::new("c", "C", 0, 2, 4, 4),
+        ];
         let mut buf = Buffer::empty(Rect::new(0, 0, 9, 5));
         let area = buf.area;
-        let hits = paint(&mut buf, area, &els, Glyphs { ascii_lines: false, ascii_labels: false }, &|_| Look::default());
+        let hits = paint(
+            &mut buf,
+            area,
+            &els,
+            Glyphs {
+                ascii_lines: false,
+                ascii_labels: false,
+            },
+            &|_| Look::default(),
+        );
         let t = text(&buf);
-        assert_eq!(t.lines().next().unwrap(), "\u{250c}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2510}", "{t}");
-        assert!(t.lines().nth(2).unwrap().starts_with("\u{251c}\u{2500}\u{2500}\u{2500}\u{253c}"), "{t}");
+        assert_eq!(
+            t.lines().next().unwrap(),
+            "\u{250c}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2510}",
+            "{t}"
+        );
+        assert!(
+            t.lines()
+                .nth(2)
+                .unwrap()
+                .starts_with("\u{251c}\u{2500}\u{2500}\u{2500}\u{253c}"),
+            "{t}"
+        );
         assert_eq!(hits.len(), 3);
         let mut buf = Buffer::empty(Rect::new(0, 0, 9, 5));
         let area = buf.area;
-        paint(&mut buf, area, &els, Glyphs { ascii_lines: true, ascii_labels: true }, &|_| Look::default());
+        paint(
+            &mut buf,
+            area,
+            &els,
+            Glyphs {
+                ascii_lines: true,
+                ascii_labels: true,
+            },
+            &|_| Look::default(),
+        );
         assert!(text(&buf).is_ascii(), "{}", text(&buf));
     }
 
     #[test]
     fn tmux_names_round_trip_through_keys() {
-        for k in ["h", "H", "$", "?", "Space", "Enter", "Tab", "BTab", "BSpace", "Up", "PPage", "NPage", "`", "*", "!", "(", "{", "=", ",", "0", "&"] {
+        for k in [
+            "h", "H", "$", "?", "Space", "Enter", "Tab", "BTab", "BSpace", "Up", "PPage", "NPage",
+            "`", "*", "!", "(", "{", "=", ",", "0", "&",
+        ] {
             let (mods, token, shift) = tmux_to_key(k).unwrap_or_else(|| panic!("{k}"));
             assert!(mods.is_empty());
-            assert_eq!(key_to_tmux(&token, shift).as_deref(), Some(k), "{k} -> {token} {shift}");
+            assert_eq!(
+                key_to_tmux(&token, shift).as_deref(),
+                Some(k),
+                "{k} -> {token} {shift}"
+            );
         }
-        assert_eq!(tmux_to_key("C-b").unwrap(), (vec!["CTRL"], "b".into(), false));
-        assert_eq!(tmux_to_key("S-Enter").unwrap(), (vec![], "return".into(), true));
-        assert_eq!(key_to_tmux("f5", false), None, "tmux-os prefix keys have no function keys");
+        assert_eq!(
+            tmux_to_key("C-b").unwrap(),
+            (vec!["CTRL"], "b".into(), false)
+        );
+        assert_eq!(
+            tmux_to_key("S-Enter").unwrap(),
+            (vec![], "return".into(), true)
+        );
+        assert_eq!(
+            key_to_tmux("f5", false),
+            None,
+            "tmux-os prefix keys have no function keys"
+        );
     }
 
     #[test]
     fn mouse_ids_and_tokens_round_trip() {
-        for t in ["mouse:272", "mouse:275", "mouse_up", "mouse_down", "mouse_left", "mouse_right"] {
+        for t in [
+            "mouse:272",
+            "mouse:275",
+            "mouse_up",
+            "mouse_down",
+            "mouse_left",
+            "mouse_right",
+        ] {
             assert_eq!(mouse_token(&mouse_input(t).unwrap()).as_deref(), Some(t));
         }
         assert!(mouse_input("a").is_none());
-        for e in mouse_elements(1, Glyphs { ascii_lines: false, ascii_labels: false }) {
+        for e in mouse_elements(
+            1,
+            Glyphs {
+                ascii_lines: false,
+                ascii_labels: false,
+            },
+        ) {
             assert!(e.x1 < MOUSE_W && e.y1 < MOUSE_H);
         }
     }
 
     #[test]
     fn pad_layouts_place_every_input_inside_the_grid_and_differ_by_family() {
-        let g = Glyphs { ascii_lines: false, ascii_labels: true };
+        let g = Glyphs {
+            ascii_lines: false,
+            ascii_labels: true,
+        };
         let mut ps = Family::generic();
         ps.layout = "symmetric".into();
         for fam in [Family::generic(), ps.clone()] {
             let els = pad_elements(&fam, 1, g);
             for id in PAD_INPUTS {
-                let e = els.iter().find(|e| e.input == *id).unwrap_or_else(|| panic!("{id}"));
+                let e = els
+                    .iter()
+                    .find(|e| e.input == *id)
+                    .unwrap_or_else(|| panic!("{id}"));
                 assert!(e.x1 < PAD_W && e.y1 < PAD_H, "{id} {e:?}");
             }
         }
         let a = pad_elements(&Family::generic(), 1, g);
         let b = pad_elements(&ps, 1, g);
-        let pos = |els: &[El], id: &str| els.iter().find(|e| e.input == id).map(|e| (e.x0, e.y0)).unwrap();
-        assert!(pos(&a, "BTN_THUMBL").1 < pos(&a, "BTN_DPAD_UP").1, "offset: left stick above the d-pad");
-        assert!(pos(&b, "BTN_THUMBL").1 > pos(&b, "BTN_DPAD_UP").1, "symmetric: d-pad above the sticks");
+        let pos = |els: &[El], id: &str| {
+            els.iter()
+                .find(|e| e.input == id)
+                .map(|e| (e.x0, e.y0))
+                .unwrap()
+        };
+        assert!(
+            pos(&a, "BTN_THUMBL").1 < pos(&a, "BTN_DPAD_UP").1,
+            "offset: left stick above the d-pad"
+        );
+        assert!(
+            pos(&b, "BTN_THUMBL").1 > pos(&b, "BTN_DPAD_UP").1,
+            "symmetric: d-pad above the sticks"
+        );
         let flat = pad_flat(&Family::generic(), g);
         assert_eq!(flat.len(), PAD_INPUTS.len());
     }
 
     #[test]
     fn spatial_navigation_moves_to_the_nearest_key_in_a_direction() {
-        let g = Glyphs { ascii_lines: false, ascii_labels: false };
+        let g = Glyphs {
+            ascii_lines: false,
+            ascii_labels: false,
+        };
         let (els, _) = keyboard_elements(140, 13, g).unwrap();
         assert_eq!(neighbour(&els, "key:q", 1, 0).as_deref(), Some("key:w"));
         assert_eq!(neighbour(&els, "key:q", 0, 1).as_deref(), Some("key:a"));
         // q sits half under 1 and half under 2: up picks the closer centre, and down from there comes back to q
         let up = neighbour(&els, "key:q", 0, -1).expect("q has a key above it");
         assert!(up == "key:1" || up == "key:2", "{up}");
-        assert_eq!(neighbour(&els, &up, 0, 1).as_deref(), Some("key:q"), "up then down returns to q");
-        assert_eq!(neighbour(&els, "key:a", 0, 1).as_deref(), Some("key:z"), "staggered rows: straight down, not diagonal");
-        assert_eq!(neighbour(&els, "key:a", -1, 0).as_deref(), Some("key:caps_lock"));
+        assert_eq!(
+            neighbour(&els, &up, 0, 1).as_deref(),
+            Some("key:q"),
+            "up then down returns to q"
+        );
+        assert_eq!(
+            neighbour(&els, "key:a", 0, 1).as_deref(),
+            Some("key:z"),
+            "staggered rows: straight down, not diagonal"
+        );
+        assert_eq!(
+            neighbour(&els, "key:a", -1, 0).as_deref(),
+            Some("key:caps_lock")
+        );
         assert_eq!(neighbour(&els, "key:w", 0, 1).as_deref(), Some("key:s"));
         assert_eq!(neighbour(&els, "key:escape", -1, 0), None);
     }

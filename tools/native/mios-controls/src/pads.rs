@@ -37,12 +37,21 @@ impl PadConfig {
 /// A controller name passes the [desktop.controls].pad_names filter (empty = all; case-insensitive substring).
 pub fn wanted(names: &[String], name: &str) -> bool {
     let n = name.to_lowercase();
-    names.is_empty() || names.iter().any(|w| !w.is_empty() && n.contains(&w.to_lowercase()))
+    names.is_empty()
+        || names
+            .iter()
+            .any(|w| !w.is_empty() && n.contains(&w.to_lowercase()))
 }
 
 impl Default for PadConfig {
     fn default() -> Self {
-        Self { stick_threshold: 0.5, trigger_threshold: 0.3, repeat_delay: Duration::from_millis(400), repeat_every: Duration::from_millis(120), pad_names: Vec::new() }
+        Self {
+            stick_threshold: 0.5,
+            trigger_threshold: 0.3,
+            repeat_delay: Duration::from_millis(400),
+            repeat_every: Duration::from_millis(120),
+            pad_names: Vec::new(),
+        }
     }
 }
 
@@ -90,7 +99,13 @@ pub fn button_name(code: u16) -> Option<&'static str> {
 pub fn parse_events(bytes: &[u8]) -> Vec<(u16, u16, i32)> {
     bytes
         .chunks_exact(24)
-        .map(|c| (u16::from_ne_bytes([c[16], c[17]]), u16::from_ne_bytes([c[18], c[19]]), i32::from_ne_bytes([c[20], c[21], c[22], c[23]])))
+        .map(|c| {
+            (
+                u16::from_ne_bytes([c[16], c[17]]),
+                u16::from_ne_bytes([c[18], c[19]]),
+                i32::from_ne_bytes([c[20], c[21], c[22], c[23]]),
+            )
+        })
         .collect()
 }
 
@@ -108,7 +123,12 @@ pub struct Translator {
 impl Translator {
     pub fn new(axes: BTreeMap<u16, Axis>, keys: &BTreeSet<u16>) -> Self {
         let has_rx = axes.contains_key(&3);
-        Self { axes, digital_triggers: keys.contains(&0x138) || keys.contains(&0x139), has_rx, held: BTreeSet::new() }
+        Self {
+            axes,
+            digital_triggers: keys.contains(&0x138) || keys.contains(&0x139),
+            has_rx,
+            held: BTreeSet::new(),
+        }
     }
 
     fn set(&mut self, input: &str, on: bool, out: &mut Vec<(String, bool)>) {
@@ -123,12 +143,22 @@ impl Translator {
     }
 
     fn axis(&mut self, code: u16, value: i32) -> f64 {
-        let a = self.axes.entry(code).or_insert(Axis { min: -32768, max: 32767, value: 0 });
+        let a = self.axes.entry(code).or_insert(Axis {
+            min: -32768,
+            max: 32767,
+            value: 0,
+        });
         a.value = value;
         a.centered()
     }
 
-    pub fn feed(&mut self, kind: u16, code: u16, value: i32, cfg: &PadConfig) -> Vec<(String, bool)> {
+    pub fn feed(
+        &mut self,
+        kind: u16,
+        code: u16,
+        value: i32,
+        cfg: &PadConfig,
+    ) -> Vec<(String, bool)> {
         let mut out = Vec::new();
         match kind {
             EV_KEY if value != 2 => {
@@ -140,7 +170,11 @@ impl Translator {
             }
             EV_ABS => match code {
                 16 | 17 => {
-                    let (neg, pos) = if code == 16 { ("pad:BTN_DPAD_LEFT", "pad:BTN_DPAD_RIGHT") } else { ("pad:BTN_DPAD_UP", "pad:BTN_DPAD_DOWN") };
+                    let (neg, pos) = if code == 16 {
+                        ("pad:BTN_DPAD_LEFT", "pad:BTN_DPAD_RIGHT")
+                    } else {
+                        ("pad:BTN_DPAD_UP", "pad:BTN_DPAD_DOWN")
+                    };
                     self.set(neg, value < 0, &mut out);
                     self.set(pos, value > 0, &mut out);
                 }
@@ -149,8 +183,16 @@ impl Translator {
                 2 | 5 if !self.digital_triggers => {
                     self.axis(code, value);
                     let t = self.axes.get(&code).map(Axis::trigger).unwrap_or(0.0);
-                    let id = if code == 2 { "pad:BTN_TL2" } else { "pad:BTN_TR2" };
-                    let on = if self.held.contains(id) { t > cfg.trigger_threshold * 0.6 } else { t >= cfg.trigger_threshold };
+                    let id = if code == 2 {
+                        "pad:BTN_TL2"
+                    } else {
+                        "pad:BTN_TR2"
+                    };
+                    let on = if self.held.contains(id) {
+                        t > cfg.trigger_threshold * 0.6
+                    } else {
+                        t >= cfg.trigger_threshold
+                    };
                     self.set(id, on, &mut out);
                 }
                 _ => {}
@@ -181,12 +223,24 @@ impl Translator {
             3 | 2 => ("RS", false),
             _ => ("RS", true),
         };
-        let (neg, pos) = if vertical { ("UP", "DOWN") } else { ("LEFT", "RIGHT") };
+        let (neg, pos) = if vertical {
+            ("UP", "DOWN")
+        } else {
+            ("LEFT", "RIGHT")
+        };
         let (n, p) = (format!("pad:{side}_{neg}"), format!("pad:{side}_{pos}"));
         // hysteresis: a direction is released below 70% of the threshold, so a noisy stick never chatters
         let th = cfg.stick_threshold;
-        let on_n = if self.held.contains(&n) { v < -th * 0.7 } else { v <= -th };
-        let on_p = if self.held.contains(&p) { v > th * 0.7 } else { v >= th };
+        let on_n = if self.held.contains(&n) {
+            v < -th * 0.7
+        } else {
+            v <= -th
+        };
+        let on_p = if self.held.contains(&p) {
+            v > th * 0.7
+        } else {
+            v >= th
+        };
         self.set(&n, on_n, out);
         self.set(&p, on_p, out);
     }
@@ -216,12 +270,17 @@ impl Source {
     }
     fn read(&mut self) -> std::io::Result<Vec<(u16, u16, i32)>> {
         match &mut self.src {
-            Src::Owned(d) => d.read_events().map(|v| v.into_iter().map(|e| (e.kind, e.code, e.value)).collect()),
+            Src::Owned(d) => d
+                .read_events()
+                .map(|v| v.into_iter().map(|e| (e.kind, e.code, e.value)).collect()),
             Src::Plain(f) => {
                 let mut buf = [0u8; 24 * 64];
                 let n = f.read(&mut buf)?;
                 if n == 0 {
-                    return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "device removed"));
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "device removed",
+                    ));
                 }
                 Ok(parse_events(&buf[..n]))
             }
@@ -238,15 +297,30 @@ fn dev_path(d: &Info) -> Option<PathBuf> {
 fn open_pads(infos: &[Info], cfg: &PadConfig) -> (Vec<Source>, Vec<String>) {
     let mut out = Vec::new();
     let mut notes = Vec::new();
-    for d in infos.iter().filter(|d| d.kind == Kind::Controller && cfg.wants(d)) {
+    for d in infos
+        .iter()
+        .filter(|d| d.kind == Kind::Controller && cfg.wants(d))
+    {
         let Some(path) = dev_path(d) else { continue };
         if d.is_virtual() {
-            let physical = d.name.rsplit('-').next().map(|e| PathBuf::from("/dev/input").join(e));
-            let axes = physical.and_then(|p| mios_inputd::linux::Device::open(&p, false).ok()).map(|p| p.axes.clone()).unwrap_or_default();
+            let physical = d
+                .name
+                .rsplit('-')
+                .next()
+                .map(|e| PathBuf::from("/dev/input").join(e));
+            let axes = physical
+                .and_then(|p| mios_inputd::linux::Device::open(&p, false).ok())
+                .map(|p| p.axes.clone())
+                .unwrap_or_default();
             match File::open(&path) {
                 Ok(f) => {
                     notes.push(format!("{} (mios-inputd virtual pad)", d.name));
-                    out.push(Source { name: d.name.clone(), src: Src::Plain(f), tr: Translator::new(axes, &d.keys), grabbed: false });
+                    out.push(Source {
+                        name: d.name.clone(),
+                        src: Src::Plain(f),
+                        tr: Translator::new(axes, &d.keys),
+                        grabbed: false,
+                    });
                 }
                 Err(e) => notes.push(format!("{}: {e}", d.name)),
             }
@@ -256,7 +330,12 @@ fn open_pads(infos: &[Info], cfg: &PadConfig) -> (Vec<Source>, Vec<String>) {
             Ok(dev) => {
                 let tr = Translator::new(dev.axes.clone(), &d.keys);
                 notes.push(d.name.clone());
-                out.push(Source { name: d.name.clone(), src: Src::Owned(dev), tr, grabbed: false });
+                out.push(Source {
+                    name: d.name.clone(),
+                    src: Src::Owned(dev),
+                    tr,
+                    grabbed: false,
+                });
             }
             Err(e) => notes.push(format!("{}: {e}", d.name)),
         }
@@ -270,7 +349,12 @@ fn open_mice(infos: &[Info]) -> Vec<Source> {
         .filter(|d| d.kind == Kind::Mouse && !d.is_virtual())
         .filter_map(|d| {
             let f = File::open(dev_path(d)?).ok()?;
-            Some(Source { name: d.name.clone(), src: Src::Plain(f), tr: Translator::default(), grabbed: false })
+            Some(Source {
+                name: d.name.clone(),
+                src: Src::Plain(f),
+                tr: Translator::default(),
+                grabbed: false,
+            })
         })
         .collect()
 }
@@ -308,20 +392,35 @@ pub fn spawn(tx: Sender<Msg>, cpu: Option<usize>, cfg: PadConfig) -> Option<PadH
             run(tx, cmd_rx, wake_rx, cfg);
         })
         .ok()?;
-    Some(PadHandle { cmd: cmd_tx, wake: wake_tx })
+    Some(PadHandle {
+        cmd: cmd_tx,
+        wake: wake_tx,
+    })
 }
 
 fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadConfig) {
     use rustix::event::{poll, PollFd, PollFlags};
     let mut infos = crate::devices::scan();
     let (mut pads, notes) = open_pads(&infos, &cfg);
-    let _ = tx.send(Msg::PadStatus(if notes.is_empty() { "no controller".into() } else { format!("controllers: {}", notes.join("; ")) }));
+    let _ = tx.send(Msg::PadStatus(if notes.is_empty() {
+        "no controller".into()
+    } else {
+        format!("controllers: {}", notes.join("; "))
+    }));
     let mut mice: Vec<Source> = Vec::new();
     let mut capturing = false;
     // held directions -> (device, next repeat)
     let mut repeat: BTreeMap<(String, String), Instant> = BTreeMap::new();
     loop {
-        let timeout = repeat.values().min().map(|t| t.saturating_duration_since(Instant::now()).as_millis().min(i32::MAX as u128) as i32).unwrap_or(-1);
+        let timeout = repeat
+            .values()
+            .min()
+            .map(|t| {
+                t.saturating_duration_since(Instant::now())
+                    .as_millis()
+                    .min(i32::MAX as u128) as i32
+            })
+            .unwrap_or(-1);
         let ready: Vec<usize>;
         let woke;
         {
@@ -334,7 +433,12 @@ fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadCon
                 continue;
             }
             woke = !fds[0].revents().is_empty();
-            ready = fds[1..].iter().enumerate().filter(|(_, f)| !f.revents().is_empty()).map(|(i, _)| i).collect();
+            ready = fds[1..]
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| !f.revents().is_empty())
+                .map(|(i, _)| i)
+                .collect();
         }
         if woke {
             let mut b = [0u8; 64];
@@ -347,7 +451,11 @@ fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadCon
                         let (p, notes) = open_pads(&infos, &cfg);
                         pads = p;
                         repeat.clear();
-                        let _ = tx.send(Msg::PadStatus(if notes.is_empty() { "no controller".into() } else { format!("controllers: {}", notes.join("; ")) }));
+                        let _ = tx.send(Msg::PadStatus(if notes.is_empty() {
+                            "no controller".into()
+                        } else {
+                            format!("controllers: {}", notes.join("; "))
+                        }));
                     }
                     PadCmd::Capture(on) => {
                         capturing = on;
@@ -368,7 +476,11 @@ fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadCon
                                     }
                                 }
                             }
-                            let mut msg = format!("capture: listening on {} controller(s) and {} mouse/mice", pads.len(), mice.len());
+                            let mut msg = format!(
+                                "capture: listening on {} controller(s) and {} mouse/mice",
+                                pads.len(),
+                                mice.len()
+                            );
                             if !grabbed.is_empty() {
                                 msg.push_str(&format!("; grabbed {}", grabbed.join(", ")));
                             }
@@ -394,25 +506,41 @@ fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadCon
         let mut gone = Vec::new();
         let n_pads = pads.len();
         for i in ready {
-            let s = if i < n_pads { &mut pads[i] } else { &mut mice[i - n_pads] };
+            let s = if i < n_pads {
+                &mut pads[i]
+            } else {
+                &mut mice[i - n_pads]
+            };
             match s.read() {
                 Ok(events) => {
                     for (k, c, v) in events {
                         for (input, down) in s.tr.feed(k, c, v, &cfg) {
                             let key = (s.name.clone(), input.clone());
-                            let dir = input.contains("DPAD_") || input.contains("LS_") || input.contains("RS_");
+                            let dir = input.contains("DPAD_")
+                                || input.contains("LS_")
+                                || input.contains("RS_");
                             if dir && down && !capturing {
                                 repeat.insert(key, Instant::now() + cfg.repeat_delay);
                             } else if !down {
                                 repeat.remove(&key);
                             }
-                            if tx.send(Msg::Pad(PadEdge { device: s.name.clone(), input, down, repeat: false })).is_err() {
+                            if tx
+                                .send(Msg::Pad(PadEdge {
+                                    device: s.name.clone(),
+                                    input,
+                                    down,
+                                    repeat: false,
+                                }))
+                                .is_err()
+                            {
                                 return;
                             }
                         }
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => gone.push((i < n_pads, s.name.clone())),
             }
         }
@@ -429,7 +557,15 @@ fn run(tx: Sender<Msg>, cmd: Receiver<PadCmd>, mut wake: UnixStream, cfg: PadCon
         for ((dev, input), at) in repeat.iter_mut() {
             if *at <= now {
                 *at = now + cfg.repeat_every;
-                if tx.send(Msg::Pad(PadEdge { device: dev.clone(), input: input.clone(), down: true, repeat: true })).is_err() {
+                if tx
+                    .send(Msg::Pad(PadEdge {
+                        device: dev.clone(),
+                        input: input.clone(),
+                        down: true,
+                        repeat: true,
+                    }))
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -455,7 +591,11 @@ mod tests {
         bytes.extend(ev(1, 0x130, 1));
         bytes.extend(ev(3, 16, -1));
         bytes.extend([0u8; 5]);
-        assert_eq!(parse_events(&bytes), vec![(1, 0x130, 1), (3, 16, -1)], "a partial record is ignored");
+        assert_eq!(
+            parse_events(&bytes),
+            vec![(1, 0x130, 1), (3, 16, -1)],
+            "a partial record is ignored"
+        );
     }
 
     #[test]
@@ -463,26 +603,81 @@ mod tests {
         let cfg = PadConfig::default();
         let mut axes = BTreeMap::new();
         for c in [0, 1, 3, 4] {
-            axes.insert(c, Axis { min: -32768, max: 32767, value: 0 });
+            axes.insert(
+                c,
+                Axis {
+                    min: -32768,
+                    max: 32767,
+                    value: 0,
+                },
+            );
         }
         for c in [2, 5] {
-            axes.insert(c, Axis { min: 0, max: 255, value: 0 });
+            axes.insert(
+                c,
+                Axis {
+                    min: 0,
+                    max: 255,
+                    value: 0,
+                },
+            );
         }
         let mut t = Translator::new(axes, &BTreeSet::new());
-        assert_eq!(t.feed(1, 0x130, 1, &cfg), vec![("pad:BTN_SOUTH".into(), true)]);
-        assert!(wanted(&[], "anything") && wanted(&["Fixture".into()], "mios-input-fixture-a") && !wanted(&["fixture".into()], "OBINS AnnePro2"));
-        assert!(t.feed(1, 0x130, 2, &cfg).is_empty(), "autorepeat value is not a press");
-        assert_eq!(t.feed(1, 0x130, 0, &cfg), vec![("pad:BTN_SOUTH".into(), false)]);
-        assert_eq!(t.feed(3, 16, 1, &cfg), vec![("pad:BTN_DPAD_RIGHT".into(), true)]);
-        assert_eq!(t.feed(3, 16, -1, &cfg), vec![("pad:BTN_DPAD_LEFT".into(), true), ("pad:BTN_DPAD_RIGHT".into(), false)]);
-        assert_eq!(t.feed(3, 16, 0, &cfg), vec![("pad:BTN_DPAD_LEFT".into(), false)]);
+        assert_eq!(
+            t.feed(1, 0x130, 1, &cfg),
+            vec![("pad:BTN_SOUTH".into(), true)]
+        );
+        assert!(
+            wanted(&[], "anything")
+                && wanted(&["Fixture".into()], "mios-input-fixture-a")
+                && !wanted(&["fixture".into()], "OBINS AnnePro2")
+        );
+        assert!(
+            t.feed(1, 0x130, 2, &cfg).is_empty(),
+            "autorepeat value is not a press"
+        );
+        assert_eq!(
+            t.feed(1, 0x130, 0, &cfg),
+            vec![("pad:BTN_SOUTH".into(), false)]
+        );
+        assert_eq!(
+            t.feed(3, 16, 1, &cfg),
+            vec![("pad:BTN_DPAD_RIGHT".into(), true)]
+        );
+        assert_eq!(
+            t.feed(3, 16, -1, &cfg),
+            vec![
+                ("pad:BTN_DPAD_LEFT".into(), true),
+                ("pad:BTN_DPAD_RIGHT".into(), false)
+            ]
+        );
+        assert_eq!(
+            t.feed(3, 16, 0, &cfg),
+            vec![("pad:BTN_DPAD_LEFT".into(), false)]
+        );
         assert_eq!(t.feed(3, 1, -30000, &cfg), vec![("pad:LS_UP".into(), true)]);
-        assert!(t.feed(3, 1, -14000, &cfg).is_empty(), "hysteresis keeps it held above 70% of the threshold");
+        assert!(
+            t.feed(3, 1, -14000, &cfg).is_empty(),
+            "hysteresis keeps it held above 70% of the threshold"
+        );
         assert_eq!(t.feed(3, 1, -5000, &cfg), vec![("pad:LS_UP".into(), false)]);
-        assert_eq!(t.feed(3, 3, 32000, &cfg), vec![("pad:RS_RIGHT".into(), true)]);
-        assert_eq!(t.feed(3, 5, 200, &cfg), vec![("pad:BTN_TR2".into(), true)], "analog trigger without digital BTN_TR2");
+        assert_eq!(
+            t.feed(3, 3, 32000, &cfg),
+            vec![("pad:RS_RIGHT".into(), true)]
+        );
+        assert_eq!(
+            t.feed(3, 5, 200, &cfg),
+            vec![("pad:BTN_TR2".into(), true)],
+            "analog trigger without digital BTN_TR2"
+        );
         assert_eq!(t.feed(3, 5, 0, &cfg), vec![("pad:BTN_TR2".into(), false)]);
-        assert_eq!(t.feed(2, 8, -1, &cfg), vec![("mouse:wheel_down".into(), true), ("mouse:wheel_down".into(), false)]);
+        assert_eq!(
+            t.feed(2, 8, -1, &cfg),
+            vec![
+                ("mouse:wheel_down".into(), true),
+                ("mouse:wheel_down".into(), false)
+            ]
+        );
         assert_eq!(t.feed(1, 0x113, 1, &cfg), vec![("mouse:275".into(), true)]);
     }
 
@@ -491,15 +686,49 @@ mod tests {
         let cfg = PadConfig::default();
         let keys: BTreeSet<u16> = [0x138, 0x139].into_iter().collect();
         let mut axes = BTreeMap::new();
-        axes.insert(3, Axis { min: -32768, max: 32767, value: 0 });
-        axes.insert(5, Axis { min: 0, max: 255, value: 0 });
+        axes.insert(
+            3,
+            Axis {
+                min: -32768,
+                max: 32767,
+                value: 0,
+            },
+        );
+        axes.insert(
+            5,
+            Axis {
+                min: 0,
+                max: 255,
+                value: 0,
+            },
+        );
         let mut t = Translator::new(axes, &keys);
-        assert!(t.feed(3, 5, 255, &cfg).is_empty(), "a digital BTN_TR2 pad's analog axis is not a second press");
+        assert!(
+            t.feed(3, 5, 255, &cfg).is_empty(),
+            "a digital BTN_TR2 pad's analog axis is not a second press"
+        );
         let mut axes = BTreeMap::new();
-        axes.insert(2, Axis { min: -32768, max: 32767, value: 0 });
-        axes.insert(5, Axis { min: -32768, max: 32767, value: 0 });
+        axes.insert(
+            2,
+            Axis {
+                min: -32768,
+                max: 32767,
+                value: 0,
+            },
+        );
+        axes.insert(
+            5,
+            Axis {
+                min: -32768,
+                max: 32767,
+                value: 0,
+            },
+        );
         let mut t = Translator::new(axes, &BTreeSet::new());
         assert_eq!(t.feed(3, 5, -32000, &cfg), vec![("pad:RS_UP".into(), true)]);
-        assert_eq!(t.feed(3, 2, 32000, &cfg), vec![("pad:RS_RIGHT".into(), true)]);
+        assert_eq!(
+            t.feed(3, 2, 32000, &cfg),
+            vec![("pad:RS_RIGHT".into(), true)]
+        );
     }
 }

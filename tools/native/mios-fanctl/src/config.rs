@@ -70,7 +70,9 @@ pub fn load_from(paths: &[String]) -> Result<Config, String> {
     let mut acc = toml::Value::Table(toml::map::Map::new());
     let mut sources = Vec::new();
     for p in paths {
-        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
         let v: toml::Value = toml::from_str(&text).map_err(|e| format!("{p}: {e}"))?;
         merge(&mut acc, v);
         sources.push(p.clone());
@@ -106,8 +108,16 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let a = d.join("vendor.toml");
         let b = d.join("admin.toml");
-        std::fs::write(&a, "[client]\nrefresh_ms = 500\n[roles]\n\"h:pwm6\" = \"pump\"\n").unwrap();
-        std::fs::write(&b, "[client]\nsocket = \"/tmp/x.sock\"\n[roles]\n\"h:pwm7\" = \"pump\"\n").unwrap();
+        std::fs::write(
+            &a,
+            "[client]\nrefresh_ms = 500\n[roles]\n\"h:pwm6\" = \"pump\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &b,
+            "[client]\nsocket = \"/tmp/x.sock\"\n[roles]\n\"h:pwm7\" = \"pump\"\n",
+        )
+        .unwrap();
         let c = load_from(&[a.display().to_string(), b.display().to_string()]).unwrap();
         assert_eq!(c.client.refresh_ms, 500);
         assert_eq!(c.client.socket, "/tmp/x.sock");

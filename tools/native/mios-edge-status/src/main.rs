@@ -1057,7 +1057,11 @@ mod tests {
     fn gtk_import_is_followed_transitively() {
         let d = scratch("import");
         let edge = d.join("mios-edge.css");
-        fs::write(d.join("mios-colors.css"), "@import url(\"mios-edge.css\");\n").unwrap_or_default();
+        fs::write(
+            d.join("mios-colors.css"),
+            "@import url(\"mios-edge.css\");\n",
+        )
+        .unwrap_or_default();
         fs::write(d.join("loop.css"), "@import url(\"loop.css\");\n").unwrap_or_default();
         let direct = import_chain(&edge, "@import url(\"mios-edge.css\");", "mios-edge.css");
         let via = import_chain(&edge, "@import url(\"mios-colors.css\");", "mios-edge.css");

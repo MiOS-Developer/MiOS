@@ -130,7 +130,12 @@ pub fn read(d: &[u8], e: &Entry) -> Result<Vec<u8>, String> {
         m => return Err(format!("zip: {} uses unsupported method {m}", e.name)),
     };
     if out.len() as u64 != e.size {
-        return Err(format!("zip: {} inflated to {} bytes, expected {}", e.name, out.len(), e.size));
+        return Err(format!(
+            "zip: {} inflated to {} bytes, expected {}",
+            e.name,
+            out.len(),
+            e.size
+        ));
     }
     let mut crc = flate2::Crc::new();
     crc.update(&out);
@@ -150,7 +155,8 @@ pub fn build(members: &[(&str, &[u8], bool)]) -> Vec<u8> {
         let mut crc = flate2::Crc::new();
         crc.update(data);
         let body = if *deflate {
-            let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            let mut enc =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
             enc.write_all(data).unwrap();
             enc.finish().unwrap()
         } else {
@@ -203,17 +209,29 @@ mod tests {
     #[test]
     fn reads_stored_and_deflated_root_members() {
         let exe = b"MZ\x90\x00 pretend windows binary".repeat(50);
-        let z = build(&[("ShaderGlass.exe", &exe, true), ("LICENSE", b"GNU GENERAL PUBLIC LICENSE\nVersion 3", false)]);
+        let z = build(&[
+            ("ShaderGlass.exe", &exe, true),
+            ("LICENSE", b"GNU GENERAL PUBLIC LICENSE\nVersion 3", false),
+        ]);
         let list = entries(&z).unwrap();
         assert_eq!(list.len(), 2);
-        assert_eq!(read(&z, find(&list, "ShaderGlass.exe").unwrap().unwrap()).unwrap(), exe);
-        assert!(read(&z, find(&list, "LICENSE").unwrap().unwrap()).unwrap().starts_with(b"GNU GENERAL"));
+        assert_eq!(
+            read(&z, find(&list, "ShaderGlass.exe").unwrap().unwrap()).unwrap(),
+            exe
+        );
+        assert!(read(&z, find(&list, "LICENSE").unwrap().unwrap())
+            .unwrap()
+            .starts_with(b"GNU GENERAL"));
         assert!(find(&list, "WineCap.dll").unwrap().is_none());
     }
 
     #[test]
     fn refuses_paths_duplicates_corruption_and_truncation() {
-        let z = build(&[("a/../../evil", b"x", false), ("dup", b"1", false), ("dup", b"2", false)]);
+        let z = build(&[
+            ("a/../../evil", b"x", false),
+            ("dup", b"1", false),
+            ("dup", b"2", false),
+        ]);
         let list = entries(&z).unwrap();
         for bad in ["a/../../evil", "../x", "", ".."] {
             assert!(find(&list, bad).is_err(), "{bad}");

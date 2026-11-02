@@ -43,7 +43,11 @@ pub struct Flight {
 impl Flight {
     /// None when another pass holds the window (the caller has been recorded as a pending rerun).
     pub fn acquire(dir: &Path, key: &str) -> Result<Option<Flight>, String> {
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
         let lock_path = dir.join(format!("{key}.lock"));
         let dirty = dir.join(format!("{key}.dirty"));
         let lock = OpenOptions::new()
@@ -57,7 +61,13 @@ impl Flight {
         match lock.try_lock() {
             Ok(()) => Ok(Some(Flight { _lock: lock, dirty })),
             Err(fs::TryLockError::WouldBlock) => {
-                OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&dirty).map_err(|e| e.to_string())?;
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&dirty)
+                    .map_err(|e| e.to_string())?;
                 Ok(None)
             }
             Err(fs::TryLockError::Error(e)) => Err(e.to_string()),
@@ -79,7 +89,12 @@ pub struct Ui {
 
 /// The witnessed human pane the hook fired for (port of mios-mcp-server `_human_tmux_context`): a pane on the native
 /// human socket, or the pane tmux named in the hook's own TMUX/TMUX_PANE; compact views re-enter their main window.
-pub fn context(socket: &str, pane: &str, human_socket: &str, terminal_session: &str) -> Result<Ui, String> {
+pub fn context(
+    socket: &str,
+    pane: &str,
+    human_socket: &str,
+    terminal_session: &str,
+) -> Result<Ui, String> {
     let path = Path::new(socket);
     let ambient = std::env::var("TMUX").unwrap_or_default();
     let parts: Vec<&str> = ambient.rsplitn(3, ',').collect();
@@ -92,23 +107,55 @@ pub fn context(socket: &str, pane: &str, human_socket: &str, terminal_session: &
         return Err("invalid native MiOS desktop tmux binding".into());
     }
     let tmux = |args: &[&str]| workspace_tmux(socket, args);
-    let row = tmux(&["display-message", "-p", "-t", pane, "#{socket_path}|#{session_name}|#{pane_id}|#{window_id}|#{pid}"])?;
+    let row = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{socket_path}|#{session_name}|#{pane_id}|#{window_id}|#{pid}",
+    ])?;
     let mut fields: Vec<String> = row.split('|').map(str::to_owned).collect();
     if fields.len() == 5 && fields[1].starts_with("mios-workspace-") {
-        let tags: Vec<String> = tmux(&["display-message", "-p", "-t", pane, "#{@mios-workspace-head}|#{@mios-workspace-worker}|#{@mios-workspace-window}"])?
+        let tags: Vec<String> = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{@mios-workspace-head}|#{@mios-workspace-worker}|#{@mios-workspace-window}",
+        ])?
+        .split('|')
+        .map(str::to_owned)
+        .collect();
+        let head = if !tags.is_empty() && !tags[0].is_empty() {
+            tags[0].clone()
+        } else {
+            tags.get(1).cloned().unwrap_or_default()
+        };
+        let mut main = tags
+            .get(2)
+            .filter(|w| window_id(w))
+            .cloned()
+            .unwrap_or_default();
+        if main.is_empty() && pane_id(&head) {
+            main = tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                &head,
+                "#{@mios-workspace-window}",
+            ])?;
+        }
+        if window_id(&main) {
+            let witness: Vec<String> = tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                &main,
+                "#{session_name}|#{@mios-workspace-head}",
+            ])?
             .split('|')
             .map(str::to_owned)
             .collect();
-        let head = if !tags.is_empty() && !tags[0].is_empty() { tags[0].clone() } else { tags.get(1).cloned().unwrap_or_default() };
-        let mut main = tags.get(2).filter(|w| window_id(w)).cloned().unwrap_or_default();
-        if main.is_empty() && pane_id(&head) {
-            main = tmux(&["display-message", "-p", "-t", &head, "#{@mios-workspace-window}"])?;
-        }
-        if window_id(&main) {
-            let witness: Vec<String> = tmux(&["display-message", "-p", "-t", &main, "#{session_name}|#{@mios-workspace-head}"])?
-                .split('|')
-                .map(str::to_owned)
-                .collect();
             if witness.len() == 2 && (head.is_empty() || witness[1] == head) {
                 fields[1] = witness[0].clone();
                 fields[3] = main;
@@ -126,17 +173,32 @@ pub fn context(socket: &str, pane: &str, human_socket: &str, terminal_session: &
     {
         return Err("desktop pane is not in the native MiOS session".into());
     }
-    Ok(Ui { socket: socket.into(), pane: pane.into(), window: fields[3].clone(), session: fields[1].clone() })
+    Ok(Ui {
+        socket: socket.into(),
+        pane: pane.into(),
+        window: fields[3].clone(),
+        session: fields[1].clone(),
+    })
 }
 
 fn log(msg: &str) {
     // run-shell shows a hook's output in the pane: never print, keep a small private log instead.
-    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) else { return };
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) else {
+        return;
+    };
     let path = dir.join("mios-workspace-hook").join("hook.log");
-    if fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
+    if fs::metadata(&path)
+        .map(|m| m.len() > 256 * 1024)
+        .unwrap_or(false)
+    {
         let _ = fs::rename(&path, path.with_extension("log.1"));
     }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).mode(0o600).open(&path) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(&path)
+    {
         let _ = writeln!(f, "{msg}");
     }
 }
@@ -154,14 +216,25 @@ pub fn run(event: &str, head: Option<&str>, socket: Option<&str>) -> Result<&'st
         return Ok("helper");
     }
     let ambient = std::env::var("TMUX").unwrap_or_default();
-    let socket = socket.map(str::to_owned).unwrap_or_else(|| ambient.rsplitn(3, ',').last().unwrap_or("").to_owned());
-    let pane = head.map(str::to_owned).or_else(|| std::env::var("TMUX_PANE").ok()).unwrap_or_default();
+    let socket = socket
+        .map(str::to_owned)
+        .unwrap_or_else(|| ambient.rsplitn(3, ',').last().unwrap_or("").to_owned());
+    let pane = head
+        .map(str::to_owned)
+        .or_else(|| std::env::var("TMUX_PANE").ok())
+        .unwrap_or_default();
     if socket.is_empty() || !pane_id(&pane) {
         return Ok("unbound");
     }
     let tmux = |args: &[&str]| workspace_tmux(&socket, args);
     // Cheapest checks first: one tmux query decides most events (our own reshaping) before any SSOT parse.
-    let probe = tmux(&["display-message", "-p", "-t", &pane, &format!("#{{window_id}}|#{{window_width}}|#{{window_height}}|#{{{APPLIED_OPTION}}}")])?;
+    let probe = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        &pane,
+        &format!("#{{window_id}}|#{{window_width}}|#{{window_height}}|#{{{APPLIED_OPTION}}}"),
+    ])?;
     let f: Vec<&str> = probe.split('|').collect();
     if f.len() != 4 || !window_id(f[0]) {
         return Err(format!("unexpected window probe {probe:?}"));
@@ -171,25 +244,42 @@ pub fn run(event: &str, head: Option<&str>, socket: Option<&str>) -> Result<&'st
     if f[3] == applied_key(f[1], f[2]) {
         return Ok("unchanged");
     }
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("mios-workspace-hook");
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("mios-workspace-hook");
     let key = &super::digest(&format!("{socket}|{window}"))[..24];
     let Some(flight) = Flight::acquire(&dir, key)? else {
         return Ok("coalesced");
     };
     // Bare Tmux-OS sessions opt out (their session environment carries MIOS_SESSION_BARE=1).
-    if tmux(&["show-environment", "-t", &pane, "MIOS_SESSION_BARE"]).ok().as_deref() == Some("MIOS_SESSION_BARE=1") {
+    if tmux(&["show-environment", "-t", &pane, "MIOS_SESSION_BARE"])
+        .ok()
+        .as_deref()
+        == Some("MIOS_SESSION_BARE=1")
+    {
         return Ok("bare");
     }
     let merged = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
     let ws = get(&merged, "mcp.tmux.workspace").ok_or("missing [mcp.tmux.workspace]")?;
-    if event == "ensure" && get(ws, "global_sessions").and_then(toml::Value::as_bool) != Some(true) {
+    if event == "ensure" && get(ws, "global_sessions").and_then(toml::Value::as_bool) != Some(true)
+    {
         return Ok("disabled");
     }
-    let str_at = |p: &str| get(&merged, p).and_then(toml::Value::as_str).unwrap_or("").to_owned();
+    let str_at = |p: &str| {
+        get(&merged, p)
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
     let human_socket = str_at("keybindings.socket_name");
     let terminal_session = str_at("keybindings.terminal_session");
     let ws_json = serde_json::to_value(ws).map_err(|e| e.to_string())?;
-    let start = get(&merged, "terminal.start_directory").and_then(toml::Value::as_str).filter(|d| Path::new(d).is_dir()).unwrap_or("/").to_owned();
+    let start = get(&merged, "terminal.start_directory")
+        .and_then(toml::Value::as_str)
+        .filter(|d| Path::new(d).is_dir())
+        .unwrap_or("/")
+        .to_owned();
     let mut outcome = "applied";
     for pass in 0..MAX_PASSES {
         let _ = flight.take_dirty();
@@ -210,14 +300,31 @@ pub fn run(event: &str, head: Option<&str>, socket: Option<&str>) -> Result<&'st
         let result: Value = workspace(&request)?;
         let _ = result;
         // Record the size this pass produced, so the window-resized events our own reshaping caused are no-ops.
-        let size = tmux(&["display-message", "-p", "-t", &ui.window, "#{window_width}|#{window_height}"])?;
+        let size = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &ui.window,
+            "#{window_width}|#{window_height}",
+        ])?;
         if let Some((w, h)) = size.split_once('|') {
-            tmux(&["set-option", "-w", "-t", &ui.window, APPLIED_OPTION, &applied_key(w, h)])?;
+            tmux(&[
+                "set-option",
+                "-w",
+                "-t",
+                &ui.window,
+                APPLIED_OPTION,
+                &applied_key(w, h),
+            ])?;
         }
         if !flight.take_dirty() {
             break;
         }
-        outcome = if pass + 1 == MAX_PASSES { "applied-capped" } else { "applied-rerun" };
+        outcome = if pass + 1 == MAX_PASSES {
+            "applied-capped"
+        } else {
+            "applied-rerun"
+        };
     }
     Ok(outcome)
 }
@@ -243,13 +350,33 @@ pub fn key(action: &str, value: &str) -> Result<&'static str, String> {
     }
     let tmux = |args: &[&str]| workspace_tmux(&socket, args);
     let merged = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
-    let str_at = |p: &str| get(&merged, p).and_then(toml::Value::as_str).unwrap_or("").to_owned();
-    let ui = context(&socket, &pane, &str_at("keybindings.socket_name"), &str_at("keybindings.terminal_session"))?;
-    let marks: Vec<String> = tmux(&["display-message", "-p", "-t", &pane, "#{@mios-workspace-head}|#{@mios-workspace-worker}"])?
-        .split('|')
-        .map(str::to_owned)
-        .collect();
-    let head = marks.iter().find(|m| !m.is_empty()).cloned().unwrap_or_default();
+    let str_at = |p: &str| {
+        get(&merged, p)
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let ui = context(
+        &socket,
+        &pane,
+        &str_at("keybindings.socket_name"),
+        &str_at("keybindings.terminal_session"),
+    )?;
+    let marks: Vec<String> = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        &pane,
+        "#{@mios-workspace-head}|#{@mios-workspace-worker}",
+    ])?
+    .split('|')
+    .map(str::to_owned)
+    .collect();
+    let head = marks
+        .iter()
+        .find(|m| !m.is_empty())
+        .cloned()
+        .unwrap_or_default();
     if !pane_id(&head) {
         if action == "focus" {
             tmux(&["select-pane", "-t", &format!("{}.+", ui.window)])?;
@@ -259,7 +386,11 @@ pub fn key(action: &str, value: &str) -> Result<&'static str, String> {
     }
     let ws = get(&merged, "mcp.tmux.workspace").ok_or("missing [mcp.tmux.workspace]")?;
     let ws_json = serde_json::to_value(ws).map_err(|e| e.to_string())?;
-    let start = get(&merged, "terminal.start_directory").and_then(toml::Value::as_str).filter(|d| Path::new(d).is_dir()).unwrap_or("/").to_owned();
+    let start = get(&merged, "terminal.start_directory")
+        .and_then(toml::Value::as_str)
+        .filter(|d| Path::new(d).is_dir())
+        .unwrap_or("/")
+        .to_owned();
     let directory = std::env::current_dir()
         .ok()
         .filter(|d| d.is_absolute() && d.is_dir())
@@ -279,14 +410,30 @@ pub fn key(action: &str, value: &str) -> Result<&'static str, String> {
     request[if action == "focus" { "target" } else { "view" }] = json!(value);
     // One pass at a time per window, shared with the hooks: a key pressed during a hook pass waits for nothing and
     // marks the pass dirty, so the holder reruns with the new view.
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("mios-workspace-hook");
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("mios-workspace-hook");
     let key = &super::digest(&format!("{socket}|{}", ui.window))[..24];
     let flight = Flight::acquire(&dir, key)?;
     workspace(&request)?;
     if flight.is_some() {
-        let size = tmux(&["display-message", "-p", "-t", &ui.window, "#{window_width}|#{window_height}"])?;
+        let size = tmux(&[
+            "display-message",
+            "-p",
+            "-t",
+            &ui.window,
+            "#{window_width}|#{window_height}",
+        ])?;
         if let Some((w, h)) = size.split_once('|') {
-            tmux(&["set-option", "-w", "-t", &ui.window, APPLIED_OPTION, &applied_key(w, h)])?;
+            tmux(&[
+                "set-option",
+                "-w",
+                "-t",
+                &ui.window,
+                APPLIED_OPTION,
+                &applied_key(w, h),
+            ])?;
         }
     }
     Ok("applied")
@@ -313,11 +460,18 @@ pub fn key_main(args: &[String]) -> ! {
 
 /// CLI entry: never prints (tmux would show it in the pane); failures go to the private hook log.
 pub fn main(args: &[String]) -> ! {
-    let r = run(&args[2], args.get(3).map(String::as_str), args.get(4).map(String::as_str));
+    let r = run(
+        &args[2],
+        args.get(3).map(String::as_str),
+        args.get(4).map(String::as_str),
+    );
     match r {
         Ok(_) => std::process::exit(0),
         Err(e) => {
-            log(&format!("workspace-hook {}: {e}", args.get(2).map(String::as_str).unwrap_or("")));
+            log(&format!(
+                "workspace-hook {}: {e}",
+                args.get(2).map(String::as_str).unwrap_or("")
+            ));
             std::process::exit(0)
         }
     }
@@ -337,15 +491,29 @@ mod tests {
     #[test]
     fn single_flight_coalesces_concurrent_events_into_one_rerun() {
         let d = tempfile::tempdir().unwrap();
-        let first = Flight::acquire(d.path(), "w").unwrap().expect("first holds the window");
+        let first = Flight::acquire(d.path(), "w")
+            .unwrap()
+            .expect("first holds the window");
         for _ in 0..50 {
-            assert!(Flight::acquire(d.path(), "w").unwrap().is_none(), "concurrent events never start a second pass");
+            assert!(
+                Flight::acquire(d.path(), "w").unwrap().is_none(),
+                "concurrent events never start a second pass"
+            );
         }
-        assert!(first.take_dirty(), "the holder sees one pending rerun for all 50 events");
+        assert!(
+            first.take_dirty(),
+            "the holder sees one pending rerun for all 50 events"
+        );
         assert!(!first.take_dirty(), "and only one");
         drop(first);
-        assert!(Flight::acquire(d.path(), "w").unwrap().is_some(), "released after the pass");
-        assert!(Flight::acquire(d.path(), "other").unwrap().is_some(), "windows are independent");
+        assert!(
+            Flight::acquire(d.path(), "w").unwrap().is_some(),
+            "released after the pass"
+        );
+        assert!(
+            Flight::acquire(d.path(), "other").unwrap().is_some(),
+            "windows are independent"
+        );
     }
 
     #[test]
@@ -362,17 +530,26 @@ mod tests {
         std::env::remove_var("TMUX");
         std::env::remove_var("TMUX_PANE");
         assert!(key("resize", "next").unwrap_err().contains("focus or view"));
-        assert!(key("focus", "%1; kill-server").unwrap_err().contains("invalid"));
+        assert!(key("focus", "%1; kill-server")
+            .unwrap_err()
+            .contains("invalid"));
         assert!(key("view", "portrait").unwrap_err().contains("invalid"));
         // Valid values, but no tmux context: refused before any tmux call or SSOT read.
-        assert!(key("focus", "next").unwrap_err().contains("inside MiOS-Tmux"));
-        assert!(key("view", "toggle").unwrap_err().contains("inside MiOS-Tmux"));
+        assert!(key("focus", "next")
+            .unwrap_err()
+            .contains("inside MiOS-Tmux"));
+        assert!(key("view", "toggle")
+            .unwrap_err()
+            .contains("inside MiOS-Tmux"));
     }
 
     #[test]
     fn hook_guard_skips_the_spawn_for_an_already_laid_out_window() {
         let g = spawn_guard();
-        assert!(g.contains(APPLIED_OPTION) && g.contains("#{window_width}x#{window_height}"), "{g}");
+        assert!(
+            g.contains(APPLIED_OPTION) && g.contains("#{window_width}x#{window_height}"),
+            "{g}"
+        );
         assert!(g.starts_with("#{!=:") && !g.contains("#["), "{g}");
     }
 }

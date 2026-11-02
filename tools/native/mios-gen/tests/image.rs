@@ -398,7 +398,12 @@ mod cosign_policy {
 
         // 1. Generation mode
         let out = cosign(root, false);
-        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let policy_path = root.join("usr/lib/containers/policy.json");
         let content = fs::read_to_string(&policy_path).unwrap();
         let expected = "{\n  \"default\": [\n    {\n      \"type\": \"insecureAcceptAnything\"\n    }\n  ],\n  \"transports\": {\n    \"docker\": {\n      \"ghcr.io/mios-dev\": [\n        {\n          \"keyPath\": \"/usr/share/pki/containers/mios-cosign.pub\",\n          \"signedIdentity\": {\n            \"type\": \"matchRepository\"\n          },\n          \"type\": \"sigstoreSigned\"\n        }\n      ]\n    }\n  }\n}\n";

@@ -131,13 +131,22 @@ impl RdeConfig {
                     if let Some(v) = devpod_tab.get("default_provider").and_then(|v| v.as_str()) {
                         cfg.devpod.default_provider = v.to_string();
                     }
-                    if let Some(v) = devpod_tab.get("inactivity_timeout").and_then(|v| v.as_integer()) {
+                    if let Some(v) = devpod_tab
+                        .get("inactivity_timeout")
+                        .and_then(|v| v.as_integer())
+                    {
                         cfg.devpod.inactivity_timeout = v as u32;
                     }
-                    if let Some(v) = devpod_tab.get("git_credentials_sync").and_then(|v| v.as_bool()) {
+                    if let Some(v) = devpod_tab
+                        .get("git_credentials_sync")
+                        .and_then(|v| v.as_bool())
+                    {
                         cfg.devpod.git_credentials_sync = v;
                     }
-                    if let Some(v) = devpod_tab.get("docker_credentials_sync").and_then(|v| v.as_bool()) {
+                    if let Some(v) = devpod_tab
+                        .get("docker_credentials_sync")
+                        .and_then(|v| v.as_bool())
+                    {
                         cfg.devpod.docker_credentials_sync = v;
                     }
                     if let Some(v) = devpod_tab.get("devcontainer_path").and_then(|v| v.as_str()) {
@@ -149,7 +158,10 @@ impl RdeConfig {
                     if let Some(v) = tofu_tab.get("binary_path").and_then(|v| v.as_str()) {
                         cfg.opentofu.binary_path = v.to_string();
                     }
-                    if let Some(v) = tofu_tab.get("terraform_compatibility_symlink").and_then(|v| v.as_bool()) {
+                    if let Some(v) = tofu_tab
+                        .get("terraform_compatibility_symlink")
+                        .and_then(|v| v.as_bool())
+                    {
                         cfg.opentofu.terraform_compatibility_symlink = v;
                     }
                     if let Some(v) = tofu_tab.get("parallelism").and_then(|v| v.as_integer()) {
@@ -308,7 +320,11 @@ pub enum RdeCommand {
 }
 
 /// Verify 0 AGPL copyleft taint across the toolchain.
-pub fn verify_zero_agpl_taint(config: &RdeConfig, requested_provider: Option<&str>, requested_ide: Option<&str>) -> Result<(), RdeError> {
+pub fn verify_zero_agpl_taint(
+    config: &RdeConfig,
+    requested_provider: Option<&str>,
+    requested_ide: Option<&str>,
+) -> Result<(), RdeError> {
     let orch = config.orchestrator.to_lowercase();
     if orch.contains("coder") {
         return Err(RdeError::AgplTaint(
@@ -352,18 +368,31 @@ pub fn audit_licenses(config: &RdeConfig) -> LicenseAuditReport {
     }
     let orch_item = LicenseItem {
         name: config.orchestrator.clone(),
-        license: if orch_taint { "AGPL-3.0-only".to_string() } else { "MPL-2.0".to_string() },
+        license: if orch_taint {
+            "AGPL-3.0-only".to_string()
+        } else {
+            "MPL-2.0".to_string()
+        },
         role: "Workspace Orchestrator (Client-Only)".to_string(),
         copyleft_taint: orch_taint,
     };
 
-    let infra_taint = config.opentofu.binary_path.to_lowercase().contains("terraform") && !config.opentofu.binary_path.to_lowercase().contains("tofu");
+    let infra_taint = config
+        .opentofu
+        .binary_path
+        .to_lowercase()
+        .contains("terraform")
+        && !config.opentofu.binary_path.to_lowercase().contains("tofu");
     if infra_taint {
         violations += 1;
     }
     let infra_item = LicenseItem {
         name: "OpenTofu".to_string(),
-        license: if infra_taint { "BSL-1.1".to_string() } else { "MPL-2.0".to_string() },
+        license: if infra_taint {
+            "BSL-1.1".to_string()
+        } else {
+            "MPL-2.0".to_string()
+        },
         role: "Infrastructure Provisioner".to_string(),
         copyleft_taint: infra_taint,
     };
@@ -374,7 +403,11 @@ pub fn audit_licenses(config: &RdeConfig) -> LicenseAuditReport {
     }
     let ide_item = LicenseItem {
         name: config.ide.clone(),
-        license: if ide_taint { "AGPL-3.0-only".to_string() } else { "MIT".to_string() },
+        license: if ide_taint {
+            "AGPL-3.0-only".to_string()
+        } else {
+            "MIT".to_string()
+        },
         role: "Browser Web IDE".to_string(),
         copyleft_taint: ide_taint,
     };
@@ -396,8 +429,7 @@ pub fn plan_workspace(
     recreate: bool,
     root: Option<&Path>,
 ) -> Result<ProvisioningPlan, RdeError> {
-    let config = RdeConfig::from_ssot(root)
-        .map_err(RdeError::ConfigError)?;
+    let config = RdeConfig::from_ssot(root).map_err(RdeError::ConfigError)?;
 
     verify_zero_agpl_taint(&config, provider_opt, ide_opt)?;
 
@@ -432,9 +464,15 @@ pub fn plan_workspace(
         .unwrap_or_else(|| config.ide.clone());
 
     let mut env = HashMap::new();
-    env.insert("DOCKER_HOST".to_string(), format!("unix://{}", config.socket_path));
+    env.insert(
+        "DOCKER_HOST".to_string(),
+        format!("unix://{}", config.socket_path),
+    );
     env.insert("MIOS_RDE_ENGINE".to_string(), config.engine.clone());
-    env.insert("MIOS_RDE_ORCHESTRATOR".to_string(), config.orchestrator.clone());
+    env.insert(
+        "MIOS_RDE_ORCHESTRATOR".to_string(),
+        config.orchestrator.clone(),
+    );
     env.insert("MIOS_RDE_IDE".to_string(), ide.clone());
 
     let mut cmd = vec![
@@ -492,7 +530,11 @@ pub async fn run_up(
     let plan = plan_workspace(workspace, provider, ide, recreate, root)?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&plan).map_err(|e| RdeError::ExecutionFailed(e.to_string()))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&plan)
+                .map_err(|e| RdeError::ExecutionFailed(e.to_string()))?
+        );
         return Ok(0);
     }
 
@@ -501,14 +543,29 @@ pub async fn run_up(
     println!("============================================================");
     println!("Workspace:        {}", plan.workspace.display());
     println!("DevContainer:     {}", plan.devcontainer_path.display());
-    println!("Orchestrator:     {} ({})", plan.orchestrator, plan.license_audit.orchestrator.license);
-    println!("Infrastructure:   OpenTofu ({})", plan.license_audit.infrastructure.license);
-    println!("IDE Frontend:     {} ({})", plan.ide, plan.license_audit.ide.license);
+    println!(
+        "Orchestrator:     {} ({})",
+        plan.orchestrator, plan.license_audit.orchestrator.license
+    );
+    println!(
+        "Infrastructure:   OpenTofu ({})",
+        plan.license_audit.infrastructure.license
+    );
+    println!(
+        "IDE Frontend:     {} ({})",
+        plan.ide, plan.license_audit.ide.license
+    );
     println!("Provider Target:  {}", plan.provider);
     println!("Container Engine: {}", plan.engine);
     println!("Socket Path:      {}", plan.socket_path);
-    println!("Forwarded Ports:  {:?} (devpod_agent = 8910)", plan.forward_ports);
-    println!("License Taint:    0 AGPL / 0 BSL (Compliant: {})", plan.license_audit.compliant);
+    println!(
+        "Forwarded Ports:  {:?} (devpod_agent = 8910)",
+        plan.forward_ports
+    );
+    println!(
+        "License Taint:    0 AGPL / 0 BSL (Compliant: {})",
+        plan.license_audit.compliant
+    );
     println!("------------------------------------------------------------");
     println!("Command:          {}", plan.command.join(" "));
     println!("============================================================");
@@ -532,10 +589,15 @@ pub async fn run_up(
         Ok(status) => Ok(status.code().unwrap_or(1)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             println!("[mios rde] Info: 'devpod' client binary not installed on host PATH.");
-            println!("[mios rde] Workspace configuration verified clean; ready for client connection.");
+            println!(
+                "[mios rde] Workspace configuration verified clean; ready for client connection."
+            );
             Ok(0)
         }
-        Err(e) => Err(RdeError::ExecutionFailed(format!("Failed to execute devpod: {}", e))),
+        Err(e) => Err(RdeError::ExecutionFailed(format!(
+            "Failed to execute devpod: {}",
+            e
+        ))),
     }
 }
 
@@ -547,8 +609,7 @@ pub async fn run_down(
     json: bool,
     root: Option<&Path>,
 ) -> Result<i32, RdeError> {
-    let config = RdeConfig::from_ssot(root)
-        .map_err(RdeError::ConfigError)?;
+    let config = RdeConfig::from_ssot(root).map_err(RdeError::ConfigError)?;
     verify_zero_agpl_taint(&config, None, None)?;
 
     let ws_path = if workspace == "." {
@@ -579,11 +640,18 @@ pub async fn run_down(
             "dry_run": dry_run,
             "command": cmd,
         });
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
         return Ok(0);
     }
 
-    println!("[mios rde] Action: {} workspace {}", subcmd, ws_path.display());
+    println!(
+        "[mios rde] Action: {} workspace {}",
+        subcmd,
+        ws_path.display()
+    );
     println!("[mios rde] Command: {}", cmd.join(" "));
 
     if dry_run {
@@ -592,7 +660,9 @@ pub async fn run_down(
     }
 
     let mut process_cmd = Command::new("devpod");
-    process_cmd.arg(subcmd).arg(ws_path.to_string_lossy().to_string());
+    process_cmd
+        .arg(subcmd)
+        .arg(ws_path.to_string_lossy().to_string());
 
     match process_cmd.status() {
         Ok(status) => Ok(status.code().unwrap_or(1)),
@@ -600,14 +670,16 @@ pub async fn run_down(
             println!("[mios rde] Info: 'devpod' client binary not installed on host PATH; simulated stop.");
             Ok(0)
         }
-        Err(e) => Err(RdeError::ExecutionFailed(format!("Failed to execute devpod stop: {}", e))),
+        Err(e) => Err(RdeError::ExecutionFailed(format!(
+            "Failed to execute devpod stop: {}",
+            e
+        ))),
     }
 }
 
 /// Query RDE status.
 pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Result<i32, RdeError> {
-    let config = RdeConfig::from_ssot(root)
-        .map_err(RdeError::ConfigError)?;
+    let config = RdeConfig::from_ssot(root).map_err(RdeError::ConfigError)?;
 
     let audit = audit_licenses(&config);
 
@@ -622,7 +694,10 @@ pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Res
             "forward_ports": config.devpod.forward_ports,
             "zero_agpl_compliant": audit.compliant,
         });
-        println!("{}", serde_json::to_string_pretty(&status_json).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status_json).unwrap_or_default()
+        );
         return Ok(0);
     }
 
@@ -638,23 +713,43 @@ pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Res
 
 /// Execute license and copyleft taint audit.
 pub fn run_audit(json: bool, root: Option<&Path>) -> Result<i32, RdeError> {
-    let config = RdeConfig::from_ssot(root)
-        .map_err(RdeError::ConfigError)?;
+    let config = RdeConfig::from_ssot(root).map_err(RdeError::ConfigError)?;
     let report = audit_licenses(&config);
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
         return Ok(if report.compliant { 0 } else { 1 });
     }
 
     println!("============================================================");
     println!("MiOS Sovereign License & Copyleft Taint Audit");
     println!("============================================================");
-    println!("Orchestrator:   {} [{}] - Taint: {}", report.orchestrator.name, report.orchestrator.license, report.orchestrator.copyleft_taint);
-    println!("Infrastructure: {} [{}] - Taint: {}", report.infrastructure.name, report.infrastructure.license, report.infrastructure.copyleft_taint);
-    println!("IDE:            {} [{}] - Taint: {}", report.ide.name, report.ide.license, report.ide.copyleft_taint);
+    println!(
+        "Orchestrator:   {} [{}] - Taint: {}",
+        report.orchestrator.name, report.orchestrator.license, report.orchestrator.copyleft_taint
+    );
+    println!(
+        "Infrastructure: {} [{}] - Taint: {}",
+        report.infrastructure.name,
+        report.infrastructure.license,
+        report.infrastructure.copyleft_taint
+    );
+    println!(
+        "IDE:            {} [{}] - Taint: {}",
+        report.ide.name, report.ide.license, report.ide.copyleft_taint
+    );
     println!("Violations:     {}", report.copyleft_violations);
-    println!("Status:         {}", if report.compliant { "PASSED (0 AGPL / 0 BSL)" } else { "FAILED" });
+    println!(
+        "Status:         {}",
+        if report.compliant {
+            "PASSED (0 AGPL / 0 BSL)"
+        } else {
+            "FAILED"
+        }
+    );
     println!("============================================================");
 
     Ok(if report.compliant { 0 } else { 1 })
@@ -662,14 +757,14 @@ pub fn run_audit(json: bool, root: Option<&Path>) -> Result<i32, RdeError> {
 
 /// OpenTofu wrapper for infrastructure provisioning (MPL-2.0).
 pub fn run_tofu(args: &[String], root: Option<&Path>) -> Result<i32, RdeError> {
-    let config = RdeConfig::from_ssot(root)
-        .map_err(RdeError::ConfigError)?;
+    let config = RdeConfig::from_ssot(root).map_err(RdeError::ConfigError)?;
 
     // Check for planted terraform invocations
     for a in args {
         if a.to_lowercase().contains("terraform") && !a.to_lowercase().contains("tofu") {
             return Err(RdeError::BslTaint(
-                "Direct terraform usage is prohibited under BSL 1.1 taint policy. Use 'tofu'.".to_string(),
+                "Direct terraform usage is prohibited under BSL 1.1 taint policy. Use 'tofu'."
+                    .to_string(),
             ));
         }
     }
@@ -681,10 +776,17 @@ pub fn run_tofu(args: &[String], root: Option<&Path>) -> Result<i32, RdeError> {
     match cmd.status() {
         Ok(status) => Ok(status.code().unwrap_or(1)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            println!("[mios rde tofu] Simulated OpenTofu call: {} {}", bin, args.join(" "));
+            println!(
+                "[mios rde tofu] Simulated OpenTofu call: {} {}",
+                bin,
+                args.join(" ")
+            );
             Ok(0)
         }
-        Err(e) => Err(RdeError::ExecutionFailed(format!("OpenTofu execution failed: {}", e))),
+        Err(e) => Err(RdeError::ExecutionFailed(format!(
+            "OpenTofu execution failed: {}",
+            e
+        ))),
     }
 }
 
@@ -699,15 +801,18 @@ pub async fn dispatch_action(action: &RdeCommand, root: &Path) -> i32 {
             dry_run,
             recreate,
             json,
-        } => run_up(
-            workspace,
-            provider.as_deref(),
-            ide.as_deref(),
-            *dry_run,
-            *recreate,
-            *json,
-            root_opt,
-        ).await,
+        } => {
+            run_up(
+                workspace,
+                provider.as_deref(),
+                ide.as_deref(),
+                *dry_run,
+                *recreate,
+                *json,
+                root_opt,
+            )
+            .await
+        }
         RdeCommand::Down {
             workspace,
             destroy,
@@ -743,8 +848,14 @@ mod tests {
         assert_eq!(config.orchestrator, "devpod");
         assert_eq!(config.engine, "podman");
         assert_eq!(config.ide, "code-server");
-        assert!(config.devpod.forward_ports.contains(&8910), "devpod_agent port 8910 must be included");
-        assert!(config.devpod.forward_ports.contains(&8900), "code_server port 8900 must be included");
+        assert!(
+            config.devpod.forward_ports.contains(&8910),
+            "devpod_agent port 8910 must be included"
+        );
+        assert!(
+            config.devpod.forward_ports.contains(&8900),
+            "code_server port 8900 must be included"
+        );
         assert!(!config.telemetry);
     }
 
@@ -752,7 +863,10 @@ mod tests {
     fn test_audit_zero_agpl_taint_passes() {
         let config = RdeConfig::default();
         let report = audit_licenses(&config);
-        assert!(report.compliant, "Default FOSS configuration must be compliant");
+        assert!(
+            report.compliant,
+            "Default FOSS configuration must be compliant"
+        );
         assert_eq!(report.copyleft_violations, 0);
         assert_eq!(report.orchestrator.license, "MPL-2.0");
         assert_eq!(report.infrastructure.license, "MPL-2.0");
@@ -791,7 +905,13 @@ mod tests {
 
     #[test]
     fn test_invalid_workspace_rejected() {
-        let res = plan_workspace("/nonexistent/bogus/path/to/workspace_404", None, None, false, None);
+        let res = plan_workspace(
+            "/nonexistent/bogus/path/to/workspace_404",
+            None,
+            None,
+            false,
+            None,
+        );
         assert!(res.is_err(), "Nonexistent workspace path must be rejected");
         match res.unwrap_err() {
             RdeError::InvalidWorkspace(msg) => assert!(msg.contains("does not exist")),
@@ -802,8 +922,14 @@ mod tests {
     #[test]
     fn test_valid_workspace_plan() {
         let temp = tempfile::tempdir().unwrap();
-        let plan = plan_workspace(temp.path().to_str().unwrap(), Some("podman"), Some("code-server"), false, None)
-            .expect("Valid workspace should plan successfully");
+        let plan = plan_workspace(
+            temp.path().to_str().unwrap(),
+            Some("podman"),
+            Some("code-server"),
+            false,
+            None,
+        )
+        .expect("Valid workspace should plan successfully");
 
         assert_eq!(plan.provider, "podman");
         assert_eq!(plan.ide, "code-server");

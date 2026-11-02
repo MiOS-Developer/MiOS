@@ -82,12 +82,22 @@ impl Win {
             class: s("class"),
             title: s("title"),
             pid: c.get("pid").and_then(Json::as_i64).unwrap_or(-1),
-            stable_id: c.get("stableId").map(|v| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())).unwrap_or_default(),
+            stable_id: c
+                .get("stableId")
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| v.to_string())
+                })
+                .unwrap_or_default(),
             mapped: c.get("mapped").and_then(Json::as_bool).unwrap_or(false),
             hidden: c.get("hidden").and_then(Json::as_bool).unwrap_or(false),
             pinned: c.get("pinned").and_then(Json::as_bool).unwrap_or(false),
             rect: Rect { x, y, w, h },
-            workspace_id: c.pointer("/workspace/id").and_then(Json::as_i64).unwrap_or(0),
+            workspace_id: c
+                .pointer("/workspace/id")
+                .and_then(Json::as_i64)
+                .unwrap_or(0),
             workspace_name: c
                 .pointer("/workspace/name")
                 .and_then(Json::as_str)
@@ -115,8 +125,14 @@ pub fn monitors_from_json(m: &Json) -> Vec<Mon> {
         .filter_map(|m| {
             Some(Mon {
                 id: m.get("id")?.as_i64()?,
-                active_ws: m.pointer("/activeWorkspace/id").and_then(Json::as_i64).unwrap_or(0),
-                special_ws: m.pointer("/specialWorkspace/id").and_then(Json::as_i64).unwrap_or(0),
+                active_ws: m
+                    .pointer("/activeWorkspace/id")
+                    .and_then(Json::as_i64)
+                    .unwrap_or(0),
+                special_ws: m
+                    .pointer("/specialWorkspace/id")
+                    .and_then(Json::as_i64)
+                    .unwrap_or(0),
                 refresh: m.get("refreshRate").and_then(Json::as_f64).unwrap_or(60.0),
             })
         })
@@ -255,22 +271,40 @@ impl Follower {
         now: Instant,
     ) -> Step {
         let Some(pane) = pane else {
-            return Step { actions: Vec::new(), next: p.idle, outcome: Outcome::PaneGone };
+            return Step {
+                actions: Vec::new(),
+                next: p.idle,
+                outcome: Outcome::PaneGone,
+            };
         };
         let Some(t) = target else {
-            let actions = if p.close_with_target { vec![Action::Close] } else { Vec::new() };
-            return Step { actions, next: p.idle, outcome: Outcome::TargetGone };
+            let actions = if p.close_with_target {
+                vec![Action::Close]
+            } else {
+                Vec::new()
+            };
+            return Step {
+                actions,
+                next: p.idle,
+                outcome: Outcome::TargetGone,
+            };
         };
         let frame = Self::frame(p, t, mons);
         if !pane.mapped || !t.mapped {
             // Never dispatch on an unmapped window (Hyprland 0.56 crashes resizing a window with no layout target).
-            return Step { actions: Vec::new(), next: frame, outcome: Outcome::Continue };
+            return Step {
+                actions: Vec::new(),
+                next: frame,
+                outcome: Outcome::Continue,
+            };
         }
         let r = t.rect;
         let target_moved = self.last_target.is_some_and(|l| !l.same(&r))
             && self.placed.is_none_or(|pl| !pl.same(&r));
         let pane_moved = self.last_pane.is_some_and(|l| !l.same(&pane.rect));
-        let pane_was_synced = self.last_pane.is_some_and(|l| self.placed.is_some_and(|pl| pl.same(&l)));
+        let pane_was_synced = self
+            .last_pane
+            .is_some_and(|l| self.placed.is_some_and(|pl| pl.same(&l)));
         if self.last_target.is_none_or(|l| !l.same(&r)) {
             if target_moved {
                 self.changed_at = Some(now);
@@ -284,10 +318,16 @@ impl Follower {
             self.misses = 0;
             self.missed_at = None;
         }
-        let within = |at: Option<Instant>| at.is_some_and(|a| now.saturating_duration_since(a) < p.settle);
-        let user_dragged_pane = self.dragging && self.shown == Some(true)
-            && !suppressed && on_screen(t, mons)
-            && pane_moved && pane_was_synced && !target_moved && !pane.rect.same(&r);
+        let within =
+            |at: Option<Instant>| at.is_some_and(|a| now.saturating_duration_since(a) < p.settle);
+        let user_dragged_pane = self.dragging
+            && self.shown == Some(true)
+            && !suppressed
+            && on_screen(t, mons)
+            && pane_moved
+            && pane_was_synced
+            && !target_moved
+            && !pane.rect.same(&r);
         if user_dragged_pane {
             self.changed_at = Some(now);
         }
@@ -300,7 +340,8 @@ impl Follower {
         // treating a held button as a request to move/resize the application.
         if show || (suppressed && on_screen(t, mons)) {
             if pane.monitor != t.monitor
-                && (self.workspace != Some((t.monitor, t.workspace_id)) || !within(self.placed_at)) {
+                && (self.workspace != Some((t.monitor, t.workspace_id)) || !within(self.placed_at))
+            {
                 let workspace = if t.workspace_name.starts_with("special:") {
                     t.workspace_name.clone()
                 } else {
@@ -318,10 +359,12 @@ impl Follower {
                 // Re-place when the target moved, or when the pane drifted from where it was put (Wine or the
                 // operator moved it) and the last placement had time to land -- at most PLACE_RETRIES times
                 // for one target rectangle the pane keeps missing.
-                let drifted = !pane.rect.same(&r) && !within(self.placed_at) && self.misses < PLACE_RETRIES;
+                let drifted =
+                    !pane.rect.same(&r) && !within(self.placed_at) && self.misses < PLACE_RETRIES;
                 let needs_place = self.placed.is_none()
                     || target_moved
-                    || (self.placed.is_some_and(|pl| !pl.same(&r)) && (self.shown != Some(true) || !within(self.placed_at)));
+                    || (self.placed.is_some_and(|pl| !pl.same(&r))
+                        && (self.shown != Some(true) || !within(self.placed_at)));
                 if needs_place || drifted {
                     if drifted && !needs_place {
                         self.misses += 1;
@@ -343,7 +386,11 @@ impl Follower {
             self.shown = Some(false);
         }
         self.last_pane = Some(pane.rect);
-        Step { actions, next: if hot { frame } else { p.idle }, outcome: Outcome::Continue }
+        Step {
+            actions,
+            next: if hot { frame } else { p.idle },
+            outcome: Outcome::Continue,
+        }
     }
 }
 
@@ -417,7 +464,9 @@ pub fn setup_lua(address: &str, tag: &str, entering: bool, shortcut: Option<&str
     let mut parts = Vec::new();
     if entering {
         parts.push(passthrough_lua(address, tag, false));
-        parts.push(format!("pcall(function() hl.dispatch(hl.dsp.focus({{window={w}}})) end)"));
+        parts.push(format!(
+            "pcall(function() hl.dispatch(hl.dsp.focus({{window={w}}})) end)"
+        ));
         parts.extend(send);
     } else {
         parts.extend(send);
@@ -451,7 +500,12 @@ mod tests {
             mapped: true,
             hidden: false,
             pinned: false,
-            rect: Rect { x, y, w: 800.0, h: 600.0 },
+            rect: Rect {
+                x,
+                y,
+                w: 800.0,
+                h: 600.0,
+            },
             workspace_id: ws,
             workspace_name: ws.to_string(),
             monitor: 0,
@@ -459,7 +513,12 @@ mod tests {
     }
 
     fn mons(active: i64, special: i64) -> Vec<Mon> {
-        vec![Mon { id: 0, active_ws: active, special_ws: special, refresh: 144.0 }]
+        vec![Mon {
+            id: 0,
+            active_ws: active,
+            special_ws: special,
+            refresh: 144.0,
+        }]
     }
 
     #[test]
@@ -467,10 +526,34 @@ mod tests {
         let c = json!({"address": "0xabc", "class": "kitty", "title": "x", "pid": 42, "mapped": true, "hidden": false,
             "pinned": false, "at": [10, 20], "size": [300, 200], "workspace": {"id": 3, "name": "3"}, "monitor": 1});
         let w = Win::from_json(&c).unwrap();
-        assert_eq!((w.rect.x, w.rect.y, w.rect.w, w.rect.h, w.workspace_id, w.monitor, w.pid), (10.0, 20.0, 300.0, 200.0, 3, 1, 42));
-        assert!(Win::from_json(&json!({"address": "0x1"})).is_none(), "no geometry, no window");
-        let m = monitors_from_json(&json!([{"id": 1, "refreshRate": 143.98, "activeWorkspace": {"id": 3}, "specialWorkspace": {"id": 0, "name": ""}}]));
-        assert_eq!(m, vec![Mon { id: 1, active_ws: 3, special_ws: 0, refresh: 143.98 }]);
+        assert_eq!(
+            (
+                w.rect.x,
+                w.rect.y,
+                w.rect.w,
+                w.rect.h,
+                w.workspace_id,
+                w.monitor,
+                w.pid
+            ),
+            (10.0, 20.0, 300.0, 200.0, 3, 1, 42)
+        );
+        assert!(
+            Win::from_json(&json!({"address": "0x1"})).is_none(),
+            "no geometry, no window"
+        );
+        let m = monitors_from_json(
+            &json!([{"id": 1, "refreshRate": 143.98, "activeWorkspace": {"id": 3}, "specialWorkspace": {"id": 0, "name": ""}}]),
+        );
+        assert_eq!(
+            m,
+            vec![Mon {
+                id: 1,
+                active_ws: 3,
+                special_ws: 0,
+                refresh: 143.98
+            }]
+        );
     }
 
     #[test]
@@ -478,17 +561,26 @@ mod tests {
         let t = win("0xt", 0.0, 0.0, 1);
         assert!(on_screen(&t, &mons(1, 0)));
         assert!(!on_screen(&t, &mons(2, 0)), "hidden workspace");
-        assert!(!on_screen(&t, &mons(1, -98)), "special workspace drawn over it");
+        assert!(
+            !on_screen(&t, &mons(1, -98)),
+            "special workspace drawn over it"
+        );
         let mut s = t.clone();
         s.workspace_id = -98;
         s.workspace_name = "special:scratch".into();
-        assert!(on_screen(&s, &mons(1, -98)), "on the special workspace that is shown");
+        assert!(
+            on_screen(&s, &mons(1, -98)),
+            "on the special workspace that is shown"
+        );
         s.workspace_name = "special:minimized".into();
         s.workspace_id = -97;
         assert!(!on_screen(&s, &mons(1, -98)), "lamp-minimized");
         let mut p = t.clone();
         p.pinned = true;
-        assert!(on_screen(&p, &mons(5, 0)), "pinned target is on every workspace");
+        assert!(
+            on_screen(&p, &mons(5, 0)),
+            "pinned target is on every workspace"
+        );
         let mut h = t.clone();
         h.hidden = true;
         assert!(!on_screen(&h, &mons(1, 0)));
@@ -506,11 +598,22 @@ mod tests {
         let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, now);
         assert_eq!(s.actions, vec![Action::Place(t.rect), Action::Show]);
         assert_eq!(s.outcome, Outcome::Continue);
-        assert_eq!(s.next, Duration::from_millis(100), "a target that has not moved polls at the idle rate");
+        assert_eq!(
+            s.next,
+            Duration::from_millis(100),
+            "a target that has not moved polls at the idle rate"
+        );
         // Nothing to do once the pane sits on the target.
         let mut placed = pane.clone();
         placed.rect = t.rect;
-        let s = f.step(&policy(), Some(&t), Some(&placed), &mons(1, 0), false, now + Duration::from_millis(500));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&placed),
+            &mons(1, 0),
+            false,
+            now + Duration::from_millis(500),
+        );
         assert!(s.actions.is_empty(), "{:?}", s.actions);
     }
 
@@ -523,21 +626,52 @@ mod tests {
         f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
         pane.rect = t.rect;
         t.rect.x += 40.0;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(100));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(100),
+        );
         assert_eq!(s.actions, vec![Action::Place(t.rect)]);
         let frame = Duration::from_secs_f64(1.0 / 144.0);
-        assert_eq!(s.next, frame, "moving: one poll per frame of the target's output");
+        assert_eq!(
+            s.next, frame,
+            "moving: one poll per frame of the target's output"
+        );
         // Still fast within the settle time, idle after it.
         pane.rect = t.rect;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(200));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(200),
+        );
         assert_eq!(s.next, frame);
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(500));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(500),
+        );
         assert_eq!(s.next, Duration::from_millis(100));
         // An explicit rate overrides the refresh.
         let mut p = policy();
         p.follow_hz = 50.0;
         f.poke(t0 + Duration::from_millis(600));
-        let s = f.step(&p, Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(610));
+        let s = f.step(
+            &p,
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(610),
+        );
         assert_eq!(s.next, Duration::from_millis(20));
     }
 
@@ -549,16 +683,52 @@ mod tests {
         let mut f = Follower::new();
         let mut t = win("0xt", 0.0, 0.0, 1);
         let pane = win("0xp", 0.0, 0.0, 1);
-        assert_eq!(f.step(&p, Some(&t), Some(&pane), &mons(1, 0), false, t0).actions, vec![Action::Place(t.rect), Action::Show]);
+        assert_eq!(
+            f.step(&p, Some(&t), Some(&pane), &mons(1, 0), false, t0)
+                .actions,
+            vec![Action::Place(t.rect), Action::Show]
+        );
         t.rect.y += 30.0;
-        let s = f.step(&p, Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(50));
+        let s = f.step(
+            &p,
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(50),
+        );
         assert_eq!(s.actions, vec![Action::Hide], "hide while the target moves");
-        let s = f.step(&p, Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400));
-        assert_eq!(s.actions, vec![Action::Place(t.rect), Action::Show], "back once settled");
+        let s = f.step(
+            &p,
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(400),
+        );
+        assert_eq!(
+            s.actions,
+            vec![Action::Place(t.rect), Action::Show],
+            "back once settled"
+        );
         // Workspace switch away and back.
-        let s = f.step(&p, Some(&t), Some(&pane), &mons(2, 0), false, t0 + Duration::from_millis(500));
+        let s = f.step(
+            &p,
+            Some(&t),
+            Some(&pane),
+            &mons(2, 0),
+            false,
+            t0 + Duration::from_millis(500),
+        );
         assert_eq!(s.actions, vec![Action::Hide]);
-        let s = f.step(&p, Some(&t), Some(&pane), &mons(2, 0), false, t0 + Duration::from_millis(600));
+        let s = f.step(
+            &p,
+            Some(&t),
+            Some(&pane),
+            &mons(2, 0),
+            false,
+            t0 + Duration::from_millis(600),
+        );
         assert!(s.actions.is_empty(), "hidden once, not every poll");
         // Hypr3DGlass active.
         let mut g = Follower::new();
@@ -573,7 +743,10 @@ mod tests {
         let t = win("0xt", 0.0, 0.0, 1);
         let pane = win("0xp", 0.0, 0.0, 1);
         let s = f.step(&policy(), None, Some(&pane), &mons(1, 0), false, t0);
-        assert_eq!((s.actions, s.outcome), (vec![Action::Close], Outcome::TargetGone));
+        assert_eq!(
+            (s.actions, s.outcome),
+            (vec![Action::Close], Outcome::TargetGone)
+        );
         let mut keep = policy();
         keep.close_with_target = false;
         let s = f.step(&keep, None, Some(&pane), &mons(1, 0), false, t0);
@@ -592,17 +765,52 @@ mod tests {
         let mut f = Follower::new();
         let t = win("0xt", 100.0, 100.0, 1);
         let mut pane = win("0xp", 0.0, 0.0, 1);
-        assert_eq!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0).actions.len(), 2);
+        assert_eq!(
+            f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0)
+                .actions
+                .len(),
+            2
+        );
         // The compositor has not applied the placement yet: no second dispatch within the settle time.
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(10));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(10),
+        );
         assert!(s.actions.is_empty(), "{:?}", s.actions);
         // Still off after the settle time (Wine or the operator moved it): placed again.
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(400),
+        );
         assert_eq!(s.actions, vec![Action::Place(t.rect)]);
-        pane.rect = Rect { x: 100.4, y: 99.6, w: 800.0, h: 600.0 };
+        pane.rect = Rect {
+            x: 100.4,
+            y: 99.6,
+            w: 800.0,
+            h: 600.0,
+        };
         f.reset();
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(900));
-        assert_eq!(s.actions, vec![Action::Place(t.rect), Action::Show], "reset re-sends geometry and visibility");
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(900),
+        );
+        assert_eq!(
+            s.actions,
+            vec![Action::Place(t.rect), Action::Show],
+            "reset re-sends geometry and visibility"
+        );
     }
 
     #[test]
@@ -612,11 +820,26 @@ mod tests {
         let t = win("0xt", 97.0, 141.0, 1);
         let mut pane = t.clone();
         pane.address = "0xp".into();
-        assert_eq!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0).actions, vec![Action::Place(t.rect), Action::Show]);
+        assert_eq!(
+            f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0)
+                .actions,
+            vec![Action::Place(t.rect), Action::Show]
+        );
         // The pane lands one pixel wider (the reported bug): drift, re-placed once the placement had time to land.
         pane.rect.w += 1.0;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400));
-        assert_eq!(s.actions, vec![Action::Place(t.rect)], "a 1 px wider pane is drift");
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(400),
+        );
+        assert_eq!(
+            s.actions,
+            vec![Action::Place(t.rect)],
+            "a 1 px wider pane is drift"
+        );
         // Negative control: the old 1.0 px tolerance calls these two rectangles equal (the bug).
         assert!(pane.rect.close_to(&t.rect) && !pane.rect.same(&t.rect));
     }
@@ -631,10 +854,27 @@ mod tests {
         f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
         // The target shrinks by one pixel (a drag ending one pixel short, a layout reflow): the pane follows at once.
         t.rect.w -= 1.0;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(500));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(500),
+        );
         assert_eq!(s.actions, vec![Action::Place(t.rect)]);
         pane.rect = t.rect;
-        assert!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(900)).actions.is_empty());
+        assert!(f
+            .step(
+                &policy(),
+                Some(&t),
+                Some(&pane),
+                &mons(1, 0),
+                false,
+                t0 + Duration::from_millis(900)
+            )
+            .actions
+            .is_empty());
     }
 
     #[test]
@@ -649,14 +889,35 @@ mod tests {
         pane.rect.w -= 1.0;
         let mut sent = 0;
         for i in 1..=40u64 {
-            let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400 * i));
-            sent += s.actions.iter().filter(|a| matches!(a, Action::Place(_))).count() as u32;
+            let s = f.step(
+                &policy(),
+                Some(&t),
+                Some(&pane),
+                &mons(1, 0),
+                false,
+                t0 + Duration::from_millis(400 * i),
+            );
+            sent += s
+                .actions
+                .iter()
+                .filter(|a| matches!(a, Action::Place(_)))
+                .count() as u32;
         }
-        assert_eq!(sent, PLACE_RETRIES, "re-sent PLACE_RETRIES times, then left alone (no loop)");
+        assert_eq!(
+            sent, PLACE_RETRIES,
+            "re-sent PLACE_RETRIES times, then left alone (no loop)"
+        );
         assert!(f.gave_up());
         // A new target rectangle gets a new budget.
         t.rect.x += 10.0;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_secs(20));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_secs(20),
+        );
         assert_eq!(s.actions, vec![Action::Place(t.rect)]);
         assert!(!f.gave_up());
     }
@@ -692,7 +953,10 @@ mod tests {
         }
         assert!(sent >= 1, "a 200 px drift after the give-up is corrected");
         assert!(sent <= PLACE_RETRIES + 1, "and still bounded: {sent}");
-        assert!(f.gave_up(), "back at the spot it cannot leave: given up again, no loop");
+        assert!(
+            f.gave_up(),
+            "back at the spot it cannot leave: given up again, no loop"
+        );
     }
 
     #[test]
@@ -701,17 +965,35 @@ mod tests {
         let mut f = Follower::new();
         let mut t = win("0xt", 100.0, 100.0, 1);
         let mut pane = win("0xp", 100.0, 100.0, 1);
-        assert_eq!(f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0).actions, vec![Action::Place(t.rect), Action::Show]);
+        assert_eq!(
+            f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0)
+                .actions,
+            vec![Action::Place(t.rect), Action::Show]
+        );
         // A setup-mode physical drag, not a compositor-driven reflow.
         f.set_dragging(true);
         pane.rect.x = 220.0;
         pane.rect.y = 180.0;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(50));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(50),
+        );
         assert_eq!(s.actions, vec![Action::PlaceTarget(pane.rect)]);
         assert_eq!(s.next, Duration::from_secs_f64(1.0 / 144.0));
         // Once the target catches up, no extra actions are dispatched.
         t.rect = pane.rect;
-        let s = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(60));
+        let s = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(60),
+        );
         assert!(s.actions.is_empty(), "{:?}", s.actions);
     }
 
@@ -722,11 +1004,33 @@ mod tests {
         let t = win("0xt", 100.0, 100.0, 1);
         let mut pane = win("0xp", 100.0, 100.0, 1);
         f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
-        f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(400));
-        pane.rect = Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
-        let step = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(800));
+        f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(400),
+        );
+        pane.rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+        };
+        let step = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(800),
+        );
         assert_eq!(step.actions, vec![Action::Place(t.rect)]);
-        assert!(!step.actions.iter().any(|a| matches!(a, Action::PlaceTarget(_))));
+        assert!(!step
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::PlaceTarget(_))));
     }
 
     #[test]
@@ -736,11 +1040,30 @@ mod tests {
         let t = win("0xt", 100.0, 100.0, 1);
         let mut pane = win("0xp", 100.0, 100.0, 1);
         f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0);
-        let hidden = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), true, t0 + Duration::from_millis(400));
+        let hidden = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            true,
+            t0 + Duration::from_millis(400),
+        );
         assert_eq!(hidden.actions, vec![Action::Hide]);
-        pane.rect = Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        pane.rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+        };
         f.set_dragging(true); // a held button across a transition is not a pane drag
-        let returned = f.step(&policy(), Some(&t), Some(&pane), &mons(1, 0), false, t0 + Duration::from_millis(800));
+        let returned = f.step(
+            &policy(),
+            Some(&t),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0 + Duration::from_millis(800),
+        );
         assert_eq!(returned.actions, vec![Action::Place(t.rect), Action::Show]);
     }
 
@@ -750,15 +1073,47 @@ mod tests {
         let mut f = Follower::new();
         let mut target = win("0xt", 100.0, 100.0, 1);
         let pane = win("0xp", 100.0, 100.0, 1);
-        f.step(&policy(), Some(&target), Some(&pane), &mons(1, 0), false, t0);
+        f.step(
+            &policy(),
+            Some(&target),
+            Some(&pane),
+            &mons(1, 0),
+            false,
+            t0,
+        );
         f.set_dragging(true);
-        target.rect = Rect { x: 42.0, y: 60.0, w: 1280.0, h: 720.0 };
-        let step = f.step(&policy(), Some(&target), Some(&pane), &mons(1, 0), true, t0 + Duration::from_millis(400));
+        target.rect = Rect {
+            x: 42.0,
+            y: 60.0,
+            w: 1280.0,
+            h: 720.0,
+        };
+        let step = f.step(
+            &policy(),
+            Some(&target),
+            Some(&pane),
+            &mons(1, 0),
+            true,
+            t0 + Duration::from_millis(400),
+        );
         assert_eq!(step.actions, vec![Action::Place(target.rect), Action::Hide]);
-        assert!(!step.actions.iter().any(|a| matches!(a, Action::PlaceTarget(_) | Action::Show)));
+        assert!(!step
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::PlaceTarget(_) | Action::Show)));
         target.workspace_id = 7;
-        let offscreen = f.step(&policy(), Some(&target), Some(&pane), &mons(1, 0), true, t0 + Duration::from_millis(800));
-        assert!(offscreen.actions.is_empty(), "off-workspace effects must stay dormant");
+        let offscreen = f.step(
+            &policy(),
+            Some(&target),
+            Some(&pane),
+            &mons(1, 0),
+            true,
+            t0 + Duration::from_millis(800),
+        );
+        assert!(
+            offscreen.actions.is_empty(),
+            "off-workspace effects must stay dormant"
+        );
     }
 
     #[test]
@@ -769,9 +1124,21 @@ mod tests {
         target.monitor = 1;
         let mut pane = win("0xp", 100.0, 100.0, 1);
         pane.pinned = true;
-        let monitors = vec![Mon { id: 1, active_ws: 3, special_ws: 0, refresh: 60.0 }];
+        let monitors = vec![Mon {
+            id: 1,
+            active_ws: 3,
+            special_ws: 0,
+            refresh: 60.0,
+        }];
         let step = f.step(&policy(), Some(&target), Some(&pane), &monitors, false, now);
-        assert_eq!(step.actions, vec![Action::Workspace("3".into()), Action::Place(target.rect), Action::Show]);
+        assert_eq!(
+            step.actions,
+            vec![
+                Action::Workspace("3".into()),
+                Action::Place(target.rect),
+                Action::Show
+            ]
+        );
         let lua = actions_lua(&pane.address, &target.address, &step.actions);
         assert!(lua.contains("workspace='3',follow=false,window=w"));
         assert!(!lua.contains("workspace='3',follow=false,window=t"));
@@ -779,29 +1146,76 @@ mod tests {
 
     #[test]
     fn lua_for_actions_tags_and_setup() {
-        let r = Rect { x: 10.4, y: 20.6, w: 800.0, h: 600.0 };
-        let l = actions_lua("0xab", "0xcd", &[Action::Place(r), Action::Show, Action::Hide, Action::Close]);
+        let r = Rect {
+            x: 10.4,
+            y: 20.6,
+            w: 800.0,
+            h: 600.0,
+        };
+        let l = actions_lua(
+            "0xab",
+            "0xcd",
+            &[Action::Place(r), Action::Show, Action::Hide, Action::Close],
+        );
         assert!(l.starts_with("local w='address:0xab'; "), "{l}");
-        assert!(l.contains("hl.dsp.window.resize({x=800, y=600, window=w})"), "{l}");
-        assert!(l.contains("hl.dsp.window.move({x=10, y=21, window=w})"), "{l}");
-        assert!(l.contains("value='0.85 override 0.85 override'") && l.contains("value='0 override'"), "{l}");
-        assert!(l.contains("pcall(function() hl.dispatch(hl.dsp.window.close({window=w})) end)"), "{l}");
+        assert!(
+            l.contains("hl.dsp.window.resize({x=800, y=600, window=w})"),
+            "{l}"
+        );
+        assert!(
+            l.contains("hl.dsp.window.move({x=10, y=21, window=w})"),
+            "{l}"
+        );
+        assert!(
+            l.contains("value='0.85 override 0.85 override'") && l.contains("value='0 override'"),
+            "{l}"
+        );
+        assert!(
+            l.contains("pcall(function() hl.dispatch(hl.dsp.window.close({window=w})) end)"),
+            "{l}"
+        );
         let lt = actions_lua("0xab", "0xcd", &[Action::PlaceTarget(r)]);
-        assert!(lt.contains("local t='address:0xcd'") && lt.contains("window=t"), "{lt}");
-        assert_eq!(passthrough_lua("0xab", "pt", true), "hl.dispatch(hl.dsp.window.tag({tag='+pt', window='address:0xab'}))");
+        assert!(
+            lt.contains("local t='address:0xcd'") && lt.contains("window=t"),
+            "{lt}"
+        );
+        assert_eq!(
+            passthrough_lua("0xab", "pt", true),
+            "hl.dispatch(hl.dsp.window.tag({tag='+pt', window='address:0xab'}))"
+        );
         assert!(passthrough_lua("0xab", "pt", false).contains("tag='-pt'"));
         let on = setup_lua("0xab", "pt", true, Some("m"));
-        assert!(on.starts_with("hl.dispatch(hl.dsp.window.tag({tag='-pt'") && on.contains("key='m'"), "{on}");
+        assert!(
+            on.starts_with("hl.dispatch(hl.dsp.window.tag({tag='-pt'") && on.contains("key='m'"),
+            "{on}"
+        );
         let off = setup_lua("0xab", "pt", false, Some("m"));
-        assert!(off.ends_with("tag='+pt', window='address:0xab'}))") && off.contains("send_key_state"), "{off}");
+        assert!(
+            off.ends_with("tag='+pt', window='address:0xab'}))") && off.contains("send_key_state"),
+            "{off}"
+        );
         // A press and a release, never hl.send_shortcut (it does not reach Wine).
         let k = key_press_lua("0xab", "n");
-        assert!(k.contains("state='down'") && k.contains("state='up'") && k.find("state='down'") < k.find("state='up'") && !k.contains("send_shortcut"), "{k}");
+        assert!(
+            k.contains("state='down'")
+                && k.contains("state='up'")
+                && k.find("state='down'") < k.find("state='up'")
+                && !k.contains("send_shortcut"),
+            "{k}"
+        );
         // Quotes in a shortcut cannot break out of the Lua string.
         assert!(setup_lua("0xab", "pt", true, Some("a'b")).contains("key='a\\'b'"));
         // The WineCap channel toggles the menu: no key is sent, the tag and focus still change.
         let on = setup_lua("0xab", "pt", true, None);
-        assert!(on.contains("tag='-pt'") && on.contains("hl.dsp.focus") && !on.contains("send_key_state"), "{on}");
-        assert_eq!(setup_lua("0xab", "pt", false, None), passthrough_lua("0xab", "pt", true));
+        assert!(
+            on.contains("tag='-pt'")
+                && on.contains("hl.dsp.focus")
+                && !on.contains("send_key_state"),
+            "{on}"
+        );
+        assert_eq!(
+            setup_lua("0xab", "pt", false, None),
+            passthrough_lua("0xab", "pt", true)
+        );
     }
 }

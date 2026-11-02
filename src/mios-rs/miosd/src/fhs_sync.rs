@@ -264,7 +264,8 @@ pub fn audit(root: &Path) -> FhsSyncStatus {
         findings.push("root .gitignore is absent".to_string());
     } else if let Ok(content) = std::fs::read_to_string(&gitignore) {
         if !content.lines().any(|l| l.trim() == "/*") {
-            findings.push("root .gitignore lacks mandatory '/*' block-all root boundary".to_string());
+            findings
+                .push("root .gitignore lacks mandatory '/*' block-all root boundary".to_string());
         }
         for ns in WINDOWS_HOST_NAMESPACES {
             let pat = format!("/{ns}");
@@ -376,7 +377,9 @@ pub fn sync_once(root: &Path, verbose: bool) -> FhsSyncStatus {
                     }
                     convergences += 1;
                     if verbose {
-                        println!("[mios-fhs-sync] reconciled root .gitignore host namespace exclusions");
+                        println!(
+                            "[mios-fhs-sync] reconciled root .gitignore host namespace exclusions"
+                        );
                     }
                 }
             }
@@ -390,7 +393,13 @@ pub fn sync_once(root: &Path, verbose: bool) -> FhsSyncStatus {
         let mnt_c = mnt_dir.join("c");
         if !mnt_c.exists() {
             let _ = Command::new("cmd")
-                .args(["/c", "mklink", "/J", mnt_c.to_str().unwrap_or("C:\\mnt\\c"), "C:\\"])
+                .args([
+                    "/c",
+                    "mklink",
+                    "/J",
+                    mnt_c.to_str().unwrap_or("C:\\mnt\\c"),
+                    "C:\\",
+                ])
                 .output();
             if mnt_c.exists() {
                 convergences += 1;
@@ -438,7 +447,10 @@ pub fn print_status(root: &Path) {
         }
     }
     let status = audit(root);
-    println!("{}", serde_json::to_string_pretty(&status).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&status).unwrap_or_default()
+    );
 }
 
 // ============================================================================
@@ -627,11 +639,7 @@ pub mod windows_service {
                 }
 
                 let handle = unsafe {
-                    RegisterServiceCtrlHandlerExW(
-                        wide_name.as_ptr(),
-                        Some(raw_handler::<F>),
-                        ctx,
-                    )
+                    RegisterServiceCtrlHandlerExW(wide_name.as_ptr(), Some(raw_handler::<F>), ctx)
                 };
 
                 if handle.is_null() {
@@ -958,11 +966,16 @@ fn parse_notify_records(buffer: &[u8], bytes_transferred: usize) -> Vec<(u32, St
         }
         let next_entry_offset =
             u32::from_ne_bytes(buffer[offset..offset + 4].try_into().unwrap_or_default()) as usize;
-        let action =
-            u32::from_ne_bytes(buffer[offset + 4..offset + 8].try_into().unwrap_or_default());
-        let file_name_length =
-            u32::from_ne_bytes(buffer[offset + 8..offset + 12].try_into().unwrap_or_default())
-                as usize;
+        let action = u32::from_ne_bytes(
+            buffer[offset + 4..offset + 8]
+                .try_into()
+                .unwrap_or_default(),
+        );
+        let file_name_length = u32::from_ne_bytes(
+            buffer[offset + 8..offset + 12]
+                .try_into()
+                .unwrap_or_default(),
+        ) as usize;
         let name_start = offset + 12;
         let name_end = name_start + file_name_length;
         if name_end <= bytes_transferred {
@@ -1050,8 +1063,7 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
             let mut request = WatchRequest::default();
             let mut start_time = Instant::now();
 
-            while !shutdown_clone.load(Ordering::SeqCst)
-                && !GLOBAL_SHUTDOWN.load(Ordering::SeqCst)
+            while !shutdown_clone.load(Ordering::SeqCst) && !GLOBAL_SHUTDOWN.load(Ordering::SeqCst)
             {
                 if request.should_issue() {
                     let mut bytes_returned = 0u32;
@@ -1137,8 +1149,7 @@ pub async fn run_realtime_daemon_loop(root: PathBuf, interval_secs: u64) {
         }
     });
 
-    let mut reconciliation_interval =
-        tokio::time::interval(Duration::from_secs(interval_secs));
+    let mut reconciliation_interval = tokio::time::interval(Duration::from_secs(interval_secs));
     reconciliation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut heartbeat = HeartbeatThrottle::new(HEARTBEAT_MIN_INTERVAL);
 
@@ -1206,15 +1217,25 @@ pub fn install_service(root: &Path) {
     let exe_str = exe.display().to_string();
 
     if cfg!(windows) {
-        println!("[mios-fhs-sync] Registering native Windows Service 'MiOS-FhsSync' via SCM API...");
+        println!(
+            "[mios-fhs-sync] Registering native Windows Service 'MiOS-FhsSync' via SCM API..."
+        );
         #[cfg(windows)]
         {
             use win32::*;
-            let scm = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS) };
+            let scm = unsafe {
+                OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS)
+            };
             if !scm.is_null() {
                 let service_name: Vec<u16> = "MiOS-FhsSync\0".encode_utf16().collect();
-                let display_name: Vec<u16> = "MiOS FHS Root Overlay Sync Service\0".encode_utf16().collect();
-                let bin_path = format!("\"{}\" fhs-sync --daemon --root \"{}\"", exe_str, root.display());
+                let display_name: Vec<u16> = "MiOS FHS Root Overlay Sync Service\0"
+                    .encode_utf16()
+                    .collect();
+                let bin_path = format!(
+                    "\"{}\" fhs-sync --daemon --root \"{}\"",
+                    exe_str,
+                    root.display()
+                );
                 let bin_path_wide: Vec<u16> = format!("{bin_path}\0").encode_utf16().collect();
 
                 let service = unsafe {
@@ -1259,14 +1280,27 @@ pub fn install_service(root: &Path) {
         }
 
         // Secondary fallback via sc.exe if direct SCM requires elevated tokens
-        let bin_path = format!("\"{exe_str}\" fhs-sync --daemon --root \"{}\"", root.display());
+        let bin_path = format!(
+            "\"{exe_str}\" fhs-sync --daemon --root \"{}\"",
+            root.display()
+        );
         let _ = Command::new("sc.exe")
-            .args(["create", "MiOS-FhsSync", &format!("binPath={bin_path}"), "start=", "auto", "DisplayName=", "MiOS FHS Root Overlay Sync Service"])
+            .args([
+                "create",
+                "MiOS-FhsSync",
+                &format!("binPath={bin_path}"),
+                "start=",
+                "auto",
+                "DisplayName=",
+                "MiOS FHS Root Overlay Sync Service",
+            ])
             .status();
         let _ = Command::new("sc.exe")
             .args(["description", "MiOS-FhsSync", "Maintains runtime Linux FHS root overlay and Windows host namespace isolation across MiOS system domains."])
             .status();
-        let _ = Command::new("sc.exe").args(["start", "MiOS-FhsSync"]).status();
+        let _ = Command::new("sc.exe")
+            .args(["start", "MiOS-FhsSync"])
+            .status();
     } else {
         println!("[mios-fhs-sync] Installing systemd unit 'mios-fhs-sync.service'...");
         let unit_content = format!(
@@ -1309,10 +1343,13 @@ pub fn uninstall_service() {
         #[cfg(windows)]
         {
             use win32::*;
-            let scm = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS) };
+            let scm = unsafe {
+                OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS)
+            };
             if !scm.is_null() {
                 let service_name: Vec<u16> = "MiOS-FhsSync\0".encode_utf16().collect();
-                let service = unsafe { OpenServiceW(scm, service_name.as_ptr(), SERVICE_ALL_ACCESS) };
+                let service =
+                    unsafe { OpenServiceW(scm, service_name.as_ptr(), SERVICE_ALL_ACCESS) };
                 if !service.is_null() {
                     let mut status: SERVICE_STATUS = unsafe { std::mem::zeroed() };
                     unsafe {
@@ -1327,14 +1364,20 @@ pub fn uninstall_service() {
                 unsafe { CloseServiceHandle(scm) };
             }
         }
-        let _ = Command::new("sc.exe").args(["stop", "MiOS-FhsSync"]).status();
-        let _ = Command::new("sc.exe").args(["delete", "MiOS-FhsSync"]).status();
+        let _ = Command::new("sc.exe")
+            .args(["stop", "MiOS-FhsSync"])
+            .status();
+        let _ = Command::new("sc.exe")
+            .args(["delete", "MiOS-FhsSync"])
+            .status();
         let _ = Command::new("schtasks.exe")
             .args(["/delete", "/tn", "MiOS\\FhsSync", "/f"])
             .status();
         println!("[mios-fhs-sync] Windows service and tasks removed.");
     } else {
-        println!("[mios-fhs-sync] Disabling and removing systemd service 'mios-fhs-sync.service'...");
+        println!(
+            "[mios-fhs-sync] Disabling and removing systemd service 'mios-fhs-sync.service'..."
+        );
         let _ = Command::new("systemctl")
             .args(["disable", "--now", "mios-fhs-sync.service"])
             .status();
@@ -1417,15 +1460,26 @@ mod tests {
         let t0 = Instant::now();
         let mut h = HeartbeatThrottle::new(Duration::from_secs(1));
         assert!(h.due(t0), "the first event writes");
-        assert!(!h.due(t0 + Duration::from_millis(2)), "a burst does not write again");
+        assert!(
+            !h.due(t0 + Duration::from_millis(2)),
+            "a burst does not write again"
+        );
         assert!(!h.due(t0 + Duration::from_millis(999)));
-        assert!(h.due(t0 + Duration::from_millis(1000)), "the interval has passed");
+        assert!(
+            h.due(t0 + Duration::from_millis(1000)),
+            "the interval has passed"
+        );
         h.wrote(t0 + Duration::from_millis(1500));
-        assert!(!h.due(t0 + Duration::from_millis(2000)), "a tick write restarts the interval");
+        assert!(
+            !h.due(t0 + Duration::from_millis(2000)),
+            "a tick write restarts the interval"
+        );
         assert!(h.due(t0 + Duration::from_millis(2600)));
         // 500 events in one second (the measured self-event rate) write at most twice
         let mut h = HeartbeatThrottle::new(HEARTBEAT_MIN_INTERVAL);
-        let writes = (0..500).filter(|i| h.due(t0 + Duration::from_millis(i * 2))).count();
+        let writes = (0..500)
+            .filter(|i| h.due(t0 + Duration::from_millis(i * 2)))
+            .count();
         assert_eq!(writes, 1);
     }
 

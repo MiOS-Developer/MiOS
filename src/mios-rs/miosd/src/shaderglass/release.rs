@@ -49,7 +49,11 @@ pub fn github_repo(url: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{url}: not an https://github.com/ repository"))?;
     let rest = rest.trim_end_matches('/').trim_end_matches(".git");
     let parts: Vec<&str> = rest.split('/').collect();
-    let ok = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c));
+    let ok = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    };
     if parts.len() != 2 || !ok(parts[0]) || !ok(parts[1]) {
         return Err(format!("{url}: not a github.com owner/repo URL"));
     }
@@ -60,28 +64,56 @@ pub fn github_repo(url: &str) -> Result<String, String> {
 /// `pattern`, which must carry GitHub's sha256 digest and download from this repository's release URL.
 /// "Latest + fail loudly": a newest release without such an asset is an error, never a silent fallback
 /// to an older one.
-pub fn select(releases: &Json, channel: &Channel, pattern: &Regex, repo: &str) -> Result<Release, String> {
-    let list = releases.as_array().ok_or("releases: expected a JSON array (GitHub /releases)")?;
+pub fn select(
+    releases: &Json,
+    channel: &Channel,
+    pattern: &Regex,
+    repo: &str,
+) -> Result<Release, String> {
+    let list = releases
+        .as_array()
+        .ok_or("releases: expected a JSON array (GitHub /releases)")?;
     let newest = list
         .iter()
         .filter(|r| r.get("draft").and_then(Json::as_bool) != Some(true))
-        .filter(|r| *channel == Channel::Newest || r.get("prerelease").and_then(Json::as_bool) == Some(false))
-        .filter(|r| r.get("tag_name").and_then(Json::as_str).is_some_and(|t| !t.is_empty()))
+        .filter(|r| {
+            *channel == Channel::Newest
+                || r.get("prerelease").and_then(Json::as_bool) == Some(false)
+        })
+        .filter(|r| {
+            r.get("tag_name")
+                .and_then(Json::as_str)
+                .is_some_and(|t| !t.is_empty())
+        })
         .max_by(|a, b| {
-            let p = |r: &Json| r.get("published_at").and_then(Json::as_str).unwrap_or("").to_owned();
+            let p = |r: &Json| {
+                r.get("published_at")
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            };
             p(a).cmp(&p(b))
         })
         .ok_or_else(|| format!("{repo}: no published release in channel {channel:?}"))?;
     let tag = newest["tag_name"].as_str().unwrap_or_default().to_owned();
-    if !tag.bytes().all(|c| c.is_ascii_alphanumeric() || b"-_.+".contains(&c)) {
-        return Err(format!("{repo}: release tag {tag:?} has unexpected characters"));
+    if !tag
+        .bytes()
+        .all(|c| c.is_ascii_alphanumeric() || b"-_.+".contains(&c))
+    {
+        return Err(format!(
+            "{repo}: release tag {tag:?} has unexpected characters"
+        ));
     }
     let matching: Vec<&Json> = newest
         .get("assets")
         .and_then(Json::as_array)
         .into_iter()
         .flatten()
-        .filter(|a| a.get("name").and_then(Json::as_str).is_some_and(|n| pattern.is_match(n)))
+        .filter(|a| {
+            a.get("name")
+                .and_then(Json::as_str)
+                .is_some_and(|n| pattern.is_match(n))
+        })
         .collect();
     let [a] = matching.as_slice() else {
         return Err(format!(
@@ -98,17 +130,39 @@ pub fn select(releases: &Json, channel: &Channel, pattern: &Regex, repo: &str) -
         .filter(|d| d.len() == 64 && d.bytes().all(|c| c.is_ascii_hexdigit()))
         .map(str::to_ascii_lowercase)
         .ok_or_else(|| format!("{repo} {tag}: GitHub publishes no sha256 digest for {name}; refusing to download it"))?;
-    let url = a.get("browser_download_url").and_then(Json::as_str).unwrap_or_default().to_owned();
+    let url = a
+        .get("browser_download_url")
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let expected = format!("https://github.com/{repo}/releases/download/{tag}/");
     if !url.starts_with(&expected) || url.len() == expected.len() || url.contains("..") {
-        return Err(format!("{repo} {tag}: asset URL {url:?} is not under {expected}"));
+        return Err(format!(
+            "{repo} {tag}: asset URL {url:?} is not under {expected}"
+        ));
     }
     Ok(Release {
         tag,
-        published_at: newest.get("published_at").and_then(Json::as_str).unwrap_or("").to_owned(),
-        prerelease: newest.get("prerelease").and_then(Json::as_bool).unwrap_or(false),
-        html_url: newest.get("html_url").and_then(Json::as_str).unwrap_or("").to_owned(),
-        asset: Asset { name, url, size: a.get("size").and_then(Json::as_u64).unwrap_or(0), sha256 },
+        published_at: newest
+            .get("published_at")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        prerelease: newest
+            .get("prerelease")
+            .and_then(Json::as_bool)
+            .unwrap_or(false),
+        html_url: newest
+            .get("html_url")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        asset: Asset {
+            name,
+            url,
+            size: a.get("size").and_then(Json::as_u64).unwrap_or(0),
+            sha256,
+        },
     })
 }
 
@@ -120,9 +174,23 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 fn curl(url: &str, out: &Path, api: bool) -> Result<(), String> {
     let mut c = Command::new("curl");
-    c.args(["-fsSL", "--proto", "=https", "--tlsv1.2", "--retry", "3", "--connect-timeout", "20"]);
+    c.args([
+        "-fsSL",
+        "--proto",
+        "=https",
+        "--tlsv1.2",
+        "--retry",
+        "3",
+        "--connect-timeout",
+        "20",
+    ]);
     if api {
-        c.args(["-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28"]);
+        c.args([
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "X-GitHub-Api-Version: 2022-11-28",
+        ]);
     }
     let st = c
         .arg("-o")
@@ -141,20 +209,37 @@ fn curl(url: &str, out: &Path, api: bool) -> Result<(), String> {
 pub fn fetch_releases(cfg: &Config, work: &Path) -> Result<Json, String> {
     let repo = github_repo(&cfg.source_repository)?;
     let file = work.join("releases.json");
-    curl(&format!("{}/repos/{repo}/releases?per_page=30", cfg.github_api.trim_end_matches('/')), &file, true)?;
-    serde_json::from_slice(&std::fs::read(&file).map_err(|e| e.to_string())?).map_err(|e| format!("releases JSON: {e}"))
+    curl(
+        &format!(
+            "{}/repos/{repo}/releases?per_page=30",
+            cfg.github_api.trim_end_matches('/')
+        ),
+        &file,
+        true,
+    )?;
+    serde_json::from_slice(&std::fs::read(&file).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("releases JSON: {e}"))
 }
 
 /// The installed tag's peeled commit as upstream advertises it.
 fn advertised_commit(repo_url: &str, tag: &str) -> Result<String, String> {
     let out = Command::new("git")
-        .args(["ls-remote", repo_url, &format!("refs/tags/{tag}^{{}}"), &format!("refs/tags/{tag}")])
+        .args([
+            "ls-remote",
+            repo_url,
+            &format!("refs/tags/{tag}^{{}}"),
+            &format!("refs/tags/{tag}"),
+        ])
         .stderr(Stdio::inherit())
         .output()
         .map_err(|e| format!("git ls-remote: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
-    let peeled = text.lines().find(|l| l.ends_with(&format!("refs/tags/{tag}^{{}}")));
-    let line = peeled.or_else(|| text.lines().next()).ok_or_else(|| format!("{repo_url}: tag {tag} not advertised"))?;
+    let peeled = text
+        .lines()
+        .find(|l| l.ends_with(&format!("refs/tags/{tag}^{{}}")));
+    let line = peeled
+        .or_else(|| text.lines().next())
+        .ok_or_else(|| format!("{repo_url}: tag {tag} not advertised"))?;
     let sha = line.split_whitespace().next().unwrap_or("");
     if sha.len() != 40 || !sha.bytes().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("{repo_url}: bad commit id for {tag}"));
@@ -163,7 +248,10 @@ fn advertised_commit(repo_url: &str, tag: &str) -> Result<String, String> {
 }
 
 fn run(cmd: &mut Command, what: &str) -> Result<String, String> {
-    let out = cmd.stderr(Stdio::inherit()).output().map_err(|e| format!("{what}: {e}"))?;
+    let out = cmd
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| format!("{what}: {e}"))?;
     if !out.status.success() {
         return Err(format!("{what} failed ({})", out.status));
     }
@@ -176,12 +264,16 @@ pub fn check_winecap(data: &[u8]) -> Result<(), String> {
     if data.len() < 64 || &data[..4] != b"\x7fELF" || data[4] != 2 || data[5] != 1 {
         return Err("WineCap.dll is not a 64-bit little-endian ELF object".into());
     }
-    if u16::from_le_bytes([data[16], data[17]]) != 3 || u16::from_le_bytes([data[18], data[19]]) != 62 {
+    if u16::from_le_bytes([data[16], data[17]]) != 3
+        || u16::from_le_bytes([data[18], data[19]]) != 62
+    {
         return Err("WineCap.dll is not an x86-64 shared object".into());
     }
     let has = |needle: &[u8]| data.windows(needle.len()).any(|w| w == needle);
     if !has(b"__wine_spec_nt_header") {
-        return Err("WineCap.dll does not export __wine_spec_nt_header (not a Winelib library)".into());
+        return Err(
+            "WineCap.dll does not export __wine_spec_nt_header (not a Winelib library)".into(),
+        );
     }
     if !has(b"libpipewire-0.3.so") {
         return Err("WineCap.dll does not link libpipewire-0.3".into());
@@ -199,7 +291,10 @@ pub fn fedora_release(os_release: &str) -> Result<String, String> {
             .map(|v| v.trim().trim_matches('"').to_owned())
     };
     let digits = |v: &str| !v.is_empty() && v.bytes().all(|c| c.is_ascii_digit());
-    if let Some(n) = field("PLATFORM_ID").and_then(|p| p.strip_prefix("platform:f").map(str::to_owned)).filter(|n| digits(n)) {
+    if let Some(n) = field("PLATFORM_ID")
+        .and_then(|p| p.strip_prefix("platform:f").map(str::to_owned))
+        .filter(|n| digits(n))
+    {
         return Ok(n);
     }
     if field("ID").as_deref() == Some("fedora") {
@@ -219,7 +314,12 @@ fn host_fedora_release() -> Result<String, String> {
 
 /// Clone the tag (commit checked against ls-remote), apply the MiOS patches (failing loudly), build
 /// WineCap/ in the builder image. Returns (WineCap.dll bytes, commit, toolchain lines).
-fn build_winecap(cfg: &Config, tag: &str, base: &Path, work: &Path) -> Result<(Vec<u8>, String, Vec<String>), String> {
+fn build_winecap(
+    cfg: &Config,
+    tag: &str,
+    base: &Path,
+    work: &Path,
+) -> Result<(Vec<u8>, String, Vec<String>), String> {
     if unsafe { libc::geteuid() } == 0 {
         return Err("WineCap is built by rootless podman: run `miosd shaderglass install` as the desktop user (it stages the tree and prints the root step)".into());
     }
@@ -228,56 +328,134 @@ fn build_winecap(cfg: &Config, tag: &str, base: &Path, work: &Path) -> Result<(V
     let src = work.join("src");
     run(
         Command::new("git")
-            .args(["-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1", "--branch", tag])
+            .args([
+                "-c",
+                "advice.detachedHead=false",
+                "clone",
+                "--quiet",
+                "--depth",
+                "1",
+                "--branch",
+                tag,
+            ])
             .arg(&cfg.source_repository)
             .arg(&src),
         "git clone",
     )?;
-    let got = run(Command::new("git").arg("-C").arg(&src).args(["rev-parse", "HEAD"]), "git rev-parse")?;
+    let got = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&src)
+            .args(["rev-parse", "HEAD"]),
+        "git rev-parse",
+    )?;
     if got.trim() != want {
-        return Err(format!("INTEGRITY: cloned {} but upstream advertises {want} for {tag}", got.trim()));
+        return Err(format!(
+            "INTEGRITY: cloned {} but upstream advertises {want} for {tag}",
+            got.trim()
+        ));
     }
     for p in &cfg.winecap.patches {
         let path = super::mios_root().join(p);
-        let check = Command::new("git").arg("-C").arg(&src).args(["apply", "--check"]).arg(&path).status();
+        let check = Command::new("git")
+            .arg("-C")
+            .arg(&src)
+            .args(["apply", "--check"])
+            .arg(&path)
+            .status();
         if !check.is_ok_and(|s| s.success()) {
-            return Err(format!("MiOS patch {p} no longer applies to ShaderGlass {tag} ({want}): rebase it"));
+            return Err(format!(
+                "MiOS patch {p} no longer applies to ShaderGlass {tag} ({want}): rebase it"
+            ));
         }
-        run(Command::new("git").arg("-C").arg(&src).arg("apply").arg(&path), "git apply")?;
+        run(
+            Command::new("git")
+                .arg("-C")
+                .arg(&src)
+                .arg("apply")
+                .arg(&path),
+            "git apply",
+        )?;
     }
-    let base_image = b.base_image.replace("{fedora_release}", &host_fedora_release()?);
+    let base_image = b
+        .base_image
+        .replace("{fedora_release}", &host_fedora_release()?);
     let store = base.join("storage");
     let runroot = super::runtime_root()?.join("winecap-build");
     std::fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
     super::ensure_private_dir(&runroot)?;
-    let lock = heavy_lock(std::env::var("MIOS_HEAVY_LOCK").ok().as_deref(), &b.heavy_lock, base);
+    let lock = heavy_lock(
+        std::env::var("MIOS_HEAVY_LOCK").ok().as_deref(),
+        &b.heavy_lock,
+        base,
+    );
     let scoped = |args: &[String]| -> Command {
         let mut c = Command::new("flock");
         c.arg(&lock)
             .args(["systemd-run", "--user", "--scope", "--quiet", "--collect"])
-            .args(["-p", &format!("MemoryMax={}", b.scope_memory_max), "-p", "MemorySwapMax=0", "--"])
-            .args(["env", "-u", "CONTAINER_HOST", "-u", "DOCKER_HOST", "podman", "--root"])
+            .args([
+                "-p",
+                &format!("MemoryMax={}", b.scope_memory_max),
+                "-p",
+                "MemorySwapMax=0",
+                "--",
+            ])
+            .args([
+                "env",
+                "-u",
+                "CONTAINER_HOST",
+                "-u",
+                "DOCKER_HOST",
+                "podman",
+                "--root",
+            ])
             .arg(&store)
             .arg("--runroot")
             .arg(&runroot)
             .args(args);
         c
     };
-    let mut build: Vec<String> = vec!["build".into(), "--layers".into(), "--memory".into(), b.container_memory.clone()];
-    build.extend(["--build-arg".into(), format!("MIOS_WINECAP_BUILD_BASE={base_image}")]);
-    build.extend(["--build-arg".into(), format!("MIOS_WINECAP_BUILD_PACKAGES={}", b.packages.join(" "))]);
-    build.extend(["-t".into(), b.image.clone(), b.containerfile_dir.display().to_string()]);
+    let mut build: Vec<String> = vec![
+        "build".into(),
+        "--layers".into(),
+        "--memory".into(),
+        b.container_memory.clone(),
+    ];
+    build.extend([
+        "--build-arg".into(),
+        format!("MIOS_WINECAP_BUILD_BASE={base_image}"),
+    ]);
+    build.extend([
+        "--build-arg".into(),
+        format!("MIOS_WINECAP_BUILD_PACKAGES={}", b.packages.join(" ")),
+    ]);
+    build.extend([
+        "-t".into(),
+        b.image.clone(),
+        b.containerfile_dir.display().to_string(),
+    ]);
     run(&mut scoped(&build), "podman build (WineCap builder)")?;
     let wc = src.join("WineCap");
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
     let runargs: Vec<String> = vec![
-        "run".into(), "--rm".into(), "--network=none".into(), "--memory".into(), b.container_memory.clone(),
-        "--cpus".into(), b.container_cpus.to_string(), "--userns=keep-id".into(), "--user".into(), format!("{uid}:{gid}"),
-        "-v".into(), format!("{}:/src:Z", wc.display()), b.image.clone(),
+        "run".into(),
+        "--rm".into(),
+        "--network=none".into(),
+        "--memory".into(),
+        b.container_memory.clone(),
+        "--cpus".into(),
+        b.container_cpus.to_string(),
+        "--userns=keep-id".into(),
+        "--user".into(),
+        format!("{uid}:{gid}"),
+        "-v".into(),
+        format!("{}:/src:Z", wc.display()),
+        b.image.clone(),
     ];
     let log = run(&mut scoped(&runargs), "WineCap make (builder)")?;
-    let dll = std::fs::read(wc.join("WineCap.dll")).map_err(|e| format!("built WineCap.dll: {e}"))?;
+    let dll =
+        std::fs::read(wc.join("WineCap.dll")).map_err(|e| format!("built WineCap.dll: {e}"))?;
     let toolchain = log
         .lines()
         .filter(|l| l.starts_with("winegcc: ") || l.starts_with("pipewire: "))
@@ -296,7 +474,10 @@ pub fn heavy_lock(env: Option<&str>, ssot: &str, work_root: &Path) -> String {
         return ssot.to_owned();
     }
     let fallback = work_root.join("heavy.lock");
-    eprintln!("[miosd shaderglass] {ssot}: no such directory on this host; serializing on {}", fallback.display());
+    eprintln!(
+        "[miosd shaderglass] {ssot}: no such directory on this host; serializing on {}",
+        fallback.display()
+    );
     fallback.display().to_string()
 }
 
@@ -328,7 +509,11 @@ fn work_base(cfg: &Config) -> PathBuf {
 
 /// A fresh run directory under `base`.
 fn work_dir(base: &Path) -> Result<PathBuf, String> {
-    let dir = base.join("stage").join(format!("run-{}-{}", super::picker::now_ms(), std::process::id()));
+    let dir = base.join("stage").join(format!(
+        "run-{}-{}",
+        super::picker::now_ms(),
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     Ok(dir)
 }
@@ -336,7 +521,11 @@ fn work_dir(base: &Path) -> Result<PathBuf, String> {
 /// Whether this process can create files in `dir` (probe file created and removed).
 fn writable(dir: &Path) -> bool {
     let probe = dir.join(format!(".miosd-shaderglass-probe-{}", std::process::id()));
-    let ok = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe).is_ok();
+    let ok = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .is_ok();
     if ok {
         let _ = std::fs::remove_file(&probe);
     }
@@ -347,8 +536,11 @@ fn write_file(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     let mut f = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    f.write_all(data).and_then(|_| f.sync_all()).map_err(|e| format!("{}: {e}", path.display()))?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(|e| format!("{}: {e}", path.display()))
+    f.write_all(data)
+        .and_then(|_| f.sync_all())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Resolve, verify and stage (and install when possible). Returns a human summary.
@@ -359,8 +551,10 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
     let base = work_base(cfg);
     let work = work_dir(&base)?;
     let releases = match &o.releases_json {
-        Some(p) => serde_json::from_slice(&std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?)
-            .map_err(|e| format!("{}: {e}", p.display()))?,
+        Some(p) => {
+            serde_json::from_slice(&std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?)
+                .map_err(|e| format!("{}: {e}", p.display()))?
+        }
         None => fetch_releases(cfg, &work)?,
     };
     let rel = select(&releases, &channel, &cfg.asset_pattern, &repo)?;
@@ -374,7 +568,8 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
             .patches
             .iter()
             .map(|p| {
-                let data = std::fs::read(super::mios_root().join(p)).map_err(|e| format!("{p}: {e}"))?;
+                let data =
+                    std::fs::read(super::mios_root().join(p)).map_err(|e| format!("{p}: {e}"))?;
                 Ok(json!({"path": p, "sha256": sha256_hex(&data)}))
             })
             .collect::<Result<_, String>>()?
@@ -382,14 +577,21 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
         Vec::new()
     };
     if !o.force {
-        let installed = std::fs::read(dest.join("INSTALLED.json")).ok().and_then(|b| serde_json::from_slice::<Json>(&b).ok());
+        let installed = std::fs::read(dest.join("INSTALLED.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Json>(&b).ok());
         if let Some(i) = installed {
             let same = i.pointer("/release/tag").and_then(Json::as_str) == Some(rel.tag.as_str())
-                && i.pointer("/release/asset/sha256").and_then(Json::as_str) == Some(rel.asset.sha256.as_str())
+                && i.pointer("/release/asset/sha256").and_then(Json::as_str)
+                    == Some(rel.asset.sha256.as_str())
                 && i.pointer("/winecap/source").and_then(Json::as_str) == Some(source.as_str())
                 && i.pointer("/winecap/patches") == Some(&Json::Array(patches.clone()));
             if same {
-                return Ok(format!("ShaderGlass {} is already installed at {} (use --force to reinstall)", rel.tag, dest.display()));
+                return Ok(format!(
+                    "ShaderGlass {} is already installed at {} (use --force to reinstall)",
+                    rel.tag,
+                    dest.display()
+                ));
             }
         }
     }
@@ -413,7 +615,10 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
         if o.archive.is_none() {
             let _ = std::fs::remove_file(&archive);
         }
-        return Err(format!("INTEGRITY: {} sha256 {got} != GitHub's {}", rel.asset.name, rel.asset.sha256));
+        return Err(format!(
+            "INTEGRITY: {} sha256 {got} != GitHub's {}",
+            rel.asset.name, rel.asset.sha256
+        ));
     }
     let list = zip::entries(&data)?;
     let tree = work.join("tree");
@@ -433,7 +638,11 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
         }
         if name == "LICENSE" {
             let text = String::from_utf8_lossy(&body);
-            if let Some(m) = cfg.license_markers.iter().find(|m| !text.contains(m.as_str())) {
+            if let Some(m) = cfg
+                .license_markers
+                .iter()
+                .find(|m| !text.contains(m.as_str()))
+            {
                 return Err(format!("LICENSE no longer contains {m:?}; refusing to install (review the licence change)"));
             }
         }
@@ -441,10 +650,23 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
         files.insert(name.clone(), json!(sha256_hex(&body)));
     }
     let (dll, commit, toolchain) = match (&source, &o.winecap) {
-        (_, Some(p)) => (std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?, Json::Null, vec!["--winecap supplied".to_owned()]),
+        (_, Some(p)) => (
+            std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?,
+            Json::Null,
+            vec!["--winecap supplied".to_owned()],
+        ),
         (WinecapSource::Release, None) => {
-            let e = zip::find(&list, "WineCap.dll")?.ok_or_else(|| format!("{} ships no WineCap.dll (set winecap.source = \"build\")", rel.asset.name))?;
-            (zip::read(&data, e)?, Json::Null, vec![format!("prebuilt in {}", rel.asset.name)])
+            let e = zip::find(&list, "WineCap.dll")?.ok_or_else(|| {
+                format!(
+                    "{} ships no WineCap.dll (set winecap.source = \"build\")",
+                    rel.asset.name
+                )
+            })?;
+            (
+                zip::read(&data, e)?,
+                Json::Null,
+                vec![format!("prebuilt in {}", rel.asset.name)],
+            )
         }
         _ => {
             let (d, c, t) = build_winecap(cfg, &rel.tag, &base, &work)?;
@@ -464,9 +686,17 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
         "winecap": {"source": source.as_str(), "patches": patches, "toolchain": toolchain},
         "files": files,
     });
-    write_file(&tree.join("INSTALLED.json"), &serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?, 0o644)?;
+    write_file(
+        &tree.join("INSTALLED.json"),
+        &serde_json::to_vec_pretty(&record).map_err(|e| e.to_string())?,
+        0o644,
+    )?;
     if o.stage_only {
-        return Ok(format!("ShaderGlass {} staged at {}", rel.tag, tree.display()));
+        return Ok(format!(
+            "ShaderGlass {} staged at {}",
+            rel.tag,
+            tree.display()
+        ));
     }
     let parent = dest.parent().ok_or("install_dir has no parent")?;
     if !writable(parent) {
@@ -484,17 +714,26 @@ pub fn install(cfg: &Config, o: &Opts) -> Result<String, String> {
 /// Re-verify a staged tree against its INSTALLED.json and swap it into `dest` (previous tree kept as .prev).
 pub fn install_stage(tree: &Path, dest: &Path) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
-    let record: Json = serde_json::from_slice(&std::fs::read(tree.join("INSTALLED.json")).map_err(|e| format!("stage: {e}"))?)
-        .map_err(|e| format!("stage INSTALLED.json: {e}"))?;
-    let files = record.get("files").and_then(Json::as_object).ok_or("stage INSTALLED.json has no files")?;
+    let record: Json = serde_json::from_slice(
+        &std::fs::read(tree.join("INSTALLED.json")).map_err(|e| format!("stage: {e}"))?,
+    )
+    .map_err(|e| format!("stage INSTALLED.json: {e}"))?;
+    let files = record
+        .get("files")
+        .and_then(Json::as_object)
+        .ok_or("stage INSTALLED.json has no files")?;
     if !files.contains_key("WineCap.dll") {
         return Err("stage has no WineCap.dll".into());
     }
     let parent = dest.parent().ok_or("install_dir has no parent")?;
-    let base = dest.file_name().and_then(|n| n.to_str()).ok_or("install_dir has no name")?;
+    let base = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("install_dir has no name")?;
     let new = parent.join(format!(".{base}.new-{}", std::process::id()));
     std::fs::create_dir_all(&new).map_err(|e| format!("{}: {e}", new.display()))?;
-    std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
     let mut names: Vec<&String> = files.keys().collect();
     names.sort();
     for name in names {
@@ -504,17 +743,24 @@ pub fn install_stage(tree: &Path, dest: &Path) -> Result<String, String> {
         let data = std::fs::read(tree.join(name)).map_err(|e| format!("stage {name}: {e}"))?;
         if Some(sha256_hex(&data).as_str()) != files[name].as_str() {
             let _ = std::fs::remove_dir_all(&new);
-            return Err(format!("INTEGRITY: staged {name} does not match its INSTALLED.json digest"));
+            return Err(format!(
+                "INTEGRITY: staged {name} does not match its INSTALLED.json digest"
+            ));
         }
         write_file(&new.join(name), &data, 0o644)?;
     }
-    write_file(&new.join("INSTALLED.json"), &std::fs::read(tree.join("INSTALLED.json")).map_err(|e| e.to_string())?, 0o644)?;
+    write_file(
+        &new.join("INSTALLED.json"),
+        &std::fs::read(tree.join("INSTALLED.json")).map_err(|e| e.to_string())?,
+        0o644,
+    )?;
     let prev = parent.join(format!("{base}.prev"));
     if dest.exists() {
         if prev.exists() {
             std::fs::remove_dir_all(&prev).map_err(|e| format!("{}: {e}", prev.display()))?;
         }
-        std::fs::rename(dest, &prev).map_err(|e| format!("{} -> {}: {e}", dest.display(), prev.display()))?;
+        std::fs::rename(dest, &prev)
+            .map_err(|e| format!("{} -> {}: {e}", dest.display(), prev.display()))?;
     }
     if let Err(e) = std::fs::rename(&new, dest) {
         if prev.exists() {
@@ -524,9 +770,16 @@ pub fn install_stage(tree: &Path, dest: &Path) -> Result<String, String> {
     }
     Ok(format!(
         "installed ShaderGlass {} into {} (previous tree: {})",
-        record.pointer("/release/tag").and_then(Json::as_str).unwrap_or("?"),
+        record
+            .pointer("/release/tag")
+            .and_then(Json::as_str)
+            .unwrap_or("?"),
         dest.display(),
-        if prev.exists() { prev.display().to_string() } else { "none".into() }
+        if prev.exists() {
+            prev.display().to_string()
+        } else {
+            "none".into()
+        }
     ))
 }
 
@@ -565,31 +818,68 @@ mod tests {
     #[test]
     fn newest_takes_prereleases_stable_does_not_drafts_never() {
         let n = select(&fixture(), &Channel::Newest, &pattern(), REPO).unwrap();
-        assert_eq!((n.tag.as_str(), n.prerelease, n.asset.name.as_str()), ("v1.3.1", true, "ShaderGlass-1.3.1-beta-win-x64.zip"));
-        assert_eq!(n.asset.sha256, "1677879ad8c20405e1022a26679bda9af07ee11d99a45c0734760c4bd88c70d5");
+        assert_eq!(
+            (n.tag.as_str(), n.prerelease, n.asset.name.as_str()),
+            ("v1.3.1", true, "ShaderGlass-1.3.1-beta-win-x64.zip")
+        );
+        assert_eq!(
+            n.asset.sha256,
+            "1677879ad8c20405e1022a26679bda9af07ee11d99a45c0734760c4bd88c70d5"
+        );
         let s = select(&fixture(), &Channel::Stable, &pattern(), REPO).unwrap();
         assert_eq!(s.tag, "v1.3.0", "stable skips the pre-release");
-        assert!(s.asset.url.starts_with("https://github.com/mausimus/ShaderGlass/releases/download/v1.3.0/"));
+        assert!(s
+            .asset
+            .url
+            .starts_with("https://github.com/mausimus/ShaderGlass/releases/download/v1.3.0/"));
     }
 
     #[test]
     fn newest_release_without_a_verifiable_asset_fails_loudly() {
         let mut f = fixture();
-        f.as_array_mut().unwrap().push(rel("v1.4.0", true, "2026-11-01T00:00:00Z", "ShaderGlass-1.4.0-win-x64.zip", None));
+        f.as_array_mut().unwrap().push(rel(
+            "v1.4.0",
+            true,
+            "2026-11-01T00:00:00Z",
+            "ShaderGlass-1.4.0-win-x64.zip",
+            None,
+        ));
         let e = select(&f, &Channel::Newest, &pattern(), REPO).unwrap_err();
-        assert!(e.contains("v1.4.0") && e.contains("no sha256 digest"), "{e}");
+        assert!(
+            e.contains("v1.4.0") && e.contains("no sha256 digest"),
+            "{e}"
+        );
         // ...and does not fall back to v1.3.1.
         let mut two = fixture();
-        let mut r = rel("v1.4.0", false, "2026-11-01T00:00:00Z", "ShaderGlass-1.4.0-win-x64.zip", Some(&"ab".repeat(32)));
+        let mut r = rel(
+            "v1.4.0",
+            false,
+            "2026-11-01T00:00:00Z",
+            "ShaderGlass-1.4.0-win-x64.zip",
+            Some(&"ab".repeat(32)),
+        );
         r["assets"].as_array_mut().unwrap().push(json!({"name": "ShaderGlass-1.4.0-arm-win-x64.zip", "digest": "sha256:00",
             "browser_download_url": format!("https://github.com/{REPO}/releases/download/v1.4.0/b.zip")}));
         two.as_array_mut().unwrap().push(r);
-        assert!(select(&two, &Channel::Stable, &pattern(), REPO).unwrap_err().contains("2 assets match"));
+        assert!(select(&two, &Channel::Stable, &pattern(), REPO)
+            .unwrap_err()
+            .contains("2 assets match"));
         let mut foreign = fixture();
-        foreign[1]["assets"][0]["browser_download_url"] = json!("https://evil.example/ShaderGlass-1.3.1-beta-win-x64.zip");
-        assert!(select(&foreign, &Channel::Newest, &pattern(), REPO).unwrap_err().contains("not under"));
-        assert!(select(&json!({"message": "API rate limit exceeded"}), &Channel::Newest, &pattern(), REPO).is_err());
-        assert!(select(&json!([]), &Channel::Newest, &pattern(), REPO).unwrap_err().contains("no published release"));
+        foreign[1]["assets"][0]["browser_download_url"] =
+            json!("https://evil.example/ShaderGlass-1.3.1-beta-win-x64.zip");
+        assert!(select(&foreign, &Channel::Newest, &pattern(), REPO)
+            .unwrap_err()
+            .contains("not under"));
+        assert!(select(
+            &json!({"message": "API rate limit exceeded"}),
+            &Channel::Newest,
+            &pattern(),
+            REPO
+        )
+        .is_err());
+        assert!(select(&json!([]), &Channel::Newest, &pattern(), REPO)
+            .unwrap_err()
+            .contains("no published release"));
     }
 
     #[test]
@@ -598,10 +888,21 @@ mod tests {
         let ssot = d.path().join("heavy.lock").display().to_string();
         let work = d.path().join("work");
         assert_eq!(heavy_lock(Some("/run/x.lock"), &ssot, &work), "/run/x.lock");
-        assert_eq!(heavy_lock(Some("relative.lock"), &ssot, &work), ssot, "a relative override is ignored");
+        assert_eq!(
+            heavy_lock(Some("relative.lock"), &ssot, &work),
+            ssot,
+            "a relative override is ignored"
+        );
         assert_eq!(heavy_lock(None, &ssot, &work), ssot);
-        let missing = d.path().join("no/such/dir/heavy.lock").display().to_string();
-        assert_eq!(heavy_lock(None, &missing, &work), work.join("heavy.lock").display().to_string());
+        let missing = d
+            .path()
+            .join("no/such/dir/heavy.lock")
+            .display()
+            .to_string();
+        assert_eq!(
+            heavy_lock(None, &missing, &work),
+            work.join("heavy.lock").display().to_string()
+        );
     }
 
     #[test]
@@ -609,7 +910,10 @@ mod tests {
         let mios = "NAME=\"MiOS\"\nVERSION=\"0.3.0\"\nID=mios\nID_LIKE=\"fedora coreos\"\nVERSION_ID=\"0.3.0\"\nPLATFORM_ID=\"platform:f44\"\n";
         assert_eq!(fedora_release(mios).unwrap(), "44");
         assert_eq!(fedora_release("ID=fedora\nVERSION_ID=45\n").unwrap(), "45");
-        assert_eq!(fedora_release("ID=fedora\nVERSION_ID=45\nPLATFORM_ID=\"platform:f45\"\n").unwrap(), "45");
+        assert_eq!(
+            fedora_release("ID=fedora\nVERSION_ID=45\nPLATFORM_ID=\"platform:f45\"\n").unwrap(),
+            "45"
+        );
         // Negative controls: a rebranded VERSION_ID alone, another distribution, a malformed platform.
         assert!(fedora_release("ID=mios\nVERSION_ID=\"0.3.0\"\n").is_err());
         assert!(fedora_release("ID=ubuntu\nVERSION_ID=\"22.04\"\n").is_err());
@@ -619,9 +923,21 @@ mod tests {
 
     #[test]
     fn github_repo_urls() {
-        assert_eq!(github_repo("https://github.com/mausimus/ShaderGlass").unwrap(), REPO);
-        assert_eq!(github_repo("https://github.com/mausimus/ShaderGlass.git/").unwrap(), REPO);
-        for bad in ["http://github.com/a/b", "https://gitlab.com/a/b", "https://github.com/a", "https://github.com/a/b/c", "https://github.com/a/b;x"] {
+        assert_eq!(
+            github_repo("https://github.com/mausimus/ShaderGlass").unwrap(),
+            REPO
+        );
+        assert_eq!(
+            github_repo("https://github.com/mausimus/ShaderGlass.git/").unwrap(),
+            REPO
+        );
+        for bad in [
+            "http://github.com/a/b",
+            "https://gitlab.com/a/b",
+            "https://github.com/a",
+            "https://github.com/a/b/c",
+            "https://github.com/a/b;x",
+        ] {
             assert!(github_repo(bad).is_err(), "{bad}");
         }
     }
@@ -637,10 +953,15 @@ mod tests {
         let mut good = elf.clone();
         good.extend_from_slice(b"\0libpipewire-0.3.so.0\0__wine_spec_nt_header\0");
         assert!(check_winecap(&good).is_ok());
-        assert!(check_winecap(&elf).unwrap_err().contains("__wine_spec_nt_header"));
+        assert!(check_winecap(&elf)
+            .unwrap_err()
+            .contains("__wine_spec_nt_header"));
         let mut pe = good.clone();
         pe[..2].copy_from_slice(b"MZ");
-        assert!(check_winecap(&pe).is_err(), "a PE dll is not what WineCap.dll must be");
+        assert!(
+            check_winecap(&pe).is_err(),
+            "a PE dll is not what WineCap.dll must be"
+        );
         let mut arm = good;
         arm[18] = 183;
         assert!(check_winecap(&arm).is_err());
@@ -651,26 +972,52 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let tree = d.path().join("tree");
         std::fs::create_dir_all(&tree).unwrap();
-        let files = [("ShaderGlass.exe", b"MZexe".as_slice()), ("WineCap.dll", b"elf".as_slice()), ("LICENSE", b"GPL".as_slice())];
+        let files = [
+            ("ShaderGlass.exe", b"MZexe".as_slice()),
+            ("WineCap.dll", b"elf".as_slice()),
+            ("LICENSE", b"GPL".as_slice()),
+        ];
         let mut map = serde_json::Map::new();
         for (n, b) in files {
             std::fs::write(tree.join(n), b).unwrap();
             map.insert(n.into(), json!(sha256_hex(b)));
         }
-        std::fs::write(tree.join("INSTALLED.json"), json!({"release": {"tag": "v1"}, "files": map}).to_string()).unwrap();
+        std::fs::write(
+            tree.join("INSTALLED.json"),
+            json!({"release": {"tag": "v1"}, "files": map}).to_string(),
+        )
+        .unwrap();
         let dest = d.path().join("shaderglass");
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("old"), b"old").unwrap();
         let msg = install_stage(&tree, &dest).unwrap();
         assert!(msg.contains("v1"), "{msg}");
-        assert_eq!(std::fs::read(dest.join("ShaderGlass.exe")).unwrap(), b"MZexe");
-        assert!(d.path().join("shaderglass.prev/old").exists(), "previous tree kept");
+        assert_eq!(
+            std::fs::read(dest.join("ShaderGlass.exe")).unwrap(),
+            b"MZexe"
+        );
+        assert!(
+            d.path().join("shaderglass.prev/old").exists(),
+            "previous tree kept"
+        );
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(dest.join("WineCap.dll")).unwrap().permissions().mode() & 0o777, 0o644);
-        assert_eq!(std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            std::fs::metadata(dest.join("WineCap.dll"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
         // A staged file changed after staging: refused, the installed tree stays.
         std::fs::write(tree.join("WineCap.dll"), b"tampered").unwrap();
-        assert!(install_stage(&tree, &dest).unwrap_err().contains("INTEGRITY"));
+        assert!(install_stage(&tree, &dest)
+            .unwrap_err()
+            .contains("INTEGRITY"));
         assert_eq!(std::fs::read(dest.join("WineCap.dll")).unwrap(), b"elf");
     }
 }

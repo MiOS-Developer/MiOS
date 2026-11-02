@@ -41,7 +41,11 @@ pub fn pin_current(cpu: usize) {
 
 /// Keep the calling thread (render/validation/IO) off the input CPU.
 pub fn unpin_others(input_cpu: usize, allowed: &[usize]) -> Result<(), String> {
-    sched_setaffinity(None, &set(allowed.iter().copied().filter(|c| *c != input_cpu))).map_err(|e| e.to_string())
+    sched_setaffinity(
+        None,
+        &set(allowed.iter().copied().filter(|c| *c != input_cpu)),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Start the input thread. It does nothing but block in event::read and forward every event; it is the only
@@ -75,7 +79,9 @@ pub fn spawn(tx: Sender<Msg>, configured_cpu: Option<i64>) -> (String, Option<us
             }
         })
         .expect("spawn the input thread");
-    let pin = ready_rx.recv().unwrap_or_else(|_| Err("input thread exited".into()));
+    let pin = ready_rx
+        .recv()
+        .unwrap_or_else(|_| Err("input thread exited".into()));
     let note = match (cpu, pin) {
         (Some(c), Ok(())) => match unpin_others(c, &allowed) {
             Ok(()) => format!("input thread on CPU {c} (app threads elsewhere)"),
@@ -95,20 +101,32 @@ mod tests {
     fn cpu_choice_prefers_configured_then_last_and_never_the_only_cpu() {
         assert_eq!(choose_cpu(Some(2), &[0, 1, 2, 3]), Some(2));
         assert_eq!(choose_cpu(None, &[0, 1, 2, 3]), Some(3));
-        assert_eq!(choose_cpu(Some(9), &[0, 1, 2, 3]), Some(3), "a CPU outside the affinity falls back");
+        assert_eq!(
+            choose_cpu(Some(9), &[0, 1, 2, 3]),
+            Some(3),
+            "a CPU outside the affinity falls back"
+        );
         assert_eq!(choose_cpu(Some(-1), &[0, 5]), Some(5));
-        assert_eq!(choose_cpu(Some(0), &[0]), None, "one CPU cannot be reserved");
+        assert_eq!(
+            choose_cpu(Some(0), &[0]),
+            None,
+            "one CPU cannot be reserved"
+        );
         assert_eq!(choose_cpu(None, &[]), None);
     }
 
     #[test]
     fn pinning_this_thread_and_moving_others_off_it_round_trips() {
         let allowed = allowed();
-        let Some(cpu) = choose_cpu(None, &allowed) else { return };
+        let Some(cpu) = choose_cpu(None, &allowed) else {
+            return;
+        };
         std::thread::spawn(move || {
             sched_setaffinity(None, &set([cpu])).unwrap();
             let now = sched_getaffinity(None).unwrap();
-            assert!(now.is_set(cpu) && (0..CpuSet::MAX_CPU).filter(|c| now.is_set(*c)).count() == 1);
+            assert!(
+                now.is_set(cpu) && (0..CpuSet::MAX_CPU).filter(|c| now.is_set(*c)).count() == 1
+            );
             unpin_others(cpu, &allowed).unwrap();
             let now = sched_getaffinity(None).unwrap();
             assert!(!now.is_set(cpu), "the app thread left the input CPU");

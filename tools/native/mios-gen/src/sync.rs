@@ -358,14 +358,19 @@ pub fn check_copies(root: &Path) -> Result<String, String> {
             count += 1;
             let want = fs::read(local(root, source)?).map_err(|e| format!("{source}: {e}"))?;
             if fs::read(local(root, target)?).ok().as_deref() != Some(want.as_slice()) {
-                stale.push(format!("{target} is not a copy of {source} (step {})", step.id));
+                stale.push(format!(
+                    "{target} is not a copy of {source} (step {})",
+                    step.id
+                ));
             }
         }
     }
     if !stale.is_empty() {
         return Err(stale.join("; "));
     }
-    Ok(format!("{count} declared copy stage(s) match their sources"))
+    Ok(format!(
+        "{count} declared copy stage(s) match their sources"
+    ))
 }
 
 pub fn run(root: &Path, plan_only: bool) -> Result<(), String> {
@@ -422,21 +427,17 @@ pub fn run(root: &Path, plan_only: bool) -> Result<(), String> {
                         .ok_or("native tool not preflighted")?
                 };
                 let root_str = strip_verbatim(&root).to_string_lossy().into_owned();
-                args.extend(
-                    call.args
-                        .iter()
-                        .map(|arg| {
-                            let replaced = arg.replace("{root}", &root_str);
-                            #[cfg(windows)]
-                            {
-                                replaced.replace('/', "\\")
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                replaced
-                            }
-                        }),
-                );
+                args.extend(call.args.iter().map(|arg| {
+                    let replaced = arg.replace("{root}", &root_str);
+                    #[cfg(windows)]
+                    {
+                        replaced.replace('/', "\\")
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        replaced
+                    }
+                }));
                 context
                     .run(program, &args)
                     .map_err(|e| format!("{}: {e}", step.id))?;
@@ -483,12 +484,19 @@ mod tests {
         )
         .unwrap();
         fs::write(root.path().join("a.conf"), "x\n").unwrap();
-        assert!(check_copies(root.path()).unwrap_err().contains("b.conf is not a copy of a.conf"));
+        assert!(check_copies(root.path())
+            .unwrap_err()
+            .contains("b.conf is not a copy of a.conf"));
         fs::write(root.path().join("b.conf"), "y\n").unwrap();
         assert!(check_copies(root.path()).is_err());
-        assert_eq!(fs::read_to_string(root.path().join("b.conf")).unwrap(), "y\n");
+        assert_eq!(
+            fs::read_to_string(root.path().join("b.conf")).unwrap(),
+            "y\n"
+        );
         fs::write(root.path().join("b.conf"), "x\n").unwrap();
-        assert!(check_copies(root.path()).unwrap().starts_with("1 declared copy stage(s) match"));
+        assert!(check_copies(root.path())
+            .unwrap()
+            .starts_with("1 declared copy stage(s) match"));
     }
     #[test]
     fn replacement_preserves_bytes_on_output_failure() {

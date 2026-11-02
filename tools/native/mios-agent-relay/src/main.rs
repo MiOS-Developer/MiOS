@@ -1449,9 +1449,11 @@ fn has_floating_pane(
     tmux: &dyn Fn(&[&str]) -> Result<String, String>,
     window: &str,
 ) -> Result<bool, String> {
-    Ok(tmux(&["list-panes", "-t", window, "-F", "#{pane_floating_flag}"])?
-        .lines()
-        .any(|l| l.trim() == "1"))
+    Ok(
+        tmux(&["list-panes", "-t", window, "-F", "#{pane_floating_flag}"])?
+            .lines()
+            .any(|l| l.trim() == "1"),
+    )
 }
 
 /// `select-layout` unless the window holds a floating pane (logged, then skipped).
@@ -2075,7 +2077,11 @@ fn workspace_select_viewer_pid(clients: &str, session: &str, w: usize) -> Option
                 return None;
             }
             let cw = row[3].parse::<usize>().ok()?;
-            Some((cw == w, row[1].parse::<u64>().ok()?, row[0].parse::<u32>().ok()?))
+            Some((
+                cw == w,
+                row[1].parse::<u64>().ok()?,
+                row[0].parse::<u32>().ok()?,
+            ))
         })
         .collect();
     let has_width_match = parsed.iter().any(|(m, _, _)| *m);
@@ -2232,7 +2238,9 @@ fn workspace(request: &Value) -> Result<Value, String> {
         let mut owner = String::new();
         for row in rows.lines() {
             let mut fields = row.splitn(3, '|');
-            let (Some(pane), Some(floating), Some(candidate)) = (fields.next(), fields.next(), fields.next()) else {
+            let (Some(pane), Some(floating), Some(candidate)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
                 return Err("invalid startup pane record".into());
             };
             // Only tiled panes count: a floating pane is the operator's overlay, not a workspace member.
@@ -2804,7 +2812,9 @@ fn workspace(request: &Value) -> Result<Value, String> {
         window,
         "#{window_width}|#{window_height}",
     ])?;
-    let (sw, sh) = size.split_once(['\t', '|']).unwrap_or((fields[3], fields[4]));
+    let (sw, sh) = size
+        .split_once(['\t', '|'])
+        .unwrap_or((fields[3], fields[4]));
     let w = sw.parse::<usize>().map_err(|e| e.to_string())?;
     let h = sh.parse::<usize>().map_err(|e| e.to_string())?;
     // The observer pane can exit or be closed by the operator. Every later step
@@ -2823,7 +2833,8 @@ fn workspace(request: &Value) -> Result<Value, String> {
     // in the head window, then the recorded one -- and close the duplicates.
     {
         let head_s: &str = &head;
-        let window_id = tmux(&["display-message", "-p", "-t", window, "#{window_id}"]).unwrap_or_default();
+        let window_id =
+            tmux(&["display-message", "-p", "-t", window, "#{window_id}"]).unwrap_or_default();
         let tagged = tmux(&[
             "list-panes",
             "-a",
@@ -2854,7 +2865,14 @@ fn workspace(request: &Value) -> Result<Value, String> {
                 let _ = tmux(&["kill-pane", "-t", extra]);
             }
             if keep != observer_id || !observer_alive {
-                tmux(&["set-option", "-w", "-t", window, "@mios-workspace-observer", &keep])?;
+                tmux(&[
+                    "set-option",
+                    "-w",
+                    "-t",
+                    window,
+                    "@mios-workspace-observer",
+                    &keep,
+                ])?;
             }
             observer_id = keep;
             observer_alive = true;
@@ -2944,7 +2962,10 @@ fn workspace(request: &Value) -> Result<Value, String> {
     let observer = observer_id.as_str();
     let mut workers = Vec::new();
     let mut ordered = Vec::new();
-    for row in rows.lines().map(|s| s.split(['\t', '|']).collect::<Vec<_>>()) {
+    for row in rows
+        .lines()
+        .map(|s| s.split(['\t', '|']).collect::<Vec<_>>())
+    {
         if row.len() != 7 {
             return Err("invalid workspace metadata".into());
         }
@@ -5100,9 +5121,18 @@ mod border_policy_tests {
     #[test]
     fn workspace_remote_viewer_filters_by_client_width_and_walks_sshd_ancestry() {
         let clients = "1001|100|tmux-os|200\n2002|300|tmux-os|54\n3003|999|other|200\n";
-        assert_eq!(workspace_select_viewer_pid(clients, "tmux-os", 200), Some(1001));
-        assert_eq!(workspace_select_viewer_pid(clients, "tmux-os", 54), Some(2002));
-        assert_eq!(workspace_select_viewer_pid(clients, "tmux-os", 120), Some(2002));
+        assert_eq!(
+            workspace_select_viewer_pid(clients, "tmux-os", 200),
+            Some(1001)
+        );
+        assert_eq!(
+            workspace_select_viewer_pid(clients, "tmux-os", 54),
+            Some(2002)
+        );
+        assert_eq!(
+            workspace_select_viewer_pid(clients, "tmux-os", 120),
+            Some(2002)
+        );
         assert_eq!(workspace_select_viewer_pid(clients, "missing", 200), None);
 
         let clients_desktop_latest =
@@ -5121,7 +5151,11 @@ mod border_policy_tests {
             let dir = root.join(pid.to_string());
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
-            fs::write(dir.join("stat"), format!("{pid} ({comm} (test)) S {ppid} 1 1 0\n")).unwrap();
+            fs::write(
+                dir.join("stat"),
+                format!("{pid} ({comm} (test)) S {ppid} 1 1 0\n"),
+            )
+            .unwrap();
         };
         write_proc(1, "systemd", 0);
         write_proc(100, "Hyprland", 1);
@@ -5282,7 +5316,10 @@ mod border_policy_tests {
             &["display-message", "-p", "-t", &head, "#{pane_current_path}"],
         )
         .unwrap();
-        assert_eq!(head_cwd, hash_dir_str, "expected literal # in cwd: {head_cwd}");
+        assert_eq!(
+            head_cwd, hash_dir_str,
+            "expected literal # in cwd: {head_cwd}"
+        );
 
         let win_panes = workspace_tmux(
             &sock_str,
@@ -5301,8 +5338,14 @@ mod border_policy_tests {
             let parts: Vec<&str> = row.split(['\t', '|']).collect();
             assert!(parts[1].is_empty(), "unexpected worker tag: {row}");
             assert!(parts[2].is_empty(), "unexpected reserved tag: {row}");
-            assert!(!parts[3].contains("Worker"), "unexpected worker title: {row}");
-            assert_eq!(parts[4], hash_dir_str, "unexpected expanded cwd in pane: {row}");
+            assert!(
+                !parts[3].contains("Worker"),
+                "unexpected worker title: {row}"
+            );
+            assert_eq!(
+                parts[4], hash_dir_str,
+                "unexpected expanded cwd in pane: {row}"
+            );
         }
     }
 }

@@ -15,14 +15,21 @@ fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .mode(0o600)
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    f.write_all(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    f.write_all(bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     f.sync_all().map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Replace the user tier with `new_text`. Returns the backup path when a previous tier existed.
-pub fn apply(layers: &Layers, new_text: &str, backup_suffix: &str) -> Result<Option<std::path::PathBuf>, String> {
+pub fn apply(
+    layers: &Layers,
+    new_text: &str,
+    backup_suffix: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
     let path = &layers.user_path;
-    let dir = path.parent().ok_or("the user tier has no parent directory")?;
+    let dir = path
+        .parent()
+        .ok_or("the user tier has no parent directory")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     // Invariants on the rendered text before anything is written.
     let new_value = parse_value(new_text).map_err(|e| format!("the draft does not parse: {e}"))?;
@@ -32,11 +39,18 @@ pub fn apply(layers: &Layers, new_text: &str, backup_suffix: &str) -> Result<Opt
     }
     // Emptying is legitimate when the tier held only editable paths (restore defaults); never when it held anything
     // else (defence in depth: the invariant above already proves those tables are unchanged).
-    let others_empty = without_paths(&layers.user_value, &editable).as_table().is_none_or(|t| t.is_empty());
+    let others_empty = without_paths(&layers.user_value, &editable)
+        .as_table()
+        .is_none_or(|t| t.is_empty());
     if new_text.trim().is_empty() && !others_empty {
         return Err("refusing: the draft would empty a user tier that holds other settings".into());
     }
-    let lock_path = dir.join(format!(".{}.lock", path.file_name().and_then(|n| n.to_str()).unwrap_or("mios.toml")));
+    let lock_path = dir.join(format!(
+        ".{}.lock",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("mios.toml")
+    ));
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -45,14 +59,18 @@ pub fn apply(layers: &Layers, new_text: &str, backup_suffix: &str) -> Result<Opt
         .mode(0o600)
         .open(&lock_path)
         .map_err(|e| format!("{}: {e}", lock_path.display()))?;
-    lock.lock().map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+    lock.lock()
+        .map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
     let on_disk = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
     if on_disk != layers.user_text {
-        return Err(format!("{} changed since it was read; reload the draft", path.display()));
+        return Err(format!(
+            "{} changed since it was read; reload the draft",
+            path.display()
+        ));
     }
     let backup = if on_disk.is_empty() {
         None
@@ -67,10 +85,15 @@ pub fn apply(layers: &Layers, new_text: &str, backup_suffix: &str) -> Result<Opt
         let _ = std::fs::remove_file(&tmp);
         format!("rename into {}: {e}", path.display())
     })?;
-    File::open(dir).and_then(|d| d.sync_all()).map_err(|e| format!("{}: {e}", dir.display()))?;
+    File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
     let written = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if written != new_text {
-        return Err(format!("{} does not hold the applied draft after the rename", path.display()));
+        return Err(format!(
+            "{} does not hold the applied draft after the rename",
+            path.display()
+        ));
     }
     drop(lock);
     Ok(backup)
@@ -101,12 +124,17 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let user = "[identity]\nsecret = \"s\"\n";
         let l = layers(d.path(), user);
-        let new = format!("{user}\n[keybindings.global.controller.system_layer]\nBTN_WEST = \"exec:foot\"\n");
+        let new = format!(
+            "{user}\n[keybindings.global.controller.system_layer]\nBTN_WEST = \"exec:foot\"\n"
+        );
         let b = apply(&l, &new, "controls-backup").unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&l.user_path).unwrap(), new);
         assert_eq!(std::fs::read_to_string(&b).unwrap(), user);
         for p in [&l.user_path, &b] {
-            assert_eq!(std::fs::metadata(p).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(p).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
     }
 
@@ -115,14 +143,32 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let user = "[identity]\nsecret = \"s\"\n";
         let l = layers(d.path(), user);
-        assert!(apply(&l, "[identity]\nsecret = \"other\"\n", "b").unwrap_err().contains("outside the editable"));
+        assert!(apply(&l, "[identity]\nsecret = \"other\"\n", "b")
+            .unwrap_err()
+            .contains("outside the editable"));
         assert!(apply(&l, "", "b").is_err());
         let sibling = format!("{user}[keybindings.global]\nenabled = false\n");
-        assert!(apply(&l, &sibling, "b").unwrap_err().contains("outside the editable"), "a [keybindings] key that is not an editable path is foreign");
-        std::fs::write(&l.user_path, "[identity]\nsecret = \"s\"\n# edited elsewhere\n").unwrap();
-        let new = format!("{user}[keybindings.global.controller.system_layer]\nBTN_WEST = \"exec:foot\"\n");
+        assert!(
+            apply(&l, &sibling, "b")
+                .unwrap_err()
+                .contains("outside the editable"),
+            "a [keybindings] key that is not an editable path is foreign"
+        );
+        std::fs::write(
+            &l.user_path,
+            "[identity]\nsecret = \"s\"\n# edited elsewhere\n",
+        )
+        .unwrap();
+        let new = format!(
+            "{user}[keybindings.global.controller.system_layer]\nBTN_WEST = \"exec:foot\"\n"
+        );
         assert!(apply(&l, &new, "b").unwrap_err().contains("changed since"));
-        assert!(std::fs::read_to_string(&l.user_path).unwrap().contains("edited elsewhere"), "nothing overwritten");
+        assert!(
+            std::fs::read_to_string(&l.user_path)
+                .unwrap()
+                .contains("edited elsewhere"),
+            "nothing overwritten"
+        );
     }
 
     #[test]

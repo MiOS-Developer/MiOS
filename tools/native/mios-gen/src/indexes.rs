@@ -389,7 +389,10 @@ pub mod adr_index {
             return Err((format!("failed to write {}: {}", tmp_path.display(), e), 1));
         }
         if let Err(e) = super::keep_mode(&tmp_path, &path) {
-            return Err((format!("failed to set mode on {}: {}", tmp_path.display(), e), 1));
+            return Err((
+                format!("failed to set mode on {}: {}", tmp_path.display(), e),
+                1,
+            ));
         }
         if let Err(e) = fs::rename(&tmp_path, &path) {
             return Err((format!("failed to replace {}: {}", path.display(), e), 1));
@@ -618,8 +621,12 @@ pub mod gate_index {
         let tmp_path = output_path.with_extension("tmp");
         fs::write(&tmp_path, tsv_content.as_bytes())
             .map_err(|e| (format!("Failed to write {}: {e}", tmp_path.display()), 1))?;
-        super::keep_mode(&tmp_path, &output_path)
-            .map_err(|e| (format!("Failed to set mode on {}: {e}", tmp_path.display()), 1))?;
+        super::keep_mode(&tmp_path, &output_path).map_err(|e| {
+            (
+                format!("Failed to set mode on {}: {e}", tmp_path.display()),
+                1,
+            )
+        })?;
         fs::rename(&tmp_path, &output_path).map_err(|e| {
             (
                 format!("Failed to replace {}: {e}", output_path.display()),
@@ -802,8 +809,12 @@ pub mod pipeline_index {
         let tmp_path = output_path.with_extension("tmp");
         fs::write(&tmp_path, tsv_content.as_bytes())
             .map_err(|e| (format!("Failed to write {}: {e}", tmp_path.display()), 1))?;
-        super::keep_mode(&tmp_path, &output_path)
-            .map_err(|e| (format!("Failed to set mode on {}: {e}", tmp_path.display()), 1))?;
+        super::keep_mode(&tmp_path, &output_path).map_err(|e| {
+            (
+                format!("Failed to set mode on {}: {e}", tmp_path.display()),
+                1,
+            )
+        })?;
         fs::rename(&tmp_path, &output_path).map_err(|e| {
             (
                 format!("Failed to replace {}: {e}", output_path.display()),
@@ -984,12 +995,19 @@ pub mod roadmap_index {
         let result = read(&mut reader);
         // Drain whatever `read` left so git can exit, then reap it.
         let _ = std::io::copy(&mut reader, &mut std::io::sink());
-        let status = child.wait().map_err(|e| format!("git cat-file {mode} wait failed: {e}"))?;
-        let fed = feeder.join().map_err(|_| "git cat-file: the request writer panicked".to_string())?;
+        let status = child
+            .wait()
+            .map_err(|e| format!("git cat-file {mode} wait failed: {e}"))?;
+        let fed = feeder
+            .join()
+            .map_err(|_| "git cat-file: the request writer panicked".to_string())?;
         result?;
         fed.map_err(|e| format!("git cat-file {mode}: writing requests: {e}"))?;
         if !status.success() {
-            return Err(format!("git cat-file {mode} exited with {:?}", status.code()));
+            return Err(format!(
+                "git cat-file {mode} exited with {:?}",
+                status.code()
+            ));
         }
         Ok(())
     }
@@ -1051,7 +1069,11 @@ pub mod roadmap_index {
                 let mut line = String::new();
                 loop {
                     line.clear();
-                    if out.read_line(&mut line).map_err(|e| format!("git cat-file --batch-check read: {e}"))? == 0 {
+                    if out
+                        .read_line(&mut line)
+                        .map_err(|e| format!("git cat-file --batch-check read: {e}"))?
+                        == 0
+                    {
                         return Ok(());
                     }
                     if let Ok(bytes) = line.trim().parse::<u64>() {
@@ -1093,7 +1115,11 @@ pub mod roadmap_index {
                 let mut header = Vec::new();
                 for (ext, _) in &code {
                     header.clear();
-                    if out.read_until(b'\n', &mut header).map_err(|e| format!("git cat-file --batch read: {e}"))? == 0 {
+                    if out
+                        .read_until(b'\n', &mut header)
+                        .map_err(|e| format!("git cat-file --batch read: {e}"))?
+                        == 0
+                    {
                         break;
                     }
                     let text = String::from_utf8_lossy(&header);
@@ -1103,7 +1129,9 @@ pub mod roadmap_index {
                     };
                     let (mut lines, mut last, mut left) = (0usize, b'\n', size);
                     while left > 0 {
-                        let buf = out.fill_buf().map_err(|e| format!("git cat-file --batch read: {e}"))?;
+                        let buf = out
+                            .fill_buf()
+                            .map_err(|e| format!("git cat-file --batch read: {e}"))?;
                         if buf.is_empty() {
                             return Err("git cat-file --batch: truncated body".into());
                         }
@@ -1118,7 +1146,8 @@ pub mod roadmap_index {
                     }
                     *counted.get_mut(ext).unwrap() += lines;
                     let mut lf = [0u8; 1];
-                    out.read_exact(&mut lf).map_err(|e| format!("git cat-file --batch read: {e}"))?;
+                    out.read_exact(&mut lf)
+                        .map_err(|e| format!("git cat-file --batch read: {e}"))?;
                 }
                 Ok(())
             })?;
@@ -1162,12 +1191,17 @@ pub mod roadmap_index {
         // register from the declarations reported a number nothing measured.
         let mut drift_units_cnt = 0;
         if let Ok(txt) = fs::read_to_string(root.join("usr/share/mios/mios.toml")) {
-            drift_units_cnt = mios_unit_gen::drift_register(&txt).map(|d| d.len()).unwrap_or(0);
+            drift_units_cnt = mios_unit_gen::drift_register(&txt)
+                .map(|d| d.len())
+                .unwrap_or(0);
         }
         let (mut faithful_cnt, mut shipped_cnt) = (0, 0);
-        for p in [mios_unit_gen::project(root), mios_unit_gen::project_user(root)]
-            .into_iter()
-            .flatten()
+        for p in [
+            mios_unit_gen::project(root),
+            mios_unit_gen::project_user(root),
+        ]
+        .into_iter()
+        .flatten()
         {
             faithful_cnt += p.faithful.len();
             shipped_cnt += p.faithful.len() + p.drifted.len() + p.undeclared.len();
@@ -1598,12 +1632,21 @@ pub mod roadmap_index {
         fn big_repo() -> tempfile::TempDir {
             let dir = tempfile::tempdir().unwrap();
             let git = |args: &[&str]| {
-                let ok = Command::new("git").arg("-C").arg(dir.path()).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").status().unwrap().success();
+                let ok = Command::new("git")
+                    .arg("-C")
+                    .arg(dir.path())
+                    .args(args)
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .status()
+                    .unwrap()
+                    .success();
                 assert!(ok, "git {args:?}");
             };
             git(&["init", "-q"]);
             for (i, ext) in ["sh", "py", "ps1", "rs"].iter().enumerate() {
-                let body: String = (0..20_000).map(|n| format!("line {n} of file {i}\n")).collect();
+                let body: String = (0..20_000)
+                    .map(|n| format!("line {n} of file {i}\n"))
+                    .collect();
                 fs::write(dir.path().join(format!("f{i}.{ext}")), &body).unwrap();
             }
             fs::write(dir.path().join("tail.rs"), "no trailing newline").unwrap();
@@ -1621,11 +1664,19 @@ pub mod roadmap_index {
             let root = repo.path().to_path_buf();
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || tx.send(generate_metrics_table(&root)).unwrap());
-            let table = rx.recv_timeout(Duration::from_secs(60)).expect("metrics table must not hang").unwrap();
+            let table = rx
+                .recv_timeout(Duration::from_secs(60))
+                .expect("metrics table must not hang")
+                .unwrap();
             assert!(!table.is_empty());
             // Both pipes must overflow for the deadlock: many small requests (input > 64 KiB) whose answers
             // (> 64 KiB) git cannot write while nobody reads.
-            let oid = Command::new("git").arg("-C").arg(repo.path()).args(["rev-parse", ":tail.rs"]).output().unwrap();
+            let oid = Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(["rev-parse", ":tail.rs"])
+                .output()
+                .unwrap();
             let oid = String::from_utf8(oid.stdout).unwrap();
             let requests: String = oid.repeat(5000);
             assert!(requests.len() > 128 * 1024);
@@ -1660,7 +1711,10 @@ pub mod roadmap_index {
             });
             let old = rx.recv_timeout(Duration::from_secs(5));
             let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
-            assert!(old.is_err(), "control: write-all-then-read must deadlock on this repo, got {old:?}");
+            assert!(
+                old.is_err(),
+                "control: write-all-then-read must deadlock on this repo, got {old:?}"
+            );
         }
     }
 }

@@ -80,8 +80,23 @@ const OWNED_HOOKS: &[&str] = &[
 ];
 /// Named tmux colours accepted for [theme.tmux.console] (8/16-colour kernel console).
 const CONSOLE_COLOURS: &[&str] = &[
-    "default", "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightblack",
-    "brightred", "brightgreen", "brightyellow", "brightblue", "brightmagenta", "brightcyan", "brightwhite",
+    "default",
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "brightblack",
+    "brightred",
+    "brightgreen",
+    "brightyellow",
+    "brightblue",
+    "brightmagenta",
+    "brightcyan",
+    "brightwhite",
 ];
 
 /// tmux window option the native workspace hook (mios-agent-relay --workspace-hook) sets to the size it laid out.
@@ -460,7 +475,11 @@ impl TmuxThemeEngine {
                     h.as_str()
                         .filter(|h| OWNED_HOOKS.contains(h))
                         .map(str::to_string)
-                        .ok_or_else(|| format!("[theme.tmux].workspace_hooks: {h} is not one of {OWNED_HOOKS:?}"))
+                        .ok_or_else(|| {
+                            format!(
+                                "[theme.tmux].workspace_hooks: {h} is not one of {OWNED_HOOKS:?}"
+                            )
+                        })
                 })
                 .collect::<Result<_, _>>()?,
         };
@@ -474,7 +493,9 @@ impl TmuxThemeEngine {
                 .get(key)
                 .and_then(|v| v.as_str())
                 .filter(|v| CONSOLE_COLOURS.contains(v))
-                .ok_or_else(|| format!("[theme.tmux.console].{key} must be a named console colour"))?;
+                .ok_or_else(|| {
+                    format!("[theme.tmux.console].{key} must be a named console colour")
+                })?;
             console_colors.insert(key.to_string(), v.to_string());
         }
         let console = ConsoleSettings {
@@ -634,7 +655,10 @@ impl TmuxThemeEngine {
             "set -g @mios-console-client '{}'",
             mios_unit_gen::tmux_os::console_client_format(&self.console.terms)
         ));
-        lines.push(format!("set -g @mios-visible-session '{}'", self.visible_session));
+        lines.push(format!(
+            "set -g @mios-visible-session '{}'",
+            self.visible_session
+        ));
 
         for hook in OWNED_HOOKS {
             lines.push(format!("set-hook -gu {hook}[90]"));
@@ -744,15 +768,24 @@ impl TmuxThemeEngine {
         let vt_left = format!("#[fg={vaccent},bold][#S] ");
         let (vt_right_wide, vt_right_narrow) = if self.sysmon {
             (
-                format!("#[fg={vmuted}]{}  %a %-d %b %H:%M #[fg={vfg},bold]#H", sysmon("--ascii")),
+                format!(
+                    "#[fg={vmuted}]{}  %a %-d %b %H:%M #[fg={vfg},bold]#H",
+                    sysmon("--ascii")
+                ),
                 format!("#[fg={vmuted}]{} #[fg={vfg},bold]%H:%M", compact(true)),
             )
         } else {
-            (format!("#[fg={vmuted}]%a %-d %b %H:%M #[fg={vfg},bold]#H"), format!("#[fg={vfg},bold]%H:%M"))
+            (
+                format!("#[fg={vmuted}]%a %-d %b %H:%M #[fg={vfg},bold]#H"),
+                format!("#[fg={vfg},bold]%H:%M"),
+            )
         };
         let vt_windows = [
             ("window-status-format", format!("#[fg={vmuted}]#I:#W")),
-            ("window-status-current-format", format!("#[fg={vcursor},bold][#I:#W]")),
+            (
+                "window-status-current-format",
+                format!("#[fg={vcursor},bold][#I:#W]"),
+            ),
         ];
         // Styled and console variants live in their own options and are chosen per client by indirection: a
         // literal #{?cond,A,B} would split at the commas inside #[fg=..,bg=..] and blank the status line.
@@ -766,7 +799,12 @@ impl TmuxThemeEngine {
                 format!("#{{T:@mios-{name}{suffix}-wide}}")
             }
         };
-        let side = |name: &str, wide: &str, compact: &str, vt_wide: &str, vt_narrow: &str| -> Vec<String> {
+        let side = |name: &str,
+                    wide: &str,
+                    compact: &str,
+                    vt_wide: &str,
+                    vt_narrow: &str|
+         -> Vec<String> {
             let mut out = vec![format!("set -g @mios-{name}-wide \"{wide}\"")];
             if self.narrow_cols > 0 {
                 out.push(format!("set -g @mios-{name}-narrow \"{compact}\""));
@@ -784,7 +822,13 @@ impl TmuxThemeEngine {
         };
         lines.push(header.to_string());
         lines.push(format!("set -g status-left-length {left_len}"));
-        lines.extend(side("status-left", &left_wide, &left_narrow, &vt_left, &vt_left));
+        lines.extend(side(
+            "status-left",
+            &left_wide,
+            &left_narrow,
+            &vt_left,
+            &vt_left,
+        ));
         for (styled, (name, vt)) in window_formats.iter().zip(vt_windows.iter()) {
             let prefix = format!("set -g {name} \"");
             let value = styled
@@ -798,7 +842,13 @@ impl TmuxThemeEngine {
             ));
         }
         lines.push(format!("set -g status-right-length {right_len}"));
-        lines.extend(side("status-right", &right_wide, &right_narrow, &vt_right_wide, &vt_right_narrow));
+        lines.extend(side(
+            "status-right",
+            &right_wide,
+            &right_narrow,
+            &vt_right_wide,
+            &vt_right_narrow,
+        ));
 
         let substitutions: Vec<(char, &str)> = vec![
             ('', &self.prompt.powerline_left),
@@ -1127,8 +1177,14 @@ mod remote_status_tests {
         let config = render(&doc, "rounded", true);
         let engine = TmuxThemeEngine::from_toml(&doc, None, None).unwrap();
         let p = &engine.palette;
-        assert!(config.contains(&format!("set -g menu-selected-style \"bg={},fg={},bold\"", p["cursor"], p["bg"])));
-        assert!(config.contains(&format!("set -g menu-style \"bg={},fg={}\"", p["bg"], p["fg"])));
+        assert!(config.contains(&format!(
+            "set -g menu-selected-style \"bg={},fg={},bold\"",
+            p["cursor"], p["bg"]
+        )));
+        assert!(config.contains(&format!(
+            "set -g menu-style \"bg={},fg={}\"",
+            p["bg"], p["fg"]
+        )));
         assert!(config.contains(&format!("set -g popup-border-style \"fg={}\"", p["subtle"])));
     }
 
@@ -1137,24 +1193,42 @@ mod remote_status_tests {
         for style in ["rounded", "powerline", "minimal"] {
             for doc in [narrow_doc(), legacy_doc()] {
                 let config = render(&doc, style, true);
-                for line in config.lines().filter(|l| l.starts_with("set -g @mios-") && l.contains("-vt")) {
-                    assert!(!line.contains("#[fg=#") && !line.contains("bg=#"), "{style}: hex colour in console variant: {line}");
+                for line in config
+                    .lines()
+                    .filter(|l| l.starts_with("set -g @mios-") && l.contains("-vt"))
+                {
+                    assert!(
+                        !line.contains("#[fg=#") && !line.contains("bg=#"),
+                        "{style}: hex colour in console variant: {line}"
+                    );
                     assert!(line.is_ascii(), "{style}: glyph in console variant: {line}");
                 }
                 // Every #{?..} the status uses picks between option indirections, never inline #[a,b] styles.
-                for name in ["status-left", "status-right", "window-status-format", "window-status-current-format"] {
+                for name in [
+                    "status-left",
+                    "status-right",
+                    "window-status-format",
+                    "window-status-current-format",
+                ] {
                     let v = value(&config, name);
-                    assert!(!v.contains("#["), "{style} {name}: inline style inside a conditional: {v}");
+                    assert!(
+                        !v.contains("#["),
+                        "{style} {name}: inline style inside a conditional: {v}"
+                    );
                 }
             }
         }
-        assert!(render(&ssot(), "rounded", true).contains("set -g @mios-console-client '#{||:#{m:linux*,#{client_termname}},"));
+        assert!(render(&ssot(), "rounded", true)
+            .contains("set -g @mios-console-client '#{||:#{m:linux*,#{client_termname}},"));
     }
 
     #[test]
     fn workspace_hooks_come_from_the_ssot_and_skip_bare_and_hidden_sessions() {
         let config = render(&ssot(), "rounded", true);
-        let hooks: Vec<&str> = config.lines().filter(|l| l.starts_with("set-hook -g ") && !l.starts_with("set-hook -gu")).collect();
+        let hooks: Vec<&str> = config
+            .lines()
+            .filter(|l| l.starts_with("set-hook -g ") && !l.starts_with("set-hook -gu"))
+            .collect();
         assert_eq!(hooks.len(), 4);
         for h in &hooks {
             assert!(
@@ -1162,14 +1236,24 @@ mod remote_status_tests {
                 "{h}"
             );
             assert!(h.contains("--workspace-hook ensure"), "native hook: {h}");
-            assert!(!h.contains("python") && !h.contains("mios-mcp-server"), "never an interpreter per tmux event: {h}");
+            assert!(
+                !h.contains("python") && !h.contains("mios-mcp-server"),
+                "never an interpreter per tmux event: {h}"
+            );
         }
         assert!(config.contains("set-hook -gu client-focus-in[90]"));
         let doc = with(ssot(), &[("workspace_hooks", strs(&["client-attached"]))]);
         let one = render(&doc, "rounded", true);
-        assert_eq!(one.lines().filter(|l| l.starts_with("set-hook -g ") && !l.starts_with("set-hook -gu")).count(), 1);
+        assert_eq!(
+            one.lines()
+                .filter(|l| l.starts_with("set-hook -g ") && !l.starts_with("set-hook -gu"))
+                .count(),
+            1
+        );
         let bad = with(ssot(), &[("workspace_hooks", strs(&["after-new-window"]))]);
-        assert!(TmuxThemeEngine::from_toml(&bad, None, None).unwrap_err().contains("workspace_hooks"));
+        assert!(TmuxThemeEngine::from_toml(&bad, None, None)
+            .unwrap_err()
+            .contains("workspace_hooks"));
         assert!(config.contains("set -g @mios-visible-session '#{&&:#{!:#{m:mios-float-*,#{session_name}}},#{!:#{m:mios-workspace-*,#{session_name}}}}'"));
     }
 

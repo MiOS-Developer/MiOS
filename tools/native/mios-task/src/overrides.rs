@@ -217,9 +217,7 @@ pub fn apply(records: &[Value], lines: &[OverrideLine], idx: &Index) -> Effectiv
 /// but the title contains a completion indicator (matching \bDONE\b).
 pub fn find_contradictions(records: &[Value], idx: &Index) -> Vec<String> {
     static DONE_RE: OnceLock<Regex> = OnceLock::new();
-    let rx = DONE_RE.get_or_init(|| {
-        Regex::new(r"\bDONE\b").expect("valid static regex")
-    });
+    let rx = DONE_RE.get_or_init(|| Regex::new(r"\bDONE\b").expect("valid static regex"));
     let mut errs = Vec::new();
     for r in records {
         let status = s(r, "status");

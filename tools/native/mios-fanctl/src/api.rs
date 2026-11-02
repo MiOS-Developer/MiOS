@@ -21,25 +21,38 @@ impl Client {
         }
     }
 
-    pub fn request(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
+    pub fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<(u16, Value), String> {
         let mut s = UnixStream::connect(&self.socket).map_err(|e| {
             format!(
                 "cannot connect to {}: {e} (is ventulusd running? is this account in the wheel group?)",
                 self.socket.display()
             )
         })?;
-        s.set_read_timeout(Some(self.timeout)).map_err(|e| e.to_string())?;
-        s.set_write_timeout(Some(self.timeout)).map_err(|e| e.to_string())?;
+        s.set_read_timeout(Some(self.timeout))
+            .map_err(|e| e.to_string())?;
+        s.set_write_timeout(Some(self.timeout))
+            .map_err(|e| e.to_string())?;
         let payload = body.map(|b| b.to_string()).unwrap_or_default();
-        let ctype = if body.is_some() { "Content-Type: application/json\r\n" } else { "" };
+        let ctype = if body.is_some() {
+            "Content-Type: application/json\r\n"
+        } else {
+            ""
+        };
         let req = format!(
             "{method} {path} HTTP/1.1\r\nHost: localhost\r\nUser-Agent: mios-fanctl/{}\r\nAccept: application/json\r\nConnection: close\r\n{ctype}Content-Length: {}\r\n\r\n{payload}",
             env!("CARGO_PKG_VERSION"),
             payload.len()
         );
-        s.write_all(req.as_bytes()).map_err(|e| format!("write {path}: {e}"))?;
+        s.write_all(req.as_bytes())
+            .map_err(|e| format!("write {path}: {e}"))?;
         let mut buf = Vec::new();
-        s.read_to_end(&mut buf).map_err(|e| format!("read {path}: {e}"))?;
+        s.read_to_end(&mut buf)
+            .map_err(|e| format!("read {path}: {e}"))?;
         parse_response(&buf)
     }
 
@@ -120,17 +133,22 @@ pub fn parse_response(buf: &[u8]) -> Result<(u16, Value), String> {
     if body.iter().all(u8::is_ascii_whitespace) {
         return Ok((status, Value::Null));
     }
-    let v = serde_json::from_slice(&body).map_err(|e| format!("invalid JSON body (HTTP {status}): {e}"))?;
+    let v = serde_json::from_slice(&body)
+        .map_err(|e| format!("invalid JSON body (HTTP {status}): {e}"))?;
     Ok((status, v))
 }
 
 pub fn decode_chunked(mut b: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     loop {
-        let eol = b.windows(2).position(|w| w == b"\r\n").ok_or("malformed chunk header")?;
+        let eol = b
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or("malformed chunk header")?;
         let size_s = std::str::from_utf8(&b[..eol]).map_err(|_| "bad chunk size")?;
         let size_s = size_s.split(';').next().unwrap_or("").trim();
-        let size = usize::from_str_radix(size_s, 16).map_err(|_| format!("bad chunk size {size_s:?}"))?;
+        let size =
+            usize::from_str_radix(size_s, 16).map_err(|_| format!("bad chunk size {size_s:?}"))?;
         b = &b[eol + 2..];
         if size == 0 {
             return Ok(out);

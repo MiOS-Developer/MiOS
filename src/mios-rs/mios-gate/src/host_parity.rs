@@ -142,11 +142,7 @@ pub const RUNTIME_HARDWARE_STACK: [&str; 5] = [
     "usr/libexec/mios/usb-release.sh",
 ];
 
-pub const BUILDTIME_STACK: [&str; 3] = [
-    "Containerfile",
-    "Containerfile.hummingbird",
-    "Justfile",
-];
+pub const BUILDTIME_STACK: [&str; 3] = ["Containerfile", "Containerfile.hummingbird", "Justfile"];
 
 pub const INSTALLATION_STACK: [&str; 4] = [
     "field/autounattend/MiOS-Provision.lib.ps1",
@@ -155,11 +151,8 @@ pub const INSTALLATION_STACK: [&str; 4] = [
     "field/autounattend/Build-MiOSXboxISO.ps1",
 ];
 
-pub const PIPELINE_CI_STACK: [&str; 3] = [
-    "tools/ci-suites.py",
-    "tools/sync-generated.sh",
-    "VERSION",
-];
+pub const PIPELINE_CI_STACK: [&str; 3] =
+    ["tools/ci-suites.py", "tools/sync-generated.sh", "VERSION"];
 
 pub fn check_fhs_overlay(root: &Path) -> Report {
     let mut findings = Vec::new();
@@ -170,7 +163,9 @@ pub fn check_fhs_overlay(root: &Path) -> Report {
         findings.push("root .git metadata directory is absent".to_string());
     } else if let Ok(meta) = std::fs::symlink_metadata(&git_dir) {
         if meta.file_type().is_symlink() {
-            findings.push("root .git is a symlink or junction instead of a native root directory".to_string());
+            findings.push(
+                "root .git is a symlink or junction instead of a native root directory".to_string(),
+            );
         }
     }
 
@@ -197,12 +192,15 @@ pub fn check_fhs_overlay(root: &Path) -> Report {
         findings.push("root .gitignore is absent".to_string());
     } else if let Ok(content) = std::fs::read_to_string(&gitignore) {
         if !content.lines().any(|l| l.trim() == "/*") {
-            findings.push("root .gitignore lacks mandatory '/*' block-all root boundary".to_string());
+            findings
+                .push("root .gitignore lacks mandatory '/*' block-all root boundary".to_string());
         }
         for ns in WINDOWS_HOST_NAMESPACES {
             let pat = format!("/{ns}");
             if !content.lines().any(|l| l.trim() == pat || l.trim() == ns) {
-                findings.push(format!("root .gitignore does not explicitly isolate Windows host namespace: {ns}"));
+                findings.push(format!(
+                    "root .gitignore does not explicitly isolate Windows host namespace: {ns}"
+                ));
             }
         }
     }
@@ -227,7 +225,9 @@ pub fn check_fhs_overlay(root: &Path) -> Report {
         if root.join(file).exists() {
             verified_runtime += 1;
         } else {
-            findings.push(format!("missing hardware/systemd integration component: {file}"));
+            findings.push(format!(
+                "missing hardware/systemd integration component: {file}"
+            ));
         }
     }
 
@@ -245,7 +245,9 @@ pub fn check_fhs_overlay(root: &Path) -> Report {
         if root.join(file).exists() {
             verified_install += 1;
         } else {
-            findings.push(format!("missing install-time autounattend/DISM servicing component: {file}"));
+            findings.push(format!(
+                "missing install-time autounattend/DISM servicing component: {file}"
+            ));
         }
     }
 
@@ -456,7 +458,10 @@ mod tests {
         fs::remove_dir(tree.path().join(".git")).unwrap();
         let report = check_fhs_overlay(tree.path());
         assert_eq!(report.code(), 1);
-        assert!(report.findings.iter().any(|f| f.contains(".git metadata directory is absent")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.contains(".git metadata directory is absent")));
     }
 
     #[test]
@@ -465,7 +470,10 @@ mod tests {
         fs::remove_dir(tree.path().join("dev")).unwrap();
         let report = check_fhs_overlay(tree.path());
         assert_eq!(report.code(), 1);
-        assert!(report.findings.iter().any(|f| f.contains("missing standard Linux FHS root directory: /dev")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.contains("missing standard Linux FHS root directory: /dev")));
     }
 
     #[test]
@@ -474,7 +482,10 @@ mod tests {
         fs::write(tree.path().join(".gitignore"), "/*\n").unwrap();
         let report = check_fhs_overlay(tree.path());
         assert_eq!(report.code(), 1);
-        assert!(report.findings.iter().any(|f| f.contains("does not explicitly isolate Windows host namespace")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.contains("does not explicitly isolate Windows host namespace")));
     }
 
     #[test]
@@ -483,7 +494,10 @@ mod tests {
         fs::remove_file(tree.path().join("Containerfile")).unwrap();
         let report = check_fhs_overlay(tree.path());
         assert_eq!(report.code(), 1);
-        assert!(report.findings.iter().any(|f| f.contains("missing buildtime root component: Containerfile")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.contains("missing buildtime root component: Containerfile")));
     }
 
     #[test]

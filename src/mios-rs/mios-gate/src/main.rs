@@ -211,7 +211,10 @@ fn main() -> ExitCode {
         eprint!("mios-gate: --ssot, --profile and --allow-tree-only belong to image-equivalence\n{USAGE}");
         return ExitCode::from(EXIT_CANNOT_RUN);
     }
-    if name != "static-linkage" && name != "native-policy" && (binary.is_some() || arch.is_some() || census) {
+    if name != "static-linkage"
+        && name != "native-policy"
+        && (binary.is_some() || arch.is_some() || census)
+    {
         eprint!("mios-gate: --binary, --arch and --census belong to static-linkage\n{USAGE}");
         return ExitCode::from(EXIT_CANNOT_RUN);
     }

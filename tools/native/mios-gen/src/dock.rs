@@ -16,12 +16,12 @@
 // AI-related: usr/share/mios/mios.toml,
 // usr/share/mios/quickshell/DockExpanded.qml, usr/share/mios/quickshell/DockConfig.qml, tools/native/mios-gen/src/nested_devices.rs,
 // usr/share/doc/mios/guides/hud.md, tests/test-dock-hud.py
+use mios_service_core::wayland_fd::{recv_fds, send_fds};
 use serde_json::{json, Value as Json};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
-use mios_service_core::wayland_fd::{recv_fds, send_fds};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
@@ -47,7 +47,14 @@ fn n(t: &Toml, path: &str, d: i64) -> i64 {
     get(t, path).and_then(Toml::as_integer).unwrap_or(d)
 }
 fn strs(t: &Toml, path: &str) -> Vec<String> {
-    get(t, path).and_then(Toml::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+    get(t, path)
+        .and_then(Toml::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ---- compositor IPC ------------------------------------------------------------------------------------------------
@@ -59,15 +66,32 @@ pub struct Instance {
 }
 impl Instance {
     fn current() -> Result<Self, String> {
-        let runtime = PathBuf::from(env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR missing")?);
-        let signature = env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| "HYPRLAND_INSTANCE_SIGNATURE missing")?;
+        let runtime =
+            PathBuf::from(env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR missing")?);
+        let signature = env::var("HYPRLAND_INSTANCE_SIGNATURE")
+            .map_err(|_| "HYPRLAND_INSTANCE_SIGNATURE missing")?;
         let wl = env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-1".into());
-        let wayland = if Path::new(&wl).is_absolute() { PathBuf::from(wl) } else { runtime.join(wl) };
-        Ok(Instance { runtime, signature, wayland })
+        let wayland = if Path::new(&wl).is_absolute() {
+            PathBuf::from(wl)
+        } else {
+            runtime.join(wl)
+        };
+        Ok(Instance {
+            runtime,
+            signature,
+            wayland,
+        })
     }
     fn ipc(&self, cmd: &str) -> Result<String, String> {
-        let mut st = UnixStream::connect(self.runtime.join("hypr").join(&self.signature).join(".socket.sock")).map_err(|e| format!("{}: {e}", self.signature))?;
-        st.set_read_timeout(Some(Duration::from_secs(2))).map_err(|e| e.to_string())?;
+        let mut st = UnixStream::connect(
+            self.runtime
+                .join("hypr")
+                .join(&self.signature)
+                .join(".socket.sock"),
+        )
+        .map_err(|e| format!("{}: {e}", self.signature))?;
+        st.set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|e| e.to_string())?;
         st.write_all(cmd.as_bytes()).map_err(|e| e.to_string())?;
         let mut out = String::new();
         st.read_to_string(&mut out).map_err(|e| e.to_string())?;
@@ -78,7 +102,11 @@ impl Instance {
     }
     fn eval(&self, code: &str) -> Result<(), String> {
         let r = self.ipc(&format!("/eval {code}"))?;
-        if r.trim() == "ok" { Ok(()) } else { Err(r.trim().to_owned()) }
+        if r.trim() == "ok" {
+            Ok(())
+        } else {
+            Err(r.trim().to_owned())
+        }
     }
 }
 fn lua_str(v: &str) -> String {
@@ -89,7 +117,9 @@ fn lua_str(v: &str) -> String {
 /// The registry of nested sessions lives in the runtime of the compositor that launched them: ours, or -- inside a
 /// nested session -- the parent's (session.json in our runtime names it).
 fn registry_root(me: &Instance) -> (PathBuf, Option<Json>) {
-    let desc = fs::read(me.runtime.join("session.json")).ok().and_then(|b| serde_json::from_slice::<Json>(&b).ok());
+    let desc = fs::read(me.runtime.join("session.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Json>(&b).ok());
     match desc.as_ref().and_then(|d| d["parent_runtime"].as_str()) {
         Some(p) => (PathBuf::from(p), desc.clone()),
         None => (me.runtime.clone(), None),
@@ -97,10 +127,18 @@ fn registry_root(me: &Instance) -> (PathBuf, Option<Json>) {
 }
 
 fn which(bin: &str) -> bool {
-    env::var_os("PATH").map(|p| env::split_paths(&p).any(|d| d.join(bin).is_file())).unwrap_or(false)
+    env::var_os("PATH")
+        .map(|p| env::split_paths(&p).any(|d| d.join(bin).is_file()))
+        .unwrap_or(false)
 }
 
-pub fn targets_json(data: &Toml, me: &Instance, monitors: &Json, sessions: &[Json], parent: Option<&Json>) -> Json {
+pub fn targets_json(
+    data: &Toml,
+    me: &Instance,
+    monitors: &Json,
+    sessions: &[Json],
+    parent: Option<&Json>,
+) -> Json {
     let rdp = s(data, "remote.rdp.virtual_output", "HEADLESS-MIOS-RDP");
     let local_label = s(data, "desktop.dock.targets.local_label", "This desktop");
     let mut out = Vec::new();
@@ -126,7 +164,13 @@ pub fn targets_json(data: &Toml, me: &Instance, monitors: &Json, sessions: &[Jso
         }
         let seat = sj["seat"].as_str().unwrap_or_default();
         let user = sj["user"].as_str().unwrap_or_default();
-        let label = if !user.is_empty() { format!("Session {user}") } else if !seat.is_empty() { format!("Session {seat}") } else { format!("Nested session {}", sj["compositor_pid"]) };
+        let label = if !user.is_empty() {
+            format!("Session {user}")
+        } else if !seat.is_empty() {
+            format!("Session {seat}")
+        } else {
+            format!("Nested session {}", sj["compositor_pid"])
+        };
         out.push(json!({
             "id": format!("session:{inst}"), "kind": "nested", "label": label, "available": sj["state"] == "running",
             "runtime": sj["runtime"], "instance": inst, "wayland_display": sj["wayland_display"],
@@ -134,7 +178,9 @@ pub fn targets_json(data: &Toml, me: &Instance, monitors: &Json, sessions: &[Jso
         }));
     }
     if let Some(p) = parent {
-        if let (Some(rt), Some(inst)) = (p["parent_runtime"].as_str(), p["parent_instance"].as_str()) {
+        if let (Some(rt), Some(inst)) =
+            (p["parent_runtime"].as_str(), p["parent_instance"].as_str())
+        {
             out.push(json!({
                 "id": format!("session:{inst}"), "kind": "parent", "label": "Host desktop", "available": true,
                 "runtime": rt, "instance": inst, "wayland_display": Json::Null,
@@ -142,7 +188,10 @@ pub fn targets_json(data: &Toml, me: &Instance, monitors: &Json, sessions: &[Jso
             }));
         }
     }
-    if get(data, "vm.looking_glass.enabled").and_then(Toml::as_bool).unwrap_or(false) {
+    if get(data, "vm.looking_glass.enabled")
+        .and_then(Toml::as_bool)
+        .unwrap_or(false)
+    {
         for d in strs(data, "vm.looking_glass.domains") {
             out.push(json!({
                 "id": format!("vm:{d}"), "kind": "vm", "label": format!("VM {d}"), "available": true,
@@ -179,8 +228,15 @@ pub fn targets(root: &Path, address: Option<&str>) -> Result<Json, String> {
     let me = Instance::current()?;
     let monitors = me.json("monitors").unwrap_or(Json::Array(vec![]));
     let (reg_root, desc) = registry_root(&me);
-    let reg = reg_root.join(s(&data, "desktop.nested.registry_dir", "mios/nested-sessions"));
-    let sessions: Vec<Json> = crate::nested_devices::live_sessions(&reg, false).into_iter().map(|(_, j)| j).collect();
+    let reg = reg_root.join(s(
+        &data,
+        "desktop.nested.registry_dir",
+        "mios/nested-sessions",
+    ));
+    let sessions: Vec<Json> = crate::nested_devices::live_sessions(&reg, false)
+        .into_iter()
+        .map(|(_, j)| j)
+        .collect();
     let mut v = targets_json(&data, &me, &monitors, &sessions, desc.as_ref());
     // With a window: how THIS app would move to each target (migrate / stream / live), shown by the dock per chip.
     if let Some(a) = address {
@@ -193,7 +249,13 @@ pub fn targets(root: &Path, address: Option<&str>) -> Result<Json, String> {
                 "monitor-move" => "live",
                 "relaunch" | "waypipe-relaunch" if p.migrate => "migrate",
                 "relaunch" | "waypipe-relaunch" => "stream-unavailable",
-                _ => if t.get("stream").is_some() { "stream-only" } else { "none" },
+                _ => {
+                    if t.get("stream").is_some() {
+                        "stream-only"
+                    } else {
+                        "none"
+                    }
+                }
             };
             t["for_window"] = json!({"how": how});
         }
@@ -205,8 +267,16 @@ pub fn targets(root: &Path, address: Option<&str>) -> Result<Json, String> {
 // ---- move ----------------------------------------------------------------------------------------------------------
 fn proc_argv(pid: u64) -> Result<Vec<String>, String> {
     let raw = fs::read(format!("/proc/{pid}/cmdline")).map_err(|e| format!("pid {pid}: {e}"))?;
-    let v: Vec<String> = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-    if v.is_empty() { Err(format!("pid {pid} has no command line")) } else { Ok(v) }
+    let v: Vec<String> = raw
+        .split(|b| *b == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
+    if v.is_empty() {
+        Err(format!("pid {pid} has no command line"))
+    } else {
+        Ok(v)
+    }
 }
 
 /// How an app can move (operator: "both, per app" -- migrate containerized/stateless apps, stream the rest):
@@ -215,46 +285,101 @@ fn proc_argv(pid: u64) -> Result<Vec<String>, String> {
 /// app would have to be streamed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppPolicy {
-    pub kind: &'static str,       // flatpak | container | stateless | native
-    pub app_id: String,           // the Flatpak app id (relaunch with `flatpak run`), else the window class
+    pub kind: &'static str, // flatpak | container | stateless | native
+    pub app_id: String, // the Flatpak app id (relaunch with `flatpak run`), else the window class
     pub migrate: bool,
 }
-pub fn classify(cgroup: &str, flatpak_info: Option<&str>, class: &str, stateless: &[String]) -> AppPolicy {
+pub fn classify(
+    cgroup: &str,
+    flatpak_info: Option<&str>,
+    class: &str,
+    stateless: &[String],
+) -> AppPolicy {
     if let Some(info) = flatpak_info {
-        let id = info.lines().find_map(|l| l.strip_prefix("name=")).unwrap_or(class).trim().to_owned();
-        return AppPolicy { kind: "flatpak", app_id: id, migrate: true };
+        let id = info
+            .lines()
+            .find_map(|l| l.strip_prefix("name="))
+            .unwrap_or(class)
+            .trim()
+            .to_owned();
+        return AppPolicy {
+            kind: "flatpak",
+            app_id: id,
+            migrate: true,
+        };
     }
     if cgroup.contains("app-flatpak-") {
-        return AppPolicy { kind: "flatpak", app_id: class.to_owned(), migrate: true };
+        return AppPolicy {
+            kind: "flatpak",
+            app_id: class.to_owned(),
+            migrate: true,
+        };
     }
     if cgroup.contains("libpod-") || cgroup.contains("toolbox") {
-        return AppPolicy { kind: "container", app_id: class.to_owned(), migrate: true };
+        return AppPolicy {
+            kind: "container",
+            app_id: class.to_owned(),
+            migrate: true,
+        };
     }
     if stateless.iter().any(|c| c.eq_ignore_ascii_case(class)) {
-        return AppPolicy { kind: "stateless", app_id: class.to_owned(), migrate: true };
+        return AppPolicy {
+            kind: "stateless",
+            app_id: class.to_owned(),
+            migrate: true,
+        };
     }
-    AppPolicy { kind: "native", app_id: class.to_owned(), migrate: false }
+    AppPolicy {
+        kind: "native",
+        app_id: class.to_owned(),
+        migrate: false,
+    }
 }
 fn policy_for(data: &Toml, pid: u64, class: &str) -> AppPolicy {
     let cg = fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap_or_default();
     let fi = fs::read_to_string(format!("/proc/{pid}/root/.flatpak-info")).ok();
-    classify(&cg, fi.as_deref(), class, &strs(data, "desktop.dock.targets.stateless_apps"))
+    classify(
+        &cg,
+        fi.as_deref(),
+        class,
+        &strs(data, "desktop.dock.targets.stateless_apps"),
+    )
 }
 
 fn find_client<'a>(clients: &'a Json, address: &str) -> Option<&'a Json> {
-    clients.as_array()?.iter().find(|c| c["address"].as_str().is_some_and(|a| a.eq_ignore_ascii_case(address)))
+    clients.as_array()?.iter().find(|c| {
+        c["address"]
+            .as_str()
+            .is_some_and(|a| a.eq_ignore_ascii_case(address))
+    })
 }
 
-pub fn move_window(root: &Path, target: &str, address: &str, dry_run: bool) -> Result<Json, String> {
-    if !address.starts_with("0x") || !address[2..].chars().all(|c| c.is_ascii_hexdigit()) || address.len() < 3 {
+pub fn move_window(
+    root: &Path,
+    target: &str,
+    address: &str,
+    dry_run: bool,
+) -> Result<Json, String> {
+    if !address.starts_with("0x")
+        || !address[2..].chars().all(|c| c.is_ascii_hexdigit())
+        || address.len() < 3
+    {
         return Err("address must be a Hyprland window address (0x...)".into());
     }
     let data = ssot(root)?;
     let me = Instance::current()?;
     let all = targets(root, None)?;
-    let t = all["targets"].as_array().into_iter().flatten().find(|t| t["id"] == target).cloned().ok_or_else(|| format!("unknown target {target}"))?;
+    let t = all["targets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|t| t["id"] == target)
+        .cloned()
+        .ok_or_else(|| format!("unknown target {target}"))?;
     let clients = me.json("clients")?;
-    let win = find_client(&clients, address).cloned().ok_or_else(|| format!("no window {address} in this session"))?;
+    let win = find_client(&clients, address)
+        .cloned()
+        .ok_or_else(|| format!("no window {address} in this session"))?;
     let method = t["move"]["method"].as_str().unwrap_or("none");
     match method {
         "monitor-move" => {
@@ -379,7 +504,10 @@ fn read_string(b: &[u8], at: usize) -> Option<(String, usize)> {
     if at + 4 + padded > b.len() || len == 0 {
         return None;
     }
-    Some((String::from_utf8_lossy(&b[at + 4..at + 4 + len - 1]).into_owned(), 4 + padded))
+    Some((
+        String::from_utf8_lossy(&b[at + 4..at + 4 + len - 1]).into_owned(),
+        4 + padded,
+    ))
 }
 fn msg(obj: u32, op: u16, args: &[u32]) -> Vec<u8> {
     let mut v = header(obj, op, 8 + 4 * args.len());
@@ -508,11 +636,26 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
         return Err("[desktop.dock.osk] is disabled".into());
     }
     let argv = strs(&data, "desktop.dock.osk.command");
-    let argv = if argv.is_empty() { vec!["/usr/bin/phosh-osk-stevia".to_owned(), "--replace".to_owned()] } else { argv };
-    let layer = match s(&data, "desktop.dock.osk.layer", "overlay") { "top" => 2, "bottom" => 1, "background" => 0, _ => 3 };
+    let argv = if argv.is_empty() {
+        vec![
+            "/usr/bin/phosh-osk-stevia".to_owned(),
+            "--replace".to_owned(),
+        ]
+    } else {
+        argv
+    };
+    let layer = match s(&data, "desktop.dock.osk.layer", "overlay") {
+        "top" => 2,
+        "bottom" => 1,
+        "background" => 0,
+        _ => 3,
+    };
     let rect = OskRect {
         width: o.width.max(1),
-        height: o.height.unwrap_or(n(&data, "desktop.dock.osk.height_px", 220) as u32).max(1),
+        height: o
+            .height
+            .unwrap_or(n(&data, "desktop.dock.osk.height_px", 220) as u32)
+            .max(1),
         bottom: o.bottom,
         layer,
         namespace: s(&data, "desktop.dock.osk.namespace", "mios-dock").to_owned(),
@@ -534,7 +677,11 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
         c.args(&argv[1..]);
         c
     };
-    cmd.env("WAYLAND_DISPLAY", &name).env("XDG_RUNTIME_DIR", &me.runtime).env("GDK_BACKEND", "wayland").env_remove("DISPLAY").stdin(Stdio::null());
+    cmd.env("WAYLAND_DISPLAY", &name)
+        .env("XDG_RUNTIME_DIR", &me.runtime)
+        .env("GDK_BACKEND", "wayland")
+        .env_remove("DISPLAY")
+        .stdin(Stdio::null());
     if o.force_show {
         cmd.env("POS_DEBUG", "force-show");
     }
@@ -549,20 +696,28 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
         match listener.accept() {
             Ok((client, _)) => {
                 let _ = client.set_nonblocking(false);
-                let upstream = UnixStream::connect(&me.wayland).map_err(|e| format!("{}: {e}", me.wayland.display()))?;
+                let upstream = UnixStream::connect(&me.wayland)
+                    .map_err(|e| format!("{}: {e}", me.wayland.display()))?;
                 let tracker = Arc::new(Mutex::new(Tracker::default()));
-                let (c2, u2) = (client.try_clone().map_err(|e| e.to_string())?, upstream.try_clone().map_err(|e| e.to_string())?);
+                let (c2, u2) = (
+                    client.try_clone().map_err(|e| e.to_string())?,
+                    upstream.try_clone().map_err(|e| e.to_string())?,
+                );
                 let (t1, t2, r) = (tracker.clone(), tracker, rect.clone());
                 thread::spawn(move || pump(client, upstream, t1, Some(r)));
                 thread::spawn(move || pump(u2, c2, t2, None));
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(50)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50))
+            }
             Err(e) => return Err(e.to_string()),
         }
     }
     let _ = fs::remove_file(&sock);
     if status.is_none() {
-        let _ = std::process::Command::new("kill").args(["-TERM", &child.id().to_string()]).status();
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status();
         let until = Instant::now() + Duration::from_secs(2);
         while child.try_wait().ok().flatten().is_none() && Instant::now() < until {
             thread::sleep(Duration::from_millis(20));
@@ -580,7 +735,10 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
 
 /// Expose the tracker counters for status lines (tests).
 pub fn _tracker_counts(t: &Tracker) -> HashMap<&'static str, usize> {
-    HashMap::from([("layer_shells", t.layer_shells.len()), ("layer_surfaces", t.layer_surfaces.len())])
+    HashMap::from([
+        ("layer_shells", t.layer_shells.len()),
+        ("layer_surfaces", t.layer_surfaces.len()),
+    ])
 }
 
 #[cfg(test)]
@@ -588,7 +746,13 @@ mod tests {
     use super::*;
 
     fn rect() -> OskRect {
-        OskRect { width: 640, height: 220, bottom: 72, layer: 3, namespace: "mios-dock".into() }
+        OskRect {
+            width: 640,
+            height: 220,
+            bottom: 72,
+            layer: 3,
+            namespace: "mios-dock".into(),
+        }
     }
     fn bind(registry: u32, iface: &str, id: u32) -> Vec<u8> {
         let mut body = 7u32.to_le_bytes().to_vec();
@@ -625,8 +789,14 @@ mod tests {
     fn layer_surface_lands_in_the_dock() {
         let mut t = Tracker::default();
         let r = rect();
-        assert_eq!(rewrite_request(&mut t, &r, &msg(1, 1, &[2])), msg(1, 1, &[2]));
-        assert_eq!(rewrite_request(&mut t, &r, &bind(2, "zwlr_layer_shell_v1", 5)), bind(2, "zwlr_layer_shell_v1", 5));
+        assert_eq!(
+            rewrite_request(&mut t, &r, &msg(1, 1, &[2])),
+            msg(1, 1, &[2])
+        );
+        assert_eq!(
+            rewrite_request(&mut t, &r, &bind(2, "zwlr_layer_shell_v1", 5)),
+            bind(2, "zwlr_layer_shell_v1", 5)
+        );
         let out = rewrite_request(&mut t, &r, &get_layer_surface(5, 11, 2, "osk"));
         let msgs = split(&out);
         // get_layer_surface: same ids, the dock's layer, the dock's namespace
@@ -639,11 +809,23 @@ mod tests {
         assert_eq!(msgs[3], (11, 2, vec![u32::MAX]));
         assert_eq!(msgs[4], (11, 3, vec![0, 0, 72, 0]));
         // stevia's own full-width requests are overridden
-        assert_eq!(rewrite_request(&mut t, &r, &msg(11, 1, &[2 | 4 | 8])), msg(11, 1, &[ANCHOR_BOTTOM]));
-        assert_eq!(rewrite_request(&mut t, &r, &msg(11, 2, &[180])), msg(11, 2, &[u32::MAX]));
-        assert_eq!(rewrite_request(&mut t, &r, &msg(11, 0, &[0, 180])), msg(11, 0, &[640, 220]));
+        assert_eq!(
+            rewrite_request(&mut t, &r, &msg(11, 1, &[2 | 4 | 8])),
+            msg(11, 1, &[ANCHOR_BOTTOM])
+        );
+        assert_eq!(
+            rewrite_request(&mut t, &r, &msg(11, 2, &[180])),
+            msg(11, 2, &[u32::MAX])
+        );
+        assert_eq!(
+            rewrite_request(&mut t, &r, &msg(11, 0, &[0, 180])),
+            msg(11, 0, &[640, 220])
+        );
         // ack_configure passes untouched
-        assert_eq!(rewrite_request(&mut t, &r, &msg(11, 6, &[42])), msg(11, 6, &[42]));
+        assert_eq!(
+            rewrite_request(&mut t, &r, &msg(11, 6, &[42])),
+            msg(11, 6, &[42])
+        );
     }
 
     #[test]
@@ -659,16 +841,38 @@ mod tests {
         rewrite_request(&mut t, &r, &bind(2, "zwlr_layer_shell_v1", 6));
         rewrite_request(&mut t, &r, &get_layer_surface(6, 12, 2, "osk"));
         observe_event(&mut t, &msg(1, 1, &[12]));
-        assert_eq!(rewrite_request(&mut t, &r, &msg(12, 1, &[3])), msg(12, 1, &[3]));
+        assert_eq!(
+            rewrite_request(&mut t, &r, &msg(12, 1, &[3])),
+            msg(12, 1, &[3])
+        );
     }
 
     #[test]
     fn apps_migrate_only_when_containerized_or_stateless() {
         let none: Vec<String> = vec![];
-        let f = classify("0::/user.slice/app-flatpak-org.gnome.Calculator-123.scope", Some("[Application]\nname=org.gnome.Calculator\n"), "org.gnome.Calculator", &none);
-        assert_eq!((f.kind, f.migrate, f.app_id.as_str()), ("flatpak", true, "org.gnome.Calculator"));
-        assert_eq!(classify("0::/machine.slice/libpod-abc.scope", None, "x", &none).kind, "container");
-        assert!(classify("0::/user.slice/app.slice/app-foo.scope", None, "foot", &["foot".into()]).migrate);
+        let f = classify(
+            "0::/user.slice/app-flatpak-org.gnome.Calculator-123.scope",
+            Some("[Application]\nname=org.gnome.Calculator\n"),
+            "org.gnome.Calculator",
+            &none,
+        );
+        assert_eq!(
+            (f.kind, f.migrate, f.app_id.as_str()),
+            ("flatpak", true, "org.gnome.Calculator")
+        );
+        assert_eq!(
+            classify("0::/machine.slice/libpod-abc.scope", None, "x", &none).kind,
+            "container"
+        );
+        assert!(
+            classify(
+                "0::/user.slice/app.slice/app-foo.scope",
+                None,
+                "foot",
+                &["foot".into()]
+            )
+            .migrate
+        );
         // negative control: a native app with local state is never "migrated"
         let n = classify("0::/user.slice/app.slice/app-zen.scope", None, "zen", &none);
         assert_eq!((n.kind, n.migrate), ("native", false));
@@ -680,7 +884,11 @@ mod tests {
             "[remote.rdp]\nvirtual_output = \"HEADLESS-MIOS-RDP\"\n[vm.looking_glass]\nenabled = true\ndomains = [\"vm-a\"]\n[desktop.dock.targets]\nlocal_label = \"This desktop\"\nwaypipe_hosts = [\"node2\"]\n",
         )
         .unwrap();
-        let me = Instance { runtime: "/run/x".into(), signature: "sig-me".into(), wayland: "/run/x/wayland-1".into() };
+        let me = Instance {
+            runtime: "/run/x".into(),
+            signature: "sig-me".into(),
+            wayland: "/run/x/wayland-1".into(),
+        };
         let mons = json!([{"name": "DP-1", "id": 0}, {"name": "HEADLESS-MIOS-RDP", "id": 1}]);
         let sessions = vec![
             json!({"instance": "sig-me", "state": "running"}),
@@ -693,7 +901,10 @@ mod tests {
         assert_eq!(by("output:HEADLESS-MIOS-RDP")["kind"], "remote-rdp");
         assert_eq!(by("session:sig-n")["move"]["method"], "relaunch");
         assert_eq!(by("session:sig-n")["move"]["live_state"], false);
-        assert!(!ts.iter().any(|t| t["id"] == "session:sig-me"), "own session is not a target");
+        assert!(
+            !ts.iter().any(|t| t["id"] == "session:sig-me"),
+            "own session is not a target"
+        );
         assert_eq!(by("vm:vm-a")["move"]["method"], "none");
         assert_eq!(v["methods"]["wayland-handoff"]["supported"], false);
         // waypipe is offered only as available as the binary is

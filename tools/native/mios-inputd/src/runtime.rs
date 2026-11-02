@@ -3,7 +3,7 @@
 use crate::config::{GlobalConfig, LegacyConfig};
 use crate::linux::{self, Device, VirtualDevice};
 use crate::router::{Output, PadState, Router, EV_SYN, SYN_DROPPED, SYN_REPORT};
-use std::collections::{BTreeMap,BTreeSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -62,31 +62,48 @@ struct RunningDevice {
 }
 #[derive(Clone)]
 struct CapturedTmux {
-    client: TmuxClient, start: u64, session: String, pane: String, identity: (u32,String),
+    client: TmuxClient,
+    start: u64,
+    session: String,
+    pane: String,
+    identity: (u32, String),
 }
 #[derive(Clone)]
 struct CaptureReceipt {
-    address: String, class: String, pid: u32, tmux: Option<CapturedTmux>, error: Option<String>,
+    address: String,
+    class: String,
+    pid: u32,
+    tmux: Option<CapturedTmux>,
+    error: Option<String>,
 }
 struct CaptureBinding {
-    address: String, pid: u32, worker: Option<CaptureDispatcher>, error: Option<String>,
+    address: String,
+    pid: u32,
+    worker: Option<CaptureDispatcher>,
+    error: Option<String>,
 }
-enum CaptureDispatcher { Tmux(SessionWorker), Plain(PlainCaptureWorker) }
+enum CaptureDispatcher {
+    Tmux(SessionWorker),
+    Plain(PlainCaptureWorker),
+}
 impl CaptureDispatcher {
-    fn submit(&self, action:String)->bool {
-        match self {Self::Tmux(worker)=>worker.submit(action),Self::Plain(worker)=>worker.submit(action)}
+    fn submit(&self, action: String) -> bool {
+        match self {
+            Self::Tmux(worker) => worker.submit(action),
+            Self::Plain(worker) => worker.submit(action),
+        }
     }
 }
 struct PlainCaptureWorker {
-    jobs:Option<std::sync::mpsc::SyncSender<SessionJob>>,
-    stop:std::sync::Arc<AtomicBool>,
-    worker:Option<std::thread::JoinHandle<()>>,
+    jobs: Option<std::sync::mpsc::SyncSender<SessionJob>>,
+    stop: std::sync::Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 impl PlainCaptureWorker {
-    fn spawn(address:String,pid:u32,cfg:GlobalConfig)->Result<Self,String> {
-        let (jobs,inbox)=std::sync::mpsc::sync_channel::<SessionJob>(16);
-        let stop=std::sync::Arc::new(AtomicBool::new(false));
-        let cancelled=stop.clone();
+    fn spawn(address: String, pid: u32, cfg: GlobalConfig) -> Result<Self, String> {
+        let (jobs, inbox) = std::sync::mpsc::sync_channel::<SessionJob>(16);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled = stop.clone();
         let worker=std::thread::Builder::new().name("mios-terminal-input".into()).spawn(move || {
             while let Ok(job)=inbox.recv() {
                 if cancelled.load(Ordering::Relaxed) {break;}
@@ -96,66 +113,155 @@ impl PlainCaptureWorker {
                 eprintln!("{}",serde_json::json!({"captured_window":address,"action":job.action,"ok":result.as_ref().is_ok_and(|v|v.trim()=="ok"),"error":result.err()}));
             }
         }).map_err(|e|e.to_string())?;
-        Ok(Self {jobs:Some(jobs),stop,worker:Some(worker)})
+        Ok(Self {
+            jobs: Some(jobs),
+            stop,
+            worker: Some(worker),
+        })
     }
-    fn submit(&self,action:String)->bool {
-        action.starts_with("key:") && self.jobs.as_ref().is_some_and(|tx|tx.try_send(SessionJob {queued:Instant::now(),action}).is_ok())
+    fn submit(&self, action: String) -> bool {
+        action.starts_with("key:")
+            && self.jobs.as_ref().is_some_and(|tx| {
+                tx.try_send(SessionJob {
+                    queued: Instant::now(),
+                    action,
+                })
+                .is_ok()
+            })
     }
 }
 impl Drop for PlainCaptureWorker {
-    fn drop(&mut self) {self.stop.store(true,Ordering::Relaxed);self.jobs=None;self.worker.take();}
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.jobs = None;
+        self.worker.take();
+    }
 }
-fn capture_navigation_context(cfg:&GlobalConfig, class:Option<&str>) -> Option<String> {
-    let base=cfg.classify_window(class,false,false);
-    cfg.controller.capture_navigation_contexts.contains(&base).then_some(base)
+fn capture_navigation_context(cfg: &GlobalConfig, class: Option<&str>) -> Option<String> {
+    let base = cfg.classify_window(class, false, false);
+    cfg.controller
+        .capture_navigation_contexts
+        .contains(&base)
+        .then_some(base)
 }
-fn captured_client_argv(client:&TmuxClient) -> Vec<String> {
-    vec!["/usr/bin/tmux".into(),"-S".into(),client.socket.to_string_lossy().into_owned(),
-        "display-message".into(),"-p".into(),"-c".into(),client.tty.clone(),"-t".into(),client.tty.clone(),
-        "#{pid}\t#{session_name}\t#{window_id}\t#{pane_id}".into()]
+fn captured_client_argv(client: &TmuxClient) -> Vec<String> {
+    vec![
+        "/usr/bin/tmux".into(),
+        "-S".into(),
+        client.socket.to_string_lossy().into_owned(),
+        "display-message".into(),
+        "-p".into(),
+        "-c".into(),
+        client.tty.clone(),
+        "-t".into(),
+        client.tty.clone(),
+        "#{pid}\t#{session_name}\t#{window_id}\t#{pane_id}".into(),
+    ]
 }
-fn captured_tmux(cfg:&GlobalConfig,pid:u32)->Result<Option<CapturedTmux>,String> {
-    let uid=unsafe {libc::getuid()};
-    let Some(client)=tmux_client_under(Path::new("/proc"),pid,&cfg.controller.nav.tmux_sockets,uid) else {return Ok(None)};
-    let start=proc_start(Path::new("/proc"),client.pid).ok_or("captured terminal client vanished")?.1;
-    let reply=run_bounded(&captured_client_argv(&client),Duration::from_millis(cfg.controller.context_stale_ms))?;
-    let parts:Vec<_>=reply.trim_end_matches(['\r','\n']).split('\t').collect();
-    if parts.len()!=4 || parts[1].is_empty() || parts[1].chars().any(char::is_control) {
+fn captured_tmux(cfg: &GlobalConfig, pid: u32) -> Result<Option<CapturedTmux>, String> {
+    let uid = unsafe { libc::getuid() };
+    let Some(client) = tmux_client_under(
+        Path::new("/proc"),
+        pid,
+        &cfg.controller.nav.tmux_sockets,
+        uid,
+    ) else {
+        return Ok(None);
+    };
+    let start = proc_start(Path::new("/proc"), client.pid)
+        .ok_or("captured terminal client vanished")?
+        .1;
+    let reply = run_bounded(
+        &captured_client_argv(&client),
+        Duration::from_millis(cfg.controller.context_stale_ms),
+    )?;
+    let parts: Vec<_> = reply.trim_end_matches(['\r', '\n']).split('\t').collect();
+    if parts.len() != 4 || parts[1].is_empty() || parts[1].chars().any(char::is_control) {
         return Err("captured terminal did not report an exact session/pane".into());
     }
-    let server=parts[0].parse::<u32>().ok().filter(|p|*p>0).ok_or("invalid captured server identity")?;
-    if !parts[2].starts_with('@') || !parts[3].strip_prefix('%').is_some_and(|p|!p.is_empty() && p.bytes().all(|b|b.is_ascii_digit())) {
+    let server = parts[0]
+        .parse::<u32>()
+        .ok()
+        .filter(|p| *p > 0)
+        .ok_or("invalid captured server identity")?;
+    if !parts[2].starts_with('@')
+        || !parts[3]
+            .strip_prefix('%')
+            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    {
         return Err("invalid captured terminal pane identity".into());
     }
-    if proc_start(Path::new("/proc"),client.pid).map(|v|v.1)!=Some(start) {return Err("captured client was replaced".into())}
-    Ok(Some(CapturedTmux {client,start,session:parts[1].into(),pane:parts[3].into(),identity:(server,parts[2].into())}))
+    if proc_start(Path::new("/proc"), client.pid).map(|v| v.1) != Some(start) {
+        return Err("captured client was replaced".into());
+    }
+    Ok(Some(CapturedTmux {
+        client,
+        start,
+        session: parts[1].into(),
+        pane: parts[3].into(),
+        identity: (server, parts[2].into()),
+    }))
 }
-fn capture_binding(receipt:&CaptureReceipt, device:&Path, cfg:&GlobalConfig)->Result<CaptureBinding,String> {
-    let worker=if let Some(target)=&receipt.tmux {
-        let route=crate::sessions::SessionRoute { name:"captured-terminal".into(),controllers:vec![device.to_owned()],
-            socket:target.client.socket.clone(),session:target.session.clone(),pane:target.pane.clone(),ssh_host:None };
-        Some(CaptureDispatcher::Tmux(SessionWorker::spawn_client(route,cfg.clone(),Some((target.client.clone(),target.start)),Some(target.identity.clone()))?))
-    } else if receipt.error.is_none() && receipt.pid>0 {
-        Some(CaptureDispatcher::Plain(PlainCaptureWorker::spawn(receipt.address.clone(),receipt.pid,cfg.clone())?))
-    } else {None};
-    Ok(CaptureBinding {address:receipt.address.clone(),pid:receipt.pid,worker,error:receipt.error.clone()})
+fn capture_binding(
+    receipt: &CaptureReceipt,
+    device: &Path,
+    cfg: &GlobalConfig,
+) -> Result<CaptureBinding, String> {
+    let worker = if let Some(target) = &receipt.tmux {
+        let route = crate::sessions::SessionRoute {
+            name: "captured-terminal".into(),
+            controllers: vec![device.to_owned()],
+            socket: target.client.socket.clone(),
+            session: target.session.clone(),
+            pane: target.pane.clone(),
+            ssh_host: None,
+        };
+        Some(CaptureDispatcher::Tmux(SessionWorker::spawn_client(
+            route,
+            cfg.clone(),
+            Some((target.client.clone(), target.start)),
+            Some(target.identity.clone()),
+        )?))
+    } else if receipt.error.is_none() && receipt.pid > 0 {
+        Some(CaptureDispatcher::Plain(PlainCaptureWorker::spawn(
+            receipt.address.clone(),
+            receipt.pid,
+            cfg.clone(),
+        )?))
+    } else {
+        None
+    };
+    Ok(CaptureBinding {
+        address: receipt.address.clone(),
+        pid: receipt.pid,
+        worker,
+        error: receipt.error.clone(),
+    })
 }
 /// Each controller has its own bounded dispatcher. A stalled SSH target cannot block another player's input.
 /// Queue age is checked before execution, so reconnect never replays stale button presses.
-struct SessionJob { queued: Instant, action: String }
+struct SessionJob {
+    queued: Instant,
+    action: String,
+}
 struct SessionWorker {
     jobs: Option<std::sync::mpsc::SyncSender<SessionJob>>,
     worker: Option<std::thread::JoinHandle<()>>,
     stop: std::sync::Arc<AtomicBool>,
 }
 impl SessionWorker {
-    fn spawn(route: crate::sessions::SessionRoute, cfg: GlobalConfig) -> Result<Self,String> {
-        Self::spawn_client(route,cfg,None,None)
+    fn spawn(route: crate::sessions::SessionRoute, cfg: GlobalConfig) -> Result<Self, String> {
+        Self::spawn_client(route, cfg, None, None)
     }
-    fn spawn_client(route:crate::sessions::SessionRoute,cfg:GlobalConfig,client:Option<(TmuxClient,u64)>,pin:Option<(u32,String)>)->Result<Self,String> {
-        let (jobs,inbox)=std::sync::mpsc::sync_channel::<SessionJob>(16);
-        let stop=std::sync::Arc::new(AtomicBool::new(false));
-        let cancelled=stop.clone();
+    fn spawn_client(
+        route: crate::sessions::SessionRoute,
+        cfg: GlobalConfig,
+        client: Option<(TmuxClient, u64)>,
+        pin: Option<(u32, String)>,
+    ) -> Result<Self, String> {
+        let (jobs, inbox) = std::sync::mpsc::sync_channel::<SessionJob>(16);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled = stop.clone();
         let worker=std::thread::Builder::new().name(format!("mios-pad-{}",route.name)).spawn(move || {
             let timeout=Duration::from_millis(cfg.controller.context_stale_ms);
             let mut route=route;
@@ -212,40 +318,63 @@ impl SessionWorker {
                     "ok":result.is_ok(),"error":result.err()}));
             }
         }).map_err(|e|e.to_string())?;
-        Ok(Self { jobs:Some(jobs), worker:Some(worker), stop })
+        Ok(Self {
+            jobs: Some(jobs),
+            worker: Some(worker),
+            stop,
+        })
     }
     fn submit(&self, action: String) -> bool {
-        self.jobs.as_ref().is_some_and(|tx|tx.try_send(SessionJob { queued:Instant::now(),action }).is_ok())
+        self.jobs.as_ref().is_some_and(|tx| {
+            tx.try_send(SessionJob {
+                queued: Instant::now(),
+                action,
+            })
+            .is_ok()
+        })
     }
 }
 impl Drop for SessionWorker {
     fn drop(&mut self) {
         // Disconnect and discard the queue; any already executing command has a hard deadline.
-        self.stop.store(true,Ordering::Relaxed);
-        self.jobs=None;
+        self.stop.store(true, Ordering::Relaxed);
+        self.jobs = None;
         // Cancellation kills the dedicated command process group. The forwarding thread never joins a remote job.
         self.worker.take();
     }
 }
 /// The exact target identity is checked before dispatch; no "current session" or ambient TMUX context participates.
-fn session_identity(route:&crate::sessions::SessionRoute, reply:&str) -> Result<(u32,String),String> {
-    let parts:Vec<_>=reply.trim_end_matches(['\r','\n']).split('\t').collect();
-    if parts.len()!=4 || parts[1]!=route.session || parts[3]!=route.pane {
+fn session_identity(
+    route: &crate::sessions::SessionRoute,
+    reply: &str,
+) -> Result<(u32, String), String> {
+    let parts: Vec<_> = reply.trim_end_matches(['\r', '\n']).split('\t').collect();
+    if parts.len() != 4 || parts[1] != route.session || parts[3] != route.pane {
         return Err("tmux target does not match assigned session/pane".into());
     }
-    let pid=parts[0].parse::<u32>().ok().filter(|p|*p>0).ok_or("invalid tmux server identity")?;
-    if !parts[2].strip_prefix('@').is_some_and(|n|!n.is_empty() && n.bytes().all(|c|c.is_ascii_digit())) {
+    let pid = parts[0]
+        .parse::<u32>()
+        .ok()
+        .filter(|p| *p > 0)
+        .ok_or("invalid tmux server identity")?;
+    if !parts[2]
+        .strip_prefix('@')
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+    {
         return Err("invalid tmux window identity".into());
     }
-    Ok((pid,parts[2].to_owned()))
+    Ok((pid, parts[2].to_owned()))
 }
 /// Explicit headless assignments may run without a seated login, but never override a foreign active seat.
 fn session_focus(focus: &ContextSnapshot, assigned: bool, error: Option<&str>) -> ContextSnapshot {
-    if !assigned && error.is_none() { return focus.clone(); }
-    let mut out=ContextSnapshot::new("console");
+    if !assigned && error.is_none() {
+        return focus.clone();
+    }
+    let mut out = ContextSnapshot::new("console");
     // Ambiguous ownership reserves the physical node while output is dropped by emit; it is not a foreign seat.
-    out.suspended=focus.suspended.clone().filter(|reason|
-        !reason.starts_with("no seated session") && !reason.starts_with("no logind record"));
+    out.suspended = focus.suspended.clone().filter(|reason| {
+        !reason.starts_with("no seated session") && !reason.starts_with("no logind record")
+    });
     out
 }
 /// The compositor this process follows. Starts as HYPRLAND_INSTANCE_SIGNATURE; rediscovery (C-16) replaces a stale one
@@ -255,7 +384,8 @@ fn signature() -> Result<String, String> {
     if let Some(s) = SIGNATURE.lock().ok().and_then(|s| s.clone()) {
         return Ok(s);
     }
-    std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| "selected compositor signature missing".into())
+    std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+        .map_err(|_| "selected compositor signature missing".into())
 }
 fn proc_start(proc_root: &Path, pid: u32) -> Option<(u32, u64)> {
     let stat = std::fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).ok()?;
@@ -268,14 +398,29 @@ fn proc_start(proc_root: &Path, pid: u32) -> Option<(u32, u64)> {
 pub fn live_instances(runtime: &Path, proc_root: &Path) -> Vec<(String, u32)> {
     use std::os::unix::fs::FileTypeExt;
     let mut found = vec![];
-    for entry in std::fs::read_dir(runtime.join("hypr")).into_iter().flatten().filter_map(Result::ok) {
-        let Some(sig) = entry.file_name().to_str().map(str::to_owned) else { continue };
+    for entry in std::fs::read_dir(runtime.join("hypr"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+    {
+        let Some(sig) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
         if sig.contains('/') || sig.starts_with('.') {
             continue;
         }
-        let Some(pid) = std::fs::read_to_string(entry.path().join("hyprland.lock")).ok().and_then(|t| t.lines().next()?.trim().parse::<u32>().ok()) else { continue };
-        let Some((_, start)) = proc_start(proc_root, pid) else { continue };
-        if !std::fs::metadata(entry.path().join(".socket.sock")).is_ok_and(|m| m.file_type().is_socket()) {
+        let Some(pid) = std::fs::read_to_string(entry.path().join("hyprland.lock"))
+            .ok()
+            .and_then(|t| t.lines().next()?.trim().parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Some((_, start)) = proc_start(proc_root, pid) else {
+            continue;
+        };
+        if !std::fs::metadata(entry.path().join(".socket.sock"))
+            .is_ok_and(|m| m.file_type().is_socket())
+        {
             continue;
         }
         found.push((sig, pid, start));
@@ -326,37 +471,102 @@ pub struct SeatView {
 }
 fn logind_fields(path: &Path) -> Option<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(path).ok()?;
-    Some(text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_owned(), v.trim().to_owned())).collect())
+    Some(
+        text.lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, v)| (k.to_owned(), v.trim().to_owned()))
+            .collect(),
+    )
 }
 fn logind_id_ok(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 const GRAPHICAL: [&str; 3] = ["wayland", "x11", "mir"];
 /// C-16 / INV-8: the seat view of `uid` from logind's runtime state (users/<uid>, sessions/<id>, seats/<seat>).
 pub fn seat_view(state: &Path, uid: u32) -> SeatView {
-    let foreign = |r: &str| SeatView { seat: Seat::Foreign(r.into()), graphical_vt: None };
-    let Some(user) = logind_fields(&state.join("users").join(uid.to_string())) else { return foreign("no logind record for this user") };
-    let mut ids: Vec<String> = user.get("DISPLAY").into_iter().cloned().collect();
-    ids.extend(user.get("SESSIONS").map(|s| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>()).unwrap_or_default());
-    let sessions: Vec<(String, BTreeMap<String, String>)> = ids.iter().filter(|i| logind_id_ok(i)).take(32)
-        .filter_map(|i| logind_fields(&state.join("sessions").join(i)).map(|f| (i.clone(), f))).collect();
-    let seated = |f: &BTreeMap<String, String>| f.get("SEAT").is_some_and(|s| logind_id_ok(s));
-    let Some(seat) = sessions.iter().find(|(_, f)| seated(f)).and_then(|(_, f)| f.get("SEAT").cloned()) else { return foreign("no seated session for this user") };
-    let graphical_vt = sessions.iter()
-        .find(|(_, f)| f.get("SEAT") == Some(&seat) && f.get("TYPE").is_some_and(|t| GRAPHICAL.contains(&t.as_str())) && f.get("UID").and_then(|u| u.parse().ok()) == Some(uid))
-        .and_then(|(_, f)| f.get("VTNR")?.parse::<u32>().ok()).filter(|v| *v > 0);
-    let Some(active) = logind_fields(&state.join("seats").join(&seat)).and_then(|f| f.get("ACTIVE").cloned()).filter(|a| logind_id_ok(a)) else {
-        return SeatView { seat: Seat::Foreign(format!("no active session on {seat}")), graphical_vt };
+    let foreign = |r: &str| SeatView {
+        seat: Seat::Foreign(r.into()),
+        graphical_vt: None,
     };
-    let Some(f) = logind_fields(&state.join("sessions").join(&active)) else { return SeatView { seat: Seat::Foreign("active session unreadable".into()), graphical_vt } };
-    if f.get("UID").and_then(|u| u.parse::<u32>().ok()) != Some(uid) || f.get("CLASS").is_some_and(|c| !["user", "user-early"].contains(&c.as_str())) {
-        return SeatView { seat: Seat::Foreign(format!("another session is active on {seat}")), graphical_vt };
+    let Some(user) = logind_fields(&state.join("users").join(uid.to_string())) else {
+        return foreign("no logind record for this user");
+    };
+    let mut ids: Vec<String> = user.get("DISPLAY").into_iter().cloned().collect();
+    ids.extend(
+        user.get("SESSIONS")
+            .map(|s| s.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
+    let sessions: Vec<(String, BTreeMap<String, String>)> = ids
+        .iter()
+        .filter(|i| logind_id_ok(i))
+        .take(32)
+        .filter_map(|i| logind_fields(&state.join("sessions").join(i)).map(|f| (i.clone(), f)))
+        .collect();
+    let seated = |f: &BTreeMap<String, String>| f.get("SEAT").is_some_and(|s| logind_id_ok(s));
+    let Some(seat) = sessions
+        .iter()
+        .find(|(_, f)| seated(f))
+        .and_then(|(_, f)| f.get("SEAT").cloned())
+    else {
+        return foreign("no seated session for this user");
+    };
+    let graphical_vt = sessions
+        .iter()
+        .find(|(_, f)| {
+            f.get("SEAT") == Some(&seat)
+                && f.get("TYPE")
+                    .is_some_and(|t| GRAPHICAL.contains(&t.as_str()))
+                && f.get("UID").and_then(|u| u.parse().ok()) == Some(uid)
+        })
+        .and_then(|(_, f)| f.get("VTNR")?.parse::<u32>().ok())
+        .filter(|v| *v > 0);
+    let Some(active) = logind_fields(&state.join("seats").join(&seat))
+        .and_then(|f| f.get("ACTIVE").cloned())
+        .filter(|a| logind_id_ok(a))
+    else {
+        return SeatView {
+            seat: Seat::Foreign(format!("no active session on {seat}")),
+            graphical_vt,
+        };
+    };
+    let Some(f) = logind_fields(&state.join("sessions").join(&active)) else {
+        return SeatView {
+            seat: Seat::Foreign("active session unreadable".into()),
+            graphical_vt,
+        };
+    };
+    if f.get("UID").and_then(|u| u.parse::<u32>().ok()) != Some(uid)
+        || f.get("CLASS")
+            .is_some_and(|c| !["user", "user-early"].contains(&c.as_str()))
+    {
+        return SeatView {
+            seat: Seat::Foreign(format!("another session is active on {seat}")),
+            graphical_vt,
+        };
     }
     let seat = match f.get("TYPE").map(String::as_str) {
-        Some("tty") => match f.get("VTNR").and_then(|v| v.parse::<u32>().ok()).filter(|v| (1..=63).contains(v)) {
+        Some("tty") => match f
+            .get("VTNR")
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|v| (1..=63).contains(v))
+        {
             Some(vt) => {
-                let tty = f.get("TTY").filter(|t| t.starts_with("tty") && t[3..].bytes().all(|b| b.is_ascii_digit()) && t.len() > 3)
-                    .map_or_else(|| PathBuf::from(format!("/dev/tty{vt}")), |t| Path::new("/dev").join(t));
+                let tty = f
+                    .get("TTY")
+                    .filter(|t| {
+                        t.starts_with("tty")
+                            && t[3..].bytes().all(|b| b.is_ascii_digit())
+                            && t.len() > 3
+                    })
+                    .map_or_else(
+                        || PathBuf::from(format!("/dev/tty{vt}")),
+                        |t| Path::new("/dev").join(t),
+                    );
                 Seat::Console { vt, tty }
             }
             None => Seat::Foreign("the active tty session has no VT".into()),
@@ -397,8 +607,12 @@ pub(crate) fn ipc(request: &str) -> Result<String, String> {
 }
 #[derive(Clone, Debug)]
 pub struct ContextSnapshot {
-    pub name: String, pub address: Option<String>, pub pid: Option<u64>,
-    pub room_capture: bool, pub released: bool, sampled: Instant,
+    pub name: String,
+    pub address: Option<String>,
+    pub pid: Option<u64>,
+    pub room_capture: bool,
+    pub released: bool,
+    sampled: Instant,
     pub class: Option<String>,
     /// C-09: the MiOS tmux client running under the focused terminal (or attached to the active VT), if any.
     pub tmux_client: Option<TmuxClient>,
@@ -410,7 +624,19 @@ pub struct ContextSnapshot {
 }
 impl ContextSnapshot {
     fn new(name: &str) -> Self {
-        Self { name: name.into(), address: None, pid: None, room_capture: false, released: false, sampled: Instant::now(), class: None, tmux_client: None, suspended: None, graphical_vt: None, shell_overlay:false }
+        Self {
+            name: name.into(),
+            address: None,
+            pid: None,
+            room_capture: false,
+            released: false,
+            sampled: Instant::now(),
+            class: None,
+            tmux_client: None,
+            suspended: None,
+            graphical_vt: None,
+            shell_overlay: false,
+        }
     }
 }
 /// A tmux client found under the focused window's process tree, by /proc alone (no spawn per focus change).
@@ -427,11 +653,26 @@ fn proc_parent(stat: &str) -> Option<u32> {
     rest.split_whitespace().nth(1)?.parse().ok()
 }
 /// C-09: the first tmux client below `pid` whose server socket name is one of `sockets`.
-pub fn tmux_client_under(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> Option<TmuxClient> {
+pub fn tmux_client_under(
+    proc_root: &Path,
+    pid: u32,
+    sockets: &[String],
+    uid: u32,
+) -> Option<TmuxClient> {
     let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for entry in std::fs::read_dir(proc_root).ok()?.filter_map(Result::ok) {
-        let Some(child) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        if let Some(parent) = std::fs::read_to_string(entry.path().join("stat")).ok().as_deref().and_then(proc_parent) {
+        let Some(child) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if let Some(parent) = std::fs::read_to_string(entry.path().join("stat"))
+            .ok()
+            .as_deref()
+            .and_then(proc_parent)
+        {
             children.entry(parent).or_default().push(child);
         }
     }
@@ -458,7 +699,11 @@ pub fn tmux_client_under(proc_root: &Path, pid: u32, sockets: &[String], uid: u3
 fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> Option<TmuxClient> {
     let dir = proc_root.join(pid.to_string());
     let cmdline = std::fs::read(dir.join("cmdline")).ok()?;
-    let args: Vec<String> = cmdline.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+    let args: Vec<String> = cmdline
+        .split(|b| *b == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
     if Path::new(args.first()?).file_name()?.to_str()? != "tmux" {
         return None;
     }
@@ -475,8 +720,17 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
         }
         for (flag, slot) in [("-L", 0), ("-S", 1)] {
             if let Some(v) = a.strip_prefix(flag) {
-                let v = if v.is_empty() { i += 1; args.get(i).cloned().unwrap_or_default() } else { v.to_owned() };
-                if slot == 0 { name = v } else { path = Some(PathBuf::from(v)) }
+                let v = if v.is_empty() {
+                    i += 1;
+                    args.get(i).cloned().unwrap_or_default()
+                } else {
+                    v.to_owned()
+                };
+                if slot == 0 {
+                    name = v
+                } else {
+                    path = Some(PathBuf::from(v))
+                }
             }
         }
         if a == "-f" || a == "-c" || a == "-T" {
@@ -491,8 +745,12 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
         }
         None => {
             let env = std::fs::read(dir.join("environ")).unwrap_or_default();
-            let tmpdir = env.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"TMUX_TMPDIR=")).map(|v| String::from_utf8_lossy(v).into_owned())
-                .filter(|v| !v.is_empty()).unwrap_or_else(|| "/tmp".into());
+            let tmpdir = env
+                .split(|b| *b == 0)
+                .find_map(|kv| kv.strip_prefix(b"TMUX_TMPDIR="))
+                .map(|v| String::from_utf8_lossy(v).into_owned())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "/tmp".into());
             Path::new(&tmpdir).join(format!("tmux-{uid}")).join(&name)
         }
     };
@@ -503,7 +761,10 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
     if !std::fs::metadata(&socket).ok()?.file_type().is_socket() {
         return None;
     }
-    let tty = std::fs::read_link(dir.join("fd/0")).ok()?.to_str()?.to_owned();
+    let tty = std::fs::read_link(dir.join("fd/0"))
+        .ok()?
+        .to_str()?
+        .to_owned();
     let alias = tty == "/dev/tty" || tty == "/dev/console";
     if alias {
         // Aliases name this process's tty, never whichever VT is currently active.
@@ -513,30 +774,65 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
     }
     Some(TmuxClient { pid, tty, socket })
 }
-fn snapshot(cfg:&GlobalConfig,v:&serde_json::Value) -> ContextSnapshot {
-    let class=v.get("class").and_then(|v|v.as_str()).filter(|s|!s.is_empty());
-    let room=v.get("room").and_then(|v|v.as_bool()).unwrap_or(false);
-    let captured=v.get("captured").and_then(|v|v.as_bool()).unwrap_or(false);
-    ContextSnapshot {name:cfg.classify_window(class,room,captured),
-        address:v.get("address").and_then(|v|v.as_str()).filter(|s|!s.is_empty()).map(str::to_owned),
-        pid:v.get("pid").and_then(|v|v.as_u64()).filter(|p|*p>0),
-        room_capture:captured && (room || v.get("handler").and_then(|v|v.as_str())==Some("hypr3d")),
-        released:v.get("released").and_then(|v|v.as_bool()).unwrap_or(false),sampled:Instant::now(),
-        class:class.map(str::to_owned),tmux_client:None,suspended:None,graphical_vt:None,shell_overlay:false}
+fn snapshot(cfg: &GlobalConfig, v: &serde_json::Value) -> ContextSnapshot {
+    let class = v
+        .get("class")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let room = v.get("room").and_then(|v| v.as_bool()).unwrap_or(false);
+    let captured = v.get("captured").and_then(|v| v.as_bool()).unwrap_or(false);
+    ContextSnapshot {
+        name: cfg.classify_window(class, room, captured),
+        address: v
+            .get("address")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        pid: v.get("pid").and_then(|v| v.as_u64()).filter(|p| *p > 0),
+        room_capture: captured
+            && (room || v.get("handler").and_then(|v| v.as_str()) == Some("hypr3d")),
+        released: v.get("released").and_then(|v| v.as_bool()).unwrap_or(false),
+        sampled: Instant::now(),
+        class: class.map(str::to_owned),
+        tmux_client: None,
+        suspended: None,
+        graphical_vt: None,
+        shell_overlay: false,
+    }
 }
 /// C-09 on a VT: the MiOS tmux client attached to `tty` (directly, or below a process on that tty such as the console
 /// bridge, whose child client runs on a pty). /proc only.
-pub fn tmux_client_on_tty(proc_root: &Path, tty: &Path, sockets: &[String], uid: u32) -> Option<TmuxClient> {
+pub fn tmux_client_on_tty(
+    proc_root: &Path,
+    tty: &Path,
+    sockets: &[String],
+    uid: u32,
+) -> Option<TmuxClient> {
     // Another user's /proc/<pid>/fd is unreadable, and only a listed server under this uid's socket dir counts.
     let mut on_tty: Vec<u32> = vec![];
     for entry in std::fs::read_dir(proc_root).ok()?.filter_map(Result::ok) {
-        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
         let stdin = std::fs::read_link(entry.path().join("fd/0")).ok();
-        let on_alias = stdin.as_deref().is_some_and(|p| p == Path::new("/dev/tty") || p == Path::new("/dev/console"))
-            && tty.to_str().and_then(|p| p.strip_prefix("/dev/tty")).and_then(|n| n.parse::<u32>().ok())
+        let on_alias = stdin
+            .as_deref()
+            .is_some_and(|p| p == Path::new("/dev/tty") || p == Path::new("/dev/console"))
+            && tty
+                .to_str()
+                .and_then(|p| p.strip_prefix("/dev/tty"))
+                .and_then(|n| n.parse::<u32>().ok())
                 .filter(|n| (1..=63).contains(n))
-                .is_some_and(|vt| std::fs::read_to_string(entry.path().join("stat")).ok()
-                    .and_then(|s| crate::console::vt_from_proc_stat(&s)) == Some(vt));
+                .is_some_and(|vt| {
+                    std::fs::read_to_string(entry.path().join("stat"))
+                        .ok()
+                        .and_then(|s| crate::console::vt_from_proc_stat(&s))
+                        == Some(vt)
+                });
         if stdin.as_deref() == Some(tty) || on_alias {
             on_tty.push(pid);
         }
@@ -550,18 +846,23 @@ pub fn tmux_client_on_tty(proc_root: &Path, tty: &Path, sockets: &[String], uid:
             return Some(c);
         }
     }
-    on_tty.iter().find_map(|pid| tmux_client_under(proc_root, *pid, sockets, uid))
+    on_tty
+        .iter()
+        .find_map(|pid| tmux_client_under(proc_root, *pid, sockets, uid))
 }
 /// Whether this context's nav mapping chooses between `<name>_tmux` and `<name>_plain`, so discovery is worth a scan.
-fn wants_tmux(cfg:&GlobalConfig,context:&str) -> bool {
-    let nav=&cfg.controller.nav;
-    nav.enabled && nav.contexts.get(context).is_some_and(|p| !nav.profiles.contains_key(p) && nav.profiles.contains_key(&format!("{p}_tmux")))
+fn wants_tmux(cfg: &GlobalConfig, context: &str) -> bool {
+    let nav = &cfg.controller.nav;
+    nav.enabled
+        && nav.contexts.get(context).is_some_and(|p| {
+            !nav.profiles.contains_key(p) && nav.profiles.contains_key(&format!("{p}_tmux"))
+        })
 }
 /// The capture predicate (INV-4), identical for every window kind: fullscreen==2 (when capture_fullscreen),
 /// capture_tag or the room's input_owner capture a window, and release_tag cancels all three. When the generated
 /// session exposes MIOS_INPUT_POLICY.captured (G1) that one predicate is used, so Lua and inputd cannot disagree.
 pub fn context_lua(cfg: &GlobalConfig) -> String {
-    let template=r#"local function q(s) return '"'..tostring(s or ''):gsub('[%z\1-\31\\"]',function(c) return string.format('\\u%04x',c:byte()) end)..'"' end
+    let template = r#"local function q(s) return '"'..tostring(s or ''):gsub('[%z\1-\31\\"]',function(c) return string.format('\\u%04x',c:byte()) end)..'"' end
 local w=hl.get_active_window(); local room=false; local p=hl.plugin and hl.plugin.hypr3d
 if p and p.active then local ok,v=pcall(p.active); room=ok and v and true or false end
 local function has(t) for _,tag in pairs(w and w.tags or {}) do if tostring(tag):gsub('%*$','')==t then return true end end return false end
@@ -578,54 +879,119 @@ if w then
  end
 end
 error('MIOS_INPUT_CONTEXT:'..'{"class":'..q(w and w.class)..',"address":'..q(w and w.address)..',"pid":'..tostring(w and w.pid or 0)..',"fullscreen":'..tostring(w and w.fullscreen or 0)..',"handler":'..q(w and w.fullscreen_handler)..',"room":'..tostring(room)..',"captured":'..tostring(captured)..',"released":'..tostring(released)..'}',0)"#;
-    template.replace("CAPTURE_FULLSCREEN",if cfg.controller.capture_fullscreen {"true"}else{"false"})
-        .replace("CAPTURE_TAG",&serde_json::to_string(&cfg.controller.capture_tag).unwrap())
-        .replace("RELEASE_TAG",&serde_json::to_string(&cfg.controller.release_tag).unwrap())
+    template
+        .replace(
+            "CAPTURE_FULLSCREEN",
+            if cfg.controller.capture_fullscreen {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .replace(
+            "CAPTURE_TAG",
+            &serde_json::to_string(&cfg.controller.capture_tag).unwrap(),
+        )
+        .replace(
+            "RELEASE_TAG",
+            &serde_json::to_string(&cfg.controller.release_tag).unwrap(),
+        )
 }
-fn controller_cursor_lua(cfg:&GlobalConfig,enabled:bool)->String {
-    let enabled=enabled && !cfg.controller.cursor_shape.is_empty() && !cfg.controller.virtual_pointer.is_empty();
-    let args=if enabled {format!("true,{},{},{}",serde_json::to_string(&cfg.controller.cursor_shape).unwrap(),
-        serde_json::to_string(&cfg.controller.virtual_pointer).unwrap(),cfg.controller.context_stale_ms)}else{"false".into()};
+fn controller_cursor_lua(cfg: &GlobalConfig, enabled: bool) -> String {
+    let enabled = enabled
+        && !cfg.controller.cursor_shape.is_empty()
+        && !cfg.controller.virtual_pointer.is_empty();
+    let args = if enabled {
+        format!(
+            "true,{},{},{}",
+            serde_json::to_string(&cfg.controller.cursor_shape).unwrap(),
+            serde_json::to_string(&cfg.controller.virtual_pointer).unwrap(),
+            cfg.controller.context_stale_ms
+        )
+    } else {
+        "false".into()
+    };
     format!("do local p=hl.plugin and hl.plugin.mios_pacing;if p and p.controller_cursor then pcall(p.controller_cursor,{args}) end end\n")
 }
-fn context_with_cursor(cfg:&GlobalConfig,enabled:bool)->Result<ContextSnapshot,String> {
-    context_query(cfg,&format!("{}{}",controller_cursor_lua(cfg,enabled),context_lua(cfg)))
+fn context_with_cursor(cfg: &GlobalConfig, enabled: bool) -> Result<ContextSnapshot, String> {
+    context_query(
+        cfg,
+        &format!(
+            "{}{}",
+            controller_cursor_lua(cfg, enabled),
+            context_lua(cfg)
+        ),
+    )
 }
 /// Private per-session shell state is a short lease; closed, stale, malformed, symlinked or foreign files attach no input.
-fn shell_overlay_open(runtime:&Path,cfg:&GlobalConfig)->bool {
-    use std::os::unix::fs::{MetadataExt,OpenOptionsExt};
-    if cfg.shell_input_state_file.is_empty() {return false;}
-    let Ok(mut file)=std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_CLOEXEC)
-        .open(runtime.join(&cfg.shell_input_state_file)) else {return false};
-    let Ok(meta)=file.metadata() else {return false};
-    if !meta.is_file() || meta.uid()!=unsafe{libc::getuid()} || meta.len()>4096 {return false;}
-    let mut bytes=Vec::new();if std::io::Read::by_ref(&mut file).take(4097).read_to_end(&mut bytes).is_err() || bytes.len()>4096 {return false;}
-    let Ok(state)=serde_json::from_slice::<serde_json::Value>(&bytes) else {return false};
-    let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_millis() as u64).unwrap_or(0);
-    state["version"].as_u64()==Some(1) && state["open"].as_bool()==Some(true)
-        && matches!(state["surface"].as_str(),Some("drawer"|"search"))
-        && state["output"].as_str().is_some_and(|s|!s.is_empty())
-        && state["timestamp_ms"].as_u64().is_some_and(|t|now.abs_diff(t)<cfg.controller.context_stale_ms)
+fn shell_overlay_open(runtime: &Path, cfg: &GlobalConfig) -> bool {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    if cfg.shell_input_state_file.is_empty() {
+        return false;
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(runtime.join(&cfg.shell_input_state_file))
+    else {
+        return false;
+    };
+    let Ok(meta) = file.metadata() else {
+        return false;
+    };
+    if !meta.is_file() || meta.uid() != unsafe { libc::getuid() } || meta.len() > 4096 {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    if std::io::Read::by_ref(&mut file)
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() > 4096
+    {
+        return false;
+    }
+    let Ok(state) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    state["version"].as_u64() == Some(1)
+        && state["open"].as_bool() == Some(true)
+        && matches!(state["surface"].as_str(), Some("drawer" | "search"))
+        && state["output"].as_str().is_some_and(|s| !s.is_empty())
+        && state["timestamp_ms"]
+            .as_u64()
+            .is_some_and(|t| now.abs_diff(t) < cfg.controller.context_stale_ms)
 }
-pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot,String> {
-    context_query(cfg,&context_lua(cfg))
+pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot, String> {
+    context_query(cfg, &context_lua(cfg))
 }
-fn context_query(cfg:&GlobalConfig,lua:&str)->Result<ContextSnapshot,String> {
-    let reply=ipc(&format!("/eval {lua}"))?;
-    let json=reply.split_once("MIOS_INPUT_CONTEXT:").and_then(|(_,v)|v.lines().next()).ok_or("compositor context response missing")?;
-    let value:serde_json::Value=serde_json::from_str(json).map_err(|e|format!("invalid native context: {e}"))?;
-    Ok(snapshot(cfg,&value))
+fn context_query(cfg: &GlobalConfig, lua: &str) -> Result<ContextSnapshot, String> {
+    let reply = ipc(&format!("/eval {lua}"))?;
+    let json = reply
+        .split_once("MIOS_INPUT_CONTEXT:")
+        .and_then(|(_, v)| v.lines().next())
+        .ok_or("compositor context response missing")?;
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid native context: {e}"))?;
+    Ok(snapshot(cfg, &value))
 }
 /// The ownership transaction for `input:window on|fullscreen|off` (C-02), the same for every window kind.
 /// on/fullscreen: remove release_tag, add capture_tag; fullscreen also sets fullscreen and marks it with
 /// capture_fullscreen_tag when the bridge set it. off: remove capture_tag, add release_tag, and unset a fullscreen only
 /// when capture_fullscreen_tag says the bridge set it. In the room the plugin selects the aimed window and owns its
 /// fullscreen. `expect` (the focused window address the router saw) guards a 2D capture against a focus race.
-pub fn window_lua(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<String,String> {
-    if !["on","off","fullscreen"].contains(&mode) {return Err("unsupported window ownership mode".into());}
-    let s=|v:&str| serde_json::to_string(v).unwrap();
-    let c=&cfg.controller;
-    Ok(format!(r#"local p=hl.plugin and hl.plugin.hypr3d;local mode={mode};local CAP={cap};local REL={rel};local FS={fs};local EXPECT={expect}
+pub fn window_lua(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<String, String> {
+    if !["on", "off", "fullscreen"].contains(&mode) {
+        return Err("unsupported window ownership mode".into());
+    }
+    let s = |v: &str| serde_json::to_string(v).unwrap();
+    let c = &cfg.controller;
+    Ok(format!(
+        r#"local p=hl.plugin and hl.plugin.hypr3d;local mode={mode};local CAP={cap};local REL={rel};local FS={fs};local EXPECT={expect}
 local function has(w,t) for _,x in pairs(w.tags or {{}}) do if tostring(x):gsub('%*$','')==t then return true end end return false end
 local function tag(w,t,on) if has(w,t)~=on then hl.dispatch(hl.dsp.window.tag({{window=w,tag=(on and '+' or '-')..t}})) end end
 local function own(w,room)
@@ -662,132 +1028,272 @@ end
 local okp,policy=pcall(function() return MIOS_INPUT_POLICY end)
 if okp and type(policy)=='table' and type(policy.refresh)=='function' then pcall(policy.refresh) end
 error('MIOS_INPUT_WINDOW_OK:'..tostring(target and target.address or '')..' '..tostring(target and target.class or '')..'\nMIOS_INPUT_WINDOW_PID:'..tostring(target and target.pid or 0),0)"#,
-        mode=s(mode),cap=s(&c.capture_tag),rel=s(&c.release_tag),fs=s(&c.capture_fullscreen_tag),expect=s(expect.unwrap_or(""))))
+        mode = s(mode),
+        cap = s(&c.capture_tag),
+        rel = s(&c.release_tag),
+        fs = s(&c.capture_fullscreen_tag),
+        expect = s(expect.unwrap_or(""))
+    ))
 }
 /// Run one ownership transaction against the selected compositor; Ok((address, class)) only on the success marker.
-pub fn window_transaction(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<(String,String),String> {
-    capture_transaction(mode,cfg,expect).map(|r|(r.address,r.class))
+pub fn window_transaction(
+    mode: &str,
+    cfg: &GlobalConfig,
+    expect: Option<&str>,
+) -> Result<(String, String), String> {
+    capture_transaction(mode, cfg, expect).map(|r| (r.address, r.class))
 }
-fn capture_transaction(mode:&str,cfg:&GlobalConfig,expect:Option<&str>)->Result<CaptureReceipt,String> {
-    let reply=ipc(&format!("/eval {}",window_lua(mode,cfg,expect)?))?;
-    let rest=reply.split_once("MIOS_INPUT_WINDOW_OK:").map(|(_,r)|r).ok_or_else(||reply.trim().chars().take(400).collect::<String>())?;
-    let line=rest.lines().next().unwrap_or("").trim();
-    let (address,class)=line.split_once(' ').unwrap_or((line,""));
-    let pid=reply.split_once("MIOS_INPUT_WINDOW_PID:").and_then(|(_,r)|r.lines().next()?.trim().parse::<u32>().ok()).unwrap_or(0);
-    let mut receipt=CaptureReceipt {address:address.into(),class:class.trim().into(),pid,tmux:None,error:None};
-    if mode!="off" && capture_navigation_context(cfg,Some(&receipt.class)).is_some() {
-        if pid==0 {receipt.error=Some("captured terminal process identity missing".into());}
-        else {match captured_tmux(cfg,pid) {Ok(target)=>receipt.tmux=target,Err(error)=>receipt.error=Some(error)}}
+fn capture_transaction(
+    mode: &str,
+    cfg: &GlobalConfig,
+    expect: Option<&str>,
+) -> Result<CaptureReceipt, String> {
+    let reply = ipc(&format!("/eval {}", window_lua(mode, cfg, expect)?))?;
+    let rest = reply
+        .split_once("MIOS_INPUT_WINDOW_OK:")
+        .map(|(_, r)| r)
+        .ok_or_else(|| reply.trim().chars().take(400).collect::<String>())?;
+    let line = rest.lines().next().unwrap_or("").trim();
+    let (address, class) = line.split_once(' ').unwrap_or((line, ""));
+    let pid = reply
+        .split_once("MIOS_INPUT_WINDOW_PID:")
+        .and_then(|(_, r)| r.lines().next()?.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    let mut receipt = CaptureReceipt {
+        address: address.into(),
+        class: class.trim().into(),
+        pid,
+        tmux: None,
+        error: None,
+    };
+    if mode != "off" && capture_navigation_context(cfg, Some(&receipt.class)).is_some() {
+        if pid == 0 {
+            receipt.error = Some("captured terminal process identity missing".into());
+        } else {
+            match captured_tmux(cfg, pid) {
+                Ok(target) => receipt.tmux = target,
+                Err(error) => receipt.error = Some(error),
+            }
+        }
     }
     Ok(receipt)
 }
-fn inspect_capture(cfg:&GlobalConfig,expect:Option<&str>)->Result<CaptureReceipt,String> {
-    let snapshot=context(cfg)?;
-    if snapshot.name!="app-capture" || snapshot.address.as_deref()!=expect {return Err("capture recovery focus changed".into())}
-    let address=snapshot.address.ok_or("captured window missing")?;
-    let pid=snapshot.pid.and_then(|p|u32::try_from(p).ok()).ok_or("captured process missing")?;
-    let class=snapshot.class.unwrap_or_default();
-    let target=captured_tmux(cfg,pid);
-    Ok(CaptureReceipt {address,class,pid,tmux:target.as_ref().ok().cloned().flatten(),error:target.err()})
+fn inspect_capture(cfg: &GlobalConfig, expect: Option<&str>) -> Result<CaptureReceipt, String> {
+    let snapshot = context(cfg)?;
+    if snapshot.name != "app-capture" || snapshot.address.as_deref() != expect {
+        return Err("capture recovery focus changed".into());
+    }
+    let address = snapshot.address.ok_or("captured window missing")?;
+    let pid = snapshot
+        .pid
+        .and_then(|p| u32::try_from(p).ok())
+        .ok_or("captured process missing")?;
+    let class = snapshot.class.unwrap_or_default();
+    let target = captured_tmux(cfg, pid);
+    Ok(CaptureReceipt {
+        address,
+        class,
+        pid,
+        tmux: target.as_ref().ok().cloned().flatten(),
+        error: target.err(),
+    })
 }
 /// C-32: the capture OSD text. The release chord is named from toggle_chord, so a remap never shows a stale label.
 pub fn osd_message(mode: &str, class: &str, toggle_chord: &[String]) -> String {
-    let chord=toggle_chord.iter().map(|b| match b.as_str() {"BTN_THUMBL"=>"L3".to_owned(),"BTN_THUMBR"=>"R3".to_owned(),
-        o=>o.trim_start_matches("BTN_").to_owned()}).collect::<Vec<_>>().join("+");
-    let app=if class.is_empty() {"the focused window"} else {class};
-    if mode=="off" { format!("Controller -> MiOS. {app} released.") } else { format!("Controller -> {app}. Hold {chord} to release.") }
+    let chord = toggle_chord
+        .iter()
+        .map(|b| match b.as_str() {
+            "BTN_THUMBL" => "L3".to_owned(),
+            "BTN_THUMBR" => "R3".to_owned(),
+            o => o.trim_start_matches("BTN_").to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("+");
+    let app = if class.is_empty() {
+        "the focused window"
+    } else {
+        class
+    };
+    if mode == "off" {
+        format!("Controller -> MiOS. {app} released.")
+    } else {
+        format!("Controller -> {app}. Hold {chord} to release.")
+    }
 }
 /// Run a short-lived helper with a hard deadline; its stdout (bounded) is the result.
-fn run_bounded(argv: &[String], timeout: Duration) -> Result<String,String> {
-    run_bounded_cancel(argv,timeout,None)
+fn run_bounded(argv: &[String], timeout: Duration) -> Result<String, String> {
+    run_bounded_cancel(argv, timeout, None)
 }
 /// Nonblocking bounded output, with a private process group for cancellation. A descendant retaining stdout cannot
 /// extend the deadline or stall the input loop. Killing this group never signals the caller's group or tmux server.
-fn run_bounded_cancel(argv: &[String], timeout: Duration, cancelled: Option<&AtomicBool>) -> Result<String,String> {
+fn run_bounded_cancel(
+    argv: &[String],
+    timeout: Duration,
+    cancelled: Option<&AtomicBool>,
+) -> Result<String, String> {
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
-    let (program,rest)=argv.split_first().ok_or("empty argv")?;
-    if timeout.is_zero() || cancelled.is_some_and(|c|c.load(Ordering::Relaxed)) { return Err("input action expired or cancelled".into()); }
-    let mut child=Command::new(program).args(rest).env_remove("TMUX").env_remove("TMUX_PANE")
-        .process_group(0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;
-    let group=child.id() as i32;
-    let finish=|child:&mut Child| {
-        // SAFETY: group is the positive PID of our child, created with process_group(0), never our own group.
-        unsafe { libc::kill(-group,libc::SIGKILL); }
-        let _=child.wait();
-    };
-    let mut stdout=child.stdout.take().ok_or("command stdout missing")?;
-    // SAFETY: stdout owns this valid descriptor; fcntl only changes its nonblocking flag.
-    let flags=unsafe {libc::fcntl(stdout.as_raw_fd(),libc::F_GETFL)};
-    if flags<0 || unsafe {libc::fcntl(stdout.as_raw_fd(),libc::F_SETFL,flags|libc::O_NONBLOCK)}<0 {
-        let err=std::io::Error::last_os_error().to_string();finish(&mut child);return Err(err);
+    let (program, rest) = argv.split_first().ok_or("empty argv")?;
+    if timeout.is_zero() || cancelled.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        return Err("input action expired or cancelled".into());
     }
-    let deadline=Instant::now()+timeout;
-    let mut bytes=Vec::new();
-    loop {
-        if cancelled.is_some_and(|c|c.load(Ordering::Relaxed)) || Instant::now()>=deadline {
-            finish(&mut child);return Err(format!("{program} timed out or cancelled"));
+    let mut child = Command::new(program)
+        .args(rest)
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let group = child.id() as i32;
+    let finish = |child: &mut Child| {
+        // SAFETY: group is the positive PID of our child, created with process_group(0), never our own group.
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
         }
-        let mut chunk=[0u8;4096];
+        let _ = child.wait();
+    };
+    let mut stdout = child.stdout.take().ok_or("command stdout missing")?;
+    // SAFETY: stdout owns this valid descriptor; fcntl only changes its nonblocking flag.
+    let flags = unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0
+        || unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+    {
+        let err = std::io::Error::last_os_error().to_string();
+        finish(&mut child);
+        return Err(err);
+    }
+    let deadline = Instant::now() + timeout;
+    let mut bytes = Vec::new();
+    loop {
+        if cancelled.is_some_and(|c| c.load(Ordering::Relaxed)) || Instant::now() >= deadline {
+            finish(&mut child);
+            return Err(format!("{program} timed out or cancelled"));
+        }
+        let mut chunk = [0u8; 4096];
         loop {
             match stdout.read(&mut chunk) {
-                Ok(0)=>break,
-                Ok(n)=> {
-                    if bytes.len()+n>1<<16 {finish(&mut child);return Err("command output limit exceeded".into());}
+                Ok(0) => break,
+                Ok(n) => {
+                    if bytes.len() + n > 1 << 16 {
+                        finish(&mut child);
+                        return Err("command output limit exceeded".into());
+                    }
                     bytes.extend_from_slice(&chunk[..n]);
                 }
-                Err(e) if e.kind()==std::io::ErrorKind::WouldBlock=>break,
-                Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue,
-                Err(e)=>{finish(&mut child);return Err(e.to_string());}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    finish(&mut child);
+                    return Err(e.to_string());
+                }
             }
-            if Instant::now()>=deadline {break;}
+            if Instant::now() >= deadline {
+                break;
+            }
         }
         match child.try_wait() {
-            Ok(Some(status))=>{
+            Ok(Some(status)) => {
                 // Drain only immediately available bytes, never wait on descendants' copies of stdout.
                 loop {
                     match stdout.read(&mut chunk) {
-                        Ok(0)=>break,
-                        Ok(n) if bytes.len()+n<=1<<16=>bytes.extend_from_slice(&chunk[..n]),
-                        Ok(_)=>{finish(&mut child);return Err("command output limit exceeded".into());}
-                        Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue,
-                        Err(_)=>break,
+                        Ok(0) => break,
+                        Ok(n) if bytes.len() + n <= 1 << 16 => bytes.extend_from_slice(&chunk[..n]),
+                        Ok(_) => {
+                            finish(&mut child);
+                            return Err("command output limit exceeded".into());
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
                     }
                 }
                 finish(&mut child);
-                return if status.success(){String::from_utf8(bytes).map_err(|e|e.to_string())}
-                    else{Err(format!("{program} exited {status}"))};
+                return if status.success() {
+                    String::from_utf8(bytes).map_err(|e| e.to_string())
+                } else {
+                    Err(format!("{program} exited {status}"))
+                };
             }
-            Ok(None)=>{}
-            Err(e)=>{finish(&mut child);return Err(e.to_string());}
+            Ok(None) => {}
+            Err(e) => {
+                finish(&mut child);
+                return Err(e.to_string());
+            }
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 /// C-30: argv of a tmux verb that needs no reply, against the exact server and client discovery found.
-pub fn tmux_argv(cfg: &GlobalConfig, client: &TmuxClient, verb: &str) -> Result<Vec<String>,String> {
-    crate::nav::validate_tmux(verb,&cfg.tmux_prefix_keys)?;
-    let base=|rest:&[&str]| -> Vec<String> {
-        ["/usr/bin/tmux","-S"].into_iter().map(str::to_owned).chain([client.socket.to_string_lossy().into_owned()])
-            .chain(rest.iter().map(|s|(*s).to_owned())).collect()
+pub fn tmux_argv(
+    cfg: &GlobalConfig,
+    client: &TmuxClient,
+    verb: &str,
+) -> Result<Vec<String>, String> {
+    crate::nav::validate_tmux(verb, &cfg.tmux_prefix_keys)?;
+    let base = |rest: &[&str]| -> Vec<String> {
+        ["/usr/bin/tmux", "-S"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain([client.socket.to_string_lossy().into_owned()])
+            .chain(rest.iter().map(|s| (*s).to_owned()))
+            .collect()
     };
-    let words:Vec<_>=verb.split_whitespace().collect();
+    let words: Vec<_> = verb.split_whitespace().collect();
     Ok(match words.as_slice() {
-        ["key",k] => base(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]),
-        ["session-prev"] => base(&["switch-client","-c",&client.tty,"-p"]),
-        ["session-next"] => base(&["switch-client","-c",&client.tty,"-n"]),
+        ["key", k] => base(&["send-keys", "-c", &client.tty, "-K", &cfg.tmux_prefix, k]),
+        ["session-prev"] => base(&["switch-client", "-c", &client.tty, "-p"]),
+        ["session-next"] => base(&["switch-client", "-c", &client.tty, "-n"]),
         // U1: prefix + [keybindings.tmux].menu_key opens the generated MiOS menu on exactly this client.
         ["menu"] => match &cfg.tmux_menu_key {
-            Some(k) => base(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]),
-            None => return Err("tmux:menu needs [keybindings.tmux].menu_key (the generated MiOS menu)".into()),
+            Some(k) => base(&["send-keys", "-c", &client.tty, "-K", &cfg.tmux_prefix, k]),
+            None => {
+                return Err(
+                    "tmux:menu needs [keybindings.tmux].menu_key (the generated MiOS menu)".into(),
+                )
+            }
         },
-        ["focus",d] => base(&["display-message","-p","-c",&client.tty,"-t",&client.tty,&format!("#{{pane_at_{d}}}")]),
-        ["page-up"] | ["page-down"] => base(&["display-message","-p","-c",&client.tty,"-t",&client.tty,"#{pane_id} #{pane_in_mode}"]),
+        ["focus", d] => base(&[
+            "display-message",
+            "-p",
+            "-c",
+            &client.tty,
+            "-t",
+            &client.tty,
+            &format!("#{{pane_at_{d}}}"),
+        ]),
+        ["page-up"] | ["page-down"] => base(&[
+            "display-message",
+            "-p",
+            "-c",
+            &client.tty,
+            "-t",
+            &client.tty,
+            "#{pane_id} #{pane_in_mode}",
+        ]),
         // R-21: the controller map in a popup on exactly this client; argv form, so tmux runs no shell.
         ["keymap"] => {
-            let file=keymap_path().to_string_lossy().into_owned();
-            let mut v=base(&["display-popup","-c",&client.tty,"-E","-w","90%","-h","90%","-T"," MiOS controller "]);
-            v.extend(cfg.controller.console.keymap_argv.iter().map(|a| a.replace("{file}",&file)));
+            let file = keymap_path().to_string_lossy().into_owned();
+            let mut v = base(&[
+                "display-popup",
+                "-c",
+                &client.tty,
+                "-E",
+                "-w",
+                "90%",
+                "-h",
+                "90%",
+                "-T",
+                " MiOS controller ",
+            ]);
+            v.extend(
+                cfg.controller
+                    .console
+                    .keymap_argv
+                    .iter()
+                    .map(|a| a.replace("{file}", &file)),
+            );
             v
         }
         _ => return Err(format!("tmux:{verb} has no runtime projection")),
@@ -796,73 +1302,121 @@ pub fn tmux_argv(cfg: &GlobalConfig, client: &TmuxClient, verb: &str) -> Result<
 /// The rendered controller map the tmux:keymap popup pages (`mios-inputd map --text`), private to this user.
 pub fn keymap_path() -> PathBuf {
     // SAFETY: getuid has no memory/ownership effects.
-    let runtime=std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(format!("/run/user/{}",unsafe{libc::getuid()})));
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
     runtime.join("mios-inputd-keymap.txt")
 }
-fn write_private(path: &Path, text: &str) -> Result<(),String> {
+fn write_private(path: &Path, text: &str) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
-    let tmp=path.with_extension(format!("tmp-{}",std::process::id()));
-    let _=std::fs::remove_file(&tmp);
-    let mut f=std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).custom_flags(libc::O_NOFOLLOW|libc::O_CLOEXEC).open(&tmp).map_err(|e|e.to_string())?;
-    let r=f.write_all(text.as_bytes()).and_then(|_| std::fs::rename(&tmp,path));
-    if r.is_err() { let _=std::fs::remove_file(&tmp); }
-    r.map_err(|e|e.to_string())
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    let r = f
+        .write_all(text.as_bytes())
+        .and_then(|_| std::fs::rename(&tmp, path));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r.map_err(|e| e.to_string())
 }
 /// Run a tmux verb (C-30), including the two-step ones: `focus` falls through to the compositor at the pane edge (on
 /// the desktop; on a VT it stops there), `keymap` renders the map file first.
-fn run_tmux(cfg: &GlobalConfig, client: &TmuxClient, verb: &str, console: bool) -> Result<Vec<String>,String> {
-    let t=Duration::from_millis(1000);
-    let argv=tmux_argv(cfg,client,verb)?;
-    let words:Vec<_>=verb.split_whitespace().collect();
-    let mut ran=vec![argv[3..].join(" ")];
-    let sock=client.socket.to_string_lossy().into_owned();
-    let tmux=|rest:&[&str]| -> Vec<String> { ["/usr/bin/tmux","-S",&sock].into_iter().map(str::to_owned).chain(rest.iter().map(|s|(*s).to_owned())).collect() };
+fn run_tmux(
+    cfg: &GlobalConfig,
+    client: &TmuxClient,
+    verb: &str,
+    console: bool,
+) -> Result<Vec<String>, String> {
+    let t = Duration::from_millis(1000);
+    let argv = tmux_argv(cfg, client, verb)?;
+    let words: Vec<_> = verb.split_whitespace().collect();
+    let mut ran = vec![argv[3..].join(" ")];
+    let sock = client.socket.to_string_lossy().into_owned();
+    let tmux = |rest: &[&str]| -> Vec<String> {
+        ["/usr/bin/tmux", "-S", &sock]
+            .into_iter()
+            .map(str::to_owned)
+            .chain(rest.iter().map(|s| (*s).to_owned()))
+            .collect()
+    };
     match words.as_slice() {
         ["keymap"] => {
-            write_private(&keymap_path(),&cfg.controller.nav.text(cfg.controller.capture_hold_ms))?;
-            run_bounded(&argv,t)?;
+            write_private(
+                &keymap_path(),
+                &cfg.controller.nav.text(cfg.controller.capture_hold_ms),
+            )?;
+            run_bounded(&argv, t)?;
         }
-        ["focus",d] => {
-            let edge=run_bounded(&argv,t)?.trim()=="1";
+        ["focus", d] => {
+            let edge = run_bounded(&argv, t)?.trim() == "1";
             if edge && console {
                 ran.push("edge: a VT has no compositor focus".into());
             } else if edge {
-                let lua=command_for(&format!("hypr:movefocus {d}"))?.remove(2);
-                let reply=ipc(&format!("/eval {lua}"))?;
-                ran.push(format!("hypr:movefocus {d} -> {}",reply.trim()));
+                let lua = command_for(&format!("hypr:movefocus {d}"))?.remove(2);
+                let reply = ipc(&format!("/eval {lua}"))?;
+                ran.push(format!("hypr:movefocus {d} -> {}", reply.trim()));
             } else {
-                let k=match *d {"left"=>"h","down"=>"j","up"=>"k",_=>"l"};
-                let step=tmux(&["send-keys","-c",&client.tty,"-K",&cfg.tmux_prefix,k]);
-                run_bounded(&step,t)?;
+                let k = match *d {
+                    "left" => "h",
+                    "down" => "j",
+                    "up" => "k",
+                    _ => "l",
+                };
+                let step = tmux(&["send-keys", "-c", &client.tty, "-K", &cfg.tmux_prefix, k]);
+                run_bounded(&step, t)?;
                 ran.push(step[3..].join(" "));
             }
         }
         ["page-up"] | ["page-down"] => {
-            let out=run_bounded(&argv,t)?;
-            let mut it=out.split_whitespace();
-            let (pane,mode)=(it.next().unwrap_or("").to_owned(),it.next()==Some("1"));
-            if !pane.starts_with('%') { return Err("tmux did not report the client's pane".into()); }
-            let step=if words[0]=="page-up" { tmux(&["copy-mode","-eu","-t",&pane]) } else if mode { tmux(&["send-keys","-t",&pane,"-X","page-down"]) } else { return Ok(ran) };
-            run_bounded(&step,t)?;
+            let out = run_bounded(&argv, t)?;
+            let mut it = out.split_whitespace();
+            let (pane, mode) = (it.next().unwrap_or("").to_owned(), it.next() == Some("1"));
+            if !pane.starts_with('%') {
+                return Err("tmux did not report the client's pane".into());
+            }
+            let step = if words[0] == "page-up" {
+                tmux(&["copy-mode", "-eu", "-t", &pane])
+            } else if mode {
+                tmux(&["send-keys", "-t", &pane, "-X", "page-down"])
+            } else {
+                return Ok(ran);
+            };
+            run_bounded(&step, t)?;
             ran.push(step[3..].join(" "));
         }
-        _ => { run_bounded(&argv,t)?; }
+        _ => {
+            run_bounded(&argv, t)?;
+        }
     }
     Ok(ran)
 }
 /// Jobs that must not block the forwarding loop: tmux verbs, the capture OSD, and (fixture tier with --live-context)
 /// the compositor projections of key: and hypr: into the followed (nested) compositor.
 enum Job {
-    Tmux { verb: String, client: TmuxClient, console: bool },
-    Lua { action: String, lua: String },
+    Tmux {
+        verb: String,
+        client: TmuxClient,
+        console: bool,
+    },
+    Lua {
+        action: String,
+        lua: String,
+    },
 }
 struct ActionWorker {
     jobs: Option<std::sync::mpsc::SyncSender<Job>>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl ActionWorker {
-    fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self,String> {
-        let (jobs,inbox)=std::sync::mpsc::sync_channel::<Job>(16);
+    fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
+        let (jobs, inbox) = std::sync::mpsc::sync_channel::<Job>(16);
         let worker=std::thread::Builder::new().name("mios-actions".into()).spawn(move || {
             while let Ok(job)=inbox.recv() {
                 let cfg=match policy.lock() { Ok(c)=>c.clone(), Err(_)=>break };
@@ -878,7 +1432,10 @@ impl ActionWorker {
                 }
             }
         }).map_err(|e|e.to_string())?;
-        Ok(Self{jobs:Some(jobs),worker:Some(worker)})
+        Ok(Self {
+            jobs: Some(jobs),
+            worker: Some(worker),
+        })
     }
     fn submit(&self, job: Job) -> bool {
         self.jobs.as_ref().is_some_and(|j| j.try_send(job).is_ok())
@@ -886,45 +1443,69 @@ impl ActionWorker {
 }
 impl Drop for ActionWorker {
     fn drop(&mut self) {
-        self.jobs=None;
-        if let Some(w)=self.worker.take() { let _=w.join(); }
+        self.jobs = None;
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
+        }
     }
 }
 /// The compositor projection of one key: stroke (a nested session's focused window): down then up.
 fn key_lua(chord: &crate::nav::KeyChord, window: &str) -> String {
-    let (sym,mods)=crate::nav::keysym(chord);
-    let q=|v:&str| serde_json::to_string(v).unwrap();
-    let w=q(&format!("address:{window}"));
+    let (sym, mods) = crate::nav::keysym(chord);
+    let q = |v: &str| serde_json::to_string(v).unwrap();
+    let w = q(&format!("address:{window}"));
     format!("hl.dispatch(hl.dsp.send_key_state({{mods={m},key={k},state='down',window={w}}}))\nhl.dispatch(hl.dsp.send_key_state({{mods={m},key={k},state='up',window={w}}}))",
         m=q(&mods),k=q(&sym))
 }
-fn captured_key_lua(chord:&crate::nav::KeyChord,address:&str,pid:u32,cfg:&GlobalConfig)->String {
-    let q=|v:&str|serde_json::to_string(v).unwrap();
+fn captured_key_lua(
+    chord: &crate::nav::KeyChord,
+    address: &str,
+    pid: u32,
+    cfg: &GlobalConfig,
+) -> String {
+    let q = |v: &str| serde_json::to_string(v).unwrap();
     format!("local w=hl.get_active_window();assert(w and tostring(w.address)=={address} and tonumber(w.pid)=={pid},'captured terminal focus changed');local cap=false;local released=false;for _,tag in pairs(w.tags or {{}}) do local t=tostring(tag):gsub('%*$','');if t=={cap} then cap=true end;if t=={rel} then released=true end end;assert(cap and not released,'terminal capture released');\n{stroke}",
         address=q(address),pid=pid,cap=q(&cfg.controller.capture_tag),rel=q(&cfg.controller.release_tag),stroke=key_lua(chord,address))
 }
 fn event_socket() -> Option<UnixStream> {
-    let rt=std::env::var_os("XDG_RUNTIME_DIR")?;
-    let sig=std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
-    if sig.contains('/') || sig.contains("..") {return None;}
-    let stream=UnixStream::connect(Path::new(&rt).join("hypr").join(sig).join(".socket2.sock")).ok()?;
-    stream.set_nonblocking(true).ok()?;Some(stream)
+    let rt = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    if sig.contains('/') || sig.contains("..") {
+        return None;
+    }
+    let stream =
+        UnixStream::connect(Path::new(&rt).join("hypr").join(sig).join(".socket2.sock")).ok()?;
+    stream.set_nonblocking(true).ok()?;
+    Some(stream)
 }
-fn wait_context_event(stream:&mut Option<UnixStream>,millis:u64) {
+fn wait_context_event(stream: &mut Option<UnixStream>, millis: u64) {
     use std::os::fd::AsRawFd;
-    if stream.is_none() {*stream=event_socket();}
-    let Some(s)=stream.as_mut() else {std::thread::sleep(Duration::from_millis(millis));return;};
-    let mut poll=libc::pollfd {fd:s.as_raw_fd(),events:libc::POLLIN,revents:0};
+    if stream.is_none() {
+        *stream = event_socket();
+    }
+    let Some(s) = stream.as_mut() else {
+        std::thread::sleep(Duration::from_millis(millis));
+        return;
+    };
+    let mut poll = libc::pollfd {
+        fd: s.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
     // SAFETY: one initialized pollfd references a live owned stream.
-    let ready=unsafe{libc::poll(&mut poll,1,millis.min(i32::MAX as u64) as i32)};
-    if ready>0 {
-        let mut bytes=[0u8;8192];
-        match s.read(&mut bytes) {Ok(0)=>*stream=None,Err(e) if e.kind()!=std::io::ErrorKind::WouldBlock=>*stream=None,_=>{}}
+    let ready = unsafe { libc::poll(&mut poll, 1, millis.min(i32::MAX as u64) as i32) };
+    if ready > 0 {
+        let mut bytes = [0u8; 8192];
+        match s.read(&mut bytes) {
+            Ok(0) => *stream = None,
+            Err(e) if e.kind() != std::io::ErrorKind::WouldBlock => *stream = None,
+            _ => {}
+        }
     }
     std::thread::sleep(Duration::from_millis(5));
 }
-fn policy_fingerprint(global:&GlobalConfig,legacy:&LegacyConfig) -> Result<Vec<u8>,String> {
-    serde_json::to_vec(&(global,legacy,&global.resolved_actions)).map_err(|e|e.to_string())
+fn policy_fingerprint(global: &GlobalConfig, legacy: &LegacyConfig) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&(global, legacy, &global.resolved_actions)).map_err(|e| e.to_string())
 }
 /// Action strings are policy data, never shell source. Compositor arguments are
 /// encoded as Lua string literals; unsupported verbs fail rather than eval shell.
@@ -951,7 +1532,9 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
                 // C-15b (I4): Guide + right-stick flick moves the focused window (Hyprland 0.56 hl.window.move).
                 "movewindow" => {
                     if !["left", "right", "up", "down"].contains(&arg.as_str()) {
-                        return Err(format!("movewindow needs left, right, up or down, not {arg:?}"));
+                        return Err(format!(
+                            "movewindow needs left, right, up or down, not {arg:?}"
+                        ));
                     }
                     format!("hl.dispatch(hl.dsp.window.move({{direction={q}}}))")
                 }
@@ -961,7 +1544,9 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
                         return Err(format!("unsupported room action {name}"));
                     }
                     // A bare verb takes the plugin's default argument (cancel/recenter have none; sprint toggles).
-                    if ["fullscreen", "jump", "cancel", "sprint", "recenter"].contains(&name) && arg.is_empty() {
+                    if ["fullscreen", "jump", "cancel", "sprint", "recenter"].contains(&name)
+                        && arg.is_empty()
+                    {
                         format!("hl.plugin.hypr3d.{name}()")
                     } else {
                         format!("hl.plugin.hypr3d.{name}({q})")
@@ -976,8 +1561,19 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
             if verb == "graphical-vt" {
                 return Ok(vec![]);
             }
-            if words.len() == 1 && ["toggle_vm_passthrough", "vm-capture-toggle", "vm-fullscreen"].contains(&words[0]) {
-                return Ok(vec!["/usr/libexec/mios/mios-inputd".into(), "vm-action".into(), words[0].into()]);
+            if words.len() == 1
+                && [
+                    "toggle_vm_passthrough",
+                    "vm-capture-toggle",
+                    "vm-fullscreen",
+                ]
+                .contains(&words[0])
+            {
+                return Ok(vec![
+                    "/usr/libexec/mios/mios-inputd".into(),
+                    "vm-action".into(),
+                    words[0].into(),
+                ]);
             }
             if words.first() == Some(&"hyprland-3d-toggle") {
                 return Ok(vec![
@@ -1053,16 +1649,22 @@ impl OwnershipWorker {
     fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
         let (requests, inbox) = std::sync::mpsc::sync_channel::<OwnershipRequest>(16);
         let (outbox, results) = std::sync::mpsc::channel();
-        let stop=std::sync::Arc::new(AtomicBool::new(false));
-        let cancelled=stop.clone();
-        let (notices, notice_inbox)=std::sync::mpsc::sync_channel::<Vec<String>>(16);
-        let notice_stop=stop.clone();
-        std::thread::Builder::new().name("mios-capture-notice".into()).spawn(move || {
-            while let Ok(argv)=notice_inbox.recv() {
-                if notice_stop.load(Ordering::Relaxed) { break; }
-                let _=run_bounded_cancel(&argv,Duration::from_millis(2000),Some(&notice_stop));
-            }
-        }).map_err(|e|e.to_string())?;
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled = stop.clone();
+        let (notices, notice_inbox) = std::sync::mpsc::sync_channel::<Vec<String>>(16);
+        let notice_stop = stop.clone();
+        std::thread::Builder::new()
+            .name("mios-capture-notice".into())
+            .spawn(move || {
+                while let Ok(argv) = notice_inbox.recv() {
+                    if notice_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let _ =
+                        run_bounded_cancel(&argv, Duration::from_millis(2000), Some(&notice_stop));
+                }
+            })
+            .map_err(|e| e.to_string())?;
         let worker = std::thread::Builder::new().name("mios-ownership".into()).spawn(move || {
             let mut captured:Option<CaptureReceipt>=None;
             while let Ok((seq, mode, expect, toggle, queued)) = inbox.recv() {
@@ -1097,17 +1699,31 @@ impl OwnershipWorker {
                 }
             }
         }).map_err(|e| e.to_string())?;
-        Ok(Self { requests: Some(requests), results, last: 0, worker: Some(worker), stop })
+        Ok(Self {
+            requests: Some(requests),
+            results,
+            last: 0,
+            worker: Some(worker),
+            stop,
+        })
     }
-    fn submit(&mut self, mode: &str, expect: Option<String>, toggle: Vec<String>) -> Result<(), String> {
+    fn submit(
+        &mut self,
+        mode: &str,
+        expect: Option<String>,
+        toggle: Vec<String>,
+    ) -> Result<(), String> {
         self.last += 1;
-        self.requests.as_ref().ok_or("ownership worker stopped")?
-            .try_send((self.last, mode.into(), expect, toggle, Instant::now())).map_err(|_| "ownership queue unavailable".to_string())
+        self.requests
+            .as_ref()
+            .ok_or("ownership worker stopped")?
+            .try_send((self.last, mode.into(), expect, toggle, Instant::now()))
+            .map_err(|_| "ownership queue unavailable".to_string())
     }
 }
 impl Drop for OwnershipWorker {
     fn drop(&mut self) {
-        self.stop.store(true,Ordering::Relaxed);
+        self.stop.store(true, Ordering::Relaxed);
         self.requests = None;
         self.worker.take();
     }
@@ -1138,46 +1754,80 @@ impl Sinks {
         if self.keyboard.is_none() {
             self.keyboard = Some(VirtualDevice::keyboard().map_err(|e| e.to_string())?);
         }
-        self.keyboard.as_mut().unwrap().write(&crate::nav::stroke(chord)).map_err(|e| e.to_string())
+        self.keyboard
+            .as_mut()
+            .unwrap()
+            .write(&crate::nav::stroke(chord))
+            .map_err(|e| e.to_string())
     }
 }
 /// C-17: the stroke that switches to this user's graphical VT (Ctrl+Alt+F<VTNr>; the kernel keymap maps it to
 /// Console_<n>). None without a graphical session, or on a VT that no F-key reaches.
 pub fn graphical_vt_chord(vt: Option<u32>) -> Option<String> {
-    vt.filter(|v| (1..=12).contains(v)).map(|v| format!("CTRL+ALT+F{v}"))
+    vt.filter(|v| (1..=12).contains(v))
+        .map(|v| format!("CTRL+ALT+F{v}"))
 }
 /// Returns the ownership change this output requested (`input:window on|fullscreen` = true, `off` = false), which the
 /// caller applies to every other controller of the session.
-fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &ContextSnapshot) -> Result<Option<bool>, String> {
+fn emit(
+    output: Output,
+    device: &mut RunningDevice,
+    sinks: &mut Sinks,
+    focus: &ContextSnapshot,
+) -> Result<Option<bool>, String> {
     // An explicit route is a complete output boundary: never run a host command or emit uinput for its pad.
     if device.session.is_some() || device.session_error.is_some() {
         for action in output.actions {
-            let planned=device.session.as_ref().ok_or("ambiguous controller assignment".to_owned())
-                .and_then(|route| crate::sessions::plan(route,&action,device.router.policy()));
-            let submitted=planned.is_ok() && sinks.execute_actions
-                && device.session_worker.as_ref().is_some_and(|worker|worker.submit(action.clone()));
-            println!("{}",serde_json::json!({"device":device.device.path,"session":device.session.as_ref().map(|r|&r.name),
+            let planned = device
+                .session
+                .as_ref()
+                .ok_or("ambiguous controller assignment".to_owned())
+                .and_then(|route| crate::sessions::plan(route, &action, device.router.policy()));
+            let submitted = planned.is_ok()
+                && sinks.execute_actions
+                && device
+                    .session_worker
+                    .as_ref()
+                    .is_some_and(|worker| worker.submit(action.clone()));
+            println!(
+                "{}",
+                serde_json::json!({"device":device.device.path,"session":device.session.as_ref().map(|r|&r.name),
                 "context":device.router.context,"action":action,"submitted":submitted,"executed":false,
-                "error":planned.as_ref().err(),"argv":if sinks.execute_actions {None}else{planned.as_ref().ok()}}));
+                "error":planned.as_ref().err(),"argv":if sinks.execute_actions {None}else{planned.as_ref().ok()}})
+            );
         }
         return Ok(None);
     }
     if sinks.bridge {
         if sinks.execute_actions && !sinks.nested && device.output.is_none() && !device.suspended {
-            device.output=Some(VirtualDevice::clone_gamepad(&device.device).map_err(|e|e.to_string())?);
+            device.output =
+                Some(VirtualDevice::clone_gamepad(&device.device).map_err(|e| e.to_string())?);
         }
         if let Some(virtual_pad) = &mut device.output {
             // O-7: the clone reports the driver's own codes (a quirk remapped them for routing only).
-            virtual_pad.write(&device.device.physical_events(&output.app)).map_err(|e| e.to_string())?;
+            virtual_pad
+                .write(&device.device.physical_events(&output.app))
+                .map_err(|e| e.to_string())?;
         }
-        if sinks.execute_actions && !sinks.nested && !output.pointer.is_empty()
-            && !(device.router.captured_navigation() && !device.router.half_capture()) {
+        if sinks.execute_actions
+            && !sinks.nested
+            && !output.pointer.is_empty()
+            && !(device.router.captured_navigation() && !device.router.half_capture())
+        {
             if sinks.pointer.is_none() {
-                sinks.pointer = Some(if device.router.policy().controller.virtual_pointer.is_empty() {
-                    VirtualDevice::pointer()
-                } else {VirtualDevice::pointer_named(&device.router.policy().controller.virtual_pointer)}.map_err(|e| e.to_string())?);
+                sinks.pointer = Some(
+                    if device.router.policy().controller.virtual_pointer.is_empty() {
+                        VirtualDevice::pointer()
+                    } else {
+                        VirtualDevice::pointer_named(
+                            &device.router.policy().controller.virtual_pointer,
+                        )
+                    }
+                    .map_err(|e| e.to_string())?,
+                );
             }
-            sinks.pointer
+            sinks
+                .pointer
                 .as_mut()
                 .unwrap()
                 .write(&output.pointer)
@@ -1188,24 +1838,39 @@ fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &C
     for action in output.actions {
         let mut submitted = false;
         if device.router.shell_overlay() && action.starts_with("key:") {
-            let chord=crate::nav::parse_key_chord(action.strip_prefix("key:").unwrap())?;
-            if sinks.execute_actions && !sinks.nested {sinks.stroke(&chord)?;submitted=true;}
-        } else if device.router.captured_navigation() && (action.starts_with("key:") || action.starts_with("tmux:")) {
-            if let Some(binding)=&device.capture {
-                let matches=focus.address.as_deref()==Some(binding.address.as_str()) && focus.pid==Some(u64::from(binding.pid));
+            let chord = crate::nav::parse_key_chord(action.strip_prefix("key:").unwrap())?;
+            if sinks.execute_actions && !sinks.nested {
+                sinks.stroke(&chord)?;
+                submitted = true;
+            }
+        } else if device.router.captured_navigation()
+            && (action.starts_with("key:") || action.starts_with("tmux:"))
+        {
+            if let Some(binding) = &device.capture {
+                let matches = focus.address.as_deref() == Some(binding.address.as_str())
+                    && focus.pid == Some(u64::from(binding.pid));
                 if matches && binding.error.is_none() {
-                    if let Some(worker)=&binding.worker {submitted=sinks.execute_actions && worker.submit(action.clone());}
-
+                    if let Some(worker) = &binding.worker {
+                        submitted = sinks.execute_actions && worker.submit(action.clone());
+                    }
                 }
             }
-        } else if device.router.captured_navigation() && !action.starts_with("input:")
-            && action!=device.router.policy().controller.guide_double_press_action {
+        } else if device.router.captured_navigation()
+            && !action.starts_with("input:")
+            && action != device.router.policy().controller.guide_double_press_action
+        {
             // Captured terminal navigation never executes host-global commands.
         } else if let Some(mode) = action.strip_prefix("input:window ") {
-            if mode=="on" || mode=="off" {device.capture=None;}
+            if mode == "on" || mode == "off" {
+                device.capture = None;
+            }
             ownership = Some(mode != "off");
             if let Some(worker) = &mut sinks.ownership {
-                worker.submit(mode, focus.address.clone(), device.router.legacy_toggle_chord())?;
+                worker.submit(
+                    mode,
+                    focus.address.clone(),
+                    device.router.legacy_toggle_chord(),
+                )?;
                 submitted = true;
             }
         } else if let Some(chord) = action.strip_prefix("key:") {
@@ -1224,14 +1889,21 @@ fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &C
                 }
             } else if sinks.project {
                 if let (Some(worker), Some(window)) = (&sinks.actions, &focus.address) {
-                    submitted = worker.submit(Job::Lua { action: action.clone(), lua: key_lua(&chord, window) });
+                    submitted = worker.submit(Job::Lua {
+                        action: action.clone(),
+                        lua: key_lua(&chord, window),
+                    });
                 }
             }
         } else if let Some(verb) = action.strip_prefix("tmux:") {
             // C-30: only against the tmux client discovery found; without one the *_plain profile is active.
             if sinks.runs_tmux() {
                 if let (Some(worker), Some(client)) = (&sinks.actions, &focus.tmux_client) {
-                    submitted = worker.submit(Job::Tmux { verb: verb.into(), client: client.clone(), console: device.router.console() });
+                    submitted = worker.submit(Job::Tmux {
+                        verb: verb.into(),
+                        client: client.clone(),
+                        console: device.router.console(),
+                    });
                 }
             }
         } else if action == "mios:graphical-vt" {
@@ -1246,11 +1918,17 @@ fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &C
                     submitted = true; // a VT switch: the console keymap delivers no bytes
                 }
             }
-            println!("{}", serde_json::json!({"vt_switch": chord, "graphical_vt": focus.graphical_vt, "submitted": submitted}));
+            println!(
+                "{}",
+                serde_json::json!({"vt_switch": chord, "graphical_vt": focus.graphical_vt, "submitted": submitted})
+            );
         } else if sinks.project && action.starts_with("hypr:") {
             if let Some(worker) = &sinks.actions {
                 let lua = configured_command(&action, device.router.policy())?.remove(2);
-                submitted = worker.submit(Job::Lua { action: action.clone(), lua });
+                submitted = worker.submit(Job::Lua {
+                    action: action.clone(),
+                    lua,
+                });
             }
         } else if sinks.execute_actions {
             let args = configured_command(&action, device.router.policy())?;
@@ -1302,21 +1980,22 @@ fn atomic_packet(path: &Path, pad: &PadState) -> Result<(), String> {
 }
 // evdev close() waits for a kernel grace period. Probing rejected devices in the
 // forwarding thread paused physical input for hundreds of milliseconds per scan.
-type DeviceCandidates=std::sync::mpsc::Receiver<Result<Device,String>>;
-type Discovery=(DeviceCandidates,std::thread::JoinHandle<()>);
+type DeviceCandidates = std::sync::mpsc::Receiver<Result<Device, String>>;
+type Discovery = (DeviceCandidates, std::thread::JoinHandle<()>);
 /// Nodes the host bridge must leave alone: assigned to a live nested session (path -> seat). Refreshed every scan.
-type Assigned=std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf,String>>>;
+type Assigned = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
 #[allow(clippy::too_many_arguments)]
 fn discovery_worker(
-    explicit:Vec<PathBuf>,fixture_only:bool,
-    policy:std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
-    known:std::sync::Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
-    stop:std::sync::Arc<AtomicBool>,
-    assigned:Assigned,
-    nested:bool,
-)->Result<Discovery,String> {
+    explicit: Vec<PathBuf>,
+    fixture_only: bool,
+    policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
+    known: std::sync::Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
+    stop: std::sync::Arc<AtomicBool>,
+    assigned: Assigned,
+    nested: bool,
+) -> Result<Discovery, String> {
     use std::os::unix::fs::MetadataExt;
-    let (sender,receiver)=std::sync::mpsc::sync_channel(16);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(16);
     let worker=std::thread::Builder::new().name("mios-devices".into()).spawn(move || {
         let mut rejected=BTreeMap::new();let mut sent=BTreeMap::new();let mut previous=BTreeSet::new();
         let mut skipped:BTreeSet<PathBuf>=BTreeSet::new();
@@ -1381,7 +2060,7 @@ fn discovery_worker(
             }
         }
     }).map_err(|e|e.to_string())?;
-    Ok((receiver,worker))
+    Ok((receiver, worker))
 }
 fn install_stop_handlers() {
     // SAFETY: signal handlers only store to a lock-free atomic boolean. File
@@ -1398,11 +2077,17 @@ fn install_stop_handlers() {
 /// A user manager without a seat (SSH-only, a container) or without /dev/uinput access must idle, not crash-loop.
 fn uinput_unavailable() -> Option<String> {
     use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open("/dev/uinput")
-        .err().map(|e|format!("no /dev/uinput access: {e}"))
+    std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open("/dev/uinput")
+        .err()
+        .map(|e| format!("no /dev/uinput access: {e}"))
 }
 pub fn seat_unavailable() -> Option<String> {
-    if let Some(reason)=uinput_unavailable() {return Some(reason);}
+    if let Some(reason) = uinput_unavailable() {
+        return Some(reason);
+    }
     if let Err(e) = std::fs::read_dir("/dev/input") {
         return Some(format!("no /dev/input access: {e}"));
     }
@@ -1417,20 +2102,35 @@ pub fn seat_unavailable() -> Option<String> {
 pub(crate) fn seat_from_logind_state(state: &Path, uid: u32) -> Option<String> {
     let user = state.join("users").join(uid.to_string());
     if let Err(e) = std::fs::metadata(&user) {
-        return Some(format!("logind state unavailable ({}): {e}", user.display()));
+        return Some(format!(
+            "logind state unavailable ({}): {e}",
+            user.display()
+        ));
     }
     match seat_view(state, uid).seat {
-        Seat::Foreign(r) if r.starts_with("no seated session") || r.starts_with("no logind record") => Some(r),
+        Seat::Foreign(r)
+            if r.starts_with("no seated session") || r.starts_with("no logind record") =>
+        {
+            Some(r)
+        }
         _ => None,
     }
 }
 /// The user-unit entry point (C-05). Disabled by SSOT: exit 0. No seat or no device access: idle until it appears
 /// (SIGTERM exits 0) and never start a second pad owner. A bridge error: exit non-zero, so systemd restarts it
 /// within the unit's start limit. There is no fallback process that could drive a game and the room at once.
-pub fn serve(mut global: GlobalConfig, mut legacy: LegacyConfig, root: Option<PathBuf>) -> Result<(), String> {
-    let disabled = |g: &GlobalConfig| !g.enabled || !g.controller.enabled || !g.controller.exclusive_grab;
+pub fn serve(
+    mut global: GlobalConfig,
+    mut legacy: LegacyConfig,
+    root: Option<PathBuf>,
+) -> Result<(), String> {
+    let disabled =
+        |g: &GlobalConfig| !g.enabled || !g.controller.enabled || !g.controller.exclusive_grab;
     if disabled(&global) {
-        eprintln!("{}", serde_json::json!({"serve":"disabled","reason":"SSOT disables the controller bridge","exit":0}));
+        eprintln!(
+            "{}",
+            serde_json::json!({"serve":"disabled","reason":"SSOT disables the controller bridge","exit":0})
+        );
         return Ok(());
     }
     // SAFETY: geteuid has no memory/ownership effects.
@@ -1449,16 +2149,27 @@ pub fn serve(mut global: GlobalConfig, mut legacy: LegacyConfig, root: Option<Pa
         if now != stamp {
             stamp = now;
             match GlobalConfig::load(root.as_deref()) {
-                Ok((g, l)) => { global = g; legacy = l; }
+                Ok((g, l)) => {
+                    global = g;
+                    legacy = l;
+                }
                 Err(e) => eprintln!("input policy reload rejected; keeping validated policy: {e}"),
             }
             if disabled(&global) {
-                eprintln!("{}", serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0}));
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0})
+                );
                 return Ok(());
             }
         }
-        let unavailable=if global.controller.sessions.is_empty() { seat_unavailable() }
-            else { std::fs::read_dir("/dev/input").err().map(|e|format!("no /dev/input access: {e}")) };
+        let unavailable = if global.controller.sessions.is_empty() {
+            seat_unavailable()
+        } else {
+            std::fs::read_dir("/dev/input")
+                .err()
+                .map(|e| format!("no /dev/input access: {e}"))
+        };
         match unavailable {
             None => break,
             Some(reason) => {
@@ -1474,11 +2185,32 @@ pub fn serve(mut global: GlobalConfig, mut legacy: LegacyConfig, root: Option<Pa
         }
     }
     if reported.is_some() {
-        eprintln!("{}", serde_json::json!({"serve":"bridge","reason":"seat and device access available"}));
+        eprintln!(
+            "{}",
+            serde_json::json!({"serve":"bridge","reason":"seat and device access available"})
+        );
     }
     let pad_path = global.controller.legacy_pad_state_path.clone();
-    run(global, legacy, Options { root, bridge: true, fixture_only: false, devices: vec![], context: None, duration: None, pad_path, live_context: false, write_pad: true,
-        logind_state: Some(PathBuf::from("/run/systemd")), console_tty: None, console_sink_fd: None, rediscover: true, nested: None })
+    run(
+        global,
+        legacy,
+        Options {
+            root,
+            bridge: true,
+            fixture_only: false,
+            devices: vec![],
+            context: None,
+            duration: None,
+            pad_path,
+            live_context: false,
+            write_pad: true,
+            logind_state: Some(PathBuf::from("/run/systemd")),
+            console_tty: None,
+            console_sink_fd: None,
+            rediscover: true,
+            nested: None,
+        },
+    )
 }
 pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> Result<(), String> {
     if opt.bridge && !opt.fixture_only {
@@ -1505,7 +2237,11 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     if opt.fixture_only && opt.devices.is_empty() && opt.nested.is_none() {
         return Err("fixture mode requires one explicit owned device".into());
     }
-    if opt.nested.as_ref().is_some_and(|n| n.controllers.is_empty()) {
+    if opt
+        .nested
+        .as_ref()
+        .is_some_and(|n| n.controllers.is_empty())
+    {
         return Err("the nested session holds no controller node (launch it with --device virtual-pad or a pad's /dev/input path)".into());
     }
     if opt.live_context && !opt.fixture_only {
@@ -1514,8 +2250,11 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     if !opt.fixture_only && (opt.console_tty.is_some() || opt.console_sink_fd.is_some()) {
         return Err("--console-tty and --console-sink-fd are fixture-tier options".into());
     }
-    if opt.fixture_only && opt.write_pad && opt.pad_path == global.controller.legacy_pad_state_path {
-        return Err("a fixture never writes the live room packet; pass a private --pad-path".into());
+    if opt.fixture_only && opt.write_pad && opt.pad_path == global.controller.legacy_pad_state_path
+    {
+        return Err(
+            "a fixture never writes the live room packet; pass a private --pad-path".into(),
+        );
     }
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -1531,7 +2270,11 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     install_stop_handlers();
     STOP.store(false, Ordering::Relaxed);
     let mut devices: BTreeMap<PathBuf, RunningDevice> = BTreeMap::new();
-    let follow = opt.context.is_none() && (!opt.fixture_only || opt.live_context || opt.logind_state.is_some() || opt.nested.is_some());
+    let follow = opt.context.is_none()
+        && (!opt.fixture_only
+            || opt.live_context
+            || opt.logind_state.is_some()
+            || opt.nested.is_some());
     let nested = opt.nested.is_some();
     let mut selected: Option<PathBuf> = None;
     let mut seed = PadState::default();
@@ -1546,22 +2289,36 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let mut last_reconcile = start;
     let mut focus = ContextSnapshot::new(opt.context.as_deref().unwrap_or("app-capture"));
     // INV-8: with a seat view, nothing is grabbed or routed before the first view says this user's session is active.
-    if opt.logind_state.is_some() && follow { focus.suspended = Some("seat not read yet".into()); }
+    if opt.logind_state.is_some() && follow {
+        focus.suspended = Some("seat not read yet".into());
+    }
     let console_sink = match opt.console_sink_fd {
         // SAFETY: the fixture caller passed this inherited descriptor for exactly this use; it is owned from here on.
-        Some(fd) if fd > 2 => Some(unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd) }),
+        Some(fd) if fd > 2 => {
+            Some(unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd) })
+        }
         Some(_) => return Err("--console-sink-fd must be an inherited descriptor above 2".into()),
         None => None,
     };
     // The placeholder context (app-capture until the compositor answers) is no evidence that an app owns the pad.
-    let boot_sample=focus.sampled;
-    let shared_focus=std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
-    let shared_policy=std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
+    let boot_sample = focus.sampled;
+    let shared_focus = std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
+    let shared_policy = std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
     let mut sinks = Sinks {
         pointer: None,
         children: vec![],
-        ownership: if follow && opt.bridge { Some(OwnershipWorker::spawn(shared_policy.clone())?) } else { None },
-        actions: if opt.bridge && (!opt.fixture_only || opt.live_context || nested || console_sink.is_some()) { Some(ActionWorker::spawn(shared_policy.clone())?) } else { None },
+        ownership: if follow && opt.bridge {
+            Some(OwnershipWorker::spawn(shared_policy.clone())?)
+        } else {
+            None
+        },
+        actions: if opt.bridge
+            && (!opt.fixture_only || opt.live_context || nested || console_sink.is_some())
+        {
+            Some(ActionWorker::spawn(shared_policy.clone())?)
+        } else {
+            None
+        },
         keyboard: None,
         bridge: opt.bridge,
         execute_actions: opt.bridge && !opt.fixture_only,
@@ -1569,157 +2326,292 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         console_sink,
         nested,
     };
-    let context_stop=std::sync::Arc::new(AtomicBool::new(false));
-    let cursor_requested=std::sync::Arc::new(AtomicBool::new(false));
-    let cursor_signal=cursor_requested.clone();
-    let context_worker=if follow {
-        let cache=shared_focus.clone(); let policy=shared_policy.clone(); let stop=context_stop.clone();
-        let (logind, console_tty, rediscover_on) = (opt.logind_state.clone(), opt.console_tty.clone(), opt.rediscover);
+    let context_stop = std::sync::Arc::new(AtomicBool::new(false));
+    let cursor_requested = std::sync::Arc::new(AtomicBool::new(false));
+    let cursor_signal = cursor_requested.clone();
+    let context_worker = if follow {
+        let cache = shared_focus.clone();
+        let policy = shared_policy.clone();
+        let stop = context_stop.clone();
+        let (logind, console_tty, rediscover_on) = (
+            opt.logind_state.clone(),
+            opt.console_tty.clone(),
+            opt.rediscover,
+        );
         Some(std::thread::spawn(move || {
-            let mut events=event_socket();
+            let mut events = event_socket();
             // SAFETY: getuid has no memory/ownership effects.
-            let uid=unsafe{libc::getuid()};
-            let mut tmux_cache:Option<(u64,Instant,Option<TmuxClient>)>=None;
-            let mut vt_cache:Option<(PathBuf,Instant,Option<TmuxClient>)>=None;
-            let mut last_rediscover=Instant::now()-Duration::from_secs(1);
-            let mut compositor_lost:Option<Instant>=None;
-            let runtime=std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
-            let mut reported:Option<String>=None;
+            let uid = unsafe { libc::getuid() };
+            let mut tmux_cache: Option<(u64, Instant, Option<TmuxClient>)> = None;
+            let mut vt_cache: Option<(PathBuf, Instant, Option<TmuxClient>)> = None;
+            let mut last_rediscover = Instant::now() - Duration::from_secs(1);
+            let mut compositor_lost: Option<Instant> = None;
+            let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+            let mut reported: Option<String> = None;
             while !stop.load(Ordering::Relaxed) {
-                let cfg=policy.lock().unwrap().clone();
-                let view=logind.as_deref().map(|state| seat_view(state,uid));
-                let graphical_vt=view.as_ref().and_then(|v| v.graphical_vt);
+                let cfg = policy.lock().unwrap().clone();
+                let view = logind.as_deref().map(|state| seat_view(state, uid));
+                let graphical_vt = view.as_ref().and_then(|v| v.graphical_vt);
                 // C-16: the console context (a VT) when this user's tty session is active, or when the graphical
                 // session's compositor is gone for good (no live instance at all); INV-8: suspended when another
                 // session is active. The tty path may be a test pty on the fixture tier.
-                let mut console:Option<PathBuf>=None;
+                let mut console: Option<PathBuf> = None;
                 match view.as_ref().map(|v| &v.seat) {
                     Some(Seat::Foreign(reason)) => {
-                        let mut snap=ContextSnapshot::new("console");
-                        snap.suspended=Some(reason.clone()); snap.graphical_vt=graphical_vt;
-                        if reported.as_deref()!=Some(reason.as_str()) { eprintln!("{}",serde_json::json!({"seat":"foreign","reason":reason})); reported=Some(reason.clone()); }
-                        *cache.lock().unwrap()=snap;
-                        std::thread::sleep(Duration::from_millis(cfg.controller.context_poll_ms.max(20)));
+                        let mut snap = ContextSnapshot::new("console");
+                        snap.suspended = Some(reason.clone());
+                        snap.graphical_vt = graphical_vt;
+                        if reported.as_deref() != Some(reason.as_str()) {
+                            eprintln!("{}", serde_json::json!({"seat":"foreign","reason":reason}));
+                            reported = Some(reason.clone());
+                        }
+                        *cache.lock().unwrap() = snap;
+                        std::thread::sleep(Duration::from_millis(
+                            cfg.controller.context_poll_ms.max(20),
+                        ));
                         continue;
                     }
-                    Some(Seat::Console{tty,..}) => console=Some(console_tty.clone().unwrap_or_else(|| tty.clone())),
+                    Some(Seat::Console { tty, .. }) => {
+                        console = Some(console_tty.clone().unwrap_or_else(|| tty.clone()))
+                    }
                     _ => {}
                 }
-                let result=if console.is_some() { Err("console".to_string()) } else { context_with_cursor(&cfg,cursor_signal.load(Ordering::Relaxed)) };
-                if console.is_none() && result.is_err() && rediscover_on && last_rediscover.elapsed()>=Duration::from_millis(250) {
-                    last_rediscover=Instant::now();
-                    if let Some(rt)=&runtime {
-                        let current=signature().ok();
-                        match rediscover(rt,Path::new("/proc"),current.as_deref()) {
+                let result = if console.is_some() {
+                    Err("console".to_string())
+                } else {
+                    context_with_cursor(&cfg, cursor_signal.load(Ordering::Relaxed))
+                };
+                if console.is_none()
+                    && result.is_err()
+                    && rediscover_on
+                    && last_rediscover.elapsed() >= Duration::from_millis(250)
+                {
+                    last_rediscover = Instant::now();
+                    if let Some(rt) = &runtime {
+                        let current = signature().ok();
+                        match rediscover(rt, Path::new("/proc"), current.as_deref()) {
                             Some(sig) => {
-                                compositor_lost=None;
-                                if current.as_deref()!=Some(sig.as_str()) {
-                                    eprintln!("{}",serde_json::json!({"compositor":"rediscovered","signature":sig,"previous":current}));
-                                    if let Ok(mut g)=SIGNATURE.lock() { *g=Some(sig); }
-                                    events=None;
+                                compositor_lost = None;
+                                if current.as_deref() != Some(sig.as_str()) {
+                                    eprintln!(
+                                        "{}",
+                                        serde_json::json!({"compositor":"rediscovered","signature":sig,"previous":current})
+                                    );
+                                    if let Ok(mut g) = SIGNATURE.lock() {
+                                        *g = Some(sig);
+                                    }
+                                    events = None;
                                 }
                             }
-                            None => { compositor_lost.get_or_insert_with(Instant::now); }
+                            None => {
+                                compositor_lost.get_or_insert_with(Instant::now);
+                            }
                         }
                     }
                 }
-                if console.is_none() && result.is_err() && view.is_some()
-                    && compositor_lost.is_some_and(|t| t.elapsed()>=Duration::from_millis(cfg.controller.context_stale_ms)) {
-                    if let Some(vt)=graphical_vt { console=Some(console_tty.clone().unwrap_or_else(|| PathBuf::from(format!("/dev/tty{vt}")))); }
-                }
-                if let Some(tty)=console {
-                    let mut snap=ContextSnapshot::new("console");
-                    snap.graphical_vt=graphical_vt;
-                    let fresh=vt_cache.as_ref().is_some_and(|(t,at,_)| *t==tty && at.elapsed()<Duration::from_millis(1000));
-                    if !fresh {
-                        let found=if wants_tmux(&cfg,"console") { tmux_client_on_tty(Path::new("/proc"),&tty,&cfg.controller.nav.tmux_sockets,uid) } else { None };
-                        vt_cache=Some((tty.clone(),Instant::now(),found));
+                if console.is_none()
+                    && result.is_err()
+                    && view.is_some()
+                    && compositor_lost.is_some_and(|t| {
+                        t.elapsed() >= Duration::from_millis(cfg.controller.context_stale_ms)
+                    })
+                {
+                    if let Some(vt) = graphical_vt {
+                        console = Some(
+                            console_tty
+                                .clone()
+                                .unwrap_or_else(|| PathBuf::from(format!("/dev/tty{vt}"))),
+                        );
                     }
-                    snap.tmux_client=vt_cache.as_ref().and_then(|(_,_,c)|c.clone());
-                    if reported.as_deref()!=Some("console") { eprintln!("{}",serde_json::json!({"seat":"console","tty":tty})); reported=Some("console".into()); }
-                    *cache.lock().unwrap()=snap;
-                    std::thread::sleep(Duration::from_millis(cfg.controller.context_poll_ms.max(20)));
+                }
+                if let Some(tty) = console {
+                    let mut snap = ContextSnapshot::new("console");
+                    snap.graphical_vt = graphical_vt;
+                    let fresh = vt_cache.as_ref().is_some_and(|(t, at, _)| {
+                        *t == tty && at.elapsed() < Duration::from_millis(1000)
+                    });
+                    if !fresh {
+                        let found = if wants_tmux(&cfg, "console") {
+                            tmux_client_on_tty(
+                                Path::new("/proc"),
+                                &tty,
+                                &cfg.controller.nav.tmux_sockets,
+                                uid,
+                            )
+                        } else {
+                            None
+                        };
+                        vt_cache = Some((tty.clone(), Instant::now(), found));
+                    }
+                    snap.tmux_client = vt_cache.as_ref().and_then(|(_, _, c)| c.clone());
+                    if reported.as_deref() != Some("console") {
+                        eprintln!("{}", serde_json::json!({"seat":"console","tty":tty}));
+                        reported = Some("console".into());
+                    }
+                    *cache.lock().unwrap() = snap;
+                    std::thread::sleep(Duration::from_millis(
+                        cfg.controller.context_poll_ms.max(20),
+                    ));
                     continue;
                 }
-                if result.is_ok() { compositor_lost=None; }
-                if view.is_some() && result.is_ok() && reported.as_deref()!=Some("graphical") { eprintln!("{}",serde_json::json!({"seat":"graphical"})); reported=Some("graphical".into()); }
+                if result.is_ok() {
+                    compositor_lost = None;
+                }
+                if view.is_some() && result.is_ok() && reported.as_deref() != Some("graphical") {
+                    eprintln!("{}", serde_json::json!({"seat":"graphical"}));
+                    reported = Some("graphical".into());
+                }
                 // A failed IPC read never invents terminal focus or resets held input.
-                if let Ok(mut snapshot)=result {
-                    snapshot.graphical_vt=graphical_vt;
-                    snapshot.shell_overlay=runtime.as_ref().is_some_and(|r|shell_overlay_open(r,&cfg));
+                if let Ok(mut snapshot) = result {
+                    snapshot.graphical_vt = graphical_vt;
+                    snapshot.shell_overlay = runtime
+                        .as_ref()
+                        .is_some_and(|r| shell_overlay_open(r, &cfg));
                     // C-09: /proc only, at most once a second per focused terminal (tmux may start inside it later).
-                    let nav_context=capture_navigation_context(&cfg,snapshot.class.as_deref()).unwrap_or_else(||snapshot.name.clone());
-                    if let (Some(pid),true)=(snapshot.pid,wants_tmux(&cfg,&nav_context)) {
-                        let fresh=tmux_cache.as_ref().is_some_and(|(p,t,_)| *p==pid && t.elapsed()<Duration::from_millis(1000));
+                    let nav_context = capture_navigation_context(&cfg, snapshot.class.as_deref())
+                        .unwrap_or_else(|| snapshot.name.clone());
+                    if let (Some(pid), true) = (snapshot.pid, wants_tmux(&cfg, &nav_context)) {
+                        let fresh = tmux_cache.as_ref().is_some_and(|(p, t, _)| {
+                            *p == pid && t.elapsed() < Duration::from_millis(1000)
+                        });
                         if !fresh {
-                            let found=u32::try_from(pid).ok().and_then(|p| tmux_client_under(Path::new("/proc"),p,&cfg.controller.nav.tmux_sockets,uid));
-                            tmux_cache=Some((pid,Instant::now(),found));
+                            let found = u32::try_from(pid).ok().and_then(|p| {
+                                tmux_client_under(
+                                    Path::new("/proc"),
+                                    p,
+                                    &cfg.controller.nav.tmux_sockets,
+                                    uid,
+                                )
+                            });
+                            tmux_cache = Some((pid, Instant::now(), found));
                         }
-                        snapshot.tmux_client=tmux_cache.as_ref().and_then(|(_,_,c)|c.clone());
+                        snapshot.tmux_client = tmux_cache.as_ref().and_then(|(_, _, c)| c.clone());
                     }
-                    *cache.lock().unwrap()=snapshot;
+                    *cache.lock().unwrap() = snapshot;
                 } else {
                     // A layer-input lease cannot outlive a failed compositor verification.
-                    if let Ok(mut snapshot)=cache.lock() {snapshot.shell_overlay=false;}
+                    if let Ok(mut snapshot) = cache.lock() {
+                        snapshot.shell_overlay = false;
+                    }
                 }
-                wait_context_event(&mut events,cfg.controller.context_poll_ms);
+                wait_context_event(&mut events, cfg.controller.context_poll_ms);
             }
         }))
-    } else {None};
-    let known_devices=std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    } else {
+        None
+    };
+    let known_devices = std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
     // The registry lives in the host runtime (a nested bridge already switched XDG_RUNTIME_DIR to its session's).
-    let registry=if nested { None } else { std::env::var_os("XDG_RUNTIME_DIR").map(|r| PathBuf::from(r).join(&global.nested_registry)) };
-    let assigned:Assigned=std::sync::Arc::new(std::sync::Mutex::new(registry.as_deref().map(|r| crate::nested::assigned_nodes(r,Path::new("/proc"))).unwrap_or_default()));
-    let explicit=opt.nested.as_ref().map(|n| n.controllers.clone()).unwrap_or_else(|| opt.devices.clone());
-    let (new_devices,discovery)=discovery_worker(explicit,opt.fixture_only,shared_policy.clone(),known_devices.clone(),context_stop.clone(),assigned.clone(),nested)?;
-    let mut ctx=focus.name.clone();
+    let registry = if nested {
+        None
+    } else {
+        std::env::var_os("XDG_RUNTIME_DIR").map(|r| PathBuf::from(r).join(&global.nested_registry))
+    };
+    let assigned: Assigned = std::sync::Arc::new(std::sync::Mutex::new(
+        registry
+            .as_deref()
+            .map(|r| crate::nested::assigned_nodes(r, Path::new("/proc")))
+            .unwrap_or_default(),
+    ));
+    let explicit = opt
+        .nested
+        .as_ref()
+        .map(|n| n.controllers.clone())
+        .unwrap_or_else(|| opt.devices.clone());
+    let (new_devices, discovery) = discovery_worker(
+        explicit,
+        opt.fixture_only,
+        shared_policy.clone(),
+        known_devices.clone(),
+        context_stop.clone(),
+        assigned.clone(),
+        nested,
+    )?;
+    let mut ctx = focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
-    let mut local_sink_error=if opt.bridge && !opt.fixture_only && !nested {uinput_unavailable()}else{None};
+    let mut local_sink_error = if opt.bridge && !opt.fixture_only && !nested {
+        uinput_unavailable()
+    } else {
+        None
+    };
     let result = (|| -> Result<(), String> {
         while !STOP.load(Ordering::Relaxed) && opt.duration.is_none_or(|d| start.elapsed() < d) {
             if scan.elapsed() >= Duration::from_millis(global.controller.scan_ms) {
                 scan = Instant::now();
-                if opt.bridge && !opt.fixture_only && !nested { local_sink_error=uinput_unavailable(); }
-                if let Some(n)=&opt.nested {
+                if opt.bridge && !opt.fixture_only && !nested {
+                    local_sink_error = uinput_unavailable();
+                }
+                if let Some(n) = &opt.nested {
                     if !n.alive(Path::new("/proc")) {
                         eprintln!("{}", serde_json::json!({"nested":"ended","seat":n.seat}));
                         break;
                     }
                 }
-                if let Some(r)=&registry {
-                    let now=crate::nested::assigned_nodes(r,Path::new("/proc"));
+                if let Some(r) = &registry {
+                    let now = crate::nested::assigned_nodes(r, Path::new("/proc"));
                     // A node a session claimed after this bridge owned it: hand it over (outputs to rest, grab released).
-                    let taken:Vec<PathBuf>=devices.keys().filter(|p| now.contains_key(*p)).cloned().collect();
+                    let taken: Vec<PathBuf> = devices
+                        .keys()
+                        .filter(|p| now.contains_key(*p))
+                        .cloned()
+                        .collect();
                     for path in taken {
-                        if let Some(mut dev)=devices.remove(&path) {
-                            let out=dev.router.reset();
-                            emit(out,&mut dev,&mut sinks,&focus)?;
+                        if let Some(mut dev) = devices.remove(&path) {
+                            let out = dev.router.reset();
+                            emit(out, &mut dev, &mut sinks, &focus)?;
                             dev.device.release();
                             known_devices.lock().unwrap().remove(&path);
-                            if selected.as_ref()==Some(&path) { selected=None; }
-                            eprintln!("{}", serde_json::json!({"nested":"released","device":path,"seat":now[&path]}));
+                            if selected.as_ref() == Some(&path) {
+                                selected = None;
+                            }
+                            eprintln!(
+                                "{}",
+                                serde_json::json!({"nested":"released","device":path,"seat":now[&path]})
+                            );
                         }
                     }
-                    if let Ok(mut a)=assigned.lock() { *a=now; }
+                    if let Ok(mut a) = assigned.lock() {
+                        *a = now;
+                    }
                 }
                 // Resolve stable aliases on each discovery scan; ambiguity reserves the device and routes nothing.
                 for dev in devices.values_mut() {
-                    if nested { continue; }
-                    let selection=crate::sessions::route_for_device(&global.controller.sessions,&dev.device.path);
-                    let next_session=selection.as_ref().ok().cloned().flatten();
-                    let next_error=selection.err();
-                    if next_session!=dev.session || next_error!=dev.session_error {
-                        let out=dev.router.reset();
-                        emit(out,dev,&mut sinks,&focus)?;
+                    if nested {
+                        continue;
+                    }
+                    let selection = crate::sessions::route_for_device(
+                        &global.controller.sessions,
+                        &dev.device.path,
+                    );
+                    let next_session = selection.as_ref().ok().cloned().flatten();
+                    let next_error = selection.err();
+                    if next_session != dev.session || next_error != dev.session_error {
+                        let out = dev.router.reset();
+                        emit(out, dev, &mut sinks, &focus)?;
                         // Neutralize any previous raw clone before changing the output boundary.
-                        if let Some(pad)=&mut dev.output { pad.write(&dev.device.physical_events(&dev.router.reset().app)).map_err(|e|e.to_string())?; }
-                        dev.session_worker=None;
-                        dev.capture=None;
-                        dev.session=next_session;
-                        dev.session_error=next_error;
-                        if dev.session.is_some() || dev.session_error.is_some() { dev.router.cursor=false; }
-                        dev.session_worker=if sinks.execute_actions && !dev.suspended { dev.session.clone().map(|r|SessionWorker::spawn(r,global.clone())).transpose()? } else { None };
-                        eprintln!("{}",serde_json::json!({"device":dev.device.path,"session":dev.session.as_ref().map(|r|&r.name),"error":dev.session_error}));
+                        if let Some(pad) = &mut dev.output {
+                            pad.write(&dev.device.physical_events(&dev.router.reset().app))
+                                .map_err(|e| e.to_string())?;
+                        }
+                        dev.session_worker = None;
+                        dev.capture = None;
+                        dev.session = next_session;
+                        dev.session_error = next_error;
+                        if dev.session.is_some() || dev.session_error.is_some() {
+                            dev.router.cursor = false;
+                        }
+                        dev.session_worker = if sinks.execute_actions && !dev.suspended {
+                            dev.session
+                                .clone()
+                                .map(|r| SessionWorker::spawn(r, global.clone()))
+                                .transpose()?
+                        } else {
+                            None
+                        };
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"device":dev.device.path,"session":dev.session.as_ref().map(|r|&r.name),"error":dev.session_error})
+                        );
                     }
                 }
                 let stamp = config_fingerprint(opt.root.as_deref());
@@ -1732,42 +2624,84 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     || !next.controller.enabled
                                     || (!opt.fixture_only && !next.controller.exclusive_grab))
                             {
-                                eprintln!("{}", serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0}));
+                                eprintln!(
+                                    "{}",
+                                    serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0})
+                                );
                                 break;
                             }
-                            if policy_fingerprint(&global,&legacy)? != policy_fingerprint(&next,&next_legacy)? {
-                            for dev in devices.values_mut() {
-                                let cursor=dev.router.cursor;
-                                let out = dev.router.reset();
-                                emit(out, dev, &mut sinks, &focus)?;
-                                let seq = dev.router.pad.sequences;
-                                dev.router = Router::new(
-                                    next.clone(),
-                                    next_legacy.clone(),
-                                    dev.device.snapshot().map_err(|e| e.to_string())?.1,
-                                );
-                                dev.router.pad.sequences = seq;
-                                if let Err(e) = dev.device.apply_quirks(&next.controller.quirks) { eprintln!("{}", serde_json::json!({"quirks_refused":e})); }
-                                dev.router.analog_triggers = dev.device.analog_triggers();
-                                let selection=if nested { Ok(None) } else { crate::sessions::route_for_device(&next.controller.sessions,&dev.device.path) };
-                                dev.session=selection.as_ref().ok().cloned().flatten();
-                                dev.session_error=selection.err();
-                                dev.session_worker=if sinks.execute_actions && !dev.suspended { dev.session.clone().map(|r|SessionWorker::spawn(r,next.clone())).transpose()? } else { None };
-                                let target_focus=session_focus(&focus,dev.session.is_some(),dev.session_error.as_deref());
-                                dev.router.tmux = dev.session.is_some() || target_focus.tmux_client.is_some();
-                                dev.router.set_context(&target_focus.name);
-                                let (keys, axes) =
-                                    dev.device.snapshot().map_err(|e| e.to_string())?;
-                                dev.router.resync(keys, axes);
-                                dev.router.set_capture_navigation_context(capture_navigation_context(&next,target_focus.class.as_deref()).as_deref());
-                                dev.capture=None;
-                                dev.router.cursor=cursor && dev.session.is_none() && dev.session_error.is_none();
-                            }
-                            if next.controller.virtual_pointer!=global.controller.virtual_pointer {sinks.pointer=None;}
-                            *shared_policy.lock().map_err(|_| "context policy lock failed")?=next.clone();
-                            global = next;
-                            legacy = next_legacy;
-                            eprintln!("input policy reloaded from layered SSOT");
+                            if policy_fingerprint(&global, &legacy)?
+                                != policy_fingerprint(&next, &next_legacy)?
+                            {
+                                for dev in devices.values_mut() {
+                                    let cursor = dev.router.cursor;
+                                    let out = dev.router.reset();
+                                    emit(out, dev, &mut sinks, &focus)?;
+                                    let seq = dev.router.pad.sequences;
+                                    dev.router = Router::new(
+                                        next.clone(),
+                                        next_legacy.clone(),
+                                        dev.device.snapshot().map_err(|e| e.to_string())?.1,
+                                    );
+                                    dev.router.pad.sequences = seq;
+                                    if let Err(e) = dev.device.apply_quirks(&next.controller.quirks)
+                                    {
+                                        eprintln!("{}", serde_json::json!({"quirks_refused":e}));
+                                    }
+                                    dev.router.analog_triggers = dev.device.analog_triggers();
+                                    let selection = if nested {
+                                        Ok(None)
+                                    } else {
+                                        crate::sessions::route_for_device(
+                                            &next.controller.sessions,
+                                            &dev.device.path,
+                                        )
+                                    };
+                                    dev.session = selection.as_ref().ok().cloned().flatten();
+                                    dev.session_error = selection.err();
+                                    dev.session_worker = if sinks.execute_actions && !dev.suspended
+                                    {
+                                        dev.session
+                                            .clone()
+                                            .map(|r| SessionWorker::spawn(r, next.clone()))
+                                            .transpose()?
+                                    } else {
+                                        None
+                                    };
+                                    let target_focus = session_focus(
+                                        &focus,
+                                        dev.session.is_some(),
+                                        dev.session_error.as_deref(),
+                                    );
+                                    dev.router.tmux =
+                                        dev.session.is_some() || target_focus.tmux_client.is_some();
+                                    dev.router.set_context(&target_focus.name);
+                                    let (keys, axes) =
+                                        dev.device.snapshot().map_err(|e| e.to_string())?;
+                                    dev.router.resync(keys, axes);
+                                    dev.router.set_capture_navigation_context(
+                                        capture_navigation_context(
+                                            &next,
+                                            target_focus.class.as_deref(),
+                                        )
+                                        .as_deref(),
+                                    );
+                                    dev.capture = None;
+                                    dev.router.cursor = cursor
+                                        && dev.session.is_none()
+                                        && dev.session_error.is_none();
+                                }
+                                if next.controller.virtual_pointer
+                                    != global.controller.virtual_pointer
+                                {
+                                    sinks.pointer = None;
+                                }
+                                *shared_policy
+                                    .lock()
+                                    .map_err(|_| "context policy lock failed")? = next.clone();
+                                global = next;
+                                legacy = next_legacy;
+                                eprintln!("input policy reloaded from layered SSOT");
                             }
                         }
                         Err(e) => {
@@ -1778,94 +2712,151 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             }
             // Only ready, validated handles cross this channel. No evdev probes or
             // rejected-node closes occur on the forwarding loop.
-            while let Ok(candidate)=new_devices.try_recv() {
-                    let mut device=candidate?;
-                    let path=device.path.clone();
-                    if devices.contains_key(&path) { continue; }
-                    // A nested claim can arrive while discovery has a validated handle queued.
-                    if !nested && assigned.lock().map(|a|a.contains_key(&path)).unwrap_or(true) {
-                        eprintln!("{}",serde_json::json!({"nested":"queued-candidate-released","device":path}));
-                        continue;
-                    }
-                    let quirks=device.apply_quirks(&global.controller.quirks).unwrap_or_else(|e| { eprintln!("{}", serde_json::json!({"quirks_refused":e})); vec![] });
-                    if !quirks.is_empty() {
-                        eprintln!("{}", serde_json::json!({"quirks":quirks,"device":path,"driver":device.driver(),"usb_id":format!("{:04x}:{:04x}",device.usb_id().0,device.usb_id().1)}));
-                    }
-                    let mut router =
-                        Router::new(global.clone(), legacy.clone(), device.axes.clone());
-                    router.pad.sequences = seed.sequences;
-                    router.analog_triggers = device.analog_triggers();
-                    let selection=if nested { Ok(None) } else { crate::sessions::route_for_device(&global.controller.sessions,&path) };
-                    let session=selection.as_ref().ok().cloned().flatten();
-                    let session_error=selection.err();
-                    let target_focus=session_focus(&focus,session.is_some(),session_error.as_deref());
-                    router.set_capture_navigation_context(capture_navigation_context(&global,target_focus.class.as_deref()).as_deref());
-                    router.tmux = session.is_some() || target_focus.tmux_client.is_some();
-                    router.set_context(&target_focus.name);
-                    if let Ok((keys, axes)) = device.snapshot() {
-                        router.resync(keys, axes);
-                    }
-                    // A pad that joins while a capture is pending follows the session's ownership at once.
-                    if session.is_none() && session_error.is_none() {
-                        if let Some(owned) = devices.values().filter(|d|d.session.is_none() && d.session_error.is_none()).find_map(|d| d.router.ownership()) {
-                            router.adopt_ownership(owned);
-                        }
-                    }
-                    let suspended = target_focus.suspended.is_some();
-                    if opt.bridge && !opt.fixture_only && !nested && !suspended && session.is_none() && session_error.is_none() {
-                        if let Some(reason)=&local_sink_error {
-                            eprintln!("{}",serde_json::json!({"device":path,"local_sink":"unavailable","reason":reason}));
-                            continue;
-                        }
-                    }
-                    let output = if opt.bridge {
-                        if !suspended {
-                            device
-                                .grab()
-                                .map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
-                        }
-                        // A nested session sees only its own /dev/input: no clone (it would appear on the host).
-                        if nested || session.is_some() || session_error.is_some() || suspended { None }
-                        else { Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?) }
-                    } else {
-                        None
-                    };
+            while let Ok(candidate) = new_devices.try_recv() {
+                let mut device = candidate?;
+                let path = device.path.clone();
+                if devices.contains_key(&path) {
+                    continue;
+                }
+                // A nested claim can arrive while discovery has a validated handle queued.
+                if !nested
+                    && assigned
+                        .lock()
+                        .map(|a| a.contains_key(&path))
+                        .unwrap_or(true)
+                {
                     eprintln!(
                         "{}",
-                        serde_json::json!({"mode":if opt.bridge{"bridge"}else{"observe"},"device":path,"name":device.name})
+                        serde_json::json!({"nested":"queued-candidate-released","device":path})
                     );
-                    known_devices.lock().unwrap().insert(path.clone());
-                    devices.insert(
-                        path,
-                        RunningDevice {
-                            device,
-                            output,
-                            router,
-                            dropped: false,
-                            session_worker: if sinks.execute_actions && !suspended { session.clone().map(|r|SessionWorker::spawn(r,global.clone())).transpose()? } else { None },
-                            session,
-                            session_error,
-                            capture:None,
-                            capture_recovery_at:Instant::now()-Duration::from_secs(10),
-                            suspended,
+                    continue;
+                }
+                let quirks = device
+                    .apply_quirks(&global.controller.quirks)
+                    .unwrap_or_else(|e| {
+                        eprintln!("{}", serde_json::json!({"quirks_refused":e}));
+                        vec![]
+                    });
+                if !quirks.is_empty() {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"quirks":quirks,"device":path,"driver":device.driver(),"usb_id":format!("{:04x}:{:04x}",device.usb_id().0,device.usb_id().1)})
+                    );
+                }
+                let mut router = Router::new(global.clone(), legacy.clone(), device.axes.clone());
+                router.pad.sequences = seed.sequences;
+                router.analog_triggers = device.analog_triggers();
+                let selection = if nested {
+                    Ok(None)
+                } else {
+                    crate::sessions::route_for_device(&global.controller.sessions, &path)
+                };
+                let session = selection.as_ref().ok().cloned().flatten();
+                let session_error = selection.err();
+                let target_focus =
+                    session_focus(&focus, session.is_some(), session_error.as_deref());
+                router.set_capture_navigation_context(
+                    capture_navigation_context(&global, target_focus.class.as_deref()).as_deref(),
+                );
+                router.tmux = session.is_some() || target_focus.tmux_client.is_some();
+                router.set_context(&target_focus.name);
+                if let Ok((keys, axes)) = device.snapshot() {
+                    router.resync(keys, axes);
+                }
+                // A pad that joins while a capture is pending follows the session's ownership at once.
+                if session.is_none() && session_error.is_none() {
+                    if let Some(owned) = devices
+                        .values()
+                        .filter(|d| d.session.is_none() && d.session_error.is_none())
+                        .find_map(|d| d.router.ownership())
+                    {
+                        router.adopt_ownership(owned);
+                    }
+                }
+                let suspended = target_focus.suspended.is_some();
+                if opt.bridge
+                    && !opt.fixture_only
+                    && !nested
+                    && !suspended
+                    && session.is_none()
+                    && session_error.is_none()
+                {
+                    if let Some(reason) = &local_sink_error {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"device":path,"local_sink":"unavailable","reason":reason})
+                        );
+                        continue;
+                    }
+                }
+                let output = if opt.bridge {
+                    if !suspended {
+                        device
+                            .grab()
+                            .map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
+                    }
+                    // A nested session sees only its own /dev/input: no clone (it would appear on the host).
+                    if nested || session.is_some() || session_error.is_some() || suspended {
+                        None
+                    } else {
+                        Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?)
+                    }
+                } else {
+                    None
+                };
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"mode":if opt.bridge{"bridge"}else{"observe"},"device":path,"name":device.name})
+                );
+                known_devices.lock().unwrap().insert(path.clone());
+                devices.insert(
+                    path,
+                    RunningDevice {
+                        device,
+                        output,
+                        router,
+                        dropped: false,
+                        session_worker: if sinks.execute_actions && !suspended {
+                            session
+                                .clone()
+                                .map(|r| SessionWorker::spawn(r, global.clone()))
+                                .transpose()?
+                        } else {
+                            None
                         },
-                    );
+                        session,
+                        session_error,
+                        capture: None,
+                        capture_recovery_at: Instant::now() - Duration::from_secs(10),
+                        suspended,
+                    },
+                );
             }
-            if let Ok(snapshot)=shared_focus.try_lock() { focus=snapshot.clone(); }
-            if follow && focus.sampled.elapsed()>Duration::from_millis(global.controller.context_stale_ms) {
-                focus.name="app-capture".into(); focus.room_capture=false; focus.shell_overlay=false;
+            if let Ok(snapshot) = shared_focus.try_lock() {
+                focus = snapshot.clone();
             }
-            ctx=focus.name.clone();
+            if follow
+                && focus.sampled.elapsed()
+                    > Duration::from_millis(global.controller.context_stale_ms)
+            {
+                focus.name = "app-capture".into();
+                focus.room_capture = false;
+                focus.shell_overlay = false;
+            }
+            ctx = focus.name.clone();
             // Ownership is per session: a capture/release requested by one pad applies to every pad (INV-7).
             let mut adopt: Vec<(PathBuf, bool)> = vec![];
             let paths: Vec<_> = devices.keys().cloned().collect();
             for path in paths {
                 let dev = devices.get_mut(&path).unwrap();
-                let mut target_focus=session_focus(&focus,dev.session.is_some(),dev.session_error.as_deref());
+                let mut target_focus =
+                    session_focus(&focus, dev.session.is_some(), dev.session_error.as_deref());
                 if dev.session.is_none() && dev.session_error.is_none() && dev.output.is_none() {
-                    if let Some(reason)=&local_sink_error { target_focus.suspended=Some(reason.clone()); }
+                    if let Some(reason) = &local_sink_error {
+                        target_focus.suspended = Some(reason.clone());
+                    }
                 }
-                let focus=&target_focus;
+                let focus = &target_focus;
                 // INV-8: another session (or the greeter) owns the seat: release the grab so its session gets the pad,
                 // neutralize every output, and route nothing until this user's session is active again.
                 match (&focus.suspended, dev.suspended) {
@@ -1874,21 +2865,33 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         dev.suspended = true;
                         let out = dev.router.reset();
                         emit(out, dev, &mut sinks, &focus)?;
-                        dev.session_worker=None;
-                        dev.capture=None;
+                        dev.session_worker = None;
+                        dev.capture = None;
                         dev.device.release();
                         dev.suspended = true;
-                        eprintln!("{}", serde_json::json!({"seat":"released","device":path,"reason":reason}));
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"seat":"released","device":path,"reason":reason})
+                        );
                     }
                     (None, true) => {
                         if opt.bridge {
-                            dev.device.grab().map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
+                            dev.device.grab().map_err(|e| {
+                                format!("{}: cannot own input: {e}", path.display())
+                            })?;
                         }
                         let (keys, axes) = dev.device.snapshot().map_err(|e| e.to_string())?;
                         let out = dev.router.resync(keys, axes);
                         emit(out, dev, &mut sinks, &focus)?;
                         dev.suspended = false;
-                        dev.session_worker=if sinks.execute_actions && !dev.suspended { dev.session.clone().map(|r|SessionWorker::spawn(r,global.clone())).transpose()? } else { None };
+                        dev.session_worker = if sinks.execute_actions && !dev.suspended {
+                            dev.session
+                                .clone()
+                                .map(|r| SessionWorker::spawn(r, global.clone()))
+                                .transpose()?
+                        } else {
+                            None
+                        };
                         eprintln!("{}", serde_json::json!({"seat":"owned","device":path}));
                     }
                     _ => {}
@@ -1898,24 +2901,46 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         eprintln!("input disconnected {}", path.display());
                         devices.remove(&path);
                         known_devices.lock().unwrap().remove(&path);
-                        if selected.as_ref() == Some(&path) { selected = None; }
+                        if selected.as_ref() == Some(&path) {
+                            selected = None;
+                        }
                     }
                     continue;
                 }
-                if focus.shell_overlay {dev.capture=None;}
-                let target=focus.address.clone().zip(focus.pid);
-                let mut transition=dev.router.set_shell_overlay(focus.shell_overlay);
-                transition.extend(dev.router.set_capture_navigation_context(capture_navigation_context(&global,focus.class.as_deref()).as_deref()));
-                transition.extend(dev.router.set_tmux(dev.session.is_some() || focus.tmux_client.is_some()));
-                transition.extend(dev.router.set_focus(&focus.name,target,focus.room_capture));
+                if focus.shell_overlay {
+                    dev.capture = None;
+                }
+                let target = focus.address.clone().zip(focus.pid);
+                let mut transition = dev.router.set_shell_overlay(focus.shell_overlay);
+                transition.extend(dev.router.set_capture_navigation_context(
+                    capture_navigation_context(&global, focus.class.as_deref()).as_deref(),
+                ));
+                transition.extend(
+                    dev.router
+                        .set_tmux(dev.session.is_some() || focus.tmux_client.is_some()),
+                );
+                transition.extend(
+                    dev.router
+                        .set_focus(&focus.name, target, focus.room_capture),
+                );
                 emit(transition, dev, &mut sinks, &focus)?;
-                let mismatch=dev.capture.as_ref().is_some_and(|b|focus.address.as_deref()!=Some(b.address.as_str()) || focus.pid!=Some(u64::from(b.pid)));
-                if !dev.router.app_owned() || (mismatch && dev.router.ownership().is_none()) {dev.capture=None;}
-                if !dev.router.shell_overlay() && dev.router.captured_navigation() && dev.router.ownership().is_none() && dev.capture.is_none()
-                    && dev.capture_recovery_at.elapsed()>=Duration::from_millis(global.controller.scan_ms) {
-                    if let Some(worker)=&mut sinks.ownership {
-                        let _=worker.submit("inspect",focus.address.clone(),vec![]);
-                        dev.capture_recovery_at=Instant::now();
+                let mismatch = dev.capture.as_ref().is_some_and(|b| {
+                    focus.address.as_deref() != Some(b.address.as_str())
+                        || focus.pid != Some(u64::from(b.pid))
+                });
+                if !dev.router.app_owned() || (mismatch && dev.router.ownership().is_none()) {
+                    dev.capture = None;
+                }
+                if !dev.router.shell_overlay()
+                    && dev.router.captured_navigation()
+                    && dev.router.ownership().is_none()
+                    && dev.capture.is_none()
+                    && dev.capture_recovery_at.elapsed()
+                        >= Duration::from_millis(global.controller.scan_ms)
+                {
+                    if let Some(worker) = &mut sinks.ownership {
+                        let _ = worker.submit("inspect", focus.address.clone(), vec![]);
+                        dev.capture_recovery_at = Instant::now();
                     }
                 }
                 match dev.device.read_events() {
@@ -1923,7 +2948,9 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         if events.iter().any(|e| {
                             e.kind == crate::router::EV_KEY || e.kind == crate::router::EV_ABS
                         }) {
-                            if dev.session.is_none() && dev.session_error.is_none() { selected = Some(path.clone()); }
+                            if dev.session.is_none() && dev.session_error.is_none() {
+                                selected = Some(path.clone());
+                            }
                         }
                         for event in events {
                             if event.kind == EV_SYN && event.code == SYN_DROPPED {
@@ -1939,7 +2966,9 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 let out = dev
                                     .router
                                     .event(event, (linux::monotonic_ns() / 1_000_000) as u64);
-                                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
+                                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? {
+                                    adopt.push((path.clone(), owned));
+                                }
                             }
                         }
                     }
@@ -1958,19 +2987,29 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             let now = Instant::now();
             let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
             last_tick = now;
-            let reconcile_due = now.duration_since(last_reconcile) >= Duration::from_millis(global.controller.context_poll_ms);
-            if reconcile_due { last_reconcile = now; }
+            let reconcile_due = now.duration_since(last_reconcile)
+                >= Duration::from_millis(global.controller.context_poll_ms);
+            if reconcile_due {
+                last_reconcile = now;
+            }
             for (path, dev) in devices.iter_mut().filter(|(_, d)| !d.suspended) {
-                let target_focus=session_focus(&focus,dev.session.is_some(),dev.session_error.as_deref());
-                let focus=&target_focus;
+                let target_focus =
+                    session_focus(&focus, dev.session.is_some(), dev.session_error.as_deref());
+                let focus = &target_focus;
                 if reconcile_due && !dev.dropped {
                     if let Ok(held) = dev.device.held_keys() {
-                        let out = dev.router.reconcile(&held, (linux::monotonic_ns()/1_000_000) as u64);
-                        if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
+                        let out = dev
+                            .router
+                            .reconcile(&held, (linux::monotonic_ns() / 1_000_000) as u64);
+                        if let Some(owned) = emit(out, dev, &mut sinks, &focus)? {
+                            adopt.push((path.clone(), owned));
+                        }
                     }
                 }
                 let out = dev.router.tick(dt);
-                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? { adopt.push((path.clone(), owned)); }
+                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? {
+                    adopt.push((path.clone(), owned));
+                }
                 // I4 --nested: a captured app in the session reads the assigned node itself, so the grab is released
                 // while the app owns the pad (the bridge still sees the held toggle_chord that releases it).
                 // Until the session compositor has answered once, the bridge keeps the grab: the placeholder context
@@ -1978,56 +3017,100 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 if nested && opt.bridge {
                     let want = !dev.router.app_owned() || (follow && focus.sampled == boot_sample);
                     if want && !dev.device.grabbed() {
-                        dev.device.grab().map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
+                        dev.device
+                            .grab()
+                            .map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
                         eprintln!("{}", serde_json::json!({"nested":"grab","device":path}));
                     } else if !want && dev.device.grabbed() {
                         dev.device.release();
-                        eprintln!("{}", serde_json::json!({"nested":"passthrough","device":path}));
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"nested":"passthrough","device":path})
+                        );
                     }
                 }
             }
             for (source, owned) in adopt {
                 for (path, dev) in devices.iter_mut() {
                     if *path != source && dev.session.is_none() && dev.session_error.is_none() {
-                        dev.capture=None;
+                        dev.capture = None;
                         let out = dev.router.adopt_ownership(owned);
                         emit(out, dev, &mut sinks, &focus)?;
                     }
                 }
             }
-            let cursor_active=!nested && focus.suspended.is_none() && focus.name!="desktop-3d" && !focus.room_capture
-                && focus.sampled.elapsed()<Duration::from_millis(global.controller.context_stale_ms)
-                && devices.values().any(|d|!d.suspended && d.session.is_none() && d.session_error.is_none() && d.router.cursor && !d.router.shell_overlay());
-            cursor_requested.store(cursor_active,Ordering::Relaxed);
+            let cursor_active = !nested
+                && focus.suspended.is_none()
+                && focus.name != "desktop-3d"
+                && !focus.room_capture
+                && focus.sampled.elapsed()
+                    < Duration::from_millis(global.controller.context_stale_ms)
+                && devices.values().any(|d| {
+                    !d.suspended
+                        && d.session.is_none()
+                        && d.session_error.is_none()
+                        && d.router.cursor
+                        && !d.router.shell_overlay()
+                });
+            cursor_requested.store(cursor_active, Ordering::Relaxed);
             let mut failed = vec![];
             if let Some(worker) = &sinks.ownership {
                 while let Ok((seq, mode, result)) = worker.results.try_recv() {
                     match result {
                         Ok(receipt) => {
-                            if seq==worker.last {
-                                for dev in devices.values_mut().filter(|d|d.session.is_none() && d.session_error.is_none() && !d.suspended) {
-                                    if mode!="off" {dev.router.confirm_capture_target(&receipt.address);}
-                                    if mode=="off" {dev.capture=None;}
-                                    else if capture_navigation_context(&global,Some(&receipt.class)).is_some() {
-                                        let same=dev.capture.as_ref().is_some_and(|b|b.address==receipt.address && b.pid==receipt.pid);
-                                        if mode=="on" || !same {dev.capture=Some(capture_binding(&receipt,&dev.device.path,&global)?);}
+                            if seq == worker.last {
+                                for dev in devices.values_mut().filter(|d| {
+                                    d.session.is_none() && d.session_error.is_none() && !d.suspended
+                                }) {
+                                    if mode != "off" {
+                                        dev.router.confirm_capture_target(&receipt.address);
+                                    }
+                                    if mode == "off" {
+                                        dev.capture = None;
+                                    } else if capture_navigation_context(
+                                        &global,
+                                        Some(&receipt.class),
+                                    )
+                                    .is_some()
+                                    {
+                                        let same = dev.capture.as_ref().is_some_and(|b| {
+                                            b.address == receipt.address && b.pid == receipt.pid
+                                        });
+                                        if mode == "on" || !same {
+                                            dev.capture = Some(capture_binding(
+                                                &receipt,
+                                                &dev.device.path,
+                                                &global,
+                                            )?);
+                                        }
                                     }
                                 }
                             }
-                            eprintln!("{}", serde_json::json!({"ownership":mode,"window":receipt.address,"pid":receipt.pid,
-                                "pane":receipt.tmux.as_ref().map(|t|&t.pane),"delivery_error":receipt.error,"ok":true}));
-                        },
+                            eprintln!(
+                                "{}",
+                                serde_json::json!({"ownership":mode,"window":receipt.address,"pid":receipt.pid,
+                                "pane":receipt.tmux.as_ref().map(|t|&t.pane),"delivery_error":receipt.error,"ok":true})
+                            );
+                        }
                         Err(error) => {
-                            eprintln!("{}", serde_json::json!({"ownership":mode,"ok":false,"error":error,"reverted":seq==worker.last}));
+                            eprintln!(
+                                "{}",
+                                serde_json::json!({"ownership":mode,"ok":false,"error":error,"reverted":seq==worker.last})
+                            );
                             // Only the latest request decides; an older failure must not undo a newer capture.
-                            if seq == worker.last && mode!="inspect" { failed.push(mode); }
+                            if seq == worker.last && mode != "inspect" {
+                                failed.push(mode);
+                            }
                         }
                     }
                 }
             }
             if !failed.is_empty() {
-                for dev in devices.values_mut().filter(|d|d.session.is_none() && d.session_error.is_none()) {
-                    dev.capture=None;
+                for dev in devices
+                    .values_mut()
+                    .filter(|d| d.session.is_none() && d.session_error.is_none())
+                {
+                    dev.capture = None;
                     let out = dev.router.ownership_failed();
                     emit(out, dev, &mut sinks, &focus)?;
                 }
@@ -2075,13 +3158,15 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         }
         Ok(())
     })();
-    cursor_requested.store(false,Ordering::Relaxed);
-    if !nested {let _=ipc(&format!("/eval {}",controller_cursor_lua(&global,false)));}
-    sinks.ownership=None;
+    cursor_requested.store(false, Ordering::Relaxed);
+    if !nested {
+        let _ = ipc(&format!("/eval {}", controller_cursor_lua(&global, false)));
+    }
+    sinks.ownership = None;
     for dev in devices.values_mut() {
-        dev.session_worker=None;
-        dev.capture=None;
-        dev.suspended=true;
+        dev.session_worker = None;
+        dev.capture = None;
+        dev.suspended = true;
         let out = dev.router.reset();
         let _ = emit(out, dev, &mut sinks, &focus);
         dev.device.release();
@@ -2095,8 +3180,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         let _ = atomic_packet(&opt.pad_path, &seed);
     }
     context_stop.store(true, Ordering::Relaxed);
-    if let Some(worker)=context_worker { let _=worker.join(); }
-    let _=discovery.join();
+    if let Some(worker) = context_worker {
+        let _ = worker.join();
+    }
+    let _ = discovery.join();
     drop(sinks);
     result
 }
@@ -2131,10 +3218,16 @@ fn config_fingerprint(root: Option<&Path>) -> Vec<(PathBuf, u64, Option<std::tim
 }
 
 pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<String>, String> {
-    if let Some(mode)=action.strip_prefix("input:window ") {
-        return Ok(vec!["/usr/bin/hyprctl".into(),"eval".into(),window_lua(mode,global,None)?]);
+    if let Some(mode) = action.strip_prefix("input:window ") {
+        return Ok(vec![
+            "/usr/bin/hyprctl".into(),
+            "eval".into(),
+            window_lua(mode, global, None)?,
+        ]);
     }
-    if global.planned_actions.iter().any(|a|a==action) { return Err(format!("action is planned, not implemented: {action}")); }
+    if global.planned_actions.iter().any(|a| a == action) {
+        return Err(format!("action is planned, not implemented: {action}"));
+    }
     global
         .resolved_actions
         .get(action)
@@ -2143,7 +3236,11 @@ pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<Str
         .unwrap_or_else(|| command_for(action))
 }
 pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
-    let probe = TmuxClient { pid: 0, tty: "/dev/pts/0".into(), socket: PathBuf::from("/tmp/probe") };
+    let probe = TmuxClient {
+        pid: 0,
+        tty: "/dev/pts/0".into(),
+        socket: PathBuf::from("/tmp/probe"),
+    };
     let nav = global.controller.nav.actions();
     let room: Vec<String> = global
         .controller
@@ -2182,18 +3279,37 @@ pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
 /// Query once, then validate identity again in the compositor transaction.
 /// Sending the native escape is observable; the remote client's capture state is not.
 pub fn vm_action(action: &str, global: &GlobalConfig) -> Result<(), String> {
-    let window: serde_json::Value = serde_json::from_str(&ipc("j/activewindow")?).map_err(|e| e.to_string())?;
-    let address=window.get("address").and_then(|v| v.as_str()).ok_or("no focused VM address")?;
-    let pid=window.get("pid").and_then(|v| v.as_u64()).ok_or("no focused VM process")?;
-    let class=window.get("class").and_then(|v| v.as_str()).ok_or("no focused VM class")?;
-    if let Ok(expected)=std::env::var("MIOS_INPUT_WINDOW") {
-        let expected_pid=std::env::var("MIOS_INPUT_WINDOW_PID").ok().and_then(|v|v.parse::<u64>().ok());
-        if expected != address || expected_pid != Some(pid) { return Err("controller focus changed; no VM input sent".into()); }
+    let window: serde_json::Value =
+        serde_json::from_str(&ipc("j/activewindow")?).map_err(|e| e.to_string())?;
+    let address = window
+        .get("address")
+        .and_then(|v| v.as_str())
+        .ok_or("no focused VM address")?;
+    let pid = window
+        .get("pid")
+        .and_then(|v| v.as_u64())
+        .ok_or("no focused VM process")?;
+    let class = window
+        .get("class")
+        .and_then(|v| v.as_str())
+        .ok_or("no focused VM class")?;
+    if let Ok(expected) = std::env::var("MIOS_INPUT_WINDOW") {
+        let expected_pid = std::env::var("MIOS_INPUT_WINDOW_PID")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+        if expected != address || expected_pid != Some(pid) {
+            return Err("controller focus changed; no VM input sent".into());
+        }
     }
-    let lua=global.vm.lua(action,address,pid,class)?;
-    let reply=ipc(&format!("/eval {lua}"))?;
-    if !reply.contains("MIOS_VM_SENT") { return Err(reply); }
-    println!("{}",serde_json::json!({"action":action,"address":address,"native_command_sent":true,"client_capture_state":"unknown"}));
+    let lua = global.vm.lua(action, address, pid, class)?;
+    let reply = ipc(&format!("/eval {lua}"))?;
+    if !reply.contains("MIOS_VM_SENT") {
+        return Err(reply);
+    }
+    println!(
+        "{}",
+        serde_json::json!({"action":action,"address":address,"native_command_sent":true,"client_capture_state":"unknown"})
+    );
     Ok(())
 }
 
@@ -2202,110 +3318,218 @@ mod tests {
     use super::*;
     #[test]
     fn shell_input_requires_a_fresh_valid_local_surface_lease() {
-        let (mut cfg,_)=crate::config::tests::fixture();
-        let dir=tempfile::tempdir().unwrap();
-        cfg.shell_input_state_file="mios-shell-input.json".into();
-        let path=dir.path().join(&cfg.shell_input_state_file);
-        assert!(!shell_overlay_open(dir.path(),&cfg));
-        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-        let valid=serde_json::json!({"version":1,"open":true,"surface":"drawer","output":"test-output","timestamp_ms":now});
-        std::fs::write(&path,valid.to_string()).unwrap();
-        assert!(shell_overlay_open(dir.path(),&cfg));
-        for (field,value) in [("open",serde_json::json!(false)),("version",serde_json::json!(2)),
-            ("surface",serde_json::json!("unknown")),("output",serde_json::json!("")),
-            ("timestamp_ms",serde_json::json!(now-10000)),("timestamp_ms",serde_json::json!(now+10000))] {
-            let mut invalid=valid.clone();invalid[field]=value;std::fs::write(&path,invalid.to_string()).unwrap();
-            assert!(!shell_overlay_open(dir.path(),&cfg),"{field}");
+        let (mut cfg, _) = crate::config::tests::fixture();
+        let dir = tempfile::tempdir().unwrap();
+        cfg.shell_input_state_file = "mios-shell-input.json".into();
+        let path = dir.path().join(&cfg.shell_input_state_file);
+        assert!(!shell_overlay_open(dir.path(), &cfg));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let valid = serde_json::json!({"version":1,"open":true,"surface":"drawer","output":"test-output","timestamp_ms":now});
+        std::fs::write(&path, valid.to_string()).unwrap();
+        assert!(shell_overlay_open(dir.path(), &cfg));
+        for (field, value) in [
+            ("open", serde_json::json!(false)),
+            ("version", serde_json::json!(2)),
+            ("surface", serde_json::json!("unknown")),
+            ("output", serde_json::json!("")),
+            ("timestamp_ms", serde_json::json!(now - 10000)),
+            ("timestamp_ms", serde_json::json!(now + 10000)),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            std::fs::write(&path, invalid.to_string()).unwrap();
+            assert!(!shell_overlay_open(dir.path(), &cfg), "{field}");
         }
-        std::fs::write(&path,"{broken").unwrap();assert!(!shell_overlay_open(dir.path(),&cfg));
-        std::fs::remove_file(&path).unwrap();let elsewhere=dir.path().join("elsewhere");
-        std::fs::write(&elsewhere,valid.to_string()).unwrap();std::os::unix::fs::symlink(&elsewhere,&path).unwrap();
-        assert!(!shell_overlay_open(dir.path(),&cfg),"a symlink does not own shell input");
+        std::fs::write(&path, "{broken").unwrap();
+        assert!(!shell_overlay_open(dir.path(), &cfg));
+        std::fs::remove_file(&path).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::write(&elsewhere, valid.to_string()).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+        assert!(
+            !shell_overlay_open(dir.path(), &cfg),
+            "a symlink does not own shell input"
+        );
     }
     #[test]
     fn controller_cursor_lease_uses_the_native_lua_contract() {
-        let (mut cfg,_)=crate::config::tests::fixture();
-        cfg.controller.cursor_shape="crosshair".into();cfg.controller.virtual_pointer="mios-vctl-pointer".into();
+        let (mut cfg, _) = crate::config::tests::fixture();
+        cfg.controller.cursor_shape = "crosshair".into();
+        cfg.controller.virtual_pointer = "mios-vctl-pointer".into();
         let script=format!("local calls={{}};hl={{plugin={{mios_pacing={{controller_cursor=function(...) table.insert(calls,table.pack(...)) end}}}}}};{}{}assert(#calls==2 and calls[1].n==4 and calls[1][1]==true and calls[1][2]=='crosshair' and calls[1][3]=='mios-vctl-pointer' and calls[1][4]=={} and calls[2].n==1 and calls[2][1]==false)",
             controller_cursor_lua(&cfg,true),controller_cursor_lua(&cfg,false),cfg.controller.context_stale_ms);
-        let mut child=Command::new("/usr/bin/lua").arg("-").stdin(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
-        let output=child.wait_with_output().unwrap();assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+        let mut child = Command::new("/usr/bin/lua")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     #[test]
     fn native_context_captures_arbitrary_apps_and_keeps_an_unfocused_room() {
-        let (cfg,_)=crate::config::tests::fixture();
-        let v=serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":false,"captured":true,"handler":"hypr3d"});
-        let snap=snapshot(&cfg,&v);assert_eq!(snap.name,"app-capture");assert!(snap.room_capture);
-        let empty=serde_json::json!({"room":true,"captured":false});assert_eq!(snapshot(&cfg,&empty).name,"desktop-3d");
+        let (cfg, _) = crate::config::tests::fixture();
+        let v = serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":false,"captured":true,"handler":"hypr3d"});
+        let snap = snapshot(&cfg, &v);
+        assert_eq!(snap.name, "app-capture");
+        assert!(snap.room_capture);
+        let empty = serde_json::json!({"room":true,"captured":false});
+        assert_eq!(snapshot(&cfg, &empty).name, "desktop-3d");
     }
     #[test]
     fn current_room_passthrough_uses_native_fullscreen_state() {
-        let (cfg,_)=crate::config::tests::fixture();
-        let mut v=serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":true,"fullscreen":2,"captured":true,"handler":"default"});
-        assert!(snapshot(&cfg,&v).room_capture,"the installed room uses the compositor default fullscreen handler");
-        v["room"]=serde_json::json!(false);assert!(!snapshot(&cfg,&v).room_capture,"outside the room a fullscreen capture is a 2D capture; the held chord releases it to the desktop");
-        v["room"]=serde_json::json!(true);v["fullscreen"]=serde_json::json!(0);assert!(snapshot(&cfg,&v).room_capture,"windowed room capture must support the held release chord");
+        let (cfg, _) = crate::config::tests::fixture();
+        let mut v = serde_json::json!({"class":"org.any.Flatpak","address":"0xabc","pid":42,"room":true,"fullscreen":2,"captured":true,"handler":"default"});
+        assert!(
+            snapshot(&cfg, &v).room_capture,
+            "the installed room uses the compositor default fullscreen handler"
+        );
+        v["room"] = serde_json::json!(false);
+        assert!(!snapshot(&cfg,&v).room_capture,"outside the room a fullscreen capture is a 2D capture; the held chord releases it to the desktop");
+        v["room"] = serde_json::json!(true);
+        v["fullscreen"] = serde_json::json!(0);
+        assert!(
+            snapshot(&cfg, &v).room_capture,
+            "windowed room capture must support the held release chord"
+        );
     }
     #[test]
     fn unrelated_ssot_changes_do_not_reset_controller_policy() {
-        let mut doc:toml::Value=include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
-        let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();let before=policy_fingerprint(&cfg,&legacy).unwrap();
-        doc["theme"]["font"]["size"]=toml::Value::Integer(18);
-        let (cfg,legacy)=GlobalConfig::from_value(&doc).unwrap();assert_eq!(policy_fingerprint(&cfg,&legacy).unwrap(),before);
+        let mut doc: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
+        let (cfg, legacy) = GlobalConfig::from_value(&doc).unwrap();
+        let before = policy_fingerprint(&cfg, &legacy).unwrap();
+        doc["theme"]["font"]["size"] = toml::Value::Integer(18);
+        let (cfg, legacy) = GlobalConfig::from_value(&doc).unwrap();
+        assert_eq!(policy_fingerprint(&cfg, &legacy).unwrap(), before);
     }
     #[test]
     fn release_tag_is_reported_and_class_never_captures() {
-        let (cfg,_)=crate::config::tests::fixture();
-        let v=serde_json::json!({"class":"steam_app_570","address":"0xabc","pid":42,"room":false,"captured":false,"released":true});
-        let snap=snapshot(&cfg,&v);assert_eq!(snap.name,"game");assert!(snap.released);
-        assert!(!crate::router::Router::owns_controller(&snap.name),"an uncaptured game window is an ordinary window");
-        let lua=context_lua(&cfg);
-        assert!(lua.contains("\"mios-input-released\"") && lua.contains("if released then captured=false end"));
-        assert!(lua.contains("policy.captured"),"the generated MIOS_INPUT_POLICY.captured predicate is preferred when present");
+        let (cfg, _) = crate::config::tests::fixture();
+        let v = serde_json::json!({"class":"steam_app_570","address":"0xabc","pid":42,"room":false,"captured":false,"released":true});
+        let snap = snapshot(&cfg, &v);
+        assert_eq!(snap.name, "game");
+        assert!(snap.released);
+        assert!(
+            !crate::router::Router::owns_controller(&snap.name),
+            "an uncaptured game window is an ordinary window"
+        );
+        let lua = context_lua(&cfg);
+        assert!(
+            lua.contains("\"mios-input-released\"")
+                && lua.contains("if released then captured=false end")
+        );
+        assert!(
+            lua.contains("policy.captured"),
+            "the generated MIOS_INPUT_POLICY.captured predicate is preferred when present"
+        );
     }
     #[test]
     fn seat_check_reads_logind_state_files_without_spawning() {
-        let t=std::env::temp_dir().join(format!("mios-inputd-seat-{}",std::process::id()));
-        let _=std::fs::remove_dir_all(&t);
-        std::fs::create_dir_all(t.join("users")).unwrap();std::fs::create_dir_all(t.join("sessions")).unwrap();
-        assert!(seat_from_logind_state(&t,1000).unwrap().contains("logind state unavailable"),"no user record: idle");
-        std::fs::write(t.join("users/1000"),"STATE=active\nSESSIONS=4\n").unwrap();
-        std::fs::write(t.join("sessions/4"),"UID=1000\nTYPE=tty\nREMOTE=1\nTTY=pts/3\n").unwrap();
-        assert_eq!(seat_from_logind_state(&t,1000).as_deref(),Some("no seated session for this user"),"SSH-only login: idle");
-        std::fs::write(t.join("users/1000"),"DISPLAY=../x\n").unwrap();
-        assert_eq!(seat_from_logind_state(&t,1000).as_deref(),Some("no seated session for this user"),"a path-like id is rejected");
-        std::fs::write(t.join("users/1000"),"STATE=active\nDISPLAY=3\n").unwrap();
-        std::fs::write(t.join("sessions/3"),"TYPE=wayland\nSEAT=\n").unwrap();
-        assert_eq!(seat_from_logind_state(&t,1000).as_deref(),Some("no seated session for this user"));
-        std::fs::write(t.join("sessions/3"),"TYPE=wayland\nSEAT=seat0\n").unwrap();
-        assert_eq!(seat_from_logind_state(&t,1000),None,"a seated graphical session reaches the bridge");
-        std::fs::write(t.join("users/1000"),"STATE=active\nSESSIONS=5\n").unwrap();
-        std::fs::write(t.join("sessions/5"),"UID=1000\nTYPE=tty\nSEAT=seat0\nVTNR=3\nTTY=tty3\n").unwrap();
-        assert_eq!(seat_from_logind_state(&t,1000),None,"I3: a VT login reaches the bridge too");
+        let t = std::env::temp_dir().join(format!("mios-inputd-seat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("users")).unwrap();
+        std::fs::create_dir_all(t.join("sessions")).unwrap();
+        assert!(
+            seat_from_logind_state(&t, 1000)
+                .unwrap()
+                .contains("logind state unavailable"),
+            "no user record: idle"
+        );
+        std::fs::write(t.join("users/1000"), "STATE=active\nSESSIONS=4\n").unwrap();
+        std::fs::write(
+            t.join("sessions/4"),
+            "UID=1000\nTYPE=tty\nREMOTE=1\nTTY=pts/3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            seat_from_logind_state(&t, 1000).as_deref(),
+            Some("no seated session for this user"),
+            "SSH-only login: idle"
+        );
+        std::fs::write(t.join("users/1000"), "DISPLAY=../x\n").unwrap();
+        assert_eq!(
+            seat_from_logind_state(&t, 1000).as_deref(),
+            Some("no seated session for this user"),
+            "a path-like id is rejected"
+        );
+        std::fs::write(t.join("users/1000"), "STATE=active\nDISPLAY=3\n").unwrap();
+        std::fs::write(t.join("sessions/3"), "TYPE=wayland\nSEAT=\n").unwrap();
+        assert_eq!(
+            seat_from_logind_state(&t, 1000).as_deref(),
+            Some("no seated session for this user")
+        );
+        std::fs::write(t.join("sessions/3"), "TYPE=wayland\nSEAT=seat0\n").unwrap();
+        assert_eq!(
+            seat_from_logind_state(&t, 1000),
+            None,
+            "a seated graphical session reaches the bridge"
+        );
+        std::fs::write(t.join("users/1000"), "STATE=active\nSESSIONS=5\n").unwrap();
+        std::fs::write(
+            t.join("sessions/5"),
+            "UID=1000\nTYPE=tty\nSEAT=seat0\nVTNR=3\nTTY=tty3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            seat_from_logind_state(&t, 1000),
+            None,
+            "I3: a VT login reaches the bridge too"
+        );
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
     fn window_transaction_tags_release_and_unsets_only_bridge_fullscreen() {
-        let (cfg,_)=crate::config::tests::fixture();
-        let off=window_lua("off",&cfg,None).unwrap();
+        let (cfg, _) = crate::config::tests::fixture();
+        let off = window_lua("off", &cfg, None).unwrap();
         assert!(off.contains("tag(w,CAP,false);tag(w,REL,true)"));
-        assert!(off.contains("if has(w,FS) then tag(w,FS,false)") && off.contains("action='unset'"));
-        let full=window_lua("fullscreen",&cfg,Some("0xabc")).unwrap();
-        assert!(full.contains("tag(w,REL,false);tag(w,CAP,true)") && full.contains("tag(w,FS,true)"));
+        assert!(
+            off.contains("if has(w,FS) then tag(w,FS,false)") && off.contains("action='unset'")
+        );
+        let full = window_lua("fullscreen", &cfg, Some("0xabc")).unwrap();
+        assert!(
+            full.contains("tag(w,REL,false);tag(w,CAP,true)") && full.contains("tag(w,FS,true)")
+        );
         assert!(full.contains("local EXPECT=\"0xabc\""));
-        assert!(off.contains("pcall(policy.refresh)"),"the keyboard policy re-reads the tags in the same transaction");
-        assert!(window_lua("toggle",&cfg,None).is_err());
-        assert_eq!(configured_command("input:window off",&cfg).unwrap()[2],off);
+        assert!(
+            off.contains("pcall(policy.refresh)"),
+            "the keyboard policy re-reads the tags in the same transaction"
+        );
+        assert!(window_lua("toggle", &cfg, None).is_err());
+        assert_eq!(
+            configured_command("input:window off", &cfg).unwrap()[2],
+            off
+        );
     }
     fn fake_proc(t: &Path, pid: u32, ppid: u32, comm: &str, argv: &[&str], env: &str, tty: &str) {
         let d = t.join(pid.to_string());
         std::fs::create_dir_all(d.join("fd")).unwrap();
         std::fs::write(d.join("stat"), format!("{pid} ({comm}) S {ppid} 1 1 0")).unwrap();
         std::fs::write(d.join("comm"), format!("{comm}\n")).unwrap();
-        std::fs::write(d.join("cmdline"), argv.iter().map(|a| format!("{a}\0")).collect::<String>()).unwrap();
+        std::fs::write(
+            d.join("cmdline"),
+            argv.iter().map(|a| format!("{a}\0")).collect::<String>(),
+        )
+        .unwrap();
         std::fs::write(d.join("environ"), env).unwrap();
-        if !tty.is_empty() { std::os::unix::fs::symlink(tty, d.join("fd/0")).unwrap(); }
+        if !tty.is_empty() {
+            std::os::unix::fs::symlink(tty, d.join("fd/0")).unwrap();
+        }
     }
     #[test]
     fn tmux_client_discovery_reads_proc_and_honours_the_socket_list() {
@@ -2318,70 +3542,224 @@ mod tests {
         let tmpdir = format!("TMUX_TMPDIR={}\0", t.join("sock").display());
         let proc_root = t.join("proc");
         fake_proc(&proc_root, 100, 1, "alacritty", &["alacritty"], "", "");
-        fake_proc(&proc_root, 101, 100, "mios-terminal", &["/bin/bash", "/usr/libexec/mios/mios-terminal"], "", "/dev/pts/7");
-        fake_proc(&proc_root, 102, 101, "tmux: client", &["tmux", "-L", "mios-human", "attach", "-t", "=mios"], &tmpdir, "/dev/pts/7");
+        fake_proc(
+            &proc_root,
+            101,
+            100,
+            "mios-terminal",
+            &["/bin/bash", "/usr/libexec/mios/mios-terminal"],
+            "",
+            "/dev/pts/7",
+        );
+        fake_proc(
+            &proc_root,
+            102,
+            101,
+            "tmux: client",
+            &["tmux", "-L", "mios-human", "attach", "-t", "=mios"],
+            &tmpdir,
+            "/dev/pts/7",
+        );
         fake_proc(&proc_root, 200, 1, "foot", &["foot"], "", "");
-        fake_proc(&proc_root, 201, 200, "tmux: client", &["tmux", "-Lscratch", "new"], &tmpdir, "/dev/pts/8");
+        fake_proc(
+            &proc_root,
+            201,
+            200,
+            "tmux: client",
+            &["tmux", "-Lscratch", "new"],
+            &tmpdir,
+            "/dev/pts/8",
+        );
         fake_proc(&proc_root, 300, 1, "kitty", &["kitty"], "", "");
         fake_proc(&proc_root, 301, 300, "bash", &["bash"], "", "/dev/pts/9");
         let socks = vec!["mios-human".to_owned(), "mios-nested".to_owned()];
-        let c = tmux_client_under(&proc_root, 100, &socks, 1000).expect("the mios-human client under the terminal");
-        assert_eq!((c.pid, c.tty.as_str(), c.socket.clone()), (102, "/dev/pts/7", sockdir.join("mios-human")));
-        assert!(tmux_client_under(&proc_root, 200, &socks, 1000).is_none(), "a server outside tmux_sockets selects the plain profile");
-        assert!(tmux_client_under(&proc_root, 300, &socks, 1000).is_none(), "a bare shell has no client");
-        assert!(tmux_client_under(&proc_root, 102, &socks, 1000).is_none(), "the focused pid itself is the terminal, not a child");
+        let c = tmux_client_under(&proc_root, 100, &socks, 1000)
+            .expect("the mios-human client under the terminal");
+        assert_eq!(
+            (c.pid, c.tty.as_str(), c.socket.clone()),
+            (102, "/dev/pts/7", sockdir.join("mios-human"))
+        );
+        assert!(
+            tmux_client_under(&proc_root, 200, &socks, 1000).is_none(),
+            "a server outside tmux_sockets selects the plain profile"
+        );
+        assert!(
+            tmux_client_under(&proc_root, 300, &socks, 1000).is_none(),
+            "a bare shell has no client"
+        );
+        assert!(
+            tmux_client_under(&proc_root, 102, &socks, 1000).is_none(),
+            "the focused pid itself is the terminal, not a child"
+        );
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
     fn tmux_verbs_target_the_discovered_client_and_validate_keys() {
         let (cfg, _) = crate::config::tests::fixture_nav();
-        let c = TmuxClient { pid: 1, tty: "/dev/pts/7".into(), socket: "/run/t/mios-human".into() };
-        assert_eq!(tmux_argv(&cfg, &c, "key p").unwrap(), ["/usr/bin/tmux", "-S", "/run/t/mios-human", "send-keys", "-c", "/dev/pts/7", "-K", "C-b", "p"]);
-        assert_eq!(tmux_argv(&cfg, &c, "focus left").unwrap()[3..], ["display-message", "-p", "-c", "/dev/pts/7", "-t", "/dev/pts/7", "#{pane_at_left}"]);
-        assert_eq!(tmux_argv(&cfg, &c, "session-next").unwrap()[3..], ["switch-client", "-c", "/dev/pts/7", "-n"]);
-        assert!(tmux_argv(&cfg, &c, "key r").unwrap_err().contains("prefix-table"), "r is not bound in the SSOT prefix table");
-        for k in ["e", "*", "`", "F", "Space", "Enter"] { assert!(tmux_argv(&cfg, &c, &format!("key {k}")).is_ok(), "{k}: a U1 launcher/float/menu/accept prefix key"); }
-        assert_eq!(tmux_argv(&cfg, &c, "menu").unwrap()[3..], ["send-keys", "-c", "/dev/pts/7", "-K", "C-b", "Space"], "U1's menu_key");
-        let mut no_menu = cfg.clone(); no_menu.tmux_menu_key = None;
-        assert!(tmux_argv(&no_menu, &c, "menu").is_err(), "without the U1 menu key there is no menu projection");
+        let c = TmuxClient {
+            pid: 1,
+            tty: "/dev/pts/7".into(),
+            socket: "/run/t/mios-human".into(),
+        };
+        assert_eq!(
+            tmux_argv(&cfg, &c, "key p").unwrap(),
+            [
+                "/usr/bin/tmux",
+                "-S",
+                "/run/t/mios-human",
+                "send-keys",
+                "-c",
+                "/dev/pts/7",
+                "-K",
+                "C-b",
+                "p"
+            ]
+        );
+        assert_eq!(
+            tmux_argv(&cfg, &c, "focus left").unwrap()[3..],
+            [
+                "display-message",
+                "-p",
+                "-c",
+                "/dev/pts/7",
+                "-t",
+                "/dev/pts/7",
+                "#{pane_at_left}"
+            ]
+        );
+        assert_eq!(
+            tmux_argv(&cfg, &c, "session-next").unwrap()[3..],
+            ["switch-client", "-c", "/dev/pts/7", "-n"]
+        );
+        assert!(
+            tmux_argv(&cfg, &c, "key r")
+                .unwrap_err()
+                .contains("prefix-table"),
+            "r is not bound in the SSOT prefix table"
+        );
+        for k in ["e", "*", "`", "F", "Space", "Enter"] {
+            assert!(
+                tmux_argv(&cfg, &c, &format!("key {k}")).is_ok(),
+                "{k}: a U1 launcher/float/menu/accept prefix key"
+            );
+        }
+        assert_eq!(
+            tmux_argv(&cfg, &c, "menu").unwrap()[3..],
+            ["send-keys", "-c", "/dev/pts/7", "-K", "C-b", "Space"],
+            "U1's menu_key"
+        );
+        let mut no_menu = cfg.clone();
+        no_menu.tmux_menu_key = None;
+        assert!(
+            tmux_argv(&no_menu, &c, "menu").is_err(),
+            "without the U1 menu key there is no menu projection"
+        );
         let popup = tmux_argv(&cfg, &c, "keymap").unwrap();
-        assert_eq!(popup[3..10], ["display-popup", "-c", "/dev/pts/7", "-E", "-w", "90%", "-h"], "I3: the popup on exactly this client");
-        assert_eq!(popup[popup.len() - 3..], ["/usr/bin/less".to_owned(), "-R".to_owned(), keymap_path().to_string_lossy().into_owned()], "argv form: tmux runs no shell");
-        assert!(unsupported_actions(&cfg).is_empty(), "every vendor nav action resolves: {:?}", unsupported_actions(&cfg));
+        assert_eq!(
+            popup[3..10],
+            ["display-popup", "-c", "/dev/pts/7", "-E", "-w", "90%", "-h"],
+            "I3: the popup on exactly this client"
+        );
+        assert_eq!(
+            popup[popup.len() - 3..],
+            [
+                "/usr/bin/less".to_owned(),
+                "-R".to_owned(),
+                keymap_path().to_string_lossy().into_owned()
+            ],
+            "argv form: tmux runs no shell"
+        );
+        assert!(
+            unsupported_actions(&cfg).is_empty(),
+            "every vendor nav action resolves: {:?}",
+            unsupported_actions(&cfg)
+        );
     }
     fn logind(t: &Path, files: &[(&str, &str)]) {
         let _ = std::fs::remove_dir_all(t);
-        for d in ["users", "sessions", "seats"] { std::fs::create_dir_all(t.join(d)).unwrap(); }
-        for (p, body) in files { std::fs::write(t.join(p), body).unwrap(); }
+        for d in ["users", "sessions", "seats"] {
+            std::fs::create_dir_all(t.join(d)).unwrap();
+        }
+        for (p, body) in files {
+            std::fs::write(t.join(p), body).unwrap();
+        }
     }
     #[test]
     fn seat_view_selects_console_graphical_or_foreign() {
         let t = std::env::temp_dir().join(format!("mios-inputd-seatview-{}", std::process::id()));
         let user = ("users/1000", "DISPLAY=3\nSESSIONS=3 7 9\n");
-        let gfx = ("sessions/3", "UID=1000\nTYPE=wayland\nCLASS=user\nSEAT=seat0\nTTY=tty1\nVTNR=1\n");
-        let vt = ("sessions/7", "UID=1000\nTYPE=tty\nCLASS=user\nSEAT=seat0\nTTY=tty3\nVTNR=3\n");
-        let ssh = ("sessions/9", "UID=1000\nTYPE=tty\nCLASS=user\nREMOTE=1\nTTY=pts/4\n");
+        let gfx = (
+            "sessions/3",
+            "UID=1000\nTYPE=wayland\nCLASS=user\nSEAT=seat0\nTTY=tty1\nVTNR=1\n",
+        );
+        let vt = (
+            "sessions/7",
+            "UID=1000\nTYPE=tty\nCLASS=user\nSEAT=seat0\nTTY=tty3\nVTNR=3\n",
+        );
+        let ssh = (
+            "sessions/9",
+            "UID=1000\nTYPE=tty\nCLASS=user\nREMOTE=1\nTTY=pts/4\n",
+        );
         logind(&t, &[user, gfx, vt, ssh, ("seats/seat0", "ACTIVE=3\n")]);
-        assert_eq!(seat_view(&t, 1000), SeatView { seat: Seat::Graphical, graphical_vt: Some(1) });
+        assert_eq!(
+            seat_view(&t, 1000),
+            SeatView {
+                seat: Seat::Graphical,
+                graphical_vt: Some(1)
+            }
+        );
         std::fs::write(t.join("seats/seat0"), "ACTIVE=7\n").unwrap();
-        assert_eq!(seat_view(&t, 1000), SeatView { seat: Seat::Console { vt: 3, tty: "/dev/tty3".into() }, graphical_vt: Some(1) });
+        assert_eq!(
+            seat_view(&t, 1000),
+            SeatView {
+                seat: Seat::Console {
+                    vt: 3,
+                    tty: "/dev/tty3".into()
+                },
+                graphical_vt: Some(1)
+            }
+        );
         // INV-8: the greeter or another user owns the seat.
-        std::fs::write(t.join("sessions/8"), "UID=980\nTYPE=wayland\nCLASS=greeter\nSEAT=seat0\nVTNR=1\n").unwrap();
+        std::fs::write(
+            t.join("sessions/8"),
+            "UID=980\nTYPE=wayland\nCLASS=greeter\nSEAT=seat0\nVTNR=1\n",
+        )
+        .unwrap();
         std::fs::write(t.join("seats/seat0"), "ACTIVE=8\n").unwrap();
-        assert!(matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("another session")));
-        std::fs::write(t.join("sessions/8"), "UID=1000\nTYPE=wayland\nCLASS=lock-screen\nSEAT=seat0\n").unwrap();
-        assert!(matches!(seat_view(&t, 1000).seat, Seat::Foreign(_)), "a lock screen is not this user's input target");
+        assert!(
+            matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("another session"))
+        );
+        std::fs::write(
+            t.join("sessions/8"),
+            "UID=1000\nTYPE=wayland\nCLASS=lock-screen\nSEAT=seat0\n",
+        )
+        .unwrap();
+        assert!(
+            matches!(seat_view(&t, 1000).seat, Seat::Foreign(_)),
+            "a lock screen is not this user's input target"
+        );
         std::fs::write(t.join("seats/seat0"), "ACTIVE=\n").unwrap();
-        assert!(matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("no active session")));
+        assert!(
+            matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("no active session"))
+        );
         // A VT-only login has no graphical VT to switch to (C-17 negative).
-        logind(&t, &[("users/1000", "SESSIONS=7\n"), vt, ("seats/seat0", "ACTIVE=7\n")]);
+        logind(
+            &t,
+            &[
+                ("users/1000", "SESSIONS=7\n"),
+                vt,
+                ("seats/seat0", "ACTIVE=7\n"),
+            ],
+        );
         assert_eq!(seat_view(&t, 1000).graphical_vt, None);
         assert_eq!(graphical_vt_chord(None), None);
         assert_eq!(graphical_vt_chord(Some(2)).as_deref(), Some("CTRL+ALT+F2"));
         assert_eq!(graphical_vt_chord(Some(13)), None, "no F-key reaches VT 13");
         // SSH only: nothing seated.
         logind(&t, &[("users/1000", "SESSIONS=9\n"), ssh]);
-        assert!(matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("no seated session")));
+        assert!(
+            matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("no seated session"))
+        );
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
@@ -2398,24 +3776,54 @@ mod tests {
         let stat = |pid: u32, ppid: u32, start: u64| {
             std::fs::create_dir_all(proc_root.join(pid.to_string())).unwrap();
             // Fields after the comm: state, ppid, 17 more, then starttime (field 22 of proc_pid_stat(5)).
-            std::fs::write(proc_root.join(pid.to_string()).join("stat"), format!("{pid} (Hyprland) S {ppid} {} {start}", ["0"; 17].join(" "))).unwrap();
+            std::fs::write(
+                proc_root.join(pid.to_string()).join("stat"),
+                format!("{pid} (Hyprland) S {ppid} {} {start}", ["0"; 17].join(" ")),
+            )
+            .unwrap();
         };
         let _old = inst("old", 100);
         stat(100, 50, 1000);
-        assert_eq!(rediscover(&rt, &proc_root, Some("old")).as_deref(), Some("old"), "a live followed instance is kept");
+        assert_eq!(
+            rediscover(&rt, &proc_root, Some("old")).as_deref(),
+            Some("old"),
+            "a live followed instance is kept"
+        );
         let _new = inst("new", 200);
         stat(200, 50, 2000);
-        assert_eq!(rediscover(&rt, &proc_root, Some("old")).as_deref(), Some("old"));
-        assert_eq!(rediscover(&rt, &proc_root, Some("gone")).as_deref(), Some("new"), "the newest live instance (start time), not the name order");
+        assert_eq!(
+            rediscover(&rt, &proc_root, Some("old")).as_deref(),
+            Some("old")
+        );
+        assert_eq!(
+            rediscover(&rt, &proc_root, Some("gone")).as_deref(),
+            Some("new"),
+            "the newest live instance (start time), not the name order"
+        );
         std::fs::remove_dir_all(proc_root.join("100")).unwrap();
-        assert_eq!(rediscover(&rt, &proc_root, Some("old")).as_deref(), Some("new"), "the compositor restarted: follow the new socket");
+        assert_eq!(
+            rediscover(&rt, &proc_root, Some("old")).as_deref(),
+            Some("new"),
+            "the compositor restarted: follow the new socket"
+        );
         let _nested = inst("nested", 300);
         stat(300, 250, 3000);
         stat(250, 200, 2500);
-        assert_eq!(live_instances(&rt, &proc_root).iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(), ["new"], "a session nested in a listed instance is never selected");
+        assert_eq!(
+            live_instances(&rt, &proc_root)
+                .iter()
+                .map(|(s, _)| s.as_str())
+                .collect::<Vec<_>>(),
+            ["new"],
+            "a session nested in a listed instance is never selected"
+        );
         std::fs::remove_dir_all(proc_root.join("200")).unwrap();
         std::fs::remove_dir_all(proc_root.join("300")).unwrap();
-        assert_eq!(rediscover(&rt, &proc_root, Some("new")), None, "no live compositor at all");
+        assert_eq!(
+            rediscover(&rt, &proc_root, Some("new")),
+            None,
+            "no live compositor at all"
+        );
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
@@ -2428,15 +3836,54 @@ mod tests {
         let tmpdir = format!("TMUX_TMPDIR={}\0", t.join("sock").display());
         let p = t.join("proc");
         fake_proc(&p, 10, 1, "bash", &["-bash"], "", "/dev/tty3");
-        fake_proc(&p, 11, 10, "mios-inputd", &["/usr/libexec/mios/mios-inputd", "console-bridge", "--", "tmux"], "", "/dev/tty3");
-        fake_proc(&p, 12, 11, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &tmpdir, "/dev/pts/9");
+        fake_proc(
+            &p,
+            11,
+            10,
+            "mios-inputd",
+            &[
+                "/usr/libexec/mios/mios-inputd",
+                "console-bridge",
+                "--",
+                "tmux",
+            ],
+            "",
+            "/dev/tty3",
+        );
+        fake_proc(
+            &p,
+            12,
+            11,
+            "tmux: client",
+            &["tmux", "-L", "mios-human", "attach"],
+            &tmpdir,
+            "/dev/pts/9",
+        );
         fake_proc(&p, 20, 1, "bash", &["-bash"], "", "/dev/tty4");
         let socks = vec!["mios-human".to_owned()];
-        let c = tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).expect("the client below the bridge on tty3");
+        let c = tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000)
+            .expect("the client below the bridge on tty3");
         assert_eq!((c.pid, c.tty.as_str()), (12, "/dev/pts/9"));
-        assert!(tmux_client_on_tty(&p, Path::new("/dev/tty4"), &socks, 1000).is_none(), "a bare VT shell: console_plain");
-        fake_proc(&p, 21, 20, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &tmpdir, "/dev/tty4");
-        assert_eq!(tmux_client_on_tty(&p, Path::new("/dev/tty4"), &socks, 1000).map(|c| c.tty).as_deref(), Some("/dev/tty4"), "a client attached directly");
+        assert!(
+            tmux_client_on_tty(&p, Path::new("/dev/tty4"), &socks, 1000).is_none(),
+            "a bare VT shell: console_plain"
+        );
+        fake_proc(
+            &p,
+            21,
+            20,
+            "tmux: client",
+            &["tmux", "-L", "mios-human", "attach"],
+            &tmpdir,
+            "/dev/tty4",
+        );
+        assert_eq!(
+            tmux_client_on_tty(&p, Path::new("/dev/tty4"), &socks, 1000)
+                .map(|c| c.tty)
+                .as_deref(),
+            Some("/dev/tty4"),
+            "a client attached directly"
+        );
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
@@ -2451,110 +3898,242 @@ mod tests {
         for (index, alias) in ["/dev/console", "/dev/tty"].into_iter().enumerate() {
             let p = t.join(format!("proc-{index}"));
             fake_proc(&p, 10, 1, "bash", &["bash"], "", alias);
-            fake_proc(&p, 11, 10, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &env, "/dev/pts/9");
+            fake_proc(
+                &p,
+                11,
+                10,
+                "tmux: client",
+                &["tmux", "-L", "mios-human", "attach"],
+                &env,
+                "/dev/pts/9",
+            );
             for device in [0, 4 * 256 + 4, 136 * 256 + 3] {
-                std::fs::write(p.join("10/stat"), format!("10 (shell ) name) S 1 10 10 {device} 0")).unwrap();
-                assert!(tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).is_none(), "{alias}: unrelated controlling tty {device}");
+                std::fs::write(
+                    p.join("10/stat"),
+                    format!("10 (shell ) name) S 1 10 10 {device} 0"),
+                )
+                .unwrap();
+                assert!(
+                    tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).is_none(),
+                    "{alias}: unrelated controlling tty {device}"
+                );
             }
             std::fs::write(p.join("10/stat"), "10 (shell ) name) S 1 10 10 1027 0").unwrap();
-            assert_eq!(tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).map(|c| c.pid), Some(11));
+            assert_eq!(
+                tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).map(|c| c.pid),
+                Some(11)
+            );
             // A client attached directly through an alias also needs physical VT evidence.
             std::fs::remove_file(p.join("11/fd/0")).unwrap();
-            fake_proc(&p, 11, 10, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &env, alias);
+            fake_proc(
+                &p,
+                11,
+                10,
+                "tmux: client",
+                &["tmux", "-L", "mios-human", "attach"],
+                &env,
+                alias,
+            );
             assert!(tmux_client_at(&p, 11, &socks, 1000).is_none());
             std::fs::write(p.join("11/stat"), "11 (tmux: client) S 10 11 11 1027 0").unwrap();
-            assert_eq!(tmux_client_at(&p, 11, &socks, 1000).map(|c| c.tty).as_deref(), Some(alias));
+            assert_eq!(
+                tmux_client_at(&p, 11, &socks, 1000)
+                    .map(|c| c.tty)
+                    .as_deref(),
+                Some(alias)
+            );
         }
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
     fn capture_osd_names_the_app_and_the_release_chord() {
         let chord = vec!["BTN_THUMBL".to_owned(), "BTN_THUMBR".to_owned()];
-        assert_eq!(osd_message("on", "org.gnome.Nautilus", &chord), "Controller -> org.gnome.Nautilus. Hold L3+R3 to release.");
-        assert_eq!(osd_message("fullscreen", "steam_app_570", &chord), "Controller -> steam_app_570. Hold L3+R3 to release.");
-        assert_eq!(osd_message("off", "steam_app_570", &chord), "Controller -> MiOS. steam_app_570 released.");
-        assert_eq!(osd_message("on", "x", &["BTN_TL".into(), "BTN_TR".into()]), "Controller -> x. Hold TL+TR to release.");
-        let vendor: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        assert_eq!(
+            osd_message("on", "org.gnome.Nautilus", &chord),
+            "Controller -> org.gnome.Nautilus. Hold L3+R3 to release."
+        );
+        assert_eq!(
+            osd_message("fullscreen", "steam_app_570", &chord),
+            "Controller -> steam_app_570. Hold L3+R3 to release."
+        );
+        assert_eq!(
+            osd_message("off", "steam_app_570", &chord),
+            "Controller -> MiOS. steam_app_570 released."
+        );
+        assert_eq!(
+            osd_message("on", "x", &["BTN_TL".into(), "BTN_TR".into()]),
+            "Controller -> x. Hold TL+TR to release."
+        );
+        let vendor: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
         let (cfg, _) = GlobalConfig::from_value(&vendor).unwrap();
-        assert!(cfg.controller.capture_osd && cfg.controller.capture_osd_argv.iter().any(|a| a == "{message}"));
+        assert!(
+            cfg.controller.capture_osd
+                && cfg
+                    .controller
+                    .capture_osd_argv
+                    .iter()
+                    .any(|a| a == "{message}")
+        );
         let lua = window_lua("on", &cfg, None).unwrap();
-        assert!(lua.contains("..' '..tostring(target and target.class or '')"), "the transaction reports the class it captured");
+        assert!(
+            lua.contains("..' '..tostring(target and target.class or '')"),
+            "the transaction reports the class it captured"
+        );
     }
     #[test]
     fn bounded_command_does_not_wait_for_descendants_stdout() {
-        let now=Instant::now();
-        let argv=vec!["/bin/sh".into(),"-c".into(),"sleep 10 & printf ready".into()];
-        assert_eq!(run_bounded(&argv,Duration::from_millis(300)).unwrap(),"ready");
-        assert!(now.elapsed()<Duration::from_secs(1));
+        let now = Instant::now();
+        let argv = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "sleep 10 & printf ready".into(),
+        ];
+        assert_eq!(
+            run_bounded(&argv, Duration::from_millis(300)).unwrap(),
+            "ready"
+        );
+        assert!(now.elapsed() < Duration::from_secs(1));
     }
     #[test]
     fn command_cancellation_revokes_an_inflight_job_promptly() {
-        let cancelled=std::sync::Arc::new(AtomicBool::new(false));
-        let other=cancelled.clone();
-        let worker=std::thread::spawn(move || {
-            run_bounded_cancel(&["/bin/sh".into(),"-c".into(),"sleep 10".into()],Duration::from_secs(10),Some(&other))
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let other = cancelled.clone();
+        let worker = std::thread::spawn(move || {
+            run_bounded_cancel(
+                &["/bin/sh".into(), "-c".into(), "sleep 10".into()],
+                Duration::from_secs(10),
+                Some(&other),
+            )
         });
         std::thread::sleep(Duration::from_millis(30));
-        let now=Instant::now();
-        cancelled.store(true,Ordering::Relaxed);
+        let now = Instant::now();
+        cancelled.store(true, Ordering::Relaxed);
         assert!(worker.join().unwrap().unwrap_err().contains("cancelled"));
-        assert!(now.elapsed()<Duration::from_millis(500));
+        assert!(now.elapsed() < Duration::from_millis(500));
     }
     #[test]
     fn assigned_session_focus_is_independent_but_respects_foreign_seats() {
-        let mut desktop=ContextSnapshot::new("app-capture");
-        desktop.address=Some("123".into()); desktop.pid=Some(42); desktop.room_capture=true;
-        let assigned=session_focus(&desktop,true,None);
-        assert_eq!(assigned.name,"console");
+        let mut desktop = ContextSnapshot::new("app-capture");
+        desktop.address = Some("123".into());
+        desktop.pid = Some(42);
+        desktop.room_capture = true;
+        let assigned = session_focus(&desktop, true, None);
+        assert_eq!(assigned.name, "console");
         assert!(assigned.address.is_none() && assigned.pid.is_none() && !assigned.room_capture);
-        assert_eq!(session_focus(&desktop,false,None).address,desktop.address);
-        desktop.suspended=Some("no seated session for this user".into());
-        assert!(session_focus(&desktop,true,None).suspended.is_none());
-        assert!(session_focus(&desktop,false,None).suspended.is_some());
-        desktop.suspended=Some("another session is active on seat0".into());
-        assert_eq!(session_focus(&desktop,true,None).suspended,desktop.suspended);
-        desktop.suspended=None;
-        assert!(session_focus(&desktop,true,Some("duplicate owner")).suspended.is_none(),"ambiguous node remains exclusively reserved");
+        assert_eq!(
+            session_focus(&desktop, false, None).address,
+            desktop.address
+        );
+        desktop.suspended = Some("no seated session for this user".into());
+        assert!(session_focus(&desktop, true, None).suspended.is_none());
+        assert!(session_focus(&desktop, false, None).suspended.is_some());
+        desktop.suspended = Some("another session is active on seat0".into());
+        assert_eq!(
+            session_focus(&desktop, true, None).suspended,
+            desktop.suspended
+        );
+        desktop.suspended = None;
+        assert!(
+            session_focus(&desktop, true, Some("duplicate owner"))
+                .suspended
+                .is_none(),
+            "ambiguous node remains exclusively reserved"
+        );
     }
 
     #[test]
     fn key_projection_into_a_followed_compositor_is_quoted() {
-        let lua = key_lua(&crate::nav::parse_key_chord("CTRL+SHIFT+TAB").unwrap(), "0xabc\"x");
-        assert!(lua.contains("mods=\"CTRL SHIFT\",key=\"Tab\",state='down',window=\"address:0xabc\\\"x\""), "{lua}");
+        let lua = key_lua(
+            &crate::nav::parse_key_chord("CTRL+SHIFT+TAB").unwrap(),
+            "0xabc\"x",
+        );
+        assert!(
+            lua.contains(
+                "mods=\"CTRL SHIFT\",key=\"Tab\",state='down',window=\"address:0xabc\\\"x\""
+            ),
+            "{lua}"
+        );
         assert_eq!(lua.matches("send_key_state").count(), 2);
     }
     #[test]
     fn room_verbs_reach_the_plugin_lua_api() {
         // spec P1 (C-14a/b): the room table's verbs become hl.plugin.hypr3d.<verb>(...) in the room's compositor
-        assert_eq!(command_for("hypr:hypr3d:cancel").unwrap()[2], "hl.plugin.hypr3d.cancel()");
-        assert_eq!(command_for("hypr:hypr3d:sprint").unwrap()[2], "hl.plugin.hypr3d.sprint()");
-        assert_eq!(command_for("hypr:hypr3d:sprint on").unwrap()[2], "hl.plugin.hypr3d.sprint(\"on\")");
-        assert_eq!(command_for("hypr:hypr3d:recenter").unwrap()[2], "hl.plugin.hypr3d.recenter()");
-        assert_eq!(command_for("hypr:hypr3d:view").unwrap()[2], "hl.plugin.hypr3d.view(\"\")");
-        assert!(command_for("hypr:hypr3d:unknown").unwrap_err().contains("unsupported room action"));
+        assert_eq!(
+            command_for("hypr:hypr3d:cancel").unwrap()[2],
+            "hl.plugin.hypr3d.cancel()"
+        );
+        assert_eq!(
+            command_for("hypr:hypr3d:sprint").unwrap()[2],
+            "hl.plugin.hypr3d.sprint()"
+        );
+        assert_eq!(
+            command_for("hypr:hypr3d:sprint on").unwrap()[2],
+            "hl.plugin.hypr3d.sprint(\"on\")"
+        );
+        assert_eq!(
+            command_for("hypr:hypr3d:recenter").unwrap()[2],
+            "hl.plugin.hypr3d.recenter()"
+        );
+        assert_eq!(
+            command_for("hypr:hypr3d:view").unwrap()[2],
+            "hl.plugin.hypr3d.view(\"\")"
+        );
+        assert!(command_for("hypr:hypr3d:unknown")
+            .unwrap_err()
+            .contains("unsupported room action"));
         // every vendor room action has an installed dispatcher
-        let doc: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        let doc: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
         let (cfg, _) = GlobalConfig::from_value(&doc).unwrap();
         for v in cfg.controller.room.values() {
             let (tap, hold) = v.parts();
             for a in std::iter::once(tap).chain(hold).filter(|a| *a != "none") {
-                assert!(configured_command(a, &cfg).is_ok(), "room action without a dispatcher: {a}");
+                assert!(
+                    configured_command(a, &cfg).is_ok(),
+                    "room action without a dispatcher: {a}"
+                );
             }
         }
     }
     #[test]
     fn guide_layer_move_window_and_renamed_monitor_resolve() {
         let v = command_for("hypr:movewindow left").unwrap();
-        assert_eq!(v[2], r#"hl.dispatch(hl.dsp.window.move({direction="left"}))"#);
+        assert_eq!(
+            v[2],
+            r#"hl.dispatch(hl.dsp.window.move({direction="left"}))"#
+        );
         assert!(command_for("hypr:movewindow sideways").is_err());
         let (g, _) = crate::config::tests::fixture_nav();
-        assert!(configured_command("mios:system-monitor", &g).unwrap().iter().any(|a| a == "system"));
-        assert!(configured_command("quickshell:monitor-toggle", &g).unwrap_err().contains("no installed IPC handler"), "C-19: the old alias is gone");
-        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        assert!(configured_command("mios:system-monitor", &g)
+            .unwrap()
+            .iter()
+            .any(|a| a == "system"));
+        assert!(
+            configured_command("quickshell:monitor-toggle", &g)
+                .unwrap_err()
+                .contains("no installed IPC handler"),
+            "C-19: the old alias is gone"
+        );
+        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
         let (g, _) = GlobalConfig::from_value(&v).unwrap();
-        assert_eq!(configured_command("mios:volume up", &g).unwrap()[0], "/usr/bin/wpctl");
-        assert_eq!(configured_command("mios:media next", &g).unwrap(), vec!["/usr/bin/playerctl", "next"]);
-        assert!(unsupported_actions(&g).is_empty(), "{:?}", unsupported_actions(&g));
+        assert_eq!(
+            configured_command("mios:volume up", &g).unwrap()[0],
+            "/usr/bin/wpctl"
+        );
+        assert_eq!(
+            configured_command("mios:media next", &g).unwrap(),
+            vec!["/usr/bin/playerctl", "next"]
+        );
+        assert!(
+            unsupported_actions(&g).is_empty(),
+            "{:?}",
+            unsupported_actions(&g)
+        );
     }
     #[test]
     fn compositor_actions_use_current_lua_api() {
@@ -2589,15 +4168,32 @@ mod tests {
         }
         impl PrivateServer {
             fn new() -> Self {
-                let dir = tempfile::Builder::new().prefix("mios-session-worker-").tempdir().unwrap();
+                let dir = tempfile::Builder::new()
+                    .prefix("mios-session-worker-")
+                    .tempdir()
+                    .unwrap();
                 let socket = dir.path().join("tmux");
-                Self { dir, socket, stopped: None }
+                Self {
+                    dir,
+                    socket,
+                    stopped: None,
+                }
             }
             fn tmux(&self, args: &[&str]) -> String {
-                let output = Command::new("/usr/bin/tmux").arg("-S").arg(&self.socket)
-                    .args(["-f", "/dev/null"]).args(args)
-                    .env_remove("TMUX").env_remove("TMUX_PANE").output().unwrap();
-                assert!(output.status.success(), "private tmux: {}", String::from_utf8_lossy(&output.stderr));
+                let output = Command::new("/usr/bin/tmux")
+                    .arg("-S")
+                    .arg(&self.socket)
+                    .args(["-f", "/dev/null"])
+                    .args(args)
+                    .env_remove("TMUX")
+                    .env_remove("TMUX_PANE")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "private tmux: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 String::from_utf8(output.stdout).unwrap().trim().to_owned()
             }
             fn receiver(&self, session: &str, file: &str, split: Option<&str>) -> String {
@@ -2605,17 +4201,49 @@ mod tests {
                 let quoted = format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
                 let shell = format!("stty raw -echo; exec cat > {quoted}");
                 let pane = if let Some(target) = split {
-                    self.tmux(&["split-window", "-h", "-t", target, "-P", "-F", "#{pane_id}", "--", "/bin/sh", "-c", &shell])
+                    self.tmux(&[
+                        "split-window",
+                        "-h",
+                        "-t",
+                        target,
+                        "-P",
+                        "-F",
+                        "#{pane_id}",
+                        "--",
+                        "/bin/sh",
+                        "-c",
+                        &shell,
+                    ])
                 } else {
-                    self.tmux(&["new-session", "-d", "-x", "100", "-y", "30", "-s", session, "-P", "-F", "#{pane_id}", "--", "/bin/sh", "-c", &shell])
+                    self.tmux(&[
+                        "new-session",
+                        "-d",
+                        "-x",
+                        "100",
+                        "-y",
+                        "30",
+                        "-s",
+                        session,
+                        "-P",
+                        "-F",
+                        "#{pane_id}",
+                        "--",
+                        "/bin/sh",
+                        "-c",
+                        &shell,
+                    ])
                 };
                 Self::wait(|| path.exists());
                 pane
             }
             fn route(&self, session: &str, pane: &str) -> crate::sessions::SessionRoute {
                 crate::sessions::SessionRoute {
-                    name: session.into(), controllers: vec!["/dev/input/event0".into()], socket: self.socket.clone(),
-                    session: session.into(), pane: pane.into(), ssh_host: None,
+                    name: session.into(),
+                    controllers: vec!["/dev/input/event0".into()],
+                    socket: self.socket.clone(),
+                    session: session.into(),
+                    pane: pane.into(),
+                    ssh_host: None,
                 }
             }
             fn bytes(&self, file: &str) -> Vec<u8> {
@@ -2629,17 +4257,27 @@ mod tests {
                 }
             }
             fn inspection_started(&self) -> bool {
-                std::fs::read_dir("/proc/self/task").unwrap().filter_map(Result::ok).any(|task| {
-                    std::fs::read_to_string(task.path().join("children")).unwrap_or_default()
-                        .split_whitespace().any(|pid| {
-                            let args = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-                            let parts = args.split(|b| *b == 0).collect::<Vec<_>>();
-                            parts.contains(&self.socket.as_os_str().as_encoded_bytes()) && parts.contains(&b"display-message".as_slice())
-                        })
-                })
+                std::fs::read_dir("/proc/self/task")
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .any(|task| {
+                        std::fs::read_to_string(task.path().join("children"))
+                            .unwrap_or_default()
+                            .split_whitespace()
+                            .any(|pid| {
+                                let args = std::fs::read(format!("/proc/{pid}/cmdline"))
+                                    .unwrap_or_default();
+                                let parts = args.split(|b| *b == 0).collect::<Vec<_>>();
+                                parts.contains(&self.socket.as_os_str().as_encoded_bytes())
+                                    && parts.contains(&b"display-message".as_slice())
+                            })
+                    })
             }
             fn stop(&mut self) {
-                let pid = self.tmux(&["display-message", "-p", "#{pid}"]).parse::<i32>().unwrap();
+                let pid = self
+                    .tmux(&["display-message", "-p", "#{pid}"])
+                    .parse::<i32>()
+                    .unwrap();
                 // SAFETY: this PID was returned by this fixture's private socket, never an operator server.
                 assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
                 self.stopped = Some(pid);
@@ -2654,8 +4292,13 @@ mod tests {
         impl Drop for PrivateServer {
             fn drop(&mut self) {
                 self.resume();
-                let _ = Command::new("/usr/bin/tmux").arg("-S").arg(&self.socket).arg("kill-server")
-                    .env_remove("TMUX").env_remove("TMUX_PANE").output();
+                let _ = Command::new("/usr/bin/tmux")
+                    .arg("-S")
+                    .arg(&self.socket)
+                    .arg("kill-server")
+                    .env_remove("TMUX")
+                    .env_remove("TMUX_PANE")
+                    .output();
             }
         }
 
@@ -2669,25 +4312,63 @@ mod tests {
                 use std::os::fd::{AsRawFd, FromRawFd};
                 use std::os::unix::process::CommandExt;
                 let (mut master, mut slave) = (-1, -1);
-                let size = libc::winsize { ws_row: 30, ws_col: 100, ws_xpixel: 0, ws_ypixel: 0 };
+                let size = libc::winsize {
+                    ws_row: 30,
+                    ws_col: 100,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                };
                 // SAFETY: openpty initializes two owned descriptors and reads a live winsize.
-                assert_eq!(unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), &size) }, 0);
-                let (mut master, slave) = unsafe { (std::fs::File::from_raw_fd(master), std::fs::File::from_raw_fd(slave)) };
+                assert_eq!(
+                    unsafe {
+                        libc::openpty(
+                            &mut master,
+                            &mut slave,
+                            std::ptr::null_mut(),
+                            std::ptr::null(),
+                            &size,
+                        )
+                    },
+                    0
+                );
+                let (mut master, slave) = unsafe {
+                    (
+                        std::fs::File::from_raw_fd(master),
+                        std::fs::File::from_raw_fd(slave),
+                    )
+                };
                 let flags = unsafe { libc::fcntl(master.as_raw_fd(), libc::F_GETFL) };
-                assert_eq!(unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) }, 0);
+                assert_eq!(
+                    unsafe {
+                        libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK)
+                    },
+                    0
+                );
                 let mut command = Command::new("/bin/sh");
-                command.args(["-c", "/usr/bin/tmux \"$@\"; wait", "mios-private-client", "-S"]).arg(&server.socket)
-                    .args(["attach-session", "-t", session]).env("TERM", "xterm-256color")
-                    .env_remove("TMUX").env_remove("TMUX_PANE")
+                command
+                    .args([
+                        "-c",
+                        "/usr/bin/tmux \"$@\"; wait",
+                        "mios-private-client",
+                        "-S",
+                    ])
+                    .arg(&server.socket)
+                    .args(["attach-session", "-t", session])
+                    .env("TERM", "xterm-256color")
+                    .env_remove("TMUX")
+                    .env_remove("TMUX_PANE")
                     .stdin(Stdio::from(slave.try_clone().unwrap()))
-                    .stdout(Stdio::from(slave.try_clone().unwrap())).stderr(Stdio::from(slave));
+                    .stdout(Stdio::from(slave.try_clone().unwrap()))
+                    .stderr(Stdio::from(slave));
                 // SAFETY: child-only session setup after Command duplicated the private slave onto stdin.
-                unsafe { command.pre_exec(|| {
-                    if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                }); }
+                unsafe {
+                    command.pre_exec(|| {
+                        if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                        Ok(())
+                    });
+                }
                 let process = command.spawn().unwrap();
                 let stop = std::sync::Arc::new(AtomicBool::new(false));
                 let cancelled = stop.clone();
@@ -2696,24 +4377,37 @@ mod tests {
                     while !cancelled.load(Ordering::Relaxed) {
                         match master.read(&mut buffer) {
                             Ok(0) => break,
-                            Ok(_) => {},
-                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(2)),
+                            Ok(_) => {}
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(Duration::from_millis(2))
+                            }
                             Err(_) => break,
                         }
                     }
                 });
-                let client = Self { process, stop, reader: Some(reader) };
-                PrivateServer::wait(|| captured_tmux(&capture_config(), client.process.id()).is_ok_and(|target| target.is_some()));
+                let client = Self {
+                    process,
+                    stop,
+                    reader: Some(reader),
+                };
+                PrivateServer::wait(|| {
+                    captured_tmux(&capture_config(), client.process.id())
+                        .is_ok_and(|target| target.is_some())
+                });
                 client
             }
         }
         impl Drop for PrivateClient {
             fn drop(&mut self) {
                 // SAFETY: setsid made this fixture's shell PID its own process-group ID.
-                unsafe { libc::kill(-(self.process.id() as i32), libc::SIGKILL); }
+                unsafe {
+                    libc::kill(-(self.process.id() as i32), libc::SIGKILL);
+                }
                 let _ = self.process.wait();
                 self.stop.store(true, Ordering::Relaxed);
-                if let Some(reader) = self.reader.take() { let _ = reader.join(); }
+                if let Some(reader) = self.reader.take() {
+                    let _ = reader.join();
+                }
             }
         }
         fn capture_config() -> GlobalConfig {
@@ -2724,22 +4418,44 @@ mod tests {
         }
         fn receipt(client: &PrivateClient, address: &str) -> CaptureReceipt {
             let cfg = capture_config();
-            CaptureReceipt { address: address.into(), class: "Alacritty".into(), pid: client.process.id(),
-                tmux: captured_tmux(&cfg, client.process.id()).unwrap(), error: None }
+            CaptureReceipt {
+                address: address.into(),
+                class: "Alacritty".into(),
+                pid: client.process.id(),
+                tmux: captured_tmux(&cfg, client.process.id()).unwrap(),
+                error: None,
+            }
         }
         #[test]
         fn capture_receipt_uses_selected_window_b_instead_of_stale_window_a() {
             const CHILD: &str = "MIOS_PRIVATE_CAPTURE_IPC_TEST";
             if std::env::var_os(CHILD).is_none() {
-                let dir = tempfile::Builder::new().prefix("mios-capture-receipt-").tempdir().unwrap();
-                let qualified = concat!(module_path!(), "::capture_receipt_uses_selected_window_b_instead_of_stale_window_a");
+                let dir = tempfile::Builder::new()
+                    .prefix("mios-capture-receipt-")
+                    .tempdir()
+                    .unwrap();
+                let qualified = concat!(
+                    module_path!(),
+                    "::capture_receipt_uses_selected_window_b_instead_of_stale_window_a"
+                );
                 let test_name = qualified.split_once("::").unwrap().1;
                 let output = Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", test_name, "--nocapture"])
-                    .env(CHILD, "1").env("XDG_RUNTIME_DIR", dir.path()).env("HYPRLAND_INSTANCE_SIGNATURE", "mios-capture")
-                    .output().unwrap();
-                assert!(output.status.success(), "private capture subprocess: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"), "capture subprocess must execute exactly its requested test");
+                    .env(CHILD, "1")
+                    .env("XDG_RUNTIME_DIR", dir.path())
+                    .env("HYPRLAND_INSTANCE_SIGNATURE", "mios-capture")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "private capture subprocess: {}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                    "capture subprocess must execute exactly its requested test"
+                );
                 return;
             }
             let server = PrivateServer::new();
@@ -2749,7 +4465,8 @@ mod tests {
             let b_client = PrivateClient::attach(&server, "beta");
             let cached_a = receipt(&a_client, "0xaaa");
             let cfg = capture_config();
-            let socket = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap()).join("hypr/mios-capture/.socket.sock");
+            let socket = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap())
+                .join("hypr/mios-capture/.socket.sock");
             std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
             let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
             let actual_pid = b_client.process.id();
@@ -2757,7 +4474,11 @@ mod tests {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut request = [0u8; 16384];
                 assert!(stream.read(&mut request).unwrap() > 0);
-                write!(stream, "MIOS_INPUT_WINDOW_OK:0xbbb Alacritty\nMIOS_INPUT_WINDOW_PID:{actual_pid}").unwrap();
+                write!(
+                    stream,
+                    "MIOS_INPUT_WINDOW_OK:0xbbb Alacritty\nMIOS_INPUT_WINDOW_PID:{actual_pid}"
+                )
+                .unwrap();
             });
             let selected_b = capture_transaction("on", &cfg, None).unwrap();
             compositor.join().unwrap();
@@ -2765,12 +4486,19 @@ mod tests {
             assert_eq!(selected_b.pid, b_client.process.id());
             assert_eq!(selected_b.tmux.as_ref().unwrap().pane, b);
             assert_eq!(cached_a.tmux.as_ref().unwrap().pane, a);
-            let mut binding = capture_binding(&selected_b, Path::new("/dev/input/event0"), &cfg).unwrap();
-            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            let mut binding =
+                capture_binding(&selected_b, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() {
+                CaptureDispatcher::Tmux(worker) => worker,
+                _ => panic!("expected a pinned tmux dispatcher"),
+            };
             assert!(worker.submit("key:B".into()));
             drained(worker);
             PrivateServer::wait(|| server.bytes("b") == b"b");
-            assert!(server.bytes("a").is_empty(), "the stale focused window must receive no captured input");
+            assert!(
+                server.bytes("a").is_empty(),
+                "the stale focused window must receive no captured input"
+            );
         }
         #[test]
         fn captured_client_verbs_require_the_original_client_and_its_selected_pane() {
@@ -2790,8 +4518,12 @@ mod tests {
                 server.tmux(&["bind-key", "-T", "prefix", key, "run-shell", &script]);
             }
             let captured = receipt(&client, "0xaaa");
-            let mut binding = capture_binding(&captured, Path::new("/dev/input/event0"), &cfg).unwrap();
-            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            let mut binding =
+                capture_binding(&captured, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() {
+                CaptureDispatcher::Tmux(worker) => worker,
+                _ => panic!("expected a pinned tmux dispatcher"),
+            };
             assert!(worker.submit("tmux:key k".into()));
             assert!(worker.submit("tmux:menu".into()));
             drained(worker);
@@ -2799,24 +4531,41 @@ mod tests {
             std::fs::remove_file(&key_mark).unwrap();
             std::fs::remove_file(&menu_mark).unwrap();
             server.tmux(&["select-pane", "-t", &right]);
-            let mut binding = capture_binding(&captured, Path::new("/dev/input/event0"), &cfg).unwrap();
-            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            let mut binding =
+                capture_binding(&captured, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() {
+                CaptureDispatcher::Tmux(worker) => worker,
+                _ => panic!("expected a pinned tmux dispatcher"),
+            };
             assert!(worker.submit("tmux:key k".into()));
             assert!(worker.submit("tmux:menu".into()));
             assert!(worker.submit("key:A".into()));
             drained(worker);
             PrivateServer::wait(|| server.bytes("left") == b"a");
             assert!(server.bytes("right").is_empty());
-            assert!(!key_mark.exists() && !menu_mark.exists(), "client UI commands must reject a changed selected pane");
+            assert!(
+                !key_mark.exists() && !menu_mark.exists(),
+                "client UI commands must reject a changed selected pane"
+            );
             let mut replaced = captured.clone();
             replaced.tmux.as_mut().unwrap().start += 1;
-            let mut binding = capture_binding(&replaced, Path::new("/dev/input/event0"), &cfg).unwrap();
-            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            let mut binding =
+                capture_binding(&replaced, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() {
+                CaptureDispatcher::Tmux(worker) => worker,
+                _ => panic!("expected a pinned tmux dispatcher"),
+            };
             assert!(worker.submit("key:X".into()));
             drained(worker);
-            assert_eq!(server.bytes("left"), b"a", "a replaced client must receive no input");
+            assert_eq!(
+                server.bytes("left"),
+                b"a",
+                "a replaced client must receive no input"
+            );
         }
-        fn config() -> GlobalConfig { crate::config::tests::fixture_nav().0 }
+        fn config() -> GlobalConfig {
+            crate::config::tests::fixture_nav().0
+        }
         fn drained(mut worker: SessionWorker) {
             worker.jobs = None;
             worker.worker.take().unwrap().join().unwrap();
@@ -2833,8 +4582,13 @@ mod tests {
             assert!(a.submit("tmux:focus right".into()));
             assert!(a.submit("key:C".into()));
             assert!(b.submit("key:B".into()));
-            drained(a); drained(b);
-            PrivateServer::wait(|| server.bytes("left") == b"a" && server.bytes("right") == b"c" && server.bytes("beta") == b"b");
+            drained(a);
+            drained(b);
+            PrivateServer::wait(|| {
+                server.bytes("left") == b"a"
+                    && server.bytes("right") == b"c"
+                    && server.bytes("beta") == b"b"
+            });
             assert_ne!(left, right);
         }
         #[test]
@@ -2852,15 +4606,29 @@ mod tests {
             PrivateServer::wait(|| server.bytes("first") == b"a");
             let old_pid = server.tmux(&["display-message", "-p", "#{pid}"]);
             server.tmux(&["kill-server"]);
-            PrivateServer::wait(|| std::fs::read_to_string(format!("/proc/{old_pid}/stat")).ok()
-                .is_none_or(|stat| stat.rsplit_once(')').is_some_and(|(_, tail)| tail.split_whitespace().next() == Some("Z"))));
+            PrivateServer::wait(|| {
+                std::fs::read_to_string(format!("/proc/{old_pid}/stat"))
+                    .ok()
+                    .is_none_or(|stat| {
+                        stat.rsplit_once(')')
+                            .is_some_and(|(_, tail)| tail.split_whitespace().next() == Some("Z"))
+                    })
+            });
             // tmux may leave its dead socket behind; only this fixture ever used this path.
-            if server.socket.exists() { std::fs::remove_file(&server.socket).unwrap(); }
+            if server.socket.exists() {
+                std::fs::remove_file(&server.socket).unwrap();
+            }
             let replacement = server.receiver("alpha", "replacement", None);
-            assert_eq!(replacement, pane, "server restart reuses the configured pane ID");
+            assert_eq!(
+                replacement, pane,
+                "server restart reuses the configured pane ID"
+            );
             assert!(worker.submit("key:X".into()));
             drained(worker);
-            assert!(server.bytes("replacement").is_empty(), "a new server must require explicit rebinding");
+            assert!(
+                server.bytes("replacement").is_empty(),
+                "a new server must require explicit rebinding"
+            );
         }
         #[test]
         fn expired_queue_entries_are_dropped_before_valid_input() {
@@ -2869,7 +4637,15 @@ mod tests {
             let cfg = config();
             let age = Duration::from_millis(cfg.controller.context_stale_ms + 1);
             let worker = SessionWorker::spawn(server.route("alpha", &pane), cfg).unwrap();
-            worker.jobs.as_ref().unwrap().send(SessionJob { queued: Instant::now() - age, action: "key:X".into() }).unwrap();
+            worker
+                .jobs
+                .as_ref()
+                .unwrap()
+                .send(SessionJob {
+                    queued: Instant::now() - age,
+                    action: "key:X".into(),
+                })
+                .unwrap();
             assert!(worker.submit("key:A".into()));
             drained(worker);
             PrivateServer::wait(|| server.bytes("output") == b"a");
@@ -2887,7 +4663,10 @@ mod tests {
             let now = Instant::now();
             drop(worker);
             thread.join().unwrap();
-            assert!(now.elapsed() < Duration::from_millis(500), "revocation must not wait for target recovery");
+            assert!(
+                now.elapsed() < Duration::from_millis(500),
+                "revocation must not wait for target recovery"
+            );
             server.resume();
             assert!(server.bytes("output").is_empty());
             let fresh = SessionWorker::spawn(server.route("alpha", &pane), config()).unwrap();
@@ -2897,4 +4676,3 @@ mod tests {
         }
     }
 }
-

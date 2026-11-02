@@ -45,7 +45,13 @@ impl Ease {
             Ease::Linear => t,
             Ease::In => t * t * t,
             Ease::Out => 1.0 - (1.0 - t).powi(3),
-            Ease::InOut => if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 },
+            Ease::InOut => {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+                }
+            }
         }
     }
 }
@@ -93,7 +99,9 @@ impl Channel {
 }
 
 /// The pad's evdev layout: a DualSense-like gamepad (positional face buttons, digital + analog triggers, HAT d-pad).
-pub const KEYS: [u16; 13] = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e];
+pub const KEYS: [u16; 13] = [
+    0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x138, 0x139, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e,
+];
 /// lx, ly, rx, ry (-1..1) and lt, rt (0..1), in ABS code order 0, 1, 3, 4, 2, 5.
 const AXES: [u16; 6] = [0, 1, 3, 4, 2, 5];
 
@@ -112,16 +120,34 @@ pub struct Model {
 }
 impl Model {
     pub fn new(cfg: AgentPadConfig) -> Self {
-        Self { axes: Default::default(), hat: (0, 0), buttons: BTreeSet::new(), taps: vec![], hat_tap: None, last: [0; 6], last_hat: (0, 0), last_buttons: BTreeSet::new(), digital: [false; 2], cfg }
+        Self {
+            axes: Default::default(),
+            hat: (0, 0),
+            buttons: BTreeSet::new(),
+            taps: vec![],
+            hat_tap: None,
+            last: [0; 6],
+            last_hat: (0, 0),
+            last_buttons: BTreeSet::new(),
+            digital: [false; 2],
+            cfg,
+        }
     }
     pub fn busy(&self) -> bool {
         self.axes.iter().any(Channel::busy) || !self.taps.is_empty() || self.hat_tap.is_some()
     }
     pub fn at_rest(&self) -> bool {
-        !self.busy() && self.axes.iter().all(|c| c.value == 0.0) && self.buttons.is_empty() && self.hat == (0, 0)
+        !self.busy()
+            && self.axes.iter().all(|c| c.value == 0.0)
+            && self.buttons.is_empty()
+            && self.hat == (0, 0)
     }
     fn raw(i: usize, v: f64) -> i32 {
-        if i < 4 { (v.clamp(-1.0, 1.0) * 32767.0).round() as i32 } else { (v.clamp(0.0, 1.0) * 255.0).round() as i32 }
+        if i < 4 {
+            (v.clamp(-1.0, 1.0) * 32767.0).round() as i32
+        } else {
+            (v.clamp(0.0, 1.0) * 255.0).round() as i32
+        }
     }
     fn ms(&self, req: &Json, key: &str, default: u64) -> Result<f64, String> {
         let v = match req.get(key) {
@@ -131,12 +157,19 @@ impl Model {
         Ok(v.clamp(self.cfg.min_ms, self.cfg.max_ms) as f64)
     }
     fn ease(&self, req: &Json) -> Result<Ease, String> {
-        Ease::parse(req.get("ease").and_then(Json::as_str).unwrap_or(&self.cfg.ease))
+        Ease::parse(
+            req.get("ease")
+                .and_then(Json::as_str)
+                .unwrap_or(&self.cfg.ease),
+        )
     }
     fn number(req: &Json, key: &str, default: f64) -> Result<f64, String> {
         match req.get(key) {
             None | Some(Json::Null) => Ok(default),
-            Some(v) => v.as_f64().filter(|f| f.is_finite()).ok_or_else(|| format!("{key}: a number")),
+            Some(v) => v
+                .as_f64()
+                .filter(|f| f.is_finite())
+                .ok_or_else(|| format!("{key}: a number")),
         }
     }
     /// Ramp to `targets` (channel, value), optionally hold, then ease back to rest over the same length.
@@ -145,12 +178,20 @@ impl Model {
         let ease = self.ease(req)?;
         let hold = match req.get("hold_ms") {
             None | Some(Json::Null) => None,
-            Some(v) => Some(v.as_u64().ok_or("hold_ms: milliseconds")?.min(self.cfg.max_ms) as f64),
+            Some(v) => Some(
+                v.as_u64()
+                    .ok_or("hold_ms: milliseconds")?
+                    .min(self.cfg.max_ms) as f64,
+            ),
         };
         for (i, to) in targets {
             let mut segs = vec![Segment { to: *to, ms, ease }];
             if let Some(h) = hold {
-                segs.push(Segment { to: *to, ms: h.max(1.0), ease: Ease::Linear });
+                segs.push(Segment {
+                    to: *to,
+                    ms: h.max(1.0),
+                    ease: Ease::Linear,
+                });
                 segs.push(Segment { to: 0.0, ms, ease });
             }
             self.axes[*i].set(segs);
@@ -159,7 +200,10 @@ impl Model {
         Ok(json!({"ok": true, "ramp_ms": ms, "ease": ease.name(), "until_ms": total}))
     }
     pub fn command(&mut self, req: &Json) -> Result<Json, String> {
-        let op = req.get("op").and_then(Json::as_str).ok_or("request needs op")?;
+        let op = req
+            .get("op")
+            .and_then(Json::as_str)
+            .ok_or("request needs op")?;
         match op {
             "status" => Ok(self.status()),
             "stick" => {
@@ -188,16 +232,30 @@ impl Model {
                 self.ramp(req, &[(i, v)])
             }
             "button" => {
-                let name = req.get("button").and_then(Json::as_str).ok_or("button needs a name (BTN_SOUTH ...)")?;
+                let name = req
+                    .get("button")
+                    .and_then(Json::as_str)
+                    .ok_or("button needs a name (BTN_SOUTH ...)")?;
                 let code = button_code(name)?;
                 if !KEYS.contains(&code) || [0x138, 0x139].contains(&code) {
-                    return Err(format!("{name}: not a button of this pad (triggers are analog: op trigger)"));
+                    return Err(format!(
+                        "{name}: not a button of this pad (triggers are analog: op trigger)"
+                    ));
                 }
                 match req.get("action").and_then(Json::as_str).unwrap_or("tap") {
-                    "press" => { self.buttons.insert(code); }
-                    "release" => { self.buttons.remove(&code); self.taps.retain(|(c, _)| *c != code); }
+                    "press" => {
+                        self.buttons.insert(code);
+                    }
+                    "release" => {
+                        self.buttons.remove(&code);
+                        self.taps.retain(|(c, _)| *c != code);
+                    }
                     "tap" => {
-                        let ms = req.get("ms").and_then(Json::as_u64).unwrap_or(self.cfg.tap_ms).clamp(10, self.cfg.max_ms) as f64;
+                        let ms = req
+                            .get("ms")
+                            .and_then(Json::as_u64)
+                            .unwrap_or(self.cfg.tap_ms)
+                            .clamp(10, self.cfg.max_ms) as f64;
                         self.buttons.insert(code);
                         self.taps.retain(|(c, _)| *c != code);
                         self.taps.push((code, ms));
@@ -218,7 +276,12 @@ impl Model {
                 };
                 self.hat = hat;
                 self.hat_tap = match req.get("action").and_then(Json::as_str).unwrap_or("tap") {
-                    "tap" if hat != (0, 0) => Some(req.get("ms").and_then(Json::as_u64).unwrap_or(self.cfg.tap_ms).clamp(10, self.cfg.max_ms) as f64),
+                    "tap" if hat != (0, 0) => Some(
+                        req.get("ms")
+                            .and_then(Json::as_u64)
+                            .unwrap_or(self.cfg.tap_ms)
+                            .clamp(10, self.cfg.max_ms) as f64,
+                    ),
                     "tap" | "press" | "release" => None,
                     a => return Err(format!("dpad action {a:?}: press or tap")),
                 };
@@ -243,19 +306,34 @@ impl Model {
         }
     }
     pub fn status(&self) -> Json {
-        let v: Vec<f64> = self.axes.iter().map(|c| (c.value * 1e4).round() / 1e4).collect();
+        let v: Vec<f64> = self
+            .axes
+            .iter()
+            .map(|c| (c.value * 1e4).round() / 1e4)
+            .collect();
         json!({"left": [v[0], v[1]], "right": [v[2], v[3]], "triggers": [v[4], v[5]], "dpad": [self.hat.0, self.hat.1],
                "buttons": self.buttons.iter().map(|c| crate::nav::Input::Button(*c).name()).collect::<Vec<_>>(), "busy": self.busy()})
     }
     /// The whole emitted state as one frame: what a reader that missed frames needs to be current again.
     pub fn state_frame(&self) -> Vec<Event> {
-        let mut out: Vec<_> = AXES.iter().zip(self.last).map(|(c, v)| Event::new(EV_ABS, *c, v)).collect();
-        out.extend([Event::new(EV_ABS, 16, self.last_hat.0), Event::new(EV_ABS, 17, self.last_hat.1)]);
+        let mut out: Vec<_> = AXES
+            .iter()
+            .zip(self.last)
+            .map(|(c, v)| Event::new(EV_ABS, *c, v))
+            .collect();
+        out.extend([
+            Event::new(EV_ABS, 16, self.last_hat.0),
+            Event::new(EV_ABS, 17, self.last_hat.1),
+        ]);
         for (k, code) in [(0usize, 0x138u16), (1, 0x139)] {
             out.push(Event::new(EV_KEY, code, i32::from(self.digital[k])));
         }
         for c in KEYS.iter().filter(|c| ![0x138, 0x139].contains(*c)) {
-            out.push(Event::new(EV_KEY, *c, i32::from(self.last_buttons.contains(c))));
+            out.push(Event::new(
+                EV_KEY,
+                *c,
+                i32::from(self.last_buttons.contains(c)),
+            ));
         }
         out.push(Event::new(EV_SYN, SYN_REPORT, 0));
         out
@@ -301,13 +379,21 @@ impl Model {
             }
         }
         if self.hat != self.last_hat {
-            if self.hat.0 != self.last_hat.0 { out.push(Event::new(EV_ABS, 16, self.hat.0)); }
-            if self.hat.1 != self.last_hat.1 { out.push(Event::new(EV_ABS, 17, self.hat.1)); }
+            if self.hat.0 != self.last_hat.0 {
+                out.push(Event::new(EV_ABS, 16, self.hat.0));
+            }
+            if self.hat.1 != self.last_hat.1 {
+                out.push(Event::new(EV_ABS, 17, self.hat.1));
+            }
             self.last_hat = self.hat;
         }
         if self.buttons != self.last_buttons {
-            for c in self.last_buttons.difference(&self.buttons) { out.push(Event::new(EV_KEY, *c, 0)); }
-            for c in self.buttons.difference(&self.last_buttons) { out.push(Event::new(EV_KEY, *c, 1)); }
+            for c in self.last_buttons.difference(&self.buttons) {
+                out.push(Event::new(EV_KEY, *c, 0));
+            }
+            for c in self.buttons.difference(&self.last_buttons) {
+                out.push(Event::new(EV_KEY, *c, 1));
+            }
             self.last_buttons = self.buttons.clone();
         }
         if !out.is_empty() {
@@ -319,10 +405,16 @@ impl Model {
 
 /// A pad key: the seat label or the pad id (also the socket and state file name).
 pub fn valid_key(k: &str) -> bool {
-    !k.is_empty() && k.len() <= 32 && k.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') && !k.starts_with('-')
+    !k.is_empty()
+        && k.len() <= 32
+        && k.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !k.starts_with('-')
 }
 pub fn dir(cfg: &AgentPadConfig) -> Result<PathBuf, String> {
-    let rt = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("XDG_RUNTIME_DIR missing")?;
+    let rt = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or("XDG_RUNTIME_DIR missing")?;
     Ok(rt.join(&cfg.socket_dir))
 }
 fn private_dir(d: &Path) -> Result<(), String> {
@@ -350,7 +442,13 @@ extern "C" fn stop(_: libc::c_int) {
 /// The holder: creates the pad, serves its control socket, samples every ramp at rate_hz, and runs the assigned
 /// nested session's bridge as its child. It exits on `destroy`, SIGTERM, or idle_exit_s at rest without a command;
 /// the pad (and the bridge) go with it.
-pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, fixture: bool) -> Result<(), String> {
+pub fn hold(
+    global: GlobalConfig,
+    root: Option<PathBuf>,
+    key: &str,
+    seat: bool,
+    fixture: bool,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let cfg = global.controller.agent_pad.clone();
     if !cfg.enabled {
@@ -368,7 +466,8 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
     let _ = std::fs::remove_file(&sock);
     let name = pad_name(&global, key, seat, fixture);
     let (vendor, product) = cfg.usb()?;
-    let mut pad = crate::linux::VirtualDevice::agent_pad(&name, vendor, product).map_err(|e| format!("uinput pad: {e}"))?;
+    let mut pad = crate::linux::VirtualDevice::agent_pad(&name, vendor, product)
+        .map_err(|e| format!("uinput pad: {e}"))?;
     let mut path = None;
     for _ in 0..300 {
         if let Ok(p) = pad.event_path() {
@@ -380,12 +479,17 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
     let path = path.ok_or("the pad did not enumerate")?;
     // Fixture tier: a test pad emits only while an exclusive reader (a fixture bridge or the test) holds its grab;
     // frames are withheld otherwise and the reader gets the whole state once a grab holds it again.
-    let probe = if fixture { Some(crate::linux::GrabProbe::open(&path).map_err(|e| e.to_string())?) } else { None };
+    let probe = if fixture {
+        Some(crate::linux::GrabProbe::open(&path).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
     let mut withheld = 0u64;
     let mut grab_lost = 0u64;
     let mut last_probe = Instant::now();
     let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
-    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let me = std::process::id();
     let state = json!({"pad": key, "name": name, "path": path, "seat": if seat { Some(key) } else { None }, "fixture": fixture,
@@ -439,7 +543,9 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                         Ok(0) => break Some(!buf.is_empty()),
                         Ok(n) => {
                             buf.extend_from_slice(&chunk[..n]);
-                            if buf.contains(&b'\n') || buf.len() > 65536 { break Some(true); }
+                            if buf.contains(&b'\n') || buf.len() > 65536 {
+                                break Some(true);
+                            }
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break None,
                         Err(_) => break Some(false),
@@ -457,23 +563,57 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                 let _ = s.set_nonblocking(false);
                 let _ = s.set_write_timeout(Some(Duration::from_millis(200)));
                 if buf.len() > 65536 {
-                    let _ = writeln!(s, "{}", json!({"ok": false, "error": "request line over 64 KiB"}));
+                    let _ = writeln!(
+                        s,
+                        "{}",
+                        json!({"ok": false, "error": "request line over 64 KiB"})
+                    );
                     continue;
                 }
-                let line = String::from_utf8_lossy(buf.split(|b| *b == b'\n').next().unwrap_or(&[])).into_owned();
+                let line =
+                    String::from_utf8_lossy(buf.split(|b| *b == b'\n').next().unwrap_or(&[]))
+                        .into_owned();
                 let req: Json = match serde_json::from_str(line.trim()) {
                     Ok(v) => v,
-                    Err(e) => { let _ = writeln!(s, "{}", json!({"ok": false, "error": e.to_string()})); continue; }
+                    Err(e) => {
+                        let _ = writeln!(s, "{}", json!({"ok": false, "error": e.to_string()}));
+                        continue;
+                    }
                 };
                 let op = req.get("op").and_then(Json::as_str).unwrap_or("");
                 let reply = match op {
-                    "destroy" => { let _ = writeln!(s, "{}", json!({"ok": true, "destroyed": key})); return Ok(()); }
-                    "wait" => { waiters.push((s, Instant::now() + Duration::from_millis(cfg.max_ms * 3 + 1000))); continue; }
-                    "info" => Ok(json!({"ok": true, "pad": state, "assigned": bridge.as_ref().map(SeatBridge::json), "withheld_frames": withheld, "grab_lost_frames": grab_lost})),
+                    "destroy" => {
+                        let _ = writeln!(s, "{}", json!({"ok": true, "destroyed": key}));
+                        return Ok(());
+                    }
+                    "wait" => {
+                        waiters.push((
+                            s,
+                            Instant::now() + Duration::from_millis(cfg.max_ms * 3 + 1000),
+                        ));
+                        continue;
+                    }
+                    "info" => Ok(
+                        json!({"ok": true, "pad": state, "assigned": bridge.as_ref().map(SeatBridge::json), "withheld_frames": withheld, "grab_lost_frames": grab_lost}),
+                    ),
                     "assign" => {
-                        let seat = req.get("seat").and_then(Json::as_str).unwrap_or(key).to_owned();
-                        assign(&global, root.as_deref(), &path, fixture, &seat, &d, key, &mut bridge, &mut orphans)
-                            .inspect(|_| write_state(&state_file, &state, bridge.as_ref()))
+                        let seat = req
+                            .get("seat")
+                            .and_then(Json::as_str)
+                            .unwrap_or(key)
+                            .to_owned();
+                        assign(
+                            &global,
+                            root.as_deref(),
+                            &path,
+                            fixture,
+                            &seat,
+                            &d,
+                            key,
+                            &mut bridge,
+                            &mut orphans,
+                        )
+                        .inspect(|_| write_state(&state_file, &state, bridge.as_ref()))
                     }
                     "unassign" => {
                         if let Some(b) = bridge.take() {
@@ -495,13 +635,22 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                 None if !frame.is_empty() => pad.write(&frame).map_err(|e| e.to_string())?,
                 None => {}
                 // Probe only when there is something to emit (withheld state is re-offered every 100 ms).
-                Some(p) if !frame.is_empty() || (withheld > 0 && last_probe.elapsed() >= Duration::from_millis(100)) => {
+                Some(p)
+                    if !frame.is_empty()
+                        || (withheld > 0 && last_probe.elapsed() >= Duration::from_millis(100)) =>
+                {
                     last_probe = Instant::now();
                     // After withholding, the reader gets the whole state, not the last delta.
-                    let out = if withheld > 0 { model.state_frame() } else { frame.clone() };
+                    let out = if withheld > 0 {
+                        model.state_frame()
+                    } else {
+                        frame.clone()
+                    };
                     match p.emit(|| pad.write(&out)) {
                         Ok(()) => withheld = 0,
-                        Err(crate::linux::EmitError::Ungrabbed(_)) => withheld += u64::from(!frame.is_empty()),
+                        Err(crate::linux::EmitError::Ungrabbed(_)) => {
+                            withheld += u64::from(!frame.is_empty())
+                        }
                         Err(crate::linux::EmitError::GrabLost(e)) => {
                             // Fail closed: log it, withhold from now on and re-offer the whole state once grabbed.
                             grab_lost += 1;
@@ -515,7 +664,11 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
             }
             waiters.retain_mut(|(s, until)| {
                 if !model.busy() || Instant::now() > *until {
-                    let _ = writeln!(s, "{}", json!({"ok": true, "idle": !model.busy(), "state": model.status()}));
+                    let _ = writeln!(
+                        s,
+                        "{}",
+                        json!({"ok": true, "idle": !model.busy(), "state": model.status()})
+                    );
                     false
                 } else {
                     true
@@ -523,10 +676,17 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
             });
             if let Some(b) = &mut bridge {
                 if let Some(status) = b.exited() {
-                    eprintln!("{}", json!({"bridge": "exited", "seat": b.seat, "status": status}));
+                    eprintln!(
+                        "{}",
+                        json!({"bridge": "exited", "seat": b.seat, "status": status})
+                    );
                     if let Ok(_lock) = lock_seat(&d, &b.seat) {
-                        if read_seat_record(&d, &b.seat).is_some_and(|(pid, start)| pid == b.pid && start == b.start) {
-                            let _ = std::fs::remove_file(seats_dir(&d).join(format!("{}.json", b.seat)));
+                        if read_seat_record(&d, &b.seat)
+                            .is_some_and(|(pid, start)| pid == b.pid && start == b.start)
+                        {
+                            let _ = std::fs::remove_file(
+                                seats_dir(&d).join(format!("{}.json", b.seat)),
+                            );
                         }
                     }
                     bridge = None;
@@ -534,11 +694,18 @@ pub fn hold(global: GlobalConfig, root: Option<PathBuf>, key: &str, seat: bool, 
                 }
             }
             orphans.retain_mut(|c| !matches!(c.try_wait(), Ok(Some(_))));
-            if model.at_rest() && bridge.is_none() && last_cmd.elapsed() > Duration::from_secs(cfg.idle_exit_s) {
+            if model.at_rest()
+                && bridge.is_none()
+                && last_cmd.elapsed() > Duration::from_secs(cfg.idle_exit_s)
+            {
                 eprintln!("{}", json!({"pad": key, "exit": "idle"}));
                 return Ok(());
             }
-            std::thread::sleep(if model.busy() || !waiters.is_empty() { period } else { period.max(Duration::from_millis(20)) });
+            std::thread::sleep(if model.busy() || !waiters.is_empty() {
+                period
+            } else {
+                period.max(Duration::from_millis(20))
+            });
         }
         Ok(())
     })();
@@ -596,9 +763,15 @@ impl SeatBridge {
     }
     /// The recorded process still runs (same pid and start time, and not a zombie awaiting its reaper).
     fn alive(&self) -> bool {
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", self.pid)) else { return false };
-        let f: Vec<&str> = stat.rsplit_once(')').map(|(_, r)| r.split_whitespace().collect()).unwrap_or_default();
-        f.first().is_some_and(|st| *st != "Z" && *st != "X") && f.get(19).and_then(|v| v.parse().ok()) == Some(self.start)
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", self.pid)) else {
+            return false;
+        };
+        let f: Vec<&str> = stat
+            .rsplit_once(')')
+            .map(|(_, r)| r.split_whitespace().collect())
+            .unwrap_or_default();
+        f.first().is_some_and(|st| *st != "Z" && *st != "X")
+            && f.get(19).and_then(|v| v.parse().ok()) == Some(self.start)
     }
     /// Some(exit code) once the bridge is gone.
     fn exited(&mut self) -> Option<Option<i32>> {
@@ -629,23 +802,49 @@ fn read_seat_json(d: &Path, seat: &str) -> Option<Json> {
 /// The recorded bridge's (pid, start), live or not.
 fn read_seat_record(d: &Path, seat: &str) -> Option<(u32, u64)> {
     let j = read_seat_json(d, seat)?;
-    Some((u32::try_from(j["pid"].as_u64()?).ok()?, j["start"].as_u64()?))
+    Some((
+        u32::try_from(j["pid"].as_u64()?).ok()?,
+        j["start"].as_u64()?,
+    ))
 }
 /// The seat's live bridge, if one runs.
 fn read_seat(d: &Path, seat: &str) -> Option<SeatBridge> {
     let j = read_seat_json(d, seat)?;
-    let b = SeatBridge { seat: seat.into(), pid: u32::try_from(j["pid"].as_u64()?).ok()?, start: j["start"].as_u64()?, fixture: j["fixture"].as_bool()?, child: None };
+    let b = SeatBridge {
+        seat: seat.into(),
+        pid: u32::try_from(j["pid"].as_u64()?).ok()?,
+        start: j["start"].as_u64()?,
+        fixture: j["fixture"].as_bool()?,
+        child: None,
+    };
     b.alive().then_some(b)
 }
 /// Live holders other than `me` whose state names `seat` as their assignment.
 fn other_holders(d: &Path, seat: &str, me: &str) -> usize {
-    std::fs::read_dir(d).into_iter().flatten().flatten().filter_map(|e| {
-        let p = e.path();
-        (p.extension().is_some_and(|x| x == "json")).then(|| std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<Json>(&b).ok())).flatten()
-    }).filter(|j| {
-        j["pad"].as_str() != Some(me) && j["assigned"].as_str() == Some(seat)
-            && j["pid"].as_u64().and_then(|p| u32::try_from(p).ok()).and_then(|p| crate::nested::start_time(Path::new("/proc"), p)) == j["start"].as_u64()
-    }).count()
+    std::fs::read_dir(d)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension().is_some_and(|x| x == "json"))
+                .then(|| {
+                    std::fs::read(&p)
+                        .ok()
+                        .and_then(|b| serde_json::from_slice::<Json>(&b).ok())
+                })
+                .flatten()
+        })
+        .filter(|j| {
+            j["pad"].as_str() != Some(me)
+                && j["assigned"].as_str() == Some(seat)
+                && j["pid"]
+                    .as_u64()
+                    .and_then(|p| u32::try_from(p).ok())
+                    .and_then(|p| crate::nested::start_time(Path::new("/proc"), p))
+                    == j["start"].as_u64()
+        })
+        .count()
 }
 fn write_state(file: &Path, state: &Json, bridge: Option<&SeatBridge>) {
     let mut st = state.clone();
@@ -657,9 +856,14 @@ fn write_state(file: &Path, state: &Json, bridge: Option<&SeatBridge>) {
 }
 /// Let go of a seat: the bridge stops only when no other live pad holder is assigned to it.
 fn release(d: &Path, key: &str, mut b: SeatBridge, orphans: &mut Vec<std::process::Child>) {
-    let Ok(_lock) = lock_seat(d, &b.seat) else { return };
+    let Ok(_lock) = lock_seat(d, &b.seat) else {
+        return;
+    };
     if other_holders(d, &b.seat, key) > 0 {
-        eprintln!("{}", json!({"bridge": "kept", "seat": b.seat, "reason": "another pad of the seat still uses it"}));
+        eprintln!(
+            "{}",
+            json!({"bridge": "kept", "seat": b.seat, "reason": "another pad of the seat still uses it"})
+        );
         orphans.extend(b.child.take());
         return;
     }
@@ -684,15 +888,30 @@ fn release(d: &Path, key: &str, mut b: SeatBridge, orphans: &mut Vec<std::proces
 /// Route the pad into a nested session: the session must hold this pad's node (launched with `--device virtual-pad`
 /// or `--device name:<pad name>`). The seat's bridge (`bridge --nested <seat>`) is started once and shared.
 #[allow(clippy::too_many_arguments)]
-fn assign(global: &GlobalConfig, root: Option<&Path>, node: &Path, fixture: bool, seat: &str, d: &Path, key: &str, bridge: &mut Option<SeatBridge>, orphans: &mut Vec<std::process::Child>) -> Result<Json, String> {
-    let registry = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("XDG_RUNTIME_DIR missing")?.join(&global.nested_registry);
+fn assign(
+    global: &GlobalConfig,
+    root: Option<&Path>,
+    node: &Path,
+    fixture: bool,
+    seat: &str,
+    d: &Path,
+    key: &str,
+    bridge: &mut Option<SeatBridge>,
+    orphans: &mut Vec<std::process::Child>,
+) -> Result<Json, String> {
+    let registry = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or("XDG_RUNTIME_DIR missing")?
+        .join(&global.nested_registry);
     let s = crate::nested::session(&registry, Path::new("/proc"), seat)?;
     if !s.controllers.iter().any(|p| p == node) {
         return Err(format!("the session for seat {seat:?} does not hold this pad ({}); launch it with --seat {seat} --device virtual-pad", node.display()));
     }
     if bridge.as_ref().is_some_and(|b| b.seat == seat && b.alive()) {
         let b = bridge.as_ref().map(SeatBridge::json).unwrap_or_default();
-        return Ok(json!({"ok": true, "assigned": seat, "bridge": b, "session": s.entry, "pad_state": s.pad_state}));
+        return Ok(
+            json!({"ok": true, "assigned": seat, "bridge": b, "session": s.entry, "pad_state": s.pad_state}),
+        );
     }
     if let Some(old) = bridge.take() {
         release(d, key, old, orphans);
@@ -700,13 +919,28 @@ fn assign(global: &GlobalConfig, root: Option<&Path>, node: &Path, fixture: bool
     let _lock = lock_seat(d, seat)?;
     if let Some(shared) = read_seat(d, seat) {
         if shared.fixture != fixture {
-            return Err(format!("seat {seat:?} is routed by a {} bridge (pid {}); a {} pad cannot share it", if shared.fixture { "fixture-tier" } else { "live" }, shared.pid, if fixture { "fixture" } else { "live" }));
+            return Err(format!(
+                "seat {seat:?} is routed by a {} bridge (pid {}); a {} pad cannot share it",
+                if shared.fixture {
+                    "fixture-tier"
+                } else {
+                    "live"
+                },
+                shared.pid,
+                if fixture { "fixture" } else { "live" }
+            ));
         }
         let j = shared.json();
         *bridge = Some(shared);
-        return Ok(json!({"ok": true, "assigned": seat, "bridge": j, "session": s.entry, "pad_state": s.pad_state}));
+        return Ok(
+            json!({"ok": true, "assigned": seat, "bridge": j, "session": s.entry, "pad_state": s.pad_state}),
+        );
     }
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(d.join(format!("{key}-bridge.log"))).map_err(|e| e.to_string())?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(d.join(format!("{key}-bridge.log")))
+        .map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
     if let Some(r) = root {
         cmd.arg("--root").arg(r);
@@ -715,21 +949,50 @@ fn assign(global: &GlobalConfig, root: Option<&Path>, node: &Path, fixture: bool
     if fixture {
         cmd.arg("--fixture-only");
     }
-    let child = cmd.stdin(std::process::Stdio::null()).stdout(log.try_clone().map_err(|e| e.to_string())?).stderr(log)
-        .spawn().map_err(|e| format!("nested bridge: {e}"))?;
+    let child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(log.try_clone().map_err(|e| e.to_string())?)
+        .stderr(log)
+        .spawn()
+        .map_err(|e| format!("nested bridge: {e}"))?;
     let pid = child.id();
-    let start = (0..50).find_map(|_| crate::nested::start_time(Path::new("/proc"), pid).or_else(|| { std::thread::sleep(Duration::from_millis(2)); None }))
+    let start = (0..50)
+        .find_map(|_| {
+            crate::nested::start_time(Path::new("/proc"), pid).or_else(|| {
+                std::thread::sleep(Duration::from_millis(2));
+                None
+            })
+        })
         .ok_or("nested bridge: no start time")?;
-    let record = json!({"seat": seat, "pid": pid, "start": start, "fixture": fixture, "holder": key});
-    std::fs::write(seats_dir(d).join(format!("{seat}.json")), format!("{record}\n")).map_err(|e| e.to_string())?;
-    let b = SeatBridge { seat: seat.into(), pid, start, fixture, child: Some(child) };
+    let record =
+        json!({"seat": seat, "pid": pid, "start": start, "fixture": fixture, "holder": key});
+    std::fs::write(
+        seats_dir(d).join(format!("{seat}.json")),
+        format!("{record}\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    let b = SeatBridge {
+        seat: seat.into(),
+        pid,
+        start,
+        fixture,
+        child: Some(child),
+    };
     let j = b.json();
     *bridge = Some(b);
-    Ok(json!({"ok": true, "assigned": seat, "bridge": j, "bridge_pid": pid, "session": s.entry, "pad_state": s.pad_state}))
+    Ok(
+        json!({"ok": true, "assigned": seat, "bridge": j, "bridge_pid": pid, "session": s.entry, "pad_state": s.pad_state}),
+    )
 }
 
 /// Start a holder for `key` and return its ready line (the pad's name, node and socket).
-pub fn create(global: &GlobalConfig, root: Option<&Path>, key: &str, seat: bool, fixture: bool) -> Result<Json, String> {
+pub fn create(
+    global: &GlobalConfig,
+    root: Option<&Path>,
+    key: &str,
+    seat: bool,
+    fixture: bool,
+) -> Result<Json, String> {
     use std::os::unix::process::CommandExt;
     let cfg = &global.controller.agent_pad;
     if !cfg.enabled {
@@ -740,7 +1003,12 @@ pub fn create(global: &GlobalConfig, root: Option<&Path>, key: &str, seat: bool,
     }
     let d = dir(cfg)?;
     private_dir(&d)?;
-    let log = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(d.join(format!("{key}.log"))).map_err(|e| e.to_string())?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(d.join(format!("{key}.log")))
+        .map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
     if let Some(r) = root {
         cmd.arg("--root").arg(r);
@@ -759,7 +1027,12 @@ pub fn create(global: &GlobalConfig, root: Option<&Path>, key: &str, seat: bool,
             Ok(())
         });
     }
-    let mut child = cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(log).spawn().map_err(|e| e.to_string())?;
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(log)
+        .spawn()
+        .map_err(|e| e.to_string())?;
     let stdout = child.stdout.take().ok_or("holder stdout missing")?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -768,7 +1041,9 @@ pub fn create(global: &GlobalConfig, root: Option<&Path>, key: &str, seat: bool,
         let _ = tx.send(line);
     });
     match rx.recv_timeout(Duration::from_secs(10)) {
-        Ok(line) if !line.trim().is_empty() => serde_json::from_str(line.trim()).map_err(|e| e.to_string()),
+        Ok(line) if !line.trim().is_empty() => {
+            serde_json::from_str(line.trim()).map_err(|e| e.to_string())
+        }
         _ => {
             let _ = child.kill();
             let _ = child.wait();
@@ -785,15 +1060,31 @@ pub fn request(global: &GlobalConfig, key: &str, req: &Json) -> Result<Json, Str
         return Err(format!("pad {key:?}: 1..32 of a-z, 0-9 and '-'"));
     }
     let sock = dir(cfg)?.join(format!("{key}.sock"));
-    let mut s = UnixStream::connect(&sock).map_err(|e| format!("pad {key}: {e} ({}); create it with `mios-inputd vpad create`", sock.display()))?;
+    let mut s = UnixStream::connect(&sock).map_err(|e| {
+        format!(
+            "pad {key}: {e} ({}); create it with `mios-inputd vpad create`",
+            sock.display()
+        )
+    })?;
     let wait = req.get("op").and_then(Json::as_str) == Some("wait");
-    s.set_read_timeout(Some(Duration::from_millis(if wait { cfg.max_ms * 3 + 3000 } else { 5000 }))).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_millis(if wait {
+        cfg.max_ms * 3 + 3000
+    } else {
+        5000
+    })))
+    .map_err(|e| e.to_string())?;
     writeln!(s, "{req}").map_err(|e| e.to_string())?;
     let mut line = String::new();
-    BufReader::new(&s).take(1 << 20).read_line(&mut line).map_err(|e| e.to_string())?;
+    BufReader::new(&s)
+        .take(1 << 20)
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
     let v: Json = serde_json::from_str(line.trim()).map_err(|e| format!("pad {key}: {e}"))?;
     if v.get("ok") == Some(&Json::Bool(false)) {
-        return Err(v["error"].as_str().unwrap_or("pad request failed").to_owned());
+        return Err(v["error"]
+            .as_str()
+            .unwrap_or("pad request failed")
+            .to_owned());
     }
     Ok(v)
 }
@@ -807,8 +1098,15 @@ pub fn list(global: &GlobalConfig) -> Result<Json, String> {
         if p.extension().is_none_or(|x| x != "json") {
             continue;
         }
-        if let Some(j) = std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<Json>(&b).ok()) {
-            let live = j["pid"].as_u64().and_then(|p| u32::try_from(p).ok()).and_then(|p| crate::nested::start_time(Path::new("/proc"), p)) == j["start"].as_u64();
+        if let Some(j) = std::fs::read(&p)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Json>(&b).ok())
+        {
+            let live = j["pid"]
+                .as_u64()
+                .and_then(|p| u32::try_from(p).ok())
+                .and_then(|p| crate::nested::start_time(Path::new("/proc"), p))
+                == j["start"].as_u64();
             if live {
                 out.push(j);
             }
@@ -862,78 +1160,158 @@ mod tests {
         m.command(&json!({"op": "stick", "stick": "left", "x": 0.0, "y": -1.0, "ms": 400, "ease": "in-out"})).unwrap();
         let ys = run(&mut m, 1, 1000.0);
         assert_eq!(*ys.last().unwrap(), -32767, "reaches full deflection");
-        assert!(ys.len() >= 80, "sampled at 250 Hz over 400 ms: {}", ys.len());
-        let steps: Vec<i32> = std::iter::once(0).chain(ys.iter().copied()).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+        assert!(
+            ys.len() >= 80,
+            "sampled at 250 Hz over 400 ms: {}",
+            ys.len()
+        );
+        let steps: Vec<i32> = std::iter::once(0)
+            .chain(ys.iter().copied())
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .collect();
         // Peak slope of the cubic in/out curve is 3x linear: <= 3 * 32767 * 4/400 per 4 ms sample (+rounding).
-        assert!(steps.iter().all(|s| *s <= 990), "no jump: max step {}", steps.iter().max().unwrap());
-        assert!(steps[0] < 50 && *steps.last().unwrap() < 50, "eased: small first and last steps {steps:?}");
+        assert!(
+            steps.iter().all(|s| *s <= 990),
+            "no jump: max step {}",
+            steps.iter().max().unwrap()
+        );
+        assert!(
+            steps[0] < 50 && *steps.last().unwrap() < 50,
+            "eased: small first and last steps {steps:?}"
+        );
     }
     #[test]
     fn interrupting_a_ramp_continues_from_where_the_stick_is() {
         let mut m = model();
-        m.command(&json!({"op": "stick", "x": 1.0, "ms": 400})).unwrap();
-        for _ in 0..50 { m.tick(4.0); }
+        m.command(&json!({"op": "stick", "x": 1.0, "ms": 400}))
+            .unwrap();
+        for _ in 0..50 {
+            m.tick(4.0);
+        }
         let mid = m.axes[0].value;
         assert!(mid > 0.2 && mid < 0.8, "{mid}");
-        m.command(&json!({"op": "stick", "x": -1.0, "ms": 400})).unwrap();
+        m.command(&json!({"op": "stick", "x": -1.0, "ms": 400}))
+            .unwrap();
         let f = m.tick(4.0);
         let v = f.iter().find(|e| e.code == 0).map(|e| e.value).unwrap();
-        assert!((f64::from(v) / 32767.0 - mid).abs() < 0.02, "no teleport on a new command: {v} after {mid}");
+        assert!(
+            (f64::from(v) / 32767.0 - mid).abs() < 0.02,
+            "no teleport on a new command: {v} after {mid}"
+        );
     }
     #[test]
     fn ms_zero_is_stretched_to_the_floor_and_hold_eases_back() {
         let mut m = model();
-        let r = m.command(&json!({"op": "stick", "stick": "right", "x": 1.0, "ms": 0, "hold_ms": 100})).unwrap();
+        let r = m
+            .command(&json!({"op": "stick", "stick": "right", "x": 1.0, "ms": 0, "hold_ms": 100}))
+            .unwrap();
         assert_eq!(r["ramp_ms"], 80.0, "min_ms floor: nothing ever teleports");
         let xs = run(&mut m, 3, 2000.0);
-        assert!(xs.len() > 30 && xs.contains(&32767) && *xs.last().unwrap() == 0, "{xs:?}");
+        assert!(
+            xs.len() > 30 && xs.contains(&32767) && *xs.last().unwrap() == 0,
+            "{xs:?}"
+        );
         assert!(m.at_rest());
     }
     #[test]
     fn triggers_report_digital_edges_and_buttons_tap() {
         let mut m = model();
-        m.command(&json!({"op": "trigger", "side": "right", "value": 1.0, "ms": 100})).unwrap();
+        m.command(&json!({"op": "trigger", "side": "right", "value": 1.0, "ms": 100}))
+            .unwrap();
         let mut keys = vec![];
-        for _ in 0..40 { keys.extend(m.tick(4.0).into_iter().filter(|e| e.kind == EV_KEY)); }
+        for _ in 0..40 {
+            keys.extend(m.tick(4.0).into_iter().filter(|e| e.kind == EV_KEY));
+        }
         assert_eq!(keys, vec![Event::new(EV_KEY, 0x139, 1)]);
-        m.command(&json!({"op": "button", "button": "BTN_SOUTH", "action": "tap", "ms": 40})).unwrap();
+        m.command(&json!({"op": "button", "button": "BTN_SOUTH", "action": "tap", "ms": 40}))
+            .unwrap();
         let mut keys = vec![];
-        for _ in 0..20 { keys.extend(m.tick(4.0).into_iter().filter(|e| e.kind == EV_KEY)); }
-        assert_eq!(keys, vec![Event::new(EV_KEY, 0x130, 1), Event::new(EV_KEY, 0x130, 0)]);
-        assert!(m.command(&json!({"op": "button", "button": "BTN_TL2"})).is_err(), "triggers are analog");
-        assert!(m.command(&json!({"op": "stick", "ease": "bounce"})).is_err());
+        for _ in 0..20 {
+            keys.extend(m.tick(4.0).into_iter().filter(|e| e.kind == EV_KEY));
+        }
+        assert_eq!(
+            keys,
+            vec![Event::new(EV_KEY, 0x130, 1), Event::new(EV_KEY, 0x130, 0)]
+        );
+        assert!(
+            m.command(&json!({"op": "button", "button": "BTN_TL2"}))
+                .is_err(),
+            "triggers are analog"
+        );
+        assert!(m
+            .command(&json!({"op": "stick", "ease": "bounce"}))
+            .is_err());
         assert!(m.command(&json!({"op": "warp"})).is_err());
     }
     #[test]
     fn dpad_taps_and_release_returns_everything_to_rest() {
         let mut m = model();
-        m.command(&json!({"op": "dpad", "dir": "left", "ms": 40})).unwrap();
+        m.command(&json!({"op": "dpad", "dir": "left", "ms": 40}))
+            .unwrap();
         let f = m.tick(4.0);
         assert!(f.contains(&Event::new(EV_ABS, 16, -1)));
-        for _ in 0..20 { m.tick(4.0); }
+        for _ in 0..20 {
+            m.tick(4.0);
+        }
         assert_eq!(m.hat, (0, 0));
-        m.command(&json!({"op": "stick", "x": 0.7, "y": 0.7})).unwrap();
-        m.command(&json!({"op": "button", "button": "BTN_EAST", "action": "press"})).unwrap();
-        for _ in 0..200 { m.tick(4.0); }
+        m.command(&json!({"op": "stick", "x": 0.7, "y": 0.7}))
+            .unwrap();
+        m.command(&json!({"op": "button", "button": "BTN_EAST", "action": "press"}))
+            .unwrap();
+        for _ in 0..200 {
+            m.tick(4.0);
+        }
         let r = m.command(&json!({"op": "release", "ms": 200})).unwrap();
         assert_eq!(r["ok"], true);
-        for _ in 0..100 { m.tick(4.0); }
+        for _ in 0..100 {
+            m.tick(4.0);
+        }
         assert!(m.at_rest(), "{}", m.status());
         // (1, 1) is clamped to the unit disk, not past full deflection.
         let mut m = model();
-        m.command(&json!({"op": "stick", "x": 1.0, "y": 1.0, "ms": 80})).unwrap();
-        for _ in 0..40 { m.tick(4.0); }
+        m.command(&json!({"op": "stick", "x": 1.0, "y": 1.0, "ms": 80}))
+            .unwrap();
+        for _ in 0..40 {
+            m.tick(4.0);
+        }
         assert!((m.axes[0].value - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9);
     }
     #[test]
     fn keys_and_names() {
-        assert!(valid_key("agent-1") && !valid_key("") && !valid_key("A") && !valid_key("../x") && !valid_key("-x"));
-        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap();
+        assert!(
+            valid_key("agent-1")
+                && !valid_key("")
+                && !valid_key("A")
+                && !valid_key("../x")
+                && !valid_key("-x")
+        );
+        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
         let (g, _) = GlobalConfig::from_value(&v).unwrap();
-        assert_eq!(pad_name(&g, "p2", true, false), "MiOS Nested Pad p2", "the name mios-gen's virtual-pad spec waits for");
+        assert_eq!(
+            pad_name(&g, "p2", true, false),
+            "MiOS Nested Pad p2",
+            "the name mios-gen's virtual-pad spec waits for"
+        );
         assert_eq!(pad_name(&g, "agent", false, false), "MiOS Agent Pad agent");
-        assert_eq!(pad_name(&g, "t1", true, true), "mios-input-fixture-vpad-t1", "a fixture pad no live bridge opens");
-        assert!(crate::nested::seat_pad_name_matches(&g.seat_pad_name, &pad_name(&g, "p2", true, false)));
-        assert!(!crate::nested::seat_pad_name_matches(&g.seat_pad_name, &pad_name(&g, "agent", false, false)), "an unseated pad stays routable");
+        assert_eq!(
+            pad_name(&g, "t1", true, true),
+            "mios-input-fixture-vpad-t1",
+            "a fixture pad no live bridge opens"
+        );
+        assert!(crate::nested::seat_pad_name_matches(
+            &g.seat_pad_name,
+            &pad_name(&g, "p2", true, false)
+        ));
+        assert!(
+            !crate::nested::seat_pad_name_matches(
+                &g.seat_pad_name,
+                &pad_name(&g, "agent", false, false)
+            ),
+            "an unseated pad stays routable"
+        );
     }
 }

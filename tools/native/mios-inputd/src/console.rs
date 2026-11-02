@@ -68,7 +68,10 @@ impl MouseModes {
     }
     fn reset(&mut self) {
         let pending = std::mem::take(&mut self.pending);
-        *self = Self { pending, ..Self::default() };
+        *self = Self {
+            pending,
+            ..Self::default()
+        };
     }
     /// Filter the client's output for the real terminal: mouse-mode DECSET/DECRST parameters update this state and are
     /// removed (other parameters of the same sequence pass); RIS (ESC c) resets. A sequence split across reads waits.
@@ -99,7 +102,10 @@ impl MouseModes {
                 i += 1;
                 continue;
             }
-            let end = rest[3..].iter().position(|b| !(b.is_ascii_digit() || *b == b';')).map(|p| p + 3);
+            let end = rest[3..]
+                .iter()
+                .position(|b| !(b.is_ascii_digit() || *b == b';'))
+                .map(|p| p + 3);
             let Some(end) = end else {
                 if rest.len() < 64 {
                     self.pending = rest.to_vec();
@@ -117,7 +123,10 @@ impl MouseModes {
             let params: Vec<&[u8]> = rest[3..end].split(|b| *b == b';').collect();
             let mut keep: Vec<&[u8]> = vec![];
             for p in params {
-                match std::str::from_utf8(p).ok().and_then(|t| t.parse::<u32>().ok()) {
+                match std::str::from_utf8(p)
+                    .ok()
+                    .and_then(|t| t.parse::<u32>().ok())
+                {
                     Some(m) if MOUSE_MODES.contains(&m) => self.set(m, fin == b'h'),
                     _ => keep.push(p),
                 }
@@ -133,7 +142,14 @@ impl MouseModes {
     }
     /// The report the client asked for (None while that event class is not tracked). `x`/`y` are 1-based cells;
     /// `mods` is the xterm modifier bits (4 shift, 8 meta, 16 control).
-    pub fn report(&self, kind: Kind, btn: Option<Btn>, x: u16, y: u16, mods: u8) -> Option<Vec<u8>> {
+    pub fn report(
+        &self,
+        kind: Kind,
+        btn: Option<Btn>,
+        x: u16,
+        y: u16,
+        mods: u8,
+    ) -> Option<Vec<u8>> {
         let t = self.tracking();
         let wheel = matches!(btn, Some(Btn::WheelUp | Btn::WheelDown));
         let ok = match (t, kind) {
@@ -169,7 +185,14 @@ impl MouseModes {
             return None;
         }
         let code = if kind == Kind::Release { 3 } else { base } + motion + mods;
-        Some(vec![0x1b, b'[', b'M', 32 + code, 32 + x as u8, 32 + y as u8])
+        Some(vec![
+            0x1b,
+            b'[',
+            b'M',
+            32 + code,
+            32 + x as u8,
+            32 + y as u8,
+        ])
     }
 }
 
@@ -201,10 +224,21 @@ impl Pointer {
     pub fn new(cols: u16, rows: u16, cell_px: [u32; 2]) -> Self {
         let cell = (f64::from(cell_px[0]), f64::from(cell_px[1]));
         let (x, y) = ((cols / 2).max(1), (rows / 2).max(1));
-        Self { x, y, held: [false; 3], px: ((f64::from(x) - 0.5) * cell.0, (f64::from(y) - 0.5) * cell.1), cell, pending: (false, 0) }
+        Self {
+            x,
+            y,
+            held: [false; 3],
+            px: ((f64::from(x) - 0.5) * cell.0, (f64::from(y) - 0.5) * cell.1),
+            cell,
+            pending: (false, 0),
+        }
     }
     fn held_button(&self) -> Option<Btn> {
-        [Btn::Left, Btn::Middle, Btn::Right].into_iter().zip(self.held).find(|(_, h)| *h).map(|(b, _)| b)
+        [Btn::Left, Btn::Middle, Btn::Right]
+            .into_iter()
+            .zip(self.held)
+            .find(|(_, h)| *h)
+            .map(|(b, _)| b)
     }
     fn button(&mut self, b: Btn, down: bool, mods: u8, m: &MouseModes, out: &mut Vec<u8>) {
         if let Some(i) = btn_index(b) {
@@ -241,8 +275,13 @@ impl Pointer {
         let kind = i32_at(12);
         let wdy = i16_at(26);
         // Kernel shift state (1 shift, 4 ctrl, 8 alt) -> xterm bits (4 shift, 16 control, 8 meta).
-        let mods = (if gmods & 1 != 0 { 4 } else { 0 }) | (if gmods & 4 != 0 { 16 } else { 0 }) | (if gmods & 8 != 0 { 8 } else { 0 });
-        let (x, y) = ((x.max(1) as u16).min(cols.max(1)), (y.max(1) as u16).min(rows.max(1)));
+        let mods = (if gmods & 1 != 0 { 4 } else { 0 })
+            | (if gmods & 4 != 0 { 16 } else { 0 })
+            | (if gmods & 8 != 0 { 8 } else { 0 });
+        let (x, y) = (
+            (x.max(1) as u16).min(cols.max(1)),
+            (y.max(1) as u16).min(rows.max(1)),
+        );
         if kind & (GPM_MOVE | GPM_DRAG | GPM_DOWN) != 0 {
             self.motion(x, y, mods, m, &mut out);
         }
@@ -267,26 +306,50 @@ impl Pointer {
             }
         }
         for _ in 0..wdy.unsigned_abs().min(5) {
-            self.button(if wdy > 0 { Btn::WheelUp } else { Btn::WheelDown }, true, mods, m, &mut out);
+            self.button(
+                if wdy > 0 {
+                    Btn::WheelUp
+                } else {
+                    Btn::WheelDown
+                },
+                true,
+                mods,
+                m,
+                &mut out,
+            );
         }
         out
     }
     /// One evdev event (EV_REL / EV_KEY / SYN_REPORT) of a relative pointer, read without a grab; motion is reported per
     /// frame once it crosses a cell (cell_px pixels per cell).
-    pub fn evdev(&mut self, kind: u16, code: u16, value: i32, cols: u16, rows: u16, m: &MouseModes) -> Vec<u8> {
+    pub fn evdev(
+        &mut self,
+        kind: u16,
+        code: u16,
+        value: i32,
+        cols: u16,
+        rows: u16,
+        m: &MouseModes,
+    ) -> Vec<u8> {
         let mut out = vec![];
         match (kind, code) {
             (2, 0) => {
-                self.px.0 = (self.px.0 + f64::from(value)).clamp(0.0, f64::from(cols.max(1)) * self.cell.0 - 1.0);
+                self.px.0 = (self.px.0 + f64::from(value))
+                    .clamp(0.0, f64::from(cols.max(1)) * self.cell.0 - 1.0);
                 self.pending.0 = true;
             }
             (2, 1) => {
-                self.px.1 = (self.px.1 + f64::from(value)).clamp(0.0, f64::from(rows.max(1)) * self.cell.1 - 1.0);
+                self.px.1 = (self.px.1 + f64::from(value))
+                    .clamp(0.0, f64::from(rows.max(1)) * self.cell.1 - 1.0);
                 self.pending.0 = true;
             }
             (2, 8) => self.pending.1 += value,
             (1, 0x110..=0x112) => {
-                let b = match code { 0x110 => Btn::Left, 0x111 => Btn::Right, _ => Btn::Middle };
+                let b = match code {
+                    0x110 => Btn::Left,
+                    0x111 => Btn::Right,
+                    _ => Btn::Middle,
+                };
                 self.button(b, value != 0, 0, m, &mut out);
             }
             (0, 0) => {
@@ -297,7 +360,13 @@ impl Pointer {
                 }
                 let w = std::mem::take(&mut self.pending.1);
                 for _ in 0..w.unsigned_abs().min(5) {
-                    self.button(if w > 0 { Btn::WheelUp } else { Btn::WheelDown }, true, 0, m, &mut out);
+                    self.button(
+                        if w > 0 { Btn::WheelUp } else { Btn::WheelDown },
+                        true,
+                        0,
+                        m,
+                        &mut out,
+                    );
                 }
             }
             _ => {}
@@ -338,10 +407,21 @@ impl Drop for RawGuard {
     }
 }
 fn winsize(fd: RawFd) -> libc::winsize {
-    let mut ws = libc::winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+    let mut ws = libc::winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
     // SAFETY: TIOCGWINSZ fills one initialized winsize.
-    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } < 0 || ws.ws_col == 0 || ws.ws_row == 0 {
-        ws = libc::winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } < 0 || ws.ws_col == 0 || ws.ws_row == 0
+    {
+        ws = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
     }
     ws
 }
@@ -367,7 +447,11 @@ fn write_all(fd: RawFd, mut b: &[u8]) -> io::Result<()> {
 fn read_fd(fd: RawFd, buf: &mut [u8]) -> io::Result<usize> {
     // SAFETY: reads into a live, writable buffer.
     let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
-    if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
+    if n < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(n as usize)
+    }
 }
 /// Decode a Linux tty device number, accepting only physical VTs (not tty0, serial ports or PTYs).
 pub(crate) fn vt_from_device(device: u32) -> Option<u32> {
@@ -416,10 +500,23 @@ fn gpm_connect(path: &Path, vt: u32) -> io::Result<std::os::unix::net::UnixStrea
 fn evdev_named(names: &[String]) -> Option<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     for path in crate::linux::discover().ok()? {
-        let Ok(f) = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW).open(&path) else { continue };
+        let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&path)
+        else {
+            continue;
+        };
         let mut b = [0u8; 256];
         // SAFETY: EVIOCGNAME(256) fills at most 256 bytes of a live buffer.
-        if unsafe { libc::ioctl(f.as_raw_fd(), ((2u64 << 30) | (256u64 << 16) | ((b'E' as u64) << 8) | 0x06) as _, b.as_mut_ptr()) } < 0 {
+        if unsafe {
+            libc::ioctl(
+                f.as_raw_fd(),
+                ((2u64 << 30) | (256u64 << 16) | ((b'E' as u64) << 8) | 0x06) as _,
+                b.as_mut_ptr(),
+            )
+        } < 0
+        {
             continue;
         }
         let end = b.iter().position(|c| *c == 0).unwrap_or(b.len());
@@ -432,9 +529,18 @@ fn evdev_named(names: &[String]) -> Option<std::fs::File> {
 /// Run `argv` (a VT tmux client) on a new pty; copy the VT to it and back; own the mouse modes; feed pointer reports.
 /// Returns the client's exit code.
 pub fn run(opt: Options) -> Result<i32, String> {
-    let (program, rest) = opt.argv.split_first().ok_or("console-bridge needs a client argv after --")?;
+    let (program, rest) = opt
+        .argv
+        .split_first()
+        .ok_or("console-bridge needs a client argv after --")?;
     let mut logf = match &opt.log {
-        Some(p) => Some(std::fs::OpenOptions::new().create(true).append(true).open(p).map_err(|e| e.to_string())?),
+        Some(p) => Some(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .map_err(|e| e.to_string())?,
+        ),
         None => None,
     };
     let mut log = |v: serde_json::Value| {
@@ -449,12 +555,30 @@ pub fn run(opt: Options) -> Result<i32, String> {
     let mut ws = winsize(0);
     let (mut master, mut slave) = (-1, -1);
     // SAFETY: openpty writes two descriptors; the termios/winsize pointers reference initialized values.
-    if unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), if have_termios { &original } else { std::ptr::null() }, &ws) } < 0 {
+    if unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            if have_termios {
+                &original
+            } else {
+                std::ptr::null()
+            },
+            &ws,
+        )
+    } < 0
+    {
         // No pty: the client still attaches, directly on the VT (no console mouse), instead of the login failing.
         use std::os::unix::process::CommandExt;
         let e = io::Error::last_os_error();
-        log(serde_json::json!({"console_bridge": "no pty; exec the client directly", "error": e.to_string()}));
-        return Err(format!("openpty: {e}; exec {program}: {}", std::process::Command::new(program).args(rest).exec()));
+        log(
+            serde_json::json!({"console_bridge": "no pty; exec the client directly", "error": e.to_string()}),
+        );
+        return Err(format!(
+            "openpty: {e}; exec {program}: {}",
+            std::process::Command::new(program).args(rest).exec()
+        ));
     }
     // SAFETY: both descriptors were just returned by openpty and are owned here.
     let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
@@ -465,8 +589,13 @@ pub fn run(opt: Options) -> Result<i32, String> {
     }
     let mut cmd = std::process::Command::new(program);
     cmd.args(rest).env("MIOS_CONSOLE_BRIDGE", "1");
-    let (s1, s2) = (slave.try_clone().map_err(|e| e.to_string())?, slave.try_clone().map_err(|e| e.to_string())?);
-    cmd.stdin(std::process::Stdio::from(slave)).stdout(std::process::Stdio::from(s1)).stderr(std::process::Stdio::from(s2));
+    let (s1, s2) = (
+        slave.try_clone().map_err(|e| e.to_string())?,
+        slave.try_clone().map_err(|e| e.to_string())?,
+    );
+    cmd.stdin(std::process::Stdio::from(slave))
+        .stdout(std::process::Stdio::from(s1))
+        .stderr(std::process::Stdio::from(s2));
     // SAFETY: setsid + TIOCSCTTY in the child before exec make the pty its controlling terminal (async-signal-safe calls).
     unsafe {
         use std::os::unix::process::CommandExt;
@@ -497,14 +626,18 @@ pub fn run(opt: Options) -> Result<i32, String> {
         libc::signal(libc::SIGTERM, on_hangup as *const () as libc::sighandler_t);
     }
     let vt = opt.vt.or_else(own_vt).unwrap_or(0);
-    log(serde_json::json!({"console_bridge": "started", "mouse": opt.mouse, "vt": vt, "cols": ws.ws_col, "rows": ws.ws_row}));
+    log(
+        serde_json::json!({"console_bridge": "started", "mouse": opt.mouse, "vt": vt, "cols": ws.ws_col, "rows": ws.ws_row}),
+    );
     let mut modes = MouseModes::default();
     let mut pointer = Pointer::new(ws.ws_col, ws.ws_row, opt.cell_px);
     let mut gpm: Option<std::os::unix::net::UnixStream> = None;
     let mut gpm_buf: Vec<u8> = vec![];
     let mut evdev: Option<std::fs::File> = None;
     let mut ev_buf: Vec<u8> = vec![];
-    let mut last_try = Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or_else(Instant::now);
+    let mut last_try = Instant::now()
+        .checked_sub(Duration::from_secs(10))
+        .unwrap_or_else(Instant::now);
     let mut stdin_open = true;
     let mfd = master.as_raw_fd();
     let mut buf = vec![0u8; 16384];
@@ -526,7 +659,9 @@ pub fn run(opt: Options) -> Result<i32, String> {
                 log(serde_json::json!({"gpm": "disconnected"}));
             }
             evdev = None;
-            last_try = Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or(last_try);
+            last_try = Instant::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or(last_try);
         } else if last_try.elapsed() >= Duration::from_millis(2000) {
             if opt.mouse == "gpm" && gpm.is_none() {
                 last_try = Instant::now();
@@ -535,26 +670,54 @@ pub fn run(opt: Options) -> Result<i32, String> {
                         log(serde_json::json!({"gpm": "connected", "vt": vt}));
                         gpm = Some(s);
                     }
-                    Err(e) => log(serde_json::json!({"gpm": "unavailable", "error": e.to_string()})),
+                    Err(e) => {
+                        log(serde_json::json!({"gpm": "unavailable", "error": e.to_string()}))
+                    }
                 }
             } else if opt.mouse == "evdev" && evdev.is_none() {
                 last_try = Instant::now();
                 evdev = match &opt.pointer_device {
                     Some(p) => {
                         use std::os::unix::fs::OpenOptionsExt;
-                        std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(p).ok()
+                        std::fs::OpenOptions::new()
+                            .read(true)
+                            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+                            .open(p)
+                            .ok()
                     }
                     None => evdev_named(&opt.pointer_names),
                 };
                 log(serde_json::json!({"evdev": if evdev.is_some() {"open"} else {"unavailable"}}));
             }
         }
-        let mut fds = vec![libc::pollfd { fd: mfd, events: libc::POLLIN, revents: 0 }];
+        let mut fds = vec![libc::pollfd {
+            fd: mfd,
+            events: libc::POLLIN,
+            revents: 0,
+        }];
         if stdin_open {
-            fds.push(libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 });
+            fds.push(libc::pollfd {
+                fd: 0,
+                events: libc::POLLIN,
+                revents: 0,
+            });
         }
-        let gi = gpm.as_ref().map(|g| { fds.push(libc::pollfd { fd: g.as_raw_fd(), events: libc::POLLIN, revents: 0 }); fds.len() - 1 });
-        let ei = evdev.as_ref().map(|e| { fds.push(libc::pollfd { fd: e.as_raw_fd(), events: libc::POLLIN, revents: 0 }); fds.len() - 1 });
+        let gi = gpm.as_ref().map(|g| {
+            fds.push(libc::pollfd {
+                fd: g.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+            fds.len() - 1
+        });
+        let ei = evdev.as_ref().map(|e| {
+            fds.push(libc::pollfd {
+                fd: e.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+            fds.len() - 1
+        });
         // Idle costs nothing: the poll sleeps until VT input, client output or a pointer event (a signal interrupts it).
         // It wakes early only to retry a missing pointer source while the client tracks the mouse.
         let waiting = tracking && gpm.is_none() && evdev.is_none() && opt.mouse != "off";
@@ -574,7 +737,9 @@ pub fn run(opt: Options) -> Result<i32, String> {
                     let before = modes.tracking();
                     let out = modes.filter(&buf[..k]);
                     if modes.tracking() != before {
-                        log(serde_json::json!({"mouse_mode": format!("{:?}", modes.tracking()), "sgr": modes.sgr}));
+                        log(
+                            serde_json::json!({"mouse_mode": format!("{:?}", modes.tracking()), "sgr": modes.sgr}),
+                        );
                     }
                     if write_all(1, &out).is_err() {
                         break None;
@@ -625,7 +790,9 @@ pub fn run(opt: Options) -> Result<i32, String> {
                             let kind = u16::from_ne_bytes([e[16], e[17]]);
                             let code = u16::from_ne_bytes([e[18], e[19]]);
                             let value = i32::from_ne_bytes([e[20], e[21], e[22], e[23]]);
-                            reports.extend(pointer.evdev(kind, code, value, ws.ws_col, ws.ws_row, &modes));
+                            reports.extend(
+                                pointer.evdev(kind, code, value, ws.ws_col, ws.ws_row, &modes),
+                            );
                         }
                     }
                     Some(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
@@ -678,7 +845,11 @@ mod tests {
         let mut m = MouseModes::default();
         assert_eq!(m.filter(b"a\x1b[?1000h\x1b[?1006hb"), b"ab");
         assert_eq!((m.tracking(), m.sgr), (Tracking::Normal, true));
-        assert_eq!(m.filter(b"\x1b[?1002;25h"), b"\x1b[?25h", "a combined sequence keeps its non-mouse parameter");
+        assert_eq!(
+            m.filter(b"\x1b[?1002;25h"),
+            b"\x1b[?25h",
+            "a combined sequence keeps its non-mouse parameter"
+        );
         assert_eq!(m.tracking(), Tracking::Button);
         assert_eq!(m.filter(b"\x1b[?10"), b"", "a split sequence waits");
         assert_eq!(m.filter(b"03h\x1b[2J"), b"\x1b[2J");
@@ -694,22 +865,64 @@ mod tests {
     #[test]
     fn reports_follow_the_tracking_mode_and_encoding() {
         let mut m = MouseModes::default();
-        assert_eq!(m.report(Kind::Press, Some(Btn::Left), 3, 4, 0), None, "mouse mode off: nothing");
+        assert_eq!(
+            m.report(Kind::Press, Some(Btn::Left), 3, 4, 0),
+            None,
+            "mouse mode off: nothing"
+        );
         m.filter(b"\x1b[?1000h\x1b[?1006h");
-        assert_eq!(m.report(Kind::Press, Some(Btn::Left), 3, 4, 0).unwrap(), b"\x1b[<0;3;4M");
-        assert_eq!(m.report(Kind::Release, Some(Btn::Left), 3, 4, 0).unwrap(), b"\x1b[<0;3;4m");
-        assert_eq!(m.report(Kind::Press, Some(Btn::Right), 300, 90, 16).unwrap(), b"\x1b[<18;300;90M", "SGR has no 223 limit");
-        assert_eq!(m.report(Kind::Press, Some(Btn::WheelUp), 1, 1, 0).unwrap(), b"\x1b[<64;1;1M");
-        assert_eq!(m.report(Kind::Motion, Some(Btn::Left), 5, 5, 0), None, "1000 reports no motion");
+        assert_eq!(
+            m.report(Kind::Press, Some(Btn::Left), 3, 4, 0).unwrap(),
+            b"\x1b[<0;3;4M"
+        );
+        assert_eq!(
+            m.report(Kind::Release, Some(Btn::Left), 3, 4, 0).unwrap(),
+            b"\x1b[<0;3;4m"
+        );
+        assert_eq!(
+            m.report(Kind::Press, Some(Btn::Right), 300, 90, 16)
+                .unwrap(),
+            b"\x1b[<18;300;90M",
+            "SGR has no 223 limit"
+        );
+        assert_eq!(
+            m.report(Kind::Press, Some(Btn::WheelUp), 1, 1, 0).unwrap(),
+            b"\x1b[<64;1;1M"
+        );
+        assert_eq!(
+            m.report(Kind::Motion, Some(Btn::Left), 5, 5, 0),
+            None,
+            "1000 reports no motion"
+        );
         m.filter(b"\x1b[?1002h");
-        assert_eq!(m.report(Kind::Motion, Some(Btn::Left), 5, 5, 0).unwrap(), b"\x1b[<32;5;5M");
-        assert_eq!(m.report(Kind::Motion, None, 5, 5, 0), None, "1002 reports only drags");
+        assert_eq!(
+            m.report(Kind::Motion, Some(Btn::Left), 5, 5, 0).unwrap(),
+            b"\x1b[<32;5;5M"
+        );
+        assert_eq!(
+            m.report(Kind::Motion, None, 5, 5, 0),
+            None,
+            "1002 reports only drags"
+        );
         m.filter(b"\x1b[?1003h");
-        assert_eq!(m.report(Kind::Motion, None, 5, 5, 0).unwrap(), b"\x1b[<35;5;5M");
+        assert_eq!(
+            m.report(Kind::Motion, None, 5, 5, 0).unwrap(),
+            b"\x1b[<35;5;5M"
+        );
         m.filter(b"\x1b[?1006l\x1b[?1003l\x1b[?1002l");
-        assert_eq!(m.report(Kind::Press, Some(Btn::Left), 1, 2, 0).unwrap(), [0x1b, b'[', b'M', 32, 33, 34]);
-        assert_eq!(m.report(Kind::Release, Some(Btn::Left), 1, 2, 0).unwrap(), [0x1b, b'[', b'M', 35, 33, 34]);
-        assert_eq!(m.report(Kind::Press, Some(Btn::Left), 300, 2, 0), None, "legacy cannot encode column 300");
+        assert_eq!(
+            m.report(Kind::Press, Some(Btn::Left), 1, 2, 0).unwrap(),
+            [0x1b, b'[', b'M', 32, 33, 34]
+        );
+        assert_eq!(
+            m.report(Kind::Release, Some(Btn::Left), 1, 2, 0).unwrap(),
+            [0x1b, b'[', b'M', 35, 33, 34]
+        );
+        assert_eq!(
+            m.report(Kind::Press, Some(Btn::Left), 300, 2, 0),
+            None,
+            "legacy cannot encode column 300"
+        );
     }
     fn gpm_event(buttons: u8, mods: u8, x: i16, y: i16, kind: i32, wdy: i16) -> Vec<u8> {
         let mut v = vec![buttons, mods];
@@ -728,14 +941,40 @@ mod tests {
         let mut m = MouseModes::default();
         m.filter(b"\x1b[?1002h\x1b[?1006h");
         let mut p = Pointer::new(100, 30, [8, 16]);
-        assert_eq!(p.gpm(&gpm_event(4, 0, 10, 5, GPM_DOWN | 16, 0), 100, 30, &m), b"\x1b[<0;10;5M");
-        assert_eq!(p.gpm(&gpm_event(4, 0, 12, 5, GPM_DRAG, 0), 100, 30, &m), b"\x1b[<32;12;5M");
-        assert_eq!(p.gpm(&gpm_event(4, 0, 12, 5, GPM_UP, 0), 100, 30, &m), b"\x1b[<0;12;5m");
-        assert_eq!(p.gpm(&gpm_event(0, 4, 12, 5, GPM_MOVE, 2), 100, 30, &m), b"\x1b[<80;12;5M\x1b[<80;12;5M", "ctrl + wheel up x2");
-        assert_eq!(p.gpm(&gpm_event(0, 0, 500, 500, GPM_MOVE, 0), 100, 30, &m), b"", "clamped to the screen; no drag without a button");
+        assert_eq!(
+            p.gpm(&gpm_event(4, 0, 10, 5, GPM_DOWN | 16, 0), 100, 30, &m),
+            b"\x1b[<0;10;5M"
+        );
+        assert_eq!(
+            p.gpm(&gpm_event(4, 0, 12, 5, GPM_DRAG, 0), 100, 30, &m),
+            b"\x1b[<32;12;5M"
+        );
+        assert_eq!(
+            p.gpm(&gpm_event(4, 0, 12, 5, GPM_UP, 0), 100, 30, &m),
+            b"\x1b[<0;12;5m"
+        );
+        assert_eq!(
+            p.gpm(&gpm_event(0, 4, 12, 5, GPM_MOVE, 2), 100, 30, &m),
+            b"\x1b[<80;12;5M\x1b[<80;12;5M",
+            "ctrl + wheel up x2"
+        );
+        assert_eq!(
+            p.gpm(&gpm_event(0, 0, 500, 500, GPM_MOVE, 0), 100, 30, &m),
+            b"",
+            "clamped to the screen; no drag without a button"
+        );
         assert_eq!((p.x, p.y), (100, 30));
         m.filter(b"\x1b[?1002l");
-        assert_eq!(p.gpm(&gpm_event(1, 0, 3, 3, GPM_DOWN, 0), 100, 30, &MouseModes::default()), b"", "tracking off: no reports");
+        assert_eq!(
+            p.gpm(
+                &gpm_event(1, 0, 3, 3, GPM_DOWN, 0),
+                100,
+                30,
+                &MouseModes::default()
+            ),
+            b"",
+            "tracking off: no reports"
+        );
     }
     #[test]
     fn evdev_motion_crosses_cells_and_clicks() {
@@ -744,7 +983,10 @@ mod tests {
         let mut p = Pointer::new(80, 24, [8, 16]);
         assert_eq!((p.x, p.y), (40, 12));
         assert!(p.evdev(2, 0, 3, 80, 24, &m).is_empty());
-        assert!(p.evdev(0, 0, 0, 80, 24, &m).is_empty(), "1000: motion is never reported");
+        assert!(
+            p.evdev(0, 0, 0, 80, 24, &m).is_empty(),
+            "1000: motion is never reported"
+        );
         assert_eq!((p.x, p.y), (40, 12), "3 px stays inside the cell");
         p.evdev(2, 0, 16, 80, 24, &m);
         p.evdev(2, 1, -32, 80, 24, &m);

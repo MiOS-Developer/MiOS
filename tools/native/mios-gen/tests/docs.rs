@@ -569,8 +569,10 @@ mod render_manpages {
         let ver_dst = td_root.join("VERSION");
         fs::copy(&ver_src, &ver_dst).unwrap();
 
-        let ch01_src = root.join("usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md");
-        let ch01_dst = td_root.join("usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md");
+        let ch01_src =
+            root.join("usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md");
+        let ch01_dst =
+            td_root.join("usr/share/doc/mios/manual/ch01-introduction-and-core-concepts.md");
         fs::create_dir_all(ch01_dst.parent().unwrap()).unwrap();
         if ch01_src.exists() {
             fs::copy(&ch01_src, &ch01_dst).unwrap();
@@ -609,7 +611,8 @@ mod render_manpages {
             stderr
         );
         assert!(
-            stdout.contains("page(s) rendered and validated") || stdout.contains("page(s) validated"),
+            stdout.contains("page(s) rendered and validated")
+                || stdout.contains("page(s) validated"),
             "Expected validation confirmation message in stdout, got:\n{stdout}"
         );
         assert!(
@@ -739,11 +742,7 @@ mod render_manpages {
             );
 
             let write_foreign = Command::new(bin())
-                .args([
-                    "render-manpages",
-                    "--root",
-                    &td_root.to_string_lossy(),
-                ])
+                .args(["render-manpages", "--root", &td_root.to_string_lossy()])
                 .output()
                 .expect("Failed to execute mios-gen write on foreign manpage tree");
 

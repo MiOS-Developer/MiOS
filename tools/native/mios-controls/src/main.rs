@@ -38,12 +38,18 @@ pub struct Report {
 
 /// [desktop.controls] string tunable.
 pub fn controls_str(merged: &Value, key: &str, fallback: &str) -> String {
-    at(merged, &format!("desktop.controls.{key}")).and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(fallback).to_owned()
+    at(merged, &format!("desktop.controls.{key}"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(fallback)
+        .to_owned()
 }
 
 /// [desktop.controls] integer tunable (absent or negative = automatic).
 pub fn controls_int(merged: &Value, key: &str) -> Option<i64> {
-    at(merged, &format!("desktop.controls.{key}")).and_then(Value::as_integer).filter(|v| *v >= 0)
+    at(merged, &format!("desktop.controls.{key}"))
+        .and_then(Value::as_integer)
+        .filter(|v| *v >= 0)
 }
 
 /// Create a new private file; never overwrite an existing one.
@@ -54,7 +60,8 @@ pub fn write_private_new(path: &Path, text: &str) -> Result<(), String> {
         .mode(0o600)
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    f.write_all(text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))
+    f.write_all(text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 const USAGE: &str = "Usage: mios-controls [--root DIR] [VERB]
@@ -92,7 +99,14 @@ struct Args {
 }
 
 fn parse_args(raw: Vec<String>) -> Result<Args, String> {
-    let mut a = Args { root: PathBuf::from("/"), verb: None, pos: Vec::new(), opts: Vec::new(), apply: false, json: false };
+    let mut a = Args {
+        root: PathBuf::from("/"),
+        verb: None,
+        pos: Vec::new(),
+        opts: Vec::new(),
+        apply: false,
+        json: false,
+    };
     let mut it = raw.into_iter();
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -126,11 +140,21 @@ fn flatten(v: Option<&Value>, prefix: &str, out: &mut Vec<(String, String)>) {
 }
 
 fn opt<'a>(a: &'a Args, k: &str) -> Option<&'a str> {
-    a.opts.iter().rev().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
+    a.opts
+        .iter()
+        .rev()
+        .find(|(n, _)| n == k)
+        .map(|(_, v)| v.as_str())
 }
 
 fn list_value(v: &str) -> Value {
-    Value::Array(v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(|s| Value::String(s.into())).collect())
+    Value::Array(
+        v.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| Value::String(s.into()))
+            .collect(),
+    )
 }
 
 fn edit_binding(b: &mut toml::Table, a: &Args, sep: &str) -> Result<(), String> {
@@ -140,7 +164,8 @@ fn edit_binding(b: &mut toml::Table, a: &Args, sep: &str) -> Result<(), String> 
                 b.remove("bypass");
                 continue;
             }
-            mios_resolver::keybindings::normalize_chord(v, sep).map_err(|e| format!("{key} {v:?}: {e}"))?;
+            mios_resolver::keybindings::normalize_chord(v, sep)
+                .map_err(|e| format!("{key} {v:?}: {e}"))?;
             b.insert(key.into(), Value::String(v.into()));
         }
     }
@@ -157,7 +182,10 @@ fn edit_binding(b: &mut toml::Table, a: &Args, sep: &str) -> Result<(), String> 
         }
     }
     if let Some(v) = opt(a, "tier") {
-        b.insert("tier".into(), Value::Integer(v.parse().map_err(|_| "--tier must be an integer")?));
+        b.insert(
+            "tier".into(),
+            Value::Integer(v.parse().map_err(|_| "--tier must be an integer")?),
+        );
     }
     Ok(())
 }
@@ -179,15 +207,26 @@ fn finish(layers: &Layers, draft: &Draft, apply: bool) -> Result<ExitCode, Strin
             let mut node = &mut preview;
             let segs: Vec<&str> = path.split('.').collect();
             for s in &segs[..segs.len() - 1] {
-                node = node.entry(s.to_string()).or_insert_with(|| Value::Table(toml::Table::new())).as_table_mut().ok_or("preview")?;
+                node = node
+                    .entry(s.to_string())
+                    .or_insert_with(|| Value::Table(toml::Table::new()))
+                    .as_table_mut()
+                    .ok_or("preview")?;
             }
             node.insert(segs[segs.len() - 1].to_owned(), v.clone());
         }
     }
     if preview.is_empty() {
-        println!("# user tier carries no binding overrides after this change ({})", layers.user_path.display());
+        println!(
+            "# user tier carries no binding overrides after this change ({})",
+            layers.user_path.display()
+        );
     } else {
-        println!("# user-tier binding paths after this change ({}):\n{}", layers.user_path.display(), toml::to_string(&preview).map_err(|e| e.to_string())?);
+        println!(
+            "# user-tier binding paths after this change ({}):\n{}",
+            layers.user_path.display(),
+            toml::to_string(&preview).map_err(|e| e.to_string())?
+        );
     }
     println!("validation: {}", outcome.summary);
     for f in &new {
@@ -206,7 +245,13 @@ fn finish(layers: &Layers, draft: &Draft, apply: bool) -> Result<ExitCode, Strin
     }
     let suffix = controls_str(&merged, "backup_suffix", "controls-backup");
     let backup = apply::apply(layers, &text, &suffix)?;
-    println!("applied to {}{}", layers.user_path.display(), backup.map(|b| format!(" (previous tier: {})", b.display())).unwrap_or_default());
+    println!(
+        "applied to {}{}",
+        layers.user_path.display(),
+        backup
+            .map(|b| format!(" (previous tier: {})", b.display()))
+            .unwrap_or_default()
+    );
     println!("the compositor picks it up on its next configuration reload");
     Ok(ExitCode::SUCCESS)
 }
@@ -241,22 +286,44 @@ fn use_json(u: &bindmap::Use, flagged: bool) -> serde_json::Value {
     })
 }
 
-fn print_uses(uses: &[bindmap::Use], idx: &[usize], flagged: &std::collections::BTreeSet<usize>, json: bool) {
+fn print_uses(
+    uses: &[bindmap::Use],
+    idx: &[usize],
+    flagged: &std::collections::BTreeSet<usize>,
+    json: bool,
+) {
     if json {
-        println!("{}", serde_json::Value::Array(idx.iter().map(|i| use_json(&uses[*i], flagged.contains(i))).collect()));
+        println!(
+            "{}",
+            serde_json::Value::Array(
+                idx.iter()
+                    .map(|i| use_json(&uses[*i], flagged.contains(i)))
+                    .collect()
+            )
+        );
         return;
     }
     for i in idx {
         let u = &uses[*i];
         println!(
             "{}{:<8} {:<18} {:<24} {:<28} {}{}",
-            if flagged.contains(i) { "!" } else if u.editable() { " " } else { "-" },
+            if flagged.contains(i) {
+                "!"
+            } else if u.editable() {
+                " "
+            } else {
+                "-"
+            },
             u.source.word(),
             bindmap::layer_title(&u.layer),
             u.chord,
             u.action,
             u.label,
-            if u.note.is_empty() { String::new() } else { format!(" ({})", u.note) }
+            if u.note.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", u.note)
+            }
         );
     }
 }
@@ -275,21 +342,46 @@ fn session_lua(layers: &Layers, merged: &Value) -> Option<String> {
 fn run(a: Args) -> Result<ExitCode, String> {
     if a.verb.as_deref() == Some("devices") {
         let d = devices::scan();
-        let fams = Layers::load(&a.root).map(|l| devices::Family::from_ssot(&l.effective())).unwrap_or_else(|_| vec![devices::Family::generic()]);
+        let fams = Layers::load(&a.root)
+            .map(|l| devices::Family::from_ssot(&l.effective()))
+            .unwrap_or_else(|_| vec![devices::Family::generic()]);
         if a.json {
-            println!("{}", serde_json::Value::Array(d.iter().map(|d| device_json(d, &fams)).collect()));
+            println!(
+                "{}",
+                serde_json::Value::Array(d.iter().map(|d| device_json(d, &fams)).collect())
+            );
         } else {
             for d in d {
-                let fam = if d.kind == devices::Kind::Controller { format!(" [{}]", d.family(&fams).id) } else { String::new() };
-                let flag = if d.is_virtual() { " (mios-inputd virtual)" } else if d.is_fixture() { " (fixture)" } else { "" };
-                println!("{:<10} {}{fam}{flag}  ({}; {:04x}:{:04x})", d.kind.word(), d.name, d.handlers, d.vendor, d.product);
+                let fam = if d.kind == devices::Kind::Controller {
+                    format!(" [{}]", d.family(&fams).id)
+                } else {
+                    String::new()
+                };
+                let flag = if d.is_virtual() {
+                    " (mios-inputd virtual)"
+                } else if d.is_fixture() {
+                    " (fixture)"
+                } else {
+                    ""
+                };
+                println!(
+                    "{:<10} {}{fam}{flag}  ({}; {:04x}:{:04x})",
+                    d.kind.word(),
+                    d.name,
+                    d.handlers,
+                    d.vendor,
+                    d.product
+                );
             }
         }
         return Ok(ExitCode::SUCCESS);
     }
     let layers = Layers::load(&a.root)?;
     let merged = layers.effective();
-    let sep = at(&merged, "keybindings.global.chord_sep").and_then(Value::as_str).unwrap_or(" ").to_owned();
+    let sep = at(&merged, "keybindings.global.chord_sep")
+        .and_then(Value::as_str)
+        .unwrap_or(" ")
+        .to_owned();
     let mut draft = Draft::from_merged(&merged);
     let need = |n: usize| -> Result<(), String> {
         if a.pos.len() < n {
@@ -301,7 +393,9 @@ fn run(a: Args) -> Result<ExitCode, String> {
     match a.verb.as_deref() {
         None => {
             if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-                return Err("the editor needs a terminal; use a verb (see --help) for headless use".into());
+                return Err(
+                    "the editor needs a terminal; use a verb (see --help) for headless use".into(),
+                );
             }
             tui::run(layers)?;
             Ok(ExitCode::SUCCESS)
@@ -324,24 +418,58 @@ fn run(a: Args) -> Result<ExitCode, String> {
                 println!("{v}");
             } else {
                 for b in &draft.bindings {
-                    println!("{:<26} t{} {:<22} {}", field(b, "id"), b.get("tier").and_then(Value::as_integer).unwrap_or(0), field(b, "chord"), field(b, "action"));
+                    println!(
+                        "{:<26} t{} {:<22} {}",
+                        field(b, "id"),
+                        b.get("tier").and_then(Value::as_integer).unwrap_or(0),
+                        field(b, "chord"),
+                        field(b, "action")
+                    );
                 }
                 for (k, v) in &draft.system_layer {
                     println!("{:<26} Guide+{k} {v}", "controller.system_layer");
                 }
                 for (k, v) in &draft.room {
-                    println!("{:<26} {k} {}", "controller.room", v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string()));
+                    println!(
+                        "{:<26} {k} {}",
+                        "controller.room",
+                        v.as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| v.to_string())
+                    );
                 }
-                println!("{:<26} {} (tap: Hypr3D room, hold: release capture)", "controller.toggle_chord", model::toggle_chord(&merged).join("+"));
-                println!("{:<26} {} (half-capture)", "controller.mode_override", model::str_list(at(&merged, "keybindings.global.controller.mode_override_chord")).join("+"));
+                println!(
+                    "{:<26} {} (tap: Hypr3D room, hold: release capture)",
+                    "controller.toggle_chord",
+                    model::toggle_chord(&merged).join("+")
+                );
+                println!(
+                    "{:<26} {} (half-capture)",
+                    "controller.mode_override",
+                    model::str_list(at(
+                        &merged,
+                        "keybindings.global.controller.mode_override_chord"
+                    ))
+                    .join("+")
+                );
                 let mut rows = Vec::new();
-                flatten(at(&merged, "keybindings.global.controller.nav"), "controller.nav", &mut rows);
+                flatten(
+                    at(&merged, "keybindings.global.controller.nav"),
+                    "controller.nav",
+                    &mut rows,
+                );
                 for (k, v) in rows {
                     println!("{k:<26} {v}");
                 }
-                if let Some(t) = at(&merged, "desktop.hyprland.hypr3d.controller").and_then(Value::as_table) {
+                if let Some(t) =
+                    at(&merged, "desktop.hyprland.hypr3d.controller").and_then(Value::as_table)
+                {
                     for (k, v) in t.iter().filter(|(k, _)| k.ends_with("_button")) {
-                        println!("{:<26} {k} {}", "controller.hypr3d", v.as_str().unwrap_or(""));
+                        println!(
+                            "{:<26} {k} {}",
+                            "controller.hypr3d",
+                            v.as_str().unwrap_or("")
+                        );
                     }
                 }
             }
@@ -361,26 +489,65 @@ fn run(a: Args) -> Result<ExitCode, String> {
                 "uses" => {
                     need(1)?;
                     let (input, layer) = tui::normalize_input(&a.pos[0])?;
-                    (0..uses.len()).filter(|i| uses[*i].input == input && layer.as_deref().is_none_or(|l| uses[*i].layer == l)).collect()
+                    (0..uses.len())
+                        .filter(|i| {
+                            uses[*i].input == input
+                                && layer.as_deref().is_none_or(|l| uses[*i].layer == l)
+                        })
+                        .collect()
                 }
                 "search" => {
                     need(1)?;
-                    (0..uses.len()).filter(|i| uses[*i].matches(&a.pos.join(" "))).collect()
+                    (0..uses.len())
+                        .filter(|i| uses[*i].matches(&a.pos.join(" ")))
+                        .collect()
                 }
                 _ => flagged.iter().copied().collect(),
             };
             print_uses(&uses, &idx, &flagged, a.json);
             if idx.is_empty() && !a.json {
-                eprintln!("mios-controls: {}", if verb == "conflicts" { "no conflicts".to_owned() } else { format!("nothing bound to {}", a.pos.join(" ")) });
+                eprintln!(
+                    "mios-controls: {}",
+                    if verb == "conflicts" {
+                        "no conflicts".to_owned()
+                    } else {
+                        format!("nothing bound to {}", a.pos.join(" "))
+                    }
+                );
             }
-            Ok(if verb == "conflicts" && !idx.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS })
+            Ok(if verb == "conflicts" && !idx.is_empty() {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
         }
         Some("layout") => {
             need(1)?;
-            let num = |k: &str, d: u16| opt(&a, k).map(|v| v.parse::<u16>().map_err(|_| format!("--{k} must be a number"))).transpose().map(|v| v.unwrap_or(d));
+            let num = |k: &str, d: u16| {
+                opt(&a, k)
+                    .map(|v| {
+                        v.parse::<u16>()
+                            .map_err(|_| format!("--{k} must be a number"))
+                    })
+                    .transpose()
+                    .map(|v| v.unwrap_or(d))
+            };
             let (w, h) = (num("width", 170)?, num("height", 46)?);
             let lua = session_lua(&layers, &merged);
-            print!("{}", tui::render_drawing(layers, &a.pos[0], w.clamp(20, 400), h.clamp(8, 200), opt(&a, "family"), opt(&a, "layer"), opt(&a, "glyphs"), lua, opt(&a, "select"))?);
+            print!(
+                "{}",
+                tui::render_drawing(
+                    layers,
+                    &a.pos[0],
+                    w.clamp(20, 400),
+                    h.clamp(8, 200),
+                    opt(&a, "family"),
+                    opt(&a, "layer"),
+                    opt(&a, "glyphs"),
+                    lua,
+                    opt(&a, "select")
+                )?
+            );
             Ok(ExitCode::SUCCESS)
         }
         Some("profile") => {
@@ -388,7 +555,18 @@ fn run(a: Args) -> Result<ExitCode, String> {
             let devs = devices::scan();
             let fams = devices::Family::from_ssot(&merged);
             let q = a.pos.join(" ");
-            let d = q.parse::<usize>().ok().and_then(|i| devs.get(i)).or_else(|| devs.iter().find(|d| d.name.to_ascii_lowercase().contains(&q.to_ascii_lowercase()))).ok_or_else(|| format!("no device {q:?} (see mios-controls devices)"))?;
+            let d = q
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| devs.get(i))
+                .or_else(|| {
+                    devs.iter().find(|d| {
+                        d.name
+                            .to_ascii_lowercase()
+                            .contains(&q.to_ascii_lowercase())
+                    })
+                })
+                .ok_or_else(|| format!("no device {q:?} (see mios-controls devices)"))?;
             let kind = match d.kind {
                 devices::Kind::Keyboard => "key",
                 devices::Kind::Mouse => "mouse",
@@ -399,7 +577,9 @@ fn run(a: Args) -> Result<ExitCode, String> {
             let flagged = bindmap::conflicts(&uses);
             // The device's profile: what is bound on the inputs it has, and (apart) what is bound on inputs it lacks.
             let absent = tui::absent_inputs(d);
-            let (idx, missing): (Vec<usize>, Vec<usize>) = (0..uses.len()).filter(|i| uses[*i].kind() == kind).partition(|i| !absent.contains(&uses[*i].input));
+            let (idx, missing): (Vec<usize>, Vec<usize>) = (0..uses.len())
+                .filter(|i| uses[*i].kind() == kind)
+                .partition(|i| !absent.contains(&uses[*i].input));
             if a.json {
                 let mut dj = device_json(d, &fams);
                 dj["absent"] = serde_json::json!(absent);
@@ -408,7 +588,14 @@ fn run(a: Args) -> Result<ExitCode, String> {
                     serde_json::json!({"device": dj, "uses": idx.iter().map(|i| use_json(&uses[*i], flagged.contains(i))).collect::<Vec<_>>(), "unreachable": missing.iter().map(|i| use_json(&uses[*i], flagged.contains(i))).collect::<Vec<_>>()})
                 );
             } else {
-                println!("{} ({}, {:04x}:{:04x}, {})", d.name, d.kind.word(), d.vendor, d.product, d.event().unwrap_or("-"));
+                println!(
+                    "{} ({}, {:04x}:{:04x}, {})",
+                    d.name,
+                    d.kind.word(),
+                    d.vendor,
+                    d.product,
+                    d.event().unwrap_or("-")
+                );
                 if d.kind == devices::Kind::Controller {
                     let f = d.family(&fams);
                     println!("family {} ({} layout)", f.title, f.layout);
@@ -432,7 +619,11 @@ fn run(a: Args) -> Result<ExitCode, String> {
         }
         Some("room") => {
             need(2)?;
-            let v = if a.pos[1].contains(',') { list_value(&a.pos[1]) } else { Value::String(a.pos[1].clone()) };
+            let v = if a.pos[1].contains(',') {
+                list_value(&a.pos[1])
+            } else {
+                Value::String(a.pos[1].clone())
+            };
             draft.room.insert(a.pos[0].clone(), v);
             finish(&layers, &draft, a.apply)
         }
@@ -442,18 +633,28 @@ fn run(a: Args) -> Result<ExitCode, String> {
             for f in &o.findings {
                 println!("FINDING: {f}");
             }
-            Ok(if o.findings.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(1) })
+            Ok(if o.findings.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
         }
         Some("set") => {
             need(1)?;
-            let i = draft.index(&a.pos[0]).ok_or_else(|| format!("no binding {}", a.pos[0]))?;
+            let i = draft
+                .index(&a.pos[0])
+                .ok_or_else(|| format!("no binding {}", a.pos[0]))?;
             edit_binding(&mut draft.bindings[i], &a, &sep)?;
             finish(&layers, &draft, a.apply)
         }
         Some("add") => {
             need(1)?;
             let id = &a.pos[0];
-            if id.is_empty() || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+            if id.is_empty()
+                || !id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            {
                 return Err("id must be non-empty [a-z0-9-]".into());
             }
             if draft.index(id).is_some() {
@@ -471,25 +672,33 @@ fn run(a: Args) -> Result<ExitCode, String> {
         }
         Some("remove") => {
             need(1)?;
-            let i = draft.index(&a.pos[0]).ok_or_else(|| format!("no binding {}", a.pos[0]))?;
+            let i = draft
+                .index(&a.pos[0])
+                .ok_or_else(|| format!("no binding {}", a.pos[0]))?;
             draft.bindings.remove(i);
             finish(&layers, &draft, a.apply)
         }
         Some("pad") => {
             need(2)?;
-            draft.system_layer.insert(a.pos[0].clone(), a.pos[1].clone());
+            draft
+                .system_layer
+                .insert(a.pos[0].clone(), a.pos[1].clone());
             finish(&layers, &draft, a.apply)
         }
         Some("restore-defaults") => finish(&layers, &layers.defaults(), a.apply),
         Some("export") => {
             need(1)?;
-            write_private_new(Path::new(&a.pos[0]), &model::keybindings_fragment(&draft, &layers.editable())?)?;
+            write_private_new(
+                Path::new(&a.pos[0]),
+                &model::keybindings_fragment(&draft, &layers.editable())?,
+            )?;
             println!("exported {} binding(s), {} Guide-layer and {} room button(s), {} tmux-os key(s) to {}", draft.bindings.len(), draft.system_layer.len(), draft.room.len(), draft.tmux.len(), a.pos[0]);
             Ok(ExitCode::SUCCESS)
         }
         Some("import") => {
             need(1)?;
-            let text = std::fs::read_to_string(&a.pos[0]).map_err(|e| format!("{}: {e}", a.pos[0]))?;
+            let text =
+                std::fs::read_to_string(&a.pos[0]).map_err(|e| format!("{}: {e}", a.pos[0]))?;
             let imported = model::import_fragment(&text, &draft, &layers.editable())?;
             finish(&layers, &imported, a.apply)
         }
@@ -502,7 +711,12 @@ fn run(a: Args) -> Result<ExitCode, String> {
 fn quiet_broken_pipe() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let msg = info.payload().downcast_ref::<String>().map(String::as_str).or_else(|| info.payload().downcast_ref::<&str>().copied()).unwrap_or("");
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("");
         if msg.starts_with("failed printing to stdout") && msg.contains("Broken pipe") {
             std::process::exit(141);
         }

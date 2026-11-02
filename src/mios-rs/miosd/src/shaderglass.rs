@@ -311,28 +311,46 @@ impl<'a> Section<'a> {
     fn of(doc: &'a Value, path: &str) -> Result<Self, String> {
         get(doc, path)
             .filter(|v| v.is_table())
-            .map(|v| Section { v, name: path.to_owned() })
+            .map(|v| Section {
+                v,
+                name: path.to_owned(),
+            })
             .ok_or_else(|| format!("missing [{path}]"))
     }
     fn sub(&self, key: &str) -> Result<Section<'a>, String> {
         self.v
             .get(key)
             .filter(|v| v.is_table())
-            .map(|v| Section { v, name: format!("{}.{key}", self.name) })
+            .map(|v| Section {
+                v,
+                name: format!("{}.{key}", self.name),
+            })
             .ok_or_else(|| format!("missing [{}.{key}]", self.name))
     }
     fn err(&self, key: &str, what: &str) -> String {
         format!("{}.{key} must be {what}", self.name)
     }
     fn any_str(&self, key: &str) -> Result<String, String> {
-        self.v.get(key).and_then(Value::as_str).map(str::to_owned).ok_or_else(|| self.err(key, "a string"))
+        self.v
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| self.err(key, "a string"))
     }
     fn str(&self, key: &str) -> Result<String, String> {
-        self.any_str(key).and_then(|s| if s.is_empty() { Err(self.err(key, "a nonempty string")) } else { Ok(s) })
+        self.any_str(key).and_then(|s| {
+            if s.is_empty() {
+                Err(self.err(key, "a nonempty string"))
+            } else {
+                Ok(s)
+            }
+        })
     }
     fn word(&self, key: &str) -> Result<String, String> {
         self.str(key).and_then(|s| {
-            if s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+            if s.bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            {
                 Ok(s)
             } else {
                 Err(self.err(key, "a [A-Za-z0-9_-] word"))
@@ -349,7 +367,10 @@ impl<'a> Section<'a> {
         })
     }
     fn boolean(&self, key: &str) -> Result<bool, String> {
-        self.v.get(key).and_then(Value::as_bool).ok_or_else(|| self.err(key, "a boolean"))
+        self.v
+            .get(key)
+            .and_then(Value::as_bool)
+            .ok_or_else(|| self.err(key, "a boolean"))
     }
     fn num(&self, key: &str) -> Result<f64, String> {
         match self.v.get(key) {
@@ -369,7 +390,11 @@ impl<'a> Section<'a> {
         self.v
             .get(key)
             .and_then(Value::as_array)
-            .and_then(|a| a.iter().map(|x| x.as_str().map(str::to_owned)).collect::<Option<Vec<_>>>())
+            .and_then(|a| {
+                a.iter()
+                    .map(|x| x.as_str().map(str::to_owned))
+                    .collect::<Option<Vec<_>>>()
+            })
             .ok_or_else(|| self.err(key, "a list of strings"))
     }
     fn regex(&self, key: &str) -> Result<Regex, String> {
@@ -385,7 +410,9 @@ impl<'a> Section<'a> {
 fn runtime_relative(st: &Section, key: &str) -> Result<String, String> {
     let p = st.str(key)?;
     if p.starts_with('/') || p.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
-        return Err(format!("desktop.shaderglass.state.{key} must be a relative file path under $XDG_RUNTIME_DIR"));
+        return Err(format!(
+            "desktop.shaderglass.state.{key} must be a relative file path under $XDG_RUNTIME_DIR"
+        ));
     }
     Ok(p)
 }
@@ -408,8 +435,15 @@ impl Config {
         let st = t.sub("state")?;
         let x = Section::of(doc, "desktop.hyprland.xdph")?;
         let app_id = t.str("app_id")?;
-        if !app_id.contains('.') || !app_id.bytes().all(|ch| ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_') {
-            return Err("desktop.shaderglass.app_id must be a reverse-DNS application id without dashes".into());
+        if !app_id.contains('.')
+            || !app_id
+                .bytes()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'_')
+        {
+            return Err(
+                "desktop.shaderglass.app_id must be a reverse-DNS application id without dashes"
+                    .into(),
+            );
         }
         let memory_max = t.str("memory_max")?;
         if !size_value(&memory_max) {
@@ -420,7 +454,9 @@ impl Config {
         if !install_files.contains(&exe) || !install_files.iter().any(|n| n == "LICENSE") {
             return Err("desktop.shaderglass.install_files must list exe and LICENSE".into());
         }
-        if install_files.iter().any(|n| n.contains('/') || n.starts_with('.') || n == "WineCap.dll" || n == "INSTALLED.json") {
+        if install_files.iter().any(|n| {
+            n.contains('/') || n.starts_with('.') || n == "WineCap.dll" || n == "INSTALLED.json"
+        }) {
             return Err("desktop.shaderglass.install_files are plain root names (WineCap.dll and INSTALLED.json are written by install)".into());
         }
         let profile = f_profile(&t.sub("profile")?)?;
@@ -497,7 +533,9 @@ impl Config {
             capture: CaptureCfg {
                 source_types: {
                     let v = c.str("source_types")?;
-                    if v.split(',').any(|s| !["monitor", "window", "virtual"].contains(&s.trim())) {
+                    if v.split(',')
+                        .any(|s| !["monitor", "window", "virtual"].contains(&s.trim()))
+                    {
                         return Err("desktop.shaderglass.capture.source_types is a comma list of monitor,window,virtual".into());
                     }
                     v
@@ -519,7 +557,10 @@ impl Config {
                 patches: {
                     let p = wc.list("patches")?;
                     if p.iter().any(|x| x.starts_with('/') || x.contains("..")) {
-                        return Err("desktop.shaderglass.winecap.patches are repository-relative paths".into());
+                        return Err(
+                            "desktop.shaderglass.winecap.patches are repository-relative paths"
+                                .into(),
+                        );
                     }
                     p
                 },
@@ -545,7 +586,10 @@ impl Config {
                 config: {
                     let p = x.str("config")?;
                     if p.starts_with('/') || p.split('/').any(|s| s.is_empty() || s == "..") {
-                        return Err("desktop.hyprland.xdph.config must be relative to $XDG_CONFIG_HOME".into());
+                        return Err(
+                            "desktop.hyprland.xdph.config must be relative to $XDG_CONFIG_HOME"
+                                .into(),
+                        );
                     }
                     p
                 },
@@ -573,10 +617,20 @@ impl Config {
                 resume: st.boolean("resume")?,
                 strip_keys: {
                     let k = st.list("strip_keys")?;
-                    if k.iter().any(|x| x.is_empty() || !x.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')) {
+                    if k.iter().any(|x| {
+                        x.is_empty()
+                            || !x
+                                .bytes()
+                                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                    }) {
                         return Err("desktop.shaderglass.state.strip_keys are ShaderGlass profile mnemonics".into());
                     }
-                    for need in ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat"] {
+                    for need in [
+                        "CaptureWindow",
+                        "CaptureDesktop",
+                        "CaptureDevice",
+                        "CaptureFormat",
+                    ] {
                         if !k.iter().any(|x| x == need) {
                             return Err(format!("desktop.shaderglass.state.strip_keys must strip {need} (miosd chooses the capture source)"));
                         }
@@ -588,13 +642,19 @@ impl Config {
             },
         };
         if cfg.state.runtime_state == cfg.state.room_requests {
-            return Err("desktop.shaderglass.state runtime_state and room_requests must differ".into());
+            return Err(
+                "desktop.shaderglass.state runtime_state and room_requests must differ".into(),
+            );
         }
         if cfg.cycle_shortcut == cfg.setup_shortcut {
-            return Err("desktop.shaderglass.launch cycle_shortcut and setup_shortcut must differ".into());
+            return Err(
+                "desktop.shaderglass.launch cycle_shortcut and setup_shortcut must differ".into(),
+            );
         }
         if cfg.window.pane_tag == cfg.window.passthrough_tag {
-            return Err("desktop.shaderglass.window pane_tag and passthrough_tag must differ".into());
+            return Err(
+                "desktop.shaderglass.window pane_tag and passthrough_tag must differ".into(),
+            );
         }
         if cfg.capture.restore_tokens && cfg.winecap.source == WinecapSource::Release {
             eprintln!("[miosd shaderglass] capture.restore_tokens needs the patched WineCap (winecap.source = build): tokens stay unused");
@@ -603,22 +663,33 @@ impl Config {
     }
 
     pub fn load() -> Result<Self, String> {
-        let doc = mios_resolver::resolve_merged(Some(&mios_root()), false).map_err(|e| e.to_string())?;
+        let doc =
+            mios_resolver::resolve_merged(Some(&mios_root()), false).map_err(|e| e.to_string())?;
         Self::from_ssot(&doc)
     }
 }
 
 fn f_profile(p: &Section) -> Result<Vec<(String, String)>, String> {
-    let table = p.v.as_table().ok_or("desktop.shaderglass.profile must be a table")?;
+    let table =
+        p.v.as_table()
+            .ok_or("desktop.shaderglass.profile must be a table")?;
     let mut out = Vec::new();
     for (k, v) in table {
-        if !k.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
-            return Err(format!("desktop.shaderglass.profile key {k:?} is not a ShaderGlass profile mnemonic"));
+        if !k
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
+            return Err(format!(
+                "desktop.shaderglass.profile key {k:?} is not a ShaderGlass profile mnemonic"
+            ));
         }
         if k == "CaptureWindow" {
             return Err("desktop.shaderglass.profile must not name a CaptureWindow (miosd chooses the target)".into());
         }
-        let v = v.as_str().filter(|s| !s.chars().any(char::is_control)).ok_or(format!("desktop.shaderglass.profile.{k} must be a string"))?;
+        let v = v
+            .as_str()
+            .filter(|s| !s.chars().any(char::is_control))
+            .ok_or(format!("desktop.shaderglass.profile.{k} must be a string"))?;
         out.push((k.clone(), v.to_owned()));
     }
     // ProfileVersion first, as ShaderGlass writes it.
@@ -629,30 +700,45 @@ fn f_profile(p: &Section) -> Result<Vec<(String, String)>, String> {
 // ---------------------------------------------------------------- paths and files
 
 pub(crate) fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 pub(crate) fn cache_home() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home().join(".cache"))
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home().join(".cache"))
 }
 
 fn state_home() -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home().join(".local/state"))
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home().join(".local/state"))
 }
 
 fn config_home() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home().join(".config"))
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home().join(".config"))
 }
 
 pub(crate) fn mios_root() -> PathBuf {
-    std::env::var_os("MIOS_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("MIOS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// Create `dir` (and its parents) and make `dir` itself 0700.
 pub(crate) fn ensure_private_dir(dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("{}: {e}", dir.display()))
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 /// Write `path` atomically, mode 0600.
@@ -662,7 +748,9 @@ pub(crate) fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
 
 fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
-    let dir = path.parent().ok_or_else(|| format!("{}: no parent", path.display()))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("{}: no parent", path.display()))?;
     let tmp = dir.join(format!(
         ".{}.tmp-{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("f"),
@@ -675,10 +763,13 @@ fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
         .mode(mode)
         .open(&tmp)
         .map_err(|e| format!("{}: {e}", tmp.display()))?;
-    f.write_all(data).and_then(|_| f.sync_all()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    f.write_all(data)
+        .and_then(|_| f.sync_all())
+        .map_err(|e| format!("{}: {e}", tmp.display()))?;
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))
+            .map_err(|e| e.to_string())?;
     }
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
@@ -758,20 +849,39 @@ pub fn unit_instance(primary: bool, runtime: &Path) -> String {
 }
 
 pub fn unit_name(cfg: &Config) -> String {
-    format!("app-mios-{}@{}.service", cfg.app_id, unit_instance(primary_session(), &crate::placement::runtime_dir()))
+    format!(
+        "app-mios-{}@{}.service",
+        cfg.app_id,
+        unit_instance(primary_session(), &crate::placement::runtime_dir())
+    )
 }
 
 /// The environment the supervisor unit carries over from the caller: the compositor, the SSOT tiers a test or
 /// a nested session points at, the XDG homes, and -- outside the primary session -- the private runtime
 /// directory (the user manager would otherwise hand the supervisor the primary's).
 pub const SUPERVISOR_ENV: &[&str] = &[
-    "WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_CURRENT_DESKTOP", "AQ_DRM_DEVICES", "MIOS_ROOT",
-    "MIOS_VENDOR_TOML", "MIOS_HOST_TOML", "MIOS_USER_TOML", "MIOS_USER_TOML_D", "XDG_DATA_HOME", "XDG_STATE_HOME",
-    "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "PIPEWIRE_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
+    "WAYLAND_DISPLAY",
+    "DISPLAY",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "XDG_CURRENT_DESKTOP",
+    "AQ_DRM_DEVICES",
+    "MIOS_ROOT",
+    "MIOS_VENDOR_TOML",
+    "MIOS_HOST_TOML",
+    "MIOS_USER_TOML",
+    "MIOS_USER_TOML_D",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "PIPEWIRE_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
 ];
 
 fn installed(cfg: &Config) -> Option<Json> {
-    std::fs::read(cfg.install_dir.join("INSTALLED.json")).ok().and_then(|b| serde_json::from_slice(&b).ok())
+    std::fs::read(cfg.install_dir.join("INSTALLED.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 fn require_installed(cfg: &Config) -> Result<(), String> {
@@ -797,16 +907,25 @@ fn require_enabled(cfg: &Config) -> Result<(), String> {
 
 fn control(req: &Json) -> Result<Json, String> {
     let path = control_socket()?;
-    let mut s = UnixStream::connect(&path).map_err(|e| format!("the ShaderGlass supervisor is not running ({e})"))?;
-    s.set_read_timeout(Some(Duration::from_secs(15))).map_err(|e| e.to_string())?;
-    s.write_all(format!("{req}\n").as_bytes()).map_err(|e| e.to_string())?;
+    let mut s = UnixStream::connect(&path)
+        .map_err(|e| format!("the ShaderGlass supervisor is not running ({e})"))?;
+    s.set_read_timeout(Some(Duration::from_secs(15)))
+        .map_err(|e| e.to_string())?;
+    s.write_all(format!("{req}\n").as_bytes())
+        .map_err(|e| e.to_string())?;
     let mut line = String::new();
-    BufReader::new(s).read_line(&mut line).map_err(|e| format!("supervisor: {e}"))?;
+    BufReader::new(s)
+        .read_line(&mut line)
+        .map_err(|e| format!("supervisor: {e}"))?;
     let v: Json = serde_json::from_str(&line).map_err(|e| format!("supervisor reply: {e}"))?;
     if v.get("ok") == Some(&Json::Bool(true)) {
         Ok(v)
     } else {
-        Err(v.get("error").and_then(Json::as_str).unwrap_or("the supervisor refused").to_owned())
+        Err(v
+            .get("error")
+            .and_then(Json::as_str)
+            .unwrap_or("the supervisor refused")
+            .to_owned())
     }
 }
 
@@ -816,12 +935,10 @@ fn supervisor_running() -> bool {
 
 /// The arguments of the transient unit that runs the supervisor.
 pub fn supervisor_unit_args(cfg: &Config, exe: &Path, env: &[(String, String)]) -> Vec<String> {
-    let mut a: Vec<String> = [
-        "--user", "--collect", "--quiet", "--unit",
-    ]
-    .iter()
-    .map(|s| (*s).to_owned())
-    .collect();
+    let mut a: Vec<String> = ["--user", "--collect", "--quiet", "--unit"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
     a.push(unit_name(cfg));
     a.push("--description=MiOS ShaderGlass overlay panes".into());
     for p in [
@@ -836,7 +953,12 @@ pub fn supervisor_unit_args(cfg: &Config, exe: &Path, env: &[(String, String)]) 
     // A supervisor that crashed (a panic, an abort) comes back and resumes its panes ([desktop.shaderglass.state]
     // resume); systemd's start limit bounds it, and a stop, the idle exit or a clean exit is never restarted.
     if cfg.state.resume {
-        for p in ["Restart=on-failure", "RestartSec=2", "StartLimitIntervalSec=120", "StartLimitBurst=3"] {
+        for p in [
+            "Restart=on-failure",
+            "RestartSec=2",
+            "StartLimitIntervalSec=120",
+            "StartLimitBurst=3",
+        ] {
             a.push("-p".into());
             a.push(p.into());
         }
@@ -858,10 +980,18 @@ fn start_supervisor(cfg: &Config) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut env: Vec<(String, String)> = SUPERVISOR_ENV
         .iter()
-        .filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).map(|v| ((*k).to_owned(), v)))
+        .filter_map(|k| {
+            std::env::var(k)
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(|v| ((*k).to_owned(), v))
+        })
         .collect();
     if !primary_session() {
-        env.push(("XDG_RUNTIME_DIR".into(), crate::placement::runtime_dir().display().to_string()));
+        env.push((
+            "XDG_RUNTIME_DIR".into(),
+            crate::placement::runtime_dir().display().to_string(),
+        ));
     }
     let st = Command::new("systemd-run")
         .args(supervisor_unit_args(cfg, &exe, &env))
@@ -881,7 +1011,11 @@ fn start_supervisor(cfg: &Config) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err(format!("{} did not answer (journalctl --user -u {})", unit_name(cfg), unit_name(cfg)))
+    Err(format!(
+        "{} did not answer (journalctl --user -u {})",
+        unit_name(cfg),
+        unit_name(cfg)
+    ))
 }
 
 fn resolve_window(hypr: &Hypr, window: Option<&str>) -> Result<Json, String> {
@@ -890,12 +1024,19 @@ fn resolve_window(hypr: &Hypr, window: Option<&str>) -> Result<Json, String> {
             let a = addr(a);
             hypr.json("clients")?
                 .as_array()
-                .and_then(|v| v.iter().find(|c| c.get("address").and_then(Json::as_str) == Some(a.as_str())).cloned())
+                .and_then(|v| {
+                    v.iter()
+                        .find(|c| c.get("address").and_then(Json::as_str) == Some(a.as_str()))
+                        .cloned()
+                })
                 .ok_or_else(|| format!("no window {a}"))
         }
         None => {
             let c = hypr.json("activewindow")?;
-            if c.get("address").and_then(Json::as_str).is_some_and(|a| !a.is_empty()) {
+            if c.get("address")
+                .and_then(Json::as_str)
+                .is_some_and(|a| !a.is_empty())
+            {
                 Ok(c)
             } else {
                 Err("no active window".into())
@@ -905,14 +1046,19 @@ fn resolve_window(hypr: &Hypr, window: Option<&str>) -> Result<Json, String> {
 }
 
 fn is_pane(cfg: &Config, c: &Json) -> bool {
-    cfg.window.class.is_match(c.get("class").and_then(Json::as_str).unwrap_or(""))
+    cfg.window
+        .class
+        .is_match(c.get("class").and_then(Json::as_str).unwrap_or(""))
 }
 
 /// The ShaderGlass main window: the pane class and the main-window title. Its message boxes and input
 /// dialog share the class and the bare "ShaderGlass" title, so they are never adopted (nor made
 /// click-through): only the window ShaderGlass retitled once it started.
 pub fn is_main_window(w: &WindowCfg, class: &str, title: &str) -> bool {
-    w.class.is_match(class) && w.main_title.is_match(title) && w.title.is_match(title) && !w.tools.is_match(title)
+    w.class.is_match(class)
+        && w.main_title.is_match(title)
+        && w.title.is_match(title)
+        && !w.tools.is_match(title)
 }
 
 /// Which launching pane (index, process id) a new main window of process `pid` belongs to: the pane whose
@@ -924,13 +1070,24 @@ pub fn pane_for_window(waiting: &[(usize, i64)], pid: i64, ours: bool) -> Option
         .iter()
         .find(|(_, p)| *p == pid)
         .map(|(i, _)| *i)
-        .or_else(|| if ours && waiting.len() == 1 { Some(waiting[0].0) } else { None })
+        .or_else(|| {
+            if ours && waiting.len() == 1 {
+                Some(waiting[0].0)
+            } else {
+                None
+            }
+        })
 }
 
 /// Whether process `pid` runs in this process' cgroup (the supervisor unit holds only its own Wine processes).
 fn in_my_cgroup(pid: i64) -> bool {
-    let read = |p: &str| std::fs::read_to_string(p).ok().filter(|s| !s.trim().is_empty());
-    pid > 0 && matches!((read("/proc/self/cgroup"), read(&format!("/proc/{pid}/cgroup"))), (Some(a), Some(b)) if a == b)
+    let read = |p: &str| {
+        std::fs::read_to_string(p)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+    };
+    pid > 0
+        && matches!((read("/proc/self/cgroup"), read(&format!("/proc/{pid}/cgroup"))), (Some(a), Some(b)) if a == b)
 }
 
 fn query_available_source_types() -> u32 {
@@ -939,7 +1096,9 @@ fn query_available_source_types() -> u32 {
             return None;
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        text.split_whitespace().filter_map(|w| w.parse::<u32>().ok()).last()
+        text.split_whitespace()
+            .filter_map(|w| w.parse::<u32>().ok())
+            .last()
     };
 
     if let Ok(out) = Command::new("busctl")
@@ -994,7 +1153,10 @@ fn ensure_portal_backend() {
     if !primary_session() {
         return;
     }
-    let _sig = match std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok().filter(|s| !s.is_empty()) {
+    let _sig = match std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
         Some(s) => s,
         None => match Hypr::connect() {
             Ok(hypr) => {
@@ -1036,14 +1198,23 @@ fn ensure_portal_backend() {
         .status();
 
     let active = Command::new("systemctl")
-        .args(["--user", "is-active", "--quiet", "xdg-desktop-portal-hyprland.service"])
+        .args([
+            "--user",
+            "is-active",
+            "--quiet",
+            "xdg-desktop-portal-hyprland.service",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|s| s.success());
 
-    let mut sources = if active { query_available_source_types() } else { 0 };
+    let mut sources = if active {
+        query_available_source_types()
+    } else {
+        0
+    };
 
     if !active || sources == 0 {
         let _ = Command::new("systemctl")
@@ -1070,18 +1241,30 @@ fn attach(cfg: &Config, window: Option<&str>, setup: bool) -> Result<String, Str
     ensure_portal_backend();
     let hypr = Hypr::connect()?;
     let t = resolve_window(&hypr, window)?;
-    let target = t.get("address").and_then(Json::as_str).unwrap_or("").to_owned();
+    let target = t
+        .get("address")
+        .and_then(Json::as_str)
+        .unwrap_or("")
+        .to_owned();
     if is_pane(cfg, &t) {
-        return Err(format!("{target} is a ShaderGlass window: a pane never captures itself (detach it instead)"));
+        return Err(format!(
+            "{target} is a ShaderGlass window: a pane never captures itself (detach it instead)"
+        ));
     }
     if t.get("mapped").and_then(Json::as_bool) != Some(true) {
         return Err(format!("{target} is not mapped"));
     }
     if wine::ensure_prefix(cfg)? {
-        eprintln!("[miosd shaderglass] created the Wine prefix {}", wine::prefix_dir(cfg).display());
+        eprintln!(
+            "[miosd shaderglass] created the Wine prefix {}",
+            wine::prefix_dir(cfg).display()
+        );
     }
     if let Some(p) = wine::seed_profile(cfg)? {
-        eprintln!("[miosd shaderglass] seeded the default profile {}", p.display());
+        eprintln!(
+            "[miosd shaderglass] seeded the default profile {}",
+            p.display()
+        );
     }
     start_supervisor(cfg)?;
     Ok(control(&json!({"cmd": "attach", "target": target, "setup": setup}))?.to_string())
@@ -1090,8 +1273,16 @@ fn attach(cfg: &Config, window: Option<&str>, setup: bool) -> Result<String, Str
 fn pane_or_target(cfg: &Config, window: Option<&str>) -> Result<Json, String> {
     let hypr = Hypr::connect()?;
     let w = resolve_window(&hypr, window)?;
-    let a = w.get("address").and_then(Json::as_str).unwrap_or("").to_owned();
-    Ok(if is_pane(cfg, &w) { json!({"pane": a}) } else { json!({"target": a}) })
+    let a = w
+        .get("address")
+        .and_then(Json::as_str)
+        .unwrap_or("")
+        .to_owned();
+    Ok(if is_pane(cfg, &w) {
+        json!({"pane": a})
+    } else {
+        json!({"target": a})
+    })
 }
 
 fn with_cmd(mut sel: Json, cmd: &str) -> Json {
@@ -1116,7 +1307,11 @@ fn toggle(cfg: &Config) -> Result<String, String> {
     let target = sel["target"].as_str().unwrap_or("").to_owned();
     if supervisor_running() {
         let st = control(&json!({"cmd": "status"}))?;
-        let has = st["panes"].as_array().into_iter().flatten().chain(st["queued"].as_array().into_iter().flatten())
+        let has = st["panes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(st["queued"].as_array().into_iter().flatten())
             .any(|p| p.get("target").and_then(Json::as_str) == Some(target.as_str()));
         if has {
             return Ok(control(&json!({"cmd": "detach", "target": target}))?.to_string());
@@ -1165,7 +1360,10 @@ fn resume(cfg: &Config) -> Result<String, String> {
 }
 
 fn stop(cfg: &Config) -> Result<String, String> {
-    let _ = write_private(&session_file(&cfg.state.runtime_state), b"active=0\ntargets=\n");
+    let _ = write_private(
+        &session_file(&cfg.state.runtime_state),
+        b"active=0\ntargets=\n",
+    );
     if supervisor_running() {
         control(&json!({"cmd": "stop"}))?;
         return Ok("stopping every ShaderGlass pane".into());
@@ -1176,7 +1374,10 @@ fn stop(cfg: &Config) -> Result<String, String> {
         store.set_attached(&[])?;
     }
     // A unit whose supervisor no longer answers.
-    let _ = Command::new("systemctl").args(["--user", "stop", &unit_name(cfg)]).stderr(Stdio::null()).status();
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", &unit_name(cfg)])
+        .stderr(Stdio::null())
+        .status();
     Ok("no ShaderGlass pane is running".into())
 }
 
@@ -1201,10 +1402,15 @@ fn pick(cfg: Result<Config, String>, args: &[String]) -> Result<(), String> {
         println!("ok");
         return Ok(());
     }
-    let stock = cfg.as_ref().map(|c| c.xdph.stock_picker.clone()).unwrap_or_else(|_| "hyprland-share-picker".into());
+    let stock = cfg
+        .as_ref()
+        .map(|c| c.xdph.stock_picker.clone())
+        .unwrap_or_else(|_| "hyprland-share-picker".into());
     if let Ok(cfg) = &cfg {
         if cfg.capture.picker == PickerMode::Mios {
-            let windows = picker::parse_sharing_list(&std::env::var("XDPH_WINDOW_SHARING_LIST").unwrap_or_default());
+            let windows = picker::parse_sharing_list(
+                &std::env::var("XDPH_WINDOW_SHARING_LIST").unwrap_or_default(),
+            );
             if let Ok(rt) = runtime_root() {
                 if let Some(line) = picker::claim(&rt, &windows, cfg.capture.restore_tokens) {
                     println!("{line}");
@@ -1219,10 +1425,23 @@ fn pick(cfg: Result<Config, String>, args: &[String]) -> Result<(), String> {
 
 fn portal_config(cfg: &Config, check: bool, write: bool) -> Result<String, String> {
     let path = config_home().join(&cfg.xdph.config);
-    let text = picker::xdph_conf(cfg.xdph.allow_token_by_default, &cfg.xdph.custom_picker_binary)?;
+    let text = picker::xdph_conf(
+        cfg.xdph.allow_token_by_default,
+        &cfg.xdph.custom_picker_binary,
+    )?;
     if check {
         let cur = std::fs::read_to_string(&path).unwrap_or_default();
-        return if cur == text { Ok(format!("{} matches [desktop.hyprland.xdph]", path.display())) } else { Err(format!("{} differs from [desktop.hyprland.xdph] (portal-config --write)", path.display())) };
+        return if cur == text {
+            Ok(format!(
+                "{} matches [desktop.hyprland.xdph]",
+                path.display()
+            ))
+        } else {
+            Err(format!(
+                "{} differs from [desktop.hyprland.xdph] (portal-config --write)",
+                path.display()
+            ))
+        };
     }
     if write {
         if let Some(dir) = path.parent() {
@@ -1252,10 +1471,22 @@ extern "C" fn on_signal(_: libc::c_int) {
 /// (a crash, an OOM kill, a killed Wine), the pane had mapped (it worked before), the relaunch budget is not
 /// spent and the supervisor is not stopping. A clean exit (File > Exit) is the operator's choice.
 fn relaunch_after_exit(p: &Pane, limit: u32, stopping: bool) -> bool {
-    relaunch_decision(p.requested_close, p.pane_identity.is_some(), p.restarts, limit, stopping)
+    relaunch_decision(
+        p.requested_close,
+        p.pane_identity.is_some(),
+        p.restarts,
+        limit,
+        stopping,
+    )
 }
 
-pub(crate) fn relaunch_decision(requested_close: bool, had_mapped: bool, restarts: u32, limit: u32, stopping: bool) -> bool {
+pub(crate) fn relaunch_decision(
+    requested_close: bool,
+    had_mapped: bool,
+    restarts: u32,
+    limit: u32,
+    stopping: bool,
+) -> bool {
     !requested_close && had_mapped && restarts < limit && !stopping
 }
 
@@ -1304,7 +1535,8 @@ fn spawn_control(listener: UnixListener, tx: mpsc::Sender<Msg>) {
                 let req = serde_json::from_str::<Json>(&line).unwrap_or(Json::Null);
                 let (rtx, rrx) = mpsc::channel();
                 let reply = if tx.send(Msg::Control(req, rtx)).is_ok() {
-                    rrx.recv_timeout(Duration::from_secs(12)).unwrap_or_else(|_| json!({"ok": false, "error": "supervisor busy"}))
+                    rrx.recv_timeout(Duration::from_secs(12))
+                        .unwrap_or_else(|_| json!({"ok": false, "error": "supervisor busy"}))
                 } else {
                     json!({"ok": false, "error": "supervisor stopping"})
                 };
@@ -1326,10 +1558,15 @@ struct WindowIdentity {
 
 impl WindowIdentity {
     fn from_window(window: &Win) -> Self {
-        Self { address: window.address.clone(), pid: window.pid, stable_id: window.stable_id.clone() }
+        Self {
+            address: window.address.clone(),
+            pid: window.pid,
+            stable_id: window.stable_id.clone(),
+        }
     }
     fn matches(&self, window: &Win) -> bool {
-        self.address == window.address && self.pid == window.pid
+        self.address == window.address
+            && self.pid == window.pid
             && (self.stable_id.is_empty() || self.stable_id == window.stable_id)
     }
 }
@@ -1341,7 +1578,12 @@ impl WindowIdentity {
 /// Whether to (re-)send the float/pin fix to a pane that still reports otherwise: once the last one had the
 /// settle time to land, and at most [`follow::PLACE_RETRIES`] times until the pane reports floating and pinned
 /// (then the budget starts over) -- a pane something else keeps tiling is never re-sent the fix every tick.
-pub(crate) fn layer_fix_due(sent: u32, last: Option<Instant>, now: Instant, settle: Duration) -> bool {
+pub(crate) fn layer_fix_due(
+    sent: u32,
+    last: Option<Instant>,
+    now: Instant,
+    settle: Duration,
+) -> bool {
     sent < follow::PLACE_RETRIES && last.is_none_or(|t| now.saturating_duration_since(t) >= settle)
 }
 
@@ -1359,13 +1601,23 @@ pub(crate) fn pane_layer_lua(address: &str, client: &Json) -> String {
 
 fn binding_lua(pane: &str, target: &str, on: bool, target_alive: bool) -> String {
     let sign = if on { "+" } else { "-" };
-    let mut actions = vec![format!("hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
-        lua_str(&format!("{sign}mios-shaderglass-target:{target}")), lua_str(&format!("address:{pane}")))];
+    let mut actions = vec![format!(
+        "hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
+        lua_str(&format!("{sign}mios-shaderglass-target:{target}")),
+        lua_str(&format!("address:{pane}"))
+    )];
     if target_alive {
-        actions.push(format!("hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
-            lua_str(&format!("{sign}mios-shaderglass-pane:{pane}")), lua_str(&format!("address:{target}"))));
+        actions.push(format!(
+            "hl.dispatch(hl.dsp.window.tag({{tag={},window={}}}))",
+            lua_str(&format!("{sign}mios-shaderglass-pane:{pane}")),
+            lua_str(&format!("address:{target}"))
+        ));
     }
-    actions.into_iter().map(|a| format!("pcall(function() {a} end)")).collect::<Vec<_>>().join("; ")
+    actions
+        .into_iter()
+        .map(|a| format!("pcall(function() {a} end)"))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// A pane waiting for its launch: the target's native identity, setup or overlay, and how many times it was
@@ -1462,13 +1714,20 @@ impl Supervisor {
     }
 
     fn refresh_clients(&mut self) -> Result<(), String> {
-        self.clients = self.hypr.json("clients")?.as_array().cloned().unwrap_or_default();
+        self.clients = self
+            .hypr
+            .json("clients")?
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         self.clients_at = Some(Instant::now());
         Ok(())
     }
 
     fn client(&self, a: &str) -> Option<&Json> {
-        self.clients.iter().find(|c| c.get("address").and_then(Json::as_str) == Some(a))
+        self.clients
+            .iter()
+            .find(|c| c.get("address").and_then(Json::as_str) == Some(a))
     }
 
     fn poke_all(&mut self) {
@@ -1495,7 +1754,10 @@ impl Supervisor {
         let text = format!("active={active}\ntargets={}\n", targets.join(","));
         // Written on change only (this runs every tick).
         if self.runtime_state.as_deref() != Some(text.as_str()) {
-            if let Err(e) = write_private(&session_file(&self.cfg.state.runtime_state), text.as_bytes()) {
+            if let Err(e) = write_private(
+                &session_file(&self.cfg.state.runtime_state),
+                text.as_bytes(),
+            ) {
                 self.log(&format!("runtime state: {e}"));
             }
             self.runtime_state = Some(text);
@@ -1522,8 +1784,19 @@ impl Supervisor {
             .collect();
         for q in &self.queue {
             if !list.iter().any(|a| a.address == q.identity.address) {
-                let class = self.client(&q.identity.address).and_then(|c| c.get("class")).and_then(Json::as_str).unwrap_or("").to_owned();
-                list.push(Attached { address: q.identity.address.clone(), pid: q.identity.pid, stable_id: q.identity.stable_id.clone(), class, setup: q.setup });
+                let class = self
+                    .client(&q.identity.address)
+                    .and_then(|c| c.get("class"))
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                list.push(Attached {
+                    address: q.identity.address.clone(),
+                    pid: q.identity.pid,
+                    stable_id: q.identity.stable_id.clone(),
+                    class,
+                    setup: q.setup,
+                });
             }
         }
         if let Err(e) = self.state.set_attached(&list) {
@@ -1535,13 +1808,17 @@ impl Supervisor {
     /// operator's own default is put back). Needs a mapped pane whose WineCap has the command channel.
     fn save_pane(&mut self, i: usize) -> Result<String, String> {
         if !self.cfg.state.persist {
-            return Err("profile persistence is off ([desktop.shaderglass.state].persist = false)".into());
+            return Err(
+                "profile persistence is off ([desktop.shaderglass.state].persist = false)".into(),
+            );
         }
         let Some(default) = default_profile_path(&self.cfg) else {
             return Err("the Wine prefix has no user profile directory".into());
         };
         let timeout = self.cfg.state.save_timeout;
-        let Supervisor { panes, state, cfg, .. } = self;
+        let Supervisor {
+            panes, state, cfg, ..
+        } = self;
         let p = &mut panes[i];
         if p.window.is_none() || p.closing.is_some() {
             return Err("that pane is not running".into());
@@ -1553,11 +1830,16 @@ impl Supervisor {
             return Err("this WineCap has no MiOS command channel (reinstall: mios-shaderglass install --force)".into());
         }
         let class = p.class.clone();
-        let r = state::save_profile(state, &cfg.state, &class, &default, || cmd.run("save", timeout).map(|_| ()))
-            .map(|prof| state::profile_shader(&prof).unwrap_or_default());
+        let r = state::save_profile(state, &cfg.state, &class, &default, || {
+            cmd.run("save", timeout).map(|_| ())
+        })
+        .map(|prof| state::profile_shader(&prof).unwrap_or_default());
         p.saved = Some(r.clone());
         match &r {
-            Ok(shader) => eprintln!("[miosd shaderglass] {}: saved the ShaderGlass profile of class {class} ({shader})", p.target),
+            Ok(shader) => eprintln!(
+                "[miosd shaderglass] {}: saved the ShaderGlass profile of class {class} ({shader})",
+                p.target
+            ),
             Err(e) => eprintln!("[miosd shaderglass] {}: profile not saved: {e}", p.target),
         }
         r
@@ -1576,13 +1858,18 @@ impl Supervisor {
                 self.panes[i].menu = Some(shown);
                 if shown != on {
                     let target = self.panes[i].target.clone();
-                    self.log(&format!("{target}: ShaderGlass kept its menu {}", if shown { "shown" } else { "hidden" }));
+                    self.log(&format!(
+                        "{target}: ShaderGlass kept its menu {}",
+                        if shown { "shown" } else { "hidden" }
+                    ));
                 }
                 Some(shown)
             }
             Err(e) => {
                 let target = self.panes[i].target.clone();
-                self.log(&format!("{target}: menu through WineCap: {e}; sending the key"));
+                self.log(&format!(
+                    "{target}: menu through WineCap: {e}; sending the key"
+                ));
                 None
             }
         }
@@ -1598,14 +1885,18 @@ impl Supervisor {
     fn drain_3d_requests(&mut self) {
         let req_file = session_file(&self.cfg.state.room_requests);
         let req_path = req_file.as_path();
-        let Ok(content) = std::fs::read_to_string(req_path) else { return };
+        let Ok(content) = std::fs::read_to_string(req_path) else {
+            return;
+        };
         let _ = std::fs::remove_file(req_path);
         for raw in content.lines() {
             let line = raw.trim();
             if line.is_empty() {
                 continue;
             }
-            let (verb, target_raw) = line.split_once(char::is_whitespace).unwrap_or(("toggle", line));
+            let (verb, target_raw) = line
+                .split_once(char::is_whitespace)
+                .unwrap_or(("toggle", line));
             match verb {
                 "off" | "stop" | "clear" => {
                     self.queue.clear();
@@ -1617,7 +1908,8 @@ impl Supervisor {
                 "attach" | "on" => {
                     let t = addr(target_raw.trim());
                     if !t.is_empty() {
-                        let _ = self.on_control(&json!({"cmd": "attach", "target": t, "setup": false}));
+                        let _ =
+                            self.on_control(&json!({"cmd": "attach", "target": t, "setup": false}));
                     }
                 }
                 "detach" => {
@@ -1627,9 +1919,16 @@ impl Supervisor {
                     }
                 }
                 _ => {
-                    let t = addr(if verb.starts_with("0x") { verb } else { target_raw.trim() });
+                    let t = addr(if verb.starts_with("0x") {
+                        verb
+                    } else {
+                        target_raw.trim()
+                    });
                     if !t.is_empty() {
-                        let has = self.panes.iter().any(|p| p.target == t && p.closing.is_none())
+                        let has = self
+                            .panes
+                            .iter()
+                            .any(|p| p.target == t && p.closing.is_none())
                             || self.queue.iter().any(|q| q.identity.address == t);
                         let cmd = if has { "detach" } else { "attach" };
                         let _ = self.on_control(&json!({"cmd": cmd, "target": t, "setup": false}));
@@ -1672,22 +1971,36 @@ impl Supervisor {
                 for p in &mut self.panes {
                     p.follower.reset();
                 }
-                let tags: Vec<(String, bool)> = self.panes.iter().filter_map(|p| p.window.clone().map(|w| (w, !p.setup))).collect();
+                let tags: Vec<(String, bool)> = self
+                    .panes
+                    .iter()
+                    .filter_map(|p| p.window.clone().map(|w| (w, !p.setup)))
+                    .collect();
                 for (w, on) in tags {
-                    if self.client(&w).and_then(|c| c.get("mapped")).and_then(Json::as_bool) == Some(true) {
-                        self.eval(&follow::passthrough_lua(&w, &self.cfg.window.passthrough_tag, on));
+                    if self
+                        .client(&w)
+                        .and_then(|c| c.get("mapped"))
+                        .and_then(Json::as_bool)
+                        == Some(true)
+                    {
+                        self.eval(&follow::passthrough_lua(
+                            &w,
+                            &self.cfg.window.passthrough_tag,
+                            on,
+                        ));
                     }
                 }
                 self.mons_at = None;
                 self.poke_all();
             }
-            "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" | "activespecial" | "activespecialv2"
-            | "monitoradded" | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2" | "moveworkspace"
-            | "moveworkspacev2" => {
+            "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" | "activespecial"
+            | "activespecialv2" | "monitoradded" | "monitoraddedv2" | "monitorremoved"
+            | "monitorremovedv2" | "moveworkspace" | "moveworkspacev2" => {
                 self.mons_at = None;
                 self.poke_all();
             }
-            "movewindow" | "movewindowv2" | "changefloatingmode" | "fullscreen" | "minimized" | "pin" => self.poke_all(),
+            "movewindow" | "movewindowv2" | "changefloatingmode" | "fullscreen" | "minimized"
+            | "pin" => self.poke_all(),
             // A launching ShaderGlass retitles its main window ("ShaderGlass (...)") right after it maps.
             "windowtitle" | "windowtitlev2" => {
                 self.adopt_fresh();
@@ -1709,7 +2022,9 @@ impl Supervisor {
     }
 
     fn launching(&self) -> bool {
-        self.panes.iter().any(|p| p.window.is_none() && p.closing.is_none())
+        self.panes
+            .iter()
+            .any(|p| p.window.is_none() && p.closing.is_none())
     }
 
     /// While a pane is launching: refresh the client list and adopt.
@@ -1733,8 +2048,15 @@ impl Supervisor {
                 let class = c.get("class").and_then(Json::as_str).unwrap_or("");
                 let title = c.get("title").and_then(Json::as_str).unwrap_or("");
                 let mapped = c.get("mapped").and_then(Json::as_bool) == Some(true);
-                (mapped && !taken.iter().any(|t| t == a) && is_main_window(&self.cfg.window, class, title))
-                    .then(|| (a.to_owned(), c.get("pid").and_then(Json::as_i64).unwrap_or(-1)))
+                (mapped
+                    && !taken.iter().any(|t| t == a)
+                    && is_main_window(&self.cfg.window, class, title))
+                .then(|| {
+                    (
+                        a.to_owned(),
+                        c.get("pid").and_then(Json::as_i64).unwrap_or(-1),
+                    )
+                })
             })
             .collect();
         for (a, pid) in found {
@@ -1755,11 +2077,18 @@ impl Supervisor {
 
     fn bind(&mut self, i: usize, a: &str) {
         let identity = self.panes[i].target_identity.clone();
-        if !self.client(&identity.address).and_then(Win::from_json).is_some_and(|w| identity.matches(&w)) {
+        if !self
+            .client(&identity.address)
+            .and_then(Win::from_json)
+            .is_some_and(|w| identity.matches(&w))
+        {
             self.close_pane(i);
             return;
         }
-        let pane_identity = self.client(a).and_then(Win::from_json).map(|w| WindowIdentity::from_window(&w));
+        let pane_identity = self
+            .client(a)
+            .and_then(Win::from_json)
+            .map(|w| WindowIdentity::from_window(&w));
         let tag = self.cfg.window.passthrough_tag.clone();
         let p = &mut self.panes[i];
         p.window = Some(a.to_owned());
@@ -1770,20 +2099,34 @@ impl Supervisor {
         // expires after request_ttl_ms, and finish() removes whatever is left when the pane ends.
         let setup = p.setup;
         let target = p.target.clone();
-        self.log(&format!("{a}: pane for {target} mapped ({})", if setup { "setup" } else { "overlay" }));
+        self.log(&format!(
+            "{a}: pane for {target} mapped ({})",
+            if setup { "setup" } else { "overlay" }
+        ));
         let lua = if setup {
             // A pane launched in setup: the menu through the WineCap channel when it is already up, else the key.
             let menu = self.set_menu_in_pane(i, true);
-            follow::setup_lua(a, &tag, true, menu.is_none().then_some(self.cfg.setup_shortcut.as_str()))
+            follow::setup_lua(
+                a,
+                &tag,
+                true,
+                menu.is_none().then_some(self.cfg.setup_shortcut.as_str()),
+            )
         } else {
             follow::passthrough_lua(a, &tag, true)
         };
-        let layer = self.client(a).map(|c| pane_layer_lua(a, c)).unwrap_or_default();
+        let layer = self
+            .client(a)
+            .map(|c| pane_layer_lua(a, c))
+            .unwrap_or_default();
         if !layer.is_empty() {
             self.panes[i].layer_sent = 1;
             self.panes[i].layer_at = Some(Instant::now());
         }
-        self.eval(&format!("{}; {lua}{layer}", binding_lua(a, &target, true, true)));
+        self.eval(&format!(
+            "{}; {lua}{layer}",
+            binding_lua(a, &target, true, true)
+        ));
         self.urgent = true;
     }
 
@@ -1801,14 +2144,17 @@ impl Supervisor {
             }
         }
         for (target, identity) in unbind {
-            let alive = self.client(&target).and_then(Win::from_json)
+            let alive = self
+                .client(&target)
+                .and_then(Win::from_json)
                 .is_some_and(|w| identity.matches(&w));
             self.eval(&binding_lua(a, &target, false, alive));
         }
         for i in to_close {
             self.close_pane(i);
         }
-        self.clients.retain(|c| c.get("address").and_then(Json::as_str) != Some(a));
+        self.clients
+            .retain(|c| c.get("address").and_then(Json::as_str) != Some(a));
         self.ignored.remove(a);
         self.write_state();
     }
@@ -1824,14 +2170,23 @@ impl Supervisor {
         }
         let w = self.panes[i].window.clone();
         let target = self.panes[i].target.clone();
-        let target_alive = self.client(&target).and_then(Win::from_json)
+        let target_alive = self
+            .client(&target)
+            .and_then(Win::from_json)
             .is_some_and(|t| self.panes[i].target_identity.matches(&t));
         if let Some(pane) = &w {
             self.eval(&binding_lua(pane, &target, false, target_alive));
         }
-        let mapped = w.as_deref().and_then(|w| self.client(w)).and_then(|c| c.get("mapped")).and_then(Json::as_bool) == Some(true);
+        let mapped = w
+            .as_deref()
+            .and_then(|w| self.client(w))
+            .and_then(|c| c.get("mapped"))
+            .and_then(Json::as_bool)
+            == Some(true);
         match w {
-            Some(w) if mapped => self.eval(&follow::actions_lua(&w, &target, &[follow::Action::Close])),
+            Some(w) if mapped => {
+                self.eval(&follow::actions_lua(&w, &target, &[follow::Action::Close]))
+            }
             _ => {
                 let _ = self.panes[i].child.kill();
             }
@@ -1845,7 +2200,9 @@ impl Supervisor {
             return self.panes.iter().position(|p| p.target == addr(t));
         }
         let w = addr(req.get("pane").and_then(Json::as_str)?);
-        self.panes.iter().position(|p| p.window.as_deref() == Some(w.as_str()))
+        self.panes
+            .iter()
+            .position(|p| p.window.as_deref() == Some(w.as_str()))
     }
 
     fn on_control(&mut self, req: &Json) -> Json {
@@ -1865,11 +2222,20 @@ impl Supervisor {
                 "state": self.state.to_status(),
             }),
             "attach" => {
-                let Some(t) = req.get("target").and_then(Json::as_str).filter(|t| !t.is_empty()).map(addr) else {
+                let Some(t) = req
+                    .get("target")
+                    .and_then(Json::as_str)
+                    .filter(|t| !t.is_empty())
+                    .map(addr)
+                else {
                     return err("attach needs a target".into());
                 };
-                if let Some(reply) = self.panes.iter().find(|p| p.target == t && p.closing.is_none())
-                    .map(|p| json!({"ok": true, "pane": p.id, "state": p.state()})) {
+                if let Some(reply) = self
+                    .panes
+                    .iter()
+                    .find(|p| p.target == t && p.closing.is_none())
+                    .map(|p| json!({"ok": true, "pane": p.id, "state": p.state()}))
+                {
                     self.write_state();
                     self.sync_hypr3d(&t, true);
                     return reply;
@@ -1884,10 +2250,16 @@ impl Supervisor {
                 }
                 match self.client(&t) {
                     None => return err(format!("no window {t}")),
-                    Some(c) if is_pane(&self.cfg, c) => return err(format!("{t} is a ShaderGlass window")),
+                    Some(c) if is_pane(&self.cfg, c) => {
+                        return err(format!("{t} is a ShaderGlass window"))
+                    }
                     Some(_) => {}
                 }
-                let Some(window) = self.client(&t).and_then(Win::from_json).filter(|w| w.mapped) else {
+                let Some(window) = self
+                    .client(&t)
+                    .and_then(Win::from_json)
+                    .filter(|w| w.mapped)
+                else {
                     return err("the target is not mapped".into());
                 };
                 self.queue.push_back(Queued {
@@ -1922,8 +2294,12 @@ impl Supervisor {
                 res
             }
             "setup" => {
-                let Some(i) = self.find(req) else { return err("no pane for that window".into()) };
-                let Some(w) = self.panes[i].window.clone() else { return err("that pane has not mapped yet".into()) };
+                let Some(i) = self.find(req) else {
+                    return err("no pane for that window".into());
+                };
+                let Some(w) = self.panes[i].window.clone() else {
+                    return err("that pane has not mapped yet".into());
+                };
                 let entering = !self.panes[i].setup;
                 self.panes[i].setup = entering;
                 self.panes[i].follower.reset();
@@ -1931,16 +2307,29 @@ impl Supervisor {
                 // (a relative toggle) otherwise.
                 let menu = self.set_menu_in_pane(i, entering);
                 let key = menu.is_none().then_some(self.cfg.setup_shortcut.as_str());
-                self.eval(&follow::setup_lua(&w, &self.cfg.window.passthrough_tag, entering, key));
+                self.eval(&follow::setup_lua(
+                    &w,
+                    &self.cfg.window.passthrough_tag,
+                    entering,
+                    key,
+                ));
                 self.urgent = true;
                 self.write_state();
                 // Leaving setup is when the operator is done choosing: keep it for the class.
-                let saved = if entering || !self.cfg.state.persist { None } else { Some(self.save_pane(i)) };
+                let saved = if entering || !self.cfg.state.persist {
+                    None
+                } else {
+                    Some(self.save_pane(i))
+                };
                 json!({"ok": true, "setup": entering, "menu": menu, "saved": saved.map(|r| r.is_ok())})
             }
             "cycle" => {
-                let Some(i) = self.find(req) else { return err("no pane for that window".into()) };
-                let Some(w) = self.panes[i].window.clone() else { return err("that pane has not mapped yet".into()) };
+                let Some(i) = self.find(req) else {
+                    return err("no pane for that window".into());
+                };
+                let Some(w) = self.panes[i].window.clone() else {
+                    return err("that pane has not mapped yet".into());
+                };
                 let timeout = self.cfg.state.save_timeout;
                 let via = match self.panes[i].command.as_mut().filter(|c| c.ready()) {
                     Some(c) => match c.run("next", timeout) {
@@ -1953,13 +2342,21 @@ impl Supervisor {
                         "shortcut"
                     }
                 };
-                let saved = if via == "winecap" && self.cfg.state.persist { self.save_pane(i).ok() } else { None };
+                let saved = if via == "winecap" && self.cfg.state.persist {
+                    self.save_pane(i).ok()
+                } else {
+                    None
+                };
                 json!({"ok": true, "via": via, "shader": saved})
             }
             "save" => {
-                let Some(i) = self.find(req) else { return err("no pane for that window".into()) };
+                let Some(i) = self.find(req) else {
+                    return err("no pane for that window".into());
+                };
                 match self.save_pane(i) {
-                    Ok(shader) => json!({"ok": true, "shader": shader, "profile": self.state.profile_path(&self.panes[i].class)}),
+                    Ok(shader) => {
+                        json!({"ok": true, "shader": shader, "profile": self.state.profile_path(&self.panes[i].class)})
+                    }
                     Err(e) => err(e),
                 }
             }
@@ -1978,8 +2375,15 @@ impl Supervisor {
     fn launch_next(&mut self) {
         for i in 0..self.panes.len() {
             let p = &self.panes[i];
-            let Some(request) = p.request.as_deref() else { continue };
-            match picker::retire_request(request, p.token_file.as_deref(), p.token_seed, p.closing.is_some()) {
+            let Some(request) = p.request.as_deref() else {
+                continue;
+            };
+            match picker::retire_request(
+                request,
+                p.token_file.as_deref(),
+                p.token_seed,
+                p.closing.is_some(),
+            ) {
                 Ok(true) => self.panes[i].request = None,
                 Ok(false) => {
                     if p.launched.elapsed() >= self.cfg.capture.request_ttl {
@@ -1994,21 +2398,36 @@ impl Supervisor {
                 }
             }
         }
-        if self.panes.iter().any(|p| p.window.is_none() && p.closing.is_none()) {
+        if self
+            .panes
+            .iter()
+            .any(|p| p.window.is_none() && p.closing.is_none())
+        {
             return;
         }
-        let Some(q) = self.queue.pop_front() else { return };
+        let Some(q) = self.queue.pop_front() else {
+            return;
+        };
         if let Err(e) = self.launch(&q.identity, q.setup, q.restarts) {
             self.log(&format!("{}: {e}", q.identity.address));
             self.write_state();
         }
     }
 
-    fn launch(&mut self, identity: &WindowIdentity, setup: bool, restarts: u32) -> Result<(), String> {
+    fn launch(
+        &mut self,
+        identity: &WindowIdentity,
+        setup: bool,
+        restarts: u32,
+    ) -> Result<(), String> {
         ensure_portal_backend();
         self.refresh_clients()?;
         let target = identity.address.as_str();
-        if !self.client(target).and_then(Win::from_json).is_some_and(|w| identity.matches(&w)) {
+        if !self
+            .client(target)
+            .and_then(Win::from_json)
+            .is_some_and(|w| identity.matches(&w))
+        {
             return Err("the queued target window changed before capture launch".into());
         }
         let class = self
@@ -2025,11 +2444,18 @@ impl Supervisor {
             let counts = picker::class_counts(&self.clients);
             // The store on disk: another session's pane may have saved a token since this supervisor started.
             let tokens = picker::load_store(&token_store_path());
-            let token = picker::choose_token(&tokens, &class, target, counts.get(&class).copied().unwrap_or(0));
+            let token = picker::choose_token(
+                &tokens,
+                &class,
+                target,
+                counts.get(&class).copied().unwrap_or(0),
+            );
             let f = panes_dir.join(format!("{id}.restore-token"));
             write_private(&f, token.as_deref().unwrap_or("").as_bytes())?;
             if token.is_some() {
-                self.log(&format!("{target}: reusing the restore token for class {class}"));
+                self.log(&format!(
+                    "{target}: reusing the restore token for class {class}"
+                ));
             }
             Some(f)
         } else {
@@ -2039,7 +2465,10 @@ impl Supervisor {
         let size_file = {
             let f = panes_dir.join(format!("{id}.size"));
             if let Some(t) = self.client(target).and_then(Win::from_json) {
-                let _ = write_private(&f, format!("{} {}\n", t.rect.w.round() as i64, t.rect.h.round() as i64).as_bytes());
+                let _ = write_private(
+                    &f,
+                    format!("{} {}\n", t.rect.w.round() as i64, t.rect.h.round() as i64).as_bytes(),
+                );
             }
             Some(f)
         };
@@ -2058,10 +2487,13 @@ impl Supervisor {
         // Without one, a snapshot of the operator's default taken while no save swaps it ([`state::launch_profile`]).
         let snapshot = panes_dir.join(format!("{id}.default.sgp"));
         let profile = match default_profile_path(&self.cfg) {
-            Some(default) => state::launch_profile(&self.state, &self.cfg.state, &class, &default, &snapshot).unwrap_or_else(|e| {
-                self.log(&format!("{target}: launch profile: {e}"));
-                None
-            }),
+            Some(default) => {
+                state::launch_profile(&self.state, &self.cfg.state, &class, &default, &snapshot)
+                    .unwrap_or_else(|e| {
+                        self.log(&format!("{target}: launch profile: {e}"));
+                        None
+                    })
+            }
             None if self.cfg.state.persist => self.state.saved_profile(&class),
             None => None,
         };
@@ -2104,8 +2536,15 @@ impl Supervisor {
         self.log(&format!(
             "{target}: ShaderGlass started (pid {}) for class {class}{}{}",
             child.id(),
-            profile.as_ref().map(|p| format!(" with profile {}", p.display())).unwrap_or_default(),
-            if restarts > 0 { format!(" (relaunch {restarts})") } else { String::new() }
+            profile
+                .as_ref()
+                .map(|p| format!(" with profile {}", p.display()))
+                .unwrap_or_default(),
+            if restarts > 0 {
+                format!(" (relaunch {restarts})")
+            } else {
+                String::new()
+            }
         ));
         self.panes.push(Pane {
             id,
@@ -2143,7 +2582,10 @@ impl Supervisor {
         for (i, p) in self.panes.iter_mut().enumerate() {
             match p.child.try_wait() {
                 Ok(Some(st)) => {
-                    eprintln!("[miosd shaderglass] {}: ShaderGlass exited ({st})", p.target);
+                    eprintln!(
+                        "[miosd shaderglass] {}: ShaderGlass exited ({st})",
+                        p.target
+                    );
                     done.push((i, !st.success()));
                     continue;
                 }
@@ -2153,9 +2595,19 @@ impl Supervisor {
                     continue;
                 }
             }
-            if p.window.is_none() && p.closing.is_none() && p.launched.elapsed() > self.cfg.map_timeout {
-                eprintln!("[miosd shaderglass] {}: no ShaderGlass window within {:?}; stopping it", p.target, self.cfg.map_timeout);
-                p.closing = Some(Instant::now().checked_sub(CLOSE_GRACE).unwrap_or_else(Instant::now));
+            if p.window.is_none()
+                && p.closing.is_none()
+                && p.launched.elapsed() > self.cfg.map_timeout
+            {
+                eprintln!(
+                    "[miosd shaderglass] {}: no ShaderGlass window within {:?}; stopping it",
+                    p.target, self.cfg.map_timeout
+                );
+                p.closing = Some(
+                    Instant::now()
+                        .checked_sub(CLOSE_GRACE)
+                        .unwrap_or_else(Instant::now),
+                );
             }
             if let Some(since) = p.closing {
                 let waited = since.elapsed();
@@ -2171,13 +2623,26 @@ impl Supervisor {
         }
         for (i, failed) in done.into_iter().rev() {
             let p = self.panes.remove(i);
-            let relaunch = failed && relaunch_after_exit(&p, self.cfg.state.restart_limit, self.stopping());
-            let item = Queued { identity: p.target_identity.clone(), setup: p.setup, restarts: p.restarts + 1 };
+            let relaunch =
+                failed && relaunch_after_exit(&p, self.cfg.state.restart_limit, self.stopping());
+            let item = Queued {
+                identity: p.target_identity.clone(),
+                setup: p.setup,
+                restarts: p.restarts + 1,
+            };
             self.finish(p);
             if relaunch {
                 let alive = self.refresh_clients().is_ok()
-                    && self.client(&item.identity.address).and_then(Win::from_json).is_some_and(|w| item.identity.matches(&w) && w.mapped);
-                if alive && !self.queue.iter().any(|q| q.identity.address == item.identity.address) {
+                    && self
+                        .client(&item.identity.address)
+                        .and_then(Win::from_json)
+                        .is_some_and(|w| item.identity.matches(&w) && w.mapped);
+                if alive
+                    && !self
+                        .queue
+                        .iter()
+                        .any(|q| q.identity.address == item.identity.address)
+                {
                     self.log(&format!("{}: ShaderGlass died on its own; relaunching it ({}/{}) with the saved profile",
                         item.identity.address, item.restarts, self.cfg.state.restart_limit));
                     self.queue.push_back(item);
@@ -2206,14 +2671,33 @@ impl Supervisor {
             return;
         }
         for a in list {
-            let identity = WindowIdentity { address: a.address.clone(), pid: a.pid, stable_id: a.stable_id.clone() };
-            let live = self.client(&a.address).and_then(Win::from_json).filter(|w| identity.matches(w) && w.mapped);
+            let identity = WindowIdentity {
+                address: a.address.clone(),
+                pid: a.pid,
+                stable_id: a.stable_id.clone(),
+            };
+            let live = self
+                .client(&a.address)
+                .and_then(Win::from_json)
+                .filter(|w| identity.matches(w) && w.mapped);
             match live {
                 Some(w) if !self.cfg.window.class.is_match(&w.class) => {
-                    self.log(&format!("{}: resuming the ShaderGlass pane ({}, {})", a.address, a.class, if a.setup { "setup" } else { "overlay" }));
-                    self.queue.push_back(Queued { identity, setup: a.setup, restarts: 0 });
+                    self.log(&format!(
+                        "{}: resuming the ShaderGlass pane ({}, {})",
+                        a.address,
+                        a.class,
+                        if a.setup { "setup" } else { "overlay" }
+                    ));
+                    self.queue.push_back(Queued {
+                        identity,
+                        setup: a.setup,
+                        restarts: 0,
+                    });
                 }
-                _ => self.log(&format!("{}: not resumed (the window is gone or is another window now)", a.address)),
+                _ => self.log(&format!(
+                    "{}: not resumed (the window is gone or is another window now)",
+                    a.address
+                )),
             }
         }
         self.write_state();
@@ -2222,7 +2706,9 @@ impl Supervisor {
     /// Save the restore token WineCap wrote, drop the pane's files.
     fn finish(&mut self, p: Pane) {
         if let Some(pane) = &p.window {
-            let target_alive = self.client(&p.target).and_then(Win::from_json)
+            let target_alive = self
+                .client(&p.target)
+                .and_then(Win::from_json)
                 .is_some_and(|w| p.target_identity.matches(&w));
             self.eval(&binding_lua(pane, &p.target, false, target_alive));
         }
@@ -2236,7 +2722,11 @@ impl Supervisor {
             c.cleanup();
         }
         // The default-profile snapshot the pane was started with (never a class profile).
-        if let Some(prof) = p.profile.as_deref().filter(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".default.sgp"))) {
+        if let Some(prof) = p.profile.as_deref().filter(|f| {
+            f.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".default.sgp"))
+        }) {
             if runtime_root().is_ok_and(|rt| prof.starts_with(rt)) {
                 let _ = std::fs::remove_file(prof);
             }
@@ -2259,7 +2749,10 @@ impl Supervisor {
                 });
             match saved {
                 Err(e) => self.log(&format!("restore tokens: {e}")),
-                Ok(true) => self.log(&format!("{}: restore token saved for class {}", p.target, p.class)),
+                Ok(true) => self.log(&format!(
+                    "{}: restore token saved for class {}",
+                    p.target, p.class
+                )),
                 Ok(false) => {}
             }
             let _ = std::fs::remove_file(f);
@@ -2271,7 +2764,10 @@ impl Supervisor {
         if !self.cfg.hide_in_hypr3d {
             return false;
         }
-        if self.hypr3d_at.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(100)) {
+        if self
+            .hypr3d_at
+            .is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(100))
+        {
             return self.hypr3d;
         }
         self.hypr3d_at = Some(now);
@@ -2283,8 +2779,13 @@ impl Supervisor {
                 "local p = hl.plugin and hl.plugin.hypr3d; local a = false; if p then local probe = p.effect_in_room or p.active; if probe then local ok, v = pcall(probe); a = ok and v and true or false end end; local f = io.open({}, 'w'); if f then f:write(a and '1' or '0'); f:close() end",
                 lua_str(&f.display().to_string())
             );
-            let value = self.hypr.eval(&lua).ok().and_then(|_| std::fs::read_to_string(&f).ok())
-                .map(|v| v.trim() == "1").unwrap_or(prev);
+            let value = self
+                .hypr
+                .eval(&lua)
+                .ok()
+                .and_then(|_| std::fs::read_to_string(&f).ok())
+                .map(|v| v.trim() == "1")
+                .unwrap_or(prev);
             let _ = std::fs::remove_file(&f);
             value
         } else {
@@ -2308,7 +2809,9 @@ impl Supervisor {
         self.write_state();
         // A main window the event stream did not hand over (title set before the map event, events lost).
         self.adopt_fresh();
-        let live: Vec<usize> = (0..self.panes.len()).filter(|&i| self.panes[i].window.is_some() && self.panes[i].closing.is_none()).collect();
+        let live: Vec<usize> = (0..self.panes.len())
+            .filter(|&i| self.panes[i].window.is_some() && self.panes[i].closing.is_none())
+            .collect();
         if live.is_empty() {
             return self.cfg.follow.idle;
         }
@@ -2320,12 +2823,19 @@ impl Supervisor {
         }
         if self.active.is_empty() {
             if let Ok(c) = self.hypr.json("activewindow") {
-                if let Some(a) = c.get("address").and_then(Json::as_str).filter(|a| !a.is_empty()) {
+                if let Some(a) = c
+                    .get("address")
+                    .and_then(Json::as_str)
+                    .filter(|a| !a.is_empty())
+                {
                     self.active = addr(a);
                 }
             }
         }
-        if self.mons_at.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(1)) {
+        if self
+            .mons_at
+            .is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(1))
+        {
             match self.hypr.json("monitors") {
                 Ok(m) => {
                     self.mons = follow::monitors_from_json(&m);
@@ -2348,11 +2858,21 @@ impl Supervisor {
         for &i in &live {
             let w = self.panes[i].window.clone().unwrap_or_default();
             let target_addr = self.panes[i].target.clone();
-            let target = self.client(&target_addr).and_then(Win::from_json)
+            let target = self
+                .client(&target_addr)
+                .and_then(Win::from_json)
                 .filter(|t| self.panes[i].target_identity.matches(t));
-            let pane = self.client(&w).and_then(Win::from_json)
-                .filter(|w| self.panes[i].pane_identity.as_ref().is_some_and(|id| id.matches(w)));
-            match self.client(&w).map(|c| pane_layer_lua(&w, c)).filter(|l| !l.is_empty()) {
+            let pane = self.client(&w).and_then(Win::from_json).filter(|w| {
+                self.panes[i]
+                    .pane_identity
+                    .as_ref()
+                    .is_some_and(|id| id.matches(w))
+            });
+            match self
+                .client(&w)
+                .map(|c| pane_layer_lua(&w, c))
+                .filter(|l| !l.is_empty())
+            {
                 Some(layer) => {
                     let p = &mut self.panes[i];
                     if layer_fix_due(p.layer_sent, p.layer_at, now, self.cfg.follow.settle) {
@@ -2368,14 +2888,24 @@ impl Supervisor {
             }
             let dragging = self.panes[i].setup && pointer_down;
             self.panes[i].follower.set_dragging(dragging);
-            let step = self.panes[i].follower.step(&self.cfg.follow, target.as_ref(), pane.as_ref(), &self.mons, suppressed, now);
+            let step = self.panes[i].follower.step(
+                &self.cfg.follow,
+                target.as_ref(),
+                pane.as_ref(),
+                &self.mons,
+                suppressed,
+                now,
+            );
             if !step.actions.is_empty() {
                 if let (Some(sf), Some(t)) = (&self.panes[i].size_file, &target) {
                     if let Some(r) = step.actions.iter().find_map(|a| match a {
                         follow::Action::Place(r) | follow::Action::PlaceTarget(r) => Some(*r),
                         _ => None,
                     }) {
-                        let _ = write_private(sf, format!("{} {}\n", r.w.round() as i64, r.h.round() as i64).as_bytes());
+                        let _ = write_private(
+                            sf,
+                            format!("{} {}\n", r.w.round() as i64, r.h.round() as i64).as_bytes(),
+                        );
                     } else {
                         let _ = t;
                     }
@@ -2431,11 +2961,18 @@ fn serve(cfg: Config) -> Result<(), String> {
     }
     let _ = std::fs::remove_file(&sock);
     let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
-    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
     // SAFETY: the handler only stores to an atomic.
     unsafe {
-        libc::signal(libc::SIGTERM, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+        libc::signal(
+            libc::SIGTERM,
+            on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
+        );
     }
     let hypr = Hypr::connect()?;
     let active = hypr
@@ -2471,18 +3008,26 @@ fn serve(cfg: Config) -> Result<(), String> {
     if let Some(default) = default_profile_path(&sv.cfg) {
         // Never while another session's save has the default swapped out (that save restores it itself).
         match state::recover_default_when_idle(&sv.state.dir, &default, sv.cfg.state.save_timeout) {
-            Ok(true) => sv.log("restored the operator's ShaderGlass default profile after an interrupted save"),
+            Ok(true) => sv.log(
+                "restored the operator's ShaderGlass default profile after an interrupted save",
+            ),
             Ok(false) => {}
             Err(e) => sv.log(&format!("default profile recovery: {e}")),
         }
     }
     sv.resume();
     sv.write_state();
-    sv.log(&format!("serving on {} for {}", sock.display(), sv.hypr.dir().display()));
+    sv.log(&format!(
+        "serving on {} for {}",
+        sock.display(),
+        sv.hypr.dir().display()
+    ));
     let mut next = Instant::now();
     let mut empty_since: Option<Instant> = Some(Instant::now());
     loop {
-        let wait = next.saturating_duration_since(Instant::now()).min(Duration::from_millis(250));
+        let wait = next
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(250));
         match rx.recv_timeout(wait) {
             Ok(Msg::Line(l)) => sv.on_event(&l),
             Ok(Msg::Control(req, reply)) => {
@@ -2543,9 +3088,22 @@ pub fn run(cmd: &ShaderglassCommand) -> Result<(), String> {
         Ok(())
     };
     match cmd {
-        ShaderglassCommand::Install { channel, releases_json, archive, winecap, dest, from_stage, stage_only, dry_run, force } => {
+        ShaderglassCommand::Install {
+            channel,
+            releases_json,
+            archive,
+            winecap,
+            dest,
+            from_stage,
+            stage_only,
+            dry_run,
+            force,
+        } => {
             if let Some(stage) = from_stage {
-                return print(release::install_stage(stage, dest.as_deref().unwrap_or(&cfg.install_dir))?);
+                return print(release::install_stage(
+                    stage,
+                    dest.as_deref().unwrap_or(&cfg.install_dir),
+                )?);
             }
             let o = release::Opts {
                 channel: channel.as_deref().map(Channel::parse).transpose()?,
@@ -2559,11 +3117,20 @@ pub fn run(cmd: &ShaderglassCommand) -> Result<(), String> {
             };
             print(release::install(&cfg, &o)?)
         }
-        ShaderglassCommand::Resolve { channel, releases_json } => {
-            let channel = channel.as_deref().map(Channel::parse).transpose()?.unwrap_or_else(|| cfg.channel.clone());
+        ShaderglassCommand::Resolve {
+            channel,
+            releases_json,
+        } => {
+            let channel = channel
+                .as_deref()
+                .map(Channel::parse)
+                .transpose()?
+                .unwrap_or_else(|| cfg.channel.clone());
             let releases = match releases_json {
-                Some(p) => serde_json::from_slice(&std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?)
-                    .map_err(|e| format!("{}: {e}", p.display()))?,
+                Some(p) => serde_json::from_slice(
+                    &std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?,
+                )
+                .map_err(|e| format!("{}: {e}", p.display()))?,
                 None => {
                     let dir = tempfile_dir()?;
                     let r = release::fetch_releases(&cfg, &dir);
@@ -2575,7 +3142,9 @@ pub fn run(cmd: &ShaderglassCommand) -> Result<(), String> {
             let rel = release::select(&releases, &channel, &cfg.asset_pattern, &repo)?;
             print(serde_json::to_string_pretty(&rel.to_json()).map_err(|e| e.to_string())?)
         }
-        ShaderglassCommand::Attach { window, setup } => print(attach(&cfg, window.as_deref(), *setup)?),
+        ShaderglassCommand::Attach { window, setup } => {
+            print(attach(&cfg, window.as_deref(), *setup)?)
+        }
         ShaderglassCommand::Detach { window } => print(detach(&cfg, window.as_deref())?),
         ShaderglassCommand::Toggle => print(toggle(&cfg)?),
         ShaderglassCommand::Setup { window } => print(setup(&cfg, window.as_deref())?),
@@ -2583,9 +3152,13 @@ pub fn run(cmd: &ShaderglassCommand) -> Result<(), String> {
         ShaderglassCommand::Save { window } => print(save(&cfg, window.as_deref())?),
         ShaderglassCommand::Resume => print(resume(&cfg)?),
         ShaderglassCommand::Stop => print(stop(&cfg)?),
-        ShaderglassCommand::Status => print(serde_json::to_string_pretty(&status(&cfg)).map_err(|e| e.to_string())?),
+        ShaderglassCommand::Status => {
+            print(serde_json::to_string_pretty(&status(&cfg)).map_err(|e| e.to_string())?)
+        }
         ShaderglassCommand::Serve => serve(cfg),
-        ShaderglassCommand::PortalConfig { check, write } => print(portal_config(&cfg, *check, *write)?),
+        ShaderglassCommand::PortalConfig { check, write } => {
+            print(portal_config(&cfg, *check, *write)?)
+        }
         ShaderglassCommand::Prefix => {
             let created = wine::ensure_prefix(&cfg)?;
             let seeded = wine::seed_profile(&cfg)?;
@@ -2617,24 +3190,46 @@ mod tests {
         let original = Win::from_json(&json).unwrap();
         let identity = WindowIdentity::from_window(&original);
         let mut changed = original.clone();
-        changed.rect = follow::Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 };
+        changed.rect = follow::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+        };
         changed.workspace_id = 4;
         changed.monitor = 2;
         assert!(identity.matches(&changed));
         changed.stable_id = "43".into();
-        assert!(!identity.matches(&changed), "a new native window reusing an address must not inherit capture");
-        changed.stable_id = "42".into();changed.pid = 12;
-        assert!(!identity.matches(&changed), "another process is not the original target");
+        assert!(
+            !identity.matches(&changed),
+            "a new native window reusing an address must not inherit capture"
+        );
+        changed.stable_id = "42".into();
+        changed.pid = 12;
+        assert!(
+            !identity.matches(&changed),
+            "another process is not the original target"
+        );
     }
 
     #[test]
     fn a_pane_the_rules_missed_is_floated_and_pinned_once() {
         let tiled = json!({"address": "0xp", "floating": false, "pinned": false});
         let l = pane_layer_lua("0xp", &tiled);
-        assert!(l.contains("window.float({window=\"address:0xp\",action='enable'})") || l.contains("window.float({window='address:0xp',action='enable'})"), "{l}");
+        assert!(
+            l.contains("window.float({window=\"address:0xp\",action='enable'})")
+                || l.contains("window.float({window='address:0xp',action='enable'})"),
+            "{l}"
+        );
         assert!(l.contains("window.pin("), "{l}");
-        assert_eq!(pane_layer_lua("0xp", &json!({"floating": true, "pinned": true})), "", "a ruled pane is left alone");
-        assert!(!pane_layer_lua("0xp", &json!({"floating": true, "pinned": false})).contains("float("));
+        assert_eq!(
+            pane_layer_lua("0xp", &json!({"floating": true, "pinned": true})),
+            "",
+            "a ruled pane is left alone"
+        );
+        assert!(
+            !pane_layer_lua("0xp", &json!({"floating": true, "pinned": false})).contains("float(")
+        );
     }
 
     #[test]
@@ -2645,7 +3240,10 @@ mod tests {
         assert_eq!(bound.matches("pcall(function()").count(), 2);
         let gone_target = binding_lua("0xabc", "0xdef", false, false);
         assert!(gone_target.contains("-mios-shaderglass-target:0xdef"));
-        assert!(!gone_target.contains("address:0xdef"), "never tag an address-reused target");
+        assert!(
+            !gone_target.contains("address:0xdef"),
+            "never tag an address-reused target"
+        );
     }
 
     /// Run only in an isolated compositor with three owned, floated fixture windows.
@@ -2653,24 +3251,40 @@ mod tests {
     #[test]
     #[ignore = "requires explicit owned native compositor fixtures"]
     fn live_native_association_and_mode_roundtrips() {
-        use std::thread::sleep;
         use follow::Action;
+        use std::thread::sleep;
         let hypr = Hypr::connect().expect("explicit native compositor");
         let target = std::env::var("MIOS_SHADER_TARGET").expect("owned target address");
         let pane = std::env::var("MIOS_SHADER_PANE").expect("owned overlay address");
         let control = std::env::var("MIOS_SHADER_CONTROL").expect("owned negative control address");
         let read = |address: &str| -> Win {
             let clients = hypr.json("clients").unwrap();
-            let v = clients.as_array().unwrap().iter()
-                .find(|v| v["address"].as_str() == Some(address)).expect("fixture mapped");
+            let v = clients
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["address"].as_str() == Some(address))
+                .expect("fixture mapped");
             let w = Win::from_json(v).unwrap();
-            assert!(w.title.starts_with("MiOS shader-state check "), "owned fixtures only");
+            assert!(
+                w.title.starts_with("MiOS shader-state check "),
+                "owned fixtures only"
+            );
             w
         };
         let tags = |address: &str| -> Vec<String> {
             let clients = hypr.json("clients").unwrap();
-            clients.as_array().unwrap().iter().find(|v| v["address"].as_str() == Some(address)).unwrap()
-                ["tags"].as_array().unwrap().iter().filter_map(|t| t.as_str().map(str::to_owned)).collect()
+            clients
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["address"].as_str() == Some(address))
+                .unwrap()["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|t| t.as_str().map(str::to_owned))
+                .collect()
         };
         let original = read(&target);
         let identity = WindowIdentity::from_window(&original);
@@ -2679,77 +3293,151 @@ mod tests {
         hypr.eval(&binding_lua(&pane, &target, true, true)).unwrap();
         assert!(tags(&target).contains(&format!("mios-shaderglass-pane:{pane}")));
         assert!(tags(&pane).contains(&format!("mios-shaderglass-target:{target}")));
-        assert!(!tags(&control).iter().any(|t| t.starts_with("mios-shaderglass-")));
+        assert!(!tags(&control)
+            .iter()
+            .any(|t| t.starts_with("mios-shaderglass-")));
 
         let mut follower = Follower::new();
         let policy = follow::Policy {
-            follow_hz: 0.0, idle: Duration::from_millis(100),
-            settle: Duration::from_millis(50), on_move: follow::OnMove::Follow, close_with_target: true,
+            follow_hz: 0.0,
+            idle: Duration::from_millis(100),
+            settle: Duration::from_millis(50),
+            on_move: follow::OnMove::Follow,
+            close_with_target: true,
         };
         let mut synchronize = |suppressed: bool| {
             for _ in 0..5 {
                 let t = read(&target);
                 let p = read(&pane);
-                assert!(identity.matches(&t), "native identity persists across presentation modes");
+                assert!(
+                    identity.matches(&t),
+                    "native identity persists across presentation modes"
+                );
                 let monitors = follow::monitors_from_json(&hypr.json("monitors").unwrap());
-                let step = follower.step(&policy, Some(&t), Some(&p), &monitors, suppressed, Instant::now());
-                assert!(!step.actions.iter().any(|a| matches!(a, Action::PlaceTarget(_))),
-                    "mode/reflow must never write application geometry: {:?}", step.actions);
+                let step = follower.step(
+                    &policy,
+                    Some(&t),
+                    Some(&p),
+                    &monitors,
+                    suppressed,
+                    Instant::now(),
+                );
+                assert!(
+                    !step
+                        .actions
+                        .iter()
+                        .any(|a| matches!(a, Action::PlaceTarget(_))),
+                    "mode/reflow must never write application geometry: {:?}",
+                    step.actions
+                );
                 if !step.actions.is_empty() {
-                    hypr.eval(&follow::actions_lua(&pane, &target, &step.actions)).unwrap();
+                    hypr.eval(&follow::actions_lua(&pane, &target, &step.actions))
+                        .unwrap();
                 }
                 sleep(Duration::from_millis(80));
             }
             if !suppressed {
                 let t = read(&target);
                 let p = read(&pane);
-                assert!(t.rect.same(&p.rect), "overlay follows native application geometry exactly: {:?} {:?}", t.rect, p.rect);
-                assert_eq!(t.monitor, p.monitor, "overlay follows native output ownership");
+                assert!(
+                    t.rect.same(&p.rect),
+                    "overlay follows native application geometry exactly: {:?} {:?}",
+                    t.rect,
+                    p.rect
+                );
+                assert_eq!(
+                    t.monitor, p.monitor,
+                    "overlay follows native output ownership"
+                );
             }
         };
         synchronize(false);
         let before = read(&target).rect;
-        hypr.eval(&follow::actions_lua(&pane, &target, &[Action::Place(follow::Rect {
-            x: before.x + 31.0, y: before.y + 29.0, w: before.w - 47.0, h: before.h - 41.0,
-        })])).unwrap();
+        hypr.eval(&follow::actions_lua(
+            &pane,
+            &target,
+            &[Action::Place(follow::Rect {
+                x: before.x + 31.0,
+                y: before.y + 29.0,
+                w: before.w - 47.0,
+                h: before.h - 41.0,
+            })],
+        ))
+        .unwrap();
         sleep(Duration::from_millis(200));
         synchronize(false);
-        assert!(read(&target).rect.close_to(&before), "pane-only native reflow did not resize target");
+        assert!(
+            read(&target).rect.close_to(&before),
+            "pane-only native reflow did not resize target"
+        );
         println!("native pane reflow: target unchanged, overlay reconciled");
 
         for mode in ["maximized", "fullscreen"] {
             for action in ["set", "unset"] {
-                hypr.eval(&format!("hl.dispatch(hl.dsp.window.fullscreen({{window={},mode={},action={}}}))",
-                    lua_str(&format!("address:{target}")), lua_str(mode), lua_str(action))).unwrap();
+                hypr.eval(&format!(
+                    "hl.dispatch(hl.dsp.window.fullscreen({{window={},mode={},action={}}}))",
+                    lua_str(&format!("address:{target}")),
+                    lua_str(mode),
+                    lua_str(action)
+                ))
+                .unwrap();
                 sleep(Duration::from_millis(400));
                 synchronize(false);
                 assert!(tags(&target).contains(&format!("mios-shaderglass-pane:{pane}")));
-                assert!(!tags(&control).iter().any(|t| t.starts_with("mios-shaderglass-")));
+                assert!(!tags(&control)
+                    .iter()
+                    .any(|t| t.starts_with("mios-shaderglass-")));
                 println!("native mode {mode} {action}: identity/tags/output/geometry retained");
             }
         }
         synchronize(true);
         synchronize(false);
-        assert!(read(&target).rect.close_to(&before), "suppression return preserves application rect");
+        assert!(
+            read(&target).rect.close_to(&before),
+            "suppression return preserves application rect"
+        );
 
         hypr.eval(&format!("hl.dispatch(hl.dsp.window.move({{window={},workspace='special:mios-shader-state-minimized',follow=false}}))",
             lua_str(&format!("address:{target}")))).unwrap();
         sleep(Duration::from_millis(200));
         let hidden = read(&target);
-        assert!(!follow::on_screen(&hidden, &follow::monitors_from_json(&hypr.json("monitors").unwrap())));
+        assert!(!follow::on_screen(
+            &hidden,
+            &follow::monitors_from_json(&hypr.json("monitors").unwrap())
+        ));
         // No pane->target writes are allowed when the associated target is minimized.
-        let step = Follower::new().step(&policy, Some(&hidden), Some(&read(&pane)),
-            &follow::monitors_from_json(&hypr.json("monitors").unwrap()), false, Instant::now());
+        let step = Follower::new().step(
+            &policy,
+            Some(&hidden),
+            Some(&read(&pane)),
+            &follow::monitors_from_json(&hypr.json("monitors").unwrap()),
+            false,
+            Instant::now(),
+        );
         assert!(step.actions.contains(&Action::Hide));
-        hypr.eval(&follow::actions_lua(&pane, &target, &step.actions)).unwrap();
-        hypr.eval(&format!("hl.dispatch(hl.dsp.window.move({{window={},workspace={},follow=false}}))",
-            lua_str(&format!("address:{target}")), lua_str(&original.workspace_name))).unwrap();
+        hypr.eval(&follow::actions_lua(&pane, &target, &step.actions))
+            .unwrap();
+        hypr.eval(&format!(
+            "hl.dispatch(hl.dsp.window.move({{window={},workspace={},follow=false}}))",
+            lua_str(&format!("address:{target}")),
+            lua_str(&original.workspace_name)
+        ))
+        .unwrap();
         sleep(Duration::from_millis(200));
         synchronize(false);
-        hypr.eval(&binding_lua(&pane, &target, false, true)).unwrap();
-        assert!(!tags(&target).iter().any(|t| t.starts_with("mios-shaderglass-")));
-        assert!(!tags(&pane).iter().any(|t| t.starts_with("mios-shaderglass-")));
-        assert_eq!(read(&control), wrong, "negative control untouched through all modes");
+        hypr.eval(&binding_lua(&pane, &target, false, true))
+            .unwrap();
+        assert!(!tags(&target)
+            .iter()
+            .any(|t| t.starts_with("mios-shaderglass-")));
+        assert!(!tags(&pane)
+            .iter()
+            .any(|t| t.starts_with("mios-shaderglass-")));
+        assert_eq!(
+            read(&control),
+            wrong,
+            "negative control untouched through all modes"
+        );
         println!("native minimize/restore/suppression and wrong-window control passed");
     }
 
@@ -2758,19 +3446,49 @@ mod tests {
         let cfg = Config::from_ssot(&vendor()).unwrap();
         assert!(cfg.enabled, "the installed vendor overlay is enabled");
         assert_eq!(cfg.channel, Channel::Newest);
-        assert!(cfg.asset_pattern.is_match("ShaderGlass-1.3.1-beta-win-x64.zip"));
-        assert!(cfg.asset_pattern.is_match("ShaderGlass-1.2.3.1-win-x64.zip"));
-        assert!(!cfg.asset_pattern.is_match("ShaderGlass-1.3.1-win-arm64.zip"));
-        assert!(cfg.window.class.is_match("shaderglass.exe") && !cfg.window.class.is_match("xshaderglass.exe"));
-        assert!(cfg.window.title.is_match("ShaderGlass") && cfg.window.title.is_match("ShaderGlass (kitty, crt-geom, 1px, Free, ~1:1, 60fps)"));
+        assert!(cfg
+            .asset_pattern
+            .is_match("ShaderGlass-1.3.1-beta-win-x64.zip"));
+        assert!(cfg
+            .asset_pattern
+            .is_match("ShaderGlass-1.2.3.1-win-x64.zip"));
+        assert!(!cfg
+            .asset_pattern
+            .is_match("ShaderGlass-1.3.1-win-arm64.zip"));
+        assert!(
+            cfg.window.class.is_match("shaderglass.exe")
+                && !cfg.window.class.is_match("xshaderglass.exe")
+        );
+        assert!(
+            cfg.window.title.is_match("ShaderGlass")
+                && cfg
+                    .window
+                    .title
+                    .is_match("ShaderGlass (kitty, crt-geom, 1px, Free, ~1:1, 60fps)")
+        );
         assert!(!cfg.window.title.is_match("Shader Parameters"));
-        assert!(cfg.window.tools.is_match("Choose Shader") && cfg.window.tools.is_match("Shader Parameters: crt-geom"));
+        assert!(
+            cfg.window.tools.is_match("Choose Shader")
+                && cfg.window.tools.is_match("Shader Parameters: crt-geom")
+        );
         assert_eq!(cfg.launch_args, ["-f", "-input", "Choose..."]);
-        assert_eq!(cfg.profile.first().map(|(k, _)| k.as_str()), Some("ProfileVersion"));
+        assert_eq!(
+            cfg.profile.first().map(|(k, _)| k.as_str()),
+            Some("ProfileVersion")
+        );
         assert_eq!(cfg.capture.source_types, "window");
-        assert_eq!(unit_name(&cfg), "app-mios-org.mios.ShaderGlass@overlay.service");
-        assert_eq!(cfg.xdph.custom_picker_binary, "/usr/libexec/mios/mios-share-picker");
-        assert_eq!((cfg.wine.d3d.clone(), cfg.wine.gpu.clone()), (D3d::Dxvk, Gpu::Compositor));
+        assert_eq!(
+            unit_name(&cfg),
+            "app-mios-org.mios.ShaderGlass@overlay.service"
+        );
+        assert_eq!(
+            cfg.xdph.custom_picker_binary,
+            "/usr/libexec/mios/mios-share-picker"
+        );
+        assert_eq!(
+            (cfg.wine.d3d.clone(), cfg.wine.gpu.clone()),
+            (D3d::Dxvk, Gpu::Compositor)
+        );
     }
 
     #[test]
@@ -2782,7 +3500,9 @@ mod tests {
             for p in &path[..path.len() - 1] {
                 cur = &mut cur[*p];
             }
-            cur.as_table_mut().unwrap().insert(path[path.len() - 1].to_owned(), v);
+            cur.as_table_mut()
+                .unwrap()
+                .insert(path[path.len() - 1].to_owned(), v);
             d
         };
         let s = |x: &str| Value::String(x.into());
@@ -2793,41 +3513,154 @@ mod tests {
             (sg("install_dir"), s("usr/lib/x"), "absolute"),
             (sg("app_id"), s("org-mios-sg"), "reverse-DNS"),
             (sg("memory_max"), s("lots"), "memory_max"),
-            (sg("install_files"), Value::Array(vec![s("LICENSE")]), "exe and LICENSE"),
-            (sg("install_files"), Value::Array(vec![s("ShaderGlass.exe"), s("LICENSE"), s("../evil")]), "plain root"),
-            (vec!["desktop", "shaderglass", "wine", "prefix"], s("/abs/prefix"), "relative"),
-            (vec!["desktop", "shaderglass", "wine", "driver"], s("gdi"), "driver"),
-            (vec!["desktop", "shaderglass", "wine", "gpu"], s("card2"), "gpu"),
-            (vec!["desktop", "shaderglass", "window", "main_title"], s("ShaderGlass ("), "anchored"),
-            (vec!["desktop", "shaderglass", "window", "class"], s("shaderglass"), "anchored"),
-            (vec!["desktop", "shaderglass", "window", "passthrough_tag"], s("mios-shaderglass"), "differ"),
-            (vec!["desktop", "shaderglass", "follow", "on_move"], s("jump"), "on_move"),
-            (vec!["desktop", "shaderglass", "follow", "idle_poll_ms"], Value::Integer(1), "idle_poll_ms"),
-            (vec!["desktop", "shaderglass", "capture", "source_types"], s("window,screen"), "source_types"),
-            (vec!["desktop", "shaderglass", "capture", "picker"], s("auto"), "picker"),
-            (vec!["desktop", "shaderglass", "winecap", "patches"], Value::Array(vec![s("/etc/x.patch")]), "repository-relative"),
-            (vec!["desktop", "shaderglass", "profile", "CaptureWindow"], s("kitty"), "CaptureWindow"),
-            (vec!["desktop", "hyprland", "xdph", "config"], s("/etc/xdph.conf"), "XDG_CONFIG_HOME"),
-            (vec!["desktop", "shaderglass", "state", "directory"], s("/var/lib/sg"), "relative path under $XDG_STATE_HOME"),
-            (vec!["desktop", "shaderglass", "state", "directory"], s("mios/../x"), "relative path under $XDG_STATE_HOME"),
-            (vec!["desktop", "shaderglass", "state", "save_timeout_ms"], Value::Integer(10), "save_timeout_ms"),
-            (vec!["desktop", "shaderglass", "state", "restart_limit"], Value::Integer(99), "restart_limit"),
-            (vec!["desktop", "shaderglass", "state", "persist"], s("yes"), "persist"),
-            (vec!["desktop", "shaderglass", "state", "strip_keys"], Value::Array(vec![s("InputArea")]), "CaptureWindow"),
-            (vec!["desktop", "shaderglass", "state", "strip_keys"], Value::Array(vec![s("Capture Window")]), "mnemonics"),
-            (vec!["desktop", "shaderglass", "launch", "cycle_shortcut"], s("m"), "must differ"),
-            (vec!["desktop", "shaderglass", "state", "runtime_state"], s("/tmp/mios-shaderglass.state"), "under $XDG_RUNTIME_DIR"),
-            (vec!["desktop", "shaderglass", "state", "runtime_state"], s("../mios-shaderglass.state"), "under $XDG_RUNTIME_DIR"),
-            (vec!["desktop", "shaderglass", "state", "room_requests"], s("/tmp/mios-shaderglass-3d-request.txt"), "under $XDG_RUNTIME_DIR"),
-            (vec!["desktop", "shaderglass", "state", "room_requests"], s("mios/shaderglass/active.state"), "must differ"),
+            (
+                sg("install_files"),
+                Value::Array(vec![s("LICENSE")]),
+                "exe and LICENSE",
+            ),
+            (
+                sg("install_files"),
+                Value::Array(vec![s("ShaderGlass.exe"), s("LICENSE"), s("../evil")]),
+                "plain root",
+            ),
+            (
+                vec!["desktop", "shaderglass", "wine", "prefix"],
+                s("/abs/prefix"),
+                "relative",
+            ),
+            (
+                vec!["desktop", "shaderglass", "wine", "driver"],
+                s("gdi"),
+                "driver",
+            ),
+            (
+                vec!["desktop", "shaderglass", "wine", "gpu"],
+                s("card2"),
+                "gpu",
+            ),
+            (
+                vec!["desktop", "shaderglass", "window", "main_title"],
+                s("ShaderGlass ("),
+                "anchored",
+            ),
+            (
+                vec!["desktop", "shaderglass", "window", "class"],
+                s("shaderglass"),
+                "anchored",
+            ),
+            (
+                vec!["desktop", "shaderglass", "window", "passthrough_tag"],
+                s("mios-shaderglass"),
+                "differ",
+            ),
+            (
+                vec!["desktop", "shaderglass", "follow", "on_move"],
+                s("jump"),
+                "on_move",
+            ),
+            (
+                vec!["desktop", "shaderglass", "follow", "idle_poll_ms"],
+                Value::Integer(1),
+                "idle_poll_ms",
+            ),
+            (
+                vec!["desktop", "shaderglass", "capture", "source_types"],
+                s("window,screen"),
+                "source_types",
+            ),
+            (
+                vec!["desktop", "shaderglass", "capture", "picker"],
+                s("auto"),
+                "picker",
+            ),
+            (
+                vec!["desktop", "shaderglass", "winecap", "patches"],
+                Value::Array(vec![s("/etc/x.patch")]),
+                "repository-relative",
+            ),
+            (
+                vec!["desktop", "shaderglass", "profile", "CaptureWindow"],
+                s("kitty"),
+                "CaptureWindow",
+            ),
+            (
+                vec!["desktop", "hyprland", "xdph", "config"],
+                s("/etc/xdph.conf"),
+                "XDG_CONFIG_HOME",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "directory"],
+                s("/var/lib/sg"),
+                "relative path under $XDG_STATE_HOME",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "directory"],
+                s("mios/../x"),
+                "relative path under $XDG_STATE_HOME",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "save_timeout_ms"],
+                Value::Integer(10),
+                "save_timeout_ms",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "restart_limit"],
+                Value::Integer(99),
+                "restart_limit",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "persist"],
+                s("yes"),
+                "persist",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "strip_keys"],
+                Value::Array(vec![s("InputArea")]),
+                "CaptureWindow",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "strip_keys"],
+                Value::Array(vec![s("Capture Window")]),
+                "mnemonics",
+            ),
+            (
+                vec!["desktop", "shaderglass", "launch", "cycle_shortcut"],
+                s("m"),
+                "must differ",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "runtime_state"],
+                s("/tmp/mios-shaderglass.state"),
+                "under $XDG_RUNTIME_DIR",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "runtime_state"],
+                s("../mios-shaderglass.state"),
+                "under $XDG_RUNTIME_DIR",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "room_requests"],
+                s("/tmp/mios-shaderglass-3d-request.txt"),
+                "under $XDG_RUNTIME_DIR",
+            ),
+            (
+                vec!["desktop", "shaderglass", "state", "room_requests"],
+                s("mios/shaderglass/active.state"),
+                "must differ",
+            ),
         ];
         for (path, v, needle) in cases {
             let e = Config::from_ssot(&set(&path, v)).expect_err(needle);
             assert!(e.contains(needle), "{path:?}: expected {needle:?} in {e}");
         }
         let mut missing = base.clone();
-        missing["desktop"].as_table_mut().unwrap().remove("shaderglass");
-        assert!(Config::from_ssot(&missing).unwrap_err().contains("desktop.shaderglass"));
+        missing["desktop"]
+            .as_table_mut()
+            .unwrap()
+            .remove("shaderglass");
+        assert!(Config::from_ssot(&missing)
+            .unwrap_err()
+            .contains("desktop.shaderglass"));
     }
 
     #[test]
@@ -2836,37 +3669,74 @@ mod tests {
         assert!(cfg.state.persist && cfg.state.resume);
         assert_eq!(cfg.state.directory, "mios/shaderglass");
         assert_eq!(cfg.state.restart_limit, 2);
-        for k in ["CaptureWindow", "CaptureDesktop", "CaptureDevice", "CaptureFormat", "InputArea", "CroppedArea"] {
+        for k in [
+            "CaptureWindow",
+            "CaptureDesktop",
+            "CaptureDevice",
+            "CaptureFormat",
+            "InputArea",
+            "CroppedArea",
+        ] {
             assert!(cfg.state.strip_keys.iter().any(|x| x == k), "{k}");
         }
-        assert_eq!((cfg.setup_shortcut.as_str(), cfg.cycle_shortcut.as_str()), ("m", "n"));
+        assert_eq!(
+            (cfg.setup_shortcut.as_str(), cfg.cycle_shortcut.as_str()),
+            ("m", "n")
+        );
         // The hand-over files live under the session's runtime directory, never in the shared /tmp.
         for rel in [&cfg.state.runtime_state, &cfg.state.room_requests] {
             for rt in ["/run/user/1000", "/run/user/1000/mios-nested-desktop-1"] {
                 let f = session_file_in(Path::new(rt), rel);
-                assert!(f.starts_with(rt) && !f.starts_with("/tmp"), "{}", f.display());
+                assert!(
+                    f.starts_with(rt) && !f.starts_with("/tmp"),
+                    "{}",
+                    f.display()
+                );
             }
         }
         assert_ne!(
             session_file_in(Path::new("/run/user/1000"), &cfg.state.runtime_state),
-            session_file_in(Path::new("/run/user/1000/mios-nested-desktop-1"), &cfg.state.runtime_state),
+            session_file_in(
+                Path::new("/run/user/1000/mios-nested-desktop-1"),
+                &cfg.state.runtime_state
+            ),
             "a nested session never shares the primary's"
         );
         let mut missing = vendor();
-        missing["desktop"]["shaderglass"].as_table_mut().unwrap().remove("state");
-        assert!(Config::from_ssot(&missing).unwrap_err().contains("desktop.shaderglass.state"));
+        missing["desktop"]["shaderglass"]
+            .as_table_mut()
+            .unwrap()
+            .remove("state");
+        assert!(Config::from_ssot(&missing)
+            .unwrap_err()
+            .contains("desktop.shaderglass.state"));
     }
 
     #[test]
     fn only_a_pane_that_died_on_its_own_is_relaunched() {
         // requested_close, had_mapped, restarts, limit, stopping
-        assert!(relaunch_decision(false, true, 0, 2, false), "a crash of a working pane relaunches");
+        assert!(
+            relaunch_decision(false, true, 0, 2, false),
+            "a crash of a working pane relaunches"
+        );
         assert!(relaunch_decision(false, true, 1, 2, false));
         assert!(!relaunch_decision(false, true, 2, 2, false), "budget spent");
-        assert!(!relaunch_decision(true, true, 0, 2, false), "detach / target closed / stop never relaunch");
-        assert!(!relaunch_decision(false, false, 0, 2, false), "a pane that never mapped is not retried forever");
-        assert!(!relaunch_decision(false, true, 0, 2, true), "never while the supervisor stops");
-        assert!(!relaunch_decision(false, true, 0, 0, false), "restart_limit 0");
+        assert!(
+            !relaunch_decision(true, true, 0, 2, false),
+            "detach / target closed / stop never relaunch"
+        );
+        assert!(
+            !relaunch_decision(false, false, 0, 2, false),
+            "a pane that never mapped is not retried forever"
+        );
+        assert!(
+            !relaunch_decision(false, true, 0, 2, true),
+            "never while the supervisor stops"
+        );
+        assert!(
+            !relaunch_decision(false, true, 0, 0, false),
+            "restart_limit 0"
+        );
     }
 
     #[test]
@@ -2875,16 +3745,37 @@ mod tests {
         let a = unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-1"));
         let b = unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-2"));
         assert!(a.starts_with("overlay-") && a != b && a != "overlay");
-        assert_eq!(a, unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-1")), "stable");
-        for k in ["MIOS_VENDOR_TOML", "XDG_STATE_HOME", "XDG_DATA_HOME", "PIPEWIRE_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "HYPRLAND_INSTANCE_SIGNATURE"] {
+        assert_eq!(
+            a,
+            unit_instance(false, Path::new("/run/user/1000/mios-nested-desktop-1")),
+            "stable"
+        );
+        for k in [
+            "MIOS_VENDOR_TOML",
+            "XDG_STATE_HOME",
+            "XDG_DATA_HOME",
+            "PIPEWIRE_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+        ] {
             assert!(SUPERVISOR_ENV.contains(&k), "{k}");
         }
-        assert!(!SUPERVISOR_ENV.contains(&"XDG_RUNTIME_DIR"), "added only outside the primary session");
+        assert!(
+            !SUPERVISOR_ENV.contains(&"XDG_RUNTIME_DIR"),
+            "added only outside the primary session"
+        );
         // Only the user manager's own runtime directory is the primary session (ensure_portal_backend acts there only).
         assert!(is_primary_runtime(Path::new("/run/user/1000"), 1000));
-        assert!(!is_primary_runtime(Path::new("/run/user/1000/mios-nested-desktop-1"), 1000));
+        assert!(!is_primary_runtime(
+            Path::new("/run/user/1000/mios-nested-desktop-1"),
+            1000
+        ));
         assert!(!is_primary_runtime(Path::new("/run/user/1001"), 1000));
-        assert_eq!(state::PRIMARY_SESSION, unit_instance(true, Path::new("/run/user/1000")), "the store keys the primary as its unit");
+        assert_eq!(
+            state::PRIMARY_SESSION,
+            unit_instance(true, Path::new("/run/user/1000")),
+            "the store keys the primary as its unit"
+        );
     }
 
     #[test]
@@ -2892,9 +3783,20 @@ mod tests {
         let t0 = Instant::now();
         let settle = Duration::from_millis(300);
         assert!(layer_fix_due(0, None, t0, settle), "first time");
-        assert!(!layer_fix_due(1, Some(t0), t0 + Duration::from_millis(10), settle), "not before the last one could land");
+        assert!(
+            !layer_fix_due(1, Some(t0), t0 + Duration::from_millis(10), settle),
+            "not before the last one could land"
+        );
         assert!(layer_fix_due(1, Some(t0), t0 + settle, settle));
-        assert!(!layer_fix_due(follow::PLACE_RETRIES, Some(t0), t0 + Duration::from_secs(60), settle), "bounded");
+        assert!(
+            !layer_fix_due(
+                follow::PLACE_RETRIES,
+                Some(t0),
+                t0 + Duration::from_secs(60),
+                settle
+            ),
+            "bounded"
+        );
         // Negative control: the old tick sent it whenever the pane reported otherwise -- every tick, unbounded.
         let mut sent = 0;
         let mut last = None;
@@ -2905,21 +3807,41 @@ mod tests {
                 last = Some(now);
             }
         }
-        assert_eq!(sent, follow::PLACE_RETRIES, "1000 ticks of a pane that never floats: {sent} fixes");
+        assert_eq!(
+            sent,
+            follow::PLACE_RETRIES,
+            "1000 ticks of a pane that never floats: {sent} fixes"
+        );
     }
 
     #[test]
     fn only_the_retitled_main_window_becomes_a_pane() {
         let cfg = Config::from_ssot(&vendor()).unwrap();
         let w = &cfg.window;
-        assert!(is_main_window(w, "shaderglass.exe", "ShaderGlass (no input selected)"));
-        assert!(is_main_window(w, "shaderglass.exe", "ShaderGlass (kitty, crt-geom, 1px, free, ~1:1, 60fps)"));
+        assert!(is_main_window(
+            w,
+            "shaderglass.exe",
+            "ShaderGlass (no input selected)"
+        ));
+        assert!(is_main_window(
+            w,
+            "shaderglass.exe",
+            "ShaderGlass (kitty, crt-geom, 1px, free, ~1:1, 60fps)"
+        ));
         // Negative controls: ShaderGlass' message boxes and input dialog keep the bare title, its tool
         // windows have their own, and any other class is never a pane.
         assert!(!is_main_window(w, "shaderglass.exe", "ShaderGlass"));
         assert!(!is_main_window(w, "shaderglass.exe", "Choose Shader"));
-        assert!(!is_main_window(w, "shaderglass.exe", "Shader Parameters: crt-geom"));
-        assert!(!is_main_window(w, "kitty", "ShaderGlass (no input selected)"));
+        assert!(!is_main_window(
+            w,
+            "shaderglass.exe",
+            "Shader Parameters: crt-geom"
+        ));
+        assert!(!is_main_window(
+            w,
+            "kitty",
+            "ShaderGlass (no input selected)"
+        ));
         // The static pane rules match the bare title too: they apply at map time, before the retitle.
         assert!(w.title.is_match("ShaderGlass"));
     }
@@ -2927,9 +3849,21 @@ mod tests {
     #[test]
     fn a_main_window_goes_to_the_pane_whose_process_it_is() {
         assert_eq!(pane_for_window(&[(0, 100), (1, 200)], 200, false), Some(1));
-        assert_eq!(pane_for_window(&[(3, 100)], 999, true), Some(3), "another process of our unit, one pane launching");
-        assert_eq!(pane_for_window(&[(3, 100)], 999, false), None, "a ShaderGlass outside the supervisor is never taken");
-        assert_eq!(pane_for_window(&[(0, 100), (1, 200)], 999, true), None, "ambiguous");
+        assert_eq!(
+            pane_for_window(&[(3, 100)], 999, true),
+            Some(3),
+            "another process of our unit, one pane launching"
+        );
+        assert_eq!(
+            pane_for_window(&[(3, 100)], 999, false),
+            None,
+            "a ShaderGlass outside the supervisor is never taken"
+        );
+        assert_eq!(
+            pane_for_window(&[(0, 100), (1, 200)], 999, true),
+            None,
+            "ambiguous"
+        );
         assert_eq!(pane_for_window(&[], 100, true), None);
         assert!(!in_my_cgroup(-1) && !in_my_cgroup(0));
         assert!(in_my_cgroup(i64::from(std::process::id())));
@@ -2943,30 +3877,71 @@ mod tests {
         let mut cfg = Config::from_ssot(&vendor()).unwrap();
         let aq = Some("/dev/dri/card2:/dev/dri/card1");
         assert_eq!(wine::dxvk_filter(&cfg, aq, d.path()), Some("NVIDIA"));
-        assert_eq!(wine::dxvk_filter(&cfg, None, d.path()), None, "no AQ_DRM_DEVICES: DXVK chooses");
+        assert_eq!(
+            wine::dxvk_filter(&cfg, None, d.path()),
+            None,
+            "no AQ_DRM_DEVICES: DXVK chooses"
+        );
         cfg.wine.gpu = Gpu::Any;
         assert_eq!(wine::dxvk_filter(&cfg, aq, d.path()), None);
         cfg.wine.gpu = Gpu::Compositor;
         cfg.wine.d3d = D3d::Wined3d;
-        assert_eq!(wine::dxvk_filter(&cfg, aq, d.path()), None, "wined3d has no device filter");
+        assert_eq!(
+            wine::dxvk_filter(&cfg, aq, d.path()),
+            None,
+            "wined3d has no device filter"
+        );
     }
 
     #[test]
     fn supervisor_unit_is_one_capped_app_service() {
         let cfg = Config::from_ssot(&vendor()).unwrap();
-        let a = supervisor_unit_args(&cfg, Path::new("/usr/bin/miosd"), &[("DISPLAY".into(), ":0".into())]);
+        let a = supervisor_unit_args(
+            &cfg,
+            Path::new("/usr/bin/miosd"),
+            &[("DISPLAY".into(), ":0".into())],
+        );
         let joined = a.join(" ");
-        assert!(joined.starts_with(&format!("--user --collect --quiet --unit {}", unit_name(&cfg))), "{joined}");
-        assert!(unit_name(&cfg).starts_with("app-mios-org.mios.ShaderGlass@overlay"), "{}", unit_name(&cfg));
-        for p in ["-p MemoryMax=4G", "-p KillMode=mixed", "-p OOMPolicy=continue", "--setenv=DISPLAY=:0"] {
+        assert!(
+            joined.starts_with(&format!(
+                "--user --collect --quiet --unit {}",
+                unit_name(&cfg)
+            )),
+            "{joined}"
+        );
+        assert!(
+            unit_name(&cfg).starts_with("app-mios-org.mios.ShaderGlass@overlay"),
+            "{}",
+            unit_name(&cfg)
+        );
+        for p in [
+            "-p MemoryMax=4G",
+            "-p KillMode=mixed",
+            "-p OOMPolicy=continue",
+            "--setenv=DISPLAY=:0",
+        ] {
             assert!(joined.contains(p), "{p}: {joined}");
         }
-        assert!(joined.contains("-p Restart=on-failure"), "a crashed supervisor comes back to resume: {joined}");
-        assert!(joined.contains("-p StartLimitBurst=3"), "a supervisor that cannot start is not restarted forever: {joined}");
+        assert!(
+            joined.contains("-p Restart=on-failure"),
+            "a crashed supervisor comes back to resume: {joined}"
+        );
+        assert!(
+            joined.contains("-p StartLimitBurst=3"),
+            "a supervisor that cannot start is not restarted forever: {joined}"
+        );
         let mut no_resume = cfg.clone();
         no_resume.state.resume = false;
-        assert!(!supervisor_unit_args(&no_resume, Path::new("/usr/bin/miosd"), &[]).join(" ").contains("Restart="), "resume = false: never restarted");
-        assert!(joined.ends_with("-- /usr/bin/miosd shaderglass serve"), "{joined}");
+        assert!(
+            !supervisor_unit_args(&no_resume, Path::new("/usr/bin/miosd"), &[])
+                .join(" ")
+                .contains("Restart="),
+            "resume = false: never restarted"
+        );
+        assert!(
+            joined.ends_with("-- /usr/bin/miosd shaderglass serve"),
+            "{joined}"
+        );
     }
 
     #[test]
@@ -2977,23 +3952,59 @@ mod tests {
             #[command(subcommand)]
             cmd: ShaderglassCommand,
         }
-        let p = |v: &[&str]| Cli::try_parse_from(std::iter::once("shaderglass").chain(v.iter().copied()));
-        assert!(matches!(p(&["toggle"]).unwrap().cmd, ShaderglassCommand::Toggle));
-        assert!(matches!(p(&["setup"]).unwrap().cmd, ShaderglassCommand::Setup { window: None }));
-        assert!(matches!(p(&["cycle"]).unwrap().cmd, ShaderglassCommand::Cycle { window: None }));
-        assert!(matches!(p(&["next", "--window", "0x2"]).unwrap().cmd, ShaderglassCommand::Cycle { window: Some(_) }));
-        assert!(matches!(p(&["save"]).unwrap().cmd, ShaderglassCommand::Save { window: None }));
-        assert!(matches!(p(&["resume"]).unwrap().cmd, ShaderglassCommand::Resume));
-        assert!(matches!(p(&["start", "--window", "0xab"]).unwrap().cmd, ShaderglassCommand::Attach { window: Some(ref w), setup: false } if w == "0xab"));
-        assert!(matches!(p(&["attach", "--setup"]).unwrap().cmd, ShaderglassCommand::Attach { setup: true, .. }));
-        assert!(matches!(p(&["detach", "--window", "0x1"]).unwrap().cmd, ShaderglassCommand::Detach { window: Some(_) }));
+        let p = |v: &[&str]| {
+            Cli::try_parse_from(std::iter::once("shaderglass").chain(v.iter().copied()))
+        };
+        assert!(matches!(
+            p(&["toggle"]).unwrap().cmd,
+            ShaderglassCommand::Toggle
+        ));
+        assert!(matches!(
+            p(&["setup"]).unwrap().cmd,
+            ShaderglassCommand::Setup { window: None }
+        ));
+        assert!(matches!(
+            p(&["cycle"]).unwrap().cmd,
+            ShaderglassCommand::Cycle { window: None }
+        ));
+        assert!(matches!(
+            p(&["next", "--window", "0x2"]).unwrap().cmd,
+            ShaderglassCommand::Cycle { window: Some(_) }
+        ));
+        assert!(matches!(
+            p(&["save"]).unwrap().cmd,
+            ShaderglassCommand::Save { window: None }
+        ));
+        assert!(matches!(
+            p(&["resume"]).unwrap().cmd,
+            ShaderglassCommand::Resume
+        ));
+        assert!(
+            matches!(p(&["start", "--window", "0xab"]).unwrap().cmd, ShaderglassCommand::Attach { window: Some(ref w), setup: false } if w == "0xab")
+        );
+        assert!(matches!(
+            p(&["attach", "--setup"]).unwrap().cmd,
+            ShaderglassCommand::Attach { setup: true, .. }
+        ));
+        assert!(matches!(
+            p(&["detach", "--window", "0x1"]).unwrap().cmd,
+            ShaderglassCommand::Detach { window: Some(_) }
+        ));
         match p(&["pick", "--allow-token"]).unwrap().cmd {
             ShaderglassCommand::Pick { args } => assert_eq!(args, ["--allow-token"]),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(p(&["pick"]).unwrap().cmd, ShaderglassCommand::Pick { ref args } if args.is_empty()));
-        assert!(matches!(p(&["update", "--dry-run"]).unwrap().cmd, ShaderglassCommand::Install { dry_run: true, .. }));
-        assert!(p(&["install", "--from-stage", "/x", "--archive", "/y"]).is_err(), "the root step takes no network inputs");
+        assert!(
+            matches!(p(&["pick"]).unwrap().cmd, ShaderglassCommand::Pick { ref args } if args.is_empty())
+        );
+        assert!(matches!(
+            p(&["update", "--dry-run"]).unwrap().cmd,
+            ShaderglassCommand::Install { dry_run: true, .. }
+        ));
+        assert!(
+            p(&["install", "--from-stage", "/x", "--archive", "/y"]).is_err(),
+            "the root step takes no network inputs"
+        );
         assert!(p(&["attach", "--window"]).is_err());
         assert!(p(&["frobnicate"]).is_err());
     }
@@ -3006,7 +4017,14 @@ mod tests {
         write_private(&f, b"one").unwrap();
         write_private(&f, b"two").unwrap();
         assert_eq!(std::fs::read(&f).unwrap(), b"two");
-        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
-        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1, "no temp file left behind");
+        assert_eq!(
+            std::fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::read_dir(d.path()).unwrap().count(),
+            1,
+            "no temp file left behind"
+        );
     }
 }

@@ -20,8 +20,12 @@ enum Operation {
         lua: bool,
     },
     Serve,
-    Dispatch { action: String },
-    VmAction { action: String },
+    Dispatch {
+        action: String,
+    },
+    VmAction {
+        action: String,
+    },
     Map {
         /// The readable controller map (the tmux:keymap popup's text) instead of JSON.
         #[arg(long)]
@@ -106,7 +110,9 @@ enum Operation {
     },
     /// Capture (on, fullscreen) or release (off) the focused window: the same transaction North and a held
     /// toggle_chord run, for every window kind.
-    Window { mode: String },
+    Window {
+        mode: String,
+    },
     Fixture,
     #[command(hide = true)]
     FixtureGrab {
@@ -198,7 +204,8 @@ fn run() -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     if matches!(args.command, Operation::ConsoleVt) {
-        let vt = mios_inputd::console::own_vt().ok_or("stdin is not this process's controlling Linux VT")?;
+        let vt = mios_inputd::console::own_vt()
+            .ok_or("stdin is not this process's controlling Linux VT")?;
         println!("{vt}");
         return Ok(());
     }
@@ -208,7 +215,15 @@ fn run() -> Result<(), String> {
         return vpad(&global, args.root.as_deref(), v);
     }
     #[cfg(target_os = "linux")]
-    if let Operation::ConsoleBridge { vt, mouse, gpm_socket, pointer_device, log, argv } = &args.command {
+    if let Operation::ConsoleBridge {
+        vt,
+        mouse,
+        gpm_socket,
+        pointer_device,
+        log,
+        argv,
+    } = &args.command
+    {
         let c = &global.controller.console;
         let gpm_socket = gpm_socket.clone().unwrap_or_else(|| c.gpm_socket.clone());
         let mouse = match mouse.as_deref().unwrap_or(&c.mouse) {
@@ -218,25 +233,55 @@ fn run() -> Result<(), String> {
             m => return Err(format!("--mouse {m}: gpm, evdev or off")),
         };
         let code = mios_inputd::console::run(mios_inputd::console::Options {
-            argv: argv.clone(), vt: *vt, mouse, gpm_socket, pointer_device: pointer_device.clone(),
-            pointer_names: c.pointer_names.clone(), cell_px: c.cell_px, log: log.clone(),
+            argv: argv.clone(),
+            vt: *vt,
+            mouse,
+            gpm_socket,
+            pointer_device: pointer_device.clone(),
+            pointer_names: c.pointer_names.clone(),
+            cell_px: c.cell_px,
+            log: log.clone(),
         })?;
         std::process::exit(code);
     }
     let (bridge, fixture_only, live_context, pad_override) = match &args.command {
-        Operation::Bridge { fixture_only, live_context, pad_path, .. } => (true, *fixture_only, *live_context, pad_path.clone()),
+        Operation::Bridge {
+            fixture_only,
+            live_context,
+            pad_path,
+            ..
+        } => (true, *fixture_only, *live_context, pad_path.clone()),
         _ => (false, false, false, None),
     };
     let (logind_state, console_tty, console_sink_fd, rediscover) = match &args.command {
-        Operation::Bridge { logind_state, console_tty, console_sink_fd, rediscover, .. } => (logind_state.clone(), console_tty.clone(), *console_sink_fd, *rediscover),
+        Operation::Bridge {
+            logind_state,
+            console_tty,
+            console_sink_fd,
+            rediscover,
+            ..
+        } => (
+            logind_state.clone(),
+            console_tty.clone(),
+            *console_sink_fd,
+            *rediscover,
+        ),
         _ => (None, None, None, false),
     };
     // I4 --nested: resolve the session in the host runtime, then follow it (its runtime, compositor and display).
     #[cfg(target_os = "linux")]
     let (nested, pad_override) = match &args.command {
-        Operation::Bridge { nested: Some(seat), .. } => {
-            let rt = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("XDG_RUNTIME_DIR missing")?;
-            let s = mios_inputd::nested::session(&rt.join(&global.nested_registry), std::path::Path::new("/proc"), seat)?;
+        Operation::Bridge {
+            nested: Some(seat), ..
+        } => {
+            let rt = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .ok_or("XDG_RUNTIME_DIR missing")?;
+            let s = mios_inputd::nested::session(
+                &rt.join(&global.nested_registry),
+                std::path::Path::new("/proc"),
+                seat,
+            )?;
             // Single-threaded here: no other thread reads the environment yet. Action children (wpctl, playerctl)
             // keep the host's PipeWire and user bus: the session runtime has neither (D3).
             for (k, v) in mios_inputd::nested::host_service_env(&rt, |k| std::env::var(k).ok()) {
@@ -246,37 +291,79 @@ fn run() -> Result<(), String> {
             std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", &s.instance);
             std::env::set_var("WAYLAND_DISPLAY", &s.wayland_display);
             std::env::remove_var("DISPLAY");
-            eprintln!("{}", serde_json::json!({"nested":"follow","seat":seat,"runtime":s.runtime,"instance":s.instance,"pad_state":s.pad_state,"controllers":s.controllers}));
+            eprintln!(
+                "{}",
+                serde_json::json!({"nested":"follow","seat":seat,"runtime":s.runtime,"instance":s.instance,"pad_state":s.pad_state,"controllers":s.controllers})
+            );
             let pad = Some(s.pad_state.clone());
             (Some(s), pad)
         }
         _ => (None, pad_override),
     };
     match args.command {
-        Operation::Context { lua: true } => println!("{}",serde_json::json!({"lua":mios_inputd::runtime::context_lua(&global),"executed":false})),
+        Operation::Context { lua: true } => println!(
+            "{}",
+            serde_json::json!({"lua":mios_inputd::runtime::context_lua(&global),"executed":false})
+        ),
         Operation::Context { lua: false } => {
-            let c=mios_inputd::runtime::context(&global)?;
-            println!("{}",serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture,"released":c.released,"controller_owner":if mios_inputd::router::Router::owns_controller(&c.name) {"app"} else {"mios"}}));
+            let c = mios_inputd::runtime::context(&global)?;
+            println!(
+                "{}",
+                serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture,"released":c.released,"controller_owner":if mios_inputd::router::Router::owns_controller(&c.name) {"app"} else {"mios"}})
+            );
         }
         Operation::Window { mode } => {
-            let (address,class)=mios_inputd::runtime::window_transaction(&mode,&global,None)?;
-            println!("{}",serde_json::json!({"window":address,"class":class,"mode":mode,"ok":true}));
+            let (address, class) = mios_inputd::runtime::window_transaction(&mode, &global, None)?;
+            println!(
+                "{}",
+                serde_json::json!({"window":address,"class":class,"mode":mode,"ok":true})
+            );
         }
         Operation::Dispatch { action } => {
             use std::os::unix::process::CommandExt;
-            let argv=mios_inputd::runtime::configured_command(&action,&global)?;
-            let (program,rest)=argv.split_first().ok_or("action has no external dispatcher")?;
-            return Err(std::process::Command::new(program).args(rest).exec().to_string());
+            let argv = mios_inputd::runtime::configured_command(&action, &global)?;
+            let (program, rest) = argv
+                .split_first()
+                .ok_or("action has no external dispatcher")?;
+            return Err(std::process::Command::new(program)
+                .args(rest)
+                .exec()
+                .to_string());
         }
         Operation::Serve => return mios_inputd::runtime::serve(global, legacy, args.root),
         Operation::VmAction { action } => mios_inputd::runtime::vm_action(&action, &global)?,
         #[cfg(target_os = "linux")]
-        Operation::ResolveAction { action, tmux_client, tmux_socket } => {
-            let argv=resolve(&global,&action,tmux_client.map(|tty| mios_inputd::runtime::TmuxClient{pid:0,tty,socket:tmux_socket}).as_ref())?;
-            println!("{}",serde_json::json!({"action":action,"argv":argv,"executed":false}));
+        Operation::ResolveAction {
+            action,
+            tmux_client,
+            tmux_socket,
+        } => {
+            let argv = resolve(
+                &global,
+                &action,
+                tmux_client
+                    .map(|tty| mios_inputd::runtime::TmuxClient {
+                        pid: 0,
+                        tty,
+                        socket: tmux_socket,
+                    })
+                    .as_ref(),
+            )?;
+            println!(
+                "{}",
+                serde_json::json!({"action":action,"argv":argv,"executed":false})
+            );
         }
-        Operation::Map { text: true } => print!("{}", global.controller.nav.text(global.controller.capture_hold_ms)),
-        Operation::Map { text: false } => println!("{}", serde_json::json!({"global":global,"hypr3d":legacy})),
+        Operation::Map { text: true } => print!(
+            "{}",
+            global
+                .controller
+                .nav
+                .text(global.controller.capture_hold_ms)
+        ),
+        Operation::Map { text: false } => {
+            println!("{}", serde_json::json!({"global":global,"hypr3d":legacy}))
+        }
         Operation::Replay => {
             use std::io::Read;
             #[derive(serde::Deserialize)]
@@ -313,28 +400,66 @@ fn run() -> Result<(), String> {
                 return Err("replay input exceeds 1 MiB".into());
             }
             let input: Input = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-            let contexts_ok=std::iter::once(&input.context).chain(input.script.iter().filter_map(|s| match s {Step::Context{context}=>Some(context),_=>None}))
+            let contexts_ok = std::iter::once(&input.context)
+                .chain(input.script.iter().filter_map(|s| match s {
+                    Step::Context { context } => Some(context),
+                    _ => None,
+                }))
                 .all(|c| mios_inputd::config::CONTEXTS.contains(&c.as_str()));
-            let ticks:u64=input.script.iter().map(|s| match s {Step::Tick{tick_ms}=>*tick_ms,_=>0}).sum();
-            if !contexts_ok || input.events.len()+input.script.len() > 4096 || input.tick_ms > 1000 || ticks > 600_000 {
+            let ticks: u64 = input
+                .script
+                .iter()
+                .map(|s| match s {
+                    Step::Tick { tick_ms } => *tick_ms,
+                    _ => 0,
+                })
+                .sum();
+            if !contexts_ok
+                || input.events.len() + input.script.len() > 4096
+                || input.tick_ms > 1000
+                || ticks > 600_000
+            {
                 return Err("invalid replay context/count/tick".into());
             }
-            let client=input.tmux_client.clone().map(|tty| mios_inputd::runtime::TmuxClient{pid:0,tty,socket:"/tmp/tmux-socket".into()});
+            let client = input
+                .tmux_client
+                .clone()
+                .map(|tty| mios_inputd::runtime::TmuxClient {
+                    pid: 0,
+                    tty,
+                    socket: "/tmp/tmux-socket".into(),
+                });
             let mut router = mios_inputd::router::Router::new(global.clone(), legacy, input.axes);
-            router.analog_triggers=input.analog_triggers;
-            router.tmux=client.is_some();
+            router.analog_triggers = input.analog_triggers;
+            router.tmux = client.is_some();
             router.set_context(&input.context);
             let mut output = mios_inputd::router::Output::default();
-            let mut now=1000u64;
+            let mut now = 1000u64;
             for event in input.events {
                 output.extend(router.event(event, now));
-                now+=10;
+                now += 10;
             }
             for step in input.script {
                 match step {
-                    Step::Event(e) => { output.extend(router.event(e, now)); now+=1; }
-                    Step::Tick{tick_ms} => { for _ in 0..tick_ms/10 { output.extend(router.tick(0.01)); now+=10; } if tick_ms%10>0 { output.extend(router.tick((tick_ms%10) as f64/1000.0)); now+=tick_ms%10; } }
-                    Step::Context{context} => output.extend(router.set_focus(&context, Some((format!("0x{context}"),1)), false)),
+                    Step::Event(e) => {
+                        output.extend(router.event(e, now));
+                        now += 1;
+                    }
+                    Step::Tick { tick_ms } => {
+                        for _ in 0..tick_ms / 10 {
+                            output.extend(router.tick(0.01));
+                            now += 10;
+                        }
+                        if tick_ms % 10 > 0 {
+                            output.extend(router.tick((tick_ms % 10) as f64 / 1000.0));
+                            now += tick_ms % 10;
+                        }
+                    }
+                    Step::Context { context } => output.extend(router.set_focus(
+                        &context,
+                        Some((format!("0x{context}"), 1)),
+                        false,
+                    )),
                 }
             }
             // The router clamps one tick to 100 ms (a stalled loop never jumps), so a longer replay clock advances in
@@ -349,10 +474,14 @@ fn run() -> Result<(), String> {
                 }
             }
             // Each action's projection: argv, or the key strokes of a key: chord. Nothing is executed.
-            let resolved:Vec<_>=output.actions.iter().map(|a| match resolve(&global,a,client.as_ref()) {
-                Ok(v)=>serde_json::json!({"action":a,"projection":v}),
-                Err(e)=>serde_json::json!({"action":a,"error":e}),
-            }).collect();
+            let resolved: Vec<_> = output
+                .actions
+                .iter()
+                .map(|a| match resolve(&global, a, client.as_ref()) {
+                    Ok(v) => serde_json::json!({"action":a,"projection":v}),
+                    Err(e) => serde_json::json!({"action":a,"error":e}),
+                })
+                .collect();
             println!(
                 "{}",
                 serde_json::json!({"output":output,"pad":router.pad,"cursor":router.cursor,"profile":router.nav_profile(),"resolved":resolved,"executed":false})
@@ -369,7 +498,8 @@ fn run() -> Result<(), String> {
         } => {
             let write_pad = bridge && (!fixture_only || pad_override.is_some());
             let devices = device.into_iter().collect();
-            let pad_path = pad_override.unwrap_or_else(|| global.controller.legacy_pad_state_path.clone());
+            let pad_path =
+                pad_override.unwrap_or_else(|| global.controller.legacy_pad_state_path.clone());
             mios_inputd::runtime::run(
                 global,
                 legacy,
@@ -407,23 +537,36 @@ fn main() -> std::process::ExitCode {
 
 /// The projection of one action without executing it: key: strokes, a tmux verb's argv (needs a client), or argv.
 #[cfg(target_os = "linux")]
-fn resolve(global: &GlobalConfig, action: &str, client: Option<&mios_inputd::runtime::TmuxClient>) -> Result<serde_json::Value, String> {
+fn resolve(
+    global: &GlobalConfig,
+    action: &str,
+    client: Option<&mios_inputd::runtime::TmuxClient>,
+) -> Result<serde_json::Value, String> {
     if let Some(chord) = action.strip_prefix("key:") {
         let c = mios_inputd::nav::parse_key_chord(chord)?;
-        return Ok(serde_json::json!({"keyboard":"mios-vctl-keyboard","events":mios_inputd::nav::stroke(&c),"keysym":mios_inputd::nav::keysym(&c)}));
+        return Ok(
+            serde_json::json!({"keyboard":"mios-vctl-keyboard","events":mios_inputd::nav::stroke(&c),"keysym":mios_inputd::nav::keysym(&c)}),
+        );
     }
     if let Some(verb) = action.strip_prefix("tmux:") {
         let c = client.ok_or("tmux: needs a tmux client (none under the focused terminal: the *_plain profile applies)")?;
         let mut argv = serde_json::json!(mios_inputd::runtime::tmux_argv(global, c, verb)?);
         if let Some(d) = verb.strip_prefix("focus ") {
-            let k = match d { "left" => "h", "down" => "j", "up" => "k", _ => "l" };
+            let k = match d {
+                "left" => "h",
+                "down" => "j",
+                "up" => "k",
+                _ => "l",
+            };
             argv = serde_json::json!({"probe": argv, "at_edge": format!("hypr:movefocus {d}"), "inside": ["send-keys","-c",c.tty,"-K",global.tmux_prefix,k]});
         }
         return Ok(argv);
     }
     if action == "mios:graphical-vt" {
         // C-17: resolved at fire time from logind (this user's graphical session's VTNr); none -> nothing is sent.
-        return Ok(serde_json::json!({"keyboard":"mios-vctl-keyboard","vt_switch":"CTRL+ALT+F<VTNr of this user's graphical session>"}));
+        return Ok(
+            serde_json::json!({"keyboard":"mios-vctl-keyboard","vt_switch":"CTRL+ALT+F<VTNr of this user's graphical session>"}),
+        );
     }
     if action == mios_inputd::nav::CURSOR {
         return Ok(serde_json::json!({"cursor_mode":"toggle","pointer":"mios-vctl-pointer"}));
@@ -431,14 +574,20 @@ fn resolve(global: &GlobalConfig, action: &str, client: Option<&mios_inputd::run
     if action.starts_with("pointer:") {
         return Ok(serde_json::json!({"pointer":"mios-vctl-pointer","analog":true}));
     }
-    Ok(serde_json::json!(mios_inputd::runtime::configured_command(action, global)?))
+    Ok(serde_json::json!(mios_inputd::runtime::configured_command(
+        action, global
+    )?))
 }
 
 /// `mios-inputd vpad <op>`: every op prints one JSON object (the MCP tool reads it as its result).
 #[cfg(target_os = "linux")]
 fn vpad(global: &GlobalConfig, root: Option<&std::path::Path>, v: &VpadArgs) -> Result<(), String> {
     use mios_inputd::vpad;
-    let key = v.seat.clone().filter(|_| v.op == "create").unwrap_or_else(|| v.pad.clone());
+    let key = v
+        .seat
+        .clone()
+        .filter(|_| v.op == "create")
+        .unwrap_or_else(|| v.pad.clone());
     let out = match v.op.as_str() {
         "hold" => return vpad::hold(global.clone(), root.map(Into::into), &v.pad, v.seat_pad, v.fixture),
         "create" => {

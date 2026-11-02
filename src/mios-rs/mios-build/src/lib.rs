@@ -1437,8 +1437,12 @@ compat_dirs = []
         assert_eq!(controls.compat_dirs, vec!["/usr/libexec/mios"]);
         assert!(!controls.expose_bin);
         let windows = plan_native_metadata(&config, &metadata, "windows").unwrap();
-        assert!(!windows.iter().any(|target| target.binary == "mios-controls"));
-        assert!(windows.iter().any(|target| target.binary == "mios-wallpaperd"));
+        assert!(!windows
+            .iter()
+            .any(|target| target.binary == "mios-controls"));
+        assert!(windows
+            .iter()
+            .any(|target| target.binary == "mios-wallpaperd"));
         assert!(plan
             .iter()
             .any(|target| target.binary == "mios-render-quadlets"));

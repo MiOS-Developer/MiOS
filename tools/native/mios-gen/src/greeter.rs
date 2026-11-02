@@ -98,35 +98,57 @@ impl Greeter {
             .ok_or_else(|| format!("Missing {TABLE} in layered mios.toml"))?;
         let kind = s(t, "kind")?;
         if kind != "glass" && kind != "tuigreet" {
-            return Err(format!("{TABLE}.kind: expected \"glass\" or \"tuigreet\", got {kind:?}"));
+            return Err(format!(
+                "{TABLE}.kind: expected \"glass\" or \"tuigreet\", got {kind:?}"
+            ));
         }
         let fallback = s(t, "fallback")?;
         if fallback != "tuigreet" {
-            return Err(format!("{TABLE}.fallback: only \"tuigreet\" is supported, got {fallback:?}"));
+            return Err(format!(
+                "{TABLE}.fallback: only \"tuigreet\" is supported, got {fallback:?}"
+            ));
         }
         let compositor = s(t, "compositor")?;
         if compositor != "cage" {
-            return Err(format!("{TABLE}.compositor: only \"cage\" is supported, got {compositor:?}"));
+            return Err(format!(
+                "{TABLE}.compositor: only \"cage\" is supported, got {compositor:?}"
+            ));
         }
         let outputs = s(t, "outputs")?;
         if outputs != "extend" && outputs != "last" {
-            return Err(format!("{TABLE}.outputs: expected \"extend\" or \"last\", got {outputs:?}"));
+            return Err(format!(
+                "{TABLE}.outputs: expected \"extend\" or \"last\", got {outputs:?}"
+            ));
         }
         let user = s(t, "user")?;
-        if user.is_empty() || !user.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.".contains(&c)) {
+        if user.is_empty()
+            || !user
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_-.".contains(&c))
+        {
             return Err(format!("{TABLE}.user: invalid account name {user:?}"));
         }
         let default_session = s(t, "default_session")?;
         if default_session.is_empty() || default_session.contains('/') {
-            return Err(format!("{TABLE}.default_session: expected a desktop-file id, got {default_session:?}"));
+            return Err(format!(
+                "{TABLE}.default_session: expected a desktop-file id, got {default_session:?}"
+            ));
         }
         let session_dirs = list(t, "session_dirs")?;
-        if session_dirs.is_empty() || session_dirs.iter().any(|d| !d.starts_with('/') || d.contains(':')) {
-            return Err(format!("{TABLE}.session_dirs: expected absolute directories without ':'"));
+        if session_dirs.is_empty()
+            || session_dirs
+                .iter()
+                .any(|d| !d.starts_with('/') || d.contains(':'))
+        {
+            return Err(format!(
+                "{TABLE}.session_dirs: expected absolute directories without ':'"
+            ));
         }
         let wallpaper = s(t, "wallpaper")?;
         if !wallpaper.is_empty() && !wallpaper.starts_with('/') {
-            return Err(format!("{TABLE}.wallpaper: expected \"\" or an absolute path"));
+            return Err(format!(
+                "{TABLE}.wallpaper: expected \"\" or an absolute path"
+            ));
         }
         let (autologin, autologin_user) = autologin(t)?;
         Ok(Self {
@@ -195,9 +217,13 @@ impl Greeter {
         let mut degraded = Vec::new();
         if self.kind == "glass" {
             let launcher = on(&self.launcher);
-            let exec_ok = fs::metadata(&launcher).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+            let exec_ok = fs::metadata(&launcher)
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
             if !exec_ok {
-                degraded.push(format!("launcher {} is not an executable file", launcher.display()));
+                degraded.push(format!(
+                    "launcher {} is not an executable file",
+                    launcher.display()
+                ));
             }
             let shell = on(&self.greeter_dir).join("shell.qml");
             if !shell.is_file() {
@@ -207,17 +233,37 @@ impl Greeter {
                 degraded.push("compositor /usr/bin/cage is missing".into());
             }
         }
-        let effective = if self.kind == "glass" && degraded.is_empty() { "glass" } else { "tuigreet" };
+        let effective = if self.kind == "glass" && degraded.is_empty() {
+            "glass"
+        } else {
+            "tuigreet"
+        };
         let argv = if self.boot_sync {
-            vec!["/usr/bin/mios-gen".into(), "hyprland-greeter".into(), "--kind".into(), effective.into()]
-        } else if effective == "glass" { self.glass_argv() } else { self.tuigreet_argv() };
-        let command = argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ");
+            vec![
+                "/usr/bin/mios-gen".into(),
+                "hyprland-greeter".into(),
+                "--kind".into(),
+                effective.into(),
+            ]
+        } else if effective == "glass" {
+            self.glass_argv()
+        } else {
+            self.tuigreet_argv()
+        };
+        let command = argv
+            .iter()
+            .map(|a| sh_quote(a))
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut text = String::new();
         text.push_str("# AI-hint: greetd configuration projected by `mios-gen render-greetd` from mios.toml [desktop.greeter].\n");
         text.push_str("# DO NOT EDIT: change [desktop.greeter] and re-render. kind = \"tuigreet\" reverts to the text greeter.\n");
         text.push_str(&format!("# greeter: {effective}"));
         if !degraded.is_empty() {
-            text.push_str(&format!(" (glass requested; degraded: {})", degraded.join("; ")));
+            text.push_str(&format!(
+                " (glass requested; degraded: {})",
+                degraded.join("; ")
+            ));
         }
         text.push_str("\n\n[terminal]\n");
         text.push_str(&format!("vt = {}\n\n[default_session]\n", self.vt));
@@ -225,24 +271,61 @@ impl Greeter {
         text.push_str(&format!("user = {}\n", Value::String(self.user.clone())));
         if self.autologin {
             text.push_str("\n[initial_session]\n");
-            text.push_str(&format!("command = {}\n", Value::String(self.session_cmd.clone())));
-            text.push_str(&format!("user = {}\n", Value::String(self.autologin_user.clone())));
+            text.push_str(&format!(
+                "command = {}\n",
+                Value::String(self.session_cmd.clone())
+            ));
+            text.push_str(&format!(
+                "user = {}\n",
+                Value::String(self.autologin_user.clone())
+            ));
         }
-        Rendered { effective: effective.into(), degraded, text }
+        Rendered {
+            effective: effective.into(),
+            degraded,
+            text,
+        }
     }
 }
 
 /// tuigreet --theme colour names (ratatui); they resolve through the VT palette painted from [colors].ansi_*.
 const TUI_COLORS: &[&str] = &[
-    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "darkgray", "lightred", "lightgreen",
-    "lightyellow", "lightblue", "lightmagenta", "lightcyan", "white",
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "gray",
+    "darkgray",
+    "lightred",
+    "lightgreen",
+    "lightyellow",
+    "lightblue",
+    "lightmagenta",
+    "lightcyan",
+    "white",
 ];
-const TUI_THEME_KEYS: &[&str] = &["text", "time", "container", "border", "title", "greet", "prompt", "input", "action", "button"];
+const TUI_THEME_KEYS: &[&str] = &[
+    "text",
+    "time",
+    "container",
+    "border",
+    "title",
+    "greet",
+    "prompt",
+    "input",
+    "action",
+    "button",
+];
 
 fn opt_bool(t: &toml::Table, k: &str) -> Result<bool, String> {
     match t.get(k) {
         None => Ok(false),
-        Some(v) => v.as_bool().ok_or_else(|| format!("{TABLE}.{k}: expected a boolean")),
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| format!("{TABLE}.{k}: expected a boolean")),
     }
 }
 
@@ -251,10 +334,20 @@ fn autologin(t: &toml::Table) -> Result<(bool, String), String> {
     let on = opt_bool(t, "autologin")?;
     let user = match t.get("autologin_user") {
         None => String::new(),
-        Some(v) => v.as_str().ok_or_else(|| format!("{TABLE}.autologin_user: expected a string"))?.to_string(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| format!("{TABLE}.autologin_user: expected a string"))?
+            .to_string(),
     };
-    if on && (user.is_empty() || !user.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.".contains(&c))) {
-        return Err(format!("{TABLE}.autologin_user: autologin = true needs a valid account name, got {user:?}"));
+    if on
+        && (user.is_empty()
+            || !user
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_-.".contains(&c)))
+    {
+        return Err(format!(
+            "{TABLE}.autologin_user: autologin = true needs a valid account name, got {user:?}"
+        ));
     }
     Ok((on, user))
 }
@@ -263,7 +356,9 @@ fn autologin(t: &toml::Table) -> Result<(bool, String), String> {
 fn tuigreet_style(t: &toml::Table) -> Result<Vec<String>, String> {
     let mut v = Vec::new();
     if let Some(x) = t.get("greeting") {
-        let s = x.as_str().ok_or_else(|| format!("{TABLE}.greeting: expected a string"))?;
+        let s = x
+            .as_str()
+            .ok_or_else(|| format!("{TABLE}.greeting: expected a string"))?;
         if s.contains('\n') {
             return Err(format!("{TABLE}.greeting: newlines are not allowed"));
         }
@@ -291,7 +386,9 @@ fn tuigreet_style(t: &toml::Table) -> Result<Vec<String>, String> {
     if let Some(x) = t.get("greet_align") {
         let s = x.as_str().unwrap_or("");
         if !matches!(s, "left" | "center" | "right") {
-            return Err(format!("{TABLE}.greet_align: expected \"left\", \"center\" or \"right\""));
+            return Err(format!(
+                "{TABLE}.greet_align: expected \"left\", \"center\" or \"right\""
+            ));
         }
         v.push("--greet-align".to_string());
         v.push(s.to_string());
@@ -299,23 +396,33 @@ fn tuigreet_style(t: &toml::Table) -> Result<Vec<String>, String> {
     if let Some(x) = t.get("time_format") {
         let s = x.as_str().unwrap_or("");
         if s.is_empty() || s.contains('\n') {
-            return Err(format!("{TABLE}.time_format: expected a non-empty single-line strftime format"));
+            return Err(format!(
+                "{TABLE}.time_format: expected a non-empty single-line strftime format"
+            ));
         }
         v.push("--time-format".to_string());
         v.push(s.to_string());
     }
     if let Some(x) = t.get("tuigreet_theme") {
-        let th = x.as_table().ok_or_else(|| format!("{TABLE}.tuigreet_theme: expected a table"))?;
+        let th = x
+            .as_table()
+            .ok_or_else(|| format!("{TABLE}.tuigreet_theme: expected a table"))?;
         for k in th.keys() {
             if !TUI_THEME_KEYS.contains(&k.as_str()) {
-                return Err(format!("{TABLE}.tuigreet_theme.{k}: unknown tuigreet theme component"));
+                return Err(format!(
+                    "{TABLE}.tuigreet_theme.{k}: unknown tuigreet theme component"
+                ));
             }
         }
         let mut parts = Vec::new();
         for key in TUI_THEME_KEYS {
             if let Some(c) = th.get(*key) {
-                let c = c.as_str().ok_or_else(|| format!("{TABLE}.tuigreet_theme.{key}: expected a string"))?;
-                let hex = c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit());
+                let c = c
+                    .as_str()
+                    .ok_or_else(|| format!("{TABLE}.tuigreet_theme.{key}: expected a string"))?;
+                let hex = c.len() == 7
+                    && c.starts_with('#')
+                    && c[1..].bytes().all(|b| b.is_ascii_hexdigit());
                 if !hex && !TUI_COLORS.contains(&c) {
                     return Err(format!("{TABLE}.tuigreet_theme.{key}: expected an ANSI colour name or #RRGGBB, got {c:?}"));
                 }
@@ -332,9 +439,13 @@ fn tuigreet_style(t: &toml::Table) -> Result<Vec<String>, String> {
 
 /// Paint the greeter's virtual console with the SSOT ANSI palette (terminal::console) before tuigreet draws.
 fn paint_console(doc: &Value) {
-    let on_vt = fs::read_link("/proc/self/fd/1").ok().and_then(|p| p.to_str().map(str::to_string)).is_some_and(|p| {
-        p.strip_prefix("/dev/tty").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-    });
+    let on_vt = fs::read_link("/proc/self/fd/1")
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string))
+        .is_some_and(|p| {
+            p.strip_prefix("/dev/tty")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        });
     if !on_vt {
         return;
     }
@@ -346,24 +457,32 @@ fn paint_console(doc: &Value) {
     }
 }
 
-fn boot_settings(doc: &Value, cmdline: &str, kind: Option<&str>, profile: Option<&str>) -> Result<(Greeter, String, Vec<String>), String> {
+fn boot_settings(
+    doc: &Value,
+    cmdline: &str,
+    kind: Option<&str>,
+    profile: Option<&str>,
+) -> Result<(Greeter, String, Vec<String>), String> {
     let mut g = Greeter::from_doc(doc)?;
     let profile = match profile {
         Some(p) => crate::render::render_hyprland::profile_name(doc, Some(p), cmdline)?,
         None => crate::render::desktop_boot::boot_profile(doc, cmdline)?,
     };
     let file = doc["desktop"]["hyprland"]["hardware_profiles"][&profile]["session_file"]
-        .as_str().filter(|v| v.ends_with(".desktop") && !v.contains('/') && !v.contains(".."))
+        .as_str()
+        .filter(|v| v.ends_with(".desktop") && !v.contains('/') && !v.contains(".."))
         .ok_or("Invalid GPU session file")?;
     g.default_session = file.trim_end_matches(".desktop").into();
     g.session_cmd = format!("/usr/bin/mios-gen hyprland-session --hardware-profile {profile}");
     // A global boot-selected cache gives every username the same initial GPU.
     // The chooser can still select another GPU, which becomes a boot request.
-    g.tuigreet_args.retain(|a| a != "--remember-user-session" && a != "--remember-session");
+    g.tuigreet_args
+        .retain(|a| a != "--remember-user-session" && a != "--remember-session");
     g.tuigreet_args.push("--remember-session".into());
     let effective = kind.unwrap_or(&g.kind);
     let argv = match effective {
-        "tuigreet" => g.tuigreet_argv(), "glass" => g.glass_argv(),
+        "tuigreet" => g.tuigreet_argv(),
+        "glass" => g.glass_argv(),
         _ => return Err("Invalid greeter kind".into()),
     };
     Ok((g, profile, argv))
@@ -383,34 +502,65 @@ const HOST_TABLE: &str = "[desktop.greeter.display_host]";
 
 impl DisplayHost {
     pub fn from_doc(doc: &Value) -> Result<Self, String> {
-        let t = doc["desktop"]["greeter"].get("display_host").and_then(Value::as_table)
+        let t = doc["desktop"]["greeter"]
+            .get("display_host")
+            .and_then(Value::as_table)
             .ok_or_else(|| format!("Missing {HOST_TABLE}"))?;
-        let terminal = t.get("terminal").and_then(Value::as_str).filter(|v| v.starts_with('/') && !v.contains(".."))
-            .ok_or_else(|| format!("{HOST_TABLE}.terminal: expected an absolute path"))?.to_string();
-        let mut font_family = t.get("font_family").and_then(Value::as_str)
-            .ok_or_else(|| format!("{HOST_TABLE}.font_family: expected a string"))?.to_string();
+        let terminal = t
+            .get("terminal")
+            .and_then(Value::as_str)
+            .filter(|v| v.starts_with('/') && !v.contains(".."))
+            .ok_or_else(|| format!("{HOST_TABLE}.terminal: expected an absolute path"))?
+            .to_string();
+        let mut font_family = t
+            .get("font_family")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{HOST_TABLE}.font_family: expected a string"))?
+            .to_string();
         if font_family.is_empty() {
-            font_family = doc["theme"]["font"]["family"].as_str().unwrap_or("monospace").to_string();
+            font_family = doc["theme"]["font"]["family"]
+                .as_str()
+                .unwrap_or("monospace")
+                .to_string();
         }
-        if font_family.chars().any(|c| c.is_control() || c == '"' || c == '\\') {
+        if font_family
+            .chars()
+            .any(|c| c.is_control() || c == '"' || c == '\\')
+        {
             return Err(format!("{HOST_TABLE}.font_family: invalid font name"));
         }
-        let font_size = t.get("font_size").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .filter(|v| (6.0..=72.0).contains(v)).ok_or_else(|| format!("{HOST_TABLE}.font_size: expected a number in 6..=72"))?;
+        let font_size = t
+            .get("font_size")
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+            .filter(|v| (6.0..=72.0).contains(v))
+            .ok_or_else(|| format!("{HOST_TABLE}.font_size: expected a number in 6..=72"))?;
         let padding = int(t, "padding", 0, 200).map_err(|e| e.replace(TABLE, HOST_TABLE))?;
-        Ok(Self { terminal, font_family, font_size, padding })
+        Ok(Self {
+            terminal,
+            font_family,
+            font_size,
+            padding,
+        })
     }
 
     /// The terminal's configuration: the SSOT ANSI palette (the same one the VT greeter paints), the theme font and
     /// no window chrome, so tuigreet looks and behaves as it does on the VT.
     pub fn terminal_config(&self, doc: &Value) -> Result<String, String> {
         let p = crate::terminal::console::palette(doc)?;
-        let names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+        let names = [
+            "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+        ];
         let mut out = String::from("# AI-hint: Generated by `mios-gen hyprland-greeter` from [desktop.greeter.display_host] and [colors].ansi_*; runtime only.\n");
         out += "[general]\nlive_config_reload = false\nipc_socket = false\n\n";
         out += &format!("[window]\ndecorations = \"None\"\nstartup_mode = \"Fullscreen\"\ndynamic_padding = true\npadding = {{ x = {0}, y = {0} }}\n\n", self.padding);
-        out += &format!("[font]\nsize = {:.1}\n\n[font.normal]\nfamily = \"{}\"\n\n", self.font_size, self.font_family);
-        out += &format!("[colors.primary]\nbackground = \"{}\"\nforeground = \"{}\"\n\n", p[0], p[7]);
+        out += &format!(
+            "[font]\nsize = {:.1}\n\n[font.normal]\nfamily = \"{}\"\n\n",
+            self.font_size, self.font_family
+        );
+        out += &format!(
+            "[colors.primary]\nbackground = \"{}\"\nforeground = \"{}\"\n\n",
+            p[0], p[7]
+        );
         for (table, base) in [("normal", 0), ("bright", 8)] {
             out += &format!("[colors.{table}]\n");
             for (i, n) in names.iter().enumerate() {
@@ -445,14 +595,33 @@ pub struct DisplayPlan {
 
 /// Put the login UI on the boot profile's display. `vt_argv` is the boot-selected greeter argv (tuigreet or the
 /// glass launcher); in "compositor" mode the same tuigreet becomes the hosted client and the VT fallback.
-pub fn display_plan(g: &Greeter, doc: &Value, kind: &str, display: &str, card: Option<&Path>, sysroot: &Path, cfg: &Path, vt_argv: Vec<String>) -> Result<DisplayPlan, String> {
-    let vt = |reason: String| DisplayPlan { display: "vt".into(), drm_device: None, reason, terminal_config: None, argv: vt_argv.clone() };
+pub fn display_plan(
+    g: &Greeter,
+    doc: &Value,
+    kind: &str,
+    display: &str,
+    card: Option<&Path>,
+    sysroot: &Path,
+    cfg: &Path,
+    vt_argv: Vec<String>,
+) -> Result<DisplayPlan, String> {
+    let vt = |reason: String| DisplayPlan {
+        display: "vt".into(),
+        drm_device: None,
+        reason,
+        terminal_config: None,
+        argv: vt_argv.clone(),
+    };
     if display != "compositor" {
         return Ok(vt(String::new()));
     }
-    let Some(card) = card else { return Ok(vt("the profile's GPU has no DRM card this boot".into())) };
+    let Some(card) = card else {
+        return Ok(vt("the profile's GPU has no DRM card this boot".into()));
+    };
     let on = |p: &str| sysroot.join(p.trim_start_matches('/'));
-    let exec = |p: &str| fs::metadata(on(p)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    let exec = |p: &str| {
+        fs::metadata(on(p)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
     if !exec(&g.launcher) {
         return Ok(vt(format!("launcher {} is not executable", g.launcher)));
     }
@@ -462,31 +631,60 @@ pub fn display_plan(g: &Greeter, doc: &Value, kind: &str, display: &str, card: O
     let card_s = card.to_string_lossy().into_owned();
     if kind == "glass" {
         let mut argv = vt_argv.clone();
-        let at = argv.iter().position(|a| a == "--").ok_or("glass argv has no fallback")?;
+        let at = argv
+            .iter()
+            .position(|a| a == "--")
+            .ok_or("glass argv has no fallback")?;
         argv.splice(at..at, ["--drm-device".to_string(), card_s]);
-        return Ok(DisplayPlan { display: "compositor".into(), drm_device: Some(card.into()), reason: String::new(), terminal_config: None, argv });
+        return Ok(DisplayPlan {
+            display: "compositor".into(),
+            drm_device: Some(card.into()),
+            reason: String::new(),
+            terminal_config: None,
+            argv,
+        });
     }
     let host = DisplayHost::from_doc(doc)?;
     if !exec(&host.terminal) {
         return Ok(vt(format!("terminal {} is missing", host.terminal)));
     }
     let mut argv = vec![
-        g.launcher.clone(), "--client".into(), "terminal".into(),
-        "--terminal".into(), host.terminal.clone(),
-        "--terminal-config".into(), cfg.to_string_lossy().into_owned(),
-        "--drm-device".into(), card_s,
-        "--sessions".into(), g.session_dirs.join(":"),
-        "--start-timeout".into(), g.start_timeout_s.to_string(),
-        "--heartbeat-timeout".into(), g.heartbeat_timeout_s.to_string(),
-        "--outputs".into(), g.outputs.clone(),
+        g.launcher.clone(),
+        "--client".into(),
+        "terminal".into(),
+        "--terminal".into(),
+        host.terminal.clone(),
+        "--terminal-config".into(),
+        cfg.to_string_lossy().into_owned(),
+        "--drm-device".into(),
+        card_s,
+        "--sessions".into(),
+        g.session_dirs.join(":"),
+        "--start-timeout".into(),
+        g.start_timeout_s.to_string(),
+        "--heartbeat-timeout".into(),
+        g.heartbeat_timeout_s.to_string(),
+        "--outputs".into(),
+        g.outputs.clone(),
         "--".into(),
     ];
     argv.extend(g.tuigreet_argv());
-    Ok(DisplayPlan { display: "compositor".into(), drm_device: Some(card.into()), reason: String::new(), terminal_config: Some(cfg.into()), argv })
+    Ok(DisplayPlan {
+        display: "compositor".into(),
+        drm_device: Some(card.into()),
+        reason: String::new(),
+        terminal_config: Some(cfg.into()),
+        argv,
+    })
 }
 
 /// Resolve the booted GPU before either login UI reads its remembered session.
-pub fn runtime(root: &Path, kind: Option<&str>, profile: Option<&str>, dry_run: bool) -> Result<String, String> {
+pub fn runtime(
+    root: &Path,
+    kind: Option<&str>,
+    profile: Option<&str>,
+    dry_run: bool,
+) -> Result<String, String> {
     use std::os::unix::process::CommandExt;
     let doc = mios_resolver::resolve_projection(root).map_err(|e| e.to_string())?;
     let cmdline = fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?;
@@ -494,16 +692,31 @@ pub fn runtime(root: &Path, kind: Option<&str>, profile: Option<&str>, dry_run: 
     let gpus = crate::gpu_topology::inventory(&crate::gpu_topology::host());
     let handoff = match profile {
         Some(_) => None,
-        None => crate::render::desktop_boot::boot_profile(&doc, &cmdline).ok()
+        None => crate::render::desktop_boot::boot_profile(&doc, &cmdline)
+            .ok()
             .and_then(|b| crate::gpu_topology::handoff_profile(&doc, root, &b, &gpus)),
     };
     let (g, profile, argv) = boot_settings(&doc, &cmdline, kind, profile.or(handoff.as_deref()))?;
-    let file = format!("{}.desktop",g.default_session);
+    let file = format!("{}.desktop", g.default_session);
     let display = greeter_display(&doc, &profile)?;
-    let card = (display == "compositor").then(|| crate::gpu_topology::profile_gpu(&gpus, root, &doc, &profile).map(|g| g.card)).flatten();
-    let cfg = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir).join("mios-greeter-terminal.toml");
-    let plan = display_plan(&g, &doc, kind.unwrap_or(&g.kind), &display, card.as_deref(), root, &cfg, argv)?;
+    let card = (display == "compositor")
+        .then(|| crate::gpu_topology::profile_gpu(&gpus, root, &doc, &profile).map(|g| g.card))
+        .flatten();
+    let cfg = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("mios-greeter-terminal.toml");
+    let plan = display_plan(
+        &g,
+        &doc,
+        kind.unwrap_or(&g.kind),
+        &display,
+        card.as_deref(),
+        root,
+        &cfg,
+        argv,
+    )?;
     if dry_run {
         let text = match &plan.terminal_config {
             Some(_) => Some(DisplayHost::from_doc(&doc).and_then(|h| h.terminal_config(&doc))?),
@@ -513,39 +726,69 @@ pub fn runtime(root: &Path, kind: Option<&str>, profile: Option<&str>, dry_run: 
             "drm_device":plan.drm_device,"reason":plan.reason,"terminal_config":plan.terminal_config,
             "terminal_config_text":text,"argv":plan.argv}).to_string());
     }
-    write_atomic(Path::new("/var/lib/greetd/tuigreet-lastsession-path"),
-        &format!("/usr/share/wayland-sessions/{file}"))?;
+    write_atomic(
+        Path::new("/var/lib/greetd/tuigreet-lastsession-path"),
+        &format!("/usr/share/wayland-sessions/{file}"),
+    )?;
     if let Some(path) = &plan.terminal_config {
         // No terminal config = no hosted greeter; the launcher then falls back to the VT greeter by itself.
-        if let Err(e) = DisplayHost::from_doc(&doc).and_then(|h| h.terminal_config(&doc)).and_then(|t| write_atomic(path, &t)) {
-            eprintln!("mios-gen hyprland-greeter: terminal config {}: {e}", path.display());
+        if let Err(e) = DisplayHost::from_doc(&doc)
+            .and_then(|h| h.terminal_config(&doc))
+            .and_then(|t| write_atomic(path, &t))
+        {
+            eprintln!(
+                "mios-gen hyprland-greeter: terminal config {}: {e}",
+                path.display()
+            );
         }
     }
     if g.console_palette {
         paint_console(&doc);
     }
     if !plan.reason.is_empty() {
-        eprintln!("mios-gen hyprland-greeter: {profile} greeter on the VT: {}", plan.reason);
+        eprintln!(
+            "mios-gen hyprland-greeter: {profile} greeter on the VT: {}",
+            plan.reason
+        );
     }
     let mut command = std::process::Command::new(&plan.argv[0]);
-    command.args(&plan.argv[1..]).env("MIOS_GREETER_BOOT_SESSION", &g.default_session);
-    Err(format!("Failed to start boot-selected greeter: {}", command.exec()))
+    command
+        .args(&plan.argv[1..])
+        .env("MIOS_GREETER_BOOT_SESSION", &g.default_session);
+    Err(format!(
+        "Failed to start boot-selected greeter: {}",
+        command.exec()
+    ))
 }
 
 /// `hyprland-greeter --hosted -- ARGV`: the terminal client of the hosted text greeter. Reports "ready" to the
 /// launcher's status file while ARGV (tuigreet) runs, then "launched" (it exited 0: greetd starts the session) or
 /// "exit <code>" (the launcher falls back to the VT greeter).
 pub fn hosted(argv: &[String]) -> Result<i32, String> {
-    let status = std::env::var_os("MIOS_GREETER_STATUS").filter(|v| !v.is_empty()).map(PathBuf::from)
+    let status = std::env::var_os("MIOS_GREETER_STATUS")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
         .ok_or("MIOS_GREETER_STATUS is not set (run by mios-greeter-session --client terminal)")?;
     let (bin, args) = argv.split_first().ok_or("hosted greeter command missing")?;
-    let mut child = std::process::Command::new(bin).args(args).spawn().map_err(|e| format!("{bin}: {e}"))?;
-    let beat = || { let _ = fs::write(&status, "ready\n"); };
+    let mut child = std::process::Command::new(bin)
+        .args(args)
+        .spawn()
+        .map_err(|e| format!("{bin}: {e}"))?;
+    let beat = || {
+        let _ = fs::write(&status, "ready\n");
+    };
     beat();
     for tick in 1u64.. {
         if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
             let code = s.code().unwrap_or(128);
-            let _ = fs::write(&status, if code == 0 { "launched\n".to_string() } else { format!("exit {code}\n") });
+            let _ = fs::write(
+                &status,
+                if code == 0 {
+                    "launched\n".to_string()
+                } else {
+                    format!("exit {code}\n")
+                },
+            );
             return Ok(code);
         }
         if tick % 20 == 0 {
@@ -558,7 +801,10 @@ pub fn hosted(argv: &[String]) -> Result<i32, String> {
 
 /// greetd runs the command through /bin/sh, so every argument is shell-quoted when needed.
 pub fn sh_quote(a: &str) -> String {
-    if !a.is_empty() && a.bytes().all(|c| c.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&c)) {
+    if !a.is_empty()
+        && a.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&c))
+    {
         a.to_string()
     } else {
         format!("'{}'", a.replace('\'', "'\\''"))
@@ -578,14 +824,19 @@ pub fn write_atomic(target: &Path, data: &str) -> Result<(), String> {
         .map_err(|e| format!("temp file in {}: {e}", dir.display()))?;
     tmp.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     tmp.as_file().sync_all().map_err(|e| e.to_string())?;
-    let mode = old.as_ref().map_or(0o644, |m| m.permissions().mode() & 0o7777);
+    let mode = old
+        .as_ref()
+        .map_or(0o644, |m| m.permissions().mode() & 0o7777);
     fs::set_permissions(tmp.path(), fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
     if let Some(m) = &old {
         std::os::unix::fs::chown(tmp.path(), Some(m.uid()), Some(m.gid()))
             .map_err(|e| format!("chown {}: {e}", tmp.path().display()))?;
     }
-    tmp.persist(target).map_err(|e| format!("rename onto {}: {}", target.display(), e.error))?;
-    fs::File::open(dir).and_then(|d| d.sync_all()).map_err(|e| e.to_string())?;
+    tmp.persist(target)
+        .map_err(|e| format!("rename onto {}: {}", target.display(), e.error))?;
+    fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -605,7 +856,10 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode) -> Result<Rendered, String> 
         Mode::Check(p) => {
             let disk = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
             if disk != r.text {
-                return Err(format!("{} differs from the [desktop.greeter] projection", p.display()));
+                return Err(format!(
+                    "{} differs from the [desktop.greeter] projection",
+                    p.display()
+                ));
             }
         }
     }
@@ -621,43 +875,72 @@ mod tests {
     #[test]
     fn gpu_boot_choices_set_both_greeters_and_override_stale_session_memory() {
         let mut doc: Value = FRAGMENT.parse().unwrap();
-        doc["desktop"].as_table_mut().unwrap().insert("hyprland".into(), toml::toml! {
-            hardware_profile = "igpu"
-            [boot_sync]
-            enabled = true
-            [hardware_profiles.igpu]
-            session_file = "hyprland.desktop"
-            [hardware_profiles.dgpu]
-            session_file = "mios-desktop-dgpu.desktop"
-        }.into());
+        doc["desktop"].as_table_mut().unwrap().insert(
+            "hyprland".into(),
+            toml::toml! {
+                hardware_profile = "igpu"
+                [boot_sync]
+                enabled = true
+                [hardware_profiles.igpu]
+                session_file = "hyprland.desktop"
+                [hardware_profiles.dgpu]
+                session_file = "mios-desktop-dgpu.desktop"
+            }
+            .into(),
+        );
         for (profile, file) in [("igpu", "hyprland"), ("dgpu", "mios-desktop-dgpu")] {
             for kind in ["glass", "tuigreet"] {
-                let (g, chosen, args) = boot_settings(&doc, &format!("quiet mios.desktop.gpu={profile}"), Some(kind), None).unwrap();
-                assert_eq!(chosen,profile);
-                assert_eq!(g.default_session,file);
-                assert_eq!(g.session_cmd,format!("/usr/bin/mios-gen hyprland-session --hardware-profile {profile}"));
+                let (g, chosen, args) = boot_settings(
+                    &doc,
+                    &format!("quiet mios.desktop.gpu={profile}"),
+                    Some(kind),
+                    None,
+                )
+                .unwrap();
+                assert_eq!(chosen, profile);
+                assert_eq!(g.default_session, file);
+                assert_eq!(
+                    g.session_cmd,
+                    format!("/usr/bin/mios-gen hyprland-session --hardware-profile {profile}")
+                );
                 assert!(!args.iter().any(|v| v == "--remember-user-session"));
                 assert!(args.iter().any(|v| v == "--remember-session"));
-                assert!(args.windows(2).any(|v| v[0] == "--cmd" && v[1] == g.session_cmd));
+                assert!(args
+                    .windows(2)
+                    .any(|v| v[0] == "--cmd" && v[1] == g.session_cmd));
                 if kind == "glass" {
-                    assert!(args.windows(2).any(|v| v[0] == "--default-session" && v[1] == file));
+                    assert!(args
+                        .windows(2)
+                        .any(|v| v[0] == "--default-session" && v[1] == file));
                 }
             }
         }
-        let sys = sysroot(true,true,true);
+        let sys = sysroot(true, true, true);
         let output = Greeter::from_doc(&doc).unwrap().render(sys.path());
-        assert!(output.text.contains("/usr/bin/mios-gen hyprland-greeter --kind glass"));
-        assert!(boot_settings(&doc,"mios.desktop.gpu=unknown",Some("tuigreet"),None).is_err());
-        assert!(boot_settings(&doc,"mios.desktop.gpu=dgpu",Some("unknown"),None).is_err());
+        assert!(output
+            .text
+            .contains("/usr/bin/mios-gen hyprland-greeter --kind glass"));
+        assert!(boot_settings(&doc, "mios.desktop.gpu=unknown", Some("tuigreet"), None).is_err());
+        assert!(boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("unknown"), None).is_err());
     }
 
     fn real_ssot() -> Value {
-        toml::from_str(&fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml")).unwrap()).unwrap()
+        toml::from_str(
+            &fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/share/mios/mios.toml"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
     }
 
     fn host_sysroot(launcher: bool, cage: bool, terminal: bool) -> tempfile::TempDir {
         let d = tmp();
-        for (on, p) in [(launcher, "usr/libexec/mios/mios-greeter-session"), (cage, "usr/bin/cage"), (terminal, "usr/bin/alacritty")] {
+        for (on, p) in [
+            (launcher, "usr/libexec/mios/mios-greeter-session"),
+            (cage, "usr/bin/cage"),
+            (terminal, "usr/bin/alacritty"),
+        ] {
             if on {
                 let f = d.path().join(p);
                 fs::create_dir_all(f.parent().unwrap()).unwrap();
@@ -676,22 +959,82 @@ mod tests {
         let sys = host_sysroot(true, true, true);
         let card = Path::new("/dev/dri/card0");
         let cfg = Path::new("/run/user/957/mios-greeter-terminal.toml");
-        let (g, _, vt) = boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("tuigreet"), None).unwrap();
-        let p = display_plan(&g, &doc, "tuigreet", "compositor", Some(card), sys.path(), cfg, vt.clone()).unwrap();
-        assert_eq!((p.display.as_str(), p.drm_device.as_deref(), p.reason.as_str()), ("compositor", Some(card), ""));
-        assert_eq!(&p.argv[..3], ["/usr/libexec/mios/mios-greeter-session", "--client", "terminal"]);
+        let (g, _, vt) =
+            boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("tuigreet"), None).unwrap();
+        let p = display_plan(
+            &g,
+            &doc,
+            "tuigreet",
+            "compositor",
+            Some(card),
+            sys.path(),
+            cfg,
+            vt.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                p.display.as_str(),
+                p.drm_device.as_deref(),
+                p.reason.as_str()
+            ),
+            ("compositor", Some(card), "")
+        );
+        assert_eq!(
+            &p.argv[..3],
+            [
+                "/usr/libexec/mios/mios-greeter-session",
+                "--client",
+                "terminal"
+            ]
+        );
         let dash = p.argv.iter().position(|a| a == "--").unwrap();
-        assert_eq!(&p.argv[dash + 1..], &vt[..], "the hosted command is exactly the VT greeter's argv (and its fallback)");
-        assert!(p.argv.windows(2).any(|w| w[0] == "--drm-device" && w[1] == "/dev/dri/card0"));
-        assert!(p.argv.windows(2).any(|w| w[0] == "--terminal-config" && w[1] == cfg.to_str().unwrap()));
+        assert_eq!(
+            &p.argv[dash + 1..],
+            &vt[..],
+            "the hosted command is exactly the VT greeter's argv (and its fallback)"
+        );
+        assert!(p
+            .argv
+            .windows(2)
+            .any(|w| w[0] == "--drm-device" && w[1] == "/dev/dri/card0"));
+        assert!(p
+            .argv
+            .windows(2)
+            .any(|w| w[0] == "--terminal-config" && w[1] == cfg.to_str().unwrap()));
         // Glass: the launcher gets the card before the fallback separator.
-        let (g2, _, glass) = boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("glass"), None).unwrap();
-        let p = display_plan(&g2, &doc, "glass", "compositor", Some(card), sys.path(), cfg, glass).unwrap();
-        let (i, dash) = (p.argv.iter().position(|a| a == "--drm-device").unwrap(), p.argv.iter().position(|a| a == "--").unwrap());
+        let (g2, _, glass) =
+            boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("glass"), None).unwrap();
+        let p = display_plan(
+            &g2,
+            &doc,
+            "glass",
+            "compositor",
+            Some(card),
+            sys.path(),
+            cfg,
+            glass,
+        )
+        .unwrap();
+        let (i, dash) = (
+            p.argv.iter().position(|a| a == "--drm-device").unwrap(),
+            p.argv.iter().position(|a| a == "--").unwrap(),
+        );
         assert!(i < dash && p.argv[i + 1] == "/dev/dri/card0");
         // iGPU boot: unchanged VT greeter.
-        let (g3, _, vt3) = boot_settings(&doc, "mios.desktop.gpu=igpu", Some("tuigreet"), None).unwrap();
-        let p = display_plan(&g3, &doc, "tuigreet", &greeter_display(&doc, "igpu").unwrap(), Some(card), sys.path(), cfg, vt3.clone()).unwrap();
+        let (g3, _, vt3) =
+            boot_settings(&doc, "mios.desktop.gpu=igpu", Some("tuigreet"), None).unwrap();
+        let p = display_plan(
+            &g3,
+            &doc,
+            "tuigreet",
+            &greeter_display(&doc, "igpu").unwrap(),
+            Some(card),
+            sys.path(),
+            cfg,
+            vt3.clone(),
+        )
+        .unwrap();
         assert_eq!((p.display.as_str(), p.argv), ("vt", vt3));
     }
 
@@ -699,16 +1042,32 @@ mod tests {
     fn negative_compositor_mode_never_dead_ends() {
         let doc = real_ssot();
         let cfg = Path::new("/tmp/x.toml");
-        let (g, _, vt) = boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("tuigreet"), None).unwrap();
-        for (l, c, t, card, why) in [(true, true, true, None, "no DRM card"), (false, true, true, Some("/dev/dri/card0"), "launcher"),
-            (true, false, true, Some("/dev/dri/card0"), "cage"), (true, true, false, Some("/dev/dri/card0"), "terminal")] {
+        let (g, _, vt) =
+            boot_settings(&doc, "mios.desktop.gpu=dgpu", Some("tuigreet"), None).unwrap();
+        for (l, c, t, card, why) in [
+            (true, true, true, None, "no DRM card"),
+            (false, true, true, Some("/dev/dri/card0"), "launcher"),
+            (true, false, true, Some("/dev/dri/card0"), "cage"),
+            (true, true, false, Some("/dev/dri/card0"), "terminal"),
+        ] {
             let sys = host_sysroot(l, c, t);
-            let p = display_plan(&g, &doc, "tuigreet", "compositor", card.map(Path::new), sys.path(), cfg, vt.clone()).unwrap();
+            let p = display_plan(
+                &g,
+                &doc,
+                "tuigreet",
+                "compositor",
+                card.map(Path::new),
+                sys.path(),
+                cfg,
+                vt.clone(),
+            )
+            .unwrap();
             assert_eq!((p.display.as_str(), &p.argv), ("vt", &vt), "{why}");
             assert!(p.reason.contains(why), "{why}: {}", p.reason);
         }
         let mut bad = doc.clone();
-        bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["greeter_display"] = Value::String("hdmi".into());
+        bad["desktop"]["hyprland"]["hardware_profiles"]["dgpu"]["greeter_display"] =
+            Value::String("hdmi".into());
         assert!(greeter_display(&bad, "dgpu").is_err());
         let mut bad = doc.clone();
         bad["desktop"]["greeter"]["display_host"]["font_family"] = Value::String("x\"y".into());
@@ -722,11 +1081,23 @@ mod tests {
         let text = h.terminal_config(&doc).unwrap();
         let cfg: Value = toml::from_str(&text).unwrap();
         let pal = crate::terminal::console::palette(&doc).unwrap();
-        assert_eq!(cfg["colors"]["primary"]["background"].as_str(), Some(pal[0].as_str()));
-        assert_eq!(cfg["colors"]["normal"]["cyan"].as_str(), Some(pal[6].as_str()));
-        assert_eq!(cfg["colors"]["bright"]["blue"].as_str(), Some(pal[12].as_str()));
+        assert_eq!(
+            cfg["colors"]["primary"]["background"].as_str(),
+            Some(pal[0].as_str())
+        );
+        assert_eq!(
+            cfg["colors"]["normal"]["cyan"].as_str(),
+            Some(pal[6].as_str())
+        );
+        assert_eq!(
+            cfg["colors"]["bright"]["blue"].as_str(),
+            Some(pal[12].as_str())
+        );
         assert_eq!(cfg["window"]["decorations"].as_str(), Some("None"));
-        assert_eq!(cfg["font"]["normal"]["family"].as_str(), doc["theme"]["font"]["family"].as_str());
+        assert_eq!(
+            cfg["font"]["normal"]["family"].as_str(),
+            doc["theme"]["font"]["family"].as_str()
+        );
     }
 
     fn tmp() -> tempfile::TempDir {
@@ -774,9 +1145,16 @@ mod tests {
         assert_eq!(r.effective, "glass", "{:?}", r.degraded);
         let doc: Value = toml::from_str(&r.text).unwrap();
         let cmd = doc["default_session"]["command"].as_str().unwrap();
-        assert!(cmd.starts_with("/usr/libexec/mios/mios-greeter-session --greeter-dir /usr/share/mios/greeter "), "{cmd}");
+        assert!(
+            cmd.starts_with(
+                "/usr/libexec/mios/mios-greeter-session --greeter-dir /usr/share/mios/greeter "
+            ),
+            "{cmd}"
+        );
         assert!(cmd.ends_with(&format!(" -- {LIVE_TUIGREET}")), "{cmd}");
-        assert!(cmd.contains("--default-session hyprland --start-timeout 20 --heartbeat-timeout 30 --outputs extend"));
+        assert!(cmd.contains(
+            "--default-session hyprland --start-timeout 20 --heartbeat-timeout 30 --outputs extend"
+        ));
         assert_eq!(doc["default_session"]["user"].as_str(), Some("greetd"));
         assert_eq!(doc["terminal"]["vt"].as_integer(), Some(1));
     }
@@ -788,12 +1166,19 @@ mod tests {
         let r = cfg(&frag).unwrap().render(sys.path());
         assert_eq!(r.effective, "tuigreet");
         let doc: Value = toml::from_str(&r.text).unwrap();
-        assert_eq!(doc["default_session"]["command"].as_str(), Some(LIVE_TUIGREET));
+        assert_eq!(
+            doc["default_session"]["command"].as_str(),
+            Some(LIVE_TUIGREET)
+        );
     }
 
     #[test]
     fn negative_glass_degrades_when_launcher_greeter_or_cage_missing() {
-        for (l, g, c) in [(false, true, true), (true, false, true), (true, true, false)] {
+        for (l, g, c) in [
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
             let sys = sysroot(l, g, c);
             let r = cfg(FRAGMENT).unwrap().render(sys.path());
             assert_eq!(r.effective, "tuigreet", "launcher={l} greeter={g} cage={c}");
@@ -804,7 +1189,10 @@ mod tests {
         let sys = sysroot(true, true, true);
         let l = sys.path().join("usr/libexec/mios/mios-greeter-session");
         fs::set_permissions(&l, fs::Permissions::from_mode(0o644)).unwrap();
-        assert_eq!(cfg(FRAGMENT).unwrap().render(sys.path()).effective, "tuigreet");
+        assert_eq!(
+            cfg(FRAGMENT).unwrap().render(sys.path()).effective,
+            "tuigreet"
+        );
     }
 
     #[test]
@@ -815,21 +1203,30 @@ mod tests {
             ("compositor          = \"cage\"", "compositor = \"weston\""),
             ("outputs             = \"extend\"", "outputs = \"all\""),
             ("start_timeout_s     = 20", "start_timeout_s = 0"),
-            ("session_cmd         = \"/usr/local/bin/start-hyprland-igpu\"", "session_cmd = \"start-hyprland\""),
+            (
+                "session_cmd         = \"/usr/local/bin/start-hyprland-igpu\"",
+                "session_cmd = \"start-hyprland\"",
+            ),
             ("user                = \"greetd\"", "user = \"greetd; rm\""),
         ] {
             let frag = FRAGMENT.replace(from, to);
             assert_ne!(frag, FRAGMENT, "fixture drifted: {from}");
             assert!(cfg(&frag).is_err(), "{to} must be rejected");
         }
-        assert!(Greeter::from_doc(&toml::from_str::<Value>("[desktop]\nsession = \"x\"\n").unwrap()).is_err());
+        assert!(Greeter::from_doc(
+            &toml::from_str::<Value>("[desktop]\nsession = \"x\"\n").unwrap()
+        )
+        .is_err());
     }
 
     #[test]
     fn autologin_and_tuigreet_theme_are_projected_from_the_ssot() {
         let off = cfg(FRAGMENT).unwrap();
         assert!(!off.autologin && !off.console_palette);
-        assert!(!off.render(Path::new("/nonexistent")).text.contains("[initial_session]"));
+        assert!(!off
+            .render(Path::new("/nonexistent"))
+            .text
+            .contains("[initial_session]"));
         let frag = FRAGMENT.replacen(
             "[desktop.greeter]\n",
             "[desktop.greeter]\nautologin = true\nautologin_user = \"mios\"\nconsole_palette = true\ngreeting = \"MiOS\"\nwidth = 64\ngreet_align = \"center\"\n",
@@ -838,18 +1235,35 @@ mod tests {
         let g = cfg(&frag).unwrap();
         assert!(g.console_palette);
         let text = g.render(Path::new("/nonexistent")).text;
-        assert!(text.contains("\n[initial_session]\n") && text.contains("user = \"mios\""), "{text}");
+        assert!(
+            text.contains("\n[initial_session]\n") && text.contains("user = \"mios\""),
+            "{text}"
+        );
         let joined = g.tuigreet_argv().join(" ");
         assert!(joined.contains("--greeting MiOS --width 64 --greet-align center --theme container=black;border=lightblue;title=#F35C15"), "{joined}");
     }
 
     #[test]
     fn negative_autologin_and_tuigreet_style_values_are_rejected() {
-        for extra in ["autologin = true\n", "autologin = true\nautologin_user = \"bad user\"\n", "greet_align = \"middle\"\n", "width = 5\n", "autologin = \"yes\"\n"] {
-            let frag = FRAGMENT.replacen("[desktop.greeter]\n", &format!("[desktop.greeter]\n{extra}"), 1);
+        for extra in [
+            "autologin = true\n",
+            "autologin = true\nautologin_user = \"bad user\"\n",
+            "greet_align = \"middle\"\n",
+            "width = 5\n",
+            "autologin = \"yes\"\n",
+        ] {
+            let frag = FRAGMENT.replacen(
+                "[desktop.greeter]\n",
+                &format!("[desktop.greeter]\n{extra}"),
+                1,
+            );
             assert!(cfg(&frag).is_err(), "{extra}");
         }
-        for theme in ["border = \"chartreuse\"\n", "sparkle = \"red\"\n", "border = 3\n"] {
+        for theme in [
+            "border = \"chartreuse\"\n",
+            "sparkle = \"red\"\n",
+            "border = 3\n",
+        ] {
             let frag = format!("{FRAGMENT}\n[desktop.greeter.tuigreet_theme]\n{theme}");
             assert!(cfg(&frag).is_err(), "{theme}");
         }
@@ -861,12 +1275,18 @@ mod tests {
         assert_eq!(sh_quote("a b"), "'a b'");
         assert_eq!(sh_quote("it's"), "'it'\\''s'");
         assert_eq!(sh_quote(""), "''");
-        let frag = FRAGMENT.replace("wallpaper           = \"\"", "wallpaper = \"/srv/my walls/it's.png\"");
+        let frag = FRAGMENT.replace(
+            "wallpaper           = \"\"",
+            "wallpaper = \"/srv/my walls/it's.png\"",
+        );
         let sys = sysroot(true, true, true);
         let r = cfg(&frag).unwrap().render(sys.path());
         let doc: Value = toml::from_str(&r.text).unwrap();
         let cmd = doc["default_session"]["command"].as_str().unwrap();
-        assert!(cmd.contains("--wallpaper '/srv/my walls/it'\\''s.png' --"), "{cmd}");
+        assert!(
+            cmd.contains("--wallpaper '/srv/my walls/it'\\''s.png' --"),
+            "{cmd}"
+        );
     }
 
     #[test]
@@ -881,8 +1301,16 @@ mod tests {
         let r = run(root.path(), sys.path(), Mode::Write(target.clone())).unwrap();
         assert_eq!(r.effective, "glass");
         assert_eq!(fs::read_to_string(&target).unwrap(), r.text);
-        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o640, "mode preserved");
-        let leftovers: Vec<_> = fs::read_dir(&out).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o640,
+            "mode preserved"
+        );
+        let leftovers: Vec<_> = fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
         assert_eq!(leftovers.len(), 1, "no temp files left: {leftovers:?}");
         run(root.path(), sys.path(), Mode::Check(target.clone())).unwrap();
         // Negative: drift is reported.

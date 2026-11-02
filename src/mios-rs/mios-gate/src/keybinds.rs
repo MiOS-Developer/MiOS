@@ -64,7 +64,11 @@ struct Bound {
 
 /// The default context set: every context a compositor serves (all but `console`).
 fn all_contexts() -> BTreeSet<String> {
-    CONTEXTS.iter().filter(|c| **c != CONSOLE).map(|c| c.to_string()).collect()
+    CONTEXTS
+        .iter()
+        .filter(|c| **c != CONSOLE)
+        .map(|c| c.to_string())
+        .collect()
 }
 
 fn str_list(v: Option<&Value>) -> Vec<String> {
@@ -120,10 +124,16 @@ fn lua_binds(lua: &str) -> (Vec<String>, usize) {
         let t = line.trim_start();
         // Native hold release is the other edge of its declared press chord.
         // Count the press once; its lifecycle is verified by the native policy test.
-        if t.starts_with("local up=mios_native_hl.bind(") { continue; }
-        let rest = if let Some(rest)=t.strip_prefix("hl.bind(") {rest}
-            else if let Some((_,rest))=t.split_once("mios_native_hl.bind(") {rest}
-            else {continue};
+        if t.starts_with("local up=mios_native_hl.bind(") {
+            continue;
+        }
+        let rest = if let Some(rest) = t.strip_prefix("hl.bind(") {
+            rest
+        } else if let Some((_, rest)) = t.split_once("mios_native_hl.bind(") {
+            rest
+        } else {
+            continue;
+        };
         // the chord expression ends at the first top-level comma that follows the closing quote
         let mut depth_quote = false;
         let mut end = None;
@@ -152,15 +162,26 @@ const HYPR3D_TOGGLE_COMMAND: &str = "/usr/bin/mios-gen hyprland-3d-toggle";
 /// native dispatchers a realized row can name. None for anything else.
 fn entry_runs(ssot: &Value, path: &str, e: &Value) -> Option<String> {
     if path == "desktop.screenshot.bindings" {
-        let binary = ssot.get("desktop")?.get("screenshot")?.get("binary")?.as_str()?;
+        let binary = ssot
+            .get("desktop")?
+            .get("screenshot")?
+            .get("binary")?
+            .as_str()?;
         let args = e.get("args").and_then(Value::as_str).unwrap_or("");
-        return Some(std::iter::once(binary).chain(args.split_whitespace()).collect::<Vec<_>>().join(" "));
+        return Some(
+            std::iter::once(binary)
+                .chain(args.split_whitespace())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
     }
     let args = e.get("args");
     match e.get("dispatcher").and_then(Value::as_str)? {
         "exec_cmd" => args.and_then(Value::as_str).map(str::to_owned),
         "window.close" => Some("hypr:killactive".into()),
-        "window.fullscreen" if args.and_then(|a| a.get("mode")).and_then(Value::as_str) == Some("fullscreen") => {
+        "window.fullscreen"
+            if args.and_then(|a| a.get("mode")).and_then(Value::as_str) == Some("fullscreen") =>
+        {
             Some("hypr:fullscreen".into())
         }
         _ => None,
@@ -171,7 +192,8 @@ fn entry_runs(ssot: &Value, path: &str, e: &Value) -> Option<String> {
 /// binds): its [keybindings.global.action_argv], `exec:mios-terminal` = the SSOT terminal action's command, any other
 /// `exec:<prog>` = `prog` alone, or the same hypr: verb. Sharing a word with the command is not running it (V1).
 fn runs_action(ssot: &Value, action: &str, runs: &str) -> bool {
-    (action.starts_with("hypr:") && action == runs) || mios_resolver::keybindings::command_realizes(ssot, action, runs)
+    (action.starts_with("hypr:") && action == runs)
+        || mios_resolver::keybindings::command_realizes(ssot, action, runs)
 }
 
 /// The literal binds of the generated session per chord, each with its dispatcher expression (`hl.dsp.*`). A
@@ -184,24 +206,47 @@ fn lua_bind_dispatchers(lua: &str) -> Vec<(String, String)> {
         if let Some((_, d)) = t.split_once("local d=") {
             last_d = d.replace("mios_native_hl.dsp.", "hl.dsp.");
         }
-        if t.starts_with("local up=mios_native_hl.bind(") { continue; }
-        let rest = if let Some(rest) = t.strip_prefix("hl.bind(") { rest }
-            else if let Some((_, rest)) = t.split_once("mios_native_hl.bind(") { rest }
-            else { continue };
+        if t.starts_with("local up=mios_native_hl.bind(") {
+            continue;
+        }
+        let rest = if let Some(rest) = t.strip_prefix("hl.bind(") {
+            rest
+        } else if let Some((_, rest)) = t.split_once("mios_native_hl.bind(") {
+            rest
+        } else {
+            continue;
+        };
         let mut quoted = false;
         let mut escaped = false;
         let mut end = None;
         for (i, c) in rest.char_indices() {
-            if escaped { escaped = false; continue }
-            if c == '\\' && quoted { escaped = true; continue }
-            if c == '"' { quoted = !quoted }
-            if c == ',' && !quoted { end = Some(i); break }
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' && quoted {
+                escaped = true;
+                continue;
+            }
+            if c == '"' {
+                quoted = !quoted
+            }
+            if c == ',' && !quoted {
+                end = Some(i);
+                break;
+            }
         }
         let Some(end) = end else { continue };
-        let Some(chord) = lua_literal(&rest[..end]) else { continue };
+        let Some(chord) = lua_literal(&rest[..end]) else {
+            continue;
+        };
         // the dispatcher expression, without hl.bind's own closing parenthesis
         let d = rest[end + 1..].trim();
-        let d = d.strip_suffix(')').unwrap_or(d).trim().replace("mios_native_hl.dsp.", "hl.dsp.");
+        let d = d
+            .strip_suffix(')')
+            .unwrap_or(d)
+            .trim()
+            .replace("mios_native_hl.dsp.", "hl.dsp.");
         let is_d = d == "d" || d.starts_with("d,") || d.starts_with("d)");
         out.push((chord, if is_d { last_d.clone() } else { d }));
     }
@@ -213,11 +258,23 @@ fn tmux_named_keys(ssot: &Value) -> Vec<String> {
     let kb = ssot.get("keybindings");
     let tmux = kb.and_then(|k| k.get("tmux"));
     let float = tmux.and_then(|t| t.get("float"));
-    let s = |t: Option<&Value>, k: &str| t.and_then(|t| t.get(k)).and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_owned);
-    [s(tmux, "menu_key"), s(tmux, "launcher_key"), s(float, "new_key"), s(float, "toggle_key"), s(float, "lift_key"), s(kb.and_then(|k| k.get("agent")), "accept_key")]
-        .into_iter()
-        .flatten()
-        .collect()
+    let s = |t: Option<&Value>, k: &str| {
+        t.and_then(|t| t.get(k))
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    [
+        s(tmux, "menu_key"),
+        s(tmux, "launcher_key"),
+        s(float, "new_key"),
+        s(float, "toggle_key"),
+        s(float, "lift_key"),
+        s(kb.and_then(|k| k.get("agent")), "accept_key"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 pub struct Analysis {
@@ -255,9 +312,15 @@ fn tmux_key_chord(key: &str) -> String {
 /// tier-3 owner of its chord and is exempt; prefix-table keys are second steps after it and cannot shadow one.
 fn tmux_root_findings(ssot: &Value, reserved: &[(String, Vec<String>)]) -> Vec<String> {
     let mut out = Vec::new();
-    let Some(kb) = ssot.get("keybindings") else { return out };
+    let Some(kb) = ssot.get("keybindings") else {
+        return out;
+    };
     let prefix = kb.get("tmux_prefix").and_then(Value::as_str).unwrap_or("");
-    let roots = kb.get("agent").and_then(|a| a.get("accept_chord")).and_then(Value::as_str).into_iter();
+    let roots = kb
+        .get("agent")
+        .and_then(|a| a.get("accept_chord"))
+        .and_then(Value::as_str)
+        .into_iter();
     for key in roots.filter(|k| *k != prefix) {
         match normalize_chord(&tmux_key_chord(key), false) {
             Ok(steps) => {
@@ -267,7 +330,9 @@ fn tmux_root_findings(ssot: &Value, reserved: &[(String, Vec<String>)]) -> Vec<S
                     }
                 }
             }
-            Err(e) => out.push(format!("keybindings.agent.accept_chord: tmux key {key:?} does not normalise: {e}")),
+            Err(e) => out.push(format!(
+                "keybindings.agent.accept_chord: tmux key {key:?} does not normalise: {e}"
+            )),
         }
     }
     out
@@ -292,7 +357,9 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
     if namespaces.is_empty() {
         return Err("[keybindings.global].action_namespaces is empty".into());
     }
-    let planned: BTreeSet<String> = str_list(global.get("planned_actions")).into_iter().collect();
+    let planned: BTreeSet<String> = str_list(global.get("planned_actions"))
+        .into_iter()
+        .collect();
     let native = global.get("native_actions").and_then(Value::as_table);
     let implemented: BTreeSet<String> = global
         .get("action_argv")
@@ -300,18 +367,35 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
         .map(|t| t.keys().cloned().collect())
         .unwrap_or_default();
     let mut findings_pre: Vec<String> = Vec::new();
-    for (action,backend) in native.into_iter().flatten() {
-        if action!="mios:vm-command-modifier" || backend.as_str()!=Some("hyprland") || planned.contains(action) || implemented.contains(action) {
-            findings_pre.push(format!("unsupported or conflicting native action realizer: {action}"));
+    for (action, backend) in native.into_iter().flatten() {
+        if action != "mios:vm-command-modifier"
+            || backend.as_str() != Some("hyprland")
+            || planned.contains(action)
+            || implemented.contains(action)
+        {
+            findings_pre.push(format!(
+                "unsupported or conflicting native action realizer: {action}"
+            ));
         }
     }
-    for (a, v) in global.get("action_argv").and_then(Value::as_table).into_iter().flatten() {
-        let ok = v.as_array().is_some_and(|x| !x.is_empty() && x.iter().all(|e| e.as_str().is_some_and(|s| !s.is_empty())));
+    for (a, v) in global
+        .get("action_argv")
+        .and_then(Value::as_table)
+        .into_iter()
+        .flatten()
+    {
+        let ok = v.as_array().is_some_and(|x| {
+            !x.is_empty() && x.iter().all(|e| e.as_str().is_some_and(|s| !s.is_empty()))
+        });
         if !ok {
-            findings_pre.push(format!("action_argv[{a}] must be a non-empty array of non-empty strings"));
+            findings_pre.push(format!(
+                "action_argv[{a}] must be a non-empty array of non-empty strings"
+            ));
         }
         if planned.contains(a) {
-            findings_pre.push(format!("action {a} is both implemented (action_argv) and planned"));
+            findings_pre.push(format!(
+                "action {a} is both implemented (action_argv) and planned"
+            ));
         }
     }
     let reserved: Vec<(String, Vec<String>)> = str_list(global.get("reserved_terminal"))
@@ -405,11 +489,16 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                     "SHIFT" => leaf.starts_with("shift_"),
                     _ => false,
                 });
-                if steps.len() != 1 || !own || !matches!(&leaf[leaf.len().saturating_sub(2)..], "_l" | "_r") {
+                if steps.len() != 1
+                    || !own
+                    || !matches!(&leaf[leaf.len().saturating_sub(2)..], "_l" | "_r")
+                {
                     findings.push(format!("{tag}: trigger = \"release\" needs a modifier-only chord whose key is one of its own modifier keys, not {}", steps.join(" ")));
                 }
             }
-            Some(other) => findings.push(format!("{tag}: trigger {other:?} must be press or release")),
+            Some(other) => {
+                findings.push(format!("{tag}: trigger {other:?} must be press or release"))
+            }
         }
         // rule 2: in vm-passthrough only bypass_mod chords may be host-bound
         if scope == "host"
@@ -531,7 +620,9 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                         runs: Some(HYPR3D_TOGGLE_COMMAND.into()),
                     });
                 }
-                Err(err) => findings.push(format!("desktop.hyprland.hypr3d.toggle_key {k:?}: {err}")),
+                Err(err) => {
+                    findings.push(format!("desktop.hyprland.hypr3d.toggle_key {k:?}: {err}"))
+                }
             }
         }
     }
@@ -543,7 +634,13 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
             .iter()
             .filter(|b| b.legacy && b.source != "hyprland.lua" && &b.steps == steps)
             .collect();
-        if !owners.is_empty() && !owners.iter().any(|b| b.runs.as_deref().is_some_and(|r| runs_action(ssot, action, r))) {
+        if !owners.is_empty()
+            && !owners.iter().any(|b| {
+                b.runs
+                    .as_deref()
+                    .is_some_and(|r| runs_action(ssot, action, r))
+            })
+        {
             findings.push(format!(
                 "{tag}: realized_by hyprland on {} but that chord is {} in the compositor tables, which does not run {action}",
                 steps.join(" "),
@@ -604,7 +701,8 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
                 .map(|(_, d)| d.as_str())
                 .filter(|d| {
                     !mios_resolver::keybindings::lua_dispatcher_realizes(ssot, action, d)
-                        && mios_resolver::keybindings::lua_exec_command(d).as_deref() != Some(own.as_str())
+                        && mios_resolver::keybindings::lua_exec_command(d).as_deref()
+                            != Some(own.as_str())
                 })
                 .collect();
             if !foreign.is_empty() {
@@ -667,7 +765,13 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
         }
     }
 
-    findings.extend(controller_audit(ssot, &namespaces, &implemented, &planned, native));
+    findings.extend(controller_audit(
+        ssot,
+        &namespaces,
+        &implemented,
+        &planned,
+        native,
+    ));
 
     Ok(Analysis {
         findings,
@@ -681,18 +785,46 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
 fn console_capable(action: &str) -> bool {
     action == "none"
         || CONSOLE_ACTIONS.contains(&action)
-        || action.split_once(':').is_some_and(|(ns, _)| CONSOLE_NAMESPACES.contains(&ns))
+        || action
+            .split_once(':')
+            .is_some_and(|(ns, _)| CONSOLE_NAMESPACES.contains(&ns))
 }
 
 /// Pseudo-inputs of the controller grammar besides the evdev buttons: stick directions and the toggle chord.
 const PSEUDO_INPUTS: &[&str] = &[
-    "LS_UP", "LS_DOWN", "LS_LEFT", "LS_RIGHT", "RS_UP", "RS_DOWN", "RS_LEFT", "RS_RIGHT", "TOGGLE_CHORD",
+    "LS_UP",
+    "LS_DOWN",
+    "LS_LEFT",
+    "LS_RIGHT",
+    "RS_UP",
+    "RS_DOWN",
+    "RS_LEFT",
+    "RS_RIGHT",
+    "TOGGLE_CHORD",
 ];
 /// Every input a nav profile of an uncaptured compositor context must map (to an action or "none").
 const NAV_REQUIRED: &[&str] = &[
-    "BTN_SOUTH", "BTN_EAST", "BTN_WEST", "BTN_DPAD_UP", "BTN_DPAD_DOWN", "BTN_DPAD_LEFT", "BTN_DPAD_RIGHT",
-    "LS_UP", "LS_DOWN", "LS_LEFT", "LS_RIGHT", "RS_UP", "RS_DOWN", "RS_LEFT", "RS_RIGHT",
-    "BTN_TL2", "BTN_TR2", "BTN_SELECT", "BTN_MODE", "BTN_THUMBL", "BTN_THUMBR",
+    "BTN_SOUTH",
+    "BTN_EAST",
+    "BTN_WEST",
+    "BTN_DPAD_UP",
+    "BTN_DPAD_DOWN",
+    "BTN_DPAD_LEFT",
+    "BTN_DPAD_RIGHT",
+    "LS_UP",
+    "LS_DOWN",
+    "LS_LEFT",
+    "LS_RIGHT",
+    "RS_UP",
+    "RS_DOWN",
+    "RS_LEFT",
+    "RS_RIGHT",
+    "BTN_TL2",
+    "BTN_TR2",
+    "BTN_SELECT",
+    "BTN_MODE",
+    "BTN_THUMBL",
+    "BTN_THUMBR",
 ];
 /// Owned by the capture contract or the room on a compositor (North capture, bumpers ShaderGlass, Start cursor mode,
 /// the toggle chord); a console profile maps them too, because no compositor runs there.
@@ -701,29 +833,60 @@ const CONTRACT_INPUTS: &[&str] = &["BTN_NORTH", "BTN_TL", "BTN_TR", "BTN_START",
 /// `vm-passthrough` are class contexts that scope keyboard passthrough only: no window class captures the controller,
 /// so an uncaptured game or VM window follows a nav profile like any window until North captures it. `app-capture`
 /// (captured: the controller belongs to the app) and `desktop-3d` (the room has its own map) never take one.
-const NAV_CONTEXTS: &[&str] = &["desktop-2d", "terminal", "game", "vm-passthrough", "console"];
+const NAV_CONTEXTS: &[&str] = &[
+    "desktop-2d",
+    "terminal",
+    "game",
+    "vm-passthrough",
+    "console",
+];
 /// Settings of [keybindings.global.controller.nav] that are not profiles (mios-inputd nav.rs RESERVED).
-const NAV_SETTINGS: &[&str] = &["enabled", "flick_on", "flick_off", "contexts", "repeat", "tmux_sockets"];
+const NAV_SETTINGS: &[&str] = &[
+    "enabled",
+    "flick_on",
+    "flick_off",
+    "contexts",
+    "repeat",
+    "tmux_sockets",
+];
 /// Cursor mode (mios-inputd nav.rs CURSOR): a button toggles it. On the console the sticks drive the gpm pointer and
 /// the triggers select, so it is the one pointer: action a VT profile may use; no other pointer: action reaches a VT.
 const CURSOR: &str = "pointer:cursor";
-const TMUX_VERBS: &[&str] = &["focus", "page-up", "page-down", "session-prev", "session-next", "menu", "keymap", "key"];
+const TMUX_VERBS: &[&str] = &[
+    "focus",
+    "page-up",
+    "page-down",
+    "session-prev",
+    "session-next",
+    "menu",
+    "keymap",
+    "key",
+];
 
 fn input_known(name: &str) -> bool {
     PSEUDO_INPUTS.contains(&name) || mios_resolver::keybindings::button_code(name).is_ok()
 }
 
 /// Resolve a nav profile through `inherits` (once, no cycles).
-fn resolve_profile(nav: &toml::Table, name: &str, out: &mut Vec<String>) -> Option<BTreeMap<String, Value>> {
+fn resolve_profile(
+    nav: &toml::Table,
+    name: &str,
+    out: &mut Vec<String>,
+) -> Option<BTreeMap<String, Value>> {
     let mut chain = Vec::new();
     let mut cur = name.to_string();
     loop {
         if chain.contains(&cur) {
-            out.push(format!("controller.nav.{name}: inherits cycle {}", chain.join(" -> ")));
+            out.push(format!(
+                "controller.nav.{name}: inherits cycle {}",
+                chain.join(" -> ")
+            ));
             return None;
         }
         let Some(t) = nav.get(&cur).and_then(Value::as_table) else {
-            out.push(format!("controller.nav.{name}: profile {cur:?} does not exist"));
+            out.push(format!(
+                "controller.nav.{name}: profile {cur:?} does not exist"
+            ));
             return None;
         };
         chain.push(cur.clone());
@@ -731,7 +894,9 @@ fn resolve_profile(nav: &toml::Table, name: &str, out: &mut Vec<String>) -> Opti
             None => break,
             Some(Value::String(p)) => cur = p.clone(),
             Some(_) => {
-                out.push(format!("controller.nav.{cur}: inherits must be a profile name"));
+                out.push(format!(
+                    "controller.nav.{cur}: inherits must be a profile name"
+                ));
                 return None;
             }
         }
@@ -757,21 +922,43 @@ pub fn controller_audit(
     native: Option<&toml::Table>,
 ) -> Vec<String> {
     let mut out = Vec::new();
-    let ctl = ssot.get("keybindings").and_then(|k| k.get("global")).and_then(|g| g.get("controller"));
-    let Some(ctl) = ctl.and_then(Value::as_table) else { return out };
-    let prefix_keys: BTreeSet<String> = ["actions"].iter()
-        .filter_map(|k| ssot.get("keybindings").and_then(|kb| kb.get(*k)).and_then(Value::as_array))
-        .chain(ssot.get("keybindings").and_then(|kb| kb.get("tmux")).and_then(|t| t.get("bindings")).and_then(Value::as_array))
+    let ctl = ssot
+        .get("keybindings")
+        .and_then(|k| k.get("global"))
+        .and_then(|g| g.get("controller"));
+    let Some(ctl) = ctl.and_then(Value::as_table) else {
+        return out;
+    };
+    let prefix_keys: BTreeSet<String> = ["actions"]
+        .iter()
+        .filter_map(|k| {
+            ssot.get("keybindings")
+                .and_then(|kb| kb.get(*k))
+                .and_then(Value::as_array)
+        })
+        .chain(
+            ssot.get("keybindings")
+                .and_then(|kb| kb.get("tmux"))
+                .and_then(|t| t.get("bindings"))
+                .and_then(Value::as_array),
+        )
         .flatten()
         .filter_map(|r| r.get("key").and_then(Value::as_str).map(str::to_owned))
         .chain(tmux_named_keys(ssot))
         .collect();
     // tmux:menu runs `send-keys -c <client> -K <tmux_prefix> <menu_key>` (the bare `mios-menu` alias cannot be aimed
     // at a client), so it needs the menu key.
-    let menu_key = ssot.get("keybindings").and_then(|kb| kb.get("tmux")).and_then(|t| t.get("menu_key")).and_then(Value::as_str).filter(|k| !k.is_empty());
+    let menu_key = ssot
+        .get("keybindings")
+        .and_then(|kb| kb.get("tmux"))
+        .and_then(|t| t.get("menu_key"))
+        .and_then(Value::as_str)
+        .filter(|k| !k.is_empty());
     let check_action = |tag: &str, a: &str, console: bool, button: bool, out: &mut Vec<String>| {
         if a.is_empty() {
-            out.push(format!("{tag}: \"\" is not a value; use \"none\" to unbind"));
+            out.push(format!(
+                "{tag}: \"\" is not a value; use \"none\" to unbind"
+            ));
             return;
         }
         if a == "none" {
@@ -810,28 +997,56 @@ pub fn controller_audit(
     };
     // `input` is the mapped controller input: stick directions and the toggle chord are not buttons.
     let is_button = |input: &str| !PSEUDO_INPUTS.contains(&input);
-    let check_value = |tag: &str, input: &str, v: &Value, console: bool, out: &mut Vec<String>| match v {
-        Value::String(a) => check_action(tag, a, console, is_button(input), out),
-        Value::Array(a) if a.len() == 2 && a.iter().all(|x| x.is_str()) => {
-            for x in a {
-                check_action(tag, x.as_str().unwrap_or(""), console, is_button(input), out);
+    let check_value =
+        |tag: &str, input: &str, v: &Value, console: bool, out: &mut Vec<String>| match v {
+            Value::String(a) => check_action(tag, a, console, is_button(input), out),
+            Value::Array(a) if a.len() == 2 && a.iter().all(|x| x.is_str()) => {
+                for x in a {
+                    check_action(
+                        tag,
+                        x.as_str().unwrap_or(""),
+                        console,
+                        is_button(input),
+                        out,
+                    );
+                }
             }
-        }
-        _ => out.push(format!("{tag}: value must be \"ns:action\", \"none\" or [\"tap\", \"hold\"]")),
-    };
+            _ => out.push(format!(
+                "{tag}: value must be \"ns:action\", \"none\" or [\"tap\", \"hold\"]"
+            )),
+        };
     let chord = |v: Option<&Value>| str_list(v).into_iter().collect::<BTreeSet<String>>();
-    let toggle = chord(ssot.get("desktop").and_then(|d| d.get("hyprland")).and_then(|h| h.get("hypr3d")).and_then(|h| h.get("controller")).and_then(|c| c.get("toggle_chord")));
+    let toggle = chord(
+        ssot.get("desktop")
+            .and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get("hypr3d"))
+            .and_then(|h| h.get("controller"))
+            .and_then(|c| c.get("toggle_chord")),
+    );
     let over = chord(ctl.get("mode_override_chord"));
     let both: Vec<_> = toggle.intersection(&over).cloned().collect();
     if !both.is_empty() {
-        out.push(format!("controller: toggle_chord and mode_override_chord share {}", both.join(",")));
+        out.push(format!(
+            "controller: toggle_chord and mode_override_chord share {}",
+            both.join(",")
+        ));
     }
-    if let Some(room) = ssot.get("desktop").and_then(|d| d.get("hyprland")).and_then(|h| h.get("hypr3d")).and_then(|h| h.get("controller")).and_then(Value::as_table) {
+    if let Some(room) = ssot
+        .get("desktop")
+        .and_then(|d| d.get("hyprland"))
+        .and_then(|h| h.get("hypr3d"))
+        .and_then(|h| h.get("controller"))
+        .and_then(Value::as_table)
+    {
         let mut roles: BTreeMap<String, String> = BTreeMap::new();
         for (k, v) in room {
-            let Some(b) = v.as_str().filter(|_| k.ends_with("_button")) else { continue };
+            let Some(b) = v.as_str().filter(|_| k.ends_with("_button")) else {
+                continue;
+            };
             if !input_known(b) {
-                out.push(format!("hypr3d.controller.{k}: unknown controller button {b}"));
+                out.push(format!(
+                    "hypr3d.controller.{k}: unknown controller button {b}"
+                ));
             }
             if k == "cursor_mode_button" {
                 continue; // mirrors [keybindings.global.controller].cursor_mode_button
@@ -840,7 +1055,9 @@ pub fn controller_audit(
                 out.push(format!("hypr3d.controller: {prev} and {k} both use {b}"));
             }
             if toggle.contains(b) {
-                out.push(format!("hypr3d.controller.{k}: {b} is part of toggle_chord"));
+                out.push(format!(
+                    "hypr3d.controller.{k}: {b} is part of toggle_chord"
+                ));
             }
         }
     }
@@ -853,25 +1070,48 @@ pub fn controller_audit(
             check_value(&tag, k, v, false, &mut out);
         }
     }
-    let Some(nav) = ctl.get("nav").and_then(Value::as_table) else { return out };
+    let Some(nav) = ctl.get("nav").and_then(Value::as_table) else {
+        return out;
+    };
     if nav.get("enabled").and_then(Value::as_bool) == Some(false) {
         return out;
     }
-    let f = |k: &str| nav.get(k).and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)));
+    let f = |k: &str| {
+        nav.get(k)
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+    };
     if let (Some(on), Some(off)) = (f("flick_on"), f("flick_off")) {
         if !(0.0 < off && off < on && on <= 1.0) {
-            out.push(format!("controller.nav: need 0 < flick_off ({off}) < flick_on ({on}) <= 1"));
+            out.push(format!(
+                "controller.nav: need 0 < flick_off ({off}) < flick_on ({on}) <= 1"
+            ));
         }
     }
-    for (k, v) in nav.get("repeat").and_then(Value::as_table).into_iter().flatten() {
-        let ok = v.as_array().is_some_and(|a| a.len() == 2 && a.iter().all(|x| x.as_integer().is_some_and(|i| i > 0)));
+    for (k, v) in nav
+        .get("repeat")
+        .and_then(Value::as_table)
+        .into_iter()
+        .flatten()
+    {
+        let ok = v.as_array().is_some_and(|a| {
+            a.len() == 2 && a.iter().all(|x| x.as_integer().is_some_and(|i| i > 0))
+        });
         if !input_known(k) || !ok {
-            out.push(format!("controller.nav.repeat.{k}: needs a known input and [delay_ms, rate_ms] > 0"));
+            out.push(format!(
+                "controller.nav.repeat.{k}: needs a known input and [delay_ms, rate_ms] > 0"
+            ));
         }
     }
     if let Some(s) = nav.get("tmux_sockets") {
         // tmux -L names whose clients select the <profile>_tmux profile (mios-inputd nav.rs, the same rule).
-        let ok = |x: &Value| x.as_str().is_some_and(|n| !n.is_empty() && n.len() <= 64 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+        let ok = |x: &Value| {
+            x.as_str().is_some_and(|n| {
+                !n.is_empty()
+                    && n.len() <= 64
+                    && n.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+        };
         if !s.as_array().is_some_and(|a| a.iter().all(ok)) {
             out.push("controller.nav.tmux_sockets: must be a list of tmux -L socket names ([A-Za-z0-9_-]{1,64})".into());
         }
@@ -889,15 +1129,23 @@ pub fn controller_audit(
                 continue;
             }
             if !input_known(k) {
-                out.push(format!("controller.nav.{name}.{k}: unknown controller input {k}"));
+                out.push(format!(
+                    "controller.nav.{name}.{k}: unknown controller input {k}"
+                ));
             }
             check_value(&format!("controller.nav.{name}.{k}"), k, v, false, &mut out);
         }
     }
-    let contexts = nav.get("contexts").and_then(Value::as_table).cloned().unwrap_or_default();
+    let contexts = nav
+        .get("contexts")
+        .and_then(Value::as_table)
+        .cloned()
+        .unwrap_or_default();
     for (ctx, profile) in &contexts {
         let Some(profile) = profile.as_str() else {
-            out.push(format!("controller.nav.contexts.{ctx}: must be a profile name or \"vpad\""));
+            out.push(format!(
+                "controller.nav.contexts.{ctx}: must be a profile name or \"vpad\""
+            ));
             continue;
         };
         if !NAV_CONTEXTS.contains(&ctx.as_str()) {
@@ -912,19 +1160,33 @@ pub fn controller_audit(
         }
         let names: Vec<String> = if nav.contains_key(profile) {
             vec![profile.to_string()]
-        } else if nav.contains_key(&format!("{profile}_tmux")) || nav.contains_key(&format!("{profile}_plain")) {
+        } else if nav.contains_key(&format!("{profile}_tmux"))
+            || nav.contains_key(&format!("{profile}_plain"))
+        {
             vec![format!("{profile}_tmux"), format!("{profile}_plain")]
         } else {
             vec![profile.to_string()]
         };
         let console = ctx == CONSOLE;
         for name in names {
-            let Some(map) = resolve_profile(nav, &name, &mut out) else { continue };
+            let Some(map) = resolve_profile(nav, &name, &mut out) else {
+                continue;
+            };
             let tag = format!("controller.nav {ctx} ({name})");
-            let required: Vec<&str> = if console { NAV_REQUIRED.iter().chain(CONTRACT_INPUTS).copied().collect() } else { NAV_REQUIRED.to_vec() };
+            let required: Vec<&str> = if console {
+                NAV_REQUIRED
+                    .iter()
+                    .chain(CONTRACT_INPUTS)
+                    .copied()
+                    .collect()
+            } else {
+                NAV_REQUIRED.to_vec()
+            };
             for input in required {
                 match map.get(input) {
-                    None => out.push(format!("{tag}: {input} unmapped (map it to an action or \"none\")")),
+                    None => out.push(format!(
+                        "{tag}: {input} unmapped (map it to an action or \"none\")"
+                    )),
                     Some(v) => {
                         if console {
                             check_value(&format!("{tag}.{input}"), input, v, true, &mut out);
@@ -1117,16 +1379,35 @@ passthrough = ["vm-passthrough"]
     /// entry that realizes the row (same exec argv, same hypr: verb) is still one binding with no finding.
     #[test]
     fn realized_row_on_another_entrys_chord_is_found() {
-        let row = |chord: &str, action: &str| format!("{BASE}\n[keybindings.global.action_argv]\n\"mios:session-scale-up\" = [\"/usr/bin/mios-gen\", \"session-scale\", \"up\"]\n[[keybindings.global.bindings]]\nid = \"session-scale-up\"\ntier = 1\nchord = \"{chord}\"\naction = \"{action}\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.hyprland]\nbindings = [ {{ key = \"SUPER + J\", dispatcher = \"layout\", args = \"togglesplit\", label = \"Toggle split direction\" }}, {{ key = \"SUPER + K\", dispatcher = \"exec_cmd\", args = \"/usr/bin/mios-gen session-scale up\", label = \"Scale up\" }}, {{ key = \"SUPER + C\", dispatcher = \"window.close\", label = \"Close\" }} ]\n");
+        let row = |chord: &str, action: &str| {
+            format!("{BASE}\n[keybindings.global.action_argv]\n\"mios:session-scale-up\" = [\"/usr/bin/mios-gen\", \"session-scale\", \"up\"]\n[[keybindings.global.bindings]]\nid = \"session-scale-up\"\ntier = 1\nchord = \"{chord}\"\naction = \"{action}\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.hyprland]\nbindings = [ {{ key = \"SUPER + J\", dispatcher = \"layout\", args = \"togglesplit\", label = \"Toggle split direction\" }}, {{ key = \"SUPER + K\", dispatcher = \"exec_cmd\", args = \"/usr/bin/mios-gen session-scale up\", label = \"Scale up\" }}, {{ key = \"SUPER + C\", dispatcher = \"window.close\", label = \"Close\" }} ]\n")
+        };
         let lua = "hl.bind(\"SUPER + J\", hl.dsp.layout(\"togglesplit\"))\nhl.bind(\"SUPER + K\", hl.dsp.exec_cmd(\"/usr/bin/mios-gen session-scale up\"))\nhl.bind(\"SUPER + C\", hl.dsp.window.close())\n";
-        let probe = |chord: &str, action: &str| analyze(&row(chord, action).parse().unwrap(), Some(lua)).unwrap().findings;
+        let probe = |chord: &str, action: &str| {
+            analyze(&row(chord, action).parse().unwrap(), Some(lua))
+                .unwrap()
+                .findings
+        };
         let bad = probe("SUPER+J", "mios:session-scale-up");
         assert!(bad.iter().any(|f| f.contains("session-scale-up: realized_by hyprland on SUPER+j but that chord is desktop.hyprland.bindings:Toggle split direction")), "{bad:?}");
         let bad_hypr = probe("SUPER+J", "hypr:killactive");
-        assert!(bad_hypr.iter().any(|f| f.contains("does not run hypr:killactive")), "{bad_hypr:?}");
+        assert!(
+            bad_hypr
+                .iter()
+                .any(|f| f.contains("does not run hypr:killactive")),
+            "{bad_hypr:?}"
+        );
         // positive controls: the entry runs exactly the row's argv / hypr: verb
-        assert!(probe("SUPER+K", "mios:session-scale-up").is_empty(), "{:?}", probe("SUPER+K", "mios:session-scale-up"));
-        assert!(probe("SUPER+C", "hypr:killactive").is_empty(), "{:?}", probe("SUPER+C", "hypr:killactive"));
+        assert!(
+            probe("SUPER+K", "mios:session-scale-up").is_empty(),
+            "{:?}",
+            probe("SUPER+K", "mios:session-scale-up")
+        );
+        assert!(
+            probe("SUPER+C", "hypr:killactive").is_empty(),
+            "{:?}",
+            probe("SUPER+C", "hypr:killactive")
+        );
     }
 
     /// V1 (round-2 verifier): a realized `exec:<prog>` row on a chord whose hyprland.lua literal merely mentions the
@@ -1136,36 +1417,73 @@ passthrough = ["vm-passthrough"]
     #[test]
     fn exec_row_on_an_unrelated_lua_literal_is_found() {
         let term = "alacritty -e env -u TMUX /usr/libexec/mios/mios-terminal";
-        let ssot = |chord: &str, action: &str| format!("{BASE}\n[[keybindings.actions]]\nid = \"terminal\"\ndesktop_command = \"{term}\"\n[[keybindings.global.bindings]]\nid = \"probe\"\ntier = 1\nchord = \"{chord}\"\naction = \"{action}\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n");
+        let ssot = |chord: &str, action: &str| {
+            format!("{BASE}\n[[keybindings.actions]]\nid = \"terminal\"\ndesktop_command = \"{term}\"\n[[keybindings.global.bindings]]\nid = \"probe\"\ntier = 1\nchord = \"{chord}\"\naction = \"{action}\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n")
+        };
         let lua = format!("hl.bind(\"SUPER + Return\", hl.dsp.exec_cmd(\"{term}\"))\nhl.bind(\"CTRL + ALT + SHIFT + m\", hl.dsp.exec_cmd(\"{term} --action system\"))\n do local d=mios_native_hl.dsp.exec_cmd(\"/usr/libexec/mios/mios-inputd dispatch 'exec:alacritty'\")\n local b=mios_native_hl.bind(\"CTRL+ALT+SHIFT+f9\",d)\n if b then end end\n");
-        let f = |chord: &str, action: &str| analyze(&ssot(chord, action).parse().unwrap(), Some(&lua)).unwrap().findings;
+        let f = |chord: &str, action: &str| {
+            analyze(&ssot(chord, action).parse().unwrap(), Some(&lua))
+                .unwrap()
+                .findings
+        };
         let bad = f("CTRL+ALT+SHIFT+m", "exec:alacritty");
         assert!(bad.iter().any(|x| x.contains(&format!("probe: realized_by hyprland on CTRL+ALT+SHIFT+m but hyprland.lua binds that chord to hl.dsp.exec_cmd(\"{term} --action system\"), which does not run exec:alacritty"))), "{bad:?}");
         let bad = f("CTRL+ALT+SHIFT+m", "exec:mios-terminal");
-        assert!(bad.iter().any(|x| x.contains("does not run exec:mios-terminal")), "{bad:?}");
+        assert!(
+            bad.iter()
+                .any(|x| x.contains("does not run exec:mios-terminal")),
+            "{bad:?}"
+        );
         let bad = f("SUPER+Return", "exec:env");
-        assert!(bad.iter().any(|x| x.contains("does not run exec:env")), "{bad:?}");
+        assert!(
+            bad.iter().any(|x| x.contains("does not run exec:env")),
+            "{bad:?}"
+        );
         // negative control: the pre-fix any-word rule took the system terminal as the realization of exec:alacritty
-        let old_rule = |prog: &str, cmd: &str| cmd.split_whitespace().any(|t| t == prog || t.ends_with(&format!("/{prog}")));
+        let old_rule = |prog: &str, cmd: &str| {
+            cmd.split_whitespace()
+                .any(|t| t == prog || t.ends_with(&format!("/{prog}")))
+        };
         assert!(old_rule("alacritty", &format!("{term} --action system")) && old_rule("env", term));
         // positive controls
-        assert!(f("CTRL+ALT+SHIFT+F9", "exec:alacritty").is_empty(), "{:?}", f("CTRL+ALT+SHIFT+F9", "exec:alacritty"));
-        assert!(f("SUPER+Return", "exec:mios-terminal").is_empty(), "{:?}", f("SUPER+Return", "exec:mios-terminal"));
+        assert!(
+            f("CTRL+ALT+SHIFT+F9", "exec:alacritty").is_empty(),
+            "{:?}",
+            f("CTRL+ALT+SHIFT+F9", "exec:alacritty")
+        );
+        assert!(
+            f("SUPER+Return", "exec:mios-terminal").is_empty(),
+            "{:?}",
+            f("SUPER+Return", "exec:mios-terminal")
+        );
     }
 
     /// (b) [desktop.hyprland.hypr3d].toggle_key is audited: SUPER+G is ShaderGlass, so the room toggle there collides
     /// (render-hyprland rejects it too). Control: SUPER+F12 (the shipped key) is clean and realizes hypr3d-toggle.
     #[test]
     fn hypr3d_toggle_key_is_audited() {
-        let ssot = |key: &str| format!("{BASE}\n[keybindings.global.action_argv]\n\"mios:hyprland-3d-toggle\" = [\"/usr/bin/mios-gen\", \"hyprland-3d-toggle\"]\n[[keybindings.global.bindings]]\nid = \"hypr3d-toggle\"\ntier = 1\nchord = \"SUPER+F12\"\naction = \"mios:hyprland-3d-toggle\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.shaderglass]\nbindings = [ {{ key = \"SUPER + G\", args = \"toggle\", label = \"ShaderGlass\" }} ]\n[desktop.hyprland.hypr3d]\nenabled = true\ntoggle_key = \"{key}\"\n");
+        let ssot = |key: &str| {
+            format!("{BASE}\n[keybindings.global.action_argv]\n\"mios:hyprland-3d-toggle\" = [\"/usr/bin/mios-gen\", \"hyprland-3d-toggle\"]\n[[keybindings.global.bindings]]\nid = \"hypr3d-toggle\"\ntier = 1\nchord = \"SUPER+F12\"\naction = \"mios:hyprland-3d-toggle\"\nrealized_by = \"hyprland\"\npassthrough = [\"vm-passthrough\"]\n[desktop.shaderglass]\nbindings = [ {{ key = \"SUPER + G\", args = \"toggle\", label = \"ShaderGlass\" }} ]\n[desktop.hyprland.hypr3d]\nenabled = true\ntoggle_key = \"{key}\"\n")
+        };
         let lua = "hl.bind(\"SUPER + G\", hl.dsp.exec_cmd(\"/usr/bin/mios-shaderglass toggle\"))\n hl.bind(\"SUPER + F12\", hl.dsp.exec_cmd(\"/usr/bin/mios-gen hyprland-3d-toggle\"))\n";
-        let f = |key: &str| analyze(&ssot(key).parse().unwrap(), Some(lua)).unwrap().findings;
+        let f = |key: &str| {
+            analyze(&ssot(key).parse().unwrap(), Some(lua))
+                .unwrap()
+                .findings
+        };
         let bad = f("SUPER + G");
-        assert!(bad.iter().any(|x| x.contains("collision chord SUPER+g") && x.contains("desktop.hyprland.hypr3d.toggle_key")), "{bad:?}");
+        assert!(
+            bad.iter().any(|x| x.contains("collision chord SUPER+g")
+                && x.contains("desktop.hyprland.hypr3d.toggle_key")),
+            "{bad:?}"
+        );
         assert!(f("SUPER + F12").is_empty(), "{:?}", f("SUPER + F12"));
         let mut off: Value = ssot("SUPER + G").parse().unwrap();
         off["desktop"]["hyprland"]["hypr3d"]["enabled"] = Value::Boolean(false);
-        assert!(analyze(&off, Some(lua)).unwrap().findings.is_empty(), "a disabled room binds no toggle key");
+        assert!(
+            analyze(&off, Some(lua)).unwrap().findings.is_empty(),
+            "a disabled room binds no toggle key"
+        );
     }
 
     #[test]
@@ -1256,10 +1574,22 @@ passthrough = ["vm-passthrough"]
             format!("\n[[keybindings.global.bindings]]\nid = \"launch\"\ntier = 1\nchord = \"{chord}\"\ntrigger = \"{trigger}\"\naction = \"quickshell:launcher\"\npassthrough = [\"vm-passthrough\"]\n")
         };
         let ok = run(&row("SUPER+CTRL+Super_L", "release"));
-        assert!(ok.findings.iter().all(|f| !f.contains("trigger")), "{:?}", ok.findings);
-        for bad in [row("SUPER+CTRL+p", "release"), row("SUPER+Control_L", "release"), row("SUPER+CTRL+Super_L", "hold")] {
+        assert!(
+            ok.findings.iter().all(|f| !f.contains("trigger")),
+            "{:?}",
+            ok.findings
+        );
+        for bad in [
+            row("SUPER+CTRL+p", "release"),
+            row("SUPER+Control_L", "release"),
+            row("SUPER+CTRL+Super_L", "hold"),
+        ] {
             let a = run(&bad);
-            assert!(a.findings.iter().any(|f| f.contains("trigger")), "{bad}: {:?}", a.findings);
+            assert!(
+                a.findings.iter().any(|f| f.contains("trigger")),
+                "{bad}: {:?}",
+                a.findings
+            );
         }
     }
 
@@ -1267,7 +1597,14 @@ passthrough = ["vm-passthrough"]
     fn unimplemented_unplanned_quickshell_or_mios_action_is_rejected() {
         // negative control: a mios: action in neither action_argv nor planned_actions
         let a = run("\n[[keybindings.global.bindings]]\nid = \"ghost-action\"\ntier = 1\nchord = \"SUPER+F6\"\naction = \"mios:no-such-verb\"\ncontexts = [\"game\"]\n");
-        assert!(a.findings.iter().any(|f| f.contains("neither in [keybindings.global.action_argv] nor planned_actions")), "{:?}", a.findings);
+        assert!(
+            a.findings
+                .iter()
+                .any(|f| f
+                    .contains("neither in [keybindings.global.action_argv] nor planned_actions")),
+            "{:?}",
+            a.findings
+        );
         // positive control: the same action listed as planned is accepted
         let toml = format!("{BASE}\n[[keybindings.global.bindings]]\nid = \"ghost-action\"\ntier = 1\nchord = \"SUPER+F6\"\naction = \"mios:no-such-verb\"\ncontexts = [\"game\"]\n").replace("planned_actions = [\"quickshell:launcher\"", "planned_actions = [\"mios:no-such-verb\", \"quickshell:launcher\"");
         let v: Value = toml.parse().unwrap();
@@ -1278,10 +1615,20 @@ passthrough = ["vm-passthrough"]
     fn tmux_root_key_may_not_shadow_a_reserved_chord_but_the_prefix_is_exempt() {
         let clean = run("\n[keybindings]\ntmux_prefix = \"C-b\"\n[keybindings.agent]\naccept_chord = \"S-Enter\"\n");
         assert!(clean.findings.is_empty(), "{:?}", clean.findings);
-        let bad = run("\n[keybindings]\ntmux_prefix = \"C-b\"\n[keybindings.agent]\naccept_chord = \"C-a\"\n");
-        assert!(bad.findings.iter().any(|f| f.contains("tmux root key C-a shadows reserved terminal chord")), "{:?}", bad.findings);
+        let bad = run(
+            "\n[keybindings]\ntmux_prefix = \"C-b\"\n[keybindings.agent]\naccept_chord = \"C-a\"\n",
+        );
+        assert!(
+            bad.findings
+                .iter()
+                .any(|f| f.contains("tmux root key C-a shadows reserved terminal chord")),
+            "{:?}",
+            bad.findings
+        );
         // A prefix equal to a reserved chord is the tier-3 owner's own choice, not a root-table steal.
-        let own = run("\n[keybindings]\ntmux_prefix = \"C-a\"\n[keybindings.agent]\naccept_chord = \"C-a\"\n");
+        let own = run(
+            "\n[keybindings]\ntmux_prefix = \"C-a\"\n[keybindings.agent]\naccept_chord = \"C-a\"\n",
+        );
         assert!(own.findings.is_empty(), "{:?}", own.findings);
         assert_eq!(tmux_key_chord("S-Enter"), "SHIFT+Enter");
         assert_eq!(tmux_key_chord("C-M-x"), "CTRL+ALT+x");
@@ -1298,13 +1645,27 @@ passthrough = ["vm-passthrough"]
     fn console_is_not_a_default_context_and_takes_console_namespaces_only() {
         // a row without contexts collides with a console-only row on the same chord? No: console is not default.
         let a = run("\n[[keybindings.global.bindings]]\nid = \"vt-a\"\ntier = 2\nchord = \"SUPER+CTRL+F3\"\naction = \"tmux:menu\"\ncontexts = [\"console\"]\n[[keybindings.global.bindings]]\nid = \"desk-a\"\ntier = 1\nchord = \"SUPER+CTRL+F3\"\naction = \"exec:x\"\n");
-        assert!(a.findings.iter().all(|f| !f.starts_with("collision")), "{:?}", a.findings);
+        assert!(
+            a.findings.iter().all(|f| !f.starts_with("collision")),
+            "{:?}",
+            a.findings
+        );
         assert!(a.findings.is_empty(), "{:?}", a.findings);
         // negative control: the same two rows both in console collide
         let b = run("\n[[keybindings.global.bindings]]\nid = \"vt-a\"\ntier = 2\nchord = \"SUPER+CTRL+F3\"\naction = \"tmux:menu\"\ncontexts = [\"console\"]\n[[keybindings.global.bindings]]\nid = \"vt-b\"\ntier = 2\nchord = \"SUPER+CTRL+F3\"\naction = \"tmux:keymap\"\ncontexts = [\"console\"]\n");
-        assert!(b.findings.iter().any(|f| f.starts_with("collision")), "{:?}", b.findings);
+        assert!(
+            b.findings.iter().any(|f| f.starts_with("collision")),
+            "{:?}",
+            b.findings
+        );
         let c = run("\n[[keybindings.global.bindings]]\nid = \"vt-hypr\"\ntier = 2\nchord = \"SUPER+CTRL+F4\"\naction = \"hypr:killactive\"\ncontexts = [\"console\"]\n");
-        assert!(c.findings.iter().any(|f| f.contains("cannot run on the console")), "{:?}", c.findings);
+        assert!(
+            c.findings
+                .iter()
+                .any(|f| f.contains("cannot run on the console")),
+            "{:?}",
+            c.findings
+        );
     }
 
     #[test]
@@ -1312,19 +1673,34 @@ passthrough = ["vm-passthrough"]
         let toml = format!("{BASE}\n[[keybindings.global.bindings]]\nid = \"vt-print\"\ntier = 2\nchord = \"SUPER+CTRL+Print\"\naction = \"tmux:menu\"\ncontexts = [\"console\"]\n");
         let v: Value = toml.parse().unwrap();
         let a = analyze(&v, Some("hl.bind(\"SUPER + CTRL + Print\", x)\n")).unwrap();
-        assert!(a.findings.iter().all(|f| !f.starts_with("collision")), "{:?}", a.findings);
+        assert!(
+            a.findings.iter().all(|f| !f.starts_with("collision")),
+            "{:?}",
+            a.findings
+        );
     }
 
     // ---- literal duplicate (C-22) ----
     #[test]
     fn duplicate_compositor_bind_is_reported() {
         let v: Value = BASE.parse().unwrap();
-        let one = analyze(&v, Some(" hl.bind(\"Print\", hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))\n")).unwrap();
+        let one = analyze(
+            &v,
+            Some(" hl.bind(\"Print\", hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))\n"),
+        )
+        .unwrap();
         assert!(one.findings.is_empty(), "{:?}", one.findings);
         // the old generator: a dispatch bind beside the literal one
         let two = analyze(&v, Some(" hl.bind(\"Print\", hl.dsp.exec_cmd(\"/usr/bin/mios-shot region\"))\n local b=mios_native_hl.bind(\"print\",mios_native_hl.dsp.exec_cmd(\"x\"))\n")).unwrap();
         // two hl.bind lines on one chord are an ordinary collision (both [hyprland.lua], every compositor context)
-        assert!(two.findings.iter().any(|f| f.starts_with("collision chord print / print: ") && f.matches("[hyprland.lua]").count() == 2), "{:?}", two.findings);
+        assert!(
+            two.findings
+                .iter()
+                .any(|f| f.starts_with("collision chord print / print: ")
+                    && f.matches("[hyprland.lua]").count() == 2),
+            "{:?}",
+            two.findings
+        );
     }
 
     // ---- controller audit (C-23 / INV-10) ----
@@ -1423,7 +1799,11 @@ crouch_button = "BTN_WEST"
         let v: Value = toml.parse().unwrap();
         let g = &v["keybindings"]["global"];
         let ns: BTreeSet<String> = str_list(g.get("action_namespaces")).into_iter().collect();
-        let imp: BTreeSet<String> = g.get("action_argv").and_then(Value::as_table).map(|t| t.keys().cloned().collect()).unwrap_or_default();
+        let imp: BTreeSet<String> = g
+            .get("action_argv")
+            .and_then(Value::as_table)
+            .map(|t| t.keys().cloned().collect())
+            .unwrap_or_default();
         controller_audit(&v, &ns, &imp, &BTreeSet::new(), None)
     }
 
@@ -1435,10 +1815,21 @@ crouch_button = "BTN_WEST"
     #[test]
     fn unmapped_input_is_a_finding_and_none_counts_as_mapped() {
         let f = audit(&NAV.replace("BTN_EAST = [\"key:ESC\", \"key:ALT+LEFT\"]\n", ""));
-        assert!(f.iter().any(|x| x.contains("desktop-2d (desktop): BTN_EAST unmapped")), "{f:?}");
+        assert!(
+            f.iter()
+                .any(|x| x.contains("desktop-2d (desktop): BTN_EAST unmapped")),
+            "{f:?}"
+        );
         // terminal profiles inherit desktop: they lose BTN_EAST too (inheritance is resolved)
-        assert!(f.iter().any(|x| x.contains("terminal (terminal_plain): BTN_EAST unmapped")), "{f:?}");
-        let g = audit(&NAV.replace("BTN_EAST = [\"key:ESC\", \"key:ALT+LEFT\"]", "BTN_EAST = \"none\""));
+        assert!(
+            f.iter()
+                .any(|x| x.contains("terminal (terminal_plain): BTN_EAST unmapped")),
+            "{f:?}"
+        );
+        let g = audit(&NAV.replace(
+            "BTN_EAST = [\"key:ESC\", \"key:ALT+LEFT\"]",
+            "BTN_EAST = \"none\"",
+        ));
         assert!(g.is_empty(), "{g:?}");
     }
 
@@ -1446,43 +1837,145 @@ crouch_button = "BTN_WEST"
     /// that is bound nowhere is still rejected.
     #[test]
     fn named_tmux_keys_are_prefix_keys() {
-        let ok = audit(&NAV.replacen("BTN_TL2 = \"tmux:key p\"", "BTN_TL2 = \"tmux:key Space\"", 1));
+        let ok = audit(&NAV.replacen(
+            "BTN_TL2 = \"tmux:key p\"",
+            "BTN_TL2 = \"tmux:key Space\"",
+            1,
+        ));
         assert!(ok.is_empty(), "{ok:?}");
-        let bad = audit(&NAV.replacen("BTN_TL2 = \"tmux:key p\"", "BTN_TL2 = \"tmux:key Space\"", 1).replacen("menu_key = \"Space\"\n", "", 1));
-        assert!(bad.iter().any(|x| x.contains("tmux:key \"Space\" is not a prefix key")), "{bad:?}");
+        let bad = audit(
+            &NAV.replacen(
+                "BTN_TL2 = \"tmux:key p\"",
+                "BTN_TL2 = \"tmux:key Space\"",
+                1,
+            )
+            .replacen("menu_key = \"Space\"\n", "", 1),
+        );
+        assert!(
+            bad.iter()
+                .any(|x| x.contains("tmux:key \"Space\" is not a prefix key")),
+            "{bad:?}"
+        );
     }
 
     #[test]
     fn nav_grammar_violations_are_findings() {
         let cases = [
-            ("BTN_MODE = \"quickshell:drawer-toggle\"", "BTN_MODE = \"app\"", "\"app\" is not a nav value"),
-            ("BTN_MODE = \"quickshell:drawer-toggle\"", "BTN_MODE = \"\"", "use \"none\" to unbind"),
-            ("BTN_MODE = \"quickshell:drawer-toggle\"", "BTN_MODE = \"bogus\"", "must be <namespace>:<verb>"),
-            ("BTN_MODE = \"tmux:menu\"", "BTN_MODE = \"hypr:killactive\"", "cannot run on the console"),
-            ("BTN_TL2 = \"tmux:key p\"", "BTN_TL2 = \"tmux:key q\"", "tmux:key \"q\" is not a prefix key"),
+            (
+                "BTN_MODE = \"quickshell:drawer-toggle\"",
+                "BTN_MODE = \"app\"",
+                "\"app\" is not a nav value",
+            ),
+            (
+                "BTN_MODE = \"quickshell:drawer-toggle\"",
+                "BTN_MODE = \"\"",
+                "use \"none\" to unbind",
+            ),
+            (
+                "BTN_MODE = \"quickshell:drawer-toggle\"",
+                "BTN_MODE = \"bogus\"",
+                "must be <namespace>:<verb>",
+            ),
+            (
+                "BTN_MODE = \"tmux:menu\"",
+                "BTN_MODE = \"hypr:killactive\"",
+                "cannot run on the console",
+            ),
+            (
+                "BTN_TL2 = \"tmux:key p\"",
+                "BTN_TL2 = \"tmux:key q\"",
+                "tmux:key \"q\" is not a prefix key",
+            ),
             // (a) tmux:menu is client-exact only through the menu key; without one it has no route
-            ("menu_key = \"Space\"\n", "", "tmux:menu needs [keybindings.tmux].menu_key"),
-            ("RS_LEFT = \"tmux:focus left\"", "RS_LEFT = \"tmux:warp left\"", "unknown tmux verb"),
-            ("BTN_THUMBR = \"key:CTRL+0\"", "BTN_THUMBR = \"key:CTRL+0\"\nBTN_NORTH = \"key:F\"", "owned by the capture contract"),
-            ("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\napp-capture = \"desktop\"", "captured contexts belong to the app"),
-            ("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\ndesktop-3d = \"desktop\"", "the room has its own map"),
-            ("flick_off = 0.3", "flick_off = 0.3\ntmux_sockets = \"mios-human\"", "tmux_sockets: must be a list"),
-            ("flick_off = 0.3", "flick_off = 0.3\ntmux_sockets = [\"mios human\"]", "tmux_sockets: must be a list"),
-            ("BTN_START = \"none\"", "BTN_START = \"pointer:wheel-up\"", "cannot run on the console"),
-            ("RS_UP = \"none\"", "RS_UP = \"pointer:cursor\"", "only a button can fire it"),
-            ("TOGGLE_CHORD = \"mios:graphical-vt\"", "TOGGLE_CHORD = \"pointer:cursor\"", "only a button can fire it"),
-            ("inherits = \"console_plain\"", "inherits = \"console_tmux\"", "inherits cycle"),
-            ("BTN_SOUTH = [\"key:ENTER\", \"key:SHIFT+ENTER\"]", "BTN_SOUTH = [\"key:ENTER\"]", "value must be"),
+            (
+                "menu_key = \"Space\"\n",
+                "",
+                "tmux:menu needs [keybindings.tmux].menu_key",
+            ),
+            (
+                "RS_LEFT = \"tmux:focus left\"",
+                "RS_LEFT = \"tmux:warp left\"",
+                "unknown tmux verb",
+            ),
+            (
+                "BTN_THUMBR = \"key:CTRL+0\"",
+                "BTN_THUMBR = \"key:CTRL+0\"\nBTN_NORTH = \"key:F\"",
+                "owned by the capture contract",
+            ),
+            (
+                "desktop-2d = \"desktop\"",
+                "desktop-2d = \"desktop\"\napp-capture = \"desktop\"",
+                "captured contexts belong to the app",
+            ),
+            (
+                "desktop-2d = \"desktop\"",
+                "desktop-2d = \"desktop\"\ndesktop-3d = \"desktop\"",
+                "the room has its own map",
+            ),
+            (
+                "flick_off = 0.3",
+                "flick_off = 0.3\ntmux_sockets = \"mios-human\"",
+                "tmux_sockets: must be a list",
+            ),
+            (
+                "flick_off = 0.3",
+                "flick_off = 0.3\ntmux_sockets = [\"mios human\"]",
+                "tmux_sockets: must be a list",
+            ),
+            (
+                "BTN_START = \"none\"",
+                "BTN_START = \"pointer:wheel-up\"",
+                "cannot run on the console",
+            ),
+            (
+                "RS_UP = \"none\"",
+                "RS_UP = \"pointer:cursor\"",
+                "only a button can fire it",
+            ),
+            (
+                "TOGGLE_CHORD = \"mios:graphical-vt\"",
+                "TOGGLE_CHORD = \"pointer:cursor\"",
+                "only a button can fire it",
+            ),
+            (
+                "inherits = \"console_plain\"",
+                "inherits = \"console_tmux\"",
+                "inherits cycle",
+            ),
+            (
+                "BTN_SOUTH = [\"key:ENTER\", \"key:SHIFT+ENTER\"]",
+                "BTN_SOUTH = [\"key:ENTER\"]",
+                "value must be",
+            ),
             ("flick_off = 0.3", "flick_off = 0.7", "flick_off"),
-            ("mode_override_chord = [\"BTN_MODE\", \"BTN_SELECT\"]", "mode_override_chord = [\"BTN_MODE\", \"BTN_THUMBL\"]", "share BTN_THUMBL"),
-            ("crouch_button = \"BTN_WEST\"", "crouch_button = \"BTN_SOUTH\"", "both use BTN_SOUTH"),
-            ("BTN_DPAD_UP = [400, 60]", "BTN_BOGUS = [400, 60]", "repeat.BTN_BOGUS"),
-            ("console = \"console\"", "console = \"vpad\"", "the console has no virtual-pad consumer"),
+            (
+                "mode_override_chord = [\"BTN_MODE\", \"BTN_SELECT\"]",
+                "mode_override_chord = [\"BTN_MODE\", \"BTN_THUMBL\"]",
+                "share BTN_THUMBL",
+            ),
+            (
+                "crouch_button = \"BTN_WEST\"",
+                "crouch_button = \"BTN_SOUTH\"",
+                "both use BTN_SOUTH",
+            ),
+            (
+                "BTN_DPAD_UP = [400, 60]",
+                "BTN_BOGUS = [400, 60]",
+                "repeat.BTN_BOGUS",
+            ),
+            (
+                "console = \"console\"",
+                "console = \"vpad\"",
+                "the console has no virtual-pad consumer",
+            ),
         ];
         for (from, to, want) in cases {
             assert!(NAV.contains(from), "fixture lacks {from}");
             let f = audit(&NAV.replacen(from, to, 1));
-            assert!(f.iter().any(|x| x.contains(want)), "{to:?} -> want {want:?}, got {f:?}");
+            assert!(
+                f.iter().any(|x| x.contains(want)),
+                "{to:?} -> want {want:?}, got {f:?}"
+            );
         }
     }
 
@@ -1497,7 +1990,11 @@ crouch_button = "BTN_WEST"
             .replacen("desktop-2d = \"desktop\"", "desktop-2d = \"desktop\"\ngame = \"desktop\"\nvm-passthrough = \"desktop\"", 1)
             .replacen("BTN_START = \"none\"", "BTN_START = \"pointer:cursor\"", 1)
             .replacen("BTN_SELECT = [\"tmux:key w\", \"tmux:keymap\"]", "BTN_SELECT = [\"tmux:key w\", \"tmux:keymap\"]\nBTN_START = [\"tmux:key y\", \"pointer:cursor\"]", 1);
-        assert!(ok.contains("tmux_sockets") && ok.contains("vm-passthrough = ") && ok.contains("[\"tmux:key y\", \"pointer:cursor\"]"));
+        assert!(
+            ok.contains("tmux_sockets")
+                && ok.contains("vm-passthrough = ")
+                && ok.contains("[\"tmux:key y\", \"pointer:cursor\"]")
+        );
         let f = audit(&ok);
         assert!(f.is_empty(), "{f:?}");
         // a class context profile is still a compositor profile: the capture contract owns North there
@@ -1506,20 +2003,38 @@ crouch_button = "BTN_WEST"
             "[keybindings.global.controller.nav.gamenav]\ninherits = \"desktop\"\nBTN_NORTH = \"key:F\"\n[keybindings.global.controller.nav.terminal_tmux]",
             1,
         ));
-        assert!(bad.iter().any(|x| x.contains("controller.nav game (gamenav): BTN_NORTH is owned by the capture contract")), "{bad:?}");
+        assert!(
+            bad.iter().any(|x| x.contains(
+                "controller.nav game (gamenav): BTN_NORTH is owned by the capture contract"
+            )),
+            "{bad:?}"
+        );
         // a pointer: action other than cursor mode never reaches a VT, and cursor mode is never a desktop stick action
-        let bad = audit(&ok.replacen("RS_LEFT = \"hypr:movefocus left\"", "RS_LEFT = \"pointer:cursor\"", 1));
-        assert!(bad.iter().any(|x| x.contains("controller.nav.desktop.RS_LEFT: pointer:cursor toggles cursor mode")), "{bad:?}");
+        let bad = audit(&ok.replacen(
+            "RS_LEFT = \"hypr:movefocus left\"",
+            "RS_LEFT = \"pointer:cursor\"",
+            1,
+        ));
+        assert!(
+            bad.iter().any(|x| x
+                .contains("controller.nav.desktop.RS_LEFT: pointer:cursor toggles cursor mode")),
+            "{bad:?}"
+        );
     }
 
     /// The staged all-steps SSOT (every "#@<STEP>" line enabled, every "@drop" line removed) passes the controller
     /// audit, so the grammar the gate enforces is the one the spec stages.
     #[test]
     fn staged_all_steps_controller_map_passes_the_audit() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/design/mios-global-bindings-staged.patch.toml");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../docs/design/mios-global-bindings-staged.patch.toml");
         // A missing spec is a failure, never a silent pass: a source-only snapshot without docs/ hid a red audit (V5).
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("{}: {e} (run the gate tests in a full-tree checkout)", path.display()));
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "{}: {e} (run the gate tests in a full-tree checkout)",
+                path.display()
+            )
+        });
         let mut out = String::new();
         for line in text.lines() {
             if line.contains("# @drop:") {
@@ -1535,5 +2050,4 @@ crouch_button = "BTN_WEST"
         let f = audit(&out);
         assert!(f.is_empty(), "{f:#?}");
     }
-
 }

@@ -30,14 +30,26 @@ const CUSTOM: &str = "/etc/grub.d/40_custom";
 const FIRMWARE: &str = "/etc/grub.d/30_uefi-firmware";
 const OLD_MENU_DIR: &str = "/boot/loader/mios-menu";
 const MANAGED_KEYS: &[&str] = &[
-    "GRUB_TIMEOUT", "GRUB_TIMEOUT_STYLE", "GRUB_DEFAULT", "GRUB_SAVEDEFAULT", "GRUB_DISABLE_SUBMENU",
-    "GRUB_DISABLE_RECOVERY", "GRUB_ENABLE_BLSCFG", "GRUB_GRUBENV_UPDATE", "GRUB_DISABLE_OS_PROBER",
-    "GRUB_TERMINAL", "GRUB_TERMINAL_OUTPUT", "GRUB_GFXMODE", "GRUB_GFXPAYLOAD_LINUX", "GRUB_THEME",
+    "GRUB_TIMEOUT",
+    "GRUB_TIMEOUT_STYLE",
+    "GRUB_DEFAULT",
+    "GRUB_SAVEDEFAULT",
+    "GRUB_DISABLE_SUBMENU",
+    "GRUB_DISABLE_RECOVERY",
+    "GRUB_ENABLE_BLSCFG",
+    "GRUB_GRUBENV_UPDATE",
+    "GRUB_DISABLE_OS_PROBER",
+    "GRUB_TERMINAL",
+    "GRUB_TERMINAL_OUTPUT",
+    "GRUB_GFXMODE",
+    "GRUB_GFXPAYLOAD_LINUX",
+    "GRUB_THEME",
     "GRUB_BACKGROUND",
 ];
 /// A comment a host-only edit left beside GRUB_GRUBENV_UPDATE; the managed block carries that setting now.
-const RETIRED_COMMENTS: &[&str] =
-    &["# Keep the two GPU profiles independent; native MiOS projection owns their kernel options."];
+const RETIRED_COMMENTS: &[&str] = &[
+    "# Keep the two GPU profiles independent; native MiOS projection owns their kernel options.",
+];
 /// grub2-tools' stock 40_custom: restored when it still carries an older host-only recovery entry.
 const STOCK_CUSTOM: &str = "#!/usr/bin/sh\nexec tail -n +3 $0\n# This file provides an easy way to add custom menu entries.  Simply type the\n# menu entries you want to add after this comment.  Be careful not to change\n# the 'exec tail' line above.\n";
 const FONT_RANGES: &str = "0x20-0x7E,0xA0-0xFF,0x2190-0x21FF,0x2500-0x259F";
@@ -121,11 +133,16 @@ fn table<'a>(doc: &'a Value, path: &[&str]) -> Option<&'a toml::Table> {
 }
 
 fn get_str(t: &toml::Table, name: &str, k: &str) -> Result<String, String> {
-    t.get(k).and_then(Value::as_str).map(str::to_string).ok_or_else(|| format!("{name}.{k}: expected a string"))
+    t.get(k)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("{name}.{k}: expected a string"))
 }
 
 fn get_bool(t: &toml::Table, name: &str, k: &str) -> Result<bool, String> {
-    t.get(k).and_then(Value::as_bool).ok_or_else(|| format!("{name}.{k}: expected a boolean"))
+    t.get(k)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("{name}.{k}: expected a boolean"))
 }
 
 fn get_int(t: &toml::Table, name: &str, k: &str, lo: i64, hi: i64) -> Result<u32, String> {
@@ -137,15 +154,41 @@ fn get_int(t: &toml::Table, name: &str, k: &str, lo: i64, hi: i64) -> Result<u32
 }
 
 fn get_list(t: &toml::Table, name: &str, k: &str) -> Result<Vec<String>, String> {
-    let a = t.get(k).and_then(Value::as_array).ok_or_else(|| format!("{name}.{k}: expected an array of strings"))?;
+    let a = t
+        .get(k)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{name}.{k}: expected an array of strings"))?;
     a.iter()
-        .map(|v| v.as_str().map(str::to_string).ok_or_else(|| format!("{name}.{k}: expected an array of strings")))
+        .map(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("{name}.{k}: expected an array of strings"))
+        })
         .collect()
 }
 
 /// Values land in shell (/etc/default/grub, grub.d) and GRUB script: refuse anything that could escape a word.
 fn safe(what: &str, v: &str) -> Result<(), String> {
-    if v.is_empty() || v.chars().any(|c| matches!(c, '"' | '\'' | '$' | '`' | '\\' | '\n' | '\r' | ';' | '{' | '}' | '|' | '&' | '<' | '>')) {
+    if v.is_empty()
+        || v.chars().any(|c| {
+            matches!(
+                c,
+                '"' | '\''
+                    | '$'
+                    | '`'
+                    | '\\'
+                    | '\n'
+                    | '\r'
+                    | ';'
+                    | '{'
+                    | '}'
+                    | '|'
+                    | '&'
+                    | '<'
+                    | '>'
+            )
+        })
+    {
         Err(format!("{what}: unsafe or empty value {v:?}"))
     } else {
         Ok(())
@@ -153,13 +196,17 @@ fn safe(what: &str, v: &str) -> Result<(), String> {
 }
 
 fn valid_id(v: &str) -> bool {
-    !v.is_empty() && v.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+    !v.is_empty()
+        && v.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
 fn boot_path(what: &str, v: &str) -> Result<(), String> {
     safe(what, v)?;
     if !v.starts_with('/') || v.contains("..") || v.contains(char::is_whitespace) {
-        return Err(format!("{what}: expected an absolute path without '..' or spaces, got {v:?}"));
+        return Err(format!(
+            "{what}: expected an absolute path without '..' or spaces, got {v:?}"
+        ));
     }
     Ok(())
 }
@@ -174,22 +221,30 @@ fn color(colors: Option<&toml::Table>, k: &str, v: &str) -> Result<String, Strin
             .ok_or_else(|| format!("{THEME_TABLE}.{k}: unknown [colors] token {v:?}"))?
             .to_string()
     };
-    if resolved.len() == 7 && resolved.starts_with('#') && resolved[1..].bytes().all(|b| b.is_ascii_hexdigit()) {
+    if resolved.len() == 7
+        && resolved.starts_with('#')
+        && resolved[1..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
         Ok(resolved.to_uppercase())
     } else {
-        Err(format!("{THEME_TABLE}.{k}: expected #RRGGBB or a [colors] token, got {v:?}"))
+        Err(format!(
+            "{THEME_TABLE}.{k}: expected #RRGGBB or a [colors] token, got {v:?}"
+        ))
     }
 }
 
 impl Theme {
     fn from_doc(doc: &Value) -> Result<Self, String> {
-        let t = table(doc, &["boot", "grub", "theme"]).ok_or_else(|| format!("Missing {THEME_TABLE}"))?;
+        let t = table(doc, &["boot", "grub", "theme"])
+            .ok_or_else(|| format!("Missing {THEME_TABLE}"))?;
         let colors = table(doc, &["colors"]);
         let n = THEME_TABLE;
         let dir = get_str(t, n, "dir")?;
         boot_path(&format!("{n}.dir"), &dir)?;
         if !dir.starts_with("/boot/") {
-            return Err(format!("{n}.dir: GRUB reads its theme from /boot, got {dir:?}"));
+            return Err(format!(
+                "{n}.dir: GRUB reads its theme from /boot, got {dir:?}"
+            ));
         }
         let title = get_str(t, n, "title")?;
         let hint = get_str(t, n, "hint")?;
@@ -204,14 +259,22 @@ impl Theme {
         boot_path(&format!("{n}.font_bold"), &font_bold)?;
         let fonts = get_str(t, n, "fonts")?;
         if !matches!(fonts.as_str(), "auto" | "always" | "never") {
-            return Err(format!("{n}.fonts: expected \"auto\", \"always\" or \"never\", got {fonts:?}"));
+            return Err(format!(
+                "{n}.fonts: expected \"auto\", \"always\" or \"never\", got {fonts:?}"
+            ));
         }
         let builtin_font = get_str(t, n, "builtin_font")?;
         if builtin_font.is_empty() || builtin_font.contains(['"', '\n']) {
-            return Err(format!("{n}.builtin_font: expected a GRUB font name such as \"Unifont Regular 16\""));
+            return Err(format!(
+                "{n}.builtin_font: expected a GRUB font name such as \"Unifont Regular 16\""
+            ));
         }
         let builtin_font_gfxmode = get_str(t, n, "builtin_font_gfxmode")?;
-        if builtin_font_gfxmode.is_empty() || !builtin_font_gfxmode.bytes().all(|c| c.is_ascii_alphanumeric() || c == b',') {
+        if builtin_font_gfxmode.is_empty()
+            || !builtin_font_gfxmode
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b',')
+        {
             return Err(format!("{n}.builtin_font_gfxmode: expected e.g. \"1280x720,auto\", got {builtin_font_gfxmode:?}"));
         }
         let c = |k: &str| -> Result<String, String> { color(colors, k, &get_str(t, n, k)?) };
@@ -243,7 +306,8 @@ impl Theme {
 
 impl Grub {
     pub fn from_doc(doc: &Value) -> Result<Self, String> {
-        let t = table(doc, &["boot", "grub"]).ok_or_else(|| format!("Missing {TABLE} in layered mios.toml"))?;
+        let t = table(doc, &["boot", "grub"])
+            .ok_or_else(|| format!("Missing {TABLE} in layered mios.toml"))?;
         let profiles = table(doc, &["desktop", "hyprland", "hardware_profiles"])
             .ok_or("Missing [desktop.hyprland.hardware_profiles]")?;
         let n = TABLE;
@@ -253,7 +317,9 @@ impl Grub {
         }
         let menu_profiles = get_list(t, n, "menu_profiles")?;
         if menu_profiles.is_empty() {
-            return Err(format!("{n}.menu_profiles: at least one hardware profile is required"));
+            return Err(format!(
+                "{n}.menu_profiles: at least one hardware profile is required"
+            ));
         }
         for (i, p) in menu_profiles.iter().enumerate() {
             if !valid_id(p) || !profiles.contains_key(p) {
@@ -265,28 +331,40 @@ impl Grub {
         }
         let default = get_str(t, n, "default")?;
         if default != "last" && !menu_profiles.contains(&default) {
-            return Err(format!("{n}.default: expected \"last\" or one of menu_profiles, got {default:?}"));
+            return Err(format!(
+                "{n}.default: expected \"last\" or one of menu_profiles, got {default:?}"
+            ));
         }
         let initial_default = get_str(t, n, "initial_default")?;
         if !menu_profiles.contains(&initial_default) {
-            return Err(format!("{n}.initial_default: expected one of menu_profiles, got {initial_default:?}"));
+            return Err(format!(
+                "{n}.initial_default: expected one of menu_profiles, got {initial_default:?}"
+            ));
         }
         let recovery_profile = get_str(t, n, "recovery_profile")?;
         if !menu_profiles.contains(&recovery_profile) {
-            return Err(format!("{n}.recovery_profile: expected one of menu_profiles, got {recovery_profile:?}"));
+            return Err(format!(
+                "{n}.recovery_profile: expected one of menu_profiles, got {recovery_profile:?}"
+            ));
         }
-        let archive_dir = get_str(t, n, "archive_dir")?.trim_end_matches('/').to_string();
+        let archive_dir = get_str(t, n, "archive_dir")?
+            .trim_end_matches('/')
+            .to_string();
         boot_path(&format!("{n}.archive_dir"), &archive_dir)?;
         if !archive_dir.starts_with("/boot/loader/") || archive_dir == ENTRIES {
             return Err(format!("{n}.archive_dir: expected a directory under /boot/loader/ other than entries, got {archive_dir:?}"));
         }
         let recovery_title = get_str(t, n, "recovery_title")?;
         if recovery_title.is_empty() || recovery_title.contains(['\'', '"', '\n', '\\']) {
-            return Err(format!("{n}.recovery_title: quotes, backslashes and newlines are not allowed"));
+            return Err(format!(
+                "{n}.recovery_title: quotes, backslashes and newlines are not allowed"
+            ));
         }
         let recovery_kernel = get_str(t, n, "recovery_kernel")?;
         if !matches!(recovery_kernel.as_str(), "rescue" | "profile") {
-            return Err(format!("{n}.recovery_kernel: expected \"rescue\" or \"profile\", got {recovery_kernel:?}"));
+            return Err(format!(
+                "{n}.recovery_kernel: expected \"rescue\" or \"profile\", got {recovery_kernel:?}"
+            ));
         }
         let recovery_remove = get_list(t, n, "recovery_remove")?;
         let recovery_append = get_list(t, n, "recovery_append")?;
@@ -294,8 +372,14 @@ impl Grub {
             safe(&format!("{n}.recovery_*"), v)?;
         }
         let gfxmode = get_str(t, n, "gfxmode")?;
-        if gfxmode.is_empty() || !gfxmode.bytes().all(|c| c.is_ascii_alphanumeric() || c == b',') {
-            return Err(format!("{n}.gfxmode: expected e.g. \"1920x1080,auto\", got {gfxmode:?}"));
+        if gfxmode.is_empty()
+            || !gfxmode
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b',')
+        {
+            return Err(format!(
+                "{n}.gfxmode: expected e.g. \"1920x1080,auto\", got {gfxmode:?}"
+            ));
         }
         Ok(Self {
             enabled: get_bool(t, n, "enabled")?,
@@ -320,7 +404,10 @@ impl Grub {
     }
 
     fn managed_ids(&self) -> Vec<String> {
-        self.menu_profiles.iter().map(|p| format!("mios-desktop-{p}")).collect()
+        self.menu_profiles
+            .iter()
+            .map(|p| format!("mios-desktop-{p}"))
+            .collect()
     }
 }
 
@@ -342,7 +429,17 @@ fn managed_values(g: &Grub, fonts_on: bool) -> Vec<(&'static str, String)> {
         ("GRUB_GRUBENV_UPDATE", "no".to_string()),
         ("GRUB_DISABLE_OS_PROBER", "true".to_string()),
         // Without convertible fonts GRUB draws its embedded 16 px Unifont; a lower mode makes it readable.
-        ("GRUB_GFXMODE", format!("\"{}\"", if g.theme.enabled && !fonts_on { &g.theme.builtin_font_gfxmode } else { &g.gfxmode })),
+        (
+            "GRUB_GFXMODE",
+            format!(
+                "\"{}\"",
+                if g.theme.enabled && !fonts_on {
+                    &g.theme.builtin_font_gfxmode
+                } else {
+                    &g.gfxmode
+                }
+            ),
+        ),
         ("GRUB_GFXPAYLOAD_LINUX", "keep".to_string()),
     ];
     if g.theme.enabled {
@@ -418,7 +515,11 @@ pub fn parse_entry(text: &str) -> Result<Entry, String> {
     if initrd.is_empty() {
         return Err("boot entry has no initrd".into());
     }
-    Ok(Entry { linux: linux.remove(0), initrd, options })
+    Ok(Entry {
+        linux: linux.remove(0),
+        initrd,
+        options,
+    })
 }
 
 fn entry_files_exist(boot: &Path, e: &Entry) -> bool {
@@ -430,10 +531,19 @@ fn entry_files_exist(boot: &Path, e: &Entry) -> bool {
 
 pub fn recovery_options(g: &Grub, profile_options: &[String]) -> Result<Vec<String>, String> {
     let removed = |o: &str| {
-        g.recovery_remove.iter().any(|r| if r.ends_with('=') { o.starts_with(r.as_str()) } else { o == r })
+        g.recovery_remove.iter().any(|r| {
+            if r.ends_with('=') {
+                o.starts_with(r.as_str())
+            } else {
+                o == r
+            }
+        })
     };
-    let mut out: Vec<String> =
-        profile_options.iter().filter(|o| !o.starts_with('$') && !removed(o)).cloned().collect();
+    let mut out: Vec<String> = profile_options
+        .iter()
+        .filter(|o| !o.starts_with('$') && !removed(o))
+        .cloned()
+        .collect();
     for a in &g.recovery_append {
         if !out.contains(a) {
             out.push(a.clone());
@@ -463,7 +573,11 @@ pub fn render_recovery(
     initrd: &[String],
     options: &[String],
 ) -> Result<String, String> {
-    if boot_uuid.is_empty() || !boot_uuid.bytes().all(|c| c.is_ascii_hexdigit() || c == b'-') {
+    if boot_uuid.is_empty()
+        || !boot_uuid
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() || c == b'-')
+    {
         return Err(format!("invalid /boot filesystem UUID {boot_uuid:?}"));
     }
     boot_path("recovery kernel", linux)?;
@@ -476,13 +590,18 @@ pub fn render_recovery(
     s.push_str(HINT);
     s.push_str("\n# A static entry: recovery stays in the menu even when BLS discovery fails.\n");
     s.push_str("exec tail -n +5 \"$0\"\n");
-    s.push_str(&format!("menuentry '{}' --class mios --unrestricted --id {RECOVERY_ID} {{\n", g.recovery_title));
+    s.push_str(&format!(
+        "menuentry '{}' --class mios --unrestricted --id {RECOVERY_ID} {{\n",
+        g.recovery_title
+    ));
     if g.recovery_saves_default {
         s.push_str("\tsavedefault\n");
     }
     s.push_str("\tinsmod part_gpt\n");
     s.push_str(&format!("\tinsmod {module}\n"));
-    s.push_str(&format!("\tsearch --no-floppy --fs-uuid --set=root {boot_uuid}\n"));
+    s.push_str(&format!(
+        "\tsearch --no-floppy --fs-uuid --set=root {boot_uuid}\n"
+    ));
     s.push_str(&format!("\tlinux {linux} {}\n", options.join(" ")));
     s.push_str(&format!("\tinitrd {}\n", initrd.join(" ")));
     s.push_str("}\n");
@@ -507,11 +626,19 @@ pub fn plan_archive(names: &[String], g: &Grub) -> Result<Vec<String>, String> {
         }
     }
     let keep: Vec<String> = g.menu_profiles.iter().map(|p| managed_entry(p)).collect();
-    Ok(names.iter().filter(|n| n.ends_with(".conf") && !keep.contains(n)).cloned().collect())
+    Ok(names
+        .iter()
+        .filter(|n| n.ends_with(".conf") && !keep.contains(n))
+        .cloned()
+        .collect())
 }
 
 /// grub2-editenv set/unset lists that make grubenv match the SSOT.
-pub fn env_plan(g: &Grub, env: &[(String, String)], booted: Option<&str>) -> (Vec<String>, Vec<String>) {
+pub fn env_plan(
+    g: &Grub,
+    env: &[(String, String)],
+    booted: Option<&str>,
+) -> (Vec<String>, Vec<String>) {
     let get = |k: &str| env.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str());
     let mut set = Vec::new();
     let mut unset = Vec::new();
@@ -557,9 +684,13 @@ pub fn pf2_name(bytes: &[u8]) -> Result<String, String> {
     let mut i = 0usize;
     while i + 8 <= bytes.len() {
         let tag = &bytes[i..i + 4];
-        let len = u32::from_be_bytes([bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]]) as usize;
+        let len =
+            u32::from_be_bytes([bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]]) as usize;
         let start = i + 8;
-        if tag == b"CHIX" || tag == b"DATA" || start.checked_add(len).is_none_or(|end| end > bytes.len()) {
+        if tag == b"CHIX"
+            || tag == b"DATA"
+            || start.checked_add(len).is_none_or(|end| end > bytes.len())
+        {
             break;
         }
         if tag == b"NAME" {
@@ -573,7 +704,13 @@ pub fn pf2_name(bytes: &[u8]) -> Result<String, String> {
 }
 
 pub fn render_theme(t: &Theme, f: &FontNames, builtin: bool) -> String {
-    let px = |size: u32| if builtin { builtin_px(&t.builtin_font) } else { size };
+    let px = |size: u32| {
+        if builtin {
+            builtin_px(&t.builtin_font)
+        } else {
+            size
+        }
+    };
     let left = (100 - t.menu_width_pct) / 2;
     let item_height = px(t.item_size) * 2;
     let item_padding = px(t.item_size) / 2;
@@ -666,20 +803,32 @@ terminal-font: \"{hint_font}\"\n\
 
 /// Pixel size at the end of a GRUB font name ("Unifont Regular 16" -> 16).
 fn builtin_px(name: &str) -> u32 {
-    name.rsplit(' ').next().and_then(|s| s.parse().ok()).filter(|n| (8..=128).contains(n)).unwrap_or(16)
+    name.rsplit(' ')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| (8..=128).contains(n))
+        .unwrap_or(16)
 }
 
 fn builtin_fonts(t: &Theme) -> FontNames {
     let b = t.builtin_font.clone();
-    FontNames { title: b.clone(), item: b.clone(), selected: b.clone(), hint: b }
+    FontNames {
+        title: b.clone(),
+        item: b.clone(),
+        selected: b.clone(),
+        hint: b,
+    }
 }
 
-const SECURE_BOOT_VAR: &str = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+const SECURE_BOOT_VAR: &str =
+    "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
 
 /// Under Secure Boot the signed GRUB's shim_lock verifier refuses every font file read from disk; only the font
 /// embedded in grubx64.efi ("loadfont unicode") loads. Verified on this host's grubx64.efi in OVMF with Secure Boot.
 fn secure_boot() -> bool {
-    fs::read(SECURE_BOOT_VAR).map(|b| b.len() >= 5 && b[4] == 1).unwrap_or(false)
+    fs::read(SECURE_BOOT_VAR)
+        .map(|b| b.len() >= 5 && b[4] == 1)
+        .unwrap_or(false)
 }
 
 fn fonts_wanted(t: &Theme) -> bool {
@@ -692,7 +841,12 @@ fn fonts_wanted(t: &Theme) -> bool {
 
 fn pf2_files(dir: &Path) -> Vec<PathBuf> {
     fs::read_dir(dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pf2")).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "pf2"))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -705,15 +859,40 @@ struct FontSpec {
 
 fn font_specs(t: &Theme) -> [FontSpec; 4] {
     [
-        FontSpec { file: "title.pf2", family: "MiOS Title", size: t.title_size, bold: true },
-        FontSpec { file: "item.pf2", family: "MiOS Item", size: t.item_size, bold: false },
-        FontSpec { file: "selected.pf2", family: "MiOS Selected", size: t.item_size, bold: true },
-        FontSpec { file: "hint.pf2", family: "MiOS Hint", size: t.hint_size, bold: false },
+        FontSpec {
+            file: "title.pf2",
+            family: "MiOS Title",
+            size: t.title_size,
+            bold: true,
+        },
+        FontSpec {
+            file: "item.pf2",
+            family: "MiOS Item",
+            size: t.item_size,
+            bold: false,
+        },
+        FontSpec {
+            file: "selected.pf2",
+            family: "MiOS Selected",
+            size: t.item_size,
+            bold: true,
+        },
+        FontSpec {
+            file: "hint.pf2",
+            family: "MiOS Hint",
+            size: t.hint_size,
+            bold: false,
+        },
     ]
 }
 
 fn font_names(names: Vec<String>) -> FontNames {
-    FontNames { title: names[0].clone(), item: names[1].clone(), selected: names[2].clone(), hint: names[3].clone() }
+    FontNames {
+        title: names[0].clone(),
+        item: names[1].clone(),
+        selected: names[2].clone(),
+        hint: names[3].clone(),
+    }
 }
 
 fn existing_fonts(dir: &Path, t: &Theme) -> Result<FontNames, String> {
@@ -730,7 +909,14 @@ fn predicted_fonts(t: &Theme) -> FontNames {
     font_names(
         font_specs(t)
             .iter()
-            .map(|f| format!("{} {} {}", f.family, if f.bold { "Bold" } else { "Regular" }, f.size))
+            .map(|f| {
+                format!(
+                    "{} {} {}",
+                    f.family,
+                    if f.bold { "Bold" } else { "Regular" },
+                    f.size
+                )
+            })
             .collect(),
     )
 }
@@ -744,7 +930,11 @@ fn run_cmd(program: &str, args: &[&str]) -> Result<String, String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(format!("{program} {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+        Err(format!(
+            "{program} {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
     }
 }
 
@@ -757,7 +947,20 @@ fn build_fonts(dir: &Path, t: &Theme) -> Result<FontNames, String> {
         let tmp_s = tmp.to_string_lossy().into_owned();
         let size = f.size.to_string();
         let src = if f.bold { &t.font_bold } else { &t.font };
-        run_cmd("grub2-mkfont", &["-o", &tmp_s, "-s", &size, "-n", f.family, "-r", FONT_RANGES, src])?;
+        run_cmd(
+            "grub2-mkfont",
+            &[
+                "-o",
+                &tmp_s,
+                "-s",
+                &size,
+                "-n",
+                f.family,
+                "-r",
+                FONT_RANGES,
+                src,
+            ],
+        )?;
         let bytes = fs::read(&tmp).map_err(|e| format!("{tmp_s}: {e}"))?;
         names.push(pf2_name(&bytes).map_err(|e| format!("{tmp_s}: {e}"))?);
         fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)).map_err(|e| e.to_string())?;
@@ -769,7 +972,11 @@ fn build_fonts(dir: &Path, t: &Theme) -> Result<FontNames, String> {
 fn env_list(path: &Path) -> Result<Vec<(String, String)>, String> {
     let p = path.to_string_lossy().into_owned();
     let out = run_cmd("grub2-editenv", &[&p, "list"])?;
-    Ok(out.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect())
+    Ok(out
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect())
 }
 
 fn list_conf(dir: &Path) -> Result<Vec<String>, String> {
@@ -790,7 +997,9 @@ fn boot_identity(sysroot: &Path) -> Result<(String, String), String> {
     let info = fs::read_to_string("/proc/self/mountinfo").map_err(|e| e.to_string())?;
     let mut found = None;
     for line in info.lines() {
-        let Some((pre, post)) = line.split_once(" - ") else { continue };
+        let Some((pre, post)) = line.split_once(" - ") else {
+            continue;
+        };
         if pre.split(' ').nth(4) == Some(target.as_str()) {
             let mut p = post.split(' ');
             let fs_type = p.next().unwrap_or("").to_string();
@@ -798,9 +1007,13 @@ fn boot_identity(sysroot: &Path) -> Result<(String, String), String> {
             found = Some((fs_type, source));
         }
     }
-    let (fs_type, source) = found.ok_or_else(|| format!("{target} is not a separate mount; cannot identify /boot"))?;
+    let (fs_type, source) =
+        found.ok_or_else(|| format!("{target} is not a separate mount; cannot identify /boot"))?;
     let dev = fs::canonicalize(&source).map_err(|e| format!("{source}: {e}"))?;
-    for e in fs::read_dir("/dev/disk/by-uuid").map_err(|e| e.to_string())?.flatten() {
+    for e in fs::read_dir("/dev/disk/by-uuid")
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         if fs::canonicalize(e.path()).ok().as_deref() == Some(dev.as_path()) {
             return Ok((e.file_name().to_string_lossy().into_owned(), fs_type));
         }
@@ -848,37 +1061,58 @@ pub fn vercmp(a: &str, b: &str) -> Ordering {
 pub fn newest_source(sysroot: &Path, g: &Grub) -> Result<PathBuf, String> {
     let boot = sysroot.join("boot");
     let mut best: Option<(String, PathBuf)> = None;
-    for dir in [sysroot.join(ENTRIES.trim_start_matches('/')), sysroot.join(g.archive_dir.trim_start_matches('/'))] {
+    for dir in [
+        sysroot.join(ENTRIES.trim_start_matches('/')),
+        sysroot.join(g.archive_dir.trim_start_matches('/')),
+    ] {
         let Ok(rd) = fs::read_dir(&dir) else { continue };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if !name.ends_with(".conf") || name.starts_with("mios-") || name.contains("-0-rescue") {
                 continue;
             }
-            let Ok(text) = fs::read_to_string(e.path()) else { continue };
-            let Ok(parsed) = parse_entry(&text) else { continue };
+            let Ok(text) = fs::read_to_string(e.path()) else {
+                continue;
+            };
+            let Ok(parsed) = parse_entry(&text) else {
+                continue;
+            };
             if !entry_files_exist(&boot, &parsed) {
                 continue;
             }
-            let version = text.lines().find_map(|l| l.strip_prefix("version ")).map(str::trim).unwrap_or("").to_string();
+            let version = text
+                .lines()
+                .find_map(|l| l.strip_prefix("version "))
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string();
             if version.is_empty() {
                 continue;
             }
-            if best.as_ref().is_none_or(|(v, _)| vercmp(&version, v) == Ordering::Greater) {
+            if best
+                .as_ref()
+                .is_none_or(|(v, _)| vercmp(&version, v) == Ordering::Greater)
+            {
                 best = Some((version, e.path()));
             }
         }
     }
-    best.map(|(_, p)| p).ok_or_else(|| "no installed kernel BLS entry with an existing kernel and initrd".into())
+    best.map(|(_, p)| p)
+        .ok_or_else(|| "no installed kernel BLS entry with an existing kernel and initrd".into())
 }
 
 fn booted_profile() -> Option<String> {
     let cmdline = fs::read_to_string("/proc/cmdline").ok()?;
-    cmdline.split_whitespace().find_map(|t| t.strip_prefix("mios.desktop.gpu=")).map(str::to_string)
+    cmdline
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("mios.desktop.gpu="))
+        .map(str::to_string)
 }
 
 fn is_root() -> bool {
-    fs::metadata("/proc/self").map(|m| m.uid() == 0).unwrap_or(false)
+    fs::metadata("/proc/self")
+        .map(|m| m.uid() == 0)
+        .unwrap_or(false)
 }
 
 fn write(path: &Path, text: &str, mode: u32) -> Result<(), String> {
@@ -886,7 +1120,8 @@ fn write(path: &Path, text: &str, mode: u32) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     crate::greeter::write_atomic(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|e| format!("{}: {e}", path.display()))
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn executable(path: &Path) -> bool {
@@ -894,7 +1129,13 @@ fn executable(path: &Path) -> bool {
 }
 
 /// `mios-gen render-grub`: print, check, stage (everything but the live grub.cfg swap) or apply.
-pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version: Option<&str>) -> Result<String, String> {
+pub fn run(
+    root: &Path,
+    sysroot: &Path,
+    mode: Mode,
+    event: Option<&str>,
+    version: Option<&str>,
+) -> Result<String, String> {
     let doc = mios_resolver::resolve_projection(root).map_err(|e| e.to_string())?;
     let g = Grub::from_doc(&doc)?;
     let fonts_on = g.theme.enabled && fonts_wanted(&g.theme);
@@ -914,7 +1155,10 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
             return Err("--kernel-event only runs against the live system".into());
         }
         if let Some(v) = version {
-            if !v.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-+~".contains(&c)) {
+            if !v
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-+~".contains(&c))
+            {
                 return Err(format!("invalid kernel version {v:?}"));
             }
         }
@@ -934,7 +1178,10 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let e = parse_entry(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         if !entry_files_exist(&boot, &e) {
-            return Err(format!("{}: kernel or initrd missing under /boot", path.display()));
+            return Err(format!(
+                "{}: kernel or initrd missing under /boot",
+                path.display()
+            ));
         }
     }
     let names = list_conf(&entries_dir)?;
@@ -957,25 +1204,40 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
                 rescue.sort();
             }
             match rescue.pop() {
-                Some(id) => (format!("/vmlinuz-0-rescue-{id}"), vec![format!("/initramfs-0-rescue-{id}.img")]),
-                None => (profile.linux.clone(), profile.initrd.iter().filter(|p| !p.starts_with('$')).cloned().collect()),
+                Some(id) => (
+                    format!("/vmlinuz-0-rescue-{id}"),
+                    vec![format!("/initramfs-0-rescue-{id}.img")],
+                ),
+                None => (
+                    profile.linux.clone(),
+                    profile
+                        .initrd
+                        .iter()
+                        .filter(|p| !p.starts_with('$'))
+                        .cloned()
+                        .collect(),
+                ),
             }
         };
         let options = recovery_options(&g, &profile.options)?;
         let (uuid, fs_type) = boot_identity(sysroot)?;
-        Some(render_recovery(&g, &uuid, &fs_type, &linux, &initrd, &options)?)
+        Some(render_recovery(
+            &g, &uuid, &fs_type, &linux, &initrd, &options,
+        )?)
     } else {
         None
     };
 
     let default_path = at("/etc/default/grub");
-    let old_default = fs::read_to_string(&default_path).map_err(|e| format!("{}: {e}", default_path.display()))?;
+    let old_default = fs::read_to_string(&default_path)
+        .map_err(|e| format!("{}: {e}", default_path.display()))?;
     let new_default = render_default_grub(&old_default, &g, fonts_on);
     let theme_dir = at(&g.theme.dir);
     let recovery_path = at(RECOVERY_SCRIPT);
     let hook_path = at(KERNEL_HOOK);
     let custom_path = at(CUSTOM);
-    let custom_conflict = fs::read_to_string(&custom_path).is_ok_and(|t| t.contains(&format!("--id {RECOVERY_ID}")));
+    let custom_conflict =
+        fs::read_to_string(&custom_path).is_ok_and(|t| t.contains(&format!("--id {RECOVERY_ID}")));
     let grubenv = at(GRUBENV);
     let booted = if live { booted_profile() } else { None };
 
@@ -989,14 +1251,28 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
             }
             if g.theme.enabled {
                 let fonts = if fonts_on {
-                    existing_fonts(&theme_dir, &g.theme).unwrap_or_else(|_| predicted_fonts(&g.theme))
+                    existing_fonts(&theme_dir, &g.theme)
+                        .unwrap_or_else(|_| predicted_fonts(&g.theme))
                 } else {
                     builtin_fonts(&g.theme)
                 };
-                let kind = if fonts_on { "converted SSOT fonts" } else { "GRUB built-in font (Secure Boot)" };
-                log.push_str(&format!("== {}/theme.txt ({kind}) ==\n{}", theme_dir.display(), render_theme(&g.theme, &fonts, !fonts_on)));
+                let kind = if fonts_on {
+                    "converted SSOT fonts"
+                } else {
+                    "GRUB built-in font (Secure Boot)"
+                };
+                log.push_str(&format!(
+                    "== {}/theme.txt ({kind}) ==\n{}",
+                    theme_dir.display(),
+                    render_theme(&g.theme, &fonts, !fonts_on)
+                ));
             }
-            log.push_str(&format!("== BLS menu: keep {:?}; archive to {}: {:?}\n", g.managed_ids(), g.archive_dir, archive));
+            log.push_str(&format!(
+                "== BLS menu: keep {:?}; archive to {}: {:?}\n",
+                g.managed_ids(),
+                g.archive_dir,
+                archive
+            ));
             if let Ok(env) = env_list(&grubenv) {
                 let (set, unset) = env_plan(&g, &env, booted.as_deref());
                 log.push_str(&format!("== grubenv: set {set:?} unset {unset:?}\n"));
@@ -1006,45 +1282,79 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
         Mode::Check => {
             let mut drift = Vec::new();
             if old_default != new_default {
-                drift.push(format!("{} differs from the [boot.grub] projection", default_path.display()));
+                drift.push(format!(
+                    "{} differs from the [boot.grub] projection",
+                    default_path.display()
+                ));
             }
             match &recovery_text {
                 Some(r) => {
-                    if fs::read_to_string(&recovery_path).ok().as_deref() != Some(r.as_str()) || !executable(&recovery_path) {
-                        drift.push(format!("{} differs or is not executable", recovery_path.display()));
+                    if fs::read_to_string(&recovery_path).ok().as_deref() != Some(r.as_str())
+                        || !executable(&recovery_path)
+                    {
+                        drift.push(format!(
+                            "{} differs or is not executable",
+                            recovery_path.display()
+                        ));
                     }
                 }
                 None => {
                     if recovery_path.exists() {
-                        drift.push(format!("{} exists but [boot.grub].recovery = false", recovery_path.display()));
+                        drift.push(format!(
+                            "{} exists but [boot.grub].recovery = false",
+                            recovery_path.display()
+                        ));
                     }
                 }
             }
             if custom_conflict {
-                drift.push(format!("{} still carries a host-only recovery entry", custom_path.display()));
+                drift.push(format!(
+                    "{} still carries a host-only recovery entry",
+                    custom_path.display()
+                ));
             }
             if g.hide_firmware_entry && executable(&at(FIRMWARE)) {
-                drift.push(format!("{} is executable (firmware entry shown)", at(FIRMWARE).display()));
+                drift.push(format!(
+                    "{} is executable (firmware entry shown)",
+                    at(FIRMWARE).display()
+                ));
             }
             if !archive.is_empty() {
                 drift.push(format!("unmanaged BLS entries in the menu: {archive:?}"));
             }
             if g.theme.enabled {
-                let fonts = if fonts_on { existing_fonts(&theme_dir, &g.theme) } else { Ok(builtin_fonts(&g.theme)) };
+                let fonts = if fonts_on {
+                    existing_fonts(&theme_dir, &g.theme)
+                } else {
+                    Ok(builtin_fonts(&g.theme))
+                };
                 if !fonts_on && !pf2_files(&theme_dir).is_empty() {
-                    drift.push(format!("{}: font files present, but GRUB refuses them under Secure Boot", theme_dir.display()));
+                    drift.push(format!(
+                        "{}: font files present, but GRUB refuses them under Secure Boot",
+                        theme_dir.display()
+                    ));
                 }
                 match fonts {
                     Ok(fonts) => {
                         let want = render_theme(&g.theme, &fonts, !fonts_on);
-                        if fs::read_to_string(theme_dir.join("theme.txt")).ok().as_deref() != Some(want.as_str()) {
-                            drift.push(format!("{}/theme.txt differs from [boot.grub.theme]", theme_dir.display()));
+                        if fs::read_to_string(theme_dir.join("theme.txt"))
+                            .ok()
+                            .as_deref()
+                            != Some(want.as_str())
+                        {
+                            drift.push(format!(
+                                "{}/theme.txt differs from [boot.grub.theme]",
+                                theme_dir.display()
+                            ));
                         }
                     }
                     Err(e) => drift.push(format!("theme fonts: {e}")),
                 }
             }
-            if g.kernel_hook && fs::read_to_string(&hook_path).ok().as_deref() != Some(render_kernel_hook().as_str()) {
+            if g.kernel_hook
+                && fs::read_to_string(&hook_path).ok().as_deref()
+                    != Some(render_kernel_hook().as_str())
+            {
                 drift.push(format!("{} differs or is missing", hook_path.display()));
             }
             match env_list(&grubenv) {
@@ -1068,14 +1378,26 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
                 let fonts = if fonts_on {
                     build_fonts(&theme_dir, &g.theme)?
                 } else {
-                    fs::create_dir_all(&theme_dir).map_err(|e| format!("{}: {e}", theme_dir.display()))?;
+                    fs::create_dir_all(&theme_dir)
+                        .map_err(|e| format!("{}: {e}", theme_dir.display()))?;
                     for p in pf2_files(&theme_dir) {
                         fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
                     }
                     builtin_fonts(&g.theme)
                 };
-                write(&theme_dir.join("theme.txt"), &render_theme(&g.theme, &fonts, !fonts_on), 0o644)?;
-                log.push_str(&format!("[render-grub] theme {} (fonts: {}, {}, {}, {})\n", theme_dir.display(), fonts.title, fonts.item, fonts.selected, fonts.hint));
+                write(
+                    &theme_dir.join("theme.txt"),
+                    &render_theme(&g.theme, &fonts, !fonts_on),
+                    0o644,
+                )?;
+                log.push_str(&format!(
+                    "[render-grub] theme {} (fonts: {}, {}, {}, {})\n",
+                    theme_dir.display(),
+                    fonts.title,
+                    fonts.item,
+                    fonts.selected,
+                    fonts.hint
+                ));
             }
             match &recovery_text {
                 Some(r) => write(&recovery_path, r, 0o755)?,
@@ -1087,13 +1409,24 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
             }
             if custom_conflict {
                 write(&custom_path, STOCK_CUSTOM, 0o755)?;
-                log.push_str(&format!("[render-grub] restored stock {}\n", custom_path.display()));
+                log.push_str(&format!(
+                    "[render-grub] restored stock {}\n",
+                    custom_path.display()
+                ));
             }
             let fw = at(FIRMWARE);
             if fw.exists() {
-                let m = fs::metadata(&fw).map_err(|e| e.to_string())?.permissions().mode();
-                let want = if g.hide_firmware_entry { m & !0o111 } else { m | 0o755 };
-                fs::set_permissions(&fw, fs::Permissions::from_mode(want & 0o7777)).map_err(|e| e.to_string())?;
+                let m = fs::metadata(&fw)
+                    .map_err(|e| e.to_string())?
+                    .permissions()
+                    .mode();
+                let want = if g.hide_firmware_entry {
+                    m & !0o111
+                } else {
+                    m | 0o755
+                };
+                fs::set_permissions(&fw, fs::Permissions::from_mode(want & 0o7777))
+                    .map_err(|e| e.to_string())?;
             }
             if new_default != old_default {
                 write(&default_path, &new_default, 0o644)?;
@@ -1105,22 +1438,29 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
             }
             let archive_dir = at(&g.archive_dir);
             if !archive.is_empty() || at(OLD_MENU_DIR).exists() {
-                fs::create_dir_all(&archive_dir).map_err(|e| format!("{}: {e}", archive_dir.display()))?;
-                fs::set_permissions(&archive_dir, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+                fs::create_dir_all(&archive_dir)
+                    .map_err(|e| format!("{}: {e}", archive_dir.display()))?;
+                fs::set_permissions(&archive_dir, fs::Permissions::from_mode(0o700))
+                    .map_err(|e| e.to_string())?;
             }
             for name in &archive {
                 let dest = archive_dir.join(name);
                 if dest.exists() {
-                    fs::rename(&dest, archive_dir.join(format!("{name}.prev"))).map_err(|e| e.to_string())?;
+                    fs::rename(&dest, archive_dir.join(format!("{name}.prev")))
+                        .map_err(|e| e.to_string())?;
                 }
                 fs::rename(entries_dir.join(name), &dest).map_err(|e| format!("{name}: {e}"))?;
             }
             if !archive.is_empty() {
-                log.push_str(&format!("[render-grub] archived to {}: {archive:?}\n", g.archive_dir));
+                log.push_str(&format!(
+                    "[render-grub] archived to {}: {archive:?}\n",
+                    g.archive_dir
+                ));
             }
             let old_menu = at(OLD_MENU_DIR);
             if old_menu.exists() && !archive_dir.join("mios-menu.retired").exists() {
-                fs::rename(&old_menu, archive_dir.join("mios-menu.retired")).map_err(|e| e.to_string())?;
+                fs::rename(&old_menu, archive_dir.join("mios-menu.retired"))
+                    .map_err(|e| e.to_string())?;
                 log.push_str(&format!("[render-grub] retired {OLD_MENU_DIR}\n"));
             }
             let env = env_list(&grubenv)?;
@@ -1136,7 +1476,9 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
                 a.extend(set.iter().map(String::as_str));
                 run_cmd("grub2-editenv", &a)?;
             }
-            log.push_str(&format!("[render-grub] grubenv: set {set:?} unset {unset:?}\n"));
+            log.push_str(&format!(
+                "[render-grub] grubenv: set {set:?} unset {unset:?}\n"
+            ));
             if live {
                 let staged = format!("{GRUB_CFG}.mios-new");
                 run_cmd("grub2-mkconfig", &["-o", &staged])?;
@@ -1146,17 +1488,26 @@ pub fn run(root: &Path, sysroot: &Path, mode: Mode, event: Option<&str>, version
                     return Err(format!("{staged}: no blscfg command; refusing to install"));
                 }
                 if g.recovery && !text.contains(&format!("--id {RECOVERY_ID}")) {
-                    return Err(format!("{staged}: recovery entry missing; refusing to install"));
+                    return Err(format!(
+                        "{staged}: recovery entry missing; refusing to install"
+                    ));
                 }
                 if g.theme.enabled && !text.contains("set theme=") {
-                    return Err(format!("{staged}: theme not referenced; refusing to install"));
+                    return Err(format!(
+                        "{staged}: theme not referenced; refusing to install"
+                    ));
                 }
                 if matches!(mode, Mode::Apply) {
-                    fs::copy(GRUB_CFG, format!("{GRUB_CFG}.mios-prev")).map_err(|e| e.to_string())?;
+                    fs::copy(GRUB_CFG, format!("{GRUB_CFG}.mios-prev"))
+                        .map_err(|e| e.to_string())?;
                     fs::rename(&staged, GRUB_CFG).map_err(|e| e.to_string())?;
-                    log.push_str(&format!("[render-grub] installed {GRUB_CFG} (previous: {GRUB_CFG}.mios-prev)\n"));
+                    log.push_str(&format!(
+                        "[render-grub] installed {GRUB_CFG} (previous: {GRUB_CFG}.mios-prev)\n"
+                    ));
                 } else {
-                    log.push_str(&format!("[render-grub] staged {staged}; current {GRUB_CFG} unchanged\n"));
+                    log.push_str(&format!(
+                        "[render-grub] staged {staged}; current {GRUB_CFG} unchanged\n"
+                    ));
                 }
             }
             Ok(log)
@@ -1245,27 +1596,60 @@ builtin_font_gfxmode = "1280x720,auto"
         assert_eq!(g.theme.background, "#282262");
         assert_eq!(g.theme.selected, "#F35C15");
         assert_eq!(g.theme.accent, "#1A407F");
-        assert_eq!(g.managed_ids(), vec!["mios-desktop-igpu", "mios-desktop-dgpu"]);
+        assert_eq!(
+            g.managed_ids(),
+            vec!["mios-desktop-igpu", "mios-desktop-dgpu"]
+        );
     }
 
     #[test]
     fn negative_invalid_ssot_values_are_rejected() {
         for (a, b) in [
             ("timeout_style = \"menu\"", "timeout_style = \"fancy\""),
-            ("menu_profiles = [\"igpu\", \"dgpu\"]", "menu_profiles = [\"igpu\", \"vgpu\"]"),
-            ("menu_profiles = [\"igpu\", \"dgpu\"]", "menu_profiles = [\"igpu\", \"igpu\"]"),
+            (
+                "menu_profiles = [\"igpu\", \"dgpu\"]",
+                "menu_profiles = [\"igpu\", \"vgpu\"]",
+            ),
+            (
+                "menu_profiles = [\"igpu\", \"dgpu\"]",
+                "menu_profiles = [\"igpu\", \"igpu\"]",
+            ),
             ("default = \"last\"", "default = \"newest\""),
-            ("archive_dir = \"/boot/loader/mios-kernel-sources\"", "archive_dir = \"/boot/loader/entries\""),
-            ("archive_dir = \"/boot/loader/mios-kernel-sources\"", "archive_dir = \"/boot/loader/../x\""),
-            ("recovery_title = \"MiOS Recovery\"", "recovery_title = \"it's\""),
-            ("recovery_append = [\"systemd.unit=multi-user.target\"]", "recovery_append = [\"a;reboot\"]"),
-            ("gfxmode = \"1920x1080,auto\"", "gfxmode = \"1920x1080 auto\""),
+            (
+                "archive_dir = \"/boot/loader/mios-kernel-sources\"",
+                "archive_dir = \"/boot/loader/entries\"",
+            ),
+            (
+                "archive_dir = \"/boot/loader/mios-kernel-sources\"",
+                "archive_dir = \"/boot/loader/../x\"",
+            ),
+            (
+                "recovery_title = \"MiOS Recovery\"",
+                "recovery_title = \"it's\"",
+            ),
+            (
+                "recovery_append = [\"systemd.unit=multi-user.target\"]",
+                "recovery_append = [\"a;reboot\"]",
+            ),
+            (
+                "gfxmode = \"1920x1080,auto\"",
+                "gfxmode = \"1920x1080 auto\"",
+            ),
             ("selected = \"cursor\"", "selected = \"nosuchtoken\""),
-            ("dir = \"/boot/grub2/themes/mios\"", "dir = \"/usr/share/grub/themes/mios\""),
+            (
+                "dir = \"/boot/grub2/themes/mios\"",
+                "dir = \"/usr/share/grub/themes/mios\"",
+            ),
             ("fonts = \"auto\"", "fonts = \"sometimes\""),
-            ("builtin_font_gfxmode = \"1280x720,auto\"", "builtin_font_gfxmode = \"1280x720;reboot\""),
+            (
+                "builtin_font_gfxmode = \"1280x720,auto\"",
+                "builtin_font_gfxmode = \"1280x720;reboot\"",
+            ),
         ] {
-            assert!(Grub::from_doc(&doc(Some((a, b)))).is_err(), "{b} was accepted");
+            assert!(
+                Grub::from_doc(&doc(Some((a, b)))).is_err(),
+                "{b} was accepted"
+            );
         }
     }
 
@@ -1273,21 +1657,36 @@ builtin_font_gfxmode = "1280x720,auto"
     fn default_grub_keeps_host_lines_replaces_managed_keys_and_is_idempotent() {
         let g = grub();
         let once = render_default_grub(HOST_DEFAULT, &g, true);
-        assert!(once.contains("GRUB_CMDLINE_LINUX=\"rd.lvm.lv=fedora/root rhgb quiet amd_iommu=on\"\n"));
+        assert!(
+            once.contains("GRUB_CMDLINE_LINUX=\"rd.lvm.lv=fedora/root rhgb quiet amd_iommu=on\"\n")
+        );
         assert!(once.contains("GRUB_DISTRIBUTOR="));
         assert!(!once.contains("GRUB_TIMEOUT=5"));
         assert!(!once.contains("Keep the two GPU profiles"));
-        for want in ["GRUB_TIMEOUT=10\n", "GRUB_DEFAULT=saved\n", "GRUB_SAVEDEFAULT=true\n", "GRUB_GRUBENV_UPDATE=no\n",
-            "GRUB_TERMINAL_OUTPUT=\"gfxterm\"\n", "GRUB_THEME=\"/boot/grub2/themes/mios/theme.txt\"\n"] {
+        for want in [
+            "GRUB_TIMEOUT=10\n",
+            "GRUB_DEFAULT=saved\n",
+            "GRUB_SAVEDEFAULT=true\n",
+            "GRUB_GRUBENV_UPDATE=no\n",
+            "GRUB_TERMINAL_OUTPUT=\"gfxterm\"\n",
+            "GRUB_THEME=\"/boot/grub2/themes/mios/theme.txt\"\n",
+        ] {
             assert!(once.contains(want), "missing {want}");
         }
         assert_eq!(once.matches("GRUB_TIMEOUT_STYLE=").count(), 1);
         assert_eq!(render_default_grub(&once, &g, true), once);
         assert!(once.contains("GRUB_GFXMODE=\"1920x1080,auto\"\n"));
         assert!(render_default_grub(&once, &g, false).contains("GRUB_GFXMODE=\"1280x720,auto\"\n"));
-        let plain = Grub::from_doc(&doc(Some(("[boot.grub.theme]\nenabled = true", "[boot.grub.theme]\nenabled = false")))).unwrap();
+        let plain = Grub::from_doc(&doc(Some((
+            "[boot.grub.theme]\nenabled = true",
+            "[boot.grub.theme]\nenabled = false",
+        ))))
+        .unwrap();
         let text = render_default_grub(&once, &plain, false);
-        assert!(text.contains("GRUB_GFXMODE=\"1920x1080,auto\"\n"), "plain console keeps gfxmode");
+        assert!(
+            text.contains("GRUB_GFXMODE=\"1920x1080,auto\"\n"),
+            "plain console keeps gfxmode"
+        );
         assert!(text.contains("GRUB_TERMINAL_OUTPUT=\"console\"") && !text.contains("GRUB_THEME="));
     }
 
@@ -1297,12 +1696,32 @@ builtin_font_gfxmode = "1280x720,auto"
         let opts: Vec<String> = "root=/dev/mapper/fedora-root ro rhgb quiet mios.desktop.gpu=igpu systemd.unit=graphical.target $tuned_params"
             .split_whitespace().map(str::to_string).collect();
         let o = recovery_options(&g, &opts).unwrap();
-        assert_eq!(o, vec!["root=/dev/mapper/fedora-root", "ro", "mios.desktop.gpu=igpu", "systemd.unit=multi-user.target"]);
-        let r = render_recovery(&g, "19cd7f48-eb78-4a5f-a483-0ea7373c0a57", "xfs", "/vmlinuz-0-rescue-abc",
-            &["/initramfs-0-rescue-abc.img".to_string()], &o).unwrap();
+        assert_eq!(
+            o,
+            vec![
+                "root=/dev/mapper/fedora-root",
+                "ro",
+                "mios.desktop.gpu=igpu",
+                "systemd.unit=multi-user.target"
+            ]
+        );
+        let r = render_recovery(
+            &g,
+            "19cd7f48-eb78-4a5f-a483-0ea7373c0a57",
+            "xfs",
+            "/vmlinuz-0-rescue-abc",
+            &["/initramfs-0-rescue-abc.img".to_string()],
+            &o,
+        )
+        .unwrap();
         assert_eq!(r.lines().nth(3), Some("exec tail -n +5 \"$0\""));
-        assert!(r.lines().nth(4).unwrap().starts_with("menuentry 'MiOS Recovery' --class mios --unrestricted --id mios-recovery {"));
-        assert!(r.contains("\tinsmod xfs\n") && r.contains("search --no-floppy --fs-uuid --set=root 19cd7f48-"));
+        assert!(r.lines().nth(4).unwrap().starts_with(
+            "menuentry 'MiOS Recovery' --class mios --unrestricted --id mios-recovery {"
+        ));
+        assert!(
+            r.contains("\tinsmod xfs\n")
+                && r.contains("search --no-floppy --fs-uuid --set=root 19cd7f48-")
+        );
         assert!(!r.contains("savedefault"));
         assert!(render_recovery(&g, "bad uuid", "xfs", "/v", &["/i".to_string()], &o).is_err());
         assert!(render_recovery(&g, "1234", "ntfs", "/v", &["/i".to_string()], &o).is_err());
@@ -1313,9 +1732,19 @@ builtin_font_gfxmode = "1280x720,auto"
     #[test]
     fn archive_keeps_only_managed_entries_and_refuses_an_empty_menu() {
         let g = grub();
-        let names: Vec<String> = ["e4-0-rescue.conf", "e4-7.2.11.conf", "mios-desktop-dgpu.conf", "mios-desktop-igpu.conf"]
-            .iter().map(|s| s.to_string()).collect();
-        assert_eq!(plan_archive(&names, &g).unwrap(), vec!["e4-0-rescue.conf", "e4-7.2.11.conf"]);
+        let names: Vec<String> = [
+            "e4-0-rescue.conf",
+            "e4-7.2.11.conf",
+            "mios-desktop-dgpu.conf",
+            "mios-desktop-igpu.conf",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            plan_archive(&names, &g).unwrap(),
+            vec!["e4-0-rescue.conf", "e4-7.2.11.conf"]
+        );
         let missing: Vec<String> = vec!["e4-7.2.11.conf".into(), "mios-desktop-igpu.conf".into()];
         assert!(plan_archive(&missing, &g).is_err());
     }
@@ -1323,16 +1752,51 @@ builtin_font_gfxmode = "1280x720,auto"
     #[test]
     fn grubenv_boots_last_entry_and_repairs_stale_defaults() {
         let g = grub();
-        let kv = |v: &[(&str, &str)]| v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
-        let (set, unset) = env_plan(&g, &kv(&[("saved_entry", "e4-7.2.12"), ("blsdir", "loader/mios-menu"), ("menu_auto_hide", "1")]), Some("dgpu"));
-        assert_eq!(set, vec!["save_default=true", "saved_entry=mios-desktop-dgpu"]);
+        let kv = |v: &[(&str, &str)]| {
+            v.iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let (set, unset) = env_plan(
+            &g,
+            &kv(&[
+                ("saved_entry", "e4-7.2.12"),
+                ("blsdir", "loader/mios-menu"),
+                ("menu_auto_hide", "1"),
+            ]),
+            Some("dgpu"),
+        );
+        assert_eq!(
+            set,
+            vec!["save_default=true", "saved_entry=mios-desktop-dgpu"]
+        );
         assert_eq!(unset, vec!["blsdir", "menu_auto_hide"]);
-        let (set, unset) = env_plan(&g, &kv(&[("saved_entry", "mios-desktop-dgpu"), ("save_default", "true")]), Some("igpu"));
+        let (set, unset) = env_plan(
+            &g,
+            &kv(&[
+                ("saved_entry", "mios-desktop-dgpu"),
+                ("save_default", "true"),
+            ]),
+            Some("igpu"),
+        );
         assert!(set.is_empty() && unset.is_empty());
-        let (set, _) = env_plan(&g, &kv(&[("saved_entry", "mios-recovery"), ("save_default", "true")]), None);
+        let (set, _) = env_plan(
+            &g,
+            &kv(&[("saved_entry", "mios-recovery"), ("save_default", "true")]),
+            None,
+        );
         assert_eq!(set, vec!["saved_entry=mios-desktop-igpu"]);
-        let fixed = Grub::from_doc(&doc(Some(("default = \"last\"", "default = \"dgpu\"")))).unwrap();
-        let (set, unset) = env_plan(&fixed, &kv(&[("saved_entry", "mios-desktop-igpu"), ("save_default", "true"), ("next_entry", "gone")]), None);
+        let fixed =
+            Grub::from_doc(&doc(Some(("default = \"last\"", "default = \"dgpu\"")))).unwrap();
+        let (set, unset) = env_plan(
+            &fixed,
+            &kv(&[
+                ("saved_entry", "mios-desktop-igpu"),
+                ("save_default", "true"),
+                ("next_entry", "gone"),
+            ]),
+            None,
+        );
         assert_eq!(set, vec!["saved_entry=mios-desktop-dgpu"]);
         assert_eq!(unset, vec!["save_default", "next_entry"]);
     }
@@ -1350,7 +1814,9 @@ builtin_font_gfxmode = "1280x720,auto"
         assert!(pf2_name(b"FILE\0\0\0\x04PFF2DATA\xff\xff\xff\xff").is_err());
         let g = grub();
         let b = render_theme(&g.theme, &builtin_fonts(&g.theme), true);
-        assert!(b.contains("item_font = \"Unifont Regular 16\"") && b.contains("item_height = 32\n"));
+        assert!(
+            b.contains("item_font = \"Unifont Regular 16\"") && b.contains("item_height = 32\n")
+        );
         let t = render_theme(&g.theme, &predicted_fonts(&g.theme), false);
         assert!(t.contains("desktop-color: \"#282262\""));
         assert!(t.contains("selected_item_color = \"#F35C15\""));
@@ -1361,10 +1827,22 @@ builtin_font_gfxmode = "1280x720,auto"
 
     #[test]
     fn kernel_versions_order_like_rpm() {
-        assert_eq!(vercmp("7.2.10-200.fc44.x86_64", "7.2.9-201.fc44.x86_64"), Ordering::Greater);
-        assert_eq!(vercmp("7.2.11-200.fc44.x86_64", "7.2.11-200.fc44.x86_64"), Ordering::Equal);
-        assert_eq!(vercmp("7.3.0-100.fc44.x86_64", "7.2.11-200.fc44.x86_64"), Ordering::Greater);
-        assert_eq!(vercmp("7.2.11-200.fc44.x86_64", "7.2.11-201.fc44.x86_64"), Ordering::Less);
+        assert_eq!(
+            vercmp("7.2.10-200.fc44.x86_64", "7.2.9-201.fc44.x86_64"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            vercmp("7.2.11-200.fc44.x86_64", "7.2.11-200.fc44.x86_64"),
+            Ordering::Equal
+        );
+        assert_eq!(
+            vercmp("7.3.0-100.fc44.x86_64", "7.2.11-200.fc44.x86_64"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            vercmp("7.2.11-200.fc44.x86_64", "7.2.11-201.fc44.x86_64"),
+            Ordering::Less
+        );
     }
 
     #[test]
@@ -1376,7 +1854,9 @@ builtin_font_gfxmode = "1280x720,auto"
         let archive = boot.join("loader/mios-kernel-sources");
         fs::create_dir_all(&entries).unwrap();
         fs::create_dir_all(&archive).unwrap();
-        let entry = |v: &str| format!("title Fedora\nversion {v}\nlinux /vmlinuz-{v}\ninitrd /initramfs-{v}.img\noptions root=x ro\n");
+        let entry = |v: &str| {
+            format!("title Fedora\nversion {v}\nlinux /vmlinuz-{v}\ninitrd /initramfs-{v}.img\noptions root=x ro\n")
+        };
         for v in ["7.2.10", "7.2.11"] {
             fs::write(boot.join(format!("vmlinuz-{v}")), "k").unwrap();
             fs::write(boot.join(format!("initramfs-{v}.img")), "i").unwrap();
@@ -1386,10 +1866,16 @@ builtin_font_gfxmode = "1280x720,auto"
         fs::write(entries.join("m-7.2.12.conf"), entry("7.2.12")).unwrap();
         fs::write(entries.join("mios-desktop-igpu.conf"), entry("9.9.9")).unwrap();
         fs::write(entries.join("m-0-rescue.conf"), entry("0-rescue")).unwrap();
-        assert_eq!(newest_source(d.path(), &g).unwrap(), archive.join("m-7.2.11.conf"));
+        assert_eq!(
+            newest_source(d.path(), &g).unwrap(),
+            archive.join("m-7.2.11.conf")
+        );
         fs::write(boot.join("vmlinuz-7.2.12"), "k").unwrap();
         fs::write(boot.join("initramfs-7.2.12.img"), "i").unwrap();
-        assert_eq!(newest_source(d.path(), &g).unwrap(), entries.join("m-7.2.12.conf"));
+        assert_eq!(
+            newest_source(d.path(), &g).unwrap(),
+            entries.join("m-7.2.12.conf")
+        );
     }
 
     #[test]

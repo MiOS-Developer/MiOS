@@ -82,7 +82,22 @@ pub async fn run(cmd: &FramerateCommand) -> Result<(), String> {
         FramerateCommand::Apply { dry_run } => apply_once(*dry_run).await,
         FramerateCommand::SetUnlocked { state, no_reload } => set_unlocked(state, *no_reload),
         FramerateCommand::ConfirmMode { reset } => confirm_mode(*reset),
-        FramerateCommand::Modeline { output, hz, edid, size, json } => modeline(output.as_deref(), *hz, edid.as_deref(), size.as_deref(), *json).await,
+        FramerateCommand::Modeline {
+            output,
+            hz,
+            edid,
+            size,
+            json,
+        } => {
+            modeline(
+                output.as_deref(),
+                *hz,
+                edid.as_deref(),
+                size.as_deref(),
+                *json,
+            )
+            .await
+        }
     }
 }
 
@@ -106,17 +121,30 @@ pub struct Config {
 }
 
 fn mios_root() -> PathBuf {
-    std::env::var_os("MIOS_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("MIOS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 impl Config {
     /// Ok(None): [desktop.framerate] absent or disabled.
     pub fn from_ssot(doc: &Value) -> Result<Option<Config>, String> {
-        let Some(policy) = Policy::from_ssot(doc)?.filter(|p| p.enabled) else { return Ok(None) };
-        let pacing = doc.get("desktop").and_then(|d| d.get("hyprland")).and_then(|h| h.get(&policy.pacing_plugin));
-        let require_vrr = match pacing.and_then(|p| p.get("config")).and_then(|c| c.get("require_vrr")) {
+        let Some(policy) = Policy::from_ssot(doc)?.filter(|p| p.enabled) else {
+            return Ok(None);
+        };
+        let pacing = doc
+            .get("desktop")
+            .and_then(|d| d.get("hyprland"))
+            .and_then(|h| h.get(&policy.pacing_plugin));
+        let require_vrr = match pacing
+            .and_then(|p| p.get("config"))
+            .and_then(|c| c.get("require_vrr"))
+        {
             None => true,
-            Some(v) => v.as_bool().ok_or(format!("[desktop.hyprland.{}.config] require_vrr must be a boolean", policy.pacing_plugin))?,
+            Some(v) => v.as_bool().ok_or(format!(
+                "[desktop.hyprland.{}.config] require_vrr must be a boolean",
+                policy.pacing_plugin
+            ))?,
         };
         // A mode the operator pinned ("WxH@Hz") is never changed; preferred / highrr / highres are not pins.
         let pinned = doc
@@ -126,7 +154,12 @@ impl Config {
             .and_then(Value::as_table)
             .into_iter()
             .flatten()
-            .filter(|(_, m)| m.get("mode").and_then(Value::as_str).and_then(plan::parse_mode).is_some())
+            .filter(|(_, m)| {
+                m.get("mode")
+                    .and_then(Value::as_str)
+                    .and_then(plan::parse_mode)
+                    .is_some()
+            })
             .map(|(name, _)| name.clone())
             .collect();
         let hypr = doc.get("desktop").and_then(|d| d.get("hyprland"));
@@ -135,19 +168,39 @@ impl Config {
             .and_then(Value::as_table)
             .into_iter()
             .flatten()
-            .filter_map(|(name, m)| m.get("mode").and_then(Value::as_str).map(|v| (name.clone(), v.trim().to_owned())))
+            .filter_map(|(name, m)| {
+                m.get("mode")
+                    .and_then(Value::as_str)
+                    .map(|v| (name.clone(), v.trim().to_owned()))
+            })
             .collect();
-        let default_rule = hypr.and_then(|h| h.get("monitor")).and_then(|m| m.get("mode")).and_then(Value::as_str).unwrap_or("preferred").trim().to_owned();
-        Ok(Some(Config { policy, require_vrr, pinned, rules, default_rule }))
+        let default_rule = hypr
+            .and_then(|h| h.get("monitor"))
+            .and_then(|m| m.get("mode"))
+            .and_then(Value::as_str)
+            .unwrap_or("preferred")
+            .trim()
+            .to_owned();
+        Ok(Some(Config {
+            policy,
+            require_vrr,
+            pinned,
+            rules,
+            default_rule,
+        }))
     }
 
     /// The configured monitor-rule mode of `output` (its own rule, else the catch-all's).
     pub fn rule(&self, output: &str) -> String {
-        self.rules.get(output).cloned().unwrap_or_else(|| self.default_rule.clone())
+        self.rules
+            .get(output)
+            .cloned()
+            .unwrap_or_else(|| self.default_rule.clone())
     }
 
     pub fn load() -> Result<Option<Config>, String> {
-        let doc = mios_resolver::resolve_merged(Some(&mios_root()), false).map_err(|e| e.to_string())?;
+        let doc =
+            mios_resolver::resolve_merged(Some(&mios_root()), false).map_err(|e| e.to_string())?;
         Config::from_ssot(&doc)
     }
 }
@@ -156,19 +209,49 @@ impl Config {
 
 const CALL: Duration = Duration::from_millis(1500);
 const PPD: [(&str, &str, &str); 2] = [
-    ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles", "net.hadess.PowerProfiles"),
-    ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles"),
+    (
+        "net.hadess.PowerProfiles",
+        "/net/hadess/PowerProfiles",
+        "net.hadess.PowerProfiles",
+    ),
+    (
+        "org.freedesktop.UPower.PowerProfiles",
+        "/org/freedesktop/UPower/PowerProfiles",
+        "org.freedesktop.UPower.PowerProfiles",
+    ),
 ];
-const UPOWER: (&str, &str, &str) = ("org.freedesktop.UPower", "/org/freedesktop/UPower", "org.freedesktop.UPower");
-const GAMEMODE: (&str, &str, &str) = ("com.feralinteractive.GameMode", "/com/feralinteractive/GameMode", "com.feralinteractive.GameMode");
+const UPOWER: (&str, &str, &str) = (
+    "org.freedesktop.UPower",
+    "/org/freedesktop/UPower",
+    "org.freedesktop.UPower",
+);
+const GAMEMODE: (&str, &str, &str) = (
+    "com.feralinteractive.GameMode",
+    "/com/feralinteractive/GameMode",
+    "com.feralinteractive.GameMode",
+);
 const TUNED: (&str, &str, &str) = ("com.redhat.tuned", "/Tuned", "com.redhat.tuned.control");
 /// /usr/local/libexec/mios-gamemode (gamemode.ini [custom]) marks a running game here.
 const GAMEMODE_MARK: &str = "/run/mios-power/gamemode.active";
 
-async fn property(conn: &Connection, (dest, path, iface): (&str, &str, &str), name: &str) -> Option<zbus::zvariant::OwnedValue> {
-    let proxy = zbus::fdo::PropertiesProxy::builder(conn).destination(dest).ok()?.path(path).ok()?.build().await.ok()?;
+async fn property(
+    conn: &Connection,
+    (dest, path, iface): (&str, &str, &str),
+    name: &str,
+) -> Option<zbus::zvariant::OwnedValue> {
+    let proxy = zbus::fdo::PropertiesProxy::builder(conn)
+        .destination(dest)
+        .ok()?
+        .path(path)
+        .ok()?
+        .build()
+        .await
+        .ok()?;
     let iface = zbus::names::InterfaceName::try_from(iface).ok()?;
-    tokio::time::timeout(CALL, proxy.get(iface, name)).await.ok()?.ok()
+    tokio::time::timeout(CALL, proxy.get(iface, name))
+        .await
+        .ok()?
+        .ok()
 }
 
 /// Where each input came from (status output, logs).
@@ -180,22 +263,35 @@ pub struct Sources {
 }
 
 /// The raw inputs (gaming before the exit hold) from D-Bus, with the sysfs / file fallbacks.
-pub async fn read_inputs(sys: Option<&Connection>, ses: Option<&Connection>, cfg: &Config, hypr: Option<&Hypr>) -> (Inputs, Sources) {
+pub async fn read_inputs(
+    sys: Option<&Connection>,
+    ses: Option<&Connection>,
+    cfg: &Config,
+    hypr: Option<&Hypr>,
+) -> (Inputs, Sources) {
     let mut src = Sources::default();
     let mut profile = None;
     if let Some(c) = sys {
         for svc in PPD {
-            if let Some(p) = property(c, svc, "ActiveProfile").await.and_then(|v| String::try_from(v).ok()) {
+            if let Some(p) = property(c, svc, "ActiveProfile")
+                .await
+                .and_then(|v| String::try_from(v).ok())
+            {
                 src.profile = svc.0.into();
                 profile = Some(p);
                 break;
             }
         }
         if profile.is_none() {
-            let reply = tokio::time::timeout(CALL, c.call_method(Some(TUNED.0), TUNED.1, Some(TUNED.2), "active_profile", &())).await;
+            let reply = tokio::time::timeout(
+                CALL,
+                c.call_method(Some(TUNED.0), TUNED.1, Some(TUNED.2), "active_profile", &()),
+            )
+            .await;
             if let Ok(Ok(msg)) = reply {
                 if let Ok(tuned) = msg.body().deserialize::<String>() {
-                    let conf = std::fs::read_to_string(mios_root().join("etc/tuned/ppd.conf")).unwrap_or_default();
+                    let conf = std::fs::read_to_string(mios_root().join("etc/tuned/ppd.conf"))
+                        .unwrap_or_default();
                     profile = ppd_profile_for_tuned(&conf, &tuned);
                     src.profile = format!("com.redhat.tuned ({tuned})");
                 }
@@ -208,19 +304,25 @@ pub async fn read_inputs(sys: Option<&Connection>, ses: Option<&Connection>, cfg
     }
     let mut on_battery = None;
     if let Some(c) = sys {
-        on_battery = property(c, UPOWER, "OnBattery").await.and_then(|v| bool::try_from(v).ok());
+        on_battery = property(c, UPOWER, "OnBattery")
+            .await
+            .and_then(|v| bool::try_from(v).ok());
         if on_battery.is_some() {
             src.battery = UPOWER.0.into();
         }
     }
     let on_battery = on_battery.unwrap_or_else(|| {
         src.battery = "sysfs power_supply".into();
-        mios_resolver::framerate::on_battery(&mios_resolver::framerate::read_power_supplies(&mios_root()))
+        mios_resolver::framerate::on_battery(&mios_resolver::framerate::read_power_supplies(
+            &mios_root(),
+        ))
     });
     let mut gaming = false;
     if cfg.policy.gaming.gamemode {
         let clients = match ses {
-            Some(c) => property(c, GAMEMODE, "ClientCount").await.and_then(|v| i32::try_from(v).ok()),
+            Some(c) => property(c, GAMEMODE, "ClientCount")
+                .await
+                .and_then(|v| i32::try_from(v).ok()),
             None => None,
         };
         gaming = match clients {
@@ -242,13 +344,24 @@ pub async fn read_inputs(sys: Option<&Connection>, ses: Option<&Connection>, cfg
             }
         }
     }
-    (Inputs { gaming, on_battery, profile }, src)
+    (
+        Inputs {
+            gaming,
+            on_battery,
+            profile,
+        },
+        src,
+    )
 }
 
 /// The active window is fullscreen on a local output and is a game (content type "game" or class matching game_class).
 fn fullscreen_game(h: &Hypr, policy: &Policy) -> bool {
-    let Ok(w) = h.json("activewindow") else { return false };
-    let Ok(class) = regex::Regex::new(&policy.gaming.game_class) else { return false };
+    let Ok(w) = h.json("activewindow") else {
+        return false;
+    };
+    let Ok(class) = regex::Regex::new(&policy.gaming.game_class) else {
+        return false;
+    };
     let full = w.get("fullscreen").and_then(Json::as_i64).unwrap_or(0) > 0;
     let game = w.get("contentType").and_then(Json::as_str) == Some("game")
         || class.is_match(w.get("class").and_then(Json::as_str).unwrap_or(""));
@@ -260,7 +373,11 @@ fn fullscreen_game(h: &Hypr, policy: &Policy) -> bool {
         .into_iter()
         .flatten()
         .find(|m| m.get("id").and_then(Json::as_i64) == monitor)
-        .and_then(|m| m.get("name").and_then(Json::as_str).map(|n| !policy.excluded(n)))
+        .and_then(|m| {
+            m.get("name")
+                .and_then(Json::as_str)
+                .map(|n| !policy.excluded(n))
+        })
         .unwrap_or(false);
     full && game && local
 }
@@ -287,14 +404,22 @@ fn output_edid(name: &str) -> Option<plan::Edid> {
     let suffix = format!("-{name}");
     let real = std::fs::read_dir(DRM_SYSFS).ok().and_then(|d| {
         d.flatten()
-            .find(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("card") && n.ends_with(&suffix)))
+            .find(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with("card") && n.ends_with(&suffix))
+            })
             .map(|e| e.path().join("edid"))
     });
     if let Some(path) = real {
         return plan::Edid::parse(&std::fs::read(path).ok()?);
     }
     let spec = std::env::var("MIOS_FRAMERATE_TEST_EDID").ok()?;
-    let file = spec.split(';').filter_map(|e| e.split_once('=')).find(|(n, _)| n.trim() == name).map(|(_, f)| f.trim().to_owned())?;
+    let file = spec
+        .split(';')
+        .filter_map(|e| e.split_once('='))
+        .find(|(n, _)| n.trim() == name)
+        .map(|(_, f)| f.trim().to_owned())?;
     plan::Edid::parse(&read_edid_file(Path::new(&file)).ok()?)
 }
 
@@ -304,11 +429,14 @@ fn read_edid_file(path: &Path) -> Result<Vec<u8>, String> {
     if raw.starts_with(&[0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0]) {
         return Ok(raw);
     }
-    let text = String::from_utf8(raw).map_err(|_| format!("{}: neither an EDID blob nor hex text", path.display()))?;
+    let text = String::from_utf8(raw)
+        .map_err(|_| format!("{}: neither an EDID blob nor hex text", path.display()))?;
     text.lines()
         .filter(|l| !l.trim_start().starts_with('#'))
         .flat_map(str::split_whitespace)
-        .map(|b| u8::from_str_radix(b, 16).map_err(|_| format!("{}: bad hex byte {b:?}", path.display())))
+        .map(|b| {
+            u8::from_str_radix(b, 16).map_err(|_| format!("{}: bad hex byte {b:?}", path.display()))
+        })
         .collect()
 }
 
@@ -333,11 +461,15 @@ fn consumers(h: &Hypr) -> Consumers {
     // The wallpaper throttle needs the option AND the live CWLSurfaceResource::frame hook (the status says so).
     let pacing_wallpaper = pacing
         && option_int(h, "plugin:mios_pacing:wallpaper_fps").is_some()
-        && h.json("mios-pacing status").ok().and_then(|v| v.get("wallpaper_hooked").and_then(Json::as_bool)) == Some(true);
+        && h.json("mios-pacing status")
+            .ok()
+            .and_then(|v| v.get("wallpaper_hooked").and_then(Json::as_bool))
+            == Some(true);
     Consumers {
         pacing,
         pacing_wallpaper,
-        hyprglass: has("hyprglass") && option_int(h, "plugin:hyprglass:layers:live_resample_fps").is_some(),
+        hyprglass: has("hyprglass")
+            && option_int(h, "plugin:hyprglass:layers:live_resample_fps").is_some(),
         hypr3d: has("hypr3d"),
     }
 }
@@ -354,11 +486,20 @@ fn drift(h: &Hypr, p: &Plan, c: Consumers) -> Vec<String> {
         check("plugin:mios_pacing:max_fps", p.rates.cap_hz);
     }
     if c.pacing_wallpaper {
-        check("plugin:mios_pacing:wallpaper_fps", plan::wallpaper_throttle(&p.rates, c));
+        check(
+            "plugin:mios_pacing:wallpaper_fps",
+            plan::wallpaper_throttle(&p.rates, c),
+        );
     }
     if c.hyprglass {
-        check("plugin:hyprglass:layers:live_resample_fps", p.rates.glass_fps);
-        check("plugin:hyprglass:windows:live_resample_fps", p.rates.glass_fps);
+        check(
+            "plugin:hyprglass:layers:live_resample_fps",
+            p.rates.glass_fps,
+        );
+        check(
+            "plugin:hyprglass:windows:live_resample_fps",
+            p.rates.glass_fps,
+        );
     }
     out
 }
@@ -373,7 +514,9 @@ fn state_home() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
+        })
 }
 
 fn bad_modes_path() -> PathBuf {
@@ -395,7 +538,8 @@ fn mkdirs(dir: &Path) -> Result<(), String> {
     }
     for d in missing.iter().rev() {
         match std::fs::create_dir(d) {
-            Ok(()) => std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("{}: {e}", d.display()))?,
+            Ok(()) => std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("{}: {e}", d.display()))?,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(format!("{}: {e}", d.display())),
         }
@@ -408,9 +552,18 @@ pub fn write_atomic(path: &Path, body: &[u8], mode: u32) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
     let dir = path.parent().ok_or("no parent directory")?;
     mkdirs(dir)?;
-    let tmp = dir.join(format!(".{}.{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("f"), std::process::id()));
+    let tmp = dir.join(format!(
+        ".{}.{}.tmp",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("f"),
+        std::process::id()
+    ));
     let res = (|| -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(mode).open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(mode)
+            .open(&tmp)?;
         f.write_all(body)?;
         f.sync_all()?;
         std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(mode))?;
@@ -442,7 +595,10 @@ fn mode_confirm_path() -> PathBuf {
 }
 
 fn read_confirm() -> ModeConfirm {
-    std::fs::read_to_string(mode_confirm_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    std::fs::read_to_string(mode_confirm_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 fn write_confirm(c: &ModeConfirm) {
@@ -459,7 +615,10 @@ fn pending_path() -> PathBuf {
 }
 
 fn read_bad() -> BTreeMap<String, BTreeSet<String>> {
-    std::fs::read_to_string(bad_modes_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    std::fs::read_to_string(bad_modes_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 fn write_bad(bad: &BTreeMap<String, BTreeSet<String>>) {
@@ -481,8 +640,11 @@ pub fn write_unlocked(dir: &Path, fragment: &str, on: bool) -> Result<PathBuf, S
     let body = unlocked_fragment(on);
     write_atomic(&path, body.as_bytes(), 0o644)?;
     let back = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let parsed: Value = back.parse().map_err(|e| format!("{}: {e}", path.display()))?;
-    if back.len() != body.len() || parsed["desktop"]["framerate"]["unlocked"].as_bool() != Some(on) {
+    let parsed: Value = back
+        .parse()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if back.len() != body.len() || parsed["desktop"]["framerate"]["unlocked"].as_bool() != Some(on)
+    {
         return Err(format!("{}: read-back mismatch", path.display()));
     }
     Ok(path)
@@ -492,12 +654,18 @@ pub fn write_unlocked(dir: &Path, fragment: &str, on: bool) -> Result<PathBuf, S
 /// `--reset` forgets the confirmed and declined panels and makes the daemon re-read them (SIGHUP).
 fn confirm_mode(reset: bool) -> Result<(), String> {
     let cfg = Config::load()?.ok_or("[desktop.framerate] is absent or disabled")?;
-    let daemon = State::read_live(&cfg.policy.state_path(&runtime_dir()), Path::new("/")).map(|s| s.pid);
+    let daemon =
+        State::read_live(&cfg.policy.state_path(&runtime_dir()), Path::new("/")).map(|s| s.pid);
     if reset {
         let path = mode_confirm_path();
         match std::fs::remove_file(&path) {
-            Ok(()) => println!("forgot the confirmed and declined modes ({})", path.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("nothing to forget ({})", path.display()),
+            Ok(()) => println!(
+                "forgot the confirmed and declined modes ({})",
+                path.display()
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                println!("nothing to forget ({})", path.display())
+            }
             Err(e) => return Err(format!("{}: {e}", path.display())),
         }
         if let Some(pid) = daemon {
@@ -508,7 +676,9 @@ fn confirm_mode(reset: bool) -> Result<(), String> {
         }
         return Ok(());
     }
-    let pending = std::fs::read_to_string(pending_path()).ok().and_then(|s| serde_json::from_str::<Json>(&s).ok());
+    let pending = std::fs::read_to_string(pending_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<Json>(&s).ok());
     let Some(p) = pending.filter(|p| p.get("deadline_unix").is_some()) else {
         return Err("no display mode is waiting for confirmation".into());
     };
@@ -525,7 +695,8 @@ fn confirm_mode(reset: bool) -> Result<(), String> {
 }
 
 fn set_unlocked(state: &str, no_reload: bool) -> Result<(), String> {
-    let doc = mios_resolver::resolve_merged(Some(&mios_root()), false).map_err(|e| e.to_string())?;
+    let doc =
+        mios_resolver::resolve_merged(Some(&mios_root()), false).map_err(|e| e.to_string())?;
     let policy = Policy::from_ssot(&doc)?.ok_or("[desktop.framerate] is not in the SSOT")?;
     let on = match state {
         "on" => true,
@@ -545,7 +716,14 @@ fn set_unlocked(state: &str, no_reload: bool) -> Result<(), String> {
                 .args(["--user", "kill", "-s", "HUP", "mios-framerate.service"])
                 .status()
                 .is_ok_and(|s| s.success());
-            println!("{}", if ok { "mios-framerate.service reloads it" } else { "could not signal mios-framerate.service" });
+            println!(
+                "{}",
+                if ok {
+                    "mios-framerate.service reloads it"
+                } else {
+                    "could not signal mios-framerate.service"
+                }
+            );
         } else {
             println!("mios-framerate.service is not running: the next start (or login) uses it");
         }
@@ -586,12 +764,21 @@ fn spawn_hypr_events(tx: Tx) {
 
 /// PropertiesChanged of one service object -> Ev::Dbus(label). A service that is absent now is picked up by the
 /// periodic self-check; the match rule follows the well-known name when it (re)appears.
-fn watch_properties(conn: Connection, (dest, path, _): (&'static str, &'static str, &'static str), label: &'static str, tx: Tx) {
+fn watch_properties(
+    conn: Connection,
+    (dest, path, _): (&'static str, &'static str, &'static str),
+    label: &'static str,
+    tx: Tx,
+) {
     tokio::spawn(async move {
-        let Ok(b) = zbus::fdo::PropertiesProxy::builder(&conn).destination(dest) else { return };
+        let Ok(b) = zbus::fdo::PropertiesProxy::builder(&conn).destination(dest) else {
+            return;
+        };
         let Ok(b) = b.path(path) else { return };
         let Ok(proxy) = b.build().await else { return };
-        let Ok(mut stream) = proxy.receive_properties_changed().await else { return };
+        let Ok(mut stream) = proxy.receive_properties_changed().await else {
+            return;
+        };
         while stream.next().await.is_some() {
             if tx.send(Ev::Dbus(label)).is_err() {
                 return;
@@ -608,7 +795,10 @@ fn watch_tuned(conn: Connection, tx: Tx) {
             .and_then(|b| b.member("profile_changed"))
             .map(|b| b.build());
         let Ok(rule) = rule else { return };
-        let Ok(mut stream) = zbus::MessageStream::for_match_rule(rule, &conn, Some(16)).await else { return };
+        let Ok(mut stream) = zbus::MessageStream::for_match_rule(rule, &conn, Some(16)).await
+        else {
+            return;
+        };
         while stream.next().await.is_some() {
             if tx.send(Ev::Dbus("tuned")).is_err() {
                 return;
@@ -620,9 +810,12 @@ fn watch_tuned(conn: Connection, tx: Tx) {
 fn spawn_signals(tx: Tx) {
     use tokio::signal::unix::{signal, SignalKind};
     tokio::spawn(async move {
-        let (Ok(mut hup), Ok(mut term), Ok(mut int), Ok(mut usr1)) =
-            (signal(SignalKind::hangup()), signal(SignalKind::terminate()), signal(SignalKind::interrupt()), signal(SignalKind::user_defined1()))
-        else {
+        let (Ok(mut hup), Ok(mut term), Ok(mut int), Ok(mut usr1)) = (
+            signal(SignalKind::hangup()),
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::user_defined1()),
+        ) else {
             return;
         };
         loop {
@@ -644,7 +837,8 @@ fn relevant(line: &str, fullscreen_game: bool) -> Option<bool> {
     let ev = line.split_once(">>").map_or(line, |(e, _)| e);
     match ev {
         // re-apply even when the plan is unchanged: a reload re-ran the Lua, a new output starts uncapped
-        "configreloaded" | "monitoradded" | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2" => Some(true),
+        "configreloaded" | "monitoradded" | "monitoraddedv2" | "monitorremoved"
+        | "monitorremovedv2" => Some(true),
         "fullscreen" | "activewindowv2" if fullscreen_game => Some(false),
         _ => None,
     }
@@ -692,7 +886,12 @@ impl Server {
     fn connect_hypr(&mut self) {
         match Hypr::connect() {
             Ok(h) => {
-                if self.hypr.as_ref().map(|o| o.dir() != h.dir()).unwrap_or(true) {
+                if self
+                    .hypr
+                    .as_ref()
+                    .map(|o| o.dir() != h.dir())
+                    .unwrap_or(true)
+                {
                     log(&format!("compositor {}", h.dir().display()));
                     self.applied = None;
                 }
@@ -722,9 +921,19 @@ impl Server {
         if self.hypr.is_none() {
             self.connect_hypr();
         }
-        let (mut inputs, src) = read_inputs(self.sys.as_ref(), self.ses.as_ref(), &self.cfg, self.hypr.as_ref()).await;
+        let (mut inputs, src) = read_inputs(
+            self.sys.as_ref(),
+            self.ses.as_ref(),
+            &self.cfg,
+            self.hypr.as_ref(),
+        )
+        .await;
         let now = Instant::now();
-        let (held, until) = self.gaming.update(inputs.gaming, now, Duration::from_millis(self.cfg.policy.gaming_exit_hold_ms));
+        let (held, until) = self.gaming.update(
+            inputs.gaming,
+            now,
+            Duration::from_millis(self.cfg.policy.gaming_exit_hold_ms),
+        );
         inputs.gaming = held;
         self.wake = until;
         let Some(h) = self.hypr.as_ref() else {
@@ -744,8 +953,16 @@ impl Server {
         };
         let c = consumers(h);
         let p = plan::plan(&self.cfg.policy, &inputs, &mons, &self.env(c));
-        let changed = self.applied.as_ref().map(|(ap, ac)| ap != &p || *ac != c).unwrap_or(true);
-        let drifted = if !changed && !force { drift(h, &p, c) } else { Vec::new() };
+        let changed = self
+            .applied
+            .as_ref()
+            .map(|(ap, ac)| ap != &p || *ac != c)
+            .unwrap_or(true);
+        let drifted = if !changed && !force {
+            drift(h, &p, c)
+        } else {
+            Vec::new()
+        };
         if changed || force || !drifted.is_empty() {
             let lua = plan::rates_lua(&p, &self.cfg.policy, c);
             match h.eval(&lua) {
@@ -794,11 +1011,20 @@ impl Server {
             if self.pending.as_ref().is_some_and(|p| p.output == m.name) {
                 continue;
             }
-            let here = plan::restorable_mode(m, self.set.get(&m.name).map(String::as_str), &self.cfg.rule(&m.name));
+            let here = plan::restorable_mode(
+                m,
+                self.set.get(&m.name).map(String::as_str),
+                &self.cfg.rule(&m.name),
+            );
             let want = match p.outputs.get(&m.name).map(|o| &o.mech) {
                 Some(Mech::Mode(mode)) => {
                     if !self.baseline.contains_key(&m.name) {
-                        log(&format!("{}: baseline {}{}", m.name, here.mode, not_shown(m, &here)));
+                        log(&format!(
+                            "{}: baseline {}{}",
+                            m.name,
+                            here.mode,
+                            not_shown(m, &here)
+                        ));
                         self.baseline.insert(m.name.clone(), here.clone());
                     }
                     mode.clone()
@@ -812,7 +1038,9 @@ impl Server {
                 },
             };
             let shows = plan::verified(Some(m), &want);
-            let (now_go, wake) = self.gate.decide(&m.name, &want, shows, Instant::now(), hold, gap);
+            let (now_go, wake) = self
+                .gate
+                .decide(&m.name, &want, shows, Instant::now(), hold, gap);
             if let Some(w) = wake {
                 self.wake = Some(self.wake.map_or(w, |x| x.min(w)));
             }
@@ -822,17 +1050,29 @@ impl Server {
             if !now_go {
                 continue;
             }
-            self.switch(m, &here, &want, pol.revert_timeout_ms, pol.mode_confirm_s).await;
+            self.switch(m, &here, &want, pol.revert_timeout_ms, pol.mode_confirm_s)
+                .await;
         }
     }
 
-    async fn switch(&mut self, m: &Monitor, here: &plan::Restore, want: &str, timeout_ms: u64, confirm_s: u64) {
+    async fn switch(
+        &mut self,
+        m: &Monitor,
+        here: &plan::Restore,
+        want: &str,
+        timeout_ms: u64,
+        confirm_s: u64,
+    ) {
         let Some(h) = self.hypr.as_ref() else { return };
         let current = here.mode.as_str();
         let snapshot = plan::monitor_lua(m, current);
         let revert = pending_path();
         let _ = write_atomic(&revert, serde_json::json!({"output": m.name, "mode": want, "previous": current, "lua": snapshot}).to_string().as_bytes(), 0o644);
-        log(&format!("{}: mode {current}{} -> {want} (a modeset: no active VRR cap, or a mode output)", m.name, not_shown(m, here)));
+        log(&format!(
+            "{}: mode {current}{} -> {want} (a modeset: no active VRR cap, or a mode output)",
+            m.name,
+            not_shown(m, here)
+        ));
         let started = Instant::now();
         let mut ok = h.eval(&plan::monitor_lua(m, want)).is_ok();
         if ok {
@@ -847,21 +1087,42 @@ impl Server {
             }
         }
         if ok {
-            log(&format!("{}: {want} verified after {} ms", m.name, started.elapsed().as_millis()));
+            log(&format!(
+                "{}: {want} verified after {} ms",
+                m.name,
+                started.elapsed().as_millis()
+            ));
             self.set.insert(m.name.clone(), want.to_owned());
             // going back to the baseline needs no answer only when the baseline is what the output really showed
-            let baseline = self.baseline.get(&m.name).filter(|b| b.exact).map(|b| b.mode.clone());
-            if plan::needs_confirm(confirm_s, &m.identity, want, baseline.as_deref(), &self.confirm.confirmed) {
+            let baseline = self
+                .baseline
+                .get(&m.name)
+                .filter(|b| b.exact)
+                .map(|b| b.mode.clone());
+            if plan::needs_confirm(
+                confirm_s,
+                &m.identity,
+                want,
+                baseline.as_deref(),
+                &self.confirm.confirmed,
+            ) {
                 // A display-mode change the operator has not seen on this panel: keep the way back armed. Unless
                 // `miosd framerate confirm-mode` answers within confirm_s, the previous mode comes back.
                 let deadline = Instant::now() + Duration::from_secs(confirm_s);
-                let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + confirm_s;
+                let unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+                    + confirm_s;
                 let body = serde_json::json!({"output": m.name, "mode": want, "previous": current, "lua": snapshot,
                     "deadline_unix": unix, "confirm": "miosd framerate confirm-mode"});
                 let _ = write_atomic(&revert, body.to_string().as_bytes(), 0o644);
                 let msg = format!("Display {} is now {want} (frame-rate tier). Keep it: run `miosd framerate confirm-mode` within {confirm_s} s; otherwise {current} comes back.", m.name);
                 let _ = h.notify(0, (confirm_s * 1000) as u32, &msg);
-                log(&format!("{}: {want} waits for confirmation ({confirm_s} s; else back to {current})", m.name));
+                log(&format!(
+                    "{}: {want} waits for confirmation ({confirm_s} s; else back to {current})",
+                    m.name
+                ));
                 self.pending = Some(PendingMode {
                     output: m.name.clone(),
                     identity: m.identity.clone(),
@@ -876,7 +1137,10 @@ impl Server {
             log(&format!("{}: {want} not verified within {timeout_ms} ms: reverting to {current}, blocklisting {want}", m.name));
             let _ = h.eval(&snapshot);
             self.set.insert(m.name.clone(), current.to_owned());
-            self.bad.entry(m.identity.clone()).or_default().insert(want.to_owned());
+            self.bad
+                .entry(m.identity.clone())
+                .or_default()
+                .insert(want.to_owned());
             write_bad(&self.bad);
             self.gate.forget(&m.name);
         }
@@ -889,13 +1153,20 @@ impl Server {
             log("confirm-mode: no display mode is waiting for confirmation");
             return;
         };
-        self.confirm.confirmed.entry(p.identity.clone()).or_default().insert(p.mode.clone());
+        self.confirm
+            .confirmed
+            .entry(p.identity.clone())
+            .or_default()
+            .insert(p.mode.clone());
         write_confirm(&self.confirm);
         let _ = std::fs::remove_file(pending_path());
         if let Some(h) = self.hypr.as_ref() {
             let _ = h.notify(5, 4000, &format!("Display {} keeps {}.", p.output, p.mode));
         }
-        log(&format!("{}: {} confirmed by the operator", p.output, p.mode));
+        log(&format!(
+            "{}: {} confirmed by the operator",
+            p.output, p.mode
+        ));
     }
 
     /// The deadline passed without an answer: restore the previous mode, and make no more automatic modesets on that
@@ -907,7 +1178,14 @@ impl Server {
             if let Err(e) = h.eval(&p.restore_lua) {
                 log(&format!("{}: restore {}: {e}", p.output, p.previous));
             }
-            let _ = h.notify(0, 6000, &format!("Display {} is back to {} (not confirmed).", p.output, p.previous));
+            let _ = h.notify(
+                0,
+                6000,
+                &format!(
+                    "Display {} is back to {} (not confirmed).",
+                    p.output, p.previous
+                ),
+            );
         }
         self.set.insert(p.output.clone(), p.previous.clone());
         self.confirm.declined.insert(p.identity.clone());
@@ -921,7 +1199,10 @@ impl Server {
     fn restore_modes(&mut self) {
         let Some(h) = self.hypr.as_ref() else { return };
         if let Some(p) = self.pending.take() {
-            log(&format!("{}: stopping before {} was confirmed: restoring {}", p.output, p.mode, p.previous));
+            log(&format!(
+                "{}: stopping before {} was confirmed: restoring {}",
+                p.output, p.mode, p.previous
+            ));
             let _ = h.eval(&p.restore_lua);
             let _ = std::fs::remove_file(pending_path());
             // the baseline below may still differ from `previous`
@@ -931,11 +1212,15 @@ impl Server {
         self.set.clear();
         for (name, base) in std::mem::take(&mut self.baseline) {
             let base = base.mode;
-            let Some(m) = mons.iter().find(|m| m.name == name) else { continue };
+            let Some(m) = mons.iter().find(|m| m.name == name) else {
+                continue;
+            };
             if plan::verified(Some(m), &base) {
                 continue;
             }
-            log(&format!("{name}: stopping: restoring the mode it had before the frame-rate policy, {base}"));
+            log(&format!(
+                "{name}: stopping: restoring the mode it had before the frame-rate policy, {base}"
+            ));
             if let Err(e) = h.eval(&plan::monitor_lua(m, &base)) {
                 log(&format!("{name}: restore {base}: {e}"));
             }
@@ -976,8 +1261,14 @@ async fn serve() -> Result<(), String> {
             }
         }
     };
-    let sys = Connection::system().await.map_err(|e| log(&format!("system bus: {e}"))).ok();
-    let ses = Connection::session().await.map_err(|e| log(&format!("session bus: {e}"))).ok();
+    let sys = Connection::system()
+        .await
+        .map_err(|e| log(&format!("system bus: {e}")))
+        .ok();
+    let ses = Connection::session()
+        .await
+        .map_err(|e| log(&format!("session bus: {e}")))
+        .ok();
     if let Some(c) = &sys {
         watch_properties(c.clone(), PPD[0], "power-profile", tx.clone());
         watch_properties(c.clone(), PPD[1], "power-profile", tx.clone());
@@ -1011,7 +1302,16 @@ async fn serve() -> Result<(), String> {
     let mut force = false;
     let mut check = Instant::now() + Duration::from_secs(srv.cfg.policy.self_check_s);
     loop {
-        let next = [dirty, srv.wake, srv.pending.as_ref().map(|p| p.deadline), Some(check)].into_iter().flatten().min().unwrap_or(check);
+        let next = [
+            dirty,
+            srv.wake,
+            srv.pending.as_ref().map(|p| p.deadline),
+            Some(check),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(check);
         let wait = next.saturating_duration_since(Instant::now());
         let debounce = Duration::from_millis(srv.cfg.policy.debounce_ms);
         match tokio::time::timeout(wait, rx.recv()).await {
@@ -1045,7 +1345,9 @@ async fn serve() -> Result<(), String> {
                     srv.restore_modes();
                     return Ok(());
                 }
-                Err(e) => log(&format!("SSOT reload refused, keeping the running policy: {e}")),
+                Err(e) => log(&format!(
+                    "SSOT reload refused, keeping the running policy: {e}"
+                )),
             },
             Ok(Some(Ev::Confirm)) => srv.confirm_pending(),
             Ok(Some(Ev::Term)) | Ok(None) => {
@@ -1085,7 +1387,9 @@ async fn serve() -> Result<(), String> {
 
 // ---------------------------------------------------------------- CLI: status, apply
 
-async fn current_plan(cfg: &Config) -> (Inputs, Sources, Plan, Option<Hypr>, Consumers, Vec<Monitor>) {
+async fn current_plan(
+    cfg: &Config,
+) -> (Inputs, Sources, Plan, Option<Hypr>, Consumers, Vec<Monitor>) {
     let sys = Connection::system().await.ok();
     let ses = Connection::session().await.ok();
     let hypr = Hypr::connect().ok();
@@ -1094,21 +1398,55 @@ async fn current_plan(cfg: &Config) -> (Inputs, Sources, Plan, Option<Hypr>, Con
         Some(h) => (monitors(h).unwrap_or_default(), consumers(h)),
         None => (Vec::new(), Consumers::default()),
     };
-    let env = Env { pacing: c.pacing, require_vrr: cfg.require_vrr, pinned: cfg.pinned.clone(), bad: read_bad(), declined: read_confirm().declined };
+    let env = Env {
+        pacing: c.pacing,
+        require_vrr: cfg.require_vrr,
+        pinned: cfg.pinned.clone(),
+        bad: read_bad(),
+        declined: read_confirm().declined,
+    };
     let p = plan::plan(&cfg.policy, &inputs, &mons, &env);
     (inputs, src, p, hypr, c, mons)
 }
 
 fn print_state(s: &State, header: &str) {
     println!("{header}");
-    println!("tier {}  desktop {} Hz (cap {})  glass {} fps  wallpaper {} fps  (max {} Hz)", s.tier, s.desktop_hz, if s.cap_hz == 0 { "none".to_string() } else { s.cap_hz.to_string() }, s.glass_fps, s.wallpaper_fps, s.max_hz);
+    println!(
+        "tier {}  desktop {} Hz (cap {})  glass {} fps  wallpaper {} fps  (max {} Hz)",
+        s.tier,
+        s.desktop_hz,
+        if s.cap_hz == 0 {
+            "none".to_string()
+        } else {
+            s.cap_hz.to_string()
+        },
+        s.glass_fps,
+        s.wallpaper_fps,
+        s.max_hz
+    );
     println!("inputs: profile {:?}, on battery {}, gaming {}, unlocked {}; wallpaper paced by the compositor {}", s.inputs.profile, s.inputs.on_battery, s.inputs.gaming, s.unlocked, s.wallpaper_paced);
     for (name, o) in &s.outputs {
-        println!("  {name}: {} cap {} max {} Hz now {:.3} Hz{}", o.mechanism, o.cap_hz, o.max_hz, o.refresh_hz, o.mode.as_ref().map(|m| format!(" mode {m}")).unwrap_or_default());
+        println!(
+            "  {name}: {} cap {} max {} Hz now {:.3} Hz{}",
+            o.mechanism,
+            o.cap_hz,
+            o.max_hz,
+            o.refresh_hz,
+            o.mode
+                .as_ref()
+                .map(|m| format!(" mode {m}"))
+                .unwrap_or_default()
+        );
     }
-    if let Some(p) = std::fs::read_to_string(pending_path()).ok().and_then(|t| serde_json::from_str::<Json>(&t).ok()) {
+    if let Some(p) = std::fs::read_to_string(pending_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Json>(&t).ok())
+    {
         if let Some(unix) = p.get("deadline_unix").and_then(Json::as_u64) {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
             println!(
                 "  waiting for confirmation: {} {} ({} s left; `miosd framerate confirm-mode` keeps it, else {} comes back)",
                 p.get("output").and_then(Json::as_str).unwrap_or("?"),
@@ -1131,7 +1469,15 @@ async fn status(json: bool) -> Result<(), String> {
         if json {
             print!("{}", s.to_json());
         } else {
-            print_state(&s, &format!("mios-framerate (pid {}, apply #{}, {}):", s.pid, s.seq, path.display()));
+            print_state(
+                &s,
+                &format!(
+                    "mios-framerate (pid {}, apply #{}, {}):",
+                    s.pid,
+                    s.seq,
+                    path.display()
+                ),
+            );
         }
         return Ok(());
     }
@@ -1140,8 +1486,14 @@ async fn status(json: bool) -> Result<(), String> {
     if json {
         print!("{}", s.to_json());
     } else {
-        print_state(&s, "mios-framerate is not running; the plan for the current inputs:");
-        println!("sources: profile {}, battery {}, gaming {}", src.profile, src.battery, src.gaming);
+        print_state(
+            &s,
+            "mios-framerate is not running; the plan for the current inputs:",
+        );
+        println!(
+            "sources: profile {}, battery {}, gaming {}",
+            src.profile, src.battery, src.gaming
+        );
     }
     Ok(())
 }
@@ -1154,14 +1506,22 @@ async fn apply_once(dry_run: bool) -> Result<(), String> {
     let modes: Vec<String> = mons
         .iter()
         .filter_map(|m| match p.outputs.get(&m.name).map(|o| &o.mech) {
-            Some(Mech::Mode(mode)) if !plan::verified(Some(m), mode) => Some(plan::monitor_lua(m, mode)),
+            Some(Mech::Mode(mode)) if !plan::verified(Some(m), mode) => {
+                Some(plan::monitor_lua(m, mode))
+            }
             _ => None,
         })
         .collect();
     if dry_run {
         print_state(&s, "plan (dry run, nothing applied):");
-        println!("sources: profile {}, battery {}, gaming {}", src.profile, src.battery, src.gaming);
-        println!("consumers loaded: pacing {} (wallpaper hook {}), hyprglass {}, hypr3d {}", c.pacing, c.pacing_wallpaper, c.hyprglass, c.hypr3d);
+        println!(
+            "sources: profile {}, battery {}, gaming {}",
+            src.profile, src.battery, src.gaming
+        );
+        println!(
+            "consumers loaded: pacing {} (wallpaper hook {}), hyprglass {}, hypr3d {}",
+            c.pacing, c.pacing_wallpaper, c.hyprglass, c.hypr3d
+        );
         println!("hyprctl eval:\n{lua}");
         for m in &modes {
             println!("modeset (hysteresis and verification in serve): {m}");
@@ -1189,41 +1549,80 @@ async fn apply_once(dry_run: bool) -> Result<(), String> {
 
 // ---------------------------------------------------------------- CLI: modeline (read-only)
 
-async fn modeline(output: Option<&str>, hz: Option<f64>, edid: Option<&Path>, size: Option<&str>, json: bool) -> Result<(), String> {
+async fn modeline(
+    output: Option<&str>,
+    hz: Option<f64>,
+    edid: Option<&Path>,
+    size: Option<&str>,
+    json: bool,
+) -> Result<(), String> {
     let cfg = Config::load()?;
-    let tolerance = cfg.as_ref().map(|c| c.policy.mode_tolerance_hz).unwrap_or(0.5);
+    let tolerance = cfg
+        .as_ref()
+        .map(|c| c.policy.mode_tolerance_hz)
+        .unwrap_or(0.5);
     let (m, target) = if let Some(path) = edid {
-        let e = plan::Edid::parse(&read_edid_file(path)?).ok_or_else(|| format!("{}: no detailed timing (not an EDID?)", path.display()))?;
+        let e = plan::Edid::parse(&read_edid_file(path)?)
+            .ok_or_else(|| format!("{}: no detailed timing (not an EDID?)", path.display()))?;
         let (w, h) = match size {
             Some(s) => {
                 let (w, h) = s.split_once('x').ok_or("--size must be WxH")?;
-                (w.parse().map_err(|_| "--size must be WxH")?, h.parse().map_err(|_| "--size must be WxH")?)
+                (
+                    w.parse().map_err(|_| "--size must be WxH")?,
+                    h.parse().map_err(|_| "--size must be WxH")?,
+                )
             }
             None => (e.timings[0].hdisplay, e.timings[0].vdisplay),
         };
-        let base = mios_resolver::edid_timing::fastest_at(&e.timings, w, h).ok_or_else(|| format!("no EDID timing at {w}x{h}"))?;
-        let m = Monitor { name: output.unwrap_or("EDID").to_owned(), width: w, height: h, refresh: base.refresh_hz(), scale: 1.0, dpms: true, edid: Some(e), ..Default::default() };
+        let base = mios_resolver::edid_timing::fastest_at(&e.timings, w, h)
+            .ok_or_else(|| format!("no EDID timing at {w}x{h}"))?;
+        let m = Monitor {
+            name: output.unwrap_or("EDID").to_owned(),
+            width: w,
+            height: h,
+            refresh: base.refresh_hz(),
+            scale: 1.0,
+            dpms: true,
+            edid: Some(e),
+            ..Default::default()
+        };
         (m, hz.ok_or("--edid needs --hz (no compositor, no tier)")?)
     } else {
-        let cfg = cfg.as_ref().ok_or("[desktop.framerate] is absent or disabled (or pass --edid FILE --hz N)")?;
+        let cfg = cfg
+            .as_ref()
+            .ok_or("[desktop.framerate] is absent or disabled (or pass --edid FILE --hz N)")?;
         let (_, _, p, hypr, _, mons) = current_plan(&cfg).await;
         hypr.ok_or("no live Hyprland instance (or pass --edid FILE --hz N)")?;
         let m = match output {
-            Some(o) => mons.into_iter().find(|m| m.name == o).ok_or_else(|| format!("no output {o}"))?,
-            None => mons.into_iter().find(|m| m.local(&cfg.policy) && m.edid.is_some()).ok_or("no local output with an EDID")?,
+            Some(o) => mons
+                .into_iter()
+                .find(|m| m.name == o)
+                .ok_or_else(|| format!("no output {o}"))?,
+            None => mons
+                .into_iter()
+                .find(|m| m.local(&cfg.policy) && m.edid.is_some())
+                .ok_or("no local output with an EDID")?,
         };
         let target = hz.unwrap_or(f64::from(p.rates.desktop_hz));
         if target <= 0.0 {
-            return Err("the tier has no desktop rate (unlocked runs the output maximum): pass --hz".into());
+            return Err(
+                "the tier has no desktop rate (unlocked runs the output maximum): pass --hz".into(),
+            );
         }
         (m, target)
     };
-    let line = plan::extended_mode(&m, target, tolerance).map_err(|e| format!("{}: no extended-vblank mode for {target} Hz: {e}", m.name))?;
-    let t = mios_resolver::edid_timing::Timing::parse_modeline(&line).ok_or("internal: the modeline does not parse")?;
+    let line = plan::extended_mode(&m, target, tolerance)
+        .map_err(|e| format!("{}: no extended-vblank mode for {target} Hz: {e}", m.name))?;
+    let t = mios_resolver::edid_timing::Timing::parse_modeline(&line)
+        .ok_or("internal: the modeline does not parse")?;
     let e = m.edid.as_ref().expect("extended_mode needs the EDID");
-    let base = mios_resolver::edid_timing::fastest_at(&e.timings, m.width, m.height).expect("extended_mode found a base");
+    let base = mios_resolver::edid_timing::fastest_at(&e.timings, m.width, m.height)
+        .expect("extended_mode found a base");
     let shows = plan::mode_string(m.width, m.height, m.refresh);
-    let rule = cfg.as_ref().map(|c| c.rule(&m.name)).unwrap_or_else(|| "preferred".into());
+    let rule = cfg
+        .as_ref()
+        .map(|c| c.rule(&m.name))
+        .unwrap_or_else(|| "preferred".into());
     let back = plan::restorable_mode(&m, None, &rule);
     let current = back.mode.clone();
     let apply = plan::monitor_lua(&m, &line);
@@ -1238,8 +1637,19 @@ async fn modeline(output: Option<&str>, hz: Option<f64>, edid: Option<&Path>, si
         });
         println!("{v}");
     } else {
-        println!("{}: base {} ({:.3} Hz, line {:.3} kHz)", m.name, base.modeline(), base.refresh_hz(), base.line_khz());
-        println!("{}: {target} Hz extended vblank {line} ({:.4} Hz, {} more blank lines)", m.name, t.refresh_hz(), t.vtotal - base.vtotal);
+        println!(
+            "{}: base {} ({:.3} Hz, line {:.3} kHz)",
+            m.name,
+            base.modeline(),
+            base.refresh_hz(),
+            base.line_khz()
+        );
+        println!(
+            "{}: {target} Hz extended vblank {line} ({:.4} Hz, {} more blank lines)",
+            m.name,
+            t.refresh_hz(),
+            t.vtotal - base.vtotal
+        );
         println!("apply:   {apply}");
         println!("restore: {restore}");
         if !back.exact {
@@ -1255,23 +1665,48 @@ mod tests {
 
     #[test]
     fn config_reads_pins_and_the_pacing_option() {
-        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../usr/share/mios/mios.toml")).unwrap();
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../usr/share/mios/mios.toml"
+        ))
+        .unwrap();
         let mut doc: Value = text.parse().unwrap();
-        let c = Config::from_ssot(&doc).unwrap().expect("[desktop.framerate] enabled in the SSOT");
+        let c = Config::from_ssot(&doc)
+            .unwrap()
+            .expect("[desktop.framerate] enabled in the SSOT");
         assert!(c.require_vrr && c.pinned.is_empty());
-        let mons: Value = "[DP-3]\nmode = \"1920x1080@144\"\n[HDMI-A-1]\nmode = \"preferred\"\n".parse().unwrap();
-        doc["desktop"]["hyprland"].as_table_mut().unwrap().insert("monitors".into(), mons);
+        let mons: Value = "[DP-3]\nmode = \"1920x1080@144\"\n[HDMI-A-1]\nmode = \"preferred\"\n"
+            .parse()
+            .unwrap();
+        doc["desktop"]["hyprland"]
+            .as_table_mut()
+            .unwrap()
+            .insert("monitors".into(), mons);
         let c = Config::from_ssot(&doc).unwrap().unwrap();
-        assert_eq!(c.pinned, ["DP-3".to_string()].into(), "only an explicit WxH@Hz is a pin");
+        assert_eq!(
+            c.pinned,
+            ["DP-3".to_string()].into(),
+            "only an explicit WxH@Hz is a pin"
+        );
         // the monitor rules the way back falls to (plan::restorable_mode): an output's own, else the catch-all's
-        assert_eq!((c.rule("HDMI-A-1").as_str(), c.rule("eDP-1").as_str()), ("preferred", "preferred"));
+        assert_eq!(
+            (c.rule("HDMI-A-1").as_str(), c.rule("eDP-1").as_str()),
+            ("preferred", "preferred")
+        );
         doc["desktop"]["hyprland"]["monitor"]["mode"] = Value::String("highrr".into());
         let c = Config::from_ssot(&doc).unwrap().unwrap();
-        assert_eq!((c.rule("HDMI-A-1").as_str(), c.rule("eDP-1").as_str()), ("preferred", "highrr"));
+        assert_eq!(
+            (c.rule("HDMI-A-1").as_str(), c.rule("eDP-1").as_str()),
+            ("preferred", "highrr")
+        );
         doc["desktop"]["framerate"]["enabled"] = Value::Boolean(false);
-        assert!(Config::from_ssot(&doc).unwrap().is_none(), "disabled: no daemon work");
+        assert!(
+            Config::from_ssot(&doc).unwrap().is_none(),
+            "disabled: no daemon work"
+        );
         doc["desktop"]["framerate"]["enabled"] = Value::Boolean(true);
-        doc["desktop"]["hyprland"]["mios-pacing"]["config"]["require_vrr"] = Value::String("yes".into());
+        doc["desktop"]["hyprland"]["mios-pacing"]["config"]["require_vrr"] =
+            Value::String("yes".into());
         assert!(Config::from_ssot(&doc).unwrap_err().contains("require_vrr"));
     }
 
@@ -1282,17 +1717,31 @@ mod tests {
         let p = write_unlocked(&d, "50-framerate.toml", true).unwrap();
         let v: Value = std::fs::read_to_string(&p).unwrap().parse().unwrap();
         assert_eq!(v["desktop"]["framerate"]["unlocked"].as_bool(), Some(true));
-        assert_eq!(v["desktop"]["framerate"].as_table().unwrap().len(), 1, "only the unlocked key");
+        assert_eq!(
+            v["desktop"]["framerate"].as_table().unwrap().len(),
+            1,
+            "only the unlocked key"
+        );
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o644);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
         write_unlocked(&d, "50-framerate.toml", false).unwrap();
         let v: Value = std::fs::read_to_string(&p).unwrap().parse().unwrap();
         assert_eq!(v["desktop"]["framerate"]["unlocked"].as_bool(), Some(false));
-        let leftovers: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).collect();
+        let leftovers: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
         assert!(leftovers.is_empty(), "no temp files left behind");
         // the fragment is an ordinary mios.d layer for the resolver
         let merged = mios_resolver::layers::merge_layer_files(&[p.clone()]).unwrap();
-        assert_eq!(merged["desktop"]["framerate"]["unlocked"].as_bool(), Some(false));
+        assert_eq!(
+            merged["desktop"]["framerate"]["unlocked"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1304,21 +1753,36 @@ mod tests {
         write_atomic(&path, b"{}", 0o644).unwrap();
         unsafe { libc::umask(old) };
         for d in [dir.path().join("mios"), dir.path().join("mios/framerate")] {
-            assert_eq!(std::fs::metadata(&d).unwrap().permissions().mode() & 0o777, 0o755, "{}", d.display());
+            assert_eq!(
+                std::fs::metadata(&d).unwrap().permissions().mode() & 0o777,
+                0o755,
+                "{}",
+                d.display()
+            );
         }
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o644);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
     }
 
     #[test]
     fn edid_files_read_as_blob_or_commented_hex_and_garbage_is_refused() {
-        let fixture = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/framerate/dp3-lg-24gl600f.edid.hex"));
+        let fixture = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/fixtures/framerate/dp3-lg-24gl600f.edid.hex"
+        ));
         let bytes = read_edid_file(fixture).unwrap();
         assert_eq!(bytes.len(), 256);
         let dir = std::env::temp_dir().join(format!("mios-fr-edid-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let bin = dir.join("edid");
         std::fs::write(&bin, &bytes).unwrap();
-        assert_eq!(read_edid_file(&bin).unwrap(), bytes, "the sysfs binary form");
+        assert_eq!(
+            read_edid_file(&bin).unwrap(),
+            bytes,
+            "the sysfs binary form"
+        );
         let e = plan::Edid::parse(&bytes).unwrap();
         assert_eq!(e.range.map(|r| (r.min_v_hz, r.max_v_hz)), Some((48, 144)));
         let junk = dir.join("junk");
@@ -1333,7 +1797,11 @@ mod tests {
         assert_eq!(relevant("configreloaded>>", false), Some(true));
         assert_eq!(relevant("monitoraddedv2>>1,DP-3,desc", false), Some(true));
         assert_eq!(relevant("monitorremoved>>DP-3", false), Some(true));
-        assert_eq!(relevant("activewindowv2>>0x1", false), None, "focus changes are irrelevant without fullscreen_game");
+        assert_eq!(
+            relevant("activewindowv2>>0x1", false),
+            None,
+            "focus changes are irrelevant without fullscreen_game"
+        );
         assert_eq!(relevant("activewindowv2>>0x1", true), Some(false));
         assert_eq!(relevant("fullscreen>>1", true), Some(false));
         assert_eq!(relevant("openwindow>>0x1,1,kitty,kitty", true), None);

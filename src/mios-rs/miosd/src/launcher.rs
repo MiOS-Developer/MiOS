@@ -18,7 +18,8 @@ use std::time::Duration;
 
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{
-    self, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    self, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton,
+    MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::layout::Rect;
@@ -136,11 +137,16 @@ pub struct Cfg {
 }
 
 fn at<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
-    path.split('.').try_fold(v, |cur, k| cur.get(k)).ok_or_else(|| format!("missing SSOT key {path}"))
+    path.split('.')
+        .try_fold(v, |cur, k| cur.get(k))
+        .ok_or_else(|| format!("missing SSOT key {path}"))
 }
 
 fn s(v: &Value, path: &str) -> Result<String, String> {
-    at(v, path)?.as_str().map(str::to_owned).ok_or_else(|| format!("{path} must be a string"))
+    at(v, path)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{path} must be a string"))
 }
 
 /// Shown text: printable ASCII, no format or quoting characters (the same rule as every tmux-shown SSOT string).
@@ -156,7 +162,13 @@ fn int(v: &Value, path: &str, range: std::ops::RangeInclusive<i64>) -> Result<i6
     at(v, path)?
         .as_integer()
         .filter(|n| range.contains(n))
-        .ok_or_else(|| format!("{path} must be an integer in {}..={}", range.start(), range.end()))
+        .ok_or_else(|| {
+            format!(
+                "{path} must be an integer in {}..={}",
+                range.start(),
+                range.end()
+            )
+        })
 }
 
 fn strings(v: &Value, path: &str) -> Result<Vec<String>, String> {
@@ -164,7 +176,11 @@ fn strings(v: &Value, path: &str) -> Result<Vec<String>, String> {
         .as_array()
         .ok_or_else(|| format!("{path} must be an array"))?
         .iter()
-        .map(|x| x.as_str().map(str::to_owned).ok_or_else(|| format!("{path} must hold strings")))
+        .map(|x| {
+            x.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{path} must hold strings"))
+        })
         .collect()
 }
 
@@ -177,12 +193,31 @@ fn percent(v: &Value, path: &str) -> Result<u32, String> {
 }
 
 fn ident(x: &str) -> bool {
-    !x.is_empty() && x.len() <= 32 && x.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    !x.is_empty()
+        && x.len() <= 32
+        && x.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 pub const LABEL_KEYS: &[&str] = &[
-    "go", "popout", "float", "dock", "move_window", "move_session", "rename", "close", "yes", "no", "open", "open_popup",
-    "open_window", "open_float", "open_desktop", "new_window", "run", "cancel",
+    "go",
+    "popout",
+    "float",
+    "dock",
+    "move_window",
+    "move_session",
+    "rename",
+    "close",
+    "yes",
+    "no",
+    "open",
+    "open_popup",
+    "open_window",
+    "open_float",
+    "open_desktop",
+    "new_window",
+    "run",
+    "cancel",
 ];
 
 pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
@@ -198,7 +233,9 @@ pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
                 .ok_or_else(|| format!("{l}.section_titles.{k} must be plain ASCII text"))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
-    let labels_t = at(v, &format!("{l}.labels"))?.as_table().ok_or("keybindings.tmux.launcher.labels must be a table")?;
+    let labels_t = at(v, &format!("{l}.labels"))?
+        .as_table()
+        .ok_or("keybindings.tmux.launcher.labels must be a table")?;
     let mut labels = BTreeMap::new();
     for k in LABEL_KEYS {
         let t = labels_t
@@ -209,37 +246,70 @@ pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
         labels.insert((*k).to_owned(), t.to_owned());
     }
     let sections = strings(v, &format!("{l}.sections"))?;
-    if sections.is_empty() || sections.iter().any(|x| !["running", "ai", "apps", "menus"].contains(&x.as_str())) {
-        return Err(format!("{l}.sections may list only running, ai, apps and menus"));
+    if sections.is_empty()
+        || sections
+            .iter()
+            .any(|x| !["running", "ai", "apps", "menus"].contains(&x.as_str()))
+    {
+        return Err(format!(
+            "{l}.sections may list only running, ai, apps and menus"
+        ));
     }
     let menu_sections = strings(v, &format!("{l}.menu_sections"))?;
     if menu_sections.iter().any(|m| !ident(m)) {
         return Err(format!("{l}.menu_sections must be menu ids"));
     }
     let desktop_terminal = strings(v, &format!("{l}.desktop_terminal"))?;
-    if desktop_terminal.is_empty() || desktop_terminal.iter().any(|a| a.is_empty() || a.chars().any(char::is_control)) {
+    if desktop_terminal.is_empty()
+        || desktop_terminal
+            .iter()
+            .any(|a| a.is_empty() || a.chars().any(char::is_control))
+    {
         return Err(format!("{l}.desktop_terminal must be a non-empty argv"));
     }
     let popout_prefix = s(v, &format!("{l}.popout_session_prefix"))?;
-    if popout_prefix.is_empty() || popout_prefix.len() > 16 || !popout_prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
-        return Err(format!("{l}.popout_session_prefix must be 1-16 of [A-Za-z0-9._-]"));
+    if popout_prefix.is_empty()
+        || popout_prefix.len() > 16
+        || !popout_prefix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    {
+        return Err(format!(
+            "{l}.popout_session_prefix must be 1-16 of [A-Za-z0-9._-]"
+        ));
     }
     let new_session_name = s(v, "terminal.sessions.new_session_name")?;
-    if new_session_name.is_empty() || !new_session_name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
+    if new_session_name.is_empty()
+        || !new_session_name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    {
         return Err("[terminal.sessions].new_session_name must be [A-Za-z0-9._-]".into());
     }
     let prefix = s(v, "keybindings.tmux_prefix")?;
-    if prefix.is_empty() || !prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if prefix.is_empty()
+        || !prefix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
         return Err("[keybindings].tmux_prefix is not a tmux key name".into());
     }
     let palette = if console {
-        [Color::Black, Color::White, Color::Yellow, Color::Gray, Color::DarkGray]
+        [
+            Color::Black,
+            Color::White,
+            Color::Yellow,
+            Color::Gray,
+            Color::DarkGray,
+        ]
     } else {
         let c = |k: &str| crate::sessions::color(&s(v, &format!("colors.{k}")).unwrap_or_default());
         [c("bg"), c("fg"), c("cursor"), c("subtle"), c("muted")]
     };
     let cfg = Cfg {
-        enabled: at(v, &format!("{l}.enabled"))?.as_bool().ok_or("keybindings.tmux.launcher.enabled must be a boolean")?,
+        enabled: at(v, &format!("{l}.enabled"))?
+            .as_bool()
+            .ok_or("keybindings.tmux.launcher.enabled must be a boolean")?,
         title: text(v, &format!("{l}.title"))?,
         popup_w: percent(v, &format!("{l}.popup_width"))?,
         popup_h: percent(v, &format!("{l}.popup_height"))?,
@@ -256,9 +326,14 @@ pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
         sections,
         menu_sections,
         titles,
-        skip_keys: strings(v, &format!("{l}.skip_menu_keys"))?.into_iter().collect(),
+        skip_keys: strings(v, &format!("{l}.skip_menu_keys"))?
+            .into_iter()
+            .collect(),
         empty_running: text(v, &format!("{l}.empty_running"))?,
-        help: text(v, &format!("{l}.{}", if console { "help_vt" } else { "help" }))?,
+        help: text(
+            v,
+            &format!("{l}.{}", if console { "help_vt" } else { "help" }),
+        )?,
         options_title: text(v, &format!("{l}.options_title"))?,
         confirm_close: text(v, &format!("{l}.confirm_close"))?,
         move_window_title: text(v, &format!("{l}.move_window_title"))?,
@@ -277,7 +352,9 @@ pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
         palette,
     };
     if cfg.min_w > cfg.two_col {
-        return Err(format!("{l}.min_width must not exceed two_column_min_width"));
+        return Err(format!(
+            "{l}.min_width must not exceed two_column_min_width"
+        ));
     }
     Ok(cfg)
 }
@@ -289,7 +366,9 @@ impl Cfg {
     fn title_of(&self, id: &str) -> String {
         self.titles.get(id).cloned().unwrap_or_else(|| {
             let mut c = id.chars();
-            c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
+            c.next()
+                .map(|f| f.to_ascii_uppercase().to_string() + c.as_str())
+                .unwrap_or_default()
         })
     }
 }
@@ -329,11 +408,18 @@ pub struct Instance {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Target {
     Instance(Instance),
-    App { id: String },
+    App {
+        id: String,
+    },
     /// A prefix-table key, run as if typed on the client.
-    Prefix { key: String },
+    Prefix {
+        key: String,
+    },
     /// A row of a generated menu, run through its key table.
-    MenuRow { menu: String, key: String },
+    MenuRow {
+        menu: String,
+        key: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -363,10 +449,16 @@ pub struct PaneState {
 }
 
 fn clean(t: &str, max: usize) -> String {
-    let t: String = t.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let t: String = t
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     let t = t.trim();
     if t.chars().count() > max {
-        t.chars().take(max.saturating_sub(1)).chain(std::iter::once('~')).collect()
+        t.chars()
+            .take(max.saturating_sub(1))
+            .chain(std::iter::once('~'))
+            .collect()
     } else {
         t.to_owned()
     }
@@ -459,11 +551,23 @@ pub fn parse_running(out: &str, cfg: &Cfg) -> Vec<Item> {
             continue;
         }
         // The window's row carries its active tiled pane (the first tiled pane when a floating pane is active).
-        let tiled: Vec<&Row> = rows.iter().filter(|x| x.wid == r.wid && !x.floating).collect();
-        let pane = tiled.iter().find(|x| x.active).or_else(|| tiled.first()).copied().unwrap_or(r);
+        let tiled: Vec<&Row> = rows
+            .iter()
+            .filter(|x| x.wid == r.wid && !x.floating)
+            .collect();
+        let pane = tiled
+            .iter()
+            .find(|x| x.active)
+            .or_else(|| tiled.first())
+            .copied()
+            .unwrap_or(r);
         seen_windows.insert(r.wid);
         let tiled_n = tiled.len() as u32;
-        let more = if tiled_n > 1 { format!("  {tiled_n} panes") } else { String::new() };
+        let more = if tiled_n > 1 {
+            format!("  {tiled_n} panes")
+        } else {
+            String::new()
+        };
         let mut i = inst(pane, Kind::Window);
         i.panes = tiled_n.max(1);
         items.push(Item {
@@ -481,10 +585,27 @@ pub fn parse_running(out: &str, cfg: &Cfg) -> Vec<Item> {
 /// The rows of the AI section: [[keybindings.actions]] (label, prefix key).
 pub fn ai_items(v: &Value) -> Result<Vec<Item>, String> {
     let mut out = Vec::new();
-    for a in at(v, "keybindings.actions")?.as_array().ok_or("keybindings.actions must be an array")? {
-        let label = a.get("label").and_then(Value::as_str).filter(|t| policy::plain_text(t)).ok_or("keybindings.actions label must be plain text")?;
-        let key = a.get("key").and_then(Value::as_str).filter(|k| policy::valid_key(k)).ok_or("keybindings.actions key is not a tmux key")?;
-        out.push(Item { label: label.into(), detail: String::new(), key: single(key), target: Target::Prefix { key: key.into() }, enabled: true });
+    for a in at(v, "keybindings.actions")?
+        .as_array()
+        .ok_or("keybindings.actions must be an array")?
+    {
+        let label = a
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|t| policy::plain_text(t))
+            .ok_or("keybindings.actions label must be plain text")?;
+        let key = a
+            .get("key")
+            .and_then(Value::as_str)
+            .filter(|k| policy::valid_key(k))
+            .ok_or("keybindings.actions key is not a tmux key")?;
+        out.push(Item {
+            label: label.into(),
+            detail: String::new(),
+            key: single(key),
+            target: Target::Prefix { key: key.into() },
+            enabled: true,
+        });
     }
     Ok(out)
 }
@@ -498,7 +619,11 @@ fn single(key: &str) -> Option<char> {
 }
 
 /// One section per installed-and-visible TUI section, in [terminal.tui_launcher].sections order.
-pub fn app_sections(v: &Value, cfg: &Cfg, is_exec: impl Fn(&str) -> bool) -> Result<Vec<Section>, String> {
+pub fn app_sections(
+    v: &Value,
+    cfg: &Cfg,
+    is_exec: impl Fn(&str) -> bool,
+) -> Result<Vec<Section>, String> {
     let l = terminal_tuis::launcher(v)?;
     if !l.enabled {
         return Ok(Vec::new());
@@ -519,7 +644,12 @@ pub fn app_sections(v: &Value, cfg: &Cfg, is_exec: impl Fn(&str) -> bool) -> Res
                     enabled: true,
                 })
                 .collect();
-            (!items.is_empty()).then(|| Section { id: sec.clone(), title: cfg.title_of(sec), items, empty: None })
+            (!items.is_empty()).then(|| Section {
+                id: sec.clone(),
+                title: cfg.title_of(sec),
+                items,
+                empty: None,
+            })
         })
         .collect())
 }
@@ -531,7 +661,10 @@ pub fn menu_sections(v: &Value, cfg: &Cfg, pane: &PaneState) -> Result<Vec<Secti
     // A row several menus share (Detach, New window) is listed once, in the first section that has it.
     let mut shown: BTreeSet<(String, String)> = BTreeSet::new();
     for id in &cfg.menu_sections {
-        let m = menus.iter().find(|m| &m.id == id).ok_or_else(|| format!("keybindings.tmux.launcher.menu_sections: no menu {id:?}"))?;
+        let m = menus
+            .iter()
+            .find(|m| &m.id == id)
+            .ok_or_else(|| format!("keybindings.tmux.launcher.menu_sections: no menu {id:?}"))?;
         let items: Vec<Item> = m
             .items
             .iter()
@@ -543,12 +676,20 @@ pub fn menu_sections(v: &Value, cfg: &Cfg, pane: &PaneState) -> Result<Vec<Secti
                 label: it.label.trim_end_matches(" >").to_owned(),
                 detail: String::new(),
                 key: single(&it.key),
-                target: Target::MenuRow { menu: id.clone(), key: it.key.clone() },
+                target: Target::MenuRow {
+                    menu: id.clone(),
+                    key: it.key.clone(),
+                },
                 enabled: (!it.copy_only || pane.copy_mode) && !(it.managed_disable && pane.managed),
             })
             .collect();
         if !items.is_empty() {
-            out.push(Section { id: id.clone(), title: cfg.title_of(id), items, empty: None });
+            out.push(Section {
+                id: id.clone(),
+                title: cfg.title_of(id),
+                items,
+                empty: None,
+            });
         }
     }
     Ok(out)
@@ -556,19 +697,36 @@ pub fn menu_sections(v: &Value, cfg: &Cfg, pane: &PaneState) -> Result<Vec<Secti
 
 /// The launcher's sections in [keybindings.tmux.launcher].sections order, with unique keys: prefix and menu keys
 /// keep their own key where it is still free, apps take the next free key of POOL, `q` is never a key.
-pub fn build(cfg: &Cfg, running: Vec<Item>, ai: Vec<Item>, apps: Vec<Section>, menus: Vec<Section>) -> Vec<Section> {
+pub fn build(
+    cfg: &Cfg,
+    running: Vec<Item>,
+    ai: Vec<Item>,
+    apps: Vec<Section>,
+    menus: Vec<Section>,
+) -> Vec<Section> {
     let mut out = Vec::new();
-    let (mut ai, mut apps, mut menus, mut running) = (Some(ai), Some(apps), Some(menus), Some(running));
+    let (mut ai, mut apps, mut menus, mut running) =
+        (Some(ai), Some(apps), Some(menus), Some(running));
     for g in &cfg.sections {
         match g.as_str() {
             "running" => {
                 if let Some(r) = running.take() {
-                    out.push(Section { id: "running".into(), title: cfg.title_of("running"), items: r, empty: Some(cfg.empty_running.clone()) })
+                    out.push(Section {
+                        id: "running".into(),
+                        title: cfg.title_of("running"),
+                        items: r,
+                        empty: Some(cfg.empty_running.clone()),
+                    })
                 }
             }
             "ai" => {
                 if let Some(a) = ai.take().filter(|a| !a.is_empty()) {
-                    out.push(Section { id: "ai".into(), title: cfg.title_of("ai"), items: a, empty: None })
+                    out.push(Section {
+                        id: "ai".into(),
+                        title: cfg.title_of("ai"),
+                        items: a,
+                        empty: None,
+                    })
                 }
             }
             "apps" => out.extend(apps.take().unwrap_or_default()),
@@ -587,9 +745,17 @@ pub fn build(cfg: &Cfg, running: Vec<Item>, ai: Vec<Item>, apps: Vec<Section>, m
             }
         }
     }
-    let mut pool = POOL.chars().filter(|c| !used.contains(c)).collect::<Vec<_>>().into_iter();
+    let mut pool = POOL
+        .chars()
+        .filter(|c| !used.contains(c))
+        .collect::<Vec<_>>()
+        .into_iter();
     for sec in out.iter_mut() {
-        for it in sec.items.iter_mut().filter(|i| matches!(i.target, Target::App { .. })) {
+        for it in sec
+            .items
+            .iter_mut()
+            .filter(|i| matches!(i.target, Target::App { .. }))
+        {
             if it.key.is_none() {
                 it.key = pool.next();
             }
@@ -633,7 +799,12 @@ fn block(si: usize, s: &Section) -> Vec<Line> {
 /// Sections flow into two columns once the area is two_column_min_width wide; a section is never split, and the
 /// split point is the section boundary that balances the two columns best.
 pub fn layout(sections: &[Section], area: Rect, cfg: &Cfg) -> Layout {
-    let blocks: Vec<Vec<Line>> = sections.iter().enumerate().map(|(i, s)| block(i, s)).filter(|b| b.len() > 1).collect();
+    let blocks: Vec<Vec<Line>> = sections
+        .iter()
+        .enumerate()
+        .map(|(i, s)| block(i, s))
+        .filter(|b| b.len() > 1)
+        .collect();
     let join = |bs: &[Vec<Line>]| -> Vec<Line> {
         let mut v = Vec::new();
         for (i, b) in bs.iter().enumerate() {
@@ -667,7 +838,13 @@ pub fn layout(sections: &[Section], area: Rect, cfg: &Cfg) -> Layout {
             height,
         }
     } else {
-        Layout { cols: vec![join(&blocks)], col_w: inner_w, col_x: vec![area.x + 1], top, height }
+        Layout {
+            cols: vec![join(&blocks)],
+            col_w: inner_w,
+            col_x: vec![area.x + 1],
+            top,
+            height,
+        }
     }
 }
 
@@ -740,11 +917,20 @@ pub fn map_key(k: KeyEvent, prefix: &str, pending: &mut bool) -> Input {
         KeyCode::BackTab => Input::NextSection,
         KeyCode::Tab | KeyCode::Menu => Input::Options,
         KeyCode::F(10) if k.modifiers.contains(KeyModifiers::SHIFT) => Input::Options,
-        KeyCode::Enter if k.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => Input::Options,
+        KeyCode::Enter
+            if k.modifiers
+                .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+        {
+            Input::Options
+        }
         KeyCode::Enter | KeyCode::Char(' ') => Input::Activate,
         KeyCode::Esc => Input::Back,
         KeyCode::Char(c) if c == CLOSE_KEY && !ctrl => Input::Back,
-        KeyCode::Char(c) if !ctrl && !k.modifiers.contains(KeyModifiers::ALT) && c.is_ascii_graphic() => Input::Key(c),
+        KeyCode::Char(c)
+            if !ctrl && !k.modifiers.contains(KeyModifiers::ALT) && c.is_ascii_graphic() =>
+        {
+            Input::Key(c)
+        }
         _ => Input::Nothing,
     }
 }
@@ -764,7 +950,9 @@ pub enum Op {
 }
 
 fn tmux_op<S: AsRef<str>>(args: &[S]) -> Op {
-    Op::Tmux { args: args.iter().map(|a| a.as_ref().to_owned()).collect() }
+    Op::Tmux {
+        args: args.iter().map(|a| a.as_ref().to_owned()).collect(),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -792,7 +980,16 @@ impl Ctx {
 
 /// A free session name: base (sanitised), then base-2, base-3, ...
 pub fn fresh_name(base: &str, taken: &[String]) -> String {
-    let mut b: String = base.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c.to_ascii_lowercase() } else { '-' }).collect();
+    let mut b: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
     b = b.trim_matches('-').chars().take(28).collect();
     if b.is_empty() {
         b = "instance".into();
@@ -809,31 +1006,92 @@ pub fn fresh_name(base: &str, taken: &[String]) -> String {
 /// Moves an instance into a new session NAME: a placeholder window holds the session open for the move and is closed
 /// right after it, so NAME ends up holding only the instance.
 fn into_new_session(i: &Instance, name: &str) -> Vec<Op> {
-    let moved = if i.kind == Kind::Window { i.window_id.as_str() } else { i.pane_id.as_str() };
-    let mut v = vec![tmux_op(&["new-session", "-d", "-s", name, "-e", "MIOS_SESSION_BARE=1", "sleep", "30"])];
-    if i.kind == Kind::Window {
-        v.push(tmux_op(&["move-window", "-s", &i.window_id, "-t", &format!("={name}:")]));
+    let moved = if i.kind == Kind::Window {
+        i.window_id.as_str()
     } else {
-        v.push(tmux_op(&["break-pane", "-d", "-s", &i.pane_id, "-t", &format!("={name}:")]));
+        i.pane_id.as_str()
+    };
+    let mut v = vec![tmux_op(&[
+        "new-session",
+        "-d",
+        "-s",
+        name,
+        "-e",
+        "MIOS_SESSION_BARE=1",
+        "sleep",
+        "30",
+    ])];
+    if i.kind == Kind::Window {
+        v.push(tmux_op(&[
+            "move-window",
+            "-s",
+            &i.window_id,
+            "-t",
+            &format!("={name}:"),
+        ]));
+    } else {
+        v.push(tmux_op(&[
+            "break-pane",
+            "-d",
+            "-s",
+            &i.pane_id,
+            "-t",
+            &format!("={name}:"),
+        ]));
     }
     v.push(tmux_op(&["kill-window", "-a", "-t", moved]));
-    v.push(tmux_op(&["set-option", "-t", &format!("={name}:"), "@mios-bare", "1"]));
+    v.push(tmux_op(&[
+        "set-option",
+        "-t",
+        &format!("={name}:"),
+        "@mios-bare",
+        "1",
+    ]));
     v
 }
 
 fn exec_terminal(args: &[&str], pane: &str) -> Op {
-    Op::Exec { argv: std::iter::once(TERMINAL).chain(args.iter().copied()).map(str::to_owned).collect(), pane: pane.to_owned() }
+    Op::Exec {
+        argv: std::iter::once(TERMINAL)
+            .chain(args.iter().copied())
+            .map(str::to_owned)
+            .collect(),
+        pane: pane.to_owned(),
+    }
 }
 
 /// What Enter (or a click) does on a row.
 pub fn activate(t: &Target, cfg: &Cfg, ctx: &Ctx) -> Vec<Op> {
     match t {
-        Target::Prefix { key } => vec![tmux_op(&["send-keys", "-c", &ctx.client, "-K", &cfg.prefix, key])],
+        Target::Prefix { key } => vec![tmux_op(&[
+            "send-keys",
+            "-c",
+            &ctx.client,
+            "-K",
+            &cfg.prefix,
+            key,
+        ])],
         Target::MenuRow { menu, key } => vec![
-            tmux_op(&["switch-client", "-c", &ctx.client, "-T", &policy::menu_table(menu)]),
+            tmux_op(&[
+                "switch-client",
+                "-c",
+                &ctx.client,
+                "-T",
+                &policy::menu_table(menu),
+            ]),
             tmux_op(&["send-keys", "-c", &ctx.client, "-K", key]),
         ],
-        Target::App { id } => vec![exec_terminal(&["--app", id, "--client", &ctx.client, "--console", ctx.console_flag()], &ctx.pane)],
+        Target::App { id } => vec![exec_terminal(
+            &[
+                "--app",
+                id,
+                "--client",
+                &ctx.client,
+                "--console",
+                ctx.console_flag(),
+            ],
+            &ctx.pane,
+        )],
         Target::Instance(i) => go_to(i, ctx),
     }
 }
@@ -842,7 +1100,11 @@ fn go_to(i: &Instance, ctx: &Ctx) -> Vec<Op> {
     match i.kind {
         Kind::FloatShell => {
             // Show the float shell of the pane's parent session: switch there first unless the client is in it.
-            let parent_pane = ctx.running.iter().find(|r| r.kind == Kind::Window && r.session_id == i.parent).map(|r| r.pane_id.clone());
+            let parent_pane = ctx
+                .running
+                .iter()
+                .find(|r| r.kind == Kind::Window && r.session_id == i.parent)
+                .map(|r| r.pane_id.clone());
             let mut v = Vec::new();
             let pane = if i.parent == ctx.state.session_id || parent_pane.is_none() {
                 ctx.pane.clone()
@@ -851,10 +1113,26 @@ fn go_to(i: &Instance, ctx: &Ctx) -> Vec<Op> {
                 v.push(tmux_op(&["switch-client", "-c", &ctx.client, "-t", &p]));
                 p
             };
-            v.push(exec_terminal(&["--float", "shell", "--client", &ctx.client, "--console", ctx.console_flag()], &pane));
+            v.push(exec_terminal(
+                &[
+                    "--float",
+                    "shell",
+                    "--client",
+                    &ctx.client,
+                    "--console",
+                    ctx.console_flag(),
+                ],
+                &pane,
+            ));
             v
         }
-        _ => vec![tmux_op(&["switch-client", "-c", &ctx.client, "-t", &i.pane_id])],
+        _ => vec![tmux_op(&[
+            "switch-client",
+            "-c",
+            &ctx.client,
+            "-t",
+            &i.pane_id,
+        ])],
     }
 }
 
@@ -886,8 +1164,16 @@ pub struct Overlay {
 
 impl Overlay {
     fn new(title: String, entries: Vec<Entry>, start: usize) -> Self {
-        let sel = (start..entries.len()).chain(0..start).find(|&i| entries[i].enabled).unwrap_or(0);
-        Overlay { title, entries, sel, offset: 0 }
+        let sel = (start..entries.len())
+            .chain(0..start)
+            .find(|&i| entries[i].enabled)
+            .unwrap_or(0);
+        Overlay {
+            title,
+            entries,
+            sel,
+            offset: 0,
+        }
     }
     fn step(&mut self, down: bool) {
         let n = self.entries.len();
@@ -906,7 +1192,11 @@ impl Overlay {
 }
 
 fn entry(label: String, enabled: bool, choice: Choice) -> Entry {
-    Entry { label, enabled, choice }
+    Entry {
+        label,
+        enabled,
+        choice,
+    }
 }
 
 /// The options of a row (right-click, Tab, Shift+Enter): instance management, or how to open an app.
@@ -917,35 +1207,103 @@ pub fn options(it: &Item, cfg: &Cfg, ctx: &Ctx, app_argv: Option<(&str, Vec<Stri
         Target::Instance(i) => {
             let pane_level = matches!(i.kind, Kind::Floating | Kind::FloatShell);
             let mut e = vec![entry(l("go"), true, Choice::Ops(go_to(i, ctx)))];
-            let name = fresh_name(&format!("{}{}", cfg.popout_prefix, if i.kind == Kind::Window { &i.window } else { &i.command }), &ctx.all_session_names);
+            let name = fresh_name(
+                &format!(
+                    "{}{}",
+                    cfg.popout_prefix,
+                    if i.kind == Kind::Window {
+                        &i.window
+                    } else {
+                        &i.command
+                    }
+                ),
+                &ctx.all_session_names,
+            );
             let mut pop = into_new_session(i, &name);
             pop.push(Op::Desktop { session: name });
             e.push(entry(l("popout"), !i.managed, Choice::Ops(pop)));
             if pane_level {
                 let dock = if i.kind == Kind::FloatShell && !i.origin {
                     // A shell started in the float shell has no window to return to: it joins the launching pane's.
-                    vec![tmux_op(&["join-pane", "-h", "-s", &i.pane_id, "-t", &ctx.pane])]
+                    vec![tmux_op(&[
+                        "join-pane",
+                        "-h",
+                        "-s",
+                        &i.pane_id,
+                        "-t",
+                        &ctx.pane,
+                    ])]
                 } else {
-                    vec![exec_terminal(&["--float", "lift", "--client", &ctx.client, "--console", ctx.console_flag()], &i.pane_id)]
+                    vec![exec_terminal(
+                        &[
+                            "--float",
+                            "lift",
+                            "--client",
+                            &ctx.client,
+                            "--console",
+                            ctx.console_flag(),
+                        ],
+                        &i.pane_id,
+                    )]
                 };
                 e.push(entry(l("dock"), !i.managed, Choice::Ops(dock)));
             } else {
                 // Lifting the only pane of a window would close the window: offered once it has a second pane.
-                let lift = vec![exec_terminal(&["--float", "lift", "--client", &ctx.client, "--console", ctx.console_flag()], &i.pane_id)];
-                e.push(entry(l("float"), !i.managed && i.panes > 1, Choice::Ops(lift)));
+                let lift = vec![exec_terminal(
+                    &[
+                        "--float",
+                        "lift",
+                        "--client",
+                        &ctx.client,
+                        "--console",
+                        ctx.console_flag(),
+                    ],
+                    &i.pane_id,
+                )];
+                e.push(entry(
+                    l("float"),
+                    !i.managed && i.panes > 1,
+                    Choice::Ops(lift),
+                ));
             }
-            e.push(entry(l("move_window"), !i.managed, Choice::MoveWindow(i.clone())));
-            e.push(entry(l("move_session"), !i.managed && i.kind == Kind::Window, Choice::MoveSession(i.clone())));
+            e.push(entry(
+                l("move_window"),
+                !i.managed,
+                Choice::MoveWindow(i.clone()),
+            ));
+            e.push(entry(
+                l("move_session"),
+                !i.managed && i.kind == Kind::Window,
+                Choice::MoveSession(i.clone()),
+            ));
             if i.kind == Kind::Window {
                 let rename = format!("rename-window -t {} -- '%%'", i.window_id);
-                e.push(entry(l("rename"), true, Choice::Ops(vec![tmux_op(&["command-prompt", "-t", &ctx.client, "-I", &i.window, &rename])])));
+                e.push(entry(
+                    l("rename"),
+                    true,
+                    Choice::Ops(vec![tmux_op(&[
+                        "command-prompt",
+                        "-t",
+                        &ctx.client,
+                        "-I",
+                        &i.window,
+                        &rename,
+                    ])]),
+                ));
             }
             e.push(entry(l("close"), true, Choice::Confirm(i.clone())));
             Overlay::new(title, e, 0)
         }
         Target::App { id } => {
             let open = |mode: Option<&str>| {
-                let mut a = vec!["--app", id.as_str(), "--client", ctx.client.as_str(), "--console", ctx.console_flag()];
+                let mut a = vec![
+                    "--app",
+                    id.as_str(),
+                    "--client",
+                    ctx.client.as_str(),
+                    "--console",
+                    ctx.console_flag(),
+                ];
                 if let Some(m) = mode {
                     a.extend(["--mode", m]);
                 }
@@ -958,26 +1316,68 @@ pub fn options(it: &Item, cfg: &Cfg, ctx: &Ctx, app_argv: Option<(&str, Vec<Stri
                 entry(l("open_float"), true, open(Some("float"))),
             ];
             let desktop = app_argv.map(|(label, argv)| {
-                let name = fresh_name(&format!("{}{id}", cfg.popout_prefix), &ctx.all_session_names);
-                let mut args: Vec<String> = ["new-session", "-d", "-s", &name, "-n", label, "-e", "MIOS_SESSION_BARE=1", "--"].iter().map(|s| s.to_string()).collect();
+                let name = fresh_name(
+                    &format!("{}{id}", cfg.popout_prefix),
+                    &ctx.all_session_names,
+                );
+                let mut args: Vec<String> = [
+                    "new-session",
+                    "-d",
+                    "-s",
+                    &name,
+                    "-n",
+                    label,
+                    "-e",
+                    "MIOS_SESSION_BARE=1",
+                    "--",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
                 args.extend(argv);
-                vec![Op::Tmux { args }, tmux_op(&["set-option", "-t", &format!("={name}:"), "@mios-bare", "1"]), Op::Desktop { session: name }]
+                vec![
+                    Op::Tmux { args },
+                    tmux_op(&["set-option", "-t", &format!("={name}:"), "@mios-bare", "1"]),
+                    Op::Desktop { session: name },
+                ]
             });
-            e.push(entry(l("open_desktop"), desktop.is_some(), desktop.map(Choice::Ops).unwrap_or(Choice::Cancel)));
+            e.push(entry(
+                l("open_desktop"),
+                desktop.is_some(),
+                desktop.map(Choice::Ops).unwrap_or(Choice::Cancel),
+            ));
             e.push(entry(l("cancel"), true, Choice::Cancel));
             Overlay::new(title, e, 0)
         }
-        t => Overlay::new(title, vec![entry(l("run"), true, Choice::Ops(activate(t, cfg, ctx))), entry(l("cancel"), true, Choice::Cancel)], 0),
+        t => Overlay::new(
+            title,
+            vec![
+                entry(l("run"), true, Choice::Ops(activate(t, cfg, ctx))),
+                entry(l("cancel"), true, Choice::Cancel),
+            ],
+            0,
+        ),
     }
 }
 
 /// The close confirmation: No first (the default, as in the kill menus).
 pub fn confirm(i: &Instance, cfg: &Cfg) -> Overlay {
-    let kill = if i.kind == Kind::Window { tmux_op(&["kill-window", "-t", &i.window_id]) } else { tmux_op(&["kill-pane", "-t", &i.pane_id]) };
-    let what = if i.kind == Kind::Window { i.window.clone() } else { i.command.clone() };
+    let kill = if i.kind == Kind::Window {
+        tmux_op(&["kill-window", "-t", &i.window_id])
+    } else {
+        tmux_op(&["kill-pane", "-t", &i.pane_id])
+    };
+    let what = if i.kind == Kind::Window {
+        i.window.clone()
+    } else {
+        i.command.clone()
+    };
     Overlay::new(
         format!("{} {}", clean(&what, 30), cfg.confirm_close),
-        vec![entry(cfg.label("no"), true, Choice::Cancel), entry(cfg.label("yes"), true, Choice::Ops(vec![kill]))],
+        vec![
+            entry(cfg.label("no"), true, Choice::Cancel),
+            entry(cfg.label("yes"), true, Choice::Ops(vec![kill])),
+        ],
         0,
     )
 }
@@ -990,14 +1390,39 @@ pub fn move_window(i: &Instance, cfg: &Cfg, ctx: &Ctx) -> Overlay {
         .filter(|r| r.kind == Kind::Window && r.window_id != i.window_id && !r.managed)
         .map(|r| {
             entry(
-                format!("{}:{} {}", clean(&r.session, 16), r.window_index, clean(&r.window, 24)),
+                format!(
+                    "{}:{} {}",
+                    clean(&r.session, 16),
+                    r.window_index,
+                    clean(&r.window, 24)
+                ),
                 true,
-                Choice::Ops(vec![tmux_op(&["join-pane", "-s", &i.pane_id, "-t", &r.pane_id])]),
+                Choice::Ops(vec![tmux_op(&[
+                    "join-pane",
+                    "-s",
+                    &i.pane_id,
+                    "-t",
+                    &r.pane_id,
+                ])]),
             )
         })
         .collect();
-    let home = if i.kind == Kind::FloatShell { ctx.state.session_id.clone() } else { i.session_id.clone() };
-    e.push(entry(cfg.label("new_window"), i.kind != Kind::Window || i.panes > 1, Choice::Ops(vec![tmux_op(&["break-pane", "-s", &i.pane_id, "-t", &format!("{home}:")])])));
+    let home = if i.kind == Kind::FloatShell {
+        ctx.state.session_id.clone()
+    } else {
+        i.session_id.clone()
+    };
+    e.push(entry(
+        cfg.label("new_window"),
+        i.kind != Kind::Window || i.panes > 1,
+        Choice::Ops(vec![tmux_op(&[
+            "break-pane",
+            "-s",
+            &i.pane_id,
+            "-t",
+            &format!("{home}:"),
+        ])]),
+    ));
     e.push(entry(cfg.label("cancel"), true, Choice::Cancel));
     Overlay::new(cfg.move_window_title.clone(), e, 0)
 }
@@ -1008,10 +1433,26 @@ pub fn move_session(i: &Instance, cfg: &Cfg, ctx: &Ctx) -> Overlay {
         .sessions
         .iter()
         .filter(|(id, _)| *id != i.session_id)
-        .map(|(_, name)| entry(clean(name, 30), true, Choice::Ops(vec![tmux_op(&["move-window", "-s", &i.window_id, "-t", &format!("={name}:")])])))
+        .map(|(_, name)| {
+            entry(
+                clean(name, 30),
+                true,
+                Choice::Ops(vec![tmux_op(&[
+                    "move-window",
+                    "-s",
+                    &i.window_id,
+                    "-t",
+                    &format!("={name}:"),
+                ])]),
+            )
+        })
         .collect();
     let name = fresh_name(&cfg.new_session_name, &ctx.all_session_names);
-    e.push(entry(cfg.new_session_label.clone(), true, Choice::Ops(into_new_session(i, &name))));
+    e.push(entry(
+        cfg.new_session_label.clone(),
+        true,
+        Choice::Ops(into_new_session(i, &name)),
+    ));
     e.push(entry(cfg.label("cancel"), true, Choice::Cancel));
     Overlay::new(cfg.move_session_title.clone(), e, 0)
 }
@@ -1042,7 +1483,18 @@ impl<'a> Ui<'a> {
     fn new(cfg: &'a Cfg, sections: Vec<Section>, area: Rect, start: Option<&str>) -> Self {
         let lay = layout(&sections, area, cfg);
         let sel_order = order(&sections, &lay);
-        let mut ui = Ui { cfg, sections, sel: 0, offset: 0, overlay: Vec::new(), pending: false, lay, sel_order, overlay_rect: Rect::default(), area };
+        let mut ui = Ui {
+            cfg,
+            sections,
+            sel: 0,
+            offset: 0,
+            overlay: Vec::new(),
+            pending: false,
+            lay,
+            sel_order,
+            overlay_rect: Rect::default(),
+            area,
+        };
         ui.start(start);
         ui
     }
@@ -1066,21 +1518,32 @@ impl<'a> Ui<'a> {
         let found = self.sel_order.iter().position(|&p| {
             let si = self.section_of(p).unwrap_or(usize::MAX);
             let s = &self.sections[si];
-            s.id == want || (want == "apps" && s.items.iter().any(|i| matches!(i.target, Target::App { .. })))
+            s.id == want
+                || (want == "apps"
+                    && s.items
+                        .iter()
+                        .any(|i| matches!(i.target, Target::App { .. })))
         });
         self.sel = found.unwrap_or(0);
     }
 
     fn relayout(&mut self, area: Rect) {
-        let keep = self.sel_order.get(self.sel).and_then(|&p| match self.lay.cols[p.0][p.1] {
-            Line::Item(si, ii) => Some((si, ii)),
-            _ => None,
-        });
+        let keep = self
+            .sel_order
+            .get(self.sel)
+            .and_then(|&p| match self.lay.cols[p.0][p.1] {
+                Line::Item(si, ii) => Some((si, ii)),
+                _ => None,
+            });
         self.area = area;
         self.lay = layout(&self.sections, area, self.cfg);
         self.sel_order = order(&self.sections, &self.lay);
         if let Some(k) = keep {
-            if let Some(i) = self.sel_order.iter().position(|&p| self.lay.cols[p.0][p.1] == Line::Item(k.0, k.1)) {
+            if let Some(i) = self
+                .sel_order
+                .iter()
+                .position(|&p| self.lay.cols[p.0][p.1] == Line::Item(k.0, k.1))
+            {
                 self.sel = i;
             }
         }
@@ -1092,9 +1555,15 @@ impl<'a> Ui<'a> {
     }
 
     fn move_col(&mut self, right: bool) {
-        let Some(&(c, l)) = self.sel_order.get(self.sel) else { return };
+        let Some(&(c, l)) = self.sel_order.get(self.sel) else {
+            return;
+        };
         if self.lay.cols.len() > 1 {
-            let target = if right { (c + 1).min(self.lay.cols.len() - 1) } else { c.saturating_sub(1) };
+            let target = if right {
+                (c + 1).min(self.lay.cols.len() - 1)
+            } else {
+                c.saturating_sub(1)
+            };
             if target == c {
                 return;
             }
@@ -1115,9 +1584,14 @@ impl<'a> Ui<'a> {
 
     fn jump_section(&mut self, forward: bool) {
         let starts: Vec<usize> = (0..self.sel_order.len())
-            .filter(|&i| i == 0 || self.section_of(self.sel_order[i]) != self.section_of(self.sel_order[i - 1]))
+            .filter(|&i| {
+                i == 0
+                    || self.section_of(self.sel_order[i]) != self.section_of(self.sel_order[i - 1])
+            })
             .collect();
-        let Some(here) = starts.iter().rposition(|&st| st <= self.sel) else { return };
+        let Some(here) = starts.iter().rposition(|&st| st <= self.sel) else {
+            return;
+        };
         self.sel = if forward {
             starts[(here + 1) % starts.len()]
         } else if self.sel > starts[here] {
@@ -1128,14 +1602,23 @@ impl<'a> Ui<'a> {
     }
 
     fn page(&mut self, down: bool) {
-        let Some(&(c, l)) = self.sel_order.get(self.sel) else { return };
+        let Some(&(c, l)) = self.sel_order.get(self.sel) else {
+            return;
+        };
         let h = self.lay.height as usize;
         let target = if down { l + h } else { l.saturating_sub(h) };
-        let same: Vec<usize> = (0..self.sel_order.len()).filter(|&i| self.sel_order[i].0 == c).collect();
+        let same: Vec<usize> = (0..self.sel_order.len())
+            .filter(|&i| self.sel_order[i].0 == c)
+            .collect();
         let pick = if down {
-            same.iter().copied().filter(|&i| self.sel_order[i].1 <= target).last()
+            same.iter()
+                .copied()
+                .filter(|&i| self.sel_order[i].1 <= target)
+                .last()
         } else {
-            same.iter().copied().find(|&i| self.sel_order[i].1 >= target)
+            same.iter()
+                .copied()
+                .find(|&i| self.sel_order[i].1 >= target)
         };
         if let Some(p) = pick {
             self.sel = p;
@@ -1147,7 +1630,11 @@ impl<'a> Ui<'a> {
             return None;
         }
         let line = self.offset + (y - self.lay.top) as usize;
-        let col = self.lay.col_x.iter().rposition(|&cx| x >= cx && x < cx + self.lay.col_w)?;
+        let col = self
+            .lay
+            .col_x
+            .iter()
+            .rposition(|&cx| x >= cx && x < cx + self.lay.col_w)?;
         self.sel_order.iter().position(|&p| p == (col, line))
     }
 
@@ -1178,11 +1665,22 @@ impl<'a> Ui<'a> {
     }
 
     /// One input step. `app_argv` resolves an app's label and argv for its desktop pop-out.
-    fn input(&mut self, inp: Input, ctx: &Ctx, app_argv: &dyn Fn(&str) -> Option<(String, Vec<String>)>) -> Outcome {
+    fn input(
+        &mut self,
+        inp: Input,
+        ctx: &Ctx,
+        app_argv: &dyn Fn(&str) -> Option<(String, Vec<String>)>,
+    ) -> Outcome {
         if let Some(ov) = self.overlay.last_mut() {
             match inp {
-                Input::Up | Input::Left | Input::PageUp | Input::Wheel { up: true } => ov.step(false),
-                Input::Down | Input::Right | Input::PageDown | Input::NextSection | Input::Wheel { up: false } => ov.step(true),
+                Input::Up | Input::Left | Input::PageUp | Input::Wheel { up: true } => {
+                    ov.step(false)
+                }
+                Input::Down
+                | Input::Right
+                | Input::PageDown
+                | Input::NextSection
+                | Input::Wheel { up: false } => ov.step(true),
                 Input::Home => ov.sel = ov.entries.iter().position(|e| e.enabled).unwrap_or(0),
                 Input::End => ov.sel = ov.entries.iter().rposition(|e| e.enabled).unwrap_or(0),
                 Input::Back => {
@@ -1213,7 +1711,9 @@ impl<'a> Ui<'a> {
         let n = self.sel_order.len();
         match inp {
             Input::Up | Input::Wheel { up: true } => self.sel = self.sel.saturating_sub(1),
-            Input::Down | Input::Wheel { up: false } => self.sel = (self.sel + 1).min(n.saturating_sub(1)),
+            Input::Down | Input::Wheel { up: false } => {
+                self.sel = (self.sel + 1).min(n.saturating_sub(1))
+            }
             Input::Left => self.move_col(false),
             Input::Right => self.move_col(true),
             Input::PageUp => self.page(false),
@@ -1229,12 +1729,24 @@ impl<'a> Ui<'a> {
             }
             Input::Options => {
                 if let Some(it) = self.selected().cloned() {
-                    let argv = if let Target::App { id } = &it.target { app_argv(id) } else { None };
-                    self.open_overlay(options(&it, self.cfg, ctx, argv.as_ref().map(|(l, a)| (l.as_str(), a.clone()))));
+                    let argv = if let Target::App { id } = &it.target {
+                        app_argv(id)
+                    } else {
+                        None
+                    };
+                    self.open_overlay(options(
+                        &it,
+                        self.cfg,
+                        ctx,
+                        argv.as_ref().map(|(l, a)| (l.as_str(), a.clone())),
+                    ));
                 }
             }
             Input::Key(c) => {
-                let found = self.sel_order.iter().position(|&p| self.item_at(p).is_some_and(|i| i.key == Some(c)));
+                let found = self
+                    .sel_order
+                    .iter()
+                    .position(|&p| self.item_at(p).is_some_and(|i| i.key == Some(c)));
                 if let Some(i) = found {
                     self.sel = i;
                     if let Some(it) = self.selected() {
@@ -1245,7 +1757,15 @@ impl<'a> Ui<'a> {
             Input::Click { x, y, right } => {
                 if let Some(i) = self.hit(x, y) {
                     self.sel = i;
-                    return self.input(if right { Input::Options } else { Input::Activate }, ctx, app_argv);
+                    return self.input(
+                        if right {
+                            Input::Options
+                        } else {
+                            Input::Activate
+                        },
+                        ctx,
+                        app_argv,
+                    );
                 }
             }
             Input::Nothing => {}
@@ -1254,7 +1774,9 @@ impl<'a> Ui<'a> {
     }
 
     fn scroll(&mut self) {
-        let Some(&(_, l)) = self.sel_order.get(self.sel) else { return };
+        let Some(&(_, l)) = self.sel_order.get(self.sel) else {
+            return;
+        };
         let h = self.lay.height as usize;
         // Keep the section header above the first row of a section in view.
         let want_top = l.saturating_sub(1);
@@ -1274,7 +1796,16 @@ impl<'a> Ui<'a> {
         // Title row, centred.
         let title = format!(" {} ", self.cfg.title);
         let tx = area.x + area.width.saturating_sub(title.len() as u16) / 2;
-        buf.set_stringn(tx, area.y, &title, area.width as usize, Style::default().fg(accent).bg(bg).add_modifier(Modifier::BOLD));
+        buf.set_stringn(
+            tx,
+            area.y,
+            &title,
+            area.width as usize,
+            Style::default()
+                .fg(accent)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        );
         self.scroll();
         let selected = self.sel_order.get(self.sel).copied();
         for (c, col) in self.lay.cols.iter().enumerate() {
@@ -1289,40 +1820,94 @@ impl<'a> Ui<'a> {
                     Line::Header(si) => {
                         let t = &self.sections[si].title;
                         let head = format!("{t} ");
-                        buf.set_stringn(x0, y, &head, w, Style::default().fg(accent).bg(bg).add_modifier(Modifier::BOLD));
+                        buf.set_stringn(
+                            x0,
+                            y,
+                            &head,
+                            w,
+                            Style::default()
+                                .fg(accent)
+                                .bg(bg)
+                                .add_modifier(Modifier::BOLD),
+                        );
                         let used = head.chars().count();
                         if used < w {
-                            buf.set_stringn(x0 + used as u16, y, rule.to_string().repeat(w - used), w - used, Style::default().fg(subtle).bg(bg));
+                            buf.set_stringn(
+                                x0 + used as u16,
+                                y,
+                                rule.to_string().repeat(w - used),
+                                w - used,
+                                Style::default().fg(subtle).bg(bg),
+                            );
                         }
                     }
                     Line::Note(si) => {
                         let t = self.sections[si].empty.clone().unwrap_or_default();
-                        buf.set_stringn(x0 + self.cfg.key_w + 2, y, &t, w.saturating_sub(self.cfg.key_w as usize + 2), Style::default().fg(muted).bg(bg).add_modifier(Modifier::ITALIC));
+                        buf.set_stringn(
+                            x0 + self.cfg.key_w + 2,
+                            y,
+                            &t,
+                            w.saturating_sub(self.cfg.key_w as usize + 2),
+                            Style::default()
+                                .fg(muted)
+                                .bg(bg)
+                                .add_modifier(Modifier::ITALIC),
+                        );
                     }
                     Line::Item(si, ii) => {
                         let it = &self.sections[si].items[ii];
                         let is_sel = selected == Some((c, li));
                         let st = if is_sel {
-                            Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .bg(accent)
+                                .fg(bg)
+                                .add_modifier(Modifier::BOLD)
                         } else if !it.enabled {
-                            Style::default().fg(muted).bg(bg).add_modifier(Modifier::DIM)
+                            Style::default()
+                                .fg(muted)
+                                .bg(bg)
+                                .add_modifier(Modifier::DIM)
                         } else {
                             base
                         };
                         let kw = self.cfg.key_w as usize;
                         let key = it.key.map(|k| k.to_string()).unwrap_or_default();
                         let left = format!("{key:>kw$}  {}", it.label);
-                        let detail = if self.lay.col_w >= self.cfg.detail_min && !it.detail.is_empty() { it.detail.clone() } else { String::new() };
+                        let detail =
+                            if self.lay.col_w >= self.cfg.detail_min && !it.detail.is_empty() {
+                                it.detail.clone()
+                            } else {
+                                String::new()
+                            };
                         let room = w.saturating_sub(left.chars().count() + 1);
-                        let detail: String = if detail.chars().count() <= room { detail } else { String::new() };
+                        let detail: String = if detail.chars().count() <= room {
+                            detail
+                        } else {
+                            String::new()
+                        };
                         let pad = w.saturating_sub(left.chars().count() + detail.chars().count());
                         let text = format!("{left}{}{detail}", " ".repeat(pad));
                         buf.set_stringn(x0, y, &text, w, st);
                         if !is_sel && it.enabled && !key.is_empty() {
-                            buf.set_stringn(x0 + (kw - key.len().min(kw)) as u16, y, &key, kw, Style::default().fg(accent).bg(bg).add_modifier(Modifier::BOLD));
+                            buf.set_stringn(
+                                x0 + (kw - key.len().min(kw)) as u16,
+                                y,
+                                &key,
+                                kw,
+                                Style::default()
+                                    .fg(accent)
+                                    .bg(bg)
+                                    .add_modifier(Modifier::BOLD),
+                            );
                         }
                         if !is_sel && !detail.is_empty() {
-                            buf.set_stringn(x0 + (w - detail.chars().count()) as u16, y, &detail, w, Style::default().fg(muted).bg(bg));
+                            buf.set_stringn(
+                                x0 + (w - detail.chars().count()) as u16,
+                                y,
+                                &detail,
+                                w,
+                                Style::default().fg(muted).bg(bg),
+                            );
                         }
                     }
                 }
@@ -1330,20 +1915,50 @@ impl<'a> Ui<'a> {
             // A scroll hint when the column continues below.
             if col.len() > self.offset + self.lay.height as usize {
                 let more = if console { "v more" } else { "\u{25be} more" };
-                buf.set_stringn(x0 + self.lay.col_w.saturating_sub(7), self.lay.top + self.lay.height, more, 7, Style::default().fg(muted).bg(bg));
+                buf.set_stringn(
+                    x0 + self.lay.col_w.saturating_sub(7),
+                    self.lay.top + self.lay.height,
+                    more,
+                    7,
+                    Style::default().fg(muted).bg(bg),
+                );
             }
         }
         let help = &self.cfg.help;
         let hx = area.x + area.width.saturating_sub(help.len() as u16) / 2;
-        buf.set_stringn(hx, area.y + area.height.saturating_sub(1), help, area.width as usize, Style::default().fg(muted).bg(bg));
+        buf.set_stringn(
+            hx,
+            area.y + area.height.saturating_sub(1),
+            help,
+            area.width as usize,
+            Style::default().fg(muted).bg(bg),
+        );
         if let Some(ov) = self.overlay.last_mut() {
-            let w = ov.entries.iter().map(|e| e.label.chars().count()).chain(std::iter::once(ov.title.chars().count())).max().unwrap_or(10) as u16 + 6;
+            let w = ov
+                .entries
+                .iter()
+                .map(|e| e.label.chars().count())
+                .chain(std::iter::once(ov.title.chars().count()))
+                .max()
+                .unwrap_or(10) as u16
+                + 6;
             let w = w.min(area.width);
             let h = (ov.entries.len() as u16 + 2).min(area.height);
-            let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h };
+            let r = Rect {
+                x: area.x + (area.width - w) / 2,
+                y: area.y + (area.height - h) / 2,
+                width: w,
+                height: h,
+            };
             self.overlay_rect = r;
             buf.set_style(r, Style::default().bg(bg).fg(fg));
-            let (tl, tr, bl, br, hz, vt) = if console { ('+', '+', '+', '+', '-', '|') } else { ('\u{256d}', '\u{256e}', '\u{2570}', '\u{256f}', '\u{2500}', '\u{2502}') };
+            let (tl, tr, bl, br, hz, vt) = if console {
+                ('+', '+', '+', '+', '-', '|')
+            } else {
+                (
+                    '\u{256d}', '\u{256e}', '\u{2570}', '\u{256f}', '\u{2500}', '\u{2502}',
+                )
+            };
             let bs = Style::default().fg(accent).bg(bg);
             for x in r.x..r.x + r.width {
                 buf.set_stringn(x, r.y, hz.to_string(), 1, bs);
@@ -1353,12 +1968,23 @@ impl<'a> Ui<'a> {
                 buf.set_stringn(r.x, y, vt.to_string(), 1, bs);
                 buf.set_stringn(r.x + r.width - 1, y, vt.to_string(), 1, bs);
             }
-            for (x, y, ch) in [(r.x, r.y, tl), (r.x + r.width - 1, r.y, tr), (r.x, r.y + r.height - 1, bl), (r.x + r.width - 1, r.y + r.height - 1, br)] {
+            for (x, y, ch) in [
+                (r.x, r.y, tl),
+                (r.x + r.width - 1, r.y, tr),
+                (r.x, r.y + r.height - 1, bl),
+                (r.x + r.width - 1, r.y + r.height - 1, br),
+            ] {
                 buf.set_stringn(x, y, ch.to_string(), 1, bs);
             }
             let t = format!(" {} ", ov.title);
             let tx = r.x + r.width.saturating_sub(t.chars().count() as u16) / 2;
-            buf.set_stringn(tx, r.y, &t, r.width as usize, bs.add_modifier(Modifier::BOLD));
+            buf.set_stringn(
+                tx,
+                r.y,
+                &t,
+                r.width as usize,
+                bs.add_modifier(Modifier::BOLD),
+            );
             // Keep the selection in view when the list is taller than the popup.
             let rows = r.height.saturating_sub(2).max(1) as usize;
             if ov.sel < ov.offset {
@@ -1372,13 +1998,23 @@ impl<'a> Ui<'a> {
                     break;
                 }
                 let st = if i == ov.sel {
-                    Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .bg(accent)
+                        .fg(bg)
+                        .add_modifier(Modifier::BOLD)
                 } else if !e.enabled {
-                    Style::default().fg(muted).bg(bg).add_modifier(Modifier::DIM)
+                    Style::default()
+                        .fg(muted)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM)
                 } else {
                     Style::default().fg(fg).bg(bg)
                 };
-                let line = format!(" {:<w$} ", e.label, w = (r.width as usize).saturating_sub(4));
+                let line = format!(
+                    " {:<w$} ",
+                    e.label,
+                    w = (r.width as usize).saturating_sub(4)
+                );
                 buf.set_stringn(r.x + 1, y, &line, r.width as usize - 2, st);
             }
         }
@@ -1389,8 +2025,15 @@ impl<'a> Ui<'a> {
 
 /// A tmux client name as #{q:client_name} gives it: a tty path or a client-PID control client.
 pub fn client_ok(c: &str) -> bool {
-    let tty = c.strip_prefix("/dev/").is_some_and(|t| !t.is_empty() && !t.contains("..") && t.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-".contains(&b)));
-    let ctl = c.strip_prefix("client-").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let tty = c.strip_prefix("/dev/").is_some_and(|t| {
+        !t.is_empty()
+            && !t.contains("..")
+            && t.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/._-".contains(&b))
+    });
+    let ctl = c
+        .strip_prefix("client-")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
     tty || ctl
 }
 
@@ -1418,19 +2061,44 @@ fn socket_from_env() -> Result<String, String> {
 }
 
 fn tmux(sock: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("tmux").arg("-S").arg(sock).args(args).env_remove("TMUX_PANE").stdin(Stdio::null()).output().map_err(|e| format!("tmux: {e}"))?;
+    let out = Command::new("tmux")
+        .arg("-S")
+        .arg(sock)
+        .args(args)
+        .env_remove("TMUX_PANE")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("tmux: {e}"))?;
     if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_owned())
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .trim_end_matches('\n')
+            .to_owned())
     } else {
-        Err(format!("tmux {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()))
+        Err(format!(
+            "tmux {}: {}",
+            args.first().unwrap_or(&""),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
     }
 }
 
 fn pane_state(sock: &str, pane: &str) -> PaneState {
-    let f = tmux(sock, &["display-message", "-p", "-t", pane, "#{pane_in_mode}\t#{pane_mode}\t#{E:@mios-managed-pane}\t#{session_id}"]).unwrap_or_default();
+    let f = tmux(
+        sock,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{pane_in_mode}\t#{pane_mode}\t#{E:@mios-managed-pane}\t#{session_id}",
+        ],
+    )
+    .unwrap_or_default();
     let f: Vec<&str> = f.split('\t').collect();
     PaneState {
-        copy_mode: f.first() == Some(&"1") && f.get(1).is_some_and(|m| m.contains("copy") || m.contains("view")),
+        copy_mode: f.first() == Some(&"1")
+            && f.get(1)
+                .is_some_and(|m| m.contains("copy") || m.contains("view")),
         managed: f.get(2) == Some(&"1"),
         session_id: f.get(3).unwrap_or(&"").to_string(),
     }
@@ -1438,18 +2106,36 @@ fn pane_state(sock: &str, pane: &str) -> PaneState {
 
 fn context(cfg: &Cfg, sock: &str, client: &str, pane: &str, console: bool) -> (Ctx, String) {
     let listing = tmux(sock, &["list-panes", "-a", "-F", PANES]).unwrap_or_default();
-    let sessions_out = tmux(sock, &["list-sessions", "-F", "#{session_id}\t#{session_name}"]).unwrap_or_default();
-    let all: Vec<(String, String)> = sessions_out.lines().filter_map(|l| l.split_once('\t')).map(|(a, b)| (a.to_owned(), b.to_owned())).collect();
+    let sessions_out = tmux(
+        sock,
+        &["list-sessions", "-F", "#{session_id}\t#{session_name}"],
+    )
+    .unwrap_or_default();
+    let all: Vec<(String, String)> = sessions_out
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(a, b)| (a.to_owned(), b.to_owned()))
+        .collect();
     let running = parse_running(&listing, cfg)
         .into_iter()
-        .filter_map(|i| if let Target::Instance(x) = i.target { Some(x) } else { None })
+        .filter_map(|i| {
+            if let Target::Instance(x) = i.target {
+                Some(x)
+            } else {
+                None
+            }
+        })
         .collect();
     let ctx = Ctx {
         client: client.into(),
         pane: pane.into(),
         console,
         state: pane_state(sock, pane),
-        sessions: all.iter().filter(|(_, n)| !policy::is_hidden_session(&cfg.hidden, n)).cloned().collect(),
+        sessions: all
+            .iter()
+            .filter(|(_, n)| !policy::is_hidden_session(&cfg.hidden, n))
+            .cloned()
+            .collect(),
         all_session_names: all.into_iter().map(|(_, n)| n).collect(),
         running,
     };
@@ -1466,15 +2152,27 @@ fn sections_for(v: &Value, cfg: &Cfg, ctx: &Ctx, listing: &str) -> Result<Vec<Se
     ))
 }
 
-fn app_argv_fn<'v>(v: &'v Value, console: bool) -> impl Fn(&str) -> Option<(String, Vec<String>)> + 'v {
+fn app_argv_fn<'v>(
+    v: &'v Value,
+    console: bool,
+) -> impl Fn(&str) -> Option<(String, Vec<String>)> + 'v {
     move |id: &str| {
         let cat = terminal_tuis::catalog(v).ok()?;
-        let t = terminal_tuis::visible(&cat, console, terminal_tuis::is_installed).into_iter().find(|t| t.id == id)?;
+        let t = terminal_tuis::visible(&cat, console, terminal_tuis::is_installed)
+            .into_iter()
+            .find(|t| t.id == id)?;
         Some((t.label.clone(), t.argv_for(console).to_vec()))
     }
 }
 
-fn pick(root: &Path, client: &str, pane: &str, console: bool, start: Option<&str>, result: &Path) -> Result<(), String> {
+fn pick(
+    root: &Path,
+    client: &str,
+    pane: &str,
+    console: bool,
+    start: Option<&str>,
+    result: &Path,
+) -> Result<(), String> {
     let v = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     let cfg = config(&v, console)?;
     let sock = socket_from_env()?;
@@ -1485,7 +2183,12 @@ fn pick(root: &Path, client: &str, pane: &str, console: bool, start: Option<&str
     let mut terminal = ratatui::init();
     let _ = execute!(std::io::stdout(), EnableMouseCapture);
     let size = terminal.size().map_err(|e| e.to_string())?;
-    let mut ui = Ui::new(&cfg, sections, Rect::new(0, 0, size.width, size.height), start);
+    let mut ui = Ui::new(
+        &cfg,
+        sections,
+        Rect::new(0, 0, size.width, size.height),
+        start,
+    );
     let outcome = loop {
         terminal
             .draw(|f| {
@@ -1500,10 +2203,20 @@ fn pick(root: &Path, client: &str, pane: &str, console: bool, start: Option<&str
             continue;
         }
         let inp = match event::read().map_err(|e| e.to_string())? {
-            Event::Key(k) if k.kind == KeyEventKind::Press => map_key(k, &cfg.prefix, &mut ui.pending),
+            Event::Key(k) if k.kind == KeyEventKind::Press => {
+                map_key(k, &cfg.prefix, &mut ui.pending)
+            }
             Event::Mouse(m) => match m.kind {
-                MouseEventKind::Down(MouseButton::Left) => Input::Click { x: m.column, y: m.row, right: false },
-                MouseEventKind::Down(MouseButton::Right) => Input::Click { x: m.column, y: m.row, right: true },
+                MouseEventKind::Down(MouseButton::Left) => Input::Click {
+                    x: m.column,
+                    y: m.row,
+                    right: false,
+                },
+                MouseEventKind::Down(MouseButton::Right) => Input::Click {
+                    x: m.column,
+                    y: m.row,
+                    right: true,
+                },
                 MouseEventKind::ScrollUp => Input::Wheel { up: true },
                 MouseEventKind::ScrollDown => Input::Wheel { up: false },
                 _ => Input::Nothing,
@@ -1529,7 +2242,10 @@ fn pick(root: &Path, client: &str, pane: &str, console: bool, start: Option<&str
 }
 
 fn result_file() -> Result<PathBuf, String> {
-    let base = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(std::env::temp_dir);
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("mios-launcher");
     match std::fs::create_dir(&dir) {
         Ok(()) => {}
@@ -1541,10 +2257,16 @@ fn result_file() -> Result<PathBuf, String> {
     if !meta.is_dir() || meta.uid() != unsafe { libc::getuid() } {
         return Err(format!("{} is not this user's directory", dir.display()));
     }
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| e.to_string())?;
     for n in 0..1000 {
         let p = dir.join(format!("{}-{n}.json", std::process::id()));
-        match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&p) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&p)
+        {
             Ok(_) => return Ok(p),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e.to_string()),
@@ -1564,7 +2286,8 @@ pub fn popup_size(cfg: &Cfg, cw: u16, ch: u16) -> Option<(u16, u16)> {
 }
 
 fn desktop_session() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty()) || std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
 }
 
 /// Run the steps `pick` chose, on the same server and client.
@@ -1583,10 +2306,23 @@ pub fn run_ops(cfg: &Cfg, sock: &str, client: &str, ops: Vec<Op>) -> Result<(), 
                     let mut argv = cfg.desktop_terminal.clone();
                     argv.extend(["--session".into(), session]);
                     let mut c = Command::new(&argv[0]);
-                    c.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+                    c.args(&argv[1..])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .process_group(0);
                     c.spawn().map_err(|e| format!("{}: {e}", argv[0]))?;
                 } else {
-                    tmux(sock, &["display-message", "-c", client, "-l", &format!("{} {session}", cfg.popped_message)])?;
+                    tmux(
+                        sock,
+                        &[
+                            "display-message",
+                            "-c",
+                            client,
+                            "-l",
+                            &format!("{} {session}", cfg.popped_message),
+                        ],
+                    )?;
                 }
             }
             Op::Exec { argv, pane } => {
@@ -1594,7 +2330,15 @@ pub fn run_ops(cfg: &Cfg, sock: &str, client: &str, ops: Vec<Op>) -> Result<(), 
                     return Err("launcher exec must be the MiOS-Tmux executor on a pane".into());
                 }
                 let tmux_env = std::env::var("TMUX").unwrap_or_else(|_| format!("{sock},0,0"));
-                return Err(format!("exec {}: {}", argv[0], Command::new(&argv[0]).args(&argv[1..]).env("TMUX", tmux_env).env("TMUX_PANE", pane).exec()));
+                return Err(format!(
+                    "exec {}: {}",
+                    argv[0],
+                    Command::new(&argv[0])
+                        .args(&argv[1..])
+                        .env("TMUX", tmux_env)
+                        .env("TMUX_PANE", pane)
+                        .exec()
+                ));
             }
         }
     }
@@ -1602,27 +2346,83 @@ pub fn run_ops(cfg: &Cfg, sock: &str, client: &str, ops: Vec<Op>) -> Result<(), 
 }
 
 /// Open the launcher popup on `client` (blocks until it closes), then run what was chosen.
-pub fn open_on(root: &Path, sock: &str, client: &str, pane: &str, console: bool, start: Option<&str>) -> Result<(), String> {
+pub fn open_on(
+    root: &Path,
+    sock: &str,
+    client: &str,
+    pane: &str,
+    console: bool,
+    start: Option<&str>,
+) -> Result<(), String> {
     if !client_ok(client) || !pane_ok(pane) {
         return Err("invalid tmux client or pane".into());
     }
     let v = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     let cfg = config(&v, console)?;
-    let size = tmux(sock, &["display-message", "-p", "-c", client, "#{client_width}\t#{client_height}"])?;
-    let (cw, ch) = size.split_once('\t').map(|(a, b)| (a.parse().unwrap_or(0), b.parse().unwrap_or(0))).unwrap_or((0, 0));
+    let size = tmux(
+        sock,
+        &[
+            "display-message",
+            "-p",
+            "-c",
+            client,
+            "#{client_width}\t#{client_height}",
+        ],
+    )?;
+    let (cw, ch) = size
+        .split_once('\t')
+        .map(|(a, b)| (a.parse().unwrap_or(0), b.parse().unwrap_or(0)))
+        .unwrap_or((0, 0));
     let Some((w, h)) = popup_size(&cfg, cw, ch) else {
-        return tmux(sock, &["display-message", "-c", client, "-l", &cfg.too_small]).map(|_| ());
+        return tmux(
+            sock,
+            &["display-message", "-c", client, "-l", &cfg.too_small],
+        )
+        .map(|_| ());
     };
     let result = result_file()?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let (w, h) = (w.to_string(), h.to_string());
-    let mut args: Vec<String> = ["display-popup", "-c", client, "-t", pane, "-E", "-w", &w, "-h", &h, "-x", "C", "-y", "C"].iter().map(|s| s.to_string()).collect();
+    let mut args: Vec<String> = [
+        "display-popup",
+        "-c",
+        client,
+        "-t",
+        pane,
+        "-E",
+        "-w",
+        &w,
+        "-h",
+        &h,
+        "-x",
+        "C",
+        "-y",
+        "C",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
     if console {
         args.extend(["-b".into(), s(&v, "theme.tmux.console.border_lines")?]);
     }
     args.push("--".into());
-    args.extend([me.display().to_string(), "launcher".into(), "pick".into(), "--root".into(), root.display().to_string(), "--client".into(), client.into(), "--pane".into(), pane.into()]);
-    args.extend(["--console".into(), if console { "1".into() } else { "0".into() }, "--result".into(), result.display().to_string()]);
+    args.extend([
+        me.display().to_string(),
+        "launcher".into(),
+        "pick".into(),
+        "--root".into(),
+        root.display().to_string(),
+        "--client".into(),
+        client.into(),
+        "--pane".into(),
+        pane.into(),
+    ]);
+    args.extend([
+        "--console".into(),
+        if console { "1".into() } else { "0".into() },
+        "--result".into(),
+        result.display().to_string(),
+    ]);
     if let Some(st) = start {
         args.extend(["--start".into(), st.into()]);
     }
@@ -1634,7 +2434,8 @@ pub fn open_on(root: &Path, sock: &str, client: &str, pane: &str, console: bool,
     if chosen.trim().is_empty() {
         return Ok(());
     }
-    let ops: Vec<Op> = serde_json::from_str(&chosen).map_err(|e| format!("launcher result: {e}"))?;
+    let ops: Vec<Op> =
+        serde_json::from_str(&chosen).map_err(|e| format!("launcher result: {e}"))?;
     run_ops(&cfg, sock, client, ops)
 }
 
@@ -1642,12 +2443,27 @@ pub fn open_on(root: &Path, sock: &str, client: &str, pane: &str, console: bool,
 
 /// A tmux client process below `pid` (the focused window) on a server named `socket` under `socket_root`
 /// (TMUX_TMPDIR of that client, else the SSOT root): (socket path, client tty). /proc only.
-pub fn tmux_client_under(proc_root: &Path, pid: u32, socket: &str, socket_root: &str) -> Option<(String, String)> {
+pub fn tmux_client_under(
+    proc_root: &Path,
+    pid: u32,
+    socket: &str,
+    socket_root: &str,
+) -> Option<(String, String)> {
     let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for e in std::fs::read_dir(proc_root).ok()?.flatten() {
-        let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
-        let Some(ppid) = stat.rsplit_once(") ").and_then(|(_, r)| r.split(' ').nth(1)).and_then(|x| x.parse::<u32>().ok()) else { continue };
+        let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else {
+            continue;
+        };
+        let Some(ppid) = stat
+            .rsplit_once(") ")
+            .and_then(|(_, r)| r.split(' ').nth(1))
+            .and_then(|x| x.parse::<u32>().ok())
+        else {
+            continue;
+        };
         children.entry(ppid).or_default().push(p);
     }
     let uid = unsafe { libc::getuid() };
@@ -1658,19 +2474,54 @@ pub fn tmux_client_under(proc_root: &Path, pid: u32, socket: &str, socket_root: 
             continue;
         }
         let dir = proc_root.join(p.to_string());
-        let args: Vec<String> = std::fs::read(dir.join("cmdline")).unwrap_or_default().split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-        if args.first().and_then(|a| Path::new(a).file_name()).and_then(|n| n.to_str()) == Some("tmux") {
+        let args: Vec<String> = std::fs::read(dir.join("cmdline"))
+            .unwrap_or_default()
+            .split(|b| *b == 0)
+            .filter(|a| !a.is_empty())
+            .map(|a| String::from_utf8_lossy(a).into_owned())
+            .collect();
+        if args
+            .first()
+            .and_then(|a| Path::new(a).file_name())
+            .and_then(|n| n.to_str())
+            == Some("tmux")
+        {
             let named = args.windows(2).any(|w| w[0] == "-L" && w[1] == socket);
-            let attach = args.iter().any(|a| matches!(a.as_str(), "attach" | "attach-session" | "a" | "new" | "new-session"));
+            let attach = args.iter().any(|a| {
+                matches!(
+                    a.as_str(),
+                    "attach" | "attach-session" | "a" | "new" | "new-session"
+                )
+            });
             // A detached `new-session -d` is the server being started, never a client of a terminal.
-            let detached = args.iter().any(|a| a == "-d" || (a.starts_with('-') && !a.starts_with("--") && a.len() > 2 && a[1..].contains('d') && a[1..].bytes().all(|b| b.is_ascii_alphabetic())));
+            let detached = args.iter().any(|a| {
+                a == "-d"
+                    || (a.starts_with('-')
+                        && !a.starts_with("--")
+                        && a.len() > 2
+                        && a[1..].contains('d')
+                        && a[1..].bytes().all(|b| b.is_ascii_alphabetic()))
+            });
             if named && attach && !detached {
                 let env = std::fs::read(dir.join("environ")).unwrap_or_default();
-                let tmpdir = env.split(|b| *b == 0).filter_map(|kv| std::str::from_utf8(kv).ok()).find_map(|kv| kv.strip_prefix("TMUX_TMPDIR=")).unwrap_or(socket_root).to_owned();
+                let tmpdir = env
+                    .split(|b| *b == 0)
+                    .filter_map(|kv| std::str::from_utf8(kv).ok())
+                    .find_map(|kv| kv.strip_prefix("TMUX_TMPDIR="))
+                    .unwrap_or(socket_root)
+                    .to_owned();
                 // A client's stdin is its terminal: a pty or a VT, never /dev/null or a file.
-                let tty = std::fs::read_link(dir.join("fd/0")).ok().map(|t| t.display().to_string()).filter(|t| client_ok(t) && (t.starts_with("/dev/pts/") || t.starts_with("/dev/tty")));
+                let tty = std::fs::read_link(dir.join("fd/0"))
+                    .ok()
+                    .map(|t| t.display().to_string())
+                    .filter(|t| {
+                        client_ok(t) && (t.starts_with("/dev/pts/") || t.starts_with("/dev/tty"))
+                    });
                 if let Some(tty) = tty {
-                    return Some((format!("{}/tmux-{uid}/{socket}", tmpdir.trim_end_matches('/')), tty));
+                    return Some((
+                        format!("{}/tmux-{uid}/{socket}", tmpdir.trim_end_matches('/')),
+                        tty,
+                    ));
                 }
             }
         }
@@ -1680,9 +2531,16 @@ pub fn tmux_client_under(proc_root: &Path, pid: u32, socket: &str, socket_root: 
 }
 
 fn focused_pid() -> Option<u32> {
-    let out = Command::new("hyprctl").args(["-j", "activewindow"]).stdin(Stdio::null()).output().ok()?;
+    let out = Command::new("hyprctl")
+        .args(["-j", "activewindow"])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    v.get("pid").and_then(serde_json::Value::as_u64).map(|p| p as u32).filter(|p| *p > 1)
+    v.get("pid")
+        .and_then(serde_json::Value::as_u64)
+        .map(|p| p as u32)
+        .filter(|p| *p > 1)
 }
 
 fn desktop(root: &Path) -> Result<(), String> {
@@ -1691,59 +2549,138 @@ fn desktop(root: &Path) -> Result<(), String> {
     if !cfg.enabled {
         return Err("the launcher is disabled ([keybindings.tmux.launcher].enabled)".into());
     }
-    if let Some((sock, tty)) = focused_pid().and_then(|p| tmux_client_under(Path::new("/proc"), p, &cfg.socket, &cfg.socket_root)) {
+    if let Some((sock, tty)) = focused_pid()
+        .and_then(|p| tmux_client_under(Path::new("/proc"), p, &cfg.socket, &cfg.socket_root))
+    {
         let clients = tmux(&sock, &["list-clients", "-F", "#{client_name}"]).unwrap_or_default();
         if clients.lines().any(|c| c == tty) {
             let pane = tmux(&sock, &["display-message", "-p", "-c", &tty, "#{pane_id}"])?;
-            let console = tmux(&sock, &["display-message", "-p", "-c", &tty, "#{?#{E:@mios-console-client},1,0}"]).unwrap_or_default() == "1";
+            let console = tmux(
+                &sock,
+                &[
+                    "display-message",
+                    "-p",
+                    "-c",
+                    &tty,
+                    "#{?#{E:@mios-console-client},1,0}",
+                ],
+            )
+            .unwrap_or_default()
+                == "1";
             return open_on(root, &sock, &tty, &pane, console, None);
         }
     }
     // No tmux-os client is focused: a new terminal enters tmux-os and opens the launcher there.
     let mut argv = cfg.desktop_terminal.clone();
     argv.push("--launcher".into());
-    Err(format!("exec {}: {}", argv[0], Command::new(&argv[0]).args(&argv[1..]).exec()))
+    Err(format!(
+        "exec {}: {}",
+        argv[0],
+        Command::new(&argv[0]).args(&argv[1..]).exec()
+    ))
 }
 
 // ---- entry ---------------------------------------------------------------------------------------------------
 
 pub fn run(cmd: &LauncherCommand) -> Result<(), String> {
     match cmd {
-        LauncherCommand::Open { root, client, console, start } => {
+        LauncherCommand::Open {
+            root,
+            client,
+            console,
+            start,
+        } => {
             let pane = std::env::var("TMUX_PANE").unwrap_or_default();
             if !pane_ok(&pane) {
                 return Err("TMUX_PANE must name the launching pane".into());
             }
-            open_on(Path::new(root), &socket_from_env()?, client, &pane, console_arg(console)?, start.as_deref())
+            open_on(
+                Path::new(root),
+                &socket_from_env()?,
+                client,
+                &pane,
+                console_arg(console)?,
+                start.as_deref(),
+            )
         }
-        LauncherCommand::Pick { root, client, pane, console, start, result } => {
+        LauncherCommand::Pick {
+            root,
+            client,
+            pane,
+            console,
+            start,
+            result,
+        } => {
             if !client_ok(client) || !pane_ok(pane) {
                 return Err("invalid tmux client or pane".into());
             }
-            pick(Path::new(root), client, pane, console_arg(console)?, start.as_deref(), result)
+            pick(
+                Path::new(root),
+                client,
+                pane,
+                console_arg(console)?,
+                start.as_deref(),
+                result,
+            )
         }
         LauncherCommand::Desktop { root } => desktop(Path::new(root)),
-        LauncherCommand::List { root, client, pane, console, width, height } => {
+        LauncherCommand::List {
+            root,
+            client,
+            pane,
+            console,
+            width,
+            height,
+        } => {
             let console = console_arg(console)?;
-            let v = mios_resolver::resolve_merged(Some(Path::new(root)), false).map_err(|e| e.to_string())?;
+            let v = mios_resolver::resolve_merged(Some(Path::new(root)), false)
+                .map_err(|e| e.to_string())?;
             let cfg = config(&v, console)?;
             let (ctx, listing) = match (socket_from_env(), client, pane) {
-                (Ok(sock), Some(c), Some(p)) if client_ok(c) && pane_ok(p) => context(&cfg, &sock, c, p, console),
-                _ => (Ctx { client: String::new(), pane: String::new(), console, state: PaneState::default(), sessions: vec![], all_session_names: vec![], running: vec![] }, String::new()),
+                (Ok(sock), Some(c), Some(p)) if client_ok(c) && pane_ok(p) => {
+                    context(&cfg, &sock, c, p, console)
+                }
+                _ => (
+                    Ctx {
+                        client: String::new(),
+                        pane: String::new(),
+                        console,
+                        state: PaneState::default(),
+                        sessions: vec![],
+                        all_session_names: vec![],
+                        running: vec![],
+                    },
+                    String::new(),
+                ),
             };
             let sections = sections_for(&v, &cfg, &ctx, &listing)?;
             let mut out = serde_json::json!({ "sections": sections });
             if let Some(w) = width {
-                out["screen"] = serde_json::Value::String(render_text(&cfg, sections.clone(), *w, *height, None));
+                out["screen"] = serde_json::Value::String(render_text(
+                    &cfg,
+                    sections.clone(),
+                    *w,
+                    *height,
+                    None,
+                ));
             }
-            println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+            );
             Ok(())
         }
     }
 }
 
 /// The launcher drawn into a plain-text screen (tests, `list --width`).
-pub fn render_text(cfg: &Cfg, sections: Vec<Section>, w: u16, h: u16, start: Option<&str>) -> String {
+pub fn render_text(
+    cfg: &Cfg,
+    sections: Vec<Section>,
+    w: u16,
+    h: u16,
+    start: Option<&str>,
+) -> String {
     let area = Rect::new(0, 0, w, h);
     let mut ui = Ui::new(cfg, sections, area, start);
     let mut buf = Buffer::empty(area);
@@ -1771,7 +2708,9 @@ mod tests {
     use super::*;
 
     fn ssot() -> Value {
-        include_str!("../../../../usr/share/mios/mios.toml").parse().unwrap()
+        include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap()
     }
 
     fn cfg() -> Cfg {
@@ -1792,7 +2731,13 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
     }
 
     fn inst(items: &[Item], label: &str) -> Instance {
-        items.iter().find_map(|i| match &i.target { Target::Instance(x) if i.label == label => Some(x.clone()), _ => None }).unwrap()
+        items
+            .iter()
+            .find_map(|i| match &i.target {
+                Target::Instance(x) if i.label == label => Some(x.clone()),
+                _ => None,
+            })
+            .unwrap()
     }
 
     fn ctx() -> Ctx {
@@ -1800,21 +2745,56 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
             client: "/dev/pts/7".into(),
             pane: "%1".into(),
             console: false,
-            state: PaneState { copy_mode: false, managed: false, session_id: "$1".into() },
-            sessions: vec![("$1".into(), "tmux-os".into()), ("$2".into(), "mios".into())],
-            all_session_names: vec!["tmux-os".into(), "mios".into(), "mios-float-1".into(), "pop-bash".into()],
-            running: running().into_iter().filter_map(|i| if let Target::Instance(x) = i.target { Some(x) } else { None }).collect(),
+            state: PaneState {
+                copy_mode: false,
+                managed: false,
+                session_id: "$1".into(),
+            },
+            sessions: vec![
+                ("$1".into(), "tmux-os".into()),
+                ("$2".into(), "mios".into()),
+            ],
+            all_session_names: vec![
+                "tmux-os".into(),
+                "mios".into(),
+                "mios-float-1".into(),
+                "pop-bash".into(),
+            ],
+            running: running()
+                .into_iter()
+                .filter_map(|i| {
+                    if let Target::Instance(x) = i.target {
+                        Some(x)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
         }
     }
 
     fn installed(a: &str) -> bool {
-        matches!(a, "btop" | "top" | "yazi" | "/usr/bin/mios-fanctl" | "/usr/bin/mios-controls" | "/usr/libexec/mios/mios-dashboard")
+        matches!(
+            a,
+            "btop"
+                | "top"
+                | "yazi"
+                | "/usr/bin/mios-fanctl"
+                | "/usr/bin/mios-controls"
+                | "/usr/libexec/mios/mios-dashboard"
+        )
     }
 
     fn sections() -> Vec<Section> {
         let v = ssot();
         let c = cfg();
-        build(&c, running(), ai_items(&v).unwrap(), app_sections(&v, &c, installed).unwrap(), menu_sections(&v, &c, &PaneState::default()).unwrap())
+        build(
+            &c,
+            running(),
+            ai_items(&v).unwrap(),
+            app_sections(&v, &c, installed).unwrap(),
+            menu_sections(&v, &c, &PaneState::default()).unwrap(),
+        )
     }
 
     #[test]
@@ -1823,7 +2803,11 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let labels: Vec<&str> = r.iter().map(|i| i.label.as_str()).collect();
         assert_eq!(labels, ["bash", "htop", "btop", "MiOS AI", "less"], "{r:?}");
         let w = inst(&r, "bash");
-        assert_eq!((w.kind, w.pane_id.as_str(), w.panes), (Kind::Window, "%1", 2), "the window row carries its active tiled pane");
+        assert_eq!(
+            (w.kind, w.pane_id.as_str(), w.panes),
+            (Kind::Window, "%1", 2),
+            "the window row carries its active tiled pane"
+        );
         assert_eq!(r[0].detail, "tmux-os:0  2 panes");
         assert_eq!(inst(&r, "htop").kind, Kind::Floating);
         let f = inst(&r, "less");
@@ -1841,17 +2825,44 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
     fn sections_are_grouped_in_ssot_order_with_unique_keys() {
         let s = sections();
         let ids: Vec<&str> = s.iter().map(|x| x.id.as_str()).collect();
-        assert_eq!(ids, ["running", "ai", "mios", "system", "files", "root", "pane", "window", "session"], "{ids:?}");
-        let keys: Vec<char> = s.iter().flat_map(|x| x.items.iter().filter_map(|i| i.key)).collect();
+        assert_eq!(
+            ids,
+            ["running", "ai", "mios", "system", "files", "root", "pane", "window", "session"],
+            "{ids:?}"
+        );
+        let keys: Vec<char> = s
+            .iter()
+            .flat_map(|x| x.items.iter().filter_map(|i| i.key))
+            .collect();
         let unique: BTreeSet<char> = keys.iter().copied().collect();
-        assert_eq!(keys.len(), unique.len(), "every key opens exactly one row: {keys:?}");
+        assert_eq!(
+            keys.len(),
+            unique.len(),
+            "every key opens exactly one row: {keys:?}"
+        );
         assert!(!unique.contains(&'q'), "q always closes");
         let ai = &s[1].items;
-        assert_eq!((ai[0].label.as_str(), ai[0].key), ("MiOS Terminal", Some('t')), "prefix keys are kept");
-        assert!(s.iter().filter(|x| ["mios", "system", "files"].contains(&x.id.as_str())).flat_map(|x| &x.items).all(|i| i.key.is_some()), "every app has a key");
+        assert_eq!(
+            (ai[0].label.as_str(), ai[0].key),
+            ("MiOS Terminal", Some('t')),
+            "prefix keys are kept"
+        );
+        assert!(
+            s.iter()
+                .filter(|x| ["mios", "system", "files"].contains(&x.id.as_str()))
+                .flat_map(|x| &x.items)
+                .all(|i| i.key.is_some()),
+            "every app has a key"
+        );
         // The launcher is the root menu and the apps menu: their own rows and the submenu links are not repeated.
         let root = s.iter().find(|x| x.id == "root").unwrap();
-        assert!(root.items.iter().all(|i| !["Apps and TUIs...", "Pane", "Window", "Session"].contains(&i.label.as_str())), "{root:?}");
+        assert!(
+            root.items
+                .iter()
+                .all(|i| !["Apps and TUIs...", "Pane", "Window", "Session"]
+                    .contains(&i.label.as_str())),
+            "{root:?}"
+        );
         assert!(root.items.iter().any(|i| i.label == "Float shell"));
         let window = s.iter().find(|x| x.id == "window").unwrap();
         assert!(!window.items.iter().any(|i| i.label == "< Back"));
@@ -1862,22 +2873,53 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let v = ssot();
         let c = cfg();
         let off = menu_sections(&v, &c, &PaneState::default()).unwrap();
-        let row = |s: &[Section], l: &str| s.iter().flat_map(|x| &x.items).find(|i| i.label == l).cloned().unwrap();
-        assert!(!row(&off, "Go to top").enabled, "copy-mode rows need copy mode");
+        let row = |s: &[Section], l: &str| {
+            s.iter()
+                .flat_map(|x| &x.items)
+                .find(|i| i.label == l)
+                .cloned()
+                .unwrap()
+        };
+        assert!(
+            !row(&off, "Go to top").enabled,
+            "copy-mode rows need copy mode"
+        );
         assert!(row(&off, "Float / dock").enabled);
-        let on = menu_sections(&v, &c, &PaneState { copy_mode: true, managed: true, session_id: String::new() }).unwrap();
+        let on = menu_sections(
+            &v,
+            &c,
+            &PaneState {
+                copy_mode: true,
+                managed: true,
+                session_id: String::new(),
+            },
+        )
+        .unwrap();
         assert!(row(&on, "Go to top").enabled);
-        assert!(!row(&on, "Float / dock").enabled, "managed AI panes refuse layout changes");
+        assert!(
+            !row(&on, "Float / dock").enabled,
+            "managed AI panes refuse layout changes"
+        );
     }
 
     #[test]
     fn every_launcher_menu_row_is_bound_in_its_generated_key_table() {
-        let conf = mios_unit_gen::render_keybindings(include_str!("../../../../usr/share/mios/mios.toml")).unwrap()["usr/share/mios/tmux/mios-keys.tmux.conf"].clone();
+        let conf =
+            mios_unit_gen::render_keybindings(include_str!("../../../../usr/share/mios/mios.toml"))
+                .unwrap()["usr/share/mios/tmux/mios-keys.tmux.conf"]
+                .clone();
         for s in menu_sections(&ssot(), &cfg(), &PaneState::default()).unwrap() {
             for it in &s.items {
-                let Target::MenuRow { menu, key } = &it.target else { panic!() };
+                let Target::MenuRow { menu, key } = &it.target else {
+                    panic!()
+                };
                 let needle = format!("-T {} {} ", policy::menu_table(menu), policy::tmux_key(key));
-                assert!(conf.lines().any(|l| l.starts_with("bind-key -N") && l.contains(&needle)), "{needle} missing for {}", it.label);
+                assert!(
+                    conf.lines()
+                        .any(|l| l.starts_with("bind-key -N") && l.contains(&needle)),
+                    "{needle} missing for {}",
+                    it.label
+                );
             }
         }
     }
@@ -1890,10 +2932,31 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         assert_eq!(wide.cols.len(), 2);
         assert_eq!(wide.col_x[1] - wide.col_x[0], wide.col_w + c.gap);
         for col in &wide.cols {
-            assert!(matches!(col[0], Line::Header(_)), "a column starts with a section header");
+            assert!(
+                matches!(col[0], Line::Header(_)),
+                "a column starts with a section header"
+            );
         }
-        let left: BTreeSet<usize> = wide.cols[0].iter().filter_map(|l| if let Line::Item(si, _) = l { Some(*si) } else { None }).collect();
-        let right: BTreeSet<usize> = wide.cols[1].iter().filter_map(|l| if let Line::Item(si, _) = l { Some(*si) } else { None }).collect();
+        let left: BTreeSet<usize> = wide.cols[0]
+            .iter()
+            .filter_map(|l| {
+                if let Line::Item(si, _) = l {
+                    Some(*si)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let right: BTreeSet<usize> = wide.cols[1]
+            .iter()
+            .filter_map(|l| {
+                if let Line::Item(si, _) = l {
+                    Some(*si)
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert!(left.is_disjoint(&right), "no section spans both columns");
         let (a, b) = (wide.cols[0].len() as i64, wide.cols[1].len() as i64);
         let biggest = s.iter().map(|x| x.items.len() as i64 + 2).max().unwrap();
@@ -1911,8 +2974,17 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let lines: Vec<&str> = screen.lines().collect();
         assert!(lines[0].trim() == "MiOS", "centred title: {:?}", lines[0]);
         let ai = lines.iter().find(|l| l.contains("AI and agents")).unwrap();
-        assert!(ai.contains("\u{2500}\u{2500}"), "headers carry a rule: {ai}");
-        assert!(lines.iter().any(|l| l.contains("Running") && l.contains("Pane")) || lines.iter().any(|l| l.contains("Pane \u{2500}")), "{screen}");
+        assert!(
+            ai.contains("\u{2500}\u{2500}"),
+            "headers carry a rule: {ai}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("Running") && l.contains("Pane"))
+                || lines.iter().any(|l| l.contains("Pane \u{2500}")),
+            "{screen}"
+        );
         // The key column: a key right-aligned in key_width, two spaces, the label.
         let t = lines.iter().find(|l| l.contains("MiOS Terminal")).unwrap();
         let at = t.find("MiOS Terminal").unwrap();
@@ -1921,10 +2993,16 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let sat = split.find("Split below").unwrap();
         assert_eq!(&split[sat - 3..sat], "s  ");
         let col2 = c.gap as usize + (108 - c.gap as usize) / 2;
-        assert!(lines.iter().any(|l| l.chars().count() > col2 + 4), "something sits in the second column:\n{screen}");
+        assert!(
+            lines.iter().any(|l| l.chars().count() > col2 + 4),
+            "something sits in the second column:\n{screen}"
+        );
         assert!(lines.last().unwrap().contains("Tab options"), "help line");
         let vt = render_text(&config(&ssot(), true).unwrap(), sections(), 110, 44, None);
-        assert!(vt.lines().all(|l| l.is_ascii()), "console rendering is ASCII:\n{vt}");
+        assert!(
+            vt.lines().all(|l| l.is_ascii()),
+            "console rendering is ASCII:\n{vt}"
+        );
     }
 
     #[test]
@@ -1933,21 +3011,63 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let mut p = false;
         let none = KeyModifiers::NONE;
         assert_eq!(map_key(k(KeyCode::Down, none), "C-b", &mut p), Input::Down);
-        assert_eq!(map_key(k(KeyCode::Enter, none), "C-b", &mut p), Input::Activate);
-        assert_eq!(map_key(k(KeyCode::Enter, KeyModifiers::SHIFT), "C-b", &mut p), Input::Options, "A held");
-        assert_eq!(map_key(k(KeyCode::Tab, none), "C-b", &mut p), Input::Options, "West");
-        assert_eq!(map_key(k(KeyCode::BackTab, KeyModifiers::SHIFT), "C-b", &mut p), Input::NextSection);
+        assert_eq!(
+            map_key(k(KeyCode::Enter, none), "C-b", &mut p),
+            Input::Activate
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Enter, KeyModifiers::SHIFT), "C-b", &mut p),
+            Input::Options,
+            "A held"
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Tab, none), "C-b", &mut p),
+            Input::Options,
+            "West"
+        );
+        assert_eq!(
+            map_key(k(KeyCode::BackTab, KeyModifiers::SHIFT), "C-b", &mut p),
+            Input::NextSection
+        );
         assert_eq!(map_key(k(KeyCode::Esc, none), "C-b", &mut p), Input::Back);
-        assert_eq!(map_key(k(KeyCode::Char('c'), KeyModifiers::CONTROL), "C-b", &mut p), Input::Back, "B held");
-        assert_eq!(map_key(k(KeyCode::Char('q'), none), "C-b", &mut p), Input::Back);
-        assert_eq!(map_key(k(KeyCode::Char('b'), KeyModifiers::CONTROL), "C-b", &mut p), Input::Nothing);
-        assert_eq!(map_key(k(KeyCode::Char('n'), none), "C-b", &mut p), Input::PageDown, "trigger: tmux:key n");
+        assert_eq!(
+            map_key(k(KeyCode::Char('c'), KeyModifiers::CONTROL), "C-b", &mut p),
+            Input::Back,
+            "B held"
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Char('q'), none), "C-b", &mut p),
+            Input::Back
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Char('b'), KeyModifiers::CONTROL), "C-b", &mut p),
+            Input::Nothing
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Char('n'), none), "C-b", &mut p),
+            Input::PageDown,
+            "trigger: tmux:key n"
+        );
         map_key(k(KeyCode::Char('b'), KeyModifiers::CONTROL), "C-b", &mut p);
-        assert_eq!(map_key(k(KeyCode::Char('p'), none), "C-b", &mut p), Input::PageUp, "trigger: tmux:key p");
+        assert_eq!(
+            map_key(k(KeyCode::Char('p'), none), "C-b", &mut p),
+            Input::PageUp,
+            "trigger: tmux:key p"
+        );
         map_key(k(KeyCode::Char('b'), KeyModifiers::CONTROL), "C-b", &mut p);
-        assert_eq!(map_key(k(KeyCode::Char(' '), none), "C-b", &mut p), Input::Back, "Guide: tmux:menu closes");
-        assert_eq!(map_key(k(KeyCode::Char('t'), none), "C-b", &mut p), Input::Key('t'));
-        assert_eq!(map_key(k(KeyCode::Char(' '), none), "C-b", &mut p), Input::Activate);
+        assert_eq!(
+            map_key(k(KeyCode::Char(' '), none), "C-b", &mut p),
+            Input::Back,
+            "Guide: tmux:menu closes"
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Char('t'), none), "C-b", &mut p),
+            Input::Key('t')
+        );
+        assert_eq!(
+            map_key(k(KeyCode::Char(' '), none), "C-b", &mut p),
+            Input::Activate
+        );
     }
 
     fn ui_for(c: &Cfg, w: u16) -> Ui<'_> {
@@ -1960,13 +3080,24 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let x = ctx();
         let none = |_: &str| None;
         let mut ui = ui_for(&c, 120);
-        assert_eq!(ui.selected().unwrap().label, "bash", "starts on the running section");
+        assert_eq!(
+            ui.selected().unwrap().label,
+            "bash",
+            "starts on the running section"
+        );
         ui.input(Input::Down, &x, &none);
         assert_eq!(ui.selected().unwrap().label, "htop");
         ui.input(Input::Wheel { up: true }, &x, &none);
-        assert_eq!(ui.selected().unwrap().label, "bash", "the wheel (left stick) moves the selection");
+        assert_eq!(
+            ui.selected().unwrap().label,
+            "bash",
+            "the wheel (left stick) moves the selection"
+        );
         ui.input(Input::Right, &x, &none);
-        assert_eq!(ui.sel_order[ui.sel].0, 1, "Right moves to the second column");
+        assert_eq!(
+            ui.sel_order[ui.sel].0, 1,
+            "Right moves to the second column"
+        );
         ui.input(Input::Left, &x, &none);
         assert_eq!(ui.sel_order[ui.sel].0, 0);
         ui.input(Input::Home, &x, &none);
@@ -1979,7 +3110,10 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         ui.input(Input::Home, &x, &none);
         assert_eq!(ui.sel, 0);
         let mut apps = Ui::new(&c, sections(), Rect::new(0, 0, 120, 40), Some("apps"));
-        assert!(matches!(apps.selected().unwrap().target, Target::App { .. }), "prefix + launcher_key starts on the apps");
+        assert!(
+            matches!(apps.selected().unwrap().target, Target::App { .. }),
+            "prefix + launcher_key starts on the apps"
+        );
         assert_eq!(apps.input(Input::Back, &x, &none), Outcome::Close);
         // One column: Left/Right jump between sections instead.
         let mut one = ui_for(&c, 60);
@@ -1993,31 +3127,75 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let x = ctx();
         assert_eq!(
             activate(&Target::Prefix { key: "a".into() }, &c, &x),
-            vec![Op::Tmux { args: ["send-keys", "-c", "/dev/pts/7", "-K", "C-b", "a"].map(String::from).to_vec() }]
+            vec![Op::Tmux {
+                args: ["send-keys", "-c", "/dev/pts/7", "-K", "C-b", "a"]
+                    .map(String::from)
+                    .to_vec()
+            }]
         );
         assert_eq!(
-            activate(&Target::MenuRow { menu: "pane".into(), key: "v".into() }, &c, &x),
+            activate(
+                &Target::MenuRow {
+                    menu: "pane".into(),
+                    key: "v".into()
+                },
+                &c,
+                &x
+            ),
             vec![
-                Op::Tmux { args: ["switch-client", "-c", "/dev/pts/7", "-T", "mios-menu-pane"].map(String::from).to_vec() },
-                Op::Tmux { args: ["send-keys", "-c", "/dev/pts/7", "-K", "v"].map(String::from).to_vec() }
+                Op::Tmux {
+                    args: ["switch-client", "-c", "/dev/pts/7", "-T", "mios-menu-pane"]
+                        .map(String::from)
+                        .to_vec()
+                },
+                Op::Tmux {
+                    args: ["send-keys", "-c", "/dev/pts/7", "-K", "v"]
+                        .map(String::from)
+                        .to_vec()
+                }
             ]
         );
         assert_eq!(
             activate(&Target::App { id: "btop".into() }, &c, &x),
-            vec![Op::Exec { argv: [TERMINAL, "--app", "btop", "--client", "/dev/pts/7", "--console", "0"].map(String::from).to_vec(), pane: "%1".into() }]
+            vec![Op::Exec {
+                argv: [
+                    TERMINAL,
+                    "--app",
+                    "btop",
+                    "--client",
+                    "/dev/pts/7",
+                    "--console",
+                    "0"
+                ]
+                .map(String::from)
+                .to_vec(),
+                pane: "%1".into()
+            }]
         );
         let r = running();
         assert_eq!(
             activate(&Target::Instance(inst(&r, "btop")), &c, &x),
-            vec![Op::Tmux { args: ["switch-client", "-c", "/dev/pts/7", "-t", "%3"].map(String::from).to_vec() }]
+            vec![Op::Tmux {
+                args: ["switch-client", "-c", "/dev/pts/7", "-t", "%3"]
+                    .map(String::from)
+                    .to_vec()
+            }]
         );
         // A float-shell pane opens its parent's float shell.
         let f = activate(&Target::Instance(inst(&r, "less")), &c, &x);
-        assert!(matches!(&f[..], [Op::Exec { argv, pane }] if argv.contains(&"shell".to_string()) && pane == "%1"), "{f:?}");
+        assert!(
+            matches!(&f[..], [Op::Exec { argv, pane }] if argv.contains(&"shell".to_string()) && pane == "%1"),
+            "{f:?}"
+        );
     }
 
     fn choose(ov: &Overlay, label: &str) -> Choice {
-        ov.entries.iter().find(|e| e.label == label).unwrap().choice.clone()
+        ov.entries
+            .iter()
+            .find(|e| e.label == label)
+            .unwrap()
+            .choice
+            .clone()
     }
 
     #[test]
@@ -2028,27 +3206,110 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let item = r.iter().find(|i| i.label == "bash").unwrap();
         let ov = options(item, &c, &x, None);
         let labels: Vec<&str> = ov.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["Go to", "Pop out to its own window", "Float the pane", "Move to window...", "Move to session...", "Rename...", "Close..."]);
-        let Choice::Ops(pop) = choose(&ov, "Pop out to its own window") else { panic!() };
-        assert_eq!(pop[0], Op::Tmux { args: ["new-session", "-d", "-s", "pop-bash-2", "-e", "MIOS_SESSION_BARE=1", "sleep", "30"].map(String::from).to_vec() }, "a fresh name");
-        assert_eq!(pop[1], Op::Tmux { args: ["move-window", "-s", "@1", "-t", "=pop-bash-2:"].map(String::from).to_vec() });
-        assert_eq!(pop[2], Op::Tmux { args: ["kill-window", "-a", "-t", "@1"].map(String::from).to_vec() }, "only the instance stays");
-        assert_eq!(pop.last().unwrap(), &Op::Desktop { session: "pop-bash-2".into() });
-        let Choice::Ops(lift) = choose(&ov, "Float the pane") else { panic!() };
-        assert!(matches!(&lift[..], [Op::Exec { argv, pane }] if argv[1..4] == ["--float".to_string(), "lift".into(), "--client".into()] && pane == "%1"));
+        assert_eq!(
+            labels,
+            [
+                "Go to",
+                "Pop out to its own window",
+                "Float the pane",
+                "Move to window...",
+                "Move to session...",
+                "Rename...",
+                "Close..."
+            ]
+        );
+        let Choice::Ops(pop) = choose(&ov, "Pop out to its own window") else {
+            panic!()
+        };
+        assert_eq!(
+            pop[0],
+            Op::Tmux {
+                args: [
+                    "new-session",
+                    "-d",
+                    "-s",
+                    "pop-bash-2",
+                    "-e",
+                    "MIOS_SESSION_BARE=1",
+                    "sleep",
+                    "30"
+                ]
+                .map(String::from)
+                .to_vec()
+            },
+            "a fresh name"
+        );
+        assert_eq!(
+            pop[1],
+            Op::Tmux {
+                args: ["move-window", "-s", "@1", "-t", "=pop-bash-2:"]
+                    .map(String::from)
+                    .to_vec()
+            }
+        );
+        assert_eq!(
+            pop[2],
+            Op::Tmux {
+                args: ["kill-window", "-a", "-t", "@1"].map(String::from).to_vec()
+            },
+            "only the instance stays"
+        );
+        assert_eq!(
+            pop.last().unwrap(),
+            &Op::Desktop {
+                session: "pop-bash-2".into()
+            }
+        );
+        let Choice::Ops(lift) = choose(&ov, "Float the pane") else {
+            panic!()
+        };
+        assert!(
+            matches!(&lift[..], [Op::Exec { argv, pane }] if argv[1..4] == ["--float".to_string(), "lift".into(), "--client".into()] && pane == "%1")
+        );
         // A single-pane window cannot float its only pane; a managed AI window refuses layout changes.
         let btop = options(r.iter().find(|i| i.label == "btop").unwrap(), &c, &x, None);
-        assert!(!btop.entries.iter().find(|e| e.label == "Float the pane").unwrap().enabled);
-        let ai = options(r.iter().find(|i| i.label == "MiOS AI").unwrap(), &c, &x, None);
-        for l in ["Pop out to its own window", "Float the pane", "Move to window...", "Move to session..."] {
-            assert!(!ai.entries.iter().find(|e| e.label == l).unwrap().enabled, "{l}");
+        assert!(
+            !btop
+                .entries
+                .iter()
+                .find(|e| e.label == "Float the pane")
+                .unwrap()
+                .enabled
+        );
+        let ai = options(
+            r.iter().find(|i| i.label == "MiOS AI").unwrap(),
+            &c,
+            &x,
+            None,
+        );
+        for l in [
+            "Pop out to its own window",
+            "Float the pane",
+            "Move to window...",
+            "Move to session...",
+        ] {
+            assert!(
+                !ai.entries.iter().find(|e| e.label == l).unwrap().enabled,
+                "{l}"
+            );
         }
         // Floating panes and float-shell panes tile (dock) instead.
         let fl = options(r.iter().find(|i| i.label == "htop").unwrap(), &c, &x, None);
-        let Choice::Ops(dock) = choose(&fl, "Tile the pane (dock it)") else { panic!() };
+        let Choice::Ops(dock) = choose(&fl, "Tile the pane (dock it)") else {
+            panic!()
+        };
         assert!(matches!(&dock[..], [Op::Exec { pane, .. }] if pane == "%5"));
-        let Choice::Ops(pop) = choose(&fl, "Pop out to its own window") else { panic!() };
-        assert_eq!(pop[1], Op::Tmux { args: ["break-pane", "-d", "-s", "%5", "-t", "=pop-htop:"].map(String::from).to_vec() });
+        let Choice::Ops(pop) = choose(&fl, "Pop out to its own window") else {
+            panic!()
+        };
+        assert_eq!(
+            pop[1],
+            Op::Tmux {
+                args: ["break-pane", "-d", "-s", "%5", "-t", "=pop-htop:"]
+                    .map(String::from)
+                    .to_vec()
+            }
+        );
     }
 
     #[test]
@@ -2059,33 +3320,122 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let b = inst(&r, "bash");
         let cf = confirm(&b, &c);
         assert_eq!(cf.entries[cf.sel].label, "No", "No is the default");
-        assert_eq!(choose(&cf, "Yes, close it"), Choice::Ops(vec![Op::Tmux { args: ["kill-window", "-t", "@1"].map(String::from).to_vec() }]));
+        assert_eq!(
+            choose(&cf, "Yes, close it"),
+            Choice::Ops(vec![Op::Tmux {
+                args: ["kill-window", "-t", "@1"].map(String::from).to_vec()
+            }])
+        );
         let pane_cf = confirm(&inst(&r, "htop"), &c);
-        assert_eq!(choose(&pane_cf, "Yes, close it"), Choice::Ops(vec![Op::Tmux { args: ["kill-pane", "-t", "%5"].map(String::from).to_vec() }]));
+        assert_eq!(
+            choose(&pane_cf, "Yes, close it"),
+            Choice::Ops(vec![Op::Tmux {
+                args: ["kill-pane", "-t", "%5"].map(String::from).to_vec()
+            }])
+        );
         let mw = move_window(&b, &c, &x);
         let labels: Vec<&str> = mw.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["tmux-os:1 btop", "New window", "Cancel"], "own window and managed windows are no targets");
-        assert_eq!(choose(&mw, "tmux-os:1 btop"), Choice::Ops(vec![Op::Tmux { args: ["join-pane", "-s", "%1", "-t", "%3"].map(String::from).to_vec() }]));
+        assert_eq!(
+            labels,
+            ["tmux-os:1 btop", "New window", "Cancel"],
+            "own window and managed windows are no targets"
+        );
+        assert_eq!(
+            choose(&mw, "tmux-os:1 btop"),
+            Choice::Ops(vec![Op::Tmux {
+                args: ["join-pane", "-s", "%1", "-t", "%3"]
+                    .map(String::from)
+                    .to_vec()
+            }])
+        );
         let ms = move_session(&b, &c, &x);
         assert_eq!(ms.entries[0].label, "mios");
-        assert_eq!(choose(&ms, "mios"), Choice::Ops(vec![Op::Tmux { args: ["move-window", "-s", "@1", "-t", "=mios:"].map(String::from).to_vec() }]));
-        let Choice::Ops(new) = choose(&ms, "New session") else { panic!() };
-        assert!(matches!(&new[0], Op::Tmux { args } if args[3] == "tmux-os-2"), "{new:?}");
+        assert_eq!(
+            choose(&ms, "mios"),
+            Choice::Ops(vec![Op::Tmux {
+                args: ["move-window", "-s", "@1", "-t", "=mios:"]
+                    .map(String::from)
+                    .to_vec()
+            }])
+        );
+        let Choice::Ops(new) = choose(&ms, "New session") else {
+            panic!()
+        };
+        assert!(
+            matches!(&new[0], Op::Tmux { args } if args[3] == "tmux-os-2"),
+            "{new:?}"
+        );
     }
 
     #[test]
     fn app_options_open_every_way_and_pop_out_to_a_desktop_window() {
         let c = cfg();
         let x = ctx();
-        let it = Item { label: "btop".into(), detail: "window".into(), key: Some('1'), target: Target::App { id: "btop".into() }, enabled: true };
-        let ov = options(&it, &c, &x, Some(("btop", vec!["btop".into(), "--config".into(), "/etc/btop/btop.conf".into()])));
-        let Choice::Ops(f) = choose(&ov, "Open as a floating pane") else { panic!() };
-        assert!(matches!(&f[..], [Op::Exec { argv, .. }] if argv.ends_with(&["--mode".to_string(), "float".into()])));
-        let Choice::Ops(d) = choose(&ov, "Open in its own desktop window") else { panic!() };
-        assert_eq!(d[0], Op::Tmux { args: ["new-session", "-d", "-s", "pop-btop", "-n", "btop", "-e", "MIOS_SESSION_BARE=1", "--", "btop", "--config", "/etc/btop/btop.conf"].map(String::from).to_vec() });
-        assert_eq!(d.last().unwrap(), &Op::Desktop { session: "pop-btop".into() });
+        let it = Item {
+            label: "btop".into(),
+            detail: "window".into(),
+            key: Some('1'),
+            target: Target::App { id: "btop".into() },
+            enabled: true,
+        };
+        let ov = options(
+            &it,
+            &c,
+            &x,
+            Some((
+                "btop",
+                vec![
+                    "btop".into(),
+                    "--config".into(),
+                    "/etc/btop/btop.conf".into(),
+                ],
+            )),
+        );
+        let Choice::Ops(f) = choose(&ov, "Open as a floating pane") else {
+            panic!()
+        };
+        assert!(
+            matches!(&f[..], [Op::Exec { argv, .. }] if argv.ends_with(&["--mode".to_string(), "float".into()]))
+        );
+        let Choice::Ops(d) = choose(&ov, "Open in its own desktop window") else {
+            panic!()
+        };
+        assert_eq!(
+            d[0],
+            Op::Tmux {
+                args: [
+                    "new-session",
+                    "-d",
+                    "-s",
+                    "pop-btop",
+                    "-n",
+                    "btop",
+                    "-e",
+                    "MIOS_SESSION_BARE=1",
+                    "--",
+                    "btop",
+                    "--config",
+                    "/etc/btop/btop.conf"
+                ]
+                .map(String::from)
+                .to_vec()
+            }
+        );
+        assert_eq!(
+            d.last().unwrap(),
+            &Op::Desktop {
+                session: "pop-btop".into()
+            }
+        );
         let without = options(&it, &c, &x, None);
-        assert!(!without.entries.iter().find(|e| e.label == "Open in its own desktop window").unwrap().enabled);
+        assert!(
+            !without
+                .entries
+                .iter()
+                .find(|e| e.label == "Open in its own desktop window")
+                .unwrap()
+                .enabled
+        );
     }
 
     #[test]
@@ -2097,19 +3447,73 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let mut buf = Buffer::empty(Rect::new(0, 0, 120, 40));
         ui.draw(&mut buf, Rect::new(0, 0, 120, 40));
         let text = buf_text(&buf);
-        let col = |line: &str, needle: &str| line[..line.find(needle).unwrap()].chars().count() as u16;
-        let (y, line) = text.lines().enumerate().find(|(_, l)| l.contains("Split right")).unwrap();
+        let col =
+            |line: &str, needle: &str| line[..line.find(needle).unwrap()].chars().count() as u16;
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("Split right"))
+            .unwrap();
         let xpos = col(line, "Split right");
-        let out = ui.input(Input::Click { x: xpos, y: y as u16, right: false }, &x, &none);
-        assert_eq!(out, Outcome::Done(activate(&Target::MenuRow { menu: "pane".into(), key: "v".into() }, &c, &x)));
-        let (y, line) = text.lines().enumerate().find(|(_, l)| l.contains("btop") && !l.contains("System")).unwrap();
+        let out = ui.input(
+            Input::Click {
+                x: xpos,
+                y: y as u16,
+                right: false,
+            },
+            &x,
+            &none,
+        );
+        assert_eq!(
+            out,
+            Outcome::Done(activate(
+                &Target::MenuRow {
+                    menu: "pane".into(),
+                    key: "v".into()
+                },
+                &c,
+                &x
+            ))
+        );
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("btop") && !l.contains("System"))
+            .unwrap();
         let xpos = col(line, "btop");
-        assert_eq!(ui.input(Input::Click { x: xpos, y: y as u16, right: true }, &x, &none), Outcome::Stay);
-        assert!(ui.overlay.last().is_some_and(|o| o.title.starts_with("Options")), "right-click = options");
+        assert_eq!(
+            ui.input(
+                Input::Click {
+                    x: xpos,
+                    y: y as u16,
+                    right: true
+                },
+                &x,
+                &none
+            ),
+            Outcome::Stay
+        );
+        assert!(
+            ui.overlay
+                .last()
+                .is_some_and(|o| o.title.starts_with("Options")),
+            "right-click = options"
+        );
         assert_eq!(ui.input(Input::Back, &x, &none), Outcome::Stay);
         assert!(ui.overlay.is_empty(), "B backs out of the options first");
         // Clicking the header or a blank line chooses nothing.
-        assert_eq!(ui.input(Input::Click { x: 1, y: 2, right: false }, &x, &none), Outcome::Stay);
+        assert_eq!(
+            ui.input(
+                Input::Click {
+                    x: 1,
+                    y: 2,
+                    right: false
+                },
+                &x,
+                &none
+            ),
+            Outcome::Stay
+        );
     }
 
     #[test]
@@ -2120,13 +3524,26 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let mut ui = ui_for(&c, 120);
         assert_eq!(ui.input(Input::Options, &x, &none), Outcome::Stay);
         ui.input(Input::End, &x, &none);
-        assert_eq!(ui.input(Input::Activate, &x, &none), Outcome::Stay, "Close... asks first");
+        assert_eq!(
+            ui.input(Input::Activate, &x, &none),
+            Outcome::Stay,
+            "Close... asks first"
+        );
         assert_eq!(ui.overlay.len(), 2);
-        assert_eq!(ui.input(Input::Activate, &x, &none), Outcome::Stay, "Enter on the default (No) cancels");
+        assert_eq!(
+            ui.input(Input::Activate, &x, &none),
+            Outcome::Stay,
+            "Enter on the default (No) cancels"
+        );
         assert_eq!(ui.overlay.len(), 1);
         ui.input(Input::Activate, &x, &none);
         ui.input(Input::Down, &x, &none);
-        assert_eq!(ui.input(Input::Activate, &x, &none), Outcome::Done(vec![Op::Tmux { args: ["kill-window", "-t", "@1"].map(String::from).to_vec() }]));
+        assert_eq!(
+            ui.input(Input::Activate, &x, &none),
+            Outcome::Done(vec![Op::Tmux {
+                args: ["kill-window", "-t", "@1"].map(String::from).to_vec()
+            }])
+        );
     }
 
     #[test]
@@ -2134,8 +3551,17 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         let c = cfg();
         assert_eq!(popup_size(&c, 200, 50), Some((172, 42)));
         assert_eq!(popup_size(&c, 40, 12), Some((34, 10)), "never below min_*");
-        assert_eq!(popup_size(&c, 30, 20), None, "too narrow: the too-small message instead");
-        assert!(client_ok("/dev/pts/3") && client_ok("client-12") && !client_ok("/etc/passwd") && !client_ok("/dev/../x"));
+        assert_eq!(
+            popup_size(&c, 30, 20),
+            None,
+            "too narrow: the too-small message instead"
+        );
+        assert!(
+            client_ok("/dev/pts/3")
+                && client_ok("client-12")
+                && !client_ok("/etc/passwd")
+                && !client_ok("/dev/../x")
+        );
         assert!(pane_ok("%3") && !pane_ok("%") && !pane_ok("3"));
     }
 
@@ -2162,23 +3588,90 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
             }
         };
         mk(100, 1, &["alacritty"], "", None);
-        mk(101, 100, &["bash", "/usr/libexec/mios/mios-terminal"], "", None);
-        mk(102, 101, &["tmux", "-L", "mios-human", "attach-session", "-t", "=tmux-os"], "TMUX_TMPDIR=/tmp\0", Some(Path::new("/dev/pts/9")));
-        mk(200, 1, &["tmux", "-L", "mios-human", "new-session", "-d"], "", Some(Path::new("/dev/null")));
+        mk(
+            101,
+            100,
+            &["bash", "/usr/libexec/mios/mios-terminal"],
+            "",
+            None,
+        );
+        mk(
+            102,
+            101,
+            &[
+                "tmux",
+                "-L",
+                "mios-human",
+                "attach-session",
+                "-t",
+                "=tmux-os",
+            ],
+            "TMUX_TMPDIR=/tmp\0",
+            Some(Path::new("/dev/pts/9")),
+        );
+        mk(
+            200,
+            1,
+            &["tmux", "-L", "mios-human", "new-session", "-d"],
+            "",
+            Some(Path::new("/dev/null")),
+        );
         let uid = unsafe { libc::getuid() };
-        assert_eq!(tmux_client_under(p, 100, "mios-human", "/tmp"), Some((format!("/tmp/tmux-{uid}/mios-human"), "/dev/pts/9".into())));
-        assert_eq!(tmux_client_under(p, 100, "other", "/tmp"), None, "another server is not tmux-os");
-        assert_eq!(tmux_client_under(p, 200, "mios-human", "/tmp"), None, "the server process is no client");
+        assert_eq!(
+            tmux_client_under(p, 100, "mios-human", "/tmp"),
+            Some((format!("/tmp/tmux-{uid}/mios-human"), "/dev/pts/9".into()))
+        );
+        assert_eq!(
+            tmux_client_under(p, 100, "other", "/tmp"),
+            None,
+            "another server is not tmux-os"
+        );
+        assert_eq!(
+            tmux_client_under(p, 200, "mios-human", "/tmp"),
+            None,
+            "the server process is no client"
+        );
         // A client whose stdin is no terminal (redirected) is not the focused window's client either.
-        mk(300, 1, &["tmux", "-L", "mios-human", "attach"], "", Some(Path::new("/dev/null")));
-        assert_eq!(tmux_client_under(p, 300, "mios-human", "/tmp"), None, "stdin /dev/null is no client terminal");
-        mk(400, 1, &["tmux", "-L", "mios-human", "new-session", "-As", "x"], "", Some(Path::new("/dev/tty3")));
-        assert_eq!(tmux_client_under(p, 400, "mios-human", "/tmp"), Some((format!("/tmp/tmux-{uid}/mios-human"), "/dev/tty3".into())), "a VT client");
+        mk(
+            300,
+            1,
+            &["tmux", "-L", "mios-human", "attach"],
+            "",
+            Some(Path::new("/dev/null")),
+        );
+        assert_eq!(
+            tmux_client_under(p, 300, "mios-human", "/tmp"),
+            None,
+            "stdin /dev/null is no client terminal"
+        );
+        mk(
+            400,
+            1,
+            &["tmux", "-L", "mios-human", "new-session", "-As", "x"],
+            "",
+            Some(Path::new("/dev/tty3")),
+        );
+        assert_eq!(
+            tmux_client_under(p, 400, "mios-human", "/tmp"),
+            Some((format!("/tmp/tmux-{uid}/mios-human"), "/dev/tty3".into())),
+            "a VT client"
+        );
     }
 
     #[test]
     fn steps_round_trip_through_the_result_file() {
-        let ops = vec![Op::Tmux { args: vec!["a".into()] }, Op::Desktop { session: "s".into() }, Op::Exec { argv: vec![TERMINAL.into()], pane: "%1".into() }];
+        let ops = vec![
+            Op::Tmux {
+                args: vec!["a".into()],
+            },
+            Op::Desktop {
+                session: "s".into(),
+            },
+            Op::Exec {
+                argv: vec![TERMINAL.into()],
+                pane: "%1".into(),
+            },
+        ];
         let j = serde_json::to_string(&ops).unwrap();
         assert!(j.contains("\"op\":\"tmux\"") && j.contains("\"op\":\"exec\""));
         assert_eq!(serde_json::from_str::<Vec<Op>>(&j).unwrap(), ops);
@@ -2188,8 +3681,15 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
     fn a_long_options_list_scrolls_with_its_selection_and_clicks_hit_the_row_shown() {
         let c = cfg();
         let mut ui = Ui::new(&c, sections(), Rect::new(0, 0, 60, 10), None);
-        let pick = |n: usize| Choice::Ops(vec![tmux_op(&["display-message", &format!("target {n}")])]);
-        ui.open_overlay(Overlay::new("Move".into(), (0..20).map(|n| entry(format!("target {n}"), true, pick(n))).collect(), 0));
+        let pick =
+            |n: usize| Choice::Ops(vec![tmux_op(&["display-message", &format!("target {n}")])]);
+        ui.open_overlay(Overlay::new(
+            "Move".into(),
+            (0..20)
+                .map(|n| entry(format!("target {n}"), true, pick(n)))
+                .collect(),
+            0,
+        ));
         for _ in 0..15 {
             assert_eq!(ui.input(Input::Down, &ctx(), &|_| None), Outcome::Stay);
         }
@@ -2198,12 +3698,27 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
         ui.draw(&mut buf, area);
         let text = buf_text(&buf);
         // Negative control: without the scroll offset the popup drew entries 0..7 and the selection (15) was off-screen.
-        assert!(text.contains("target 15") && !text.contains("target 0 "), "{text}");
+        assert!(
+            text.contains("target 15") && !text.contains("target 0 "),
+            "{text}"
+        );
         let ov = ui.overlay.last().unwrap();
         assert!(ov.offset > 0 && ov.sel == 15);
         let (first, r) = (ov.offset, ui.overlay_rect);
-        match ui.input(Input::Click { x: r.x + 2, y: r.y + 1, right: false }, &ctx(), &|_| None) {
-            Outcome::Done(ops) => assert_eq!(ops, vec![tmux_op(&["display-message", &format!("target {first}")])], "the row shown, not entries[0]"),
+        match ui.input(
+            Input::Click {
+                x: r.x + 2,
+                y: r.y + 1,
+                right: false,
+            },
+            &ctx(),
+            &|_| None,
+        ) {
+            Outcome::Done(ops) => assert_eq!(
+                ops,
+                vec![tmux_op(&["display-message", &format!("target {first}")])],
+                "the row shown, not entries[0]"
+            ),
             o => panic!("{o:?}"),
         }
     }

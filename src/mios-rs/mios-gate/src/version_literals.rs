@@ -36,7 +36,8 @@ const SKIP_SEGMENT: &str = "/tests/golden/";
 /// exempting a VALUE exempts it in every file, which is a wider allowlist than
 /// any single pin needs (see the ledger entry that ports this check).
 const EXEMPT_VALUE: [&str; 11] = [
-    "0.0.0", "0.0.1", "0.8.3", "0.2.4", "0.5.0", "0.6.0", "0.6.15", "0.80.0", "0.9.6", "0.0.76", "0.1.0",
+    "0.0.0", "0.0.1", "0.8.3", "0.2.4", "0.5.0", "0.6.0", "0.6.15", "0.80.0", "0.9.6", "0.0.76",
+    "0.1.0",
 ];
 /// Lines whose version is documented as an upstream fallback, not ours.
 const EXEMPT_LINE: [&str; 2] = ["INTEL_SG_FALLBACK_TAG", "Upstream v0.15.0"];
@@ -328,18 +329,34 @@ mod tests {
         std::fs::write(lib.join("globals.ps1"), ps).unwrap();
         let add = |dir: &Path| {
             for args in [vec!["init", "-q"], vec!["add", "."]] {
-                assert!(Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success());
+                assert!(Command::new("git")
+                    .arg("-C")
+                    .arg(dir)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success());
             }
         };
         add(tmp.path());
         let r = check(tmp.path());
-        assert!(r.ok, "exact projections of SSOT prose must be clean: {:?}", r.findings);
+        assert!(
+            r.ok,
+            "exact projections of SSOT prose must be clean: {:?}",
+            r.findings
+        );
         std::fs::write(lib.join("globals.sh"), sh.replace("v0.3.4 (", "v0.3.5 (")).unwrap();
-        assert!(!check(tmp.path()).ok, "a hand-changed projection line must fail");
+        assert!(
+            !check(tmp.path()).ok,
+            "a hand-changed projection line must fail"
+        );
         std::fs::write(lib.join("globals.sh"), sh).unwrap();
         std::fs::write(tmp.path().join("automation/authored.sh"), sh).unwrap();
         add(tmp.path());
-        assert!(!check(tmp.path()).ok, "the same text in authored glue must fail");
+        assert!(
+            !check(tmp.path()).ok,
+            "the same text in authored glue must fail"
+        );
     }
 
     #[test]
@@ -407,6 +424,10 @@ mod tests {
         assert_eq!(r.code(), crate::EXIT_CANNOT_RUN);
         assert!(!r.ok);
         assert!(r.could_not_run.is_some());
-        assert!(r.could_not_run.as_ref().unwrap().contains("not a git checkout"));
+        assert!(r
+            .could_not_run
+            .as_ref()
+            .unwrap()
+            .contains("not a git checkout"));
     }
 }

@@ -186,7 +186,10 @@ impl Config {
 
 fn exclusions(doc: &Value) -> Result<Vec<Exclusion>, String> {
     let mut out = Vec::new();
-    let rules = get(doc, "desktop.hyprland.window_rules").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let rules = get(doc, "desktop.hyprland.window_rules")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     'rule: for rule in rules {
         let name = rule
             .get("name")
@@ -234,11 +237,17 @@ fn exclusions(doc: &Value) -> Result<Vec<Exclusion>, String> {
     // window_rules): a Wine window whose class also matches the games rule, so it is excluded like any other ruled
     // window and never placed or watched as a game, pinned or not (setup mode, or before its pin applies).
     let sg = get(doc, "desktop.shaderglass");
-    if sg.and_then(|t| t.get("enabled")).and_then(Value::as_bool).unwrap_or(false) {
+    if sg
+        .and_then(|t| t.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         let w = get(doc, "desktop.shaderglass.window");
         let field = |k: &str| w.and_then(|t| t.get(k)).and_then(Value::as_str);
         if let (Some(class), Some(title)) = (field("class"), field("title")) {
-            let re = |p: &str| Regex::new(p).map_err(|e| format!("desktop.shaderglass.window regex: {e}"));
+            let re = |p: &str| {
+                Regex::new(p).map_err(|e| format!("desktop.shaderglass.window regex: {e}"))
+            };
             out.push(Exclusion {
                 name: "desktop.shaderglass.window".to_owned(),
                 regexes: vec![("class", re(class)?, false), ("title", re(title)?, false)],
@@ -292,7 +301,9 @@ fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
 /// area, the width additionally to `max_width_mm` of physical screen. Logical pixels already
 /// carry the monitor scale (DPI); the millimetre cap keeps windows sane on large panels.
 pub fn size_for(cfg: &Config, usable_w: f64, usable_h: f64, px_per_mm: Option<f64>) -> (f64, f64) {
-    if let Some(opening) = &cfg.opening { return opening.size(usable_w, usable_h, px_per_mm); }
+    if let Some(opening) = &cfg.opening {
+        return opening.size(usable_w, usable_h, px_per_mm);
+    }
     let mut cap_w = (usable_w * cfg.max_width_ratio).min(cfg.max_width);
     if let Some(ppm) = px_per_mm.filter(|p| *p > 0.0 && cfg.max_width_mm > 0.0) {
         cap_w = cap_w.min(cfg.max_width_mm * ppm);
@@ -313,7 +324,11 @@ pub fn size_for(cfg: &Config, usable_w: f64, usable_h: f64, px_per_mm: Option<f6
 
 /// Centered geometry inside the monitor's usable (non-reserved) area.
 pub fn geometry(cfg: &Config, m: &MonitorBox) -> Geometry {
-    let [rl, rt, rr, rb] = cfg.opening.as_ref().map(|p| p.insets(m.reserved)).unwrap_or(m.reserved);
+    let [rl, rt, rr, rb] = cfg
+        .opening
+        .as_ref()
+        .map(|p| p.insets(m.reserved))
+        .unwrap_or(m.reserved);
     let uw = (m.w - rl - rr).max(1.0);
     let uh = (m.h - rt - rb).max(1.0);
     let ppm = (m.width_mm > 0.0).then(|| m.w / m.width_mm);
@@ -330,8 +345,12 @@ pub fn geometry(cfg: &Config, m: &MonitorBox) -> Geometry {
 /// (rule expressions see neither reserved areas nor physical size).
 pub fn rule_size(cfg: &Config, monitor_w: f64, monitor_h: f64) -> (f64, f64) {
     if let Some(opening) = &cfg.opening {
-        let [l,t,r,b] = opening.safe_insets;
-        return opening.size((monitor_w-l-r).max(1.0), (monitor_h-t-b).max(1.0), None);
+        let [l, t, r, b] = opening.safe_insets;
+        return opening.size(
+            (monitor_w - l - r).max(1.0),
+            (monitor_h - t - b).max(1.0),
+            None,
+        );
     }
     size_for(cfg, monitor_w, monitor_h, None)
 }
@@ -349,7 +368,9 @@ fn lit(v: f64) -> String {
 /// muParser expression pair ("X Y", no other spaces) equal to [`rule_size`]; the session config
 /// projection in tools/native/mios-gen/src/render.rs emits the identical string.
 pub fn rule_size_expression(cfg: &Config) -> String {
-    if let Some(opening) = &cfg.opening { return opening.rule_expression(); }
+    if let Some(opening) = &cfg.opening {
+        return opening.rule_expression();
+    }
     let (r, a) = (lit(cfg.width_ratio), lit(cfg.aspect));
     let (minw, minh, maxw) = (lit(cfg.min_width), lit(cfg.min_height), lit(cfg.max_width));
     let (mwr, mhr) = (lit(cfg.max_width_ratio), lit(cfg.max_height_ratio));
@@ -440,7 +461,10 @@ impl Hypr {
 
     /// `hyprctl notify`: an on-screen notification (icon: 0 warning, 1 info, 2 hint, 3 error, 4 confused, 5 ok).
     pub(crate) fn notify(&self, icon: i32, ms: u32, msg: &str) -> Result<(), String> {
-        let line: String = msg.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+        let line: String = msg
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
         let out = self.request(&format!("notify {icon} {ms} 0 {line}"))?;
         if out.trim() == "ok" {
             Ok(())
@@ -578,13 +602,17 @@ pub struct X11Props {
 pub fn fixed_from_hints(h: &[u32]) -> Option<(f64, f64)> {
     let v = |i: usize| h.get(i).map(|x| *x as i32).unwrap_or(0);
     let (min_w, min_h, max_w, max_h) = (v(5), v(6), v(7), v(8));
-    (min_w > 0 && min_h > 0 && min_w == max_w && min_h == max_h).then_some((min_w as f64, min_h as f64))
+    (min_w > 0 && min_h > 0 && min_w == max_w && min_h == max_h)
+        .then_some((min_w as f64, min_h as f64))
 }
 
 pub fn game_kind(cfg: &Config, c: &Json, x11: Option<&X11Props>) -> Option<GameKind> {
     let g = cfg.games.as_ref()?;
     let t = tags(c);
-    let (resizable, fixed) = (t.contains(&g.tag), t.contains(&g.fixed_tag) || t.contains(&g.candidate_tag));
+    let (resizable, fixed) = (
+        t.contains(&g.tag),
+        t.contains(&g.fixed_tag) || t.contains(&g.candidate_tag),
+    );
     if !resizable && !fixed {
         return None;
     }
@@ -636,59 +664,114 @@ fn pin_lua(address: &str, w: i64, h: i64) -> String {
 /// resizable game so a drag tiles it like any placed window; fixed-size games are never tiled (that would resize
 /// them). `pin` adds min_size/max_size = the placed size for a fixed one.
 pub fn game_plan(
-    cfg: &Config, c: &Json, monitors: &Json, kind: GameKind, fixed: Option<(f64, f64)>, managed: Option<&str>, pin: bool,
+    cfg: &Config,
+    c: &Json,
+    monitors: &Json,
+    kind: GameKind,
+    fixed: Option<(f64, f64)>,
+    managed: Option<&str>,
+    pin: bool,
 ) -> Option<GamePlan> {
     let address = c.get("address").and_then(Json::as_str)?;
     let boxes = monitor_boxes(monitors);
     let all = monitors.as_array()?;
-    let focused = all.iter().find(|m| m.get("focused").and_then(Json::as_bool) == Some(true));
+    let focused = all
+        .iter()
+        .find(|m| m.get("focused").and_then(Json::as_bool) == Some(true));
     let own = c.get("monitor").and_then(Json::as_i64).unwrap_or(0);
-    let mon = focused.and_then(|m| m.get("id").and_then(Json::as_i64)).unwrap_or(own);
+    let mon = focused
+        .and_then(|m| m.get("id").and_then(Json::as_i64))
+        .unwrap_or(own);
     let m = boxes.get(&mon)?;
     let active_ws = all
         .iter()
         .find(|x| x.get("id").and_then(Json::as_i64) == Some(mon))
         .and_then(|x| x.pointer("/activeWorkspace/id"))
         .and_then(Json::as_i64);
-    let [rl, rt, rr, rb] = cfg.opening.as_ref().map(|p| p.insets(m.reserved)).unwrap_or(m.reserved);
-    let usable = (m.x + rl, m.y + rt, (m.w - rl - rr).max(1.0), (m.h - rt - rb).max(1.0));
+    let [rl, rt, rr, rb] = cfg
+        .opening
+        .as_ref()
+        .map(|p| p.insets(m.reserved))
+        .unwrap_or(m.reserved);
+    let usable = (
+        m.x + rl,
+        m.y + rt,
+        (m.w - rl - rr).max(1.0),
+        (m.h - rt - rb).max(1.0),
+    );
     let p = geometry(cfg, m);
     let policy = (p.x as f64, p.y as f64, p.w as f64, p.h as f64);
     let fixed = match kind {
         GameKind::Fixed => Some(fixed.or_else(|| pair(c, "size"))?),
         GameKind::Resizable => None,
     };
-    let oversize = cfg.games.as_ref().map(|g| g.oversize).unwrap_or(mios_resolver::window_opening::Oversize::Fit);
-    let (x, y, w, h, resized) =
-        mios_resolver::window_opening::game_geometry(fixed, usable, (m.x, m.y, m.w, m.h), policy, oversize);
-    let g = Geometry { x: x as i64, y: y as i64, w: w as i64, h: h as i64 };
+    let oversize = cfg
+        .games
+        .as_ref()
+        .map(|g| g.oversize)
+        .unwrap_or(mios_resolver::window_opening::Oversize::Fit);
+    let (x, y, w, h, resized) = mios_resolver::window_opening::game_geometry(
+        fixed,
+        usable,
+        (m.x, m.y, m.w, m.h),
+        policy,
+        oversize,
+    );
+    let g = Geometry {
+        x: x as i64,
+        y: y as i64,
+        w: w as i64,
+        h: h as i64,
+    };
     let ws = c.pointer("/workspace/id").and_then(Json::as_i64);
     let workspace = active_ws.filter(|a| *a > 0 && ws.is_some_and(|w| w > 0) && ws != Some(*a));
     let win = lua_str(&format!("address:{address}"));
     let mut lua = format!("local w={win}; ");
     if let Some(id) = workspace {
-        lua += &format!("hl.dispatch(hl.dsp.window.move({{workspace='{id}', follow=false, window=w}})); ");
+        lua += &format!(
+            "hl.dispatch(hl.dsp.window.move({{workspace='{id}', follow=false, window=w}})); "
+        );
     }
     lua += "hl.dispatch(hl.dsp.window.float({action='enable', window=w})); ";
     // A fixed game whose declared size differs from what it has (a dispatch grew it, or oversize = fit) is sized.
     let current = pair(c, "size");
-    let size_it = resized || (kind == GameKind::Fixed && current.is_some_and(|(cw, ch)| (cw - w).abs() > 2.0 || (ch - h).abs() > 2.0));
+    let size_it = resized
+        || (kind == GameKind::Fixed
+            && current.is_some_and(|(cw, ch)| (cw - w).abs() > 2.0 || (ch - h).abs() > 2.0));
     if size_it {
-        lua += &format!("hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); ", g.w, g.h);
+        lua += &format!(
+            "hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); ",
+            g.w, g.h
+        );
     }
-    lua += &format!("hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))", g.x, g.y);
+    lua += &format!(
+        "hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))",
+        g.x, g.y
+    );
     if kind == GameKind::Fixed && pin {
         lua += "; ";
         lua += &pin_lua(address, g.w, g.h);
     }
     if let (GameKind::Resizable, Some(t)) = (kind, managed) {
-        lua += &format!("; hl.dispatch(hl.dsp.window.tag({{tag={}, window=w}}))", lua_str(&format!("+{t}")));
+        lua += &format!(
+            "; hl.dispatch(hl.dsp.window.tag({{tag={}, window=w}}))",
+            lua_str(&format!("+{t}"))
+        );
     }
     if let (GameKind::Fixed, Some(g)) = (kind, cfg.games.as_ref()) {
         // The rule only tagged a candidate; this window is a fixed-size game (static tag: other rules may match it).
-        lua += &format!("; hl.dispatch(hl.dsp.window.tag({{tag={}, window=w}}))", lua_str(&format!("+{}", g.fixed_tag)));
+        lua += &format!(
+            "; hl.dispatch(hl.dsp.window.tag({{tag={}, window=w}}))",
+            lua_str(&format!("+{}", g.fixed_tag))
+        );
     }
-    Some(GamePlan { monitor: mon, geometry: g, resized, workspace, lua })
+    Some(GamePlan {
+        monitor: mon,
+        geometry: g,
+        resized,
+        workspace,
+        lua,
+    })
 }
 
 /// Corrections per watched game over its lifetime (refused remaps + size restores); then the game is left alone
@@ -708,7 +791,10 @@ pub fn pin_restore(c: &Json, target: (f64, f64)) -> Option<String> {
     if (w - target.0).abs() <= 2.0 && (h - target.1).abs() <= 2.0 {
         return None;
     }
-    let (nx, ny) = ((x + (w - target.0) / 2.0).round(), (y + (h - target.1) / 2.0).round());
+    let (nx, ny) = (
+        (x + (w - target.0) / 2.0).round(),
+        (y + (h - target.1) / 2.0).round(),
+    );
     Some(format!(
         "local w={}; hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))",
         lua_str(&format!("address:{address}")), target.0 as i64, target.1 as i64, nx as i64, ny as i64
@@ -734,7 +820,10 @@ pub enum Remap {
 }
 
 pub fn remap_kind(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> Option<Remap> {
-    let live: Vec<&MonitorBox> = monitors.values().filter(|m| m.w > 0.0 && m.h > 0.0).collect();
+    let live: Vec<&MonitorBox> = monitors
+        .values()
+        .filter(|m| m.w > 0.0 && m.h > 0.0)
+        .collect();
     if live.is_empty() {
         return None;
     }
@@ -764,7 +853,10 @@ pub fn left_alone(cfg: &Config, c: &Json) -> Option<String> {
     if c.get("pinned").and_then(Json::as_bool) == Some(true) {
         return Some("pinned".to_owned());
     }
-    cfg.excludes.iter().find(|e| e.matches(c)).map(|e| format!("window rule {}", e.name))
+    cfg.excludes
+        .iter()
+        .find(|e| e.matches(c))
+        .map(|e| format!("window rule {}", e.name))
 }
 
 /// A game found already mapped at a daemon restart ([`Server::adopt`]): watched again at its current geometry,
@@ -779,9 +871,23 @@ pub fn adopted_game(cfg: &Config, c: &Json, x11: Option<&X11Props>) -> Option<Ga
     let pin = kind == GameKind::Fixed && cfg.games.as_ref().is_some_and(|x| x.pin_fixed_size);
     // A fitted oversize game keeps the size it has; any other fixed game the size it declares.
     let target = pin
-        .then(|| declared.filter(|d| d.0 * d.1 <= geom_of(c).map_or(0.0, |g| g.2 * g.3) + 4.0).or_else(|| pair(c, "size")))
+        .then(|| {
+            declared
+                .filter(|d| d.0 * d.1 <= geom_of(c).map_or(0.0, |g| g.2 * g.3) + 4.0)
+                .or_else(|| pair(c, "size"))
+        })
         .flatten();
-    Some(GameWatch { kind, ok: None, workspace: None, target, declared, refused: None, since: None, corrections: 0, dragged: false })
+    Some(GameWatch {
+        kind,
+        ok: None,
+        workspace: None,
+        target,
+        declared,
+        refused: None,
+        since: None,
+        corrections: 0,
+        dragged: false,
+    })
 }
 
 /// One placed game the daemon keeps honest.
@@ -822,14 +928,27 @@ pub enum GameStep {
 /// never fought), `settle` how long a fixed game's size may disagree with its declaration before it is restored
 /// (Wine re-issues the hints right after the ConfigureNotify of a resize it asked for).
 pub fn game_step(
-    w: &mut GameWatch, c: &Json, monitors: &HashMap<i64, MonitorBox>, declared: Option<(f64, f64)>, refuse: bool,
-    held: bool, settle: Duration, now: Instant,
+    w: &mut GameWatch,
+    c: &Json,
+    monitors: &HashMap<i64, MonitorBox>,
+    declared: Option<(f64, f64)>,
+    refuse: bool,
+    held: bool,
+    settle: Duration,
+    now: Instant,
 ) -> GameStep {
-    let Some(address) = c.get("address").and_then(Json::as_str) else { return GameStep::Nothing };
-    let Some(g) = geom_of(c) else { return GameStep::Nothing };
+    let Some(address) = c.get("address").and_then(Json::as_str) else {
+        return GameStep::Nothing;
+    };
+    let Some(g) = geom_of(c) else {
+        return GameStep::Nothing;
+    };
     let floating = c.get("floating").and_then(Json::as_bool) == Some(true);
     let fullscreen = c.get("fullscreen").and_then(Json::as_i64).unwrap_or(0) != 0;
-    let special = c.pointer("/workspace/name").and_then(Json::as_str).is_some_and(|n| n.starts_with("special:"));
+    let special = c
+        .pointer("/workspace/name")
+        .and_then(Json::as_str)
+        .is_some_and(|n| n.starts_with("special:"));
     let hidden = c.get("hidden").and_then(Json::as_bool) == Some(true);
     if !floating || fullscreen || special || hidden {
         w.ok = None;
@@ -845,7 +964,10 @@ pub fn game_step(
         return GameStep::Nothing;
     };
     let same = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| {
-        (a.0 - b.0).abs() <= 1.0 && (a.1 - b.1).abs() <= 1.0 && (a.2 - b.2).abs() <= 1.0 && (a.3 - b.3).abs() <= 1.0
+        (a.0 - b.0).abs() <= 1.0
+            && (a.1 - b.1).abs() <= 1.0
+            && (a.2 - b.2).abs() <= 1.0
+            && (a.3 - b.3).abs() <= 1.0
     };
     if same(g, ok) {
         w.since = None;
@@ -869,7 +991,9 @@ pub fn game_step(
         let win = lua_str(&format!("address:{address}"));
         let mut lua = format!("local w={win}; ");
         if let Some(id) = w.workspace.filter(|id| *id > 0 && ws != Some(*id)) {
-            lua += &format!("hl.dispatch(hl.dsp.window.move({{workspace='{id}', follow=false, window=w}})); ");
+            lua += &format!(
+                "hl.dispatch(hl.dsp.window.move({{workspace='{id}', follow=false, window=w}})); "
+            );
         }
         lua += &format!(
             "hl.dispatch(hl.dsp.window.resize({{x={}, y={}, window=w}})); hl.dispatch(hl.dsp.window.move({{x={}, y={}, window=w}}))",
@@ -924,18 +1048,30 @@ pub fn game_step(
 /// sessions publish). A Hyprland client is matched to its X11 window through _NET_CLIENT_LIST by WM_CLASS, then
 /// _NET_WM_PID, title and geometry; the window id is cached per address. Every failure reconnects next time.
 pub struct X11 {
-    conn: Option<(x11rb::rust_connection::RustConnection, u32, HashMap<&'static str, u32>)>,
+    conn: Option<(
+        x11rb::rust_connection::RustConnection,
+        u32,
+        HashMap<&'static str, u32>,
+    )>,
     ids: HashMap<String, u32>,
 }
 
 const X11_ATOMS: [&str; 7] = [
-    "_NET_CLIENT_LIST", "_NET_WM_PID", "_NET_WM_NAME", "_NET_WM_STATE", "_NET_WM_STATE_MODAL", "_NET_WM_WINDOW_TYPE",
+    "_NET_CLIENT_LIST",
+    "_NET_WM_PID",
+    "_NET_WM_NAME",
+    "_NET_WM_STATE",
+    "_NET_WM_STATE_MODAL",
+    "_NET_WM_WINDOW_TYPE",
     "_NET_WM_WINDOW_TYPE_NORMAL",
 ];
 
 impl X11 {
     pub fn new() -> Self {
-        X11 { conn: None, ids: HashMap::new() }
+        X11 {
+            conn: None,
+            ids: HashMap::new(),
+        }
     }
 
     fn connect(&mut self) -> Option<()> {
@@ -950,15 +1086,27 @@ impl X11 {
         let (c, screen) = match x11_socket_path(&display) {
             Some((path, screen)) => {
                 let s = std::os::unix::net::UnixStream::connect(&path).ok()?;
-                let (stream, _) = x11rb::rust_connection::DefaultStream::from_unix_stream(s).ok()?;
-                (x11rb::rust_connection::RustConnection::connect_to_stream(stream, screen).ok()?, screen)
+                let (stream, _) =
+                    x11rb::rust_connection::DefaultStream::from_unix_stream(s).ok()?;
+                (
+                    x11rb::rust_connection::RustConnection::connect_to_stream(stream, screen)
+                        .ok()?,
+                    screen,
+                )
             }
             None => x11rb::connect(Some(&display)).ok()?,
         };
         let root = c.setup().roots.get(screen)?.root;
         let mut atoms = HashMap::new();
         for name in X11_ATOMS {
-            atoms.insert(name, c.intern_atom(false, name.as_bytes()).ok()?.reply().ok()?.atom);
+            atoms.insert(
+                name,
+                c.intern_atom(false, name.as_bytes())
+                    .ok()?
+                    .reply()
+                    .ok()?
+                    .atom,
+            );
         }
         self.conn = Some((c, root, atoms));
         Some(())
@@ -967,14 +1115,24 @@ impl X11 {
     fn prop32(&self, win: u32, atom: u32) -> Option<Vec<u32>> {
         use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
         let (c, _, _) = self.conn.as_ref()?;
-        let r = c.get_property(false, win, atom, AtomEnum::ANY, 0, 1024).ok()?.reply().ok()?;
+        let r = c
+            .get_property(false, win, atom, AtomEnum::ANY, 0, 1024)
+            .ok()?
+            .reply()
+            .ok()?;
         Some(r.value32().map(|v| v.collect()).unwrap_or_default())
     }
 
     fn text(&self, win: u32, atom: u32) -> Option<Vec<u8>> {
         use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
         let (c, _, _) = self.conn.as_ref()?;
-        Some(c.get_property(false, win, atom, AtomEnum::ANY, 0, 1024).ok()?.reply().ok()?.value)
+        Some(
+            c.get_property(false, win, atom, AtomEnum::ANY, 0, 1024)
+                .ok()?
+                .reply()
+                .ok()?
+                .value,
+        )
     }
 
     fn window_for(&mut self, c: &Json) -> Option<u32> {
@@ -1000,11 +1158,18 @@ impl X11 {
         let at = geom_of(c);
         let mut best: Option<(f64, u32)> = None;
         for win in list {
-            let wm_class = self.text(win, AtomEnum::WM_CLASS.into()).unwrap_or_default();
-            if !wm_class.split(|b| *b == 0).any(|s| !s.is_empty() && s == class.as_bytes()) {
+            let wm_class = self
+                .text(win, AtomEnum::WM_CLASS.into())
+                .unwrap_or_default();
+            if !wm_class
+                .split(|b| *b == 0)
+                .any(|s| !s.is_empty() && s == class.as_bytes())
+            {
                 continue;
             }
-            let wpid = self.prop32(win, atoms["_NET_WM_PID"]).and_then(|v| v.first().copied());
+            let wpid = self
+                .prop32(win, atoms["_NET_WM_PID"])
+                .and_then(|v| v.first().copied());
             if let (Some(a), Some(b)) = (pid, wpid) {
                 if a != b as u64 {
                     continue;
@@ -1016,8 +1181,16 @@ impl X11 {
                 .or_else(|| self.text(win, AtomEnum::WM_NAME.into()))
                 .unwrap_or_default();
             let mut score = if name == title.as_bytes() { 0.0 } else { 1e6 };
-            if let (Some(g), Some(r)) = (at, self.conn.as_ref().and_then(|(cn, _, _)| cn.get_geometry(win).ok()?.reply().ok())) {
-                score += (g.0 - r.x as f64).abs() + (g.1 - r.y as f64).abs() + (g.2 - r.width as f64).abs() + (g.3 - r.height as f64).abs();
+            if let (Some(g), Some(r)) = (
+                at,
+                self.conn
+                    .as_ref()
+                    .and_then(|(cn, _, _)| cn.get_geometry(win).ok()?.reply().ok()),
+            ) {
+                score += (g.0 - r.x as f64).abs()
+                    + (g.1 - r.y as f64).abs()
+                    + (g.2 - r.width as f64).abs()
+                    + (g.3 - r.height as f64).abs();
             }
             if best.map_or(true, |(s, _)| score < s) {
                 best = Some((score, win));
@@ -1039,10 +1212,21 @@ impl X11 {
             self.ids.clear();
             return None;
         };
-        let transient = self.prop32(win, AtomEnum::WM_TRANSIENT_FOR.into()).unwrap_or_default();
+        let transient = self
+            .prop32(win, AtomEnum::WM_TRANSIENT_FOR.into())
+            .unwrap_or_default();
         let state = self.prop32(win, atoms["_NET_WM_STATE"]).unwrap_or_default();
-        let types = self.prop32(win, atoms["_NET_WM_WINDOW_TYPE"]).unwrap_or_default();
-        Some(props_from(&hints, &transient, &state, &types, atoms["_NET_WM_STATE_MODAL"], atoms["_NET_WM_WINDOW_TYPE_NORMAL"]))
+        let types = self
+            .prop32(win, atoms["_NET_WM_WINDOW_TYPE"])
+            .unwrap_or_default();
+        Some(props_from(
+            &hints,
+            &transient,
+            &state,
+            &types,
+            atoms["_NET_WM_STATE_MODAL"],
+            atoms["_NET_WM_WINDOW_TYPE_NORMAL"],
+        ))
     }
 
     pub fn forget(&mut self, address: &str) {
@@ -1068,7 +1252,14 @@ pub fn x11_socket_path(display: &str) -> Option<(String, usize)> {
 }
 
 /// [`X11Props`] from the raw property values (WM_NORMAL_HINTS, WM_TRANSIENT_FOR, _NET_WM_STATE, _NET_WM_WINDOW_TYPE).
-pub fn props_from(hints: &[u32], transient: &[u32], state: &[u32], types: &[u32], modal: u32, normal: u32) -> X11Props {
+pub fn props_from(
+    hints: &[u32],
+    transient: &[u32],
+    state: &[u32],
+    types: &[u32],
+    modal: u32,
+    normal: u32,
+) -> X11Props {
     X11Props {
         fixed: fixed_from_hints(hints),
         dialog: transient.first().is_some_and(|w| *w != 0)
@@ -1099,9 +1290,7 @@ const RESCAN_EMPTY_EVERY: Duration = Duration::from_secs(10);
 
 /// Whether the cached pointer fds should be rebuilt.
 fn should_rescan(fds_empty: bool, since_scan: Duration, hotplug: bool) -> bool {
-    hotplug
-        || since_scan > RESCAN_EVERY
-        || (fds_empty && since_scan > RESCAN_EMPTY_EVERY)
+    hotplug || since_scan > RESCAN_EVERY || (fds_empty && since_scan > RESCAN_EMPTY_EVERY)
 }
 
 fn inotify_watch(dir: &Path) -> Option<std::os::fd::OwnedFd> {
@@ -1299,7 +1488,11 @@ const PENDING_MAX_ATTEMPTS: u8 = 10;
 /// Record one on_open attempt for `a`; true when the window leaves the pending set (decided,
 /// or out of attempts). Failed attempts age the entry too, so a window whose lookup keeps
 /// erroring cannot stay pending (and keep the poll loop hot) forever.
-fn record_attempt(pending: &mut HashMap<String, u8>, a: &str, outcome: &Result<bool, String>) -> bool {
+fn record_attempt(
+    pending: &mut HashMap<String, u8>,
+    a: &str,
+    outcome: &Result<bool, String>,
+) -> bool {
     let n = pending.get(a).copied().unwrap_or(0).saturating_add(1);
     let done = matches!(outcome, Ok(true)) || n >= PENDING_MAX_ATTEMPTS;
     if done {
@@ -1343,7 +1536,9 @@ impl Server {
     }
 
     fn filtered(&self, c: &Json) -> bool {
-        if tags(c).contains(&"mios-pip-managed".to_string()) { return false; }
+        if tags(c).contains(&"mios-pip-managed".to_string()) {
+            return false;
+        }
         match &self.class_filter {
             Some(re) => re.is_match(c.get("class").and_then(Json::as_str).unwrap_or("")),
             None => true,
@@ -1404,11 +1599,23 @@ impl Server {
             .cfg
             .games
             .as_ref()
-            .map(|g| [g.tag.clone(), g.fixed_tag.clone(), g.candidate_tag.clone()].into_iter().filter(|t| tags(c).contains(t)).collect())
+            .map(|g| {
+                [g.tag.clone(), g.fixed_tag.clone(), g.candidate_tag.clone()]
+                    .into_iter()
+                    .filter(|t| tags(c).contains(t))
+                    .collect()
+            })
             .unwrap_or_default();
         let xwayland = c.get("xwayland").and_then(Json::as_bool) == Some(true);
-        let x11 = if xwayland && !game_tags.is_empty() { self.x11.props(c) } else { None };
-        if xwayland && !game_tags.is_empty() && x11.is_none() && std::env::var_os("DISPLAY").is_some()
+        let x11 = if xwayland && !game_tags.is_empty() {
+            self.x11.props(c)
+        } else {
+            None
+        };
+        if xwayland
+            && !game_tags.is_empty()
+            && x11.is_none()
+            && std::env::var_os("DISPLAY").is_some()
             && self.pending.get(address).copied().unwrap_or(0) + 1 < PENDING_MAX_ATTEMPTS
         {
             // Not in XWayland's client list yet: ask again (the last attempt decides without X11).
@@ -1420,7 +1627,9 @@ impl Server {
         let game = game_kind(&self.cfg, c, x11.as_ref());
         if game.is_none() && !game_tags.is_empty() && x11.is_some() {
             // A transient/modal/dialog-typed (or floated, not fixed-size) window of a game class: not a game.
-            self.log(&format!("{address}: game class but a dialog or not fixed-size ({x11:?}); left alone"));
+            self.log(&format!(
+                "{address}: game class but a dialog or not fixed-size ({x11:?}); left alone"
+            ));
         }
         if game.is_none() && !tags(c).contains(&self.cfg.open_tag) {
             return Ok(true);
@@ -1445,38 +1654,61 @@ impl Server {
         if let Some(kind) = game {
             // No size gate: a game's own geometry is exactly what is being corrected.
             let declared = x11.and_then(|p| p.fixed);
-            let pin = kind == GameKind::Fixed && xwayland && self.cfg.games.as_ref().is_some_and(|x| x.pin_fixed_size);
-            let Some(plan) =
-                game_plan(&self.cfg, c, &self.hypr.json("monitors")?, kind, declared, Some(&self.cfg.managed_tag), pin)
-            else {
+            let pin = kind == GameKind::Fixed
+                && xwayland
+                && self.cfg.games.as_ref().is_some_and(|x| x.pin_fixed_size);
+            let Some(plan) = game_plan(
+                &self.cfg,
+                c,
+                &self.hypr.json("monitors")?,
+                kind,
+                declared,
+                Some(&self.cfg.managed_tag),
+                pin,
+            ) else {
                 return Ok(false);
             };
             self.hypr.eval(&plan.lua)?;
             let g = plan.geometry;
             self.log(&format!(
                 "{address}: game ({kind:?}) placed {}x{}+{}+{} on monitor {}{}",
-                g.w, g.h, g.x, g.y, plan.monitor,
+                g.w,
+                g.h,
+                g.x,
+                g.y,
+                plan.monitor,
                 if plan.resized { "" } else { " at its own size" }
             ));
             // XWayland only: X11 games position and size themselves with ConfigureRequests (root remaps are refused,
             // their own size changes followed). A Wayland game cannot move itself and sizes its own buffers.
             if xwayland {
-                let ws = plan.workspace.or_else(|| c.pointer("/workspace/id").and_then(Json::as_i64));
-                self.games.insert(address.to_owned(), GameWatch {
-                    kind,
-                    ok: Some((g.x as f64, g.y as f64, g.w as f64, g.h as f64)),
-                    workspace: ws,
-                    target: pin.then_some((g.w as f64, g.h as f64)),
-                    declared,
-                    refused: None,
-                    since: None,
-                    corrections: 0,
-                    dragged: false,
-                });
+                let ws = plan
+                    .workspace
+                    .or_else(|| c.pointer("/workspace/id").and_then(Json::as_i64));
+                self.games.insert(
+                    address.to_owned(),
+                    GameWatch {
+                        kind,
+                        ok: Some((g.x as f64, g.y as f64, g.w as f64, g.h as f64)),
+                        workspace: ws,
+                        target: pin.then_some((g.w as f64, g.h as f64)),
+                        declared,
+                        refused: None,
+                        since: None,
+                        corrections: 0,
+                        dragged: false,
+                    },
+                );
             }
             if kind == GameKind::Resizable {
                 let last = (g.x as f64, g.y as f64, g.w as f64, g.h as f64);
-                self.tracked.insert(address.to_owned(), Track::Arming { last, since: Instant::now() });
+                self.tracked.insert(
+                    address.to_owned(),
+                    Track::Arming {
+                        last,
+                        since: Instant::now(),
+                    },
+                );
             }
             return Ok(true);
         }
@@ -1608,13 +1840,20 @@ impl Server {
     /// game whose geometry moved off the accepted one.
     fn watch_games(&mut self) -> Result<(), String> {
         let clients = self.clients()?;
-        let refuse = self.cfg.games.as_ref().is_some_and(|g| g.suppress_client_geometry);
+        let refuse = self
+            .cfg
+            .games
+            .as_ref()
+            .is_some_and(|g| g.suppress_client_geometry);
         let settle = self.cfg.settle;
         let mut monitors: Option<HashMap<i64, MonitorBox>> = None;
         let mut held: Option<bool> = None;
         let addrs: Vec<String> = self.games.keys().cloned().collect();
         for a in addrs {
-            let Some(c) = clients.iter().find(|c| c.get("address").and_then(Json::as_str) == Some(a.as_str())) else {
+            let Some(c) = clients
+                .iter()
+                .find(|c| c.get("address").and_then(Json::as_str) == Some(a.as_str()))
+            else {
                 self.games.remove(&a);
                 self.x11.forget(&a);
                 continue;
@@ -1628,34 +1867,65 @@ impl Server {
             }
             let mut w = self.games[&a].clone();
             let moved = match (w.ok, geom_of(c)) {
-                (Some(ok), Some(g)) => [ok.0 - g.0, ok.1 - g.1, ok.2 - g.2, ok.3 - g.3].iter().any(|d| d.abs() > 1.0),
+                (Some(ok), Some(g)) => [ok.0 - g.0, ok.1 - g.1, ok.2 - g.2, ok.3 - g.3]
+                    .iter()
+                    .any(|d| d.abs() > 1.0),
                 _ => false,
             };
             let (declared, h) = if moved {
                 if monitors.is_none() {
                     monitors = Some(monitor_boxes(&self.hypr.json("monitors")?));
                 }
-                let declared = if w.kind == GameKind::Fixed { self.x11.props(c).and_then(|p| p.fixed) } else { None };
-                (declared, *held.get_or_insert_with(|| self.buttons.down() == Some(true)))
+                let declared = if w.kind == GameKind::Fixed {
+                    self.x11.props(c).and_then(|p| p.fixed)
+                } else {
+                    None
+                };
+                (
+                    declared,
+                    *held.get_or_insert_with(|| self.buttons.down() == Some(true)),
+                )
             } else {
                 (None, false)
             };
             let empty = HashMap::new();
-            let step = game_step(&mut w, c, monitors.as_ref().unwrap_or(&empty), declared, refuse, h, settle, Instant::now());
+            let step = game_step(
+                &mut w,
+                c,
+                monitors.as_ref().unwrap_or(&empty),
+                declared,
+                refuse,
+                h,
+                settle,
+                Instant::now(),
+            );
             match step {
                 GameStep::Nothing => {}
                 GameStep::Refuse(lua) => {
                     self.hypr.eval(&lua)?;
                     let ok = w.ok.unwrap_or_default();
-                    self.log(&format!("{a}: game remapped itself to {:?}; refused, back at {}x{}+{}+{}", geom_of(c), ok.2, ok.3, ok.0, ok.1));
+                    self.log(&format!(
+                        "{a}: game remapped itself to {:?}; refused, back at {}x{}+{}+{}",
+                        geom_of(c),
+                        ok.2,
+                        ok.3,
+                        ok.0,
+                        ok.1
+                    ));
                 }
                 GameStep::Restore(lua) => {
                     self.hypr.eval(&lua)?;
-                    self.log(&format!("{a}: fixed-size game resized from outside; restored {:?}", w.target));
+                    self.log(&format!(
+                        "{a}: fixed-size game resized from outside; restored {:?}",
+                        w.target
+                    ));
                 }
                 GameStep::Repin(lua) => {
                     self.hypr.eval(&lua)?;
-                    self.log(&format!("{a}: game changed its own size to {:?}; followed", w.target));
+                    self.log(&format!(
+                        "{a}: game changed its own size to {:?}; followed",
+                        w.target
+                    ));
                 }
                 GameStep::GiveUp => {
                     self.games.remove(&a);
@@ -1704,7 +1974,8 @@ impl Server {
                 drop.push(a);
                 continue;
             };
-            if !self.filtered(c) || c.get("floating").and_then(Json::as_bool) != Some(true)
+            if !self.filtered(c)
+                || c.get("floating").and_then(Json::as_bool) != Some(true)
                 || !tags(c).contains(&self.cfg.managed_tag)
             {
                 drop.push(a);
@@ -1935,8 +2206,16 @@ fn toggle(cfg: &Config, window: Option<String>) -> Result<(), String> {
     if game_kind(cfg, &c, x11.as_ref()) == Some(GameKind::Fixed) {
         // Tiling resizes; a fixed-size game cannot re-render at another size. Re-centre it at its declared size.
         let pin = xwayland && cfg.games.as_ref().is_some_and(|g| g.pin_fixed_size);
-        let plan = game_plan(cfg, &c, &hypr.json("monitors")?, GameKind::Fixed, x11.and_then(|p| p.fixed), None, pin)
-            .ok_or("game window monitor not found")?;
+        let plan = game_plan(
+            cfg,
+            &c,
+            &hypr.json("monitors")?,
+            GameKind::Fixed,
+            x11.and_then(|p| p.fixed),
+            None,
+            pin,
+        )
+        .ok_or("game window monitor not found")?;
         return hypr.eval(&plan.lua);
     }
     if c.get("floating").and_then(Json::as_bool) == Some(true) {
@@ -2049,10 +2328,19 @@ managed_tag = "mios-placed"
     #[test]
     fn rescan_policy() {
         let s = Duration::from_secs;
-        assert!(!should_rescan(false, s(1), false), "steady state: no rescan");
+        assert!(
+            !should_rescan(false, s(1), false),
+            "steady state: no rescan"
+        );
         assert!(!should_rescan(true, s(1), false));
-        assert!(should_rescan(false, s(1), true), "hotplug event forces a rescan");
-        assert!(should_rescan(false, s(31), false), "periodic fallback with devices present");
+        assert!(
+            should_rescan(false, s(1), true),
+            "hotplug event forces a rescan"
+        );
+        assert!(
+            should_rescan(false, s(31), false),
+            "periodic fallback with devices present"
+        );
         assert!(should_rescan(true, s(11), false));
     }
 
@@ -2096,7 +2384,8 @@ managed_tag = "mios-placed"
             reserved: [0.0; 4],
             width_mm: 697.0,
         };
-        let mut c=cfg();c.width_ratio=0.8; // request enough width to actually reach the physical cap
+        let mut c = cfg();
+        c.width_ratio = 0.8; // request enough width to actually reach the physical cap
         let g = geometry(&c, &m);
         assert_eq!(g.w, (420.0 * 2560.0 / 697.0_f64).round() as i64);
         assert!(g.h < g.w);
@@ -2214,88 +2503,276 @@ candidate_tag = "mios-place-game-candidate"
     fn forza_root_remap_opens_on_the_focused_output() {
         // Journal: steam_app_2483190 mapped 1920x1080, then 3840x1080 at 0,0 (the XWayland root, both outputs).
         let c = cfg_games("fit");
-        let w = game("steam_app_2483190", (0, 0), (3840, 1080), &["mios-place-game-fixed*"]);
-        let x = X11Props { fixed: Some((3840.0, 1080.0)), dialog: false };
+        let w = game(
+            "steam_app_2483190",
+            (0, 0),
+            (3840, 1080),
+            &["mios-place-game-fixed*"],
+        );
+        let x = X11Props {
+            fixed: Some((3840.0, 1080.0)),
+            dialog: false,
+        };
         assert_eq!(game_kind(&c, &w, Some(&x)), Some(GameKind::Fixed));
-        let p = game_plan(&c, &w, &two_outputs(), GameKind::Fixed, x.fixed, Some("mios-placed"), true).unwrap();
+        let p = game_plan(
+            &c,
+            &w,
+            &two_outputs(),
+            GameKind::Fixed,
+            x.fixed,
+            Some("mios-placed"),
+            true,
+        )
+        .unwrap();
         assert_eq!(p.monitor, 1, "the focused output, not the root origin's");
-        assert_eq!(p.workspace, Some(2), "moved to the focused output's workspace");
+        assert_eq!(
+            p.workspace,
+            Some(2),
+            "moved to the focused output's workspace"
+        );
         assert!(p.resized, "larger than the output: fit to the opening size");
         let g = p.geometry;
-        assert!(g.x >= 1920 && g.x + g.w <= 3840 && g.y >= 44 && g.y + g.h <= 1080 - 72, "{g:?}");
-        assert!(p.lua.contains("workspace='2', follow=false") && p.lua.contains("hl.dsp.window.resize"));
-        assert!(!p.lua.contains("mios-placed"), "fixed-size games are never tiled on move");
-        assert!(p.lua.contains("tag='+mios-place-game-fixed'"), "a confirmed fixed game gets the fixed tag: {}", p.lua);
-        assert!(p.lua.contains(&format!("prop='max_size', value='{} {}'", g.w, g.h)), "fit pins the fitted size");
+        assert!(
+            g.x >= 1920 && g.x + g.w <= 3840 && g.y >= 44 && g.y + g.h <= 1080 - 72,
+            "{g:?}"
+        );
+        assert!(
+            p.lua.contains("workspace='2', follow=false") && p.lua.contains("hl.dsp.window.resize")
+        );
+        assert!(
+            !p.lua.contains("mios-placed"),
+            "fixed-size games are never tiled on move"
+        );
+        assert!(
+            p.lua.contains("tag='+mios-place-game-fixed'"),
+            "a confirmed fixed game gets the fixed tag: {}",
+            p.lua
+        );
+        assert!(
+            p.lua
+                .contains(&format!("prop='max_size', value='{} {}'", g.w, g.h)),
+            "fit pins the fitted size"
+        );
         // keep: centred on the output at its own size (cropped), never resized.
-        let k = game_plan(&cfg_games("keep"), &w, &two_outputs(), GameKind::Fixed, x.fixed, None, true).unwrap();
+        let k = game_plan(
+            &cfg_games("keep"),
+            &w,
+            &two_outputs(),
+            GameKind::Fixed,
+            x.fixed,
+            None,
+            true,
+        )
+        .unwrap();
         assert!(!k.resized && !k.lua.contains("window.resize"));
-        assert_eq!((k.geometry.x, k.geometry.w), (1920 + (1920 - 3840) / 2, 3840));
+        assert_eq!(
+            (k.geometry.x, k.geometry.w),
+            (1920 + (1920 - 3840) / 2, 3840)
+        );
     }
 
     #[test]
     fn fixed_size_game_is_centred_at_its_declared_size() {
         // The offscreen spawn: a 640x480 non-resizable window that asked for 700,500 of another output.
         let c = cfg_games("fit");
-        let w = game("steam_app_12", (700, 500), (640, 480), &["mios-place-game-fixed*"]);
-        let p = game_plan(&c, &w, &two_outputs(), GameKind::Fixed, Some((640.0, 480.0)), Some("mios-placed"), true).unwrap();
-        assert!(!p.resized && !p.lua.contains("window.resize"), "never resized: no black regrown area");
-        assert!(p.lua.contains("prop='min_size', value='640 480'") && p.lua.contains("prop='max_size', value='640 480'"),
-                "pinned to its own size: {}", p.lua);
+        let w = game(
+            "steam_app_12",
+            (700, 500),
+            (640, 480),
+            &["mios-place-game-fixed*"],
+        );
+        let p = game_plan(
+            &c,
+            &w,
+            &two_outputs(),
+            GameKind::Fixed,
+            Some((640.0, 480.0)),
+            Some("mios-placed"),
+            true,
+        )
+        .unwrap();
+        assert!(
+            !p.resized && !p.lua.contains("window.resize"),
+            "never resized: no black regrown area"
+        );
+        assert!(
+            p.lua.contains("prop='min_size', value='640 480'")
+                && p.lua.contains("prop='max_size', value='640 480'"),
+            "pinned to its own size: {}",
+            p.lua
+        );
         assert_eq!((p.geometry.w, p.geometry.h), (640, 480));
-        assert_eq!((p.geometry.x, p.geometry.y), (1920 + 640, 44 + (1080 - 44 - 72 - 480) / 2));
+        assert_eq!(
+            (p.geometry.x, p.geometry.y),
+            (1920 + 640, 44 + (1080 - 44 - 72 - 480) / 2)
+        );
         // Unpinned (Wayland, or pin_fixed_size off): placed the same, no size props.
         let u = game_plan(&c, &w, &two_outputs(), GameKind::Fixed, None, None, false).unwrap();
         assert!(!u.lua.contains("set_prop") && u.geometry == p.geometry);
         // A fixed game something grew (840x600) is put back to its declared size by Super+V's re-centre.
-        let grown = game("steam_app_12", (100, 100), (840, 600), &["mios-place-game-fixed*"]);
-        let g = game_plan(&c, &grown, &two_outputs(), GameKind::Fixed, Some((640.0, 480.0)), None, true).unwrap();
-        assert!(g.lua.contains("resize({x=640, y=480") && (g.geometry.w, g.geometry.h) == (640, 480), "{}", g.lua);
+        let grown = game(
+            "steam_app_12",
+            (100, 100),
+            (840, 600),
+            &["mios-place-game-fixed*"],
+        );
+        let g = game_plan(
+            &c,
+            &grown,
+            &two_outputs(),
+            GameKind::Fixed,
+            Some((640.0, 480.0)),
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(
+            g.lua.contains("resize({x=640, y=480") && (g.geometry.w, g.geometry.h) == (640, 480),
+            "{}",
+            g.lua
+        );
         // 1920x1080 fits the output but not the HUD-free area: whole output, still not resized.
-        let full = game("steam_app_12", (0, 0), (1920, 1080), &["mios-place-game-fixed*"]);
-        let p = game_plan(&c, &full, &two_outputs(), GameKind::Fixed, Some((1920.0, 1080.0)), None, true).unwrap();
+        let full = game(
+            "steam_app_12",
+            (0, 0),
+            (1920, 1080),
+            &["mios-place-game-fixed*"],
+        );
+        let p = game_plan(
+            &c,
+            &full,
+            &two_outputs(),
+            GameKind::Fixed,
+            Some((1920.0, 1080.0)),
+            None,
+            true,
+        )
+        .unwrap();
         assert_eq!((p.geometry.x, p.geometry.y, p.resized), (1920, 0, false));
     }
 
     #[test]
     fn resizable_game_takes_the_opening_size_on_the_focused_output() {
         let c = cfg_games("fit");
-        let w = game("steam_app_11", (0, 0), (1920, 1080), &["mios-place-game*", "mios-place-new*"]);
-        assert_eq!(game_kind(&c, &w, Some(&X11Props::default())), Some(GameKind::Resizable));
-        let p = game_plan(&c, &w, &two_outputs(), GameKind::Resizable, None, Some("mios-placed"), true).unwrap();
-        let mut focused = MonitorBox { x: 1920.0, y: 0.0, w: 1920.0, h: 1080.0, reserved: [0.0, 44.0, 0.0, 72.0], width_mm: 530.0 };
+        let w = game(
+            "steam_app_11",
+            (0, 0),
+            (1920, 1080),
+            &["mios-place-game*", "mios-place-new*"],
+        );
+        assert_eq!(
+            game_kind(&c, &w, Some(&X11Props::default())),
+            Some(GameKind::Resizable)
+        );
+        let p = game_plan(
+            &c,
+            &w,
+            &two_outputs(),
+            GameKind::Resizable,
+            None,
+            Some("mios-placed"),
+            true,
+        )
+        .unwrap();
+        let mut focused = MonitorBox {
+            x: 1920.0,
+            y: 0.0,
+            w: 1920.0,
+            h: 1080.0,
+            reserved: [0.0, 44.0, 0.0, 72.0],
+            width_mm: 530.0,
+        };
         assert_eq!(p.geometry, geometry(&c, &focused));
         assert!(p.resized && p.lua.contains("tag='+mios-placed'"));
-        assert!(!p.lua.contains("set_prop"), "resizable games re-render at any size: never pinned");
+        assert!(
+            !p.lua.contains("set_prop"),
+            "resizable games re-render at any size: never pinned"
+        );
         // No focus reported: the window's own output.
         let mut mons = two_outputs();
         mons[1]["focused"] = Json::Bool(false);
         let p = game_plan(&c, &w, &mons, GameKind::Resizable, None, None, false).unwrap();
         focused.x = 0.0;
-        assert_eq!((p.monitor, p.workspace, p.geometry), (0, None, geometry(&c, &focused)));
+        assert_eq!(
+            (p.monitor, p.workspace, p.geometry),
+            (0, None, geometry(&c, &focused))
+        );
     }
 
     #[test]
     fn games_are_classified_by_what_the_client_declares_not_by_class_or_float() {
         let c = cfg_games("fit");
-        let floated = game("setup.exe", (436, 274), (420, 300), &["mios-place-game-candidate*"]);
-        let fixed = X11Props { fixed: Some((420.0, 300.0)), dialog: false };
-        assert_eq!(game_kind(&c, &floated, Some(&fixed)), Some(GameKind::Fixed), "min == max: a fixed-size game");
+        let floated = game(
+            "setup.exe",
+            (436, 274),
+            (420, 300),
+            &["mios-place-game-candidate*"],
+        );
+        let fixed = X11Props {
+            fixed: Some((420.0, 300.0)),
+            dialog: false,
+        };
+        assert_eq!(
+            game_kind(&c, &floated, Some(&fixed)),
+            Some(GameKind::Fixed),
+            "min == max: a fixed-size game"
+        );
         // A resizable WM_TRANSIENT_FOR/modal dialog of a Wine app (class setup.exe): Hyprland floats it, the class
         // matches, but it is not a game. The pre-fix classifier (tag only) returned Fixed here.
-        let dialog = X11Props { fixed: None, dialog: true };
+        let dialog = X11Props {
+            fixed: None,
+            dialog: true,
+        };
         assert_eq!(game_kind(&c, &floated, Some(&dialog)), None);
-        assert_eq!(game_kind(&c, &floated, Some(&X11Props { fixed: Some((420.0, 300.0)), dialog: true })), None,
-                   "a fixed-size dialog is still a dialog");
-        assert_eq!(game_kind(&c, &floated, Some(&X11Props::default())), None, "floated, not fixed-size: left alone");
-        assert_eq!(game_kind(&c, &floated, None), None, "XWayland unreadable: a floated window is not moved");
+        assert_eq!(
+            game_kind(
+                &c,
+                &floated,
+                Some(&X11Props {
+                    fixed: Some((420.0, 300.0)),
+                    dialog: true
+                })
+            ),
+            None,
+            "a fixed-size dialog is still a dialog"
+        );
+        assert_eq!(
+            game_kind(&c, &floated, Some(&X11Props::default())),
+            None,
+            "floated, not fixed-size: left alone"
+        );
+        assert_eq!(
+            game_kind(&c, &floated, None),
+            None,
+            "XWayland unreadable: a floated window is not moved"
+        );
         // A fixed game tiled and floated again carries both tags; its hints still make it Fixed (Super+V re-centres
         // it instead of tiling it).
-        let both = game("steam_app_9", (0, 0), (480, 320), &["mios-place-game*", "mios-place-game-fixed*"]);
-        assert_eq!(game_kind(&c, &both, Some(&X11Props { fixed: Some((480.0, 320.0)), dialog: false })), Some(GameKind::Fixed));
+        let both = game(
+            "steam_app_9",
+            (0, 0),
+            (480, 320),
+            &["mios-place-game*", "mios-place-game-fixed*"],
+        );
+        assert_eq!(
+            game_kind(
+                &c,
+                &both,
+                Some(&X11Props {
+                    fixed: Some((480.0, 320.0)),
+                    dialog: false
+                })
+            ),
+            Some(GameKind::Fixed)
+        );
         assert_eq!(game_kind(&c, &both, None), Some(GameKind::Resizable));
         // Wayland: fixed only with content type game.
-        let mut wl = game("steam_app_9", (0, 0), (480, 320), &["mios-place-game-fixed*"]);
+        let mut wl = game(
+            "steam_app_9",
+            (0, 0),
+            (480, 320),
+            &["mios-place-game-fixed*"],
+        );
         wl["xwayland"] = Json::Bool(false);
         assert_eq!(game_kind(&c, &wl, None), None);
         wl["contentType"] = Json::String("game".into());
@@ -2305,25 +2782,55 @@ candidate_tag = "mios-place-game-candidate"
     #[test]
     fn x11_hints_and_dialog_markers_are_read_like_hyprland() {
         // WM_SIZE_HINTS: flags, x, y, w, h, min_w, min_h, max_w, max_h, ...
-        assert_eq!(fixed_from_hints(&[48, 0, 0, 0, 0, 480, 320, 480, 320, 0, 0]), Some((480.0, 320.0)));
-        assert_eq!(fixed_from_hints(&[48, 0, 0, 0, 0, 200, 100, 4000, 3000]), None, "min != max: resizable");
+        assert_eq!(
+            fixed_from_hints(&[48, 0, 0, 0, 0, 480, 320, 480, 320, 0, 0]),
+            Some((480.0, 320.0))
+        );
+        assert_eq!(
+            fixed_from_hints(&[48, 0, 0, 0, 0, 200, 100, 4000, 3000]),
+            None,
+            "min != max: resizable"
+        );
         assert_eq!(fixed_from_hints(&[0, 0, 0, 0, 0, 0, 0, 0, 0]), None);
         assert_eq!(fixed_from_hints(&[16, 0, 0]), None, "short property");
         let (modal, normal, dialog_type) = (11, 20, 21);
         let hints = [48, 0, 0, 0, 0, 420, 300, 420, 300];
-        assert_eq!(props_from(&hints, &[], &[], &[normal], modal, normal), X11Props { fixed: Some((420.0, 300.0)), dialog: false });
-        assert!(props_from(&hints, &[0x400001], &[], &[normal], modal, normal).dialog, "WM_TRANSIENT_FOR");
-        assert!(!props_from(&hints, &[0], &[], &[], modal, normal).dialog, "transient-for None");
-        assert!(props_from(&hints, &[], &[3, modal], &[], modal, normal).dialog, "_NET_WM_STATE_MODAL");
-        assert!(props_from(&hints, &[], &[], &[dialog_type, normal], modal, normal).dialog, "first window type DIALOG");
+        assert_eq!(
+            props_from(&hints, &[], &[], &[normal], modal, normal),
+            X11Props {
+                fixed: Some((420.0, 300.0)),
+                dialog: false
+            }
+        );
+        assert!(
+            props_from(&hints, &[0x400001], &[], &[normal], modal, normal).dialog,
+            "WM_TRANSIENT_FOR"
+        );
+        assert!(
+            !props_from(&hints, &[0], &[], &[], modal, normal).dialog,
+            "transient-for None"
+        );
+        assert!(
+            props_from(&hints, &[], &[3, modal], &[], modal, normal).dialog,
+            "_NET_WM_STATE_MODAL"
+        );
+        assert!(
+            props_from(&hints, &[], &[], &[dialog_type, normal], modal, normal).dialog,
+            "first window type DIALOG"
+        );
     }
 
     #[test]
     fn path_form_displays_name_their_socket() {
         // Nested sessions publish DISPLAY=unix:<runtime>/x11/X1; x11rb alone would dial /tmp/.X11-unix/X0.
-        assert_eq!(x11_socket_path("unix:/run/user/1000/mios-nested-desktop-7/x11/X1"),
-                   Some(("/run/user/1000/mios-nested-desktop-7/x11/X1".into(), 0)));
-        assert_eq!(x11_socket_path("/run/x/X1.2"), Some(("/run/x/X1".into(), 2)));
+        assert_eq!(
+            x11_socket_path("unix:/run/user/1000/mios-nested-desktop-7/x11/X1"),
+            Some(("/run/user/1000/mios-nested-desktop-7/x11/X1".into(), 0))
+        );
+        assert_eq!(
+            x11_socket_path("/run/x/X1.2"),
+            Some(("/run/x/X1".into(), 2))
+        );
         assert_eq!(x11_socket_path(":0"), None);
         assert_eq!(x11_socket_path("localhost:1.0"), None);
     }
@@ -2335,25 +2842,63 @@ candidate_tag = "mios-place-game-candidate"
     #[test]
     fn only_root_and_oversize_geometry_is_a_remap() {
         let m = mons2();
-        assert!(is_remap((0.0, 0.0, 3840.0, 1080.0), &m), "the XWayland root (Forza)");
-        assert!(!is_remap((1800.0, 100.0, 480.0, 320.0), &m), "straddling two outputs is a position, not a remap");
-        assert!(!is_remap((3600.0, 900.0, 480.0, 320.0), &m), "partly off-screen is a position, not a remap");
-        assert!(!is_remap((-200.0, -50.0, 816.0, 588.0), &m), "partly off the left/top edge");
-        assert!(is_remap((100.0, 0.0, 2400.0, 900.0), &m), "wider than every output");
-        assert!(is_remap((0.0, 0.0, 1800.0, 1300.0), &m), "taller than every output");
-        assert!(is_remap((500.0, 300.0, 3840.0, 1080.0), &m), "root-sized anywhere is wider than every output");
-        assert!(!is_remap((2000.0, 100.0, 640.0, 400.0), &m), "a resolution change inside the output");
-        assert!(!is_remap((1920.0, 0.0, 1920.0, 1080.0), &m), "one whole output is not the root of two");
-        let one = monitor_boxes(&serde_json::json!([{"id": 0, "x": 0, "y": 0, "width": 1392, "height": 1002, "scale": 1.0}]));
-        assert!(is_remap((0.0, 0.0, 1392.0, 1002.0), &one), "single output: the root is the output");
+        assert!(
+            is_remap((0.0, 0.0, 3840.0, 1080.0), &m),
+            "the XWayland root (Forza)"
+        );
+        assert!(
+            !is_remap((1800.0, 100.0, 480.0, 320.0), &m),
+            "straddling two outputs is a position, not a remap"
+        );
+        assert!(
+            !is_remap((3600.0, 900.0, 480.0, 320.0), &m),
+            "partly off-screen is a position, not a remap"
+        );
+        assert!(
+            !is_remap((-200.0, -50.0, 816.0, 588.0), &m),
+            "partly off the left/top edge"
+        );
+        assert!(
+            is_remap((100.0, 0.0, 2400.0, 900.0), &m),
+            "wider than every output"
+        );
+        assert!(
+            is_remap((0.0, 0.0, 1800.0, 1300.0), &m),
+            "taller than every output"
+        );
+        assert!(
+            is_remap((500.0, 300.0, 3840.0, 1080.0), &m),
+            "root-sized anywhere is wider than every output"
+        );
+        assert!(
+            !is_remap((2000.0, 100.0, 640.0, 400.0), &m),
+            "a resolution change inside the output"
+        );
+        assert!(
+            !is_remap((1920.0, 0.0, 1920.0, 1080.0), &m),
+            "one whole output is not the root of two"
+        );
+        let one = monitor_boxes(
+            &serde_json::json!([{"id": 0, "x": 0, "y": 0, "width": 1392, "height": 1002, "scale": 1.0}]),
+        );
+        assert!(
+            is_remap((0.0, 0.0, 1392.0, 1002.0), &one),
+            "single output: the root is the output"
+        );
         assert!(!is_remap((100.0, 100.0, 640.0, 400.0), &one));
     }
 
     fn watch(kind: GameKind, ok: (f64, f64, f64, f64), pin: bool) -> GameWatch {
         GameWatch {
-            kind, ok: Some(ok), workspace: Some(2),
-            target: pin.then_some((ok.2, ok.3)), declared: pin.then_some((ok.2, ok.3)),
-            refused: None, since: None, corrections: 0, dragged: false,
+            kind,
+            ok: Some(ok),
+            workspace: Some(2),
+            target: pin.then_some((ok.2, ok.3)),
+            declared: pin.then_some((ok.2, ok.3)),
+            refused: None,
+            since: None,
+            corrections: 0,
+            dragged: false,
         }
     }
 
@@ -2368,17 +2913,43 @@ candidate_tag = "mios-place-game-candidate"
         // was cropped. Now the request is honoured and the pin follows the new declaration.
         let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
-        let mut c = game("steam_app_4201", (2640, 400), (480, 320), &["mios-place-game-fixed*"]);
+        let mut c = game(
+            "steam_app_4201",
+            (2640, 400),
+            (480, 320),
+            &["mios-place-game-fixed*"],
+        );
         c["workspace"] = serde_json::json!({"id": 2, "name": "2"});
-        assert_eq!(game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            GameStep::Nothing
+        );
         at(&mut c, (2640, 400, 640, 400));
         let step = game_step(&mut w, &c, &m, Some((640.0, 400.0)), true, false, s, t0);
-        assert!(matches!(&step, GameStep::Repin(l) if l.contains("value='640 400'")), "{step:?}");
-        assert_eq!((w.target, w.ok), (Some((640.0, 400.0)), Some((2640.0, 400.0, 640.0, 400.0))));
+        assert!(
+            matches!(&step, GameStep::Repin(l) if l.contains("value='640 400'")),
+            "{step:?}"
+        );
+        assert_eq!(
+            (w.target, w.ok),
+            (Some((640.0, 400.0)), Some((2640.0, 400.0, 640.0, 400.0)))
+        );
         // Wine order: the ConfigureNotify first, the new hints right after. Within settle nothing is restored.
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
-        assert_eq!(game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0), GameStep::Nothing);
-        let step = game_step(&mut w, &c, &m, Some((640.0, 400.0)), true, false, s, t0 + Duration::from_millis(100));
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            GameStep::Nothing
+        );
+        let step = game_step(
+            &mut w,
+            &c,
+            &m,
+            Some((640.0, 400.0)),
+            true,
+            false,
+            s,
+            t0 + Duration::from_millis(100),
+        );
         assert!(matches!(step, GameStep::Repin(_)), "{step:?}");
     }
 
@@ -2386,16 +2957,35 @@ candidate_tag = "mios-place-game-candidate"
     fn a_fixed_game_grown_from_outside_is_restored_after_settle() {
         let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
-        let mut c = game("steam_app_4106", (2640, 400), (480, 320), &["mios-place-game-fixed*"]);
+        let mut c = game(
+            "steam_app_4106",
+            (2640, 400),
+            (480, 320),
+            &["mios-place-game-fixed*"],
+        );
         c["workspace"] = serde_json::json!({"id": 2, "name": "2"});
         at(&mut c, (2460, 260, 840, 600));
-        assert_eq!(game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, true, s, t0), GameStep::Nothing, "a drag is never fought");
-        assert_eq!(game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0), GameStep::Nothing, "settling");
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, true, s, t0),
+            GameStep::Nothing,
+            "a drag is never fought"
+        );
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            GameStep::Nothing,
+            "settling"
+        );
         let step = game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0 + s);
-        assert!(matches!(&step, GameStep::Restore(l) if l.contains("resize({x=480, y=320") && l.contains("move({x=2640, y=400")), "{step:?}");
+        assert!(
+            matches!(&step, GameStep::Restore(l) if l.contains("resize({x=480, y=320") && l.contains("move({x=2640, y=400")),
+            "{step:?}"
+        );
         // Unpinned games are never restored.
         let mut u = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), false);
-        assert_eq!(game_step(&mut u, &c, &m, Some((480.0, 320.0)), true, false, s, t0 + s), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut u, &c, &m, Some((480.0, 320.0)), true, false, s, t0 + s),
+            GameStep::Nothing
+        );
         assert_eq!(u.ok, Some((2460.0, 260.0, 840.0, 600.0)));
     }
 
@@ -2403,27 +2993,47 @@ candidate_tag = "mios-place-game-candidate"
     fn a_root_remap_is_refused_and_its_declaration_ignored() {
         let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
-        let mut c = game("steam_app_2483190", (2640, 400), (480, 320), &["mios-place-game-fixed*"]);
+        let mut c = game(
+            "steam_app_2483190",
+            (2640, 400),
+            (480, 320),
+            &["mios-place-game-fixed*"],
+        );
         at(&mut c, (0, 0, 3840, 1080));
         c["workspace"] = serde_json::json!({"id": 1, "name": "1"});
         let step = game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0);
-        assert!(matches!(&step, GameStep::Refuse(l) if l.contains("workspace='2'") && l.contains("resize({x=480, y=320") && l.contains("move({x=2640, y=400")), "{step:?}");
+        assert!(
+            matches!(&step, GameStep::Refuse(l) if l.contains("workspace='2'") && l.contains("resize({x=480, y=320") && l.contains("move({x=2640, y=400")),
+            "{step:?}"
+        );
         assert_eq!(w.refused, Some((3840.0, 1080.0)));
         // Back at the accepted geometry with the refused hints still set: nothing to follow.
         at(&mut c, (2640, 400, 480, 320));
-        assert_eq!(game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+            GameStep::Nothing
+        );
         // suppress_client_geometry = false: the remap stands.
         let mut off = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         at(&mut c, (0, 0, 3840, 1080));
-        assert_eq!(game_step(&mut off, &c, &m, None, false, false, s, t0), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut off, &c, &m, None, false, false, s, t0),
+            GameStep::Nothing
+        );
         assert_eq!(off.ok, Some((0.0, 0.0, 3840.0, 1080.0)));
         // A resizable game changing its own size inside the output is accepted; a remap is refused.
         let mut r = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         at(&mut c, (2400, 200, 1280, 720));
-        assert_eq!(game_step(&mut r, &c, &m, None, true, false, s, t0), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut r, &c, &m, None, true, false, s, t0),
+            GameStep::Nothing
+        );
         assert_eq!(r.ok, Some((2400.0, 200.0, 1280.0, 720.0)));
         at(&mut c, (0, 0, 3840, 1080));
-        assert!(matches!(game_step(&mut r, &c, &m, None, true, false, s, t0), GameStep::Refuse(_)));
+        assert!(matches!(
+            game_step(&mut r, &c, &m, None, true, false, s, t0),
+            GameStep::Refuse(_)
+        ));
     }
 
     #[test]
@@ -2432,19 +3042,52 @@ candidate_tag = "mios-place-game-candidate"
         // game-class window partly off-screen or straddling two outputs was "refused" and jumped back.
         let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
         for (kind, ok, to) in [
-            (GameKind::Resizable, (2400.0, 200.0, 816.0, 588.0), (3500, 60, 816, 588)),   // past the right edge
-            (GameKind::Resizable, (2400.0, 200.0, 816.0, 588.0), (1500, 200, 816, 588)),  // straddles both outputs
-            (GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), (3640, 60, 480, 320)),       // fixed, past the edge
-            (GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), (1700, 400, 480, 320)),      // fixed, straddling
-            (GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), (-200, -40, 480, 320)),      // past the left/top edge
+            (
+                GameKind::Resizable,
+                (2400.0, 200.0, 816.0, 588.0),
+                (3500, 60, 816, 588),
+            ), // past the right edge
+            (
+                GameKind::Resizable,
+                (2400.0, 200.0, 816.0, 588.0),
+                (1500, 200, 816, 588),
+            ), // straddles both outputs
+            (
+                GameKind::Fixed,
+                (2640.0, 400.0, 480.0, 320.0),
+                (3640, 60, 480, 320),
+            ), // fixed, past the edge
+            (
+                GameKind::Fixed,
+                (2640.0, 400.0, 480.0, 320.0),
+                (1700, 400, 480, 320),
+            ), // fixed, straddling
+            (
+                GameKind::Fixed,
+                (2640.0, 400.0, 480.0, 320.0),
+                (-200, -40, 480, 320),
+            ), // past the left/top edge
         ] {
             let pin = kind == GameKind::Fixed;
             let mut w = watch(kind, ok, pin);
-            let mut c = game("editor.exe", (ok.0 as i64, ok.1 as i64), (ok.2 as i64, ok.3 as i64), &["mios-place-game*"]);
+            let mut c = game(
+                "editor.exe",
+                (ok.0 as i64, ok.1 as i64),
+                (ok.2 as i64, ok.3 as i64),
+                &["mios-place-game*"],
+            );
             at(&mut c, to);
             let d = pin.then_some((ok.2, ok.3));
-            assert_eq!(game_step(&mut w, &c, &m, d, true, false, s, t0), GameStep::Nothing, "{kind:?} to {to:?}");
-            assert_eq!(w.ok, Some((to.0 as f64, to.1 as f64, to.2 as f64, to.3 as f64)), "{kind:?} to {to:?} accepted");
+            assert_eq!(
+                game_step(&mut w, &c, &m, d, true, false, s, t0),
+                GameStep::Nothing,
+                "{kind:?} to {to:?}"
+            );
+            assert_eq!(
+                w.ok,
+                Some((to.0 as f64, to.1 as f64, to.2 as f64, to.3 as f64)),
+                "{kind:?} to {to:?} accepted"
+            );
             assert_eq!(w.corrections, 0);
         }
         // A drag-resize past every output's size: a button was down at an earlier poll, so the release is the
@@ -2452,47 +3095,96 @@ candidate_tag = "mios-place-game-candidate"
         let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         let mut c = game("editor.exe", (2400, 200), (960, 692), &["mios-place-game*"]);
         at(&mut c, (100, 0, 2400, 1000));
-        assert_eq!(game_step(&mut w, &c, &m, None, true, true, s, t0), GameStep::Nothing, "held: never fought");
+        assert_eq!(
+            game_step(&mut w, &c, &m, None, true, true, s, t0),
+            GameStep::Nothing,
+            "held: never fought"
+        );
         assert!(w.dragged);
-        assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing, "released after a drag");
+        assert_eq!(
+            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            GameStep::Nothing,
+            "released after a drag"
+        );
         assert_eq!(w.ok, Some((100.0, 0.0, 2400.0, 1000.0)));
         assert!(!w.dragged, "the latch clears once the geometry is accepted");
         // Negative control: the same oversize box with no button held at any poll is a game's remap, refused.
         let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
-        assert!(matches!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Refuse(_)));
+        assert!(matches!(
+            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            GameStep::Refuse(_)
+        ));
         // The latch does not survive an accepted geometry: a later remap is refused again.
         let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         at(&mut c, (2500, 220, 960, 692));
-        assert_eq!(game_step(&mut w, &c, &m, None, true, true, s, t0), GameStep::Nothing);
-        assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut w, &c, &m, None, true, true, s, t0),
+            GameStep::Nothing
+        );
+        assert_eq!(
+            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            GameStep::Nothing
+        );
         at(&mut c, (0, 0, 3840, 1080));
-        assert!(matches!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Refuse(_)));
+        assert!(matches!(
+            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            GameStep::Refuse(_)
+        ));
     }
 
     #[test]
     fn corrections_are_bounded_and_fullscreen_is_the_games_own() {
         let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
-        let mut c = game("steam_app_7", (0, 0), (3840, 1080), &["mios-place-game-fixed*"]);
+        let mut c = game(
+            "steam_app_7",
+            (0, 0),
+            (3840, 1080),
+            &["mios-place-game-fixed*"],
+        );
         for _ in 0..GAME_CORRECTIONS {
-            assert!(matches!(game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0), GameStep::Refuse(_)));
+            assert!(matches!(
+                game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+                GameStep::Refuse(_)
+            ));
         }
-        assert_eq!(game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0), GameStep::GiveUp);
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+            GameStep::GiveUp
+        );
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
         c["fullscreen"] = serde_json::json!(2);
-        assert_eq!(game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0), GameStep::Nothing);
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+            GameStep::Nothing
+        );
         assert_eq!(w.ok, None, "fullscreen: nothing accepted or refused");
         c["fullscreen"] = serde_json::json!(0);
         at(&mut c, (2640, 400, 480, 320));
-        assert_eq!(game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0), GameStep::Nothing);
-        assert_eq!(w.ok, Some((2640.0, 400.0, 480.0, 320.0)), "taken as-is when it returns");
+        assert_eq!(
+            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            GameStep::Nothing
+        );
+        assert_eq!(
+            w.ok,
+            Some((2640.0, 400.0, 480.0, 320.0)),
+            "taken as-is when it returns"
+        );
     }
 
     #[test]
     fn pinned_fixed_game_is_restored_around_its_centre() {
-        let mut w = game("steam_app_4106", (220, 86), (840, 600), &["mios-place-game-fixed*"]);
+        let mut w = game(
+            "steam_app_4106",
+            (220, 86),
+            (840, 600),
+            &["mios-place-game-fixed*"],
+        );
         let lua = pin_restore(&w, (480.0, 320.0)).expect("grown: restore");
-        assert!(lua.contains("resize({x=480, y=320") && lua.contains("move({x=400, y=226"), "{lua}");
+        assert!(
+            lua.contains("resize({x=480, y=320") && lua.contains("move({x=400, y=226"),
+            "{lua}"
+        );
         // Negative controls: at its pinned size (within 2 px) or fullscreen, nothing is dispatched.
         w["size"] = serde_json::json!([481, 320]);
         assert_eq!(pin_restore(&w, (480.0, 320.0)), None);
@@ -2505,12 +3197,24 @@ candidate_tag = "mios-place-game-candidate"
     fn without_the_games_table_a_game_is_left_where_it_asked() {
         // Negative control: the previous configuration has no game tags, so on_open falls through to the size gate
         // ("floated at 3840x1080, not the placement size; left alone" in the recorded journal).
-        let w = game("steam_app_2483190", (0, 0), (3840, 1080), &["mios-place-game-fixed*"]);
-        let x = X11Props { fixed: Some((3840.0, 1080.0)), dialog: false };
+        let w = game(
+            "steam_app_2483190",
+            (0, 0),
+            (3840, 1080),
+            &["mios-place-game-fixed*"],
+        );
+        let x = X11Props {
+            fixed: Some((3840.0, 1080.0)),
+            dialog: false,
+        };
         assert_eq!(game_kind(&cfg(), &w, Some(&x)), None);
         assert!(cfg().games.is_none());
         let other = game("Alacritty", (0, 0), (640, 480), &["mios-place-new*"]);
-        assert_eq!(game_kind(&cfg_games("fit"), &other, Some(&x)), None, "ordinary windows keep the general path");
+        assert_eq!(
+            game_kind(&cfg_games("fit"), &other, Some(&x)),
+            None,
+            "ordinary windows keep the general path"
+        );
     }
 
     #[test]
@@ -2551,7 +3255,12 @@ title = '^ShaderGlass( \(.*\))?$'
 "#;
 
     fn shaderglass_pane(pinned: bool) -> Json {
-        let mut c = game("shaderglass.exe", (0, 0), (1392, 1002), &["mios-place-game*", "mios-shaderglass*"]);
+        let mut c = game(
+            "shaderglass.exe",
+            (0, 0),
+            (1392, 1002),
+            &["mios-place-game*", "mios-shaderglass*"],
+        );
         c["title"] = serde_json::json!("ShaderGlass (vfy)");
         c["pinned"] = serde_json::json!(pinned);
         c
@@ -2565,11 +3274,22 @@ title = '^ShaderGlass( \(.*\))?$'
         let cfg = cfg_games_with("fit", SG);
         let pane = shaderglass_pane(true);
         assert_eq!(left_alone(&cfg, &pane).as_deref(), Some("pinned"));
-        assert_eq!(adopted_game(&cfg, &pane, None), None, "pinned pane: never adopted");
+        assert_eq!(
+            adopted_game(&cfg, &pane, None),
+            None,
+            "pinned pane: never adopted"
+        );
         // Setup mode (or before the pin applies): the pane's own rule excludes it all the same.
         let unpinned = shaderglass_pane(false);
-        assert_eq!(left_alone(&cfg, &unpinned).as_deref(), Some("window rule desktop.shaderglass.window"));
-        assert_eq!(adopted_game(&cfg, &unpinned, None), None, "excluded pane: never adopted");
+        assert_eq!(
+            left_alone(&cfg, &unpinned).as_deref(),
+            Some("window rule desktop.shaderglass.window")
+        );
+        assert_eq!(
+            adopted_game(&cfg, &unpinned, None),
+            None,
+            "excluded pane: never adopted"
+        );
         // A pinned ordinary game is left alone exactly as on_open leaves it.
         let mut pinned_game = game("editor.exe", (100, 100), (960, 692), &["mios-place-game*"]);
         pinned_game["pinned"] = serde_json::json!(true);
@@ -2578,16 +3298,30 @@ title = '^ShaderGlass( \(.*\))?$'
         let g = game("editor.exe", (100, 100), (960, 692), &["mios-place-game*"]);
         assert_eq!(left_alone(&cfg, &g), None);
         let w = adopted_game(&cfg, &g, None).expect("an unpinned game is adopted");
-        assert_eq!((w.kind, w.ok, w.dragged), (GameKind::Resizable, None, false));
+        assert_eq!(
+            (w.kind, w.ok, w.dragged),
+            (GameKind::Resizable, None, false)
+        );
         // ShaderGlass disabled: no pane rule is rendered, so none is excluded (pinned still gates).
         let off = cfg_games_with("fit", &SG.replace("enabled = true", "enabled = false"));
         assert_eq!(left_alone(&off, &unpinned), None);
         assert_eq!(left_alone(&off, &pane).as_deref(), Some("pinned"));
         // Fixed-size: adopted at its declared size (the round-1 restart behaviour is kept).
-        let fx = game("steam_app_4201", (2640, 400), (480, 320), &["mios-place-game-fixed*"]);
-        let props = X11Props { fixed: Some((480.0, 320.0)), dialog: false };
+        let fx = game(
+            "steam_app_4201",
+            (2640, 400),
+            (480, 320),
+            &["mios-place-game-fixed*"],
+        );
+        let props = X11Props {
+            fixed: Some((480.0, 320.0)),
+            dialog: false,
+        };
         let w = adopted_game(&cfg, &fx, Some(&props)).expect("fixed game adopted");
-        assert_eq!((w.kind, w.target, w.declared), (GameKind::Fixed, Some((480.0, 320.0)), Some((480.0, 320.0))));
+        assert_eq!(
+            (w.kind, w.target, w.declared),
+            (GameKind::Fixed, Some((480.0, 320.0)), Some((480.0, 320.0)))
+        );
     }
 
     #[test]
@@ -2597,23 +3331,49 @@ title = '^ShaderGlass( \(.*\))?$'
         let (m, s, t0) = (mons2(), Duration::from_millis(220), Instant::now());
         let ok = (1680.0, 380.0, 480.0, 320.0);
         let mut w = watch(GameKind::Fixed, ok, true);
-        let mut c = game("steam_app_2483190", (1680, 380), (480, 320), &["mios-place-game-fixed*"]);
+        let mut c = game(
+            "steam_app_2483190",
+            (1680, 380),
+            (480, 320),
+            &["mios-place-game-fixed*"],
+        );
         at(&mut c, (0, 0, 3840, 1080));
         let d = Some((480.0, 320.0));
-        assert_eq!(game_step(&mut w, &c, &m, d, true, true, s, t0), GameStep::Nothing, "held");
+        assert_eq!(
+            game_step(&mut w, &c, &m, d, true, true, s, t0),
+            GameStep::Nothing,
+            "held"
+        );
         assert!(w.dragged);
         let r = game_step(&mut w, &c, &m, d, true, false, s, t0);
-        assert!(matches!(r, GameStep::Refuse(_)), "root after a click: {r:?}");
+        assert!(
+            matches!(r, GameStep::Refuse(_)),
+            "root after a click: {r:?}"
+        );
         // Single output (nested/PiP, RDP, laptop): the root is the output, refused after a click too.
-        let one = monitor_boxes(&serde_json::json!([{"id": 0, "x": 0, "y": 0, "width": 1392, "height": 1002, "scale": 1.0}]));
+        let one = monitor_boxes(
+            &serde_json::json!([{"id": 0, "x": 0, "y": 0, "width": 1392, "height": 1002, "scale": 1.0}]),
+        );
         let mut w = watch(GameKind::Resizable, (100.0, 120.0, 800.0, 600.0), false);
         let mut c = game("editor.exe", (100, 120), (800, 600), &["mios-place-game*"]);
         at(&mut c, (0, 0, 1392, 1002));
-        assert_eq!(game_step(&mut w, &c, &one, None, true, true, s, t0), GameStep::Nothing);
-        assert!(matches!(game_step(&mut w, &c, &one, None, true, false, s, t0), GameStep::Refuse(_)));
+        assert_eq!(
+            game_step(&mut w, &c, &one, None, true, true, s, t0),
+            GameStep::Nothing
+        );
+        assert!(matches!(
+            game_step(&mut w, &c, &one, None, true, false, s, t0),
+            GameStep::Refuse(_)
+        ));
         // Control: a drag-resize past every output (oversize, not the root) still stands once released.
-        assert_eq!(remap_kind((100.0, 0.0, 2400.0, 1000.0), &m), Some(Remap::Oversize));
-        assert_eq!(remap_kind((0.0, 0.0, 3840.0, 1080.0), &m), Some(Remap::Root));
+        assert_eq!(
+            remap_kind((100.0, 0.0, 2400.0, 1000.0), &m),
+            Some(Remap::Oversize)
+        );
+        assert_eq!(
+            remap_kind((0.0, 0.0, 3840.0, 1080.0), &m),
+            Some(Remap::Root)
+        );
         assert_eq!(remap_kind((2000.0, 100.0, 640.0, 400.0), &m), None);
     }
 
@@ -2627,35 +3387,78 @@ title = '^ShaderGlass( \(.*\))?$'
             let mut w = watch(GameKind::Resizable, ok, false);
             let mut c = game("editor.exe", (2400, 200), (816, 588), &["mios-place-game*"]);
             at(&mut c, (2500, 220, 816, 588));
-            assert_eq!(game_step(&mut w, &c, &m, None, true, true, s, t0), GameStep::Nothing);
+            assert_eq!(
+                game_step(&mut w, &c, &m, None, true, true, s, t0),
+                GameStep::Nothing
+            );
             assert!(w.dragged, "{leave}: dragging");
             let back = c.clone();
             match leave {
                 "floating" => c["floating"] = serde_json::json!(false),
                 "fullscreen" => c["fullscreen"] = serde_json::json!(1),
-                "special" => c["workspace"] = serde_json::json!({"id": -98, "name": "special:magic"}),
+                "special" => {
+                    c["workspace"] = serde_json::json!({"id": -98, "name": "special:magic"})
+                }
                 _ => c["hidden"] = serde_json::json!(true),
             }
-            assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing);
-            assert!(!w.dragged, "{leave}: the latch is cleared with the accepted geometry");
+            assert_eq!(
+                game_step(&mut w, &c, &m, None, true, false, s, t0),
+                GameStep::Nothing
+            );
+            assert!(
+                !w.dragged,
+                "{leave}: the latch is cleared with the accepted geometry"
+            );
             let mut c = back;
             at(&mut c, (2400, 200, 816, 588));
-            assert_eq!(game_step(&mut w, &c, &m, None, true, false, s, t0), GameStep::Nothing, "{leave}: re-adopted");
+            assert_eq!(
+                game_step(&mut w, &c, &m, None, true, false, s, t0),
+                GameStep::Nothing,
+                "{leave}: re-adopted"
+            );
             at(&mut c, (100, 0, 2400, 1000));
             let r = game_step(&mut w, &c, &m, None, true, false, s, t0);
-            assert!(matches!(r, GameStep::Refuse(_)), "{leave}: stale latch let an oversize remap through: {r:?}");
+            assert!(
+                matches!(r, GameStep::Refuse(_)),
+                "{leave}: stale latch let an oversize remap through: {r:?}"
+            );
         }
     }
 
     #[test]
     fn zero_size_outputs_are_ignored_and_no_live_output_never_refuses() {
         let m = mons2();
-        assert!(!is_remap((0.0, 0.0, 1920.0, 1080.0), &m), "one output-sized box at an origin is not the root of two");
+        assert!(
+            !is_remap((0.0, 0.0, 1920.0, 1080.0), &m),
+            "one output-sized box at an origin is not the root of two"
+        );
         let mut z = mons2();
-        z.insert(9, MonitorBox { x: 0.0, y: 0.0, w: 0.0, h: 0.0, ..*z.values().next().unwrap() });
-        assert!(is_remap((0.0, 0.0, 3840.0, 1080.0), &z), "0x0 output ignored, root still the root");
+        z.insert(
+            9,
+            MonitorBox {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+                ..*z.values().next().unwrap()
+            },
+        );
+        assert!(
+            is_remap((0.0, 0.0, 3840.0, 1080.0), &z),
+            "0x0 output ignored, root still the root"
+        );
         let mut e: HashMap<i64, MonitorBox> = HashMap::new();
-        e.insert(0, MonitorBox { w: 0.0, h: 0.0, ..*m.values().next().unwrap() });
-        assert!(!is_remap((0.0, 0.0, 9999.0, 9999.0), &e), "no live output: never refuse");
+        e.insert(
+            0,
+            MonitorBox {
+                w: 0.0,
+                h: 0.0,
+                ..*m.values().next().unwrap()
+            },
+        );
+        assert!(
+            !is_remap((0.0, 0.0, 9999.0, 9999.0), &e),
+            "no live output: never refuse"
+        );
     }
 }

@@ -11,7 +11,6 @@
 // [desktop.screenshot], usr/share/mios/quickshell/Shot.qml, usr/share/mios/quickshell/Config.qml,
 // usr/libexec/mios/mios-screenshot, tools/native/mios-gen/src/render.rs (screenshot bindings projection)
 
-
 use img::{Canvas, Format, Placed, Rect};
 use serde_json::{json, Value as Json};
 use std::collections::HashMap;
@@ -66,12 +65,20 @@ mod img {
 
     impl Rect {
         pub fn intersects(&self, o: &Rect) -> bool {
-            self.x < o.x + o.w && o.x < self.x + self.w && self.y < o.y + o.h && o.y < self.y + self.h
+            self.x < o.x + o.w
+                && o.x < self.x + self.w
+                && self.y < o.y + o.h
+                && o.y < self.y + self.h
         }
         pub fn union(&self, o: &Rect) -> Rect {
             let x = self.x.min(o.x);
             let y = self.y.min(o.y);
-            Rect { x, y, w: (self.x + self.w).max(o.x + o.w) - x, h: (self.y + self.h).max(o.y + o.h) - y }
+            Rect {
+                x,
+                y,
+                w: (self.x + self.w).max(o.x + o.w) - x,
+                h: (self.y + self.h).max(o.y + o.h) - y,
+            }
         }
         pub fn intersect(&self, o: &Rect) -> Option<Rect> {
             let x = self.x.max(o.x);
@@ -114,7 +121,11 @@ mod img {
 
         /// RGBA of buffer pixel (x, y) in buffer coordinates.
         pub fn at(&self, x: u32, y: u32, opaque: bool) -> [u8; 4] {
-            let y = if self.y_invert { self.height - 1 - y } else { y };
+            let y = if self.y_invert {
+                self.height - 1 - y
+            } else {
+                y
+            };
             let o = y as usize * self.stride as usize + x as usize * 4;
             let p = &self.data[o..o + 4];
             let v = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
@@ -124,11 +135,19 @@ mod img {
                 XBGR8888 => (p[0], p[1], p[2], 255),
                 ABGR8888 => (p[0], p[1], p[2], p[3]),
                 XRGB2101010 | ARGB2101010 => {
-                    let a = if self.format == ARGB2101010 { ((v >> 30) * 85) as u8 } else { 255 };
+                    let a = if self.format == ARGB2101010 {
+                        ((v >> 30) * 85) as u8
+                    } else {
+                        255
+                    };
                     (ten(v >> 20), ten(v >> 10), ten(v), a)
                 }
                 XBGR2101010 | ABGR2101010 => {
-                    let a = if self.format == ABGR2101010 { ((v >> 30) * 85) as u8 } else { 255 };
+                    let a = if self.format == ABGR2101010 {
+                        ((v >> 30) * 85) as u8
+                    } else {
+                        255
+                    };
                     (ten(v), ten(v >> 10), ten(v >> 20), a)
                 }
                 _ => (0, 0, 0, 0),
@@ -140,7 +159,11 @@ mod img {
         /// contents before `transform` (wl_output.transform semantics: 90 = rotated 90 degrees counter-clockwise).
         pub fn sample(&self, u: f64, v: f64, opaque: bool) -> [u8; 4] {
             let (bw, bh) = (self.width as f64, self.height as f64);
-            let (dw, dh) = if self.transform % 2 == 1 { (bh, bw) } else { (bw, bh) };
+            let (dw, dh) = if self.transform % 2 == 1 {
+                (bh, bw)
+            } else {
+                (bw, bh)
+            };
             let (dx, dy) = (u * dw, v * dh);
             // Verified against grim and the compositor's logical layout for all eight transforms (nested Hyprland).
             let (x, y) = match self.transform {
@@ -180,8 +203,18 @@ mod img {
         let (w, h) = ((x1 - x0) as u32, (y1 - y0) as u32);
         let mut rgba = vec![0u8; w as usize * h as usize * 4];
         for src in srcs {
-            let area = Rect { x: src.x, y: src.y, w: src.w, h: src.h };
-            let Some(hit) = area.intersect(&Rect { x: x0 as f64 / s, y: y0 as f64 / s, w: w as f64 / s, h: h as f64 / s }) else {
+            let area = Rect {
+                x: src.x,
+                y: src.y,
+                w: src.w,
+                h: src.h,
+            };
+            let Some(hit) = area.intersect(&Rect {
+                x: x0 as f64 / s,
+                y: y0 as f64 / s,
+                w: w as f64 / s,
+                h: h as f64 / s,
+            }) else {
                 continue;
             };
             let (hx0, hy0, hx1, hy1) = pixel_bounds(&hit, s);
@@ -212,7 +245,11 @@ mod img {
         let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
         for y in 0..h {
             for x in 0..w {
-                rgba.extend_from_slice(&px.sample((x as f64 + 0.5) / w as f64, (y as f64 + 0.5) / h as f64, opaque));
+                rgba.extend_from_slice(&px.sample(
+                    (x as f64 + 0.5) / w as f64,
+                    (y as f64 + 0.5) / h as f64,
+                    opaque,
+                ));
             }
         }
         Canvas { w, h, rgba }
@@ -245,7 +282,12 @@ mod img {
 
     /// Encode the canvas. `quality` (1..=100) is the JPEG quality; WebP is lossless; `compression` picks PNG's
     /// fast / default / best deflate.
-    pub fn encode(c: &Canvas, fmt: Format, quality: u8, compression: &str) -> Result<Vec<u8>, String> {
+    pub fn encode(
+        c: &Canvas,
+        fmt: Format,
+        quality: u8,
+        compression: &str,
+    ) -> Result<Vec<u8>, String> {
         use image::ImageEncoder;
         let mut out = Vec::new();
         match fmt {
@@ -267,7 +309,11 @@ mod img {
                     .chunks_exact(4)
                     .flat_map(|p| {
                         let a = p[3] as u32;
-                        [(p[0] as u32 * a / 255) as u8, (p[1] as u32 * a / 255) as u8, (p[2] as u32 * a / 255) as u8]
+                        [
+                            (p[0] as u32 * a / 255) as u8,
+                            (p[1] as u32 * a / 255) as u8,
+                            (p[2] as u32 * a / 255) as u8,
+                        ]
                     })
                     .collect();
                 image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100))
@@ -287,9 +333,16 @@ mod img {
     pub fn thumbnail(c: &Canvas, max: u32) -> Canvas {
         let long = c.w.max(c.h).max(1);
         if long <= max {
-            return Canvas { w: c.w, h: c.h, rgba: c.rgba.clone() };
+            return Canvas {
+                w: c.w,
+                h: c.h,
+                rgba: c.rgba.clone(),
+            };
         }
-        let (w, h) = (((c.w as u64 * max as u64) / long as u64).max(1) as u32, ((c.h as u64 * max as u64) / long as u64).max(1) as u32);
+        let (w, h) = (
+            ((c.w as u64 * max as u64) / long as u64).max(1) as u32,
+            ((c.h as u64 * max as u64) / long as u64).max(1) as u32,
+        );
         let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
         for y in 0..h {
             let sy = ((y as u64 * c.h as u64) / h as u64) as usize;
@@ -305,7 +358,9 @@ mod img {
     /// strftime(3) in the local time zone.
     #[allow(deprecated)] // libc::time_t: 64-bit on x86_64 musl already
     pub fn strftime(fmt: &str, t: i64) -> String {
-        let Ok(cfmt) = std::ffi::CString::new(fmt) else { return fmt.to_string() };
+        let Ok(cfmt) = std::ffi::CString::new(fmt) else {
+            return fmt.to_string();
+        };
         // SAFETY: tm is plain data; localtime_r fills it; strftime writes at most buf.len() bytes.
         unsafe {
             let mut tm: libc::tm = std::mem::zeroed();
@@ -314,7 +369,12 @@ mod img {
                 return fmt.to_string();
             }
             let mut buf = vec![0u8; 512];
-            let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cfmt.as_ptr(), &tm);
+            let n = libc::strftime(
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                cfmt.as_ptr(),
+                &tm,
+            );
             buf.truncate(n);
             String::from_utf8_lossy(&buf).into_owned()
         }
@@ -324,10 +384,20 @@ mod img {
     pub fn sanitize(s: &str) -> String {
         let out: String = s
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let out = out.trim_matches(|c| c == '.' || c == '_').to_string();
-        if out.is_empty() { "screen".into() } else { out.chars().take(64).collect() }
+        if out.is_empty() {
+            "screen".into()
+        } else {
+            out.chars().take(64).collect()
+        }
     }
 
     /// Render a [desktop.screenshot] filename template (no extension: the format adds it).
@@ -336,15 +406,23 @@ mod img {
             .replace("{mode}", &sanitize(mode))
             .replace("{output}", &sanitize(output))
             .replace("{app}", &sanitize(app));
-        let base: String = base.chars().map(|c| if c == '/' || c == '\0' { '-' } else { c }).collect();
+        let base: String = base
+            .chars()
+            .map(|c| if c == '/' || c == '\0' { '-' } else { c })
+            .collect();
         let base = base.trim_start_matches('.').to_string();
-        if base.is_empty() { "MiOS-screenshot".into() } else { base }
+        if base.is_empty() {
+            "MiOS-screenshot".into()
+        } else {
+            base
+        }
     }
 
     /// Write `bytes` as <dir>/<base>.<ext> (or <base>-N.<ext> when taken) atomically and without clobbering.
     pub fn save_atomic(dir: &Path, base: &str, ext: &str, bytes: &[u8]) -> Result<PathBuf, String> {
         use std::os::unix::fs::OpenOptionsExt;
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let tmp = dir.join(format!(".{base}.{}.part", std::process::id()));
         {
             let mut f = std::fs::OpenOptions::new()
@@ -360,9 +438,19 @@ mod img {
             }
         }
         for n in 0..10_000u32 {
-            let name = if n == 0 { format!("{base}.{ext}") } else { format!("{base}-{n}.{ext}") };
+            let name = if n == 0 {
+                format!("{base}.{ext}")
+            } else {
+                format!("{base}-{n}.{ext}")
+            };
             let target = dir.join(&name);
-            match rustix::fs::renameat_with(rustix::fs::CWD, &tmp, rustix::fs::CWD, &target, rustix::fs::RenameFlags::NOREPLACE) {
+            match rustix::fs::renameat_with(
+                rustix::fs::CWD,
+                &tmp,
+                rustix::fs::CWD,
+                &target,
+                rustix::fs::RenameFlags::NOREPLACE,
+            ) {
                 Ok(()) => return Ok(target),
                 Err(rustix::io::Errno::EXIST) => continue,
                 Err(rustix::io::Errno::INVAL) | Err(rustix::io::Errno::NOSYS) => {
@@ -386,22 +474,37 @@ mod img {
             }
         }
         let _ = std::fs::remove_file(&tmp);
-        Err(format!("no free file name for {base}.{ext} in {}", dir.display()))
+        Err(format!(
+            "no free file name for {base}.{ext} in {}",
+            dir.display()
+        ))
     }
 
     /// Atomically replace `path` (an explicit --file target).
     pub fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
         use std::os::unix::fs::OpenOptionsExt;
-        let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-        let name = path.file_name().ok_or_else(|| format!("{} is not a file path", path.display()))?;
-        let tmp = dir.join(format!(".{}.{}.part", name.to_string_lossy(), std::process::id()));
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let name = path
+            .file_name()
+            .ok_or_else(|| format!("{} is not a file path", path.display()))?;
+        let tmp = dir.join(format!(
+            ".{}.{}.part",
+            name.to_string_lossy(),
+            std::process::id()
+        ));
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o644)
             .open(&tmp)
             .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-        let r = f.write_all(bytes).and_then(|_| f.sync_all()).and_then(|_| std::fs::rename(&tmp, path));
+        let r = f
+            .write_all(bytes)
+            .and_then(|_| f.sync_all())
+            .and_then(|_| std::fs::rename(&tmp, path));
         if let Err(e) = r {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("cannot write {}: {e}", path.display()));
@@ -425,14 +528,38 @@ mod img {
         }
 
         fn px(data: &[u8], w: u32, h: u32, transform: u32) -> Pixels<'_> {
-            Pixels { width: w, height: h, stride: w * 4, format: XRGB8888, transform, y_invert: false, data }
+            Pixels {
+                width: w,
+                height: h,
+                stride: w * 4,
+                format: XRGB8888,
+                transform,
+                y_invert: false,
+                data,
+            }
         }
 
         #[test]
         fn crop_inside_one_output_is_exact() {
             let d = buf(40, 20, |x, y| [x as u8, y as u8, 7]);
-            let p = Placed { px: px(&d, 40, 20, 0), x: 100.0, y: 50.0, w: 40.0, h: 20.0, opaque: true };
-            let c = compose(&Rect { x: 110.0, y: 55.0, w: 5.0, h: 3.0 }, 1.0, &[p]);
+            let p = Placed {
+                px: px(&d, 40, 20, 0),
+                x: 100.0,
+                y: 50.0,
+                w: 40.0,
+                h: 20.0,
+                opaque: true,
+            };
+            let c = compose(
+                &Rect {
+                    x: 110.0,
+                    y: 55.0,
+                    w: 5.0,
+                    h: 3.0,
+                },
+                1.0,
+                &[p],
+            );
             assert_eq!((c.w, c.h), (5, 3));
             assert_eq!(&c.rgba[0..4], &[10, 5, 7, 255]);
             let last = ((2 * 5) + 4) * 4;
@@ -443,8 +570,24 @@ mod img {
         fn fractional_scale_region_is_logical_times_scale() {
             // A 2.5x output: 1100x2080 buffer, 440x832 logical at (2000, 0).
             let d = buf(1100, 2080, |x, y| [(x % 251) as u8, (y % 241) as u8, 1]);
-            let p = Placed { px: px(&d, 1100, 2080, 0), x: 2000.0, y: 0.0, w: 440.0, h: 832.0, opaque: true };
-            let c = compose(&Rect { x: 2010.0, y: 20.0, w: 100.0, h: 40.0 }, 2.5, &[p]);
+            let p = Placed {
+                px: px(&d, 1100, 2080, 0),
+                x: 2000.0,
+                y: 0.0,
+                w: 440.0,
+                h: 832.0,
+                opaque: true,
+            };
+            let c = compose(
+                &Rect {
+                    x: 2010.0,
+                    y: 20.0,
+                    w: 100.0,
+                    h: 40.0,
+                },
+                2.5,
+                &[p],
+            );
             assert_eq!((c.w, c.h), (250, 100));
             // canvas (0,0) = buffer (25, 50)
             assert_eq!(&c.rgba[0..4], &[25, 50, 1, 255]);
@@ -454,9 +597,28 @@ mod img {
         fn mixed_scales_use_the_largest_and_cover_both() {
             let a = buf(100, 100, |_, _| [255, 0, 0]);
             let b = buf(200, 200, |_, _| [0, 0, 255]);
-            let pa = Placed { px: px(&a, 100, 100, 0), x: 0.0, y: 0.0, w: 100.0, h: 100.0, opaque: true };
-            let pb = Placed { px: px(&b, 200, 200, 0), x: 100.0, y: 0.0, w: 100.0, h: 100.0, opaque: true };
-            let r = Rect { x: 90.0, y: 0.0, w: 20.0, h: 10.0 };
+            let pa = Placed {
+                px: px(&a, 100, 100, 0),
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+                opaque: true,
+            };
+            let pb = Placed {
+                px: px(&b, 200, 200, 0),
+                x: 100.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+                opaque: true,
+            };
+            let r = Rect {
+                x: 90.0,
+                y: 0.0,
+                w: 20.0,
+                h: 10.0,
+            };
             let c = compose(&r, 2.0, &[pa, pb]);
             assert_eq!((c.w, c.h), (40, 20));
             assert_eq!(&c.rgba[0..4], &[255, 0, 0, 255]);
@@ -467,8 +629,24 @@ mod img {
         #[test]
         fn uncovered_space_is_transparent() {
             let a = buf(10, 10, |_, _| [9, 9, 9]);
-            let pa = Placed { px: px(&a, 10, 10, 0), x: 0.0, y: 0.0, w: 10.0, h: 10.0, opaque: true };
-            let c = compose(&Rect { x: 0.0, y: 0.0, w: 20.0, h: 10.0 }, 1.0, &[pa]);
+            let pa = Placed {
+                px: px(&a, 10, 10, 0),
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+                opaque: true,
+            };
+            let c = compose(
+                &Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 20.0,
+                    h: 10.0,
+                },
+                1.0,
+                &[pa],
+            );
             assert_eq!(c.rgba[3], 255);
             assert_eq!(c.rgba[(15 * 4) + 3], 0);
         }
@@ -476,7 +654,13 @@ mod img {
         #[test]
         fn transforms_round_trip_corners() {
             // Buffer 4x2 with a marked corner at buffer (0,0).
-            let d = buf(4, 2, |x, y| if (x, y) == (0, 0) { [255, 255, 255] } else { [0, 0, 0] });
+            let d = buf(4, 2, |x, y| {
+                if (x, y) == (0, 0) {
+                    [255, 255, 255]
+                } else {
+                    [0, 0, 0]
+                }
+            });
             for t in 0..8u32 {
                 let p = px(&d, 4, 2, t);
                 let c = upright(&p, true);
@@ -494,15 +678,32 @@ mod img {
         fn ten_bit_formats_convert_down() {
             let v: u32 = (1023 << 20) | (512 << 10) | 0; // XRGB2101010: r=1023 g=512 b=0
             let d = v.to_le_bytes();
-            let p = Pixels { width: 1, height: 1, stride: 4, format: XRGB2101010, transform: 0, y_invert: false, data: &d };
+            let p = Pixels {
+                width: 1,
+                height: 1,
+                stride: 4,
+                format: XRGB2101010,
+                transform: 0,
+                y_invert: false,
+                data: &d,
+            };
             assert_eq!(p.at(0, 0, true), [255, 128, 0, 255]);
-            let p = Pixels { format: XBGR2101010, ..p };
+            let p = Pixels {
+                format: XBGR2101010,
+                ..p
+            };
             assert_eq!(p.at(0, 0, true), [0, 128, 255, 255]);
         }
 
         #[test]
         fn names_render_and_sanitize() {
-            let n = render_name("MiOS-%Y-{mode}-{output}-{app}", 0, "region", "HDMI-A-1", "org/gnome Nautilus");
+            let n = render_name(
+                "MiOS-%Y-{mode}-{output}-{app}",
+                0,
+                "region",
+                "HDMI-A-1",
+                "org/gnome Nautilus",
+            );
             assert!(n.starts_with("MiOS-19") || n.starts_with("MiOS-20"), "{n}");
             assert!(n.ends_with("-region-HDMI-A-1-org_gnome_Nautilus"), "{n}");
             assert_eq!(render_name("../../{app}", 0, "", "", ".."), "-..-screen");
@@ -521,14 +722,22 @@ mod img {
             assert_eq!(c.file_name().unwrap(), "shot-2.png");
             assert_eq!(std::fs::read(&a).unwrap(), b"one");
             assert_eq!(std::fs::read(&b).unwrap(), b"two");
-            let left: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".part")).collect();
+            let left: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
+                .collect();
             assert!(left.is_empty(), "no temp files left");
             let _ = std::fs::remove_dir_all(&dir);
         }
 
         #[test]
         fn encodes_all_formats() {
-            let c = Canvas { w: 3, h: 2, rgba: vec![200; 24] };
+            let c = Canvas {
+                w: 3,
+                h: 2,
+                rgba: vec![200; 24],
+            };
             let png = encode(&c, Format::Png, 90, "fast").unwrap();
             assert_eq!(&png[1..4], b"PNG");
             let jpg = encode(&c, Format::Jpg, 90, "fast").unwrap();
@@ -539,7 +748,11 @@ mod img {
 
         #[test]
         fn thumbnail_keeps_aspect() {
-            let c = Canvas { w: 1000, h: 500, rgba: vec![1; 1000 * 500 * 4] };
+            let c = Canvas {
+                w: 1000,
+                h: 500,
+                rgba: vec![1; 1000 * 500 * 4],
+            };
             let t = thumbnail(&c, 256);
             assert_eq!((t.w, t.h), (256, 128));
         }
@@ -565,7 +778,10 @@ mod wl {
         wl_buffer, wl_compositor, wl_output, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
         wl_surface,
     };
-    use wayland_client::{delegate_noop, event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+    use wayland_client::{
+        delegate_noop, event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+        WEnum,
+    };
     use wayland_protocols::ext::data_control::v1::client::{
         ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
         ext_data_control_manager_v1::ExtDataControlManagerV1,
@@ -586,7 +802,9 @@ mod wl {
         ext_image_copy_capture_manager_v1::{self, ExtImageCopyCaptureManagerV1},
         ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
     };
-    use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
+    use wayland_protocols::wp::viewporter::client::{
+        wp_viewport::WpViewport, wp_viewporter::WpViewporter,
+    };
     use wayland_protocols::xdg::xdg_output::zv1::client::{
         zxdg_output_manager_v1::ZxdgOutputManagerV1,
         zxdg_output_v1::{self, ZxdgOutputV1},
@@ -742,15 +960,19 @@ mod wl {
 
     impl Wl {
         pub fn connect() -> Result<Wl, String> {
-            let conn = Connection::connect_to_env().map_err(|e| format!("no Wayland display ({e})"))?;
-            let (globals, queue) =
-                registry_queue_init::<State>(&conn).map_err(|e| format!("Wayland registry: {e}"))?;
+            let conn =
+                Connection::connect_to_env().map_err(|e| format!("no Wayland display ({e})"))?;
+            let (globals, queue) = registry_queue_init::<State>(&conn)
+                .map_err(|e| format!("Wayland registry: {e}"))?;
             let qh = queue.handle();
             let list = globals.contents().clone_list();
             let mut st = State {
                 outputs: Vec::new(),
                 wl_outputs: Vec::new(),
-                globals: list.iter().map(|g| (g.interface.clone(), g.version)).collect(),
+                globals: list
+                    .iter()
+                    .map(|g| (g.interface.clone(), g.version))
+                    .collect(),
                 shm: globals.bind(&qh, 1..=1, ()).ok(),
                 compositor: globals.bind(&qh, 4..=6, ()).ok(),
                 seat: globals.bind(&qh, 1..=7, ()).ok(),
@@ -768,23 +990,40 @@ mod wl {
                 clip: Clip::default(),
             };
             let xdg: Option<ZxdgOutputManagerV1> = globals.bind(&qh, 2..=3, ()).ok();
-            for g in list.iter().filter(|g| g.interface == wl_output::WlOutput::interface().name) {
+            for g in list
+                .iter()
+                .filter(|g| g.interface == wl_output::WlOutput::interface().name)
+            {
                 let idx = st.outputs.len();
-                let out: wl_output::WlOutput = globals.registry().bind(g.name, g.version.min(4), &qh, idx);
+                let out: wl_output::WlOutput =
+                    globals.registry().bind(g.name, g.version.min(4), &qh, idx);
                 if let Some(x) = &xdg {
                     x.get_xdg_output(&out, &qh, idx);
                 }
-                st.outputs.push(Output { scale_int: 1, ..Default::default() });
+                st.outputs.push(Output {
+                    scale_int: 1,
+                    ..Default::default()
+                });
                 st.wl_outputs.push(out);
             }
-            let mut wl = Wl { _conn: conn, globals, queue, qh, st };
+            let mut wl = Wl {
+                _conn: conn,
+                globals,
+                queue,
+                qh,
+                st,
+            };
             wl.roundtrip()?;
             wl.roundtrip()?;
             for o in wl.st.outputs.iter_mut() {
                 if !o.xdg_size {
                     // No xdg-output: the mode at the integer scale, rotated by the transform.
                     let s = o.scale_int.max(1);
-                    let (w, h) = if o.transform % 2 == 1 { (o.mode_h, o.mode_w) } else { (o.mode_w, o.mode_h) };
+                    let (w, h) = if o.transform % 2 == 1 {
+                        (o.mode_h, o.mode_w)
+                    } else {
+                        (o.mode_w, o.mode_h)
+                    };
                     o.w = w / s;
                     o.h = h / s;
                 }
@@ -793,19 +1032,33 @@ mod wl {
         }
 
         pub fn roundtrip(&mut self) -> Result<(), String> {
-            self.queue.roundtrip(&mut self.st).map(|_| ()).map_err(|e| format!("Wayland: {e}"))
+            self.queue
+                .roundtrip(&mut self.st)
+                .map(|_| ())
+                .map_err(|e| format!("Wayland: {e}"))
         }
 
         /// Dispatch whatever arrives within `ms` milliseconds (false on timeout). Polls the display fd so a
         /// compositor that never answers cannot hang the tool.
         pub fn dispatch_timeout(&mut self, ms: i32) -> Result<bool, String> {
-            self.queue.flush().map_err(|e| format!("Wayland flush: {e}"))?;
-            if self.queue.dispatch_pending(&mut self.st).map_err(|e| format!("Wayland: {e}"))? > 0 {
+            self.queue
+                .flush()
+                .map_err(|e| format!("Wayland flush: {e}"))?;
+            if self
+                .queue
+                .dispatch_pending(&mut self.st)
+                .map_err(|e| format!("Wayland: {e}"))?
+                > 0
+            {
                 return Ok(true);
             }
             if let Some(guard) = self.queue.prepare_read() {
                 let fd = guard.connection_fd().as_raw_fd();
-                let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+                let mut pfd = libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
                 // SAFETY: one valid pollfd for the duration of the call.
                 let n = unsafe { libc::poll(&mut pfd, 1, ms) };
                 if n <= 0 {
@@ -815,11 +1068,17 @@ mod wl {
                 match guard.read() {
                     Ok(_) => {}
                     // A wakeup with only part of a message buffered: nothing to dispatch yet.
-                    Err(wayland_client::backend::WaylandError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
+                    Err(wayland_client::backend::WaylandError::Io(e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock =>
+                    {
+                        return Ok(false)
+                    }
                     Err(e) => return Err(format!("Wayland read: {e}")),
                 }
             }
-            self.queue.dispatch_pending(&mut self.st).map_err(|e| format!("Wayland: {e}"))?;
+            self.queue
+                .dispatch_pending(&mut self.st)
+                .map_err(|e| format!("Wayland: {e}"))?;
             Ok(true)
         }
 
@@ -832,11 +1091,18 @@ mod wl {
             let _ = self.queue.flush();
         }
 
-        fn wait_until(&mut self, what: &str, mut done: impl FnMut(&State) -> bool) -> Result<(), String> {
+        fn wait_until(
+            &mut self,
+            what: &str,
+            mut done: impl FnMut(&State) -> bool,
+        ) -> Result<(), String> {
             let start = Instant::now();
             while !done(&self.st) {
                 if start.elapsed() > ROUND {
-                    return Err(format!("compositor did not answer the {what} within {}s", ROUND.as_secs()));
+                    return Err(format!(
+                        "compositor did not answer the {what} within {}s",
+                        ROUND.as_secs()
+                    ));
                 }
                 self.dispatch_timeout(100)?;
             }
@@ -858,8 +1124,16 @@ mod wl {
                     first = Some(Instant::now());
                 }
                 if start.elapsed() > ROUND || first.is_some_and(|f| f.elapsed() > GRACE) {
-                    for p in self.st.pending.iter_mut().take(n).filter(|p| !p.ready && p.failed.is_none()) {
-                        p.failed = Some("the output did not render a frame (off, or not being drawn)".into());
+                    for p in self
+                        .st
+                        .pending
+                        .iter_mut()
+                        .take(n)
+                        .filter(|p| !p.ready && p.failed.is_none())
+                    {
+                        p.failed = Some(
+                            "the output did not render a frame (off, or not being drawn)".into(),
+                        );
                     }
                     return Ok(());
                 }
@@ -868,7 +1142,9 @@ mod wl {
         }
 
         pub fn backend(&self, want: &str) -> Option<Backend> {
-            let ext = self.st.ext_copy.is_some() && self.st.ext_output_src.is_some() && self.st.shm.is_some();
+            let ext = self.st.ext_copy.is_some()
+                && self.st.ext_output_src.is_some()
+                && self.st.shm.is_some();
             let wlr = self.st.wlr_copy.is_some() && self.st.shm.is_some();
             match want {
                 "ext" => ext.then_some(Backend::Ext),
@@ -880,7 +1156,9 @@ mod wl {
         }
 
         pub fn can_capture_toplevels(&self) -> bool {
-            self.st.ext_copy.is_some() && self.st.ext_toplevel_src.is_some() && self.has_global("ext_foreign_toplevel_list_v1")
+            self.st.ext_copy.is_some()
+                && self.st.ext_toplevel_src.is_some()
+                && self.has_global("ext_foreign_toplevel_list_v1")
         }
 
         pub fn has_global(&self, name: &str) -> bool {
@@ -888,7 +1166,9 @@ mod wl {
         }
 
         pub fn can_freeze(&self) -> bool {
-            self.st.layer_shell.is_some() && self.st.viewporter.is_some() && self.st.compositor.is_some()
+            self.st.layer_shell.is_some()
+                && self.st.viewporter.is_some()
+                && self.st.compositor.is_some()
         }
 
         /// The foreign toplevels (identifier, app id, title) the compositor lists.
@@ -902,12 +1182,23 @@ mod wl {
                 self.roundtrip()?;
                 self.roundtrip()?;
             }
-            Ok(self.st.toplevel_handles.iter().filter(|(_, t)| !t.closed).map(|(_, t)| t.clone()).collect())
+            Ok(self
+                .st
+                .toplevel_handles
+                .iter()
+                .filter(|(_, t)| !t.closed)
+                .map(|(_, t)| t.clone())
+                .collect())
         }
 
         /// Capture each source once, all sessions in flight together so the frames are one moment. One result per
         /// source: a source that fails (or never renders) does not fail the others.
-        pub fn capture(&mut self, sources: &[Source], cursor: bool, backend: Backend) -> Result<Vec<Result<Frame, String>>, String> {
+        pub fn capture(
+            &mut self,
+            sources: &[Source],
+            cursor: bool,
+            backend: Backend,
+        ) -> Result<Vec<Result<Frame, String>>, String> {
             let shm = self.st.shm.clone().ok_or("the compositor has no wl_shm")?;
             self.st.pending = (0..sources.len()).map(|_| Pending::default()).collect();
             match backend {
@@ -916,8 +1207,17 @@ mod wl {
             }
         }
 
-        fn capture_ext(&mut self, sources: &[Source], cursor: bool, shm: &wl_shm::WlShm) -> Result<Vec<Result<Frame, String>>, String> {
-            let mgr = self.st.ext_copy.clone().ok_or("no ext_image_copy_capture_manager_v1")?;
+        fn capture_ext(
+            &mut self,
+            sources: &[Source],
+            cursor: bool,
+            shm: &wl_shm::WlShm,
+        ) -> Result<Vec<Result<Frame, String>>, String> {
+            let mgr = self
+                .st
+                .ext_copy
+                .clone()
+                .ok_or("no ext_image_copy_capture_manager_v1")?;
             let options = if cursor {
                 ext_image_copy_capture_manager_v1::Options::PaintCursors
             } else {
@@ -930,7 +1230,11 @@ mod wl {
             for (i, s) in sources.iter().enumerate() {
                 let src: ExtImageCaptureSourceV1 = match s {
                     Source::Output(o) => {
-                        let m = self.st.ext_output_src.as_ref().ok_or("no ext_output_image_capture_source_manager_v1")?;
+                        let m = self
+                            .st
+                            .ext_output_src
+                            .as_ref()
+                            .ok_or("no ext_output_image_capture_source_manager_v1")?;
                         m.create_source(&self.st.wl_outputs[*o], &self.qh, ())
                     }
                     Source::Toplevel(id) => {
@@ -953,7 +1257,12 @@ mod wl {
                 handles.push((src, session));
             }
             let n = sources.len();
-            self.wait_until("capture constraints", |st| st.pending.iter().take(n).all(|p| p.constraints || p.failed.is_some()))?;
+            self.wait_until("capture constraints", |st| {
+                st.pending
+                    .iter()
+                    .take(n)
+                    .all(|p| p.constraints || p.failed.is_some())
+            })?;
             let mut frames: Vec<Result<Frame, String>> = Vec::new();
             let mut objs = Vec::new();
             for (i, (_, session)) in handles.iter().enumerate() {
@@ -965,8 +1274,14 @@ mod wl {
                     frames.push(Err("capture session sent no buffer size".into()));
                     continue;
                 };
-                let Some(fmt) = FORMATS.iter().copied().find(|f| self.st.pending[i].formats.contains(f)) else {
-                    frames.push(Err("the compositor offered no shm format mios-shot reads".into()));
+                let Some(fmt) = FORMATS
+                    .iter()
+                    .copied()
+                    .find(|f| self.st.pending[i].formats.contains(f))
+                else {
+                    frames.push(Err(
+                        "the compositor offered no shm format mios-shot reads".into()
+                    ));
                     continue;
                 };
                 let frame = alloc(shm, &self.qh, w, h, w * 4, fmt)?;
@@ -996,8 +1311,17 @@ mod wl {
             Ok(frames)
         }
 
-        fn capture_wlr(&mut self, sources: &[Source], cursor: bool, shm: &wl_shm::WlShm) -> Result<Vec<Result<Frame, String>>, String> {
-            let mgr = self.st.wlr_copy.clone().ok_or("no zwlr_screencopy_manager_v1")?;
+        fn capture_wlr(
+            &mut self,
+            sources: &[Source],
+            cursor: bool,
+            shm: &wl_shm::WlShm,
+        ) -> Result<Vec<Result<Frame, String>>, String> {
+            let mgr = self
+                .st
+                .wlr_copy
+                .clone()
+                .ok_or("no zwlr_screencopy_manager_v1")?;
             let v3 = mgr.version() >= 3;
             let mut objs = Vec::new();
             for (i, s) in sources.iter().enumerate() {
@@ -1009,7 +1333,9 @@ mod wl {
             let n = sources.len();
             // The buffer offer is protocol-only (no rendering): every output answers it promptly.
             self.wait_until("screencopy buffer", |st| {
-                st.pending.iter().take(n).all(|p| p.failed.is_some() || (p.wlr_buffer.is_some() && (!v3 || p.wlr_buffer_done)))
+                st.pending.iter().take(n).all(|p| {
+                    p.failed.is_some() || (p.wlr_buffer.is_some() && (!v3 || p.wlr_buffer_done))
+                })
             })?;
             let mut frames: Vec<Result<Frame, String>> = Vec::new();
             for (i, f) in objs.iter().enumerate() {
@@ -1022,7 +1348,9 @@ mod wl {
                     continue;
                 };
                 if !FORMATS.contains(&fmt) {
-                    frames.push(Err(format!("screencopy offered unsupported format {fmt:?}")));
+                    frames.push(Err(format!(
+                        "screencopy offered unsupported format {fmt:?}"
+                    )));
                     continue;
                 }
                 let frame = alloc(shm, &self.qh, w, h, stride, fmt)?;
@@ -1051,7 +1379,11 @@ mod wl {
         /// Show `frames[i]` full-screen on output `outs[i]` as the frozen frame (overlay layer, no input, no keyboard).
         pub fn freeze(&mut self, outs: &[usize], frames: &[Frame]) -> Result<(), String> {
             let comp = self.st.compositor.clone().ok_or("no wl_compositor")?;
-            let shell = self.st.layer_shell.clone().ok_or("no zwlr_layer_shell_v1")?;
+            let shell = self
+                .st
+                .layer_shell
+                .clone()
+                .ok_or("no zwlr_layer_shell_v1")?;
             let vp = self.st.viewporter.clone().ok_or("no wp_viewporter")?;
             let base = self.st.layers.len();
             for (k, &o) in outs.iter().enumerate() {
@@ -1067,21 +1399,35 @@ mod wl {
                 use zwlr_layer_surface_v1::Anchor;
                 layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
                 layer.set_exclusive_zone(-1);
-                layer.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+                layer
+                    .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
                 let region: wl_region::WlRegion = comp.create_region(&self.qh, ());
                 surface.set_input_region(Some(&region));
                 region.destroy();
                 surface.commit();
-                self.st.layers.push(Layer { surface, layer, viewport: None, configured: false, closed: false });
+                self.st.layers.push(Layer {
+                    surface,
+                    layer,
+                    viewport: None,
+                    configured: false,
+                    closed: false,
+                });
             }
             let n = outs.len();
-            self.wait_until("freeze surface configure", |st| st.layers[base..base + n].iter().all(|l| l.configured || l.closed))?;
+            self.wait_until("freeze surface configure", |st| {
+                st.layers[base..base + n]
+                    .iter()
+                    .all(|l| l.configured || l.closed)
+            })?;
             for (k, &o) in outs.iter().enumerate() {
                 let out = self.st.outputs[o].clone();
                 let f = &frames[k];
                 let l = &mut self.st.layers[base + k];
                 if l.closed {
-                    return Err(format!("the compositor closed the freeze surface on {}", out.name));
+                    return Err(format!(
+                        "the compositor closed the freeze surface on {}",
+                        out.name
+                    ));
                 }
                 let viewport = vp.get_viewport(&l.surface, &self.qh, ());
                 viewport.set_destination(out.w.max(1), out.h.max(1));
@@ -1114,19 +1460,33 @@ mod wl {
             offers: Vec<(String, std::sync::Arc<Vec<u8>>)>,
             ready: impl FnOnce(),
         ) -> Result<usize, String> {
-            let mgr = self.st.data_control.clone().ok_or("the compositor has no ext_data_control_manager_v1")?;
-            let seat = self.st.seat.clone().ok_or("the compositor has no wl_seat")?;
+            let mgr = self
+                .st
+                .data_control
+                .clone()
+                .ok_or("the compositor has no ext_data_control_manager_v1")?;
+            let seat = self
+                .st
+                .seat
+                .clone()
+                .ok_or("the compositor has no wl_seat")?;
             let device = mgr.get_data_device(&seat, &self.qh, ());
             let source = mgr.create_data_source(&self.qh, ());
             for (m, _) in &offers {
                 source.offer(m.clone());
             }
-            self.st.clip = Clip { offers, cancelled: false, sends: 0 };
+            self.st.clip = Clip {
+                offers,
+                cancelled: false,
+                sends: 0,
+            };
             device.set_selection(Some(&source));
             self.roundtrip()?;
             ready();
             while !self.st.clip.cancelled {
-                self.queue.blocking_dispatch(&mut self.st).map_err(|e| format!("Wayland: {e}"))?;
+                self.queue
+                    .blocking_dispatch(&mut self.st)
+                    .map_err(|e| format!("Wayland: {e}"))?;
             }
             source.destroy();
             device.destroy();
@@ -1180,7 +1540,8 @@ mod wl {
         let fd = rustix::fs::memfd_create("mios-shot", rustix::fs::MemfdFlags::CLOEXEC)
             .map_err(|e| format!("memfd_create: {e}"))?;
         let file = File::from(fd);
-        file.set_len(size as u64).map_err(|e| format!("memfd size: {e}"))?;
+        file.set_len(size as u64)
+            .map_err(|e| format!("memfd size: {e}"))?;
         // SAFETY: the memfd is private to this process and the compositor writes only within `size`.
         let map = unsafe { MmapMut::map_mut(&file) }.map_err(|e| format!("mmap: {e}"))?;
         let pool = shm.create_pool(file.as_fd(), size as i32, qh, ());
@@ -1202,15 +1563,38 @@ mod wl {
     // ---- event dispatch ----------------------------------------------------------------------------------
 
     impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-        fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
     }
 
     impl Dispatch<wl_output::WlOutput, usize> for State {
-        fn event(st: &mut Self, _: &wl_output::WlOutput, ev: wl_output::Event, idx: &usize, _: &Connection, _: &QueueHandle<Self>) {
+        fn event(
+            st: &mut Self,
+            _: &wl_output::WlOutput,
+            ev: wl_output::Event,
+            idx: &usize,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
             let o = &mut st.outputs[*idx];
             match ev {
-                wl_output::Event::Geometry { transform: WEnum::Value(t), .. } => o.transform = t as u32,
-                wl_output::Event::Mode { flags: WEnum::Value(f), width, height, .. } if f.contains(wl_output::Mode::Current) => {
+                wl_output::Event::Geometry {
+                    transform: WEnum::Value(t),
+                    ..
+                } => o.transform = t as u32,
+                wl_output::Event::Mode {
+                    flags: WEnum::Value(f),
+                    width,
+                    height,
+                    ..
+                } if f.contains(wl_output::Mode::Current) => {
                     o.mode_w = width;
                     o.mode_h = height;
                 }
@@ -1223,7 +1607,14 @@ mod wl {
     }
 
     impl Dispatch<ZxdgOutputV1, usize> for State {
-        fn event(st: &mut Self, _: &ZxdgOutputV1, ev: zxdg_output_v1::Event, idx: &usize, _: &Connection, _: &QueueHandle<Self>) {
+        fn event(
+            st: &mut Self,
+            _: &ZxdgOutputV1,
+            ev: zxdg_output_v1::Event,
+            idx: &usize,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
             let o = &mut st.outputs[*idx];
             match ev {
                 zxdg_output_v1::Event::LogicalPosition { x, y } => {
@@ -1254,11 +1645,15 @@ mod wl {
             use ext_image_copy_capture_session_v1::Event as E;
             match ev {
                 E::BufferSize { width, height } => p.size = Some((width, height)),
-                E::ShmFormat { format: WEnum::Value(f) } => p.formats.push(f),
+                E::ShmFormat {
+                    format: WEnum::Value(f),
+                } => p.formats.push(f),
                 E::Done => p.constraints = true,
                 E::Stopped => {
                     if !p.ready {
-                        p.failed.get_or_insert_with(|| "capture session stopped (source gone or capture denied)".into());
+                        p.failed.get_or_insert_with(|| {
+                            "capture session stopped (source gone or capture denied)".into()
+                        });
                     }
                 }
                 _ => {}
@@ -1278,12 +1673,18 @@ mod wl {
             let p = &mut st.pending[*idx];
             use ext_image_copy_capture_frame_v1::Event as E;
             match ev {
-                E::Transform { transform: WEnum::Value(t) } => p.transform = t as u32,
+                E::Transform {
+                    transform: WEnum::Value(t),
+                } => p.transform = t as u32,
                 E::Ready => p.ready = true,
                 E::Failed { reason } => {
                     let why = match reason {
-                        WEnum::Value(ext_image_copy_capture_frame_v1::FailureReason::BufferConstraints) => "buffer constraints changed",
-                        WEnum::Value(ext_image_copy_capture_frame_v1::FailureReason::Stopped) => "session stopped",
+                        WEnum::Value(
+                            ext_image_copy_capture_frame_v1::FailureReason::BufferConstraints,
+                        ) => "buffer constraints changed",
+                        WEnum::Value(ext_image_copy_capture_frame_v1::FailureReason::Stopped) => {
+                            "session stopped"
+                        }
                         _ => "unknown compositor error",
                     };
                     p.failed = Some(why.into());
@@ -1305,13 +1706,20 @@ mod wl {
             let p = &mut st.pending[*idx];
             use zwlr_screencopy_frame_v1::Event as E;
             match ev {
-                E::Buffer { format: WEnum::Value(f), width, height, stride } => {
+                E::Buffer {
+                    format: WEnum::Value(f),
+                    width,
+                    height,
+                    stride,
+                } => {
                     if p.wlr_buffer.is_none() || FORMATS.contains(&f) {
                         p.wlr_buffer = Some((f, width, height, stride));
                     }
                 }
                 E::BufferDone => p.wlr_buffer_done = true,
-                E::Flags { flags: WEnum::Value(f) } => p.y_invert = f.contains(zwlr_screencopy_frame_v1::Flags::YInvert),
+                E::Flags {
+                    flags: WEnum::Value(f),
+                } => p.y_invert = f.contains(zwlr_screencopy_frame_v1::Flags::YInvert),
                 E::Ready { .. } => p.ready = true,
                 E::Failed => p.failed = Some("compositor reported failure".into()),
                 _ => {}
@@ -1346,7 +1754,9 @@ mod wl {
             _: &Connection,
             _: &QueueHandle<Self>,
         ) {
-            let Some((_, t)) = st.toplevel_handles.iter_mut().find(|(x, _)| x == h) else { return };
+            let Some((_, t)) = st.toplevel_handles.iter_mut().find(|(x, _)| x == h) else {
+                return;
+            };
             use ext_foreign_toplevel_handle_v1::Event as E;
             match ev {
                 E::Identifier { identifier } => t.identifier = identifier,
@@ -1504,7 +1914,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args::default();
     let mut it = argv.iter();
     let val = |it: &mut std::slice::Iter<String>, k: &str| -> Result<String, String> {
-        it.next().cloned().ok_or_else(|| format!("{k} needs a value"))
+        it.next()
+            .cloned()
+            .ok_or_else(|| format!("{k} needs a value"))
     };
     while let Some(arg) = it.next() {
         let (k, inline) = match arg.split_once('=') {
@@ -1518,7 +1930,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
         };
         match k.as_str() {
-            "region" | "area" | "window" | "active" | "output" | "screen" | "all" | "probe" if a.mode.is_empty() => {
+            "region" | "area" | "window" | "active" | "output" | "screen" | "all" | "probe"
+                if a.mode.is_empty() =>
+            {
                 a.mode = match k.as_str() {
                     "area" => "region",
                     "active" => "window",
@@ -1530,7 +1944,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--output" => a.output = Some(v("--output")?),
             "--window" => a.window = Some(v("--window")?),
             "--geometry" => a.geometry = Some(parse_geometry(&v("--geometry")?)?),
-            "--delay" => a.delay = Some(v("--delay")?.parse().map_err(|_| "--delay needs seconds")?),
+            "--delay" => {
+                a.delay = Some(v("--delay")?.parse().map_err(|_| "--delay needs seconds")?)
+            }
             "--cursor" => a.cursor = Some(true),
             "--no-cursor" => a.cursor = Some(false),
             "--freeze" => a.freeze = Some(true),
@@ -1542,7 +1958,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--file" | "-o" => a.file = Some(v("--file")?),
             "--format" => a.format = Some(v("--format")?),
             "--quality" => {
-                let q: u8 = v("--quality")?.parse().map_err(|_| "--quality needs 1-100")?;
+                let q: u8 = v("--quality")?
+                    .parse()
+                    .map_err(|_| "--quality needs 1-100")?;
                 a.quality = Some(q.clamp(1, 100))
             }
             "--edit" => a.edit = true,
@@ -1604,7 +2022,10 @@ fn at<'a>(v: &'a toml::Value, path: &str) -> Option<&'a toml::Value> {
 }
 
 fn strings(v: Option<&toml::Value>) -> Option<Vec<String>> {
-    v?.as_array()?.iter().map(|x| x.as_str().map(str::to_string)).collect()
+    v?.as_array()?
+        .iter()
+        .map(|x| x.as_str().map(str::to_string))
+        .collect()
 }
 
 impl Settings {
@@ -1612,13 +2033,22 @@ impl Settings {
         let s = |k: &str, d: &str| t.get(k).and_then(|v| v.as_str()).unwrap_or(d).to_string();
         let b = |k: &str, d: bool| t.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
         let n = |k: &str, d: f64| {
-            t.get(k).and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))).unwrap_or(d)
+            t.get(k)
+                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                .unwrap_or(d)
         };
-        let list = |k: &str, d: &[&str]| strings(t.get(k)).unwrap_or_else(|| d.iter().map(|x| x.to_string()).collect());
+        let list = |k: &str, d: &[&str]| {
+            strings(t.get(k)).unwrap_or_else(|| d.iter().map(|x| x.to_string()).collect())
+        };
         let editors = t
             .get("editors")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|e| strings(Some(e))).filter(|e| !e.is_empty()).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| strings(Some(e)))
+                    .filter(|e| !e.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
         Ok(Settings {
             directory: s("directory", ""),
@@ -1640,13 +2070,23 @@ impl Settings {
             flash: b("flash", true),
             notify: b("notify", true),
             notify_timeout_ms: n("notify_timeout_ms", 6000.0) as i32,
-            notify_actions: list("notify_actions", &["open", "edit", "folder", "copy-path", "delete"]),
+            notify_actions: list(
+                "notify_actions",
+                &["open", "edit", "folder", "copy-path", "delete"],
+            ),
             notify_wait_s: n("notify_wait_s", 1800.0).max(1.0) as u64,
             editors,
             open_command: list("open_command", &["xdg-open"]),
             shell_ipc: list(
                 "shell_ipc",
-                &["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call"],
+                &[
+                    "quickshell",
+                    "ipc",
+                    "--path",
+                    "/usr/share/mios/quickshell/Config.qml",
+                    "--any-display",
+                    "call",
+                ],
             ),
             slurp: list("slurp", &["slurp", "-d", "-f", "%x %y %w %h"]),
             selection_timeout_s: n("selection_timeout_s", 120.0).max(1.0) as u64,
@@ -1657,8 +2097,10 @@ impl Settings {
 
     fn load() -> Result<Settings, String> {
         let paths = mios_resolver::layers::resolve_layer_paths(None);
-        let merged = mios_resolver::layers::merge_layer_files(&paths).map_err(|e| format!("SSOT: {e}"))?;
-        let t = at(&merged, "desktop.screenshot").ok_or("missing SSOT table [desktop.screenshot]")?;
+        let merged =
+            mios_resolver::layers::merge_layer_files(&paths).map_err(|e| format!("SSOT: {e}"))?;
+        let t =
+            at(&merged, "desktop.screenshot").ok_or("missing SSOT table [desktop.screenshot]")?;
         if t.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
             return Err("screenshots are disabled ([desktop.screenshot].enabled = false)".into());
         }
@@ -1675,7 +2117,17 @@ impl Settings {
         macro_rules! over {
             ($($f:ident),*) => { $( if let Some(v) = a.$f.clone() { self.$f = v; } )* };
         }
-        over!(cursor, freeze, copy, save, notify, flash, selector, window_source, backend);
+        over!(
+            cursor,
+            freeze,
+            copy,
+            save,
+            notify,
+            flash,
+            selector,
+            window_source,
+            backend
+        );
         if a.quiet {
             (self.flash, self.sound, self.notify) = (false, false, false);
         }
@@ -1732,7 +2184,11 @@ fn which(cmd: &str) -> Option<PathBuf> {
     if cmd.contains('/') {
         return Path::new(cmd).is_file().then(|| PathBuf::from(cmd));
     }
-    std::env::var_os("PATH")?.to_str()?.split(':').map(|d| Path::new(d).join(cmd)).find(|p| p.is_file())
+    std::env::var_os("PATH")?
+        .to_str()?
+        .split(':')
+        .map(|d| Path::new(d).join(cmd))
+        .find(|p| p.is_file())
 }
 
 // ---- Hyprland IPC ------------------------------------------------------------------------------------
@@ -1762,12 +2218,35 @@ fn win_of(c: &Json) -> Option<Win> {
     let at = c.get("at")?.as_array()?;
     let size = c.get("size")?.as_array()?;
     Some(Win {
-        rect: Rect { x: at.first()?.as_f64()?, y: at.get(1)?.as_f64()?, w: size.first()?.as_f64()?, h: size.get(1)?.as_f64()? },
-        id: c.get("stableId").and_then(|v| v.as_str().map(str::to_string).or_else(|| Some(v.to_string()))).unwrap_or_default(),
-        class: c.get("class").and_then(Json::as_str).unwrap_or("").to_string(),
-        title: c.get("title").and_then(Json::as_str).unwrap_or("").to_string(),
+        rect: Rect {
+            x: at.first()?.as_f64()?,
+            y: at.get(1)?.as_f64()?,
+            w: size.first()?.as_f64()?,
+            h: size.get(1)?.as_f64()?,
+        },
+        id: c
+            .get("stableId")
+            .and_then(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .or_else(|| Some(v.to_string()))
+            })
+            .unwrap_or_default(),
+        class: c
+            .get("class")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string(),
+        title: c
+            .get("title")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string(),
         floating: c.get("floating").and_then(Json::as_bool).unwrap_or(false),
-        focus: c.get("focusHistoryID").and_then(Json::as_i64).unwrap_or(i64::MAX),
+        focus: c
+            .get("focusHistoryID")
+            .and_then(Json::as_i64)
+            .unwrap_or(i64::MAX),
     })
 }
 
@@ -1788,8 +2267,16 @@ fn visible_windows() -> Vec<Win> {
     let mut out: Vec<Win> = match hypr("clients") {
         Some(Json::Array(cs)) => cs
             .iter()
-            .filter(|c| c.get("mapped").and_then(Json::as_bool) != Some(false) && c.get("hidden").and_then(Json::as_bool) != Some(true))
-            .filter(|c| c.get("workspace").and_then(|w| w.get("id")).and_then(Json::as_i64).is_some_and(|id| shown.contains(&id)))
+            .filter(|c| {
+                c.get("mapped").and_then(Json::as_bool) != Some(false)
+                    && c.get("hidden").and_then(Json::as_bool) != Some(true)
+            })
+            .filter(|c| {
+                c.get("workspace")
+                    .and_then(|w| w.get("id"))
+                    .and_then(Json::as_i64)
+                    .is_some_and(|id| shown.contains(&id))
+            })
             .filter_map(win_of)
             .collect(),
         _ => Vec::new(),
@@ -1810,7 +2297,11 @@ fn focused_output() -> Option<String> {
 
 fn enforce_permissions() -> bool {
     hypr("getoption ecosystem:enforce_permissions")
-        .and_then(|v| v.get("bool").and_then(Json::as_bool).or_else(|| v.get("int").and_then(Json::as_i64).map(|i| i != 0)))
+        .and_then(|v| {
+            v.get("bool")
+                .and_then(Json::as_bool)
+                .or_else(|| v.get("int").and_then(Json::as_i64).map(|i| i != 0))
+        })
         .unwrap_or(false)
 }
 
@@ -1840,8 +2331,16 @@ impl From<String> for Fail {
 }
 
 fn output_scale(o: &wl::Output, f: &wl::Frame) -> f64 {
-    let w = if f.transform % 2 == 1 { f.height } else { f.width };
-    if o.w > 0 { w as f64 / o.w as f64 } else { 1.0 }
+    let w = if f.transform % 2 == 1 {
+        f.height
+    } else {
+        f.width
+    };
+    if o.w > 0 {
+        w as f64 / o.w as f64
+    } else {
+        1.0
+    }
 }
 
 fn pixels(f: &wl::Frame) -> img::Pixels<'_> {
@@ -1857,11 +2356,22 @@ fn pixels(f: &wl::Frame) -> img::Pixels<'_> {
 }
 
 fn out_rect(o: &wl::Output) -> Rect {
-    Rect { x: o.x as f64, y: o.y as f64, w: o.w as f64, h: o.h as f64 }
+    Rect {
+        x: o.x as f64,
+        y: o.y as f64,
+        w: o.w as f64,
+        h: o.h as f64,
+    }
 }
 
 /// Composite `r` from the captured outputs at the configured scale rule.
-fn compose(wl: &wl::Wl, idx: &[usize], frames: &[wl::Frame], r: &Rect, rule: &str) -> (Canvas, f64) {
+fn compose(
+    wl: &wl::Wl,
+    idx: &[usize],
+    frames: &[wl::Frame],
+    r: &Rect,
+    rule: &str,
+) -> (Canvas, f64) {
     let mut s: f64 = 0.0;
     let mut placed = Vec::new();
     for (k, &o) in idx.iter().enumerate() {
@@ -1871,7 +2381,14 @@ fn compose(wl: &wl::Wl, idx: &[usize], frames: &[wl::Frame], r: &Rect, rule: &st
             continue;
         }
         s = s.max(output_scale(out, &frames[k]));
-        placed.push(Placed { px: pixels(&frames[k]), x: rect.x, y: rect.y, w: rect.w, h: rect.h, opaque: true });
+        placed.push(Placed {
+            px: pixels(&frames[k]),
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+            opaque: true,
+        });
     }
     if rule == "1" || s <= 0.0 {
         s = 1.0;
@@ -1881,7 +2398,9 @@ fn compose(wl: &wl::Wl, idx: &[usize], frames: &[wl::Frame], r: &Rect, rule: &st
 
 fn check_denied(frames: &[wl::Frame]) -> Result<(), String> {
     if frames.iter().all(|f| pixels(f).all_black()) && enforce_permissions() {
-        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "mios-shot".into());
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "mios-shot".into());
         return Err(format!(
             "Hyprland denied screen capture (ecosystem:enforce_permissions is on and the frame is blank): allow it with \
              hl.permission({{binary = \"{exe}\", type = \"screencopy\", mode = \"allow\"}}) ([desktop.screenshot].hyprland_permission)"
@@ -1891,7 +2410,9 @@ fn check_denied(frames: &[wl::Frame]) -> Result<(), String> {
 }
 
 fn all_outputs(wl: &wl::Wl) -> Vec<usize> {
-    (0..wl.st.outputs.len()).filter(|&i| wl.st.outputs[i].w > 0 && wl.st.outputs[i].h > 0).collect()
+    (0..wl.st.outputs.len())
+        .filter(|&i| wl.st.outputs[i].w > 0 && wl.st.outputs[i].h > 0)
+        .collect()
 }
 
 /// Capture the outputs `idx`; returns the ones that answered with their frames. `required`: all of them must
@@ -1928,13 +2449,20 @@ fn capture_outputs(
 
 fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
     if cfg.backend == "portal" {
-        return portal_capture(a.mode == "region" && a.geometry.is_none(), cfg.portal_timeout_s).map_err(Fail::from);
+        return portal_capture(
+            a.mode == "region" && a.geometry.is_none(),
+            cfg.portal_timeout_s,
+        )
+        .map_err(Fail::from);
     }
     let mut wl = match wl::Wl::connect() {
         Ok(w) => w,
         Err(e) if cfg.backend == "auto" => {
-            return portal_capture(a.mode == "region" && a.geometry.is_none(), cfg.portal_timeout_s)
-                .map_err(|p| Fail::Error(format!("{e}; portal fallback: {p}")));
+            return portal_capture(
+                a.mode == "region" && a.geometry.is_none(),
+                cfg.portal_timeout_s,
+            )
+            .map_err(|p| Fail::Error(format!("{e}; portal fallback: {p}")));
         }
         Err(e) => return Err(Fail::Error(e)),
     };
@@ -1944,16 +2472,27 @@ fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
                 Fail::Error(format!("the compositor offers neither ext-image-copy-capture nor wlr-screencopy; portal fallback: {p}"))
             });
         }
-        return Err(Fail::Error(format!("capture backend {:?} is not available on this compositor", cfg.backend)));
+        return Err(Fail::Error(format!(
+            "capture backend {:?} is not available on this compositor",
+            cfg.backend
+        )));
     };
     let outs = all_outputs(&wl);
     if outs.is_empty() {
         return Err(Fail::Error("no outputs to capture".into()));
     }
     let name_of = |wl: &wl::Wl, i: usize| wl.st.outputs[i].name.clone();
-    let find_output = |wl: &wl::Wl, name: &str| outs.iter().copied().find(|&i| wl.st.outputs[i].name == name);
+    let find_output = |wl: &wl::Wl, name: &str| {
+        outs.iter()
+            .copied()
+            .find(|&i| wl.st.outputs[i].name == name)
+    };
     let mut shot = Shot {
-        canvas: Canvas { w: 0, h: 0, rgba: Vec::new() },
+        canvas: Canvas {
+            w: 0,
+            h: 0,
+            rgba: Vec::new(),
+        },
         mode: a.mode.clone(),
         output: String::new(),
         app: String::new(),
@@ -1965,7 +2504,8 @@ fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
         "output" => {
             let want = a.output.clone().or_else(focused_output);
             let i = match &want {
-                Some(n) => find_output(&wl, n).ok_or_else(|| Fail::Error(format!("no output named {n}")))?,
+                Some(n) => find_output(&wl, n)
+                    .ok_or_else(|| Fail::Error(format!("no output named {n}")))?,
                 None => outs[0],
             };
             let (_, frames) = capture_outputs(&mut wl, &[i], cfg, b, true)?;
@@ -1977,7 +2517,11 @@ fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
         }
         "all" => {
             let (got, frames) = capture_outputs(&mut wl, &outs, cfg, b, false)?;
-            let r = got.iter().map(|&i| out_rect(&wl.st.outputs[i])).reduce(|a, b| a.union(&b)).unwrap();
+            let r = got
+                .iter()
+                .map(|&i| out_rect(&wl.st.outputs[i]))
+                .reduce(|a, b| a.union(&b))
+                .unwrap();
             let (c, s) = compose(&wl, &got, &frames, &r, &cfg.scale);
             shot.canvas = c;
             shot.scale = s;
@@ -1988,7 +2532,19 @@ fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
             let win = match a.window.as_deref() {
                 None | Some("active") => hypr("activewindow").as_ref().and_then(win_of),
                 Some(id) => wins.iter().find(|w| w.id == id).cloned().or_else(|| {
-                    Some(Win { rect: Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, id: id.into(), class: String::new(), title: String::new(), floating: false, focus: 0 })
+                    Some(Win {
+                        rect: Rect {
+                            x: 0.0,
+                            y: 0.0,
+                            w: 0.0,
+                            h: 0.0,
+                        },
+                        id: id.into(),
+                        class: String::new(),
+                        title: String::new(),
+                        floating: false,
+                        focus: 0,
+                    })
                 }),
             }
             .filter(|w| !w.id.is_empty())
@@ -1998,7 +2554,11 @@ fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
         }
         "region" => {
             if let Some(r) = a.geometry {
-                let hit: Vec<usize> = outs.iter().copied().filter(|&i| out_rect(&wl.st.outputs[i]).intersects(&r)).collect();
+                let hit: Vec<usize> = outs
+                    .iter()
+                    .copied()
+                    .filter(|&i| out_rect(&wl.st.outputs[i]).intersects(&r))
+                    .collect();
                 if hit.is_empty() {
                     return Err(Fail::Error("the geometry is outside every output".into()));
                 }
@@ -2016,14 +2576,25 @@ fn shoot(a: &Args, cfg: &Settings) -> Result<Shot, Fail> {
     Ok(shot)
 }
 
-fn window_shot(wl: &mut wl::Wl, outs: &[usize], win: &Win, cfg: &Settings, b: wl::Backend, shot: &mut Shot) -> Result<(), Fail> {
+fn window_shot(
+    wl: &mut wl::Wl,
+    outs: &[usize],
+    win: &Win,
+    cfg: &Settings,
+    b: wl::Backend,
+    shot: &mut Shot,
+) -> Result<(), Fail> {
     let toplevel = cfg.window_source == "toplevel" || win.rect.w <= 0.0;
     if toplevel {
         if !wl.can_capture_toplevels() {
             return Err(Fail::Error("window capture by toplevel needs ext-image-copy-capture with foreign-toplevel sources".into()));
         }
         let frame = wl
-            .capture(&[wl::Source::Toplevel(&win.id)], cfg.cursor, wl::Backend::Ext)?
+            .capture(
+                &[wl::Source::Toplevel(&win.id)],
+                cfg.cursor,
+                wl::Backend::Ext,
+            )?
             .pop()
             .ok_or_else(|| Fail::Error("no toplevel frame".into()))??;
         let px = pixels(&frame);
@@ -2032,7 +2603,11 @@ fn window_shot(wl: &mut wl::Wl, outs: &[usize], win: &Win, cfg: &Settings, b: wl
         shot.output = win.id.clone();
         return Ok(());
     }
-    let hit: Vec<usize> = outs.iter().copied().filter(|&i| out_rect(&wl.st.outputs[i]).intersects(&win.rect)).collect();
+    let hit: Vec<usize> = outs
+        .iter()
+        .copied()
+        .filter(|&i| out_rect(&wl.st.outputs[i]).intersects(&win.rect))
+        .collect();
     if hit.is_empty() {
         return Err(Fail::Error("the window is not on any output".into()));
     }
@@ -2044,11 +2619,21 @@ fn window_shot(wl: &mut wl::Wl, outs: &[usize], win: &Win, cfg: &Settings, b: wl
     Ok(())
 }
 
-fn region_shot(wl: &mut wl::Wl, outs: &[usize], cfg: &Settings, b: wl::Backend, shot: &mut Shot) -> Result<(), Fail> {
+fn region_shot(
+    wl: &mut wl::Wl,
+    outs: &[usize],
+    cfg: &Settings,
+    b: wl::Backend,
+    shot: &mut Shot,
+) -> Result<(), Fail> {
     let wins = visible_windows();
     // Freeze: capture every output now; the frames are both the frozen frame and the source of the crop, so the
     // result is exactly what the user saw while selecting.
-    let frozen = if cfg.freeze { Some(capture_outputs(wl, outs, cfg, b, false)?) } else { None };
+    let frozen = if cfg.freeze {
+        Some(capture_outputs(wl, outs, cfg, b, false)?)
+    } else {
+        None
+    };
     // Outputs that did not render are left out of the freeze and the selection.
     let outs: Vec<usize> = match &frozen {
         Some((got, f)) => {
@@ -2073,7 +2658,11 @@ fn region_shot(wl: &mut wl::Wl, outs: &[usize], cfg: &Settings, b: wl::Backend, 
             .map(out_rect)
             .ok_or_else(|| Fail::Error(format!("selector picked unknown output {n}")))?,
         Pick::Window(id) => {
-            let w = wins.iter().find(|w| &w.id == id).cloned().ok_or_else(|| Fail::Error(format!("selector picked unknown window {id}")))?;
+            let w = wins
+                .iter()
+                .find(|w| &w.id == id)
+                .cloned()
+                .ok_or_else(|| Fail::Error(format!("selector picked unknown window {id}")))?;
             shot.app = w.class.clone();
             if cfg.window_source == "toplevel" {
                 shot.mode = "window".into();
@@ -2082,7 +2671,11 @@ fn region_shot(wl: &mut wl::Wl, outs: &[usize], cfg: &Settings, b: wl::Backend, 
             w.rect
         }
     };
-    let hit: Vec<usize> = outs.iter().copied().filter(|&i| out_rect(&wl.st.outputs[i]).intersects(&rect)).collect();
+    let hit: Vec<usize> = outs
+        .iter()
+        .copied()
+        .filter(|&i| out_rect(&wl.st.outputs[i]).intersects(&rect))
+        .collect();
     if hit.is_empty() {
         return Err(Fail::Error("the selection is outside every output".into()));
     }
@@ -2115,7 +2708,8 @@ struct Selection {
 }
 
 fn parse_selection(line: &str) -> Result<Selection, Fail> {
-    let v: Json = serde_json::from_str(line.trim()).map_err(|e| Fail::Error(format!("selector sent bad JSON: {e}")))?;
+    let v: Json = serde_json::from_str(line.trim())
+        .map_err(|e| Fail::Error(format!("selector sent bad JSON: {e}")))?;
     if v.get("cancel").and_then(Json::as_bool) == Some(true) {
         return Err(Fail::Cancelled);
     }
@@ -2127,21 +2721,34 @@ fn parse_selection(line: &str) -> Result<Selection, Fail> {
     }
     let kind = match v.get("kind").and_then(Json::as_str) {
         Some("region") => {
-            let r: Vec<f64> = v.get("rect").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_f64).collect()).unwrap_or_default();
+            let r: Vec<f64> = v
+                .get("rect")
+                .and_then(Json::as_array)
+                .map(|a| a.iter().filter_map(Json::as_f64).collect())
+                .unwrap_or_default();
             match r[..] {
                 [x, y, w, h] if w >= 1.0 && h >= 1.0 => Pick::Region(Rect { x, y, w, h }),
                 _ => return Err(Fail::Error("selector sent an empty region".into())),
             }
         }
-        Some("window") => Pick::Window(v.get("id").and_then(Json::as_str).unwrap_or("").to_string()),
-        Some("output") => Pick::Output(v.get("name").and_then(Json::as_str).unwrap_or("").to_string()),
+        Some("window") => {
+            Pick::Window(v.get("id").and_then(Json::as_str).unwrap_or("").to_string())
+        }
+        Some("output") => Pick::Output(
+            v.get("name")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string(),
+        ),
         _ => return Err(Fail::Error("selector sent no kind".into())),
     };
     Ok(Selection { kind, action })
 }
 
 fn session_json(wl: &wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -> Json {
-    let cursor = hypr("cursorpos").map(|c| json!([c.get("x"), c.get("y")])).unwrap_or(Json::Null);
+    let cursor = hypr("cursorpos")
+        .map(|c| json!([c.get("x"), c.get("y")]))
+        .unwrap_or(Json::Null);
     json!({
         "v": 1,
         "mode": "region",
@@ -2155,10 +2762,17 @@ fn session_json(wl: &wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -> Js
     })
 }
 
-fn select(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -> Result<Selection, Fail> {
+fn select(
+    wl: &mut wl::Wl,
+    outs: &[usize],
+    wins: &[Win],
+    cfg: &Settings,
+) -> Result<Selection, Fail> {
     if cfg.selector != "slurp" {
         match select_shell(wl, outs, wins, cfg) {
-            Err(Fail::Error(e)) if e.starts_with("shell selector unavailable") => eprintln!("mios-shot: {e}; using slurp"),
+            Err(Fail::Error(e)) if e.starts_with("shell selector unavailable") => {
+                eprintln!("mios-shot: {e}; using slurp")
+            }
             other => return other,
         }
     }
@@ -2166,12 +2780,25 @@ fn select(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -> Resu
 }
 
 fn runtime_dir() -> PathBuf {
-    let rt = std::env::var("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    let rt = std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
     rt.join("mios")
 }
 
 fn poll2(a: i32, b: i32, ms: i32) -> (bool, bool) {
-    let mut p = [libc::pollfd { fd: a, events: libc::POLLIN, revents: 0 }, libc::pollfd { fd: b, events: libc::POLLIN, revents: 0 }];
+    let mut p = [
+        libc::pollfd {
+            fd: a,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: b,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
     // SAFETY: two valid pollfds for the duration of the call.
     let n = unsafe { libc::poll(p.as_mut_ptr(), 2, ms) };
     if n <= 0 {
@@ -2181,13 +2808,20 @@ fn poll2(a: i32, b: i32, ms: i32) -> (bool, bool) {
 }
 
 /// The glass selector in mios-shell (Shot.qml): a private socket, one session line out, one result line back.
-fn select_shell(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -> Result<Selection, Fail> {
+fn select_shell(
+    wl: &mut wl::Wl,
+    outs: &[usize],
+    wins: &[Win],
+    cfg: &Settings,
+) -> Result<Selection, Fail> {
     let dir = runtime_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| Fail::Error(format!("shell selector unavailable: {e}")))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Fail::Error(format!("shell selector unavailable: {e}")))?;
     let _ = std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
     let sock = dir.join(format!("shot-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&sock);
-    let listener = UnixListener::bind(&sock).map_err(|e| Fail::Error(format!("shell selector unavailable: {e}")))?;
+    let listener = UnixListener::bind(&sock)
+        .map_err(|e| Fail::Error(format!("shell selector unavailable: {e}")))?;
     let _ = std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600));
     struct Rm(PathBuf);
     impl Drop for Rm {
@@ -2196,7 +2830,10 @@ fn select_shell(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -
         }
     }
     let _rm = Rm(sock.clone());
-    let (prog, rest) = cfg.shell_ipc.split_first().ok_or_else(|| Fail::Error("shell selector unavailable: empty shell_ipc".into()))?;
+    let (prog, rest) = cfg
+        .shell_ipc
+        .split_first()
+        .ok_or_else(|| Fail::Error("shell selector unavailable: empty shell_ipc".into()))?;
     let st = Command::new(prog)
         .args(rest)
         .args(["shot", "select", &sock.display().to_string()])
@@ -2206,7 +2843,9 @@ fn select_shell(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -
         .status()
         .map_err(|e| Fail::Error(format!("shell selector unavailable: {prog}: {e}")))?;
     if !st.success() {
-        return Err(Fail::Error(format!("shell selector unavailable: {prog} exited with {st}")));
+        return Err(Fail::Error(format!(
+            "shell selector unavailable: {prog} exited with {st}"
+        )));
     }
     listener.set_nonblocking(true).ok();
     let wfd = wl.display_fd();
@@ -2218,7 +2857,9 @@ fn select_shell(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -
             Err(e) => return Err(Fail::Error(format!("shell selector unavailable: {e}"))),
         }
         if start.elapsed() > Duration::from_millis(cfg.selector_connect_ms) {
-            return Err(Fail::Error("shell selector unavailable: mios-shell did not connect".into()));
+            return Err(Fail::Error(
+                "shell selector unavailable: mios-shell did not connect".into(),
+            ));
         }
         wl.flush();
         let (_, w) = poll2(listener.as_raw_fd(), wfd, 50);
@@ -2228,7 +2869,9 @@ fn select_shell(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -
     };
     stream.set_nonblocking(false).ok();
     let line = format!("{}\n", session_json(wl, outs, wins, cfg));
-    stream.write_all(line.as_bytes()).map_err(|e| Fail::Error(format!("selector socket: {e}")))?;
+    stream
+        .write_all(line.as_bytes())
+        .map_err(|e| Fail::Error(format!("selector socket: {e}")))?;
     stream.set_nonblocking(true).ok();
     let mut buf = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(cfg.selection_timeout_s);
@@ -2258,7 +2901,10 @@ fn select_shell(wl: &mut wl::Wl, outs: &[usize], wins: &[Win], cfg: &Settings) -
 }
 
 fn select_slurp(wins: &[Win], cfg: &Settings) -> Result<Selection, Fail> {
-    let (prog, rest) = cfg.slurp.split_first().ok_or_else(|| Fail::Error("no selector: shell unavailable and slurp unset".into()))?;
+    let (prog, rest) = cfg
+        .slurp
+        .split_first()
+        .ok_or_else(|| Fail::Error("no selector: shell unavailable and slurp unset".into()))?;
     let mut child = Command::new(prog)
         .args(rest)
         .stdin(Stdio::piped())
@@ -2271,12 +2917,18 @@ fn select_slurp(wins: &[Win], cfg: &Settings) -> Result<Selection, Fail> {
             let _ = writeln!(si, "{},{} {}x{}", w.rect.x, w.rect.y, w.rect.w, w.rect.h);
         }
     }
-    let out = child.wait_with_output().map_err(|e| Fail::Error(format!("slurp: {e}")))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| Fail::Error(format!("slurp: {e}")))?;
     if !out.status.success() {
         return Err(Fail::Cancelled);
     }
-    let r = parse_geometry(String::from_utf8_lossy(&out.stdout).trim()).map_err(|_| Fail::Cancelled)?;
-    Ok(Selection { kind: Pick::Region(r), action: None })
+    let r =
+        parse_geometry(String::from_utf8_lossy(&out.stdout).trim()).map_err(|_| Fail::Cancelled)?;
+    Ok(Selection {
+        kind: Pick::Region(r),
+        action: None,
+    })
 }
 
 // ---- output side effects -----------------------------------------------------------------------------
@@ -2300,11 +2952,13 @@ fn spawn_detached(argv: &[String], stdin: Option<OwnedFd>) -> Result<std::proces
 }
 
 fn memfd_with(bytes: &[u8]) -> Result<OwnedFd, String> {
-    let fd = rustix::fs::memfd_create("mios-shot-data", rustix::fs::MemfdFlags::empty()).map_err(|e| format!("memfd: {e}"))?;
+    let fd = rustix::fs::memfd_create("mios-shot-data", rustix::fs::MemfdFlags::empty())
+        .map_err(|e| format!("memfd: {e}"))?;
     let mut f = std::fs::File::from(fd);
     f.write_all(bytes).map_err(|e| format!("memfd: {e}"))?;
     use std::io::Seek;
-    f.seek(std::io::SeekFrom::Start(0)).map_err(|e| format!("memfd: {e}"))?;
+    f.seek(std::io::SeekFrom::Start(0))
+        .map_err(|e| format!("memfd: {e}"))?;
     Ok(OwnedFd::from(f))
 }
 
@@ -2321,11 +2975,19 @@ fn frame_offers(offers: &[(&str, &[u8])]) -> Vec<u8> {
 fn unframe_offers(mut d: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut out = Vec::new();
     while !d.is_empty() {
-        let nl = d.iter().position(|&c| c == b'\n').ok_or("bad clipboard framing")?;
+        let nl = d
+            .iter()
+            .position(|&c| c == b'\n')
+            .ok_or("bad clipboard framing")?;
         let mime = String::from_utf8_lossy(&d[..nl]).to_string();
         d = &d[nl + 1..];
-        let nl = d.iter().position(|&c| c == b'\n').ok_or("bad clipboard framing")?;
-        let len: usize = String::from_utf8_lossy(&d[..nl]).parse().map_err(|_| "bad clipboard framing")?;
+        let nl = d
+            .iter()
+            .position(|&c| c == b'\n')
+            .ok_or("bad clipboard framing")?;
+        let len: usize = String::from_utf8_lossy(&d[..nl])
+            .parse()
+            .map_err(|_| "bad clipboard framing")?;
         d = &d[nl + 1..];
         if d.len() < len {
             return Err("short clipboard data".into());
@@ -2343,7 +3005,10 @@ fn copy_to_clipboard(offers: &[(&str, &[u8])]) -> Result<String, String> {
     let data = frame_offers(offers);
     let (r, w) = rustix::pipe::pipe().map_err(|e| format!("pipe: {e}"))?;
     let mut c = Command::new(&exe);
-    c.arg("__clip").stdin(Stdio::from(memfd_with(&data)?)).stdout(Stdio::from(w)).stderr(Stdio::null());
+    c.arg("__clip")
+        .stdin(Stdio::from(memfd_with(&data)?))
+        .stdout(Stdio::from(w))
+        .stderr(Stdio::null());
     // SAFETY: setsid is async-signal-safe.
     unsafe {
         c.pre_exec(|| {
@@ -2355,13 +3020,19 @@ fn copy_to_clipboard(offers: &[(&str, &[u8])]) -> Result<String, String> {
         drop(c);
         let mut f = std::fs::File::from(r);
         let fd = f.as_raw_fd();
-        let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        let mut p = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
         // SAFETY: one valid pollfd.
         if unsafe { libc::poll(&mut p, 1, 3000) } <= 0 {
             return Err("clipboard resident did not answer".to_string());
         }
         let mut line = String::new();
-        BufReader::new(&mut f).read_line(&mut line).map_err(|e| e.to_string())?;
+        BufReader::new(&mut f)
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
         if line.trim() == "ready" {
             Ok("native".to_string())
         } else {
@@ -2379,17 +3050,32 @@ fn copy_to_clipboard(offers: &[(&str, &[u8])]) -> Result<String, String> {
                 .stderr(Stdio::null())
                 .spawn()
                 .map_err(|x| format!("{e}; wl-copy: {x}"))?;
-            child.stdin.take().ok_or("wl-copy stdin")?.write_all(bytes).map_err(|x| format!("wl-copy: {x}"))?;
+            child
+                .stdin
+                .take()
+                .ok_or("wl-copy stdin")?
+                .write_all(bytes)
+                .map_err(|x| format!("wl-copy: {x}"))?;
             let st = child.wait().map_err(|x| format!("wl-copy: {x}"))?;
-            if st.success() { Ok(format!("wl-copy ({e})")) } else { Err(format!("{e}; wl-copy exited {st}")) }
+            if st.success() {
+                Ok(format!("wl-copy ({e})"))
+            } else {
+                Err(format!("{e}; wl-copy exited {st}"))
+            }
         }
     }
 }
 
 fn shell_call(cfg: &Settings, args: &[&str], wait: bool) -> bool {
-    let Some((prog, rest)) = cfg.shell_ipc.split_first() else { return false };
+    let Some((prog, rest)) = cfg.shell_ipc.split_first() else {
+        return false;
+    };
     let mut c = Command::new(prog);
-    c.args(rest).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    c.args(rest)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     if wait {
         c.status().map(|s| s.success()).unwrap_or(false)
     } else {
@@ -2401,26 +3087,60 @@ fn editor_argv(cfg: &Settings, file: &Path, out: &Path) -> Option<Vec<String>> {
     let e = cfg.editors.iter().find(|e| which(&e[0]).is_some())?;
     Some(
         e.iter()
-            .map(|a| a.replace("{file}", &file.display().to_string()).replace("{out}", &out.display().to_string()))
+            .map(|a| {
+                a.replace("{file}", &file.display().to_string())
+                    .replace("{out}", &out.display().to_string())
+            })
             .collect(),
     )
 }
 
 type Hints<'a> = HashMap<&'a str, zbus::zvariant::Value<'a>>;
 
-fn notify_dbus(summary: &str, body: &str, actions: &[String], thumb: Option<&Canvas>, timeout: i32) -> Result<u32, String> {
+fn notify_dbus(
+    summary: &str,
+    body: &str,
+    actions: &[String],
+    thumb: Option<&Canvas>,
+    timeout: i32,
+) -> Result<u32, String> {
     let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
-    let p = zbus::blocking::Proxy::new(&conn, "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications")
-        .map_err(|e| e.to_string())?;
+    let p = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.Notifications",
+        "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications",
+    )
+    .map_err(|e| e.to_string())?;
     let mut hints: Hints = HashMap::new();
     hints.insert("desktop-entry", zbus::zvariant::Value::from("mios-shot"));
     hints.insert("category", zbus::zvariant::Value::from("transfer.complete"));
     if let Some(t) = thumb {
-        let s = zbus::zvariant::Structure::from((t.w as i32, t.h as i32, (t.w * 4) as i32, true, 8i32, 4i32, t.rgba.clone()));
+        let s = zbus::zvariant::Structure::from((
+            t.w as i32,
+            t.h as i32,
+            (t.w * 4) as i32,
+            true,
+            8i32,
+            4i32,
+            t.rgba.clone(),
+        ));
         hints.insert("image-data", zbus::zvariant::Value::from(s));
     }
     let id: u32 = p
-        .call("Notify", &("MiOS Screenshot", 0u32, "applets-screenshooter", summary, body, actions.to_vec(), hints, timeout))
+        .call(
+            "Notify",
+            &(
+                "MiOS Screenshot",
+                0u32,
+                "applets-screenshooter",
+                summary,
+                body,
+                actions.to_vec(),
+                hints,
+                timeout,
+            ),
+        )
         .map_err(|e| e.to_string())?;
     Ok(id)
 }
@@ -2439,7 +3159,13 @@ fn action_label(k: &str) -> &'static str {
 }
 
 /// Post the result notification; returns how it was shown ("server", "toast", "off" or "failed: ...").
-fn notify(cfg: &Settings, shot: &Shot, file: Option<&Path>, copied: bool, data: Option<&[u8]>) -> String {
+fn notify(
+    cfg: &Settings,
+    shot: &Shot,
+    file: Option<&Path>,
+    copied: bool,
+    data: Option<&[u8]>,
+) -> String {
     if !cfg.notify {
         return "off".into();
     }
@@ -2450,7 +3176,14 @@ fn notify(cfg: &Settings, shot: &Shot, file: Option<&Path>, copied: bool, data: 
         (false, false) => "Screenshot taken",
     };
     let body = match file {
-        Some(f) => format!("{} ({}x{})", f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), shot.canvas.w, shot.canvas.h),
+        Some(f) => format!(
+            "{} ({}x{})",
+            f.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            shot.canvas.w,
+            shot.canvas.h
+        ),
         None => format!("{}x{}", shot.canvas.w, shot.canvas.h),
     };
     let have_editor = cfg.editors.iter().any(|e| which(&e[0]).is_some());
@@ -2469,13 +3202,31 @@ fn notify(cfg: &Settings, shot: &Shot, file: Option<&Path>, copied: bool, data: 
     if file.is_some() && keys.contains(&"open") {
         keys.insert(0, "default");
     }
-    let actions: Vec<String> = keys.iter().flat_map(|k| [k.to_string(), action_label(k).to_string()]).collect();
+    let actions: Vec<String> = keys
+        .iter()
+        .flat_map(|k| [k.to_string(), action_label(k).to_string()])
+        .collect();
     let thumb = img::thumbnail(&shot.canvas, 256);
-    match notify_dbus(summary, &body, &actions, Some(&thumb), cfg.notify_timeout_ms) {
+    match notify_dbus(
+        summary,
+        &body,
+        &actions,
+        Some(&thumb),
+        cfg.notify_timeout_ms,
+    ) {
         Ok(id) => {
             if !keys.is_empty() {
-                let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "mios-shot".into());
-                let mut argv = vec![exe, "__notify-wait".into(), "--id".into(), id.to_string(), "--format".into(), shot_format_ext(cfg).into()];
+                let exe = std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "mios-shot".into());
+                let mut argv = vec![
+                    exe,
+                    "__notify-wait".into(),
+                    "--id".into(),
+                    id.to_string(),
+                    "--format".into(),
+                    shot_format_ext(cfg).into(),
+                ];
                 if let Some(f) = file {
                     argv.extend(["--file".into(), f.display().to_string()]);
                 }
@@ -2505,7 +3256,11 @@ fn shot_format_ext(cfg: &Settings) -> &'static str {
 
 fn effects(cfg: &Settings, shot: &Shot) {
     if cfg.flash {
-        let target = if shot.mode == "all" { String::new() } else { shot.output.clone() };
+        let target = if shot.mode == "all" {
+            String::new()
+        } else {
+            shot.output.clone()
+        };
         shell_call(cfg, &["shot", "flash", &target], false);
     }
     if cfg.sound && !cfg.sound_command.is_empty() {
@@ -2529,7 +3284,9 @@ fn deliver(a: &Args, cfg: &Settings, shot: Shot) -> Result<Json, String> {
     let mut stdout = false;
     match a.file.as_deref() {
         Some("-") => {
-            std::io::stdout().write_all(&bytes).map_err(|e| format!("stdout: {e}"))?;
+            std::io::stdout()
+                .write_all(&bytes)
+                .map_err(|e| format!("stdout: {e}"))?;
             stdout = true;
         }
         Some(p) => {
@@ -2537,9 +3294,17 @@ fn deliver(a: &Args, cfg: &Settings, shot: Shot) -> Result<Json, String> {
             file = Some(PathBuf::from(p));
         }
         None if save => {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
             let base = img::render_name(&cfg.filename, now, &shot.mode, &shot.output, &shot.app);
-            file = Some(img::save_atomic(&cfg.dir(), &base, cfg.format.ext(), &bytes)?);
+            file = Some(img::save_atomic(
+                &cfg.dir(),
+                &base,
+                cfg.format.ext(),
+                &bytes,
+            )?);
         }
         None => {}
     }
@@ -2569,12 +3334,28 @@ fn deliver(a: &Args, cfg: &Settings, shot: Shot) -> Result<Json, String> {
             None => {
                 let dir = runtime_dir();
                 let _ = std::fs::create_dir_all(&dir);
-                let tmp = dir.join(format!("shot-edit-{}.{}", std::process::id(), cfg.format.ext()));
+                let tmp = dir.join(format!(
+                    "shot-edit-{}.{}",
+                    std::process::id(),
+                    cfg.format.ext()
+                ));
                 img::write_replace(&tmp, &bytes)?;
                 // Unsaved pixels stay in the runtime dir (tmpfs) only until the editor has loaded them.
-                let _ = spawn_detached(&["sh".into(), "-c".into(), "sleep 60; rm -f -- \"$0\"".into(), tmp.display().to_string()], None);
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-                let base = img::render_name(&cfg.filename, now, &shot.mode, &shot.output, &shot.app);
+                let _ = spawn_detached(
+                    &[
+                        "sh".into(),
+                        "-c".into(),
+                        "sleep 60; rm -f -- \"$0\"".into(),
+                        tmp.display().to_string(),
+                    ],
+                    None,
+                );
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let base =
+                    img::render_name(&cfg.filename, now, &shot.mode, &shot.output, &shot.app);
                 (tmp, cfg.dir().join(format!("{base}.{}", cfg.format.ext())))
             }
         };
@@ -2583,10 +3364,16 @@ fn deliver(a: &Args, cfg: &Settings, shot: Shot) -> Result<Json, String> {
                 Ok(_) => editor = json!(argv[0]),
                 Err(e) => eprintln!("mios-shot: editor: {e}"),
             },
-            None => eprintln!("mios-shot: no annotation editor installed ([desktop.screenshot].editors)"),
+            None => eprintln!(
+                "mios-shot: no annotation editor installed ([desktop.screenshot].editors)"
+            ),
         }
     }
-    let notified = if stdout { "off".to_string() } else { notify(cfg, &shot, file.as_deref(), copied, Some(&bytes)) };
+    let notified = if stdout {
+        "off".to_string()
+    } else {
+        notify(cfg, &shot, file.as_deref(), copied, Some(&bytes))
+    };
     Ok(json!({
         "ok": true,
         "mode": shot.mode,
@@ -2610,27 +3397,53 @@ fn deliver(a: &Args, cfg: &Settings, shot: Shot) -> Result<Json, String> {
 fn portal_capture(interactive: bool, timeout_s: u64) -> Result<Shot, String> {
     use zbus::zvariant::{OwnedValue, Value};
     let conn = zbus::blocking::Connection::session().map_err(|e| format!("portal: {e}"))?;
-    let unique = conn.unique_name().ok_or("portal: no bus name")?.trim_start_matches(':').replace('.', "_");
+    let unique = conn
+        .unique_name()
+        .ok_or("portal: no bus name")?
+        .trim_start_matches(':')
+        .replace('.', "_");
     let token = format!("mios_shot_{}", std::process::id());
     let path = format!("/org/freedesktop/portal/desktop/request/{unique}/{token}");
-    let req = zbus::blocking::Proxy::new(&conn, "org.freedesktop.portal.Desktop", path.as_str(), "org.freedesktop.portal.Request")
+    let req = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.portal.Desktop",
+        path.as_str(),
+        "org.freedesktop.portal.Request",
+    )
+    .map_err(|e| format!("portal: {e}"))?;
+    let mut responses = req
+        .receive_signal("Response")
         .map_err(|e| format!("portal: {e}"))?;
-    let mut responses = req.receive_signal("Response").map_err(|e| format!("portal: {e}"))?;
-    let portal = zbus::blocking::Proxy::new(&conn, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Screenshot")
-        .map_err(|e| format!("portal: {e}"))?;
+    let portal = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.Screenshot",
+    )
+    .map_err(|e| format!("portal: {e}"))?;
     let mut opts: HashMap<&str, Value> = HashMap::new();
     opts.insert("handle_token", Value::from(token.as_str()));
     opts.insert("interactive", Value::from(interactive));
-    let _handle: zbus::zvariant::OwnedObjectPath = portal.call("Screenshot", &("", opts)).map_err(|e| format!("portal: {e}"))?;
+    let _handle: zbus::zvariant::OwnedObjectPath = portal
+        .call("Screenshot", &("", opts))
+        .map_err(|e| format!("portal: {e}"))?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         if let Some(m) = responses.next() {
-            let _ = tx.send(m.body().deserialize::<(u32, HashMap<String, OwnedValue>)>().map_err(|e| e.to_string()));
+            let _ = tx.send(
+                m.body()
+                    .deserialize::<(u32, HashMap<String, OwnedValue>)>()
+                    .map_err(|e| e.to_string()),
+            );
         }
     });
     // The portal may ask the user first (xdg-desktop-portal's screenshot permission dialog for host apps): wait
     // long enough for a person, and close the request (and its dialog) when nobody answers.
-    let (code, results) = match rx.recv_timeout(Duration::from_secs(if interactive { timeout_s.max(300) } else { timeout_s })) {
+    let (code, results) = match rx.recv_timeout(Duration::from_secs(if interactive {
+        timeout_s.max(300)
+    } else {
+        timeout_s
+    })) {
         Ok(r) => r.map_err(|e| format!("portal: {e}"))?,
         Err(_) => {
             let _ = req.call_method("Close", &());
@@ -2646,9 +3459,13 @@ fn portal_capture(interactive: bool, timeout_s: u64) -> Result<Shot, String> {
         .get("uri")
         .and_then(|v| String::try_from(v.clone()).ok())
         .ok_or("portal: response carries no uri")?;
-    let p = uri.strip_prefix("file://").ok_or_else(|| format!("portal: unsupported uri {uri}"))?;
+    let p = uri
+        .strip_prefix("file://")
+        .ok_or_else(|| format!("portal: unsupported uri {uri}"))?;
     let p = percent_decode(p);
-    let img = image::open(&p).map_err(|e| format!("portal: cannot read {p}: {e}"))?.to_rgba8();
+    let img = image::open(&p)
+        .map_err(|e| format!("portal: cannot read {p}: {e}"))?
+        .to_rgba8();
     // The portal's temp file is screen content: remove it when it is ours to remove (runtime dir, e.g. XDPH's).
     if let Ok(rt) = std::env::var("XDG_RUNTIME_DIR") {
         if p.starts_with(&rt) {
@@ -2657,8 +3474,16 @@ fn portal_capture(interactive: bool, timeout_s: u64) -> Result<Shot, String> {
     }
     let (w, h) = img.dimensions();
     Ok(Shot {
-        canvas: Canvas { w, h, rgba: img.into_raw() },
-        mode: if interactive { "region".into() } else { "all".into() },
+        canvas: Canvas {
+            w,
+            h,
+            rgba: img.into_raw(),
+        },
+        mode: if interactive {
+            "region".into()
+        } else {
+            "all".into()
+        },
         output: "portal".into(),
         app: String::new(),
         backend: "org.freedesktop.portal.Screenshot".into(),
@@ -2673,7 +3498,10 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
                 out.push(v);
                 i += 3;
                 continue;
@@ -2690,7 +3518,11 @@ fn percent_decode(s: &str) -> String {
 fn bus_has(name: &str) -> bool {
     zbus::blocking::Connection::session()
         .ok()
-        .and_then(|c| zbus::blocking::fdo::DBusProxy::new(&c).ok().and_then(|p| p.name_has_owner(name.try_into().ok()?).ok()))
+        .and_then(|c| {
+            zbus::blocking::fdo::DBusProxy::new(&c)
+                .ok()
+                .and_then(|p| p.name_has_owner(name.try_into().ok()?).ok())
+        })
         .unwrap_or(false)
 }
 
@@ -2717,8 +3549,20 @@ fn probe(cfg: &Settings) -> Json {
                 "zxdg_output_manager_v1",
             ];
             j["wayland"] = json!(true);
-            j["globals"] = json!(wanted.iter().map(|n| (n.to_string(), json!(wl.st.globals.iter().find(|(g, _)| g == n).map(|(_, v)| *v)))).collect::<serde_json::Map<_, _>>());
-            j["backend"] = json!(wl.backend(&cfg.backend).map(|b| b.name()).unwrap_or(if cfg.backend == "auto" { "org.freedesktop.portal.Screenshot" } else { "none" }));
+            j["globals"] = json!(wanted
+                .iter()
+                .map(|n| (
+                    n.to_string(),
+                    json!(wl.st.globals.iter().find(|(g, _)| g == n).map(|(_, v)| *v))
+                ))
+                .collect::<serde_json::Map<_, _>>());
+            j["backend"] = json!(wl.backend(&cfg.backend).map(|b| b.name()).unwrap_or(
+                if cfg.backend == "auto" {
+                    "org.freedesktop.portal.Screenshot"
+                } else {
+                    "none"
+                }
+            ));
             j["toplevel_capture"] = json!(wl.can_capture_toplevels());
             j["freeze"] = json!(wl.can_freeze());
             j["outputs"] = json!(wl.st.outputs.iter().map(|o| json!({"name": o.name, "x": o.x, "y": o.y, "w": o.w, "h": o.h, "mode": [o.mode_w, o.mode_h], "transform": o.transform, "scale": o.scale_int})).collect::<Vec<_>>());
@@ -2726,7 +3570,11 @@ fn probe(cfg: &Settings) -> Json {
         Err(e) => {
             j["wayland"] = json!(false);
             j["error"] = json!(e);
-            j["backend"] = json!(if cfg.backend == "auto" || cfg.backend == "portal" { "org.freedesktop.portal.Screenshot" } else { "none" });
+            j["backend"] = json!(if cfg.backend == "auto" || cfg.backend == "portal" {
+                "org.freedesktop.portal.Screenshot"
+            } else {
+                "none"
+            });
         }
     }
     j
@@ -2757,7 +3605,10 @@ fn resident_clip() -> i32 {
             return 1;
         }
     };
-    let offers: Vec<(String, std::sync::Arc<Vec<u8>>)> = offers.into_iter().map(|(m, b)| (m, std::sync::Arc::new(b))).collect();
+    let offers: Vec<(String, std::sync::Arc<Vec<u8>>)> = offers
+        .into_iter()
+        .map(|(m, b)| (m, std::sync::Arc::new(b)))
+        .collect();
     let r = wl.serve_clipboard(offers, || {
         let mut so = std::io::stdout();
         let _ = so.write_all(b"ready\n");
@@ -2802,20 +3653,33 @@ fn resident_notify(argv: &[String]) -> i32 {
     if file.is_none() {
         let _ = std::io::stdin().read_to_end(&mut data);
     }
-    let Ok(conn) = zbus::blocking::Connection::session() else { return 1 };
-    let Ok(p) = zbus::blocking::Proxy::new(&conn, "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications") else {
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return 1;
+    };
+    let Ok(p) = zbus::blocking::Proxy::new(
+        &conn,
+        "org.freedesktop.Notifications",
+        "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications",
+    ) else {
         return 1;
     };
     let (tx, rx) = std::sync::mpsc::channel::<(String, u32, String)>();
     for sig in ["ActionInvoked", "NotificationClosed"] {
-        let Ok(stream) = p.receive_signal(sig) else { return 1 };
+        let Ok(stream) = p.receive_signal(sig) else {
+            return 1;
+        };
         let tx = tx.clone();
         std::thread::spawn(move || {
             for m in stream {
                 let r = if sig == "ActionInvoked" {
-                    m.body().deserialize::<(u32, String)>().map(|(i, k)| (sig.to_string(), i, k))
+                    m.body()
+                        .deserialize::<(u32, String)>()
+                        .map(|(i, k)| (sig.to_string(), i, k))
                 } else {
-                    m.body().deserialize::<(u32, u32)>().map(|(i, _)| (sig.to_string(), i, String::new()))
+                    m.body()
+                        .deserialize::<(u32, u32)>()
+                        .map(|(i, _)| (sig.to_string(), i, String::new()))
                 };
                 if let Ok(x) = r {
                     if tx.send(x).is_err() {
@@ -2827,7 +3691,9 @@ fn resident_notify(argv: &[String]) -> i32 {
     }
     let deadline = Instant::now() + Duration::from_secs(cfg.notify_wait_s);
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-        let Ok((sig, nid, key)) = rx.recv_timeout(left) else { break };
+        let Ok((sig, nid, key)) = rx.recv_timeout(left) else {
+            break;
+        };
         if nid != id {
             continue;
         }
@@ -2853,8 +3719,14 @@ fn run_action(cfg: &Settings, key: &str, file: Option<&Path>, data: &[u8], ext: 
         ("folder", Some(f)) => {
             let uri = format!("file://{}", fs(f));
             let shown = zbus::blocking::Connection::session().ok().and_then(|c| {
-                c.call_method(Some("org.freedesktop.FileManager1"), "/org/freedesktop/FileManager1", Some("org.freedesktop.FileManager1"), "ShowItems", &(vec![uri.as_str()], ""))
-                    .ok()
+                c.call_method(
+                    Some("org.freedesktop.FileManager1"),
+                    "/org/freedesktop/FileManager1",
+                    Some("org.freedesktop.FileManager1"),
+                    "ShowItems",
+                    &(vec![uri.as_str()], ""),
+                )
+                .ok()
             });
             if shown.is_none() {
                 let mut argv = cfg.open_command.clone();
@@ -2864,7 +3736,11 @@ fn run_action(cfg: &Settings, key: &str, file: Option<&Path>, data: &[u8], ext: 
         }
         ("copy-path", Some(f)) => {
             let p = fs(f);
-            let _ = copy_to_clipboard(&[("text/plain;charset=utf-8", p.as_bytes()), ("text/plain", p.as_bytes()), ("UTF8_STRING", p.as_bytes())]);
+            let _ = copy_to_clipboard(&[
+                ("text/plain;charset=utf-8", p.as_bytes()),
+                ("text/plain", p.as_bytes()),
+                ("UTF8_STRING", p.as_bytes()),
+            ]);
         }
         ("delete", Some(f)) => {
             // Only the file this run wrote, inside the screenshots directory.
@@ -2878,7 +3754,10 @@ fn run_action(cfg: &Settings, key: &str, file: Option<&Path>, data: &[u8], ext: 
             }
         }
         ("save" | "edit", None) if !data.is_empty() => {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
             let base = img::render_name(&cfg.filename, now, "region", "", "");
             if let Ok(saved) = img::save_atomic(&cfg.dir(), &base, ext, data) {
                 if key == "edit" {
@@ -2924,7 +3803,10 @@ fn main() {
         std::process::exit(64);
     }
     if a.mode == "probe" {
-        println!("{}", serde_json::to_string_pretty(&probe(&cfg)).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&probe(&cfg)).unwrap_or_default()
+        );
         return;
     }
     if cfg.delay_s > 0.0 {
@@ -2954,7 +3836,11 @@ fn main() {
         Err((code, msg)) => {
             if a.json {
                 let j = json!({"ok": false, "cancelled": code == 2, "error": msg});
-                if a.file.as_deref() == Some("-") { eprintln!("{j}") } else { println!("{j}") }
+                if a.file.as_deref() == Some("-") {
+                    eprintln!("{j}")
+                } else {
+                    println!("{j}")
+                }
             }
             if code != 2 {
                 eprintln!("mios-shot: {msg}");
@@ -2970,15 +3856,38 @@ mod tests {
 
     #[test]
     fn geometry_parses_slurp_and_plain() {
-        assert_eq!(parse_geometry("10,20 30x40").unwrap(), Rect { x: 10.0, y: 20.0, w: 30.0, h: 40.0 });
-        assert_eq!(parse_geometry("10 20 30 40").unwrap(), Rect { x: 10.0, y: 20.0, w: 30.0, h: 40.0 });
+        assert_eq!(
+            parse_geometry("10,20 30x40").unwrap(),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 30.0,
+                h: 40.0
+            }
+        );
+        assert_eq!(
+            parse_geometry("10 20 30 40").unwrap(),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 30.0,
+                h: 40.0
+            }
+        );
         assert!(parse_geometry("10,20 0x40").is_err());
         assert!(parse_geometry("nope").is_err());
     }
 
     #[test]
     fn args_modes_and_overrides() {
-        let a = parse_args(&["window".into(), "--no-copy".into(), "--format=webp".into(), "--delay".into(), "2".into()]).unwrap();
+        let a = parse_args(&[
+            "window".into(),
+            "--no-copy".into(),
+            "--format=webp".into(),
+            "--delay".into(),
+            "2".into(),
+        ])
+        .unwrap();
         assert_eq!(a.mode, "window");
         assert_eq!(a.copy, Some(false));
         assert_eq!(a.format.as_deref(), Some("webp"));
@@ -2994,13 +3903,31 @@ mod tests {
 
     #[test]
     fn selection_lines() {
-        assert!(matches!(parse_selection(r#"{"cancel":true}"#), Err(Fail::Cancelled)));
+        assert!(matches!(
+            parse_selection(r#"{"cancel":true}"#),
+            Err(Fail::Cancelled)
+        ));
         let s = parse_selection(r#"{"kind":"region","rect":[1,2,3,4],"action":"copy"}"#).unwrap();
-        assert_eq!(s.kind, Pick::Region(Rect { x: 1.0, y: 2.0, w: 3.0, h: 4.0 }));
+        assert_eq!(
+            s.kind,
+            Pick::Region(Rect {
+                x: 1.0,
+                y: 2.0,
+                w: 3.0,
+                h: 4.0
+            })
+        );
         assert_eq!(s.action.as_deref(), Some("copy"));
-        assert_eq!(parse_selection(r#"{"kind":"window","id":"abc"}"#).unwrap().kind, Pick::Window("abc".into()));
+        assert_eq!(
+            parse_selection(r#"{"kind":"window","id":"abc"}"#)
+                .unwrap()
+                .kind,
+            Pick::Window("abc".into())
+        );
         assert!(parse_selection(r#"{"kind":"region","rect":[1,2,0,4]}"#).is_err());
-        assert!(parse_selection(r#"{"kind":"region","rect":[1,2,3,4],"action":"rm -rf"}"#).is_err());
+        assert!(
+            parse_selection(r#"{"kind":"region","rect":[1,2,3,4],"action":"rm -rf"}"#).is_err()
+        );
         assert!(parse_selection("garbage").is_err());
     }
 
@@ -3008,7 +3935,13 @@ mod tests {
     fn clipboard_framing_round_trips() {
         let f = frame_offers(&[("image/png", b"\x89PNG\n\x00"), ("text/plain", b"a\nb")]);
         let o = unframe_offers(&f).unwrap();
-        assert_eq!(o, vec![("image/png".to_string(), b"\x89PNG\n\x00".to_vec()), ("text/plain".to_string(), b"a\nb".to_vec())]);
+        assert_eq!(
+            o,
+            vec![
+                ("image/png".to_string(), b"\x89PNG\n\x00".to_vec()),
+                ("text/plain".to_string(), b"a\nb".to_vec())
+            ]
+        );
         assert!(unframe_offers(b"image/png\n9\nshort").is_err());
     }
 
@@ -3019,7 +3952,10 @@ mod tests {
         assert_eq!(s.format, Format::Jpg);
         assert_eq!(s.quality, 70);
         assert!(!s.copy && s.save && s.freeze && !s.cursor);
-        assert_eq!(s.editors, vec![vec!["satty".to_string(), "-f".into(), "{file}".into()]]);
+        assert_eq!(
+            s.editors,
+            vec![vec!["satty".to_string(), "-f".into(), "{file}".into()]]
+        );
         let bad: toml::Value = toml::from_str("format = \"bmp\"").unwrap();
         assert!(Settings::from_table(&bad).is_err());
     }

@@ -6,8 +6,8 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use toml::Value;
 
 #[derive(Clone, Debug, Default)]
@@ -22,11 +22,17 @@ pub struct Outcome {
 impl Outcome {
     /// Findings the draft introduces; a defect already present below the draft never blocks an unrelated edit.
     pub fn new_findings(&self) -> Vec<&String> {
-        self.findings.iter().filter(|f| !self.baseline.contains(*f)).collect()
+        self.findings
+            .iter()
+            .filter(|f| !self.baseline.contains(*f))
+            .collect()
     }
     pub fn mentions(&self, id: &str) -> Vec<&String> {
         let needle = [format!("{id}:"), format!("{id} ["), format!("{id}#")];
-        self.findings.iter().filter(|f| needle.iter().any(|n| f.contains(n.as_str()))).collect()
+        self.findings
+            .iter()
+            .filter(|f| needle.iter().any(|n| f.contains(n.as_str())))
+            .collect()
     }
 }
 
@@ -40,22 +46,32 @@ impl Validator {
     /// [desktop.controls].mios_gen.
     pub fn from_ssot(merged: &Value) -> Self {
         if let Some(p) = std::env::var_os("MIOS_GEN").filter(|p| !p.is_empty()) {
-            return Self { mios_gen: PathBuf::from(p) };
+            return Self {
+                mios_gen: PathBuf::from(p),
+            };
         }
         let mios_gen = at(merged, "desktop.controls.mios_gen")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .unwrap_or("/usr/bin/mios-gen");
-        Self { mios_gen: PathBuf::from(mios_gen) }
+        Self {
+            mios_gen: PathBuf::from(mios_gen),
+        }
     }
 
     /// The Lua session the compositor would load for `user_text` as the user tier. mios-gen prints it with
     /// --runtime and writes nothing; the draft lives in a private 0600 file only for the call.
     /// The draft as a private 0600 user tier for the duration of `f` (removed afterwards).
-    fn with_draft<T>(user_text: &str, f: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
+    fn with_draft<T>(
+        user_text: &str,
+        f: impl FnOnce(&Path) -> Result<T, String>,
+    ) -> Result<T, String> {
         let dir = runtime_dir();
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let path = dir.join(format!(".mios-controls-draft-{}-{n}.toml", std::process::id()));
+        let path = dir.join(format!(
+            ".mios-controls-draft-{}-{n}.toml",
+            std::process::id()
+        ));
         let _cleanup = Remove(path.clone());
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -63,17 +79,28 @@ impl Validator {
             .mode(0o600)
             .open(&path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        file.write_all(user_text.as_bytes()).map_err(|e| e.to_string())?;
+        file.write_all(user_text.as_bytes())
+            .map_err(|e| e.to_string())?;
         drop(file);
         f(&path)
     }
 
-    fn mios_gen(&self, layers: &Layers, draft: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    fn mios_gen(
+        &self,
+        layers: &Layers,
+        draft: &Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, String> {
         let root = layers.root.display().to_string();
         let mut cmd = Command::new(&self.mios_gen);
         if crate::model::rooted(&layers.root) {
             // the explicit root's vendor tier, never the session's MIOS_TOML / MIOS_VENDOR_TOML
-            cmd.env_remove("MIOS_TOML").env_remove("MIOS_VENDOR_TOML_D").env("MIOS_VENDOR_TOML", layers.root.join("usr/share/mios/mios.toml"));
+            cmd.env_remove("MIOS_TOML")
+                .env_remove("MIOS_VENDOR_TOML_D")
+                .env(
+                    "MIOS_VENDOR_TOML",
+                    layers.root.join("usr/share/mios/mios.toml"),
+                );
         }
         cmd.args(args)
             .args(["--root", &root])
@@ -92,9 +119,13 @@ impl Validator {
             let out = self.mios_gen(layers, path, &["render-hyprland", "--runtime"])?;
             if !out.status.success() {
                 let err = String::from_utf8_lossy(&out.stderr);
-                return Err(format!("render-hyprland rejected the draft: {}", err.lines().last().unwrap_or("").trim()));
+                return Err(format!(
+                    "render-hyprland rejected the draft: {}",
+                    err.lines().last().unwrap_or("").trim()
+                ));
             }
-            String::from_utf8(out.stdout).map_err(|_| "render-hyprland printed non-UTF-8 Lua".into())
+            String::from_utf8(out.stdout)
+                .map_err(|_| "render-hyprland printed non-UTF-8 Lua".into())
         })
     }
 
@@ -104,19 +135,33 @@ impl Validator {
         Self::with_draft(user_text, |path| {
             let n = SEQ.fetch_add(1, Ordering::Relaxed);
             let dir = runtime_dir().join(format!(".mios-controls-tmux-{}-{n}", std::process::id()));
-            std::fs::DirBuilder::new().mode(0o700).create(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&dir)
+                .map_err(|e| format!("{}: {e}", dir.display()))?;
             let _cleanup = RemoveDir(dir.clone());
             let d = dir.display().to_string();
             let out = self.mios_gen(layers, path, &["render-tmux-theme", "--runtime", &d])?;
             if !out.status.success() {
                 let err = String::from_utf8_lossy(&out.stderr);
-                return Err(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("failed").trim().to_owned());
+                return Err(err
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .last()
+                    .unwrap_or("failed")
+                    .trim()
+                    .to_owned());
             }
             std::fs::read_to_string(dir.join("tmux.conf")).map_err(|e| format!("tmux.conf: {e}"))
         })
     }
 
-    fn analyze(&self, layers: &Layers, user_text: &str, check_tmux: bool) -> Result<(Vec<String>, String, String), String> {
+    fn analyze(
+        &self,
+        layers: &Layers,
+        user_text: &str,
+        check_tmux: bool,
+    ) -> Result<(Vec<String>, String, String), String> {
         let user = crate::model::parse_value(user_text)?;
         let merged = layers.merged_with(user);
         let lua = self.render_lua(layers, user_text)?;
@@ -129,7 +174,12 @@ impl Validator {
                 findings.push(format!("tmux-os: the tmux-os keys do not project: {e}"));
             }
         }
-        let summary = format!("{} binding(s), {} compositor bind line(s), {} finding(s)", a.bindings, a.lua_literal, findings.len());
+        let summary = format!(
+            "{} binding(s), {} compositor bind line(s), {} finding(s)",
+            a.bindings,
+            a.lua_literal,
+            findings.len()
+        );
         Ok((findings, summary, lua))
     }
 
@@ -140,17 +190,28 @@ impl Validator {
             let s = format!("{} finding(s) (no changes)", baseline.len());
             (baseline.clone(), s, base_lua)
         } else {
-            let tmux_changed = crate::model::parse_value(draft_text).ok().and_then(|v| at(&v, "keybindings.tmux").cloned()) != at(&layers.user_value, "keybindings.tmux").cloned();
+            let tmux_changed = crate::model::parse_value(draft_text)
+                .ok()
+                .and_then(|v| at(&v, "keybindings.tmux").cloned())
+                != at(&layers.user_value, "keybindings.tmux").cloned();
             self.analyze(layers, draft_text, tmux_changed)?
         };
-        Ok(Outcome { findings, baseline: baseline.into_iter().collect(), summary, lua: Some(lua) })
+        Ok(Outcome {
+            findings,
+            baseline: baseline.into_iter().collect(),
+            summary,
+            lua: Some(lua),
+        })
     }
 }
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(std::env::temp_dir)
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 struct RemoveDir(PathBuf);
@@ -181,16 +242,35 @@ impl Drop for Remove {
 /// (LS_*/RS_*) are system-layer keys only, so a toggle chord, capture button or Guide bound to one could never fire.
 /// The same rule mios-inputd's loader applies (mios_resolver::keybindings::button_code).
 pub fn controller_role_findings(merged: &Value) -> Vec<String> {
-    const LEGACY: [&str; 8] = ["grab_button", "resize_button", "view_mode_button", "jump_button", "crouch_button", "fullscreen_button", "shaderglass_toggle_button", "shaderglass_cycle_button"];
+    const LEGACY: [&str; 8] = [
+        "grab_button",
+        "resize_button",
+        "view_mode_button",
+        "jump_button",
+        "crouch_button",
+        "fullscreen_button",
+        "shaderglass_toggle_button",
+        "shaderglass_cycle_button",
+    ];
     let mut out = Vec::new();
     let mut check = |tag: String, name: &str| {
         if let Err(e) = mios_resolver::keybindings::button_code(name) {
             out.push(format!("{tag}: {e}"));
         }
     };
-    let strs = |path: &str| -> Vec<String> { at(merged, path).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect() };
+    let strs = |path: &str| -> Vec<String> {
+        at(merged, path)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    };
     for key in ["guide_button", "cursor_mode_button"] {
-        if let Some(b) = at(merged, &format!("keybindings.global.controller.{key}")).and_then(Value::as_str) {
+        if let Some(b) =
+            at(merged, &format!("keybindings.global.controller.{key}")).and_then(Value::as_str)
+        {
             check(format!("controller.{key}"), b);
         }
     }
@@ -206,7 +286,9 @@ pub fn controller_role_findings(merged: &Value) -> Vec<String> {
         check("hypr3d.controller.toggle_chord".into(), &b);
     }
     for key in LEGACY {
-        if let Some(b) = at(merged, &format!("desktop.hyprland.hypr3d.controller.{key}")).and_then(Value::as_str) {
+        if let Some(b) =
+            at(merged, &format!("desktop.hyprland.hypr3d.controller.{key}")).and_then(Value::as_str)
+        {
             check(format!("hypr3d.controller.{key}"), b);
         }
     }
@@ -221,8 +303,15 @@ pub fn controller_role_findings(merged: &Value) -> Vec<String> {
 /// (mios-inputd config.rs quirk_code, the same rule).
 fn quirk_code(name: &str) -> Result<u16, String> {
     if let Some(hex) = name.strip_prefix("0x") {
-        let c = u16::from_str_radix(hex, 16).map_err(|_| format!("quirk code {name}: hex evdev key code"))?;
-        return if (0x100..=0x2ff).contains(&c) { Ok(c) } else { Err(format!("quirk code {name}: outside the evdev button range 0x100..0x2ff")) };
+        let c = u16::from_str_radix(hex, 16)
+            .map_err(|_| format!("quirk code {name}: hex evdev key code"))?;
+        return if (0x100..=0x2ff).contains(&c) {
+            Ok(c)
+        } else {
+            Err(format!(
+                "quirk code {name}: outside the evdev button range 0x100..0x2ff"
+            ))
+        };
     }
     mios_resolver::keybindings::button_code(name).map_err(|e| format!("quirk code {name}: {e}"))
 }
@@ -233,19 +322,28 @@ fn quirk_code(name: &str) -> Result<u16, String> {
 pub fn quirk_findings(merged: &Value) -> Vec<String> {
     const GAMEPAD_BLOCK: std::ops::RangeInclusive<u16> = 0x130..=0x13e;
     let mut out = Vec::new();
-    let Some(quirks) = at(merged, "keybindings.global.controller.quirks").and_then(Value::as_table) else { return out };
+    let Some(quirks) = at(merged, "keybindings.global.controller.quirks").and_then(Value::as_table)
+    else {
+        return out;
+    };
     for (name, q) in quirks {
         let tag = format!("controller.quirks.{name}");
-        let Some(remap) = q.get("remap") else { continue };
+        let Some(remap) = q.get("remap") else {
+            continue;
+        };
         let Some(remap) = remap.as_table() else {
-            out.push(format!("{tag}.remap: must be a table of reported = positional codes"));
+            out.push(format!(
+                "{tag}.remap: must be a table of reported = positional codes"
+            ));
             continue;
         };
         let mut codes = std::collections::BTreeMap::new();
         let mut targets = BTreeSet::new();
         for (from, to) in remap {
             let Some(to) = to.as_str() else {
-                out.push(format!("{tag}.remap.{from}: the target must be a button name"));
+                out.push(format!(
+                    "{tag}.remap.{from}: the target must be a button name"
+                ));
                 continue;
             };
             match (quirk_code(from), quirk_code(to)) {
@@ -275,12 +373,20 @@ pub fn quirk_findings(merged: &Value) -> Vec<String> {
 /// the layer's modifier), and actions under the same namespace/implemented rules the keyboard bindings follow.
 pub fn controller_findings(merged: &Value) -> Vec<String> {
     let mut out = controller_role_findings(merged);
-    let Some(layer) = at(merged, "keybindings.global.controller.system_layer").and_then(Value::as_table) else {
+    let Some(layer) =
+        at(merged, "keybindings.global.controller.system_layer").and_then(Value::as_table)
+    else {
         return out;
     };
-    let guide = at(merged, "keybindings.global.controller.guide_button").and_then(Value::as_str).unwrap_or("BTN_MODE");
-    let namespaces: BTreeSet<String> = str_list(at(merged, "keybindings.global.action_namespaces")).into_iter().collect();
-    let planned: BTreeSet<String> = str_list(at(merged, "keybindings.global.planned_actions")).into_iter().collect();
+    let guide = at(merged, "keybindings.global.controller.guide_button")
+        .and_then(Value::as_str)
+        .unwrap_or("BTN_MODE");
+    let namespaces: BTreeSet<String> = str_list(at(merged, "keybindings.global.action_namespaces"))
+        .into_iter()
+        .collect();
+    let planned: BTreeSet<String> = str_list(at(merged, "keybindings.global.planned_actions"))
+        .into_iter()
+        .collect();
     let implemented: BTreeSet<String> = at(merged, "keybindings.global.action_argv")
         .and_then(Value::as_table)
         .map(|t| t.keys().cloned().collect())
@@ -328,35 +434,62 @@ mod tests {
 
     #[test]
     fn valid_system_layer_has_no_findings() {
-        assert!(controller_findings(&merged("BTN_SOUTH=\"hypr:togglefloating\"\nBTN_WEST=\"mios:ok\"\n")).is_empty());
+        assert!(controller_findings(&merged(
+            "BTN_SOUTH=\"hypr:togglefloating\"\nBTN_WEST=\"mios:ok\"\n"
+        ))
+        .is_empty());
     }
 
     #[test]
     fn system_layer_rejects_bad_buttons_guide_namespaces_and_unimplemented_actions() {
         let f = controller_findings(&merged("BTN_BOGUS=\"hypr:x\"\nBTN_MODE=\"hypr:x\"\nBTN_SOUTH=\"nope:x\"\nBTN_WEST=\"mios:missing\"\nBTN_EAST=\"hypr:\"\n"));
         assert_eq!(f.len(), 5, "{f:#?}");
-        assert!(f.iter().any(|x| x.contains("BTN_BOGUS") && x.contains("unknown controller button")));
-        assert!(f.iter().any(|x| x.contains("BTN_MODE") && x.contains("modifier")));
-        assert!(f.iter().any(|x| x.contains("BTN_SOUTH") && x.contains("namespace")));
-        assert!(f.iter().any(|x| x.contains("BTN_WEST") && x.contains("planned_actions")));
+        assert!(f
+            .iter()
+            .any(|x| x.contains("BTN_BOGUS") && x.contains("unknown controller button")));
+        assert!(f
+            .iter()
+            .any(|x| x.contains("BTN_MODE") && x.contains("modifier")));
+        assert!(f
+            .iter()
+            .any(|x| x.contains("BTN_SOUTH") && x.contains("namespace")));
+        assert!(f
+            .iter()
+            .any(|x| x.contains("BTN_WEST") && x.contains("planned_actions")));
         assert!(f.iter().any(|x| x.contains("BTN_EAST")));
     }
 
     #[test]
     fn stick_pseudo_keys_are_system_layer_keys_only() {
         // D1: LS_*/RS_* name one flick in the system layer; every other role needs a button a device can press.
-        assert!(controller_findings(&merged("LS_UP=\"mios:ok\"\nRS_LEFT=\"hypr:movewindow left\"\n")).is_empty());
+        assert!(controller_findings(&merged(
+            "LS_UP=\"mios:ok\"\nRS_LEFT=\"hypr:movewindow left\"\n"
+        ))
+        .is_empty());
         let roles: Value = "[keybindings.global.controller]\nguide_button=\"BTN_MODE\"\ncursor_mode_button=\"RS_UP\"\nmode_override_chord=[\"BTN_SELECT\",\"LS_DOWN\"]\n[keybindings.global.controller.room]\nRS_RIGHT=\"hypr:hypr3d:cancel\"\nBTN_EAST=\"hypr:hypr3d:cancel\"\n[desktop.hyprland.hypr3d.controller]\ntoggle_chord=[\"LS_UP\",\"BTN_THUMBR\"]\nfullscreen_button=\"RS_DOWN\"\ngrab_button=\"BTN_TR2\"\n[keybindings.controller]\nhypr3d_toggle_chord=[\"BTN_THUMBL\",\"LS_LEFT\"]\n".parse().unwrap();
         let f = controller_findings(&roles);
-        for tag in ["controller.cursor_mode_button", "controller.mode_override_chord", "controller.room.RS_RIGHT", "hypr3d.controller.toggle_chord", "hypr3d.controller.fullscreen_button", "keybindings.controller.hypr3d_toggle_chord"] {
-            assert!(f.iter().any(|x| x.starts_with(&format!("{tag}:")) && x.contains("stick direction")), "{tag} not flagged: {f:#?}");
+        for tag in [
+            "controller.cursor_mode_button",
+            "controller.mode_override_chord",
+            "controller.room.RS_RIGHT",
+            "hypr3d.controller.toggle_chord",
+            "hypr3d.controller.fullscreen_button",
+            "keybindings.controller.hypr3d_toggle_chord",
+        ] {
+            assert!(
+                f.iter()
+                    .any(|x| x.starts_with(&format!("{tag}:")) && x.contains("stick direction")),
+                "{tag} not flagged: {f:#?}"
+            );
         }
         assert_eq!(f.len(), 6, "real buttons are not flagged: {f:#?}");
     }
 
     #[test]
     fn quirk_codes_follow_the_inputd_loader() {
-        let q = |remap: &str| -> Value { format!("[keybindings.global.controller.quirks.xpad]\ndrivers=[\"xpad\"]\nremap={{ {remap} }}\n").parse().unwrap() };
+        let q = |remap: &str| -> Value {
+            format!("[keybindings.global.controller.quirks.xpad]\ndrivers=[\"xpad\"]\nremap={{ {remap} }}\n").parse().unwrap()
+        };
         // positive: the vendor xpad quirk (a face swap plus hex d-pad codes) is clean
         let ok = controller_findings(&q("BTN_NORTH=\"BTN_WEST\", BTN_WEST=\"BTN_NORTH\", \"0x2c0\"=\"BTN_DPAD_LEFT\", \"0x2c3\"=\"BTN_DPAD_DOWN\""));
         assert!(ok.is_empty(), "{ok:#?}");

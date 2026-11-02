@@ -106,7 +106,11 @@ mod tests {
         assert!(r.is_excluded_section("a") && !r.is_excluded_section("b"));
         assert!(r.suppresses_canonical("m", "MIOS_M_OTHER"));
         assert!(!r.suppresses_canonical("m", "MIOS_M_KEEP"));
-        let edited = rules(&base.replace("['a']", "['b']").replace("'MIOS_M_KEEP'", "'MIOS_M_OTHER'"));
+        let edited = rules(
+            &base
+                .replace("['a']", "['b']")
+                .replace("'MIOS_M_KEEP'", "'MIOS_M_OTHER'"),
+        );
         assert!(!edited.is_excluded_section("a") && edited.is_excluded_section("b"));
         assert!(!edited.suppresses_canonical("m", "MIOS_M_OTHER"));
         assert!(edited.suppresses_canonical("m", "MIOS_M_KEEP"));

@@ -280,7 +280,16 @@ mod tests {
     #[test]
     fn hidden_and_foreign_entries_are_never_layers() {
         let dir = tempdir().unwrap();
-        for name in ["10-a.toml", "9-b.toml", ".hidden.toml", ".99-late.toml", "notes.txt", "x.toml.bak", "X.TOML", "A.toml"] {
+        for name in [
+            "10-a.toml",
+            "9-b.toml",
+            ".hidden.toml",
+            ".99-late.toml",
+            "notes.txt",
+            "x.toml.bak",
+            "X.TOML",
+            "A.toml",
+        ] {
             fs::write(dir.path().join(name), "").unwrap();
         }
         fs::create_dir(dir.path().join("dir.toml")).unwrap();
@@ -390,7 +399,6 @@ mod tests {
         assert_eq!(paths[3], normalize_path(&h_file));
     }
 
-
     fn layer_files(bodies: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
         let dir = tempdir().unwrap();
         let paths = bodies
@@ -461,5 +469,4 @@ mod tests {
             "user path unexpectedly started with bare /mios/mios.toml: {user_str}"
         );
     }
-
 }

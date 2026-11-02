@@ -136,7 +136,14 @@ fn owned_unit_files(root: &Path) -> Result<(usize, Vec<PathBuf>), String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"])
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+        ])
         .args(UNIT_DIRS)
         .output()
         .map_err(|e| format!("cannot run git ls-files: {e}"))?;

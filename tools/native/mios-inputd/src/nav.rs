@@ -44,7 +44,9 @@ impl Input {
         }
         for (prefix, right) in [("LS_", false), ("RS_", true)] {
             if let Some(d) = name.strip_prefix(prefix) {
-                return Dir::parse(d).map(|dir| Input::Stick { right, dir }).ok_or_else(|| format!("unknown stick direction {name}"));
+                return Dir::parse(d)
+                    .map(|dir| Input::Stick { right, dir })
+                    .ok_or_else(|| format!("unknown stick direction {name}"));
             }
         }
         crate::config::button_code(name).map(Input::Button)
@@ -52,16 +54,36 @@ impl Input {
     pub fn name(self) -> String {
         match self {
             Input::ToggleChord => "TOGGLE_CHORD".into(),
-            Input::Stick { right, dir } => format!("{}_{}", if right { "RS" } else { "LS" }, dir.word().to_ascii_uppercase()),
-            Input::Button(c) => BUTTON_NAMES.iter().find(|(_, v)| *v == c).map_or_else(|| format!("0x{c:x}"), |(n, _)| (*n).into()),
+            Input::Stick { right, dir } => format!(
+                "{}_{}",
+                if right { "RS" } else { "LS" },
+                dir.word().to_ascii_uppercase()
+            ),
+            Input::Button(c) => BUTTON_NAMES
+                .iter()
+                .find(|(_, v)| *v == c)
+                .map_or_else(|| format!("0x{c:x}"), |(n, _)| (*n).into()),
         }
     }
 }
 const BUTTON_NAMES: [(&str, u16); 17] = [
-    ("BTN_SOUTH", 0x130), ("BTN_EAST", 0x131), ("BTN_NORTH", 0x133), ("BTN_WEST", 0x134), ("BTN_TL", 0x136),
-    ("BTN_TR", 0x137), ("BTN_TL2", 0x138), ("BTN_TR2", 0x139), ("BTN_SELECT", 0x13a), ("BTN_START", 0x13b),
-    ("BTN_MODE", 0x13c), ("BTN_THUMBL", 0x13d), ("BTN_THUMBR", 0x13e), ("BTN_DPAD_UP", 0x220),
-    ("BTN_DPAD_DOWN", 0x221), ("BTN_DPAD_LEFT", 0x222), ("BTN_DPAD_RIGHT", 0x223),
+    ("BTN_SOUTH", 0x130),
+    ("BTN_EAST", 0x131),
+    ("BTN_NORTH", 0x133),
+    ("BTN_WEST", 0x134),
+    ("BTN_TL", 0x136),
+    ("BTN_TR", 0x137),
+    ("BTN_TL2", 0x138),
+    ("BTN_TR2", 0x139),
+    ("BTN_SELECT", 0x13a),
+    ("BTN_START", 0x13b),
+    ("BTN_MODE", 0x13c),
+    ("BTN_THUMBL", 0x13d),
+    ("BTN_THUMBR", 0x13e),
+    ("BTN_DPAD_UP", 0x220),
+    ("BTN_DPAD_DOWN", 0x221),
+    ("BTN_DPAD_LEFT", 0x222),
+    ("BTN_DPAD_RIGHT", 0x223),
 ];
 pub const BTN_DPAD_UP: u16 = 0x220;
 pub const BTN_DPAD_DOWN: u16 = 0x221;
@@ -80,10 +102,16 @@ impl Value {
         match v {
             toml::Value::String(s) => Ok(Value::Press(s.clone())),
             toml::Value::Array(a) if a.len() == 2 => {
-                let s = |i: usize| a[i].as_str().map(str::to_owned).ok_or_else(|| format!("{what}: [tap, hold] takes two strings"));
+                let s = |i: usize| {
+                    a[i].as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| format!("{what}: [tap, hold] takes two strings"))
+                };
                 Ok(Value::TapHold(s(0)?, s(1)?))
             }
-            _ => Err(format!("{what}: a nav value is \"ns:action\", \"none\" or [\"tap\", \"hold\"]")),
+            _ => Err(format!(
+                "{what}: a nav value is \"ns:action\", \"none\" or [\"tap\", \"hold\"]"
+            )),
         }
     }
     pub fn actions(&self) -> Vec<&str> {
@@ -108,7 +136,14 @@ pub struct NavConfig {
     pub tmux_sockets: Vec<String>,
     pub profiles: BTreeMap<String, Profile>,
 }
-const RESERVED: [&str; 6] = ["enabled", "flick_on", "flick_off", "contexts", "repeat", "tmux_sockets"];
+const RESERVED: [&str; 6] = [
+    "enabled",
+    "flick_on",
+    "flick_off",
+    "contexts",
+    "repeat",
+    "tmux_sockets",
+];
 /// Inputs the ownership contract or the room owns wherever a compositor runs; a desktop profile may not claim them.
 const CONTRACT: [&str; 5] = ["BTN_NORTH", "BTN_TL", "BTN_TR", "BTN_START", "TOGGLE_CHORD"];
 
@@ -122,8 +157,12 @@ pub struct Ctx<'a> {
 
 impl NavConfig {
     pub fn from_value(v: Option<&toml::Value>, ctx: &Ctx) -> Result<Self, String> {
-        let Some(v) = v else { return Ok(Self::default()) };
-        let t = v.as_table().ok_or("[keybindings.global.controller.nav] must be a table")?;
+        let Some(v) = v else {
+            return Ok(Self::default());
+        };
+        let t = v
+            .as_table()
+            .ok_or("[keybindings.global.controller.nav] must be a table")?;
         let num = |k: &str, d: f64| -> Result<f64, String> {
             match t.get(k) {
                 None => Ok(d),
@@ -133,19 +172,32 @@ impl NavConfig {
             }
         };
         let mut cfg = NavConfig {
-            enabled: t.get("enabled").map_or(Ok(false), |v| v.as_bool().ok_or("nav.enabled must be a boolean"))?,
+            enabled: t.get("enabled").map_or(Ok(false), |v| {
+                v.as_bool().ok_or("nav.enabled must be a boolean")
+            })?,
             flick_on: num("flick_on", 0.6)?,
             flick_off: num("flick_off", 0.3)?,
             ..Self::default()
         };
-        if !(cfg.flick_on.is_finite() && cfg.flick_off.is_finite() && cfg.flick_off >= 0.0 && cfg.flick_off < cfg.flick_on && cfg.flick_on <= 1.0) {
+        if !(cfg.flick_on.is_finite()
+            && cfg.flick_off.is_finite()
+            && cfg.flick_off >= 0.0
+            && cfg.flick_off < cfg.flick_on
+            && cfg.flick_on <= 1.0)
+        {
             return Err("nav: 0 <= flick_off < flick_on <= 1".into());
         }
         if let Some(c) = t.get("contexts") {
             for (context, profile) in c.as_table().ok_or("nav.contexts must be a table")? {
-                let p = profile.as_str().ok_or_else(|| format!("nav.contexts.{context} must name a profile"))?;
-                if !ctx.contexts.contains(&context.as_str()) || ["app-capture", "desktop-3d", "controller"].contains(&context.as_str()) {
-                    return Err(format!("nav.contexts: {context} is not an uncaptured window context"));
+                let p = profile
+                    .as_str()
+                    .ok_or_else(|| format!("nav.contexts.{context} must name a profile"))?;
+                if !ctx.contexts.contains(&context.as_str())
+                    || ["app-capture", "desktop-3d", "controller"].contains(&context.as_str())
+                {
+                    return Err(format!(
+                        "nav.contexts: {context} is not an uncaptured window context"
+                    ));
                 }
                 cfg.contexts.insert(context.clone(), p.into());
             }
@@ -153,21 +205,41 @@ impl NavConfig {
         if let Some(r) = t.get("repeat") {
             for (input, pair) in r.as_table().ok_or("nav.repeat must be a table")? {
                 let i = Input::parse(input)?;
-                if matches!(i, Input::Stick { right: true, .. }) || matches!(i, Input::ToggleChord) {
-                    return Err(format!("nav.repeat.{input}: right-stick flicks and the toggle chord never repeat"));
+                if matches!(i, Input::Stick { right: true, .. }) || matches!(i, Input::ToggleChord)
+                {
+                    return Err(format!(
+                        "nav.repeat.{input}: right-stick flicks and the toggle chord never repeat"
+                    ));
                 }
-                let a = pair.as_array().filter(|a| a.len() == 2).ok_or_else(|| format!("nav.repeat.{input} is [delay_ms, rate_ms]"))?;
-                let n = |i: usize| a[i].as_integer().filter(|v| *v > 0).map(|v| v as u64).ok_or_else(|| format!("nav.repeat.{input}: positive integers"));
+                let a = pair
+                    .as_array()
+                    .filter(|a| a.len() == 2)
+                    .ok_or_else(|| format!("nav.repeat.{input} is [delay_ms, rate_ms]"))?;
+                let n = |i: usize| {
+                    a[i].as_integer()
+                        .filter(|v| *v > 0)
+                        .map(|v| v as u64)
+                        .ok_or_else(|| format!("nav.repeat.{input}: positive integers"))
+                };
                 let (delay, rate) = (n(0)?, n(1)?);
                 if !(50..=5000).contains(&delay) || !(16..=5000).contains(&rate) {
-                    return Err(format!("nav.repeat.{input}: delay 50..=5000 ms, rate 16..=5000 ms"));
+                    return Err(format!(
+                        "nav.repeat.{input}: delay 50..=5000 ms, rate 16..=5000 ms"
+                    ));
                 }
                 cfg.repeat.insert(i, (delay, rate));
             }
         }
         if let Some(s) = t.get("tmux_sockets") {
             for name in s.as_array().ok_or("nav.tmux_sockets must be an array")? {
-                let n = name.as_str().filter(|n| !n.is_empty() && n.len() <= 64 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+                let n = name
+                    .as_str()
+                    .filter(|n| {
+                        !n.is_empty()
+                            && n.len() <= 64
+                            && n.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    })
                     .ok_or("nav.tmux_sockets: socket names are [A-Za-z0-9_-]{1,64}")?;
                 cfg.tmux_sockets.push(n.into());
             }
@@ -177,15 +249,29 @@ impl NavConfig {
             if RESERVED.contains(&name.as_str()) {
                 continue;
             }
-            if name == "vpad" || name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
-                return Err(format!("nav profile name {name:?} must be [a-z0-9_] and not \"vpad\""));
+            if name == "vpad"
+                || name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            {
+                return Err(format!(
+                    "nav profile name {name:?} must be [a-z0-9_] and not \"vpad\""
+                ));
             }
-            let body = body.as_table().ok_or_else(|| format!("nav.{name} must be a table"))?;
+            let body = body
+                .as_table()
+                .ok_or_else(|| format!("nav.{name} must be a table"))?;
             let mut inherits = None;
             let mut map = Profile::new();
             for (input, value) in body {
                 if input == "inherits" {
-                    inherits = Some(value.as_str().ok_or_else(|| format!("nav.{name}.inherits names a profile"))?.to_owned());
+                    inherits = Some(
+                        value
+                            .as_str()
+                            .ok_or_else(|| format!("nav.{name}.inherits names a profile"))?
+                            .to_owned(),
+                    );
                     continue;
                 }
                 let what = format!("nav.{name}.{input}");
@@ -198,10 +284,18 @@ impl NavConfig {
                     return Err(format!("{what}: Guide hold is the system layer modifier; BTN_MODE takes one tap action"));
                 }
                 if matches!(i, Input::Stick { .. }) && matches!(v, Value::TapHold(..)) {
-                    return Err(format!("{what}: a stick direction takes one action (a flick has no hold)"));
+                    return Err(format!(
+                        "{what}: a stick direction takes one action (a flick has no hold)"
+                    ));
                 }
-                if matches!(v, Value::TapHold(..)) && v.actions().iter().any(|a| a.starts_with("pointer:") && *a != CURSOR) {
-                    return Err(format!("{what}: pointer: is analog and cannot be a tap or hold"));
+                if matches!(v, Value::TapHold(..))
+                    && v.actions()
+                        .iter()
+                        .any(|a| a.starts_with("pointer:") && *a != CURSOR)
+                {
+                    return Err(format!(
+                        "{what}: pointer: is analog and cannot be a tap or hold"
+                    ));
                 }
                 if i == Input::ToggleChord && matches!(v, Value::TapHold(..)) {
                     return Err(format!("{what}: the toggle chord takes one action (its hold is the capture release)"));
@@ -221,8 +315,12 @@ impl NavConfig {
                 }
                 match parent {
                     None => break,
-                    Some(p) if !raw.contains_key(p) => return Err(format!("nav.{cur}.inherits: unknown profile {p}")),
-                    Some(p) if chain.contains(p) || chain.len() > 8 => return Err(format!("nav.{name}: inherits cycle through {p}")),
+                    Some(p) if !raw.contains_key(p) => {
+                        return Err(format!("nav.{cur}.inherits: unknown profile {p}"))
+                    }
+                    Some(p) if chain.contains(p) || chain.len() > 8 => {
+                        return Err(format!("nav.{name}: inherits cycle through {p}"))
+                    }
                     Some(p) => {
                         chain.push(p.clone());
                         cur = p.clone();
@@ -234,13 +332,17 @@ impl NavConfig {
         for (context, p) in &cfg.contexts {
             if p == "vpad" {
                 if context == "console" || context == "shell" {
-                    return Err(format!("nav.contexts.{context}: no virtual-pad consumer; name a profile"));
+                    return Err(format!(
+                        "nav.contexts.{context}: no virtual-pad consumer; name a profile"
+                    ));
                 }
                 continue;
             }
             let names = cfg.candidates(p);
             if names.is_empty() {
-                return Err(format!("nav.contexts.{context}: no profile {p} (or {p}_tmux and {p}_plain)"));
+                return Err(format!(
+                    "nav.contexts.{context}: no profile {p} (or {p}_tmux and {p}_plain)"
+                ));
             }
             for n in names {
                 for (input, value) in &cfg.profiles[&n] {
@@ -248,8 +350,10 @@ impl NavConfig {
                     if context == "shell" {
                         // A focused shell layer owns the keyboard; no window capture or host command behind it.
                         for action in value.actions() {
-                            if action!="none" && !action.starts_with("key:") {
-                                return Err(format!("nav.{n}.{name}: shell navigation uses key: or none"));
+                            if action != "none" && !action.starts_with("key:") {
+                                return Err(format!(
+                                    "nav.{n}.{name}: shell navigation uses key: or none"
+                                ));
                             }
                         }
                     } else if context == "console" {
@@ -259,7 +363,9 @@ impl NavConfig {
                                 return Err(format!("nav.{n}.{name}: {a} cannot reach a VT (console rows use key:, tmux:, mios:graphical-vt, pointer:cursor or none)"));
                             }
                         }
-                    } else if CONTRACT.contains(&name.as_str()) && value != &Value::Press("none".into()) {
+                    } else if CONTRACT.contains(&name.as_str())
+                        && value != &Value::Press("none".into())
+                    {
                         return Err(format!("nav.{n}.{name}: owned by the capture contract or the room wherever a compositor runs ({context})"));
                     }
                 }
@@ -296,14 +402,27 @@ impl NavConfig {
     }
     /// Every action a nav profile can fire, for the bridge's unresolved-action check.
     pub fn actions(&self) -> BTreeSet<String> {
-        self.profiles.values().flat_map(|p| p.values().flat_map(|v| v.actions().into_iter().map(str::to_owned))).collect()
+        self.profiles
+            .values()
+            .flat_map(|p| {
+                p.values()
+                    .flat_map(|v| v.actions().into_iter().map(str::to_owned))
+            })
+            .collect()
     }
     /// The resolved controller map as text (`mios-inputd map --text`, the tmux:keymap popup): context -> profile, then
     /// each profile's inputs with their tap/hold actions.
     pub fn text(&self, hold_ms: u64) -> String {
         let mut out = format!("MiOS controller map (uncaptured). A hold is {hold_ms} ms; North captures the focused window, a held L3+R3 releases it.\n\n");
         for (context, p) in &self.contexts {
-            out += &format!("  {context:<16} {}\n", if self.profiles.contains_key(p) || p == "vpad" { p.clone() } else { format!("{p}_tmux (tmux client) / {p}_plain") });
+            out += &format!(
+                "  {context:<16} {}\n",
+                if self.profiles.contains_key(p) || p == "vpad" {
+                    p.clone()
+                } else {
+                    format!("{p}_tmux (tmux client) / {p}_plain")
+                }
+            );
         }
         for (name, profile) in &self.profiles {
             out += &format!("\n[{name}]\n");
@@ -323,7 +442,11 @@ pub const CURSOR: &str = "pointer:cursor";
 /// The projections a VT can receive: the uinput keyboard (the kernel console reads it), tmux verbs for the client on
 /// the active VT, the graphical-VT switch, cursor mode (the virtual pointer moves the gpm pointer) and "none".
 pub fn console_capable(action: &str) -> bool {
-    action == "none" || action == "mios:graphical-vt" || action == CURSOR || action.starts_with("key:") || action.starts_with("tmux:")
+    action == "none"
+        || action == "mios:graphical-vt"
+        || action == CURSOR
+        || action.starts_with("key:")
+        || action.starts_with("tmux:")
 }
 
 fn validate_value(action: &str, input: Input, ctx: &Ctx) -> Result<(), String> {
@@ -381,17 +504,53 @@ pub struct KeyChord {
     pub mods: Vec<u16>,
     pub key: u16,
 }
-const MODS: [(&str, u16, &str); 4] = [("CTRL", 29, "CTRL"), ("SHIFT", 42, "SHIFT"), ("ALT", 56, "ALT"), ("SUPER", 125, "SUPER")];
+const MODS: [(&str, u16, &str); 4] = [
+    ("CTRL", 29, "CTRL"),
+    ("SHIFT", 42, "SHIFT"),
+    ("ALT", 56, "ALT"),
+    ("SUPER", 125, "SUPER"),
+];
 /// (name, evdev code, xkb keysym) for the keys a nav value may press. Names are case-insensitive; a single
 /// letter or digit is its own name.
 const KEYS: [(&str, u16, &str); 38] = [
-    ("ENTER", 28, "Return"), ("RETURN", 28, "Return"), ("ESC", 1, "Escape"), ("ESCAPE", 1, "Escape"), ("TAB", 15, "Tab"),
-    ("SPACE", 57, "space"), ("BACKSPACE", 14, "BackSpace"), ("DELETE", 111, "Delete"), ("INSERT", 110, "Insert"),
-    ("HOME", 102, "Home"), ("END", 107, "End"), ("PAGEUP", 104, "Prior"), ("PAGEDOWN", 109, "Next"), ("UP", 103, "Up"),
-    ("DOWN", 108, "Down"), ("LEFT", 105, "Left"), ("RIGHT", 106, "Right"), ("COMPOSE", 127, "Menu"), ("MENU", 127, "Menu"),
-    ("MINUS", 12, "minus"), ("EQUAL", 13, "equal"), ("F1", 59, "F1"), ("F2", 60, "F2"), ("F3", 61, "F3"), ("F4", 62, "F4"),
-    ("F5", 63, "F5"), ("F6", 64, "F6"), ("F7", 65, "F7"), ("F8", 66, "F8"), ("F9", 67, "F9"), ("F10", 68, "F10"),
-    ("F11", 87, "F11"), ("F12", 88, "F12"), ("0", 11, "0"), ("1", 2, "1"), ("2", 3, "2"), ("3", 4, "3"), ("4", 5, "4"),
+    ("ENTER", 28, "Return"),
+    ("RETURN", 28, "Return"),
+    ("ESC", 1, "Escape"),
+    ("ESCAPE", 1, "Escape"),
+    ("TAB", 15, "Tab"),
+    ("SPACE", 57, "space"),
+    ("BACKSPACE", 14, "BackSpace"),
+    ("DELETE", 111, "Delete"),
+    ("INSERT", 110, "Insert"),
+    ("HOME", 102, "Home"),
+    ("END", 107, "End"),
+    ("PAGEUP", 104, "Prior"),
+    ("PAGEDOWN", 109, "Next"),
+    ("UP", 103, "Up"),
+    ("DOWN", 108, "Down"),
+    ("LEFT", 105, "Left"),
+    ("RIGHT", 106, "Right"),
+    ("COMPOSE", 127, "Menu"),
+    ("MENU", 127, "Menu"),
+    ("MINUS", 12, "minus"),
+    ("EQUAL", 13, "equal"),
+    ("F1", 59, "F1"),
+    ("F2", 60, "F2"),
+    ("F3", 61, "F3"),
+    ("F4", 62, "F4"),
+    ("F5", 63, "F5"),
+    ("F6", 64, "F6"),
+    ("F7", 65, "F7"),
+    ("F8", 66, "F8"),
+    ("F9", 67, "F9"),
+    ("F10", 68, "F10"),
+    ("F11", 87, "F11"),
+    ("F12", 88, "F12"),
+    ("0", 11, "0"),
+    ("1", 2, "1"),
+    ("2", 3, "2"),
+    ("3", 4, "3"),
+    ("4", 5, "4"),
 ];
 const DIGITS_5_9: [(char, u16); 5] = [('5', 6), ('6', 7), ('7', 8), ('8', 9), ('9', 10)];
 const LETTERS: &str = "qwertyuiop asdfghjkl zxcvbnm";
@@ -411,7 +570,11 @@ pub fn parse_key_chord(text: &str) -> Result<KeyChord, String> {
     let mut codes = vec![];
     for m in mods {
         let up = m.to_ascii_uppercase();
-        let code = MODS.iter().find(|(n, _, _)| *n == up).map(|(_, c, _)| *c).ok_or_else(|| format!("unknown modifier {m} in key:{text}"))?;
+        let code = MODS
+            .iter()
+            .find(|(n, _, _)| *n == up)
+            .map(|(_, c, _)| *c)
+            .ok_or_else(|| format!("unknown modifier {m} in key:{text}"))?;
         if codes.contains(&code) {
             return Err(format!("modifier {m} repeated in key:{text}"));
         }
@@ -434,7 +597,12 @@ fn key_code(name: &str) -> Option<u16> {
 }
 /// Every key code the virtual keyboard must advertise.
 pub fn keyboard_codes() -> Vec<u16> {
-    let mut v: BTreeSet<u16> = KEYS.iter().map(|(_, c, _)| *c).chain(MODS.iter().map(|(_, c, _)| *c)).chain(DIGITS_5_9.iter().map(|(_, c)| *c)).collect();
+    let mut v: BTreeSet<u16> = KEYS
+        .iter()
+        .map(|(_, c, _)| *c)
+        .chain(MODS.iter().map(|(_, c, _)| *c))
+        .chain(DIGITS_5_9.iter().map(|(_, c)| *c))
+        .collect();
     for c in LETTERS.chars().filter(|c| *c != ' ') {
         v.insert(letter_code(c).unwrap());
     }
@@ -442,10 +610,28 @@ pub fn keyboard_codes() -> Vec<u16> {
 }
 /// The xkb keysym and the Hyprland modifier mask for a chord: the compositor projection (a nested session's window).
 pub fn keysym(chord: &KeyChord) -> (String, String) {
-    let mods = chord.mods.iter().filter_map(|c| MODS.iter().find(|(_, m, _)| m == c).map(|(_, _, n)| *n)).collect::<Vec<_>>().join(" ");
-    let sym = KEYS.iter().find(|(_, c, _)| *c == chord.key).map(|(_, _, s)| (*s).to_owned())
-        .or_else(|| DIGITS_5_9.iter().find(|(_, k)| *k == chord.key).map(|(d, _)| d.to_string()))
-        .or_else(|| LETTERS.chars().find(|c| *c != ' ' && letter_code(*c) == Some(chord.key)).map(|c| c.to_string()))
+    let mods = chord
+        .mods
+        .iter()
+        .filter_map(|c| MODS.iter().find(|(_, m, _)| m == c).map(|(_, _, n)| *n))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let sym = KEYS
+        .iter()
+        .find(|(_, c, _)| *c == chord.key)
+        .map(|(_, _, s)| (*s).to_owned())
+        .or_else(|| {
+            DIGITS_5_9
+                .iter()
+                .find(|(_, k)| *k == chord.key)
+                .map(|(d, _)| d.to_string())
+        })
+        .or_else(|| {
+            LETTERS
+                .chars()
+                .find(|c| *c != ' ' && letter_code(*c) == Some(chord.key))
+                .map(|c| c.to_string())
+        })
         .unwrap_or_default();
     (sym, mods)
 }
@@ -456,10 +642,21 @@ pub fn vt_bytes(chord: &KeyChord) -> Option<Vec<u8>> {
     let has = |c: u16| chord.mods.contains(&c);
     let (ctrl, shift, alt) = (has(29), has(42), has(56));
     let named: Option<&[u8]> = match chord.key {
-        28 => Some(b"\r"), 1 => Some(b"\x1b"), 15 => Some(b"\t"), 14 => Some(b"\x7f"), 57 => Some(b" "),
-        103 => Some(b"\x1b[A"), 108 => Some(b"\x1b[B"), 106 => Some(b"\x1b[C"), 105 => Some(b"\x1b[D"),
-        102 => Some(b"\x1b[1~"), 110 => Some(b"\x1b[2~"), 111 => Some(b"\x1b[3~"), 107 => Some(b"\x1b[4~"),
-        104 => Some(b"\x1b[5~"), 109 => Some(b"\x1b[6~"),
+        28 => Some(b"\r"),
+        1 => Some(b"\x1b"),
+        15 => Some(b"\t"),
+        14 => Some(b"\x7f"),
+        57 => Some(b" "),
+        103 => Some(b"\x1b[A"),
+        108 => Some(b"\x1b[B"),
+        106 => Some(b"\x1b[C"),
+        105 => Some(b"\x1b[D"),
+        102 => Some(b"\x1b[1~"),
+        110 => Some(b"\x1b[2~"),
+        111 => Some(b"\x1b[3~"),
+        107 => Some(b"\x1b[4~"),
+        104 => Some(b"\x1b[5~"),
+        109 => Some(b"\x1b[6~"),
         _ => None,
     };
     let fkey = (59..=68).chain([87, 88]).position(|k| k == chord.key);
@@ -467,7 +664,20 @@ pub fn vt_bytes(chord: &KeyChord) -> Option<Vec<u8>> {
         if ctrl && alt {
             return None; // Console_<n>: a VT switch, no bytes
         }
-        const F: [&[u8]; 12] = [b"\x1b[[A", b"\x1b[[B", b"\x1b[[C", b"\x1b[[D", b"\x1b[[E", b"\x1b[17~", b"\x1b[18~", b"\x1b[19~", b"\x1b[20~", b"\x1b[21~", b"\x1b[23~", b"\x1b[24~"];
+        const F: [&[u8]; 12] = [
+            b"\x1b[[A",
+            b"\x1b[[B",
+            b"\x1b[[C",
+            b"\x1b[[D",
+            b"\x1b[[E",
+            b"\x1b[17~",
+            b"\x1b[18~",
+            b"\x1b[19~",
+            b"\x1b[20~",
+            b"\x1b[21~",
+            b"\x1b[23~",
+            b"\x1b[24~",
+        ];
         return Some(F[n].to_vec());
     }
     let mut out = match named {
@@ -476,7 +686,11 @@ pub fn vt_bytes(chord: &KeyChord) -> Option<Vec<u8>> {
             let (sym, _) = keysym(chord);
             let c = sym.chars().next().filter(|_| sym.chars().count() == 1)?;
             let c = if shift { c.to_ascii_uppercase() } else { c };
-            if ctrl && c.is_ascii_alphabetic() { vec![(c.to_ascii_lowercase() as u8) & 0x1f] } else { vec![c as u8] }
+            if ctrl && c.is_ascii_alphabetic() {
+                vec![(c.to_ascii_lowercase() as u8) & 0x1f]
+            } else {
+                vec![c as u8]
+            }
         }
     };
     if ctrl && chord.key == 1 {
@@ -496,7 +710,11 @@ pub fn vt_bytes(chord: &KeyChord) -> Option<Vec<u8>> {
 /// no context change can strand a pressed virtual key (INV-6).
 pub fn stroke(chord: &KeyChord) -> Vec<crate::router::Event> {
     use crate::router::{Event, EV_KEY, EV_SYN, SYN_REPORT};
-    let mut v: Vec<_> = chord.mods.iter().map(|m| Event::new(EV_KEY, *m, 1)).collect();
+    let mut v: Vec<_> = chord
+        .mods
+        .iter()
+        .map(|m| Event::new(EV_KEY, *m, 1))
+        .collect();
     v.push(Event::new(EV_KEY, chord.key, 1));
     v.push(Event::new(EV_SYN, SYN_REPORT, 0));
     v.push(Event::new(EV_KEY, chord.key, 0));
@@ -509,32 +727,67 @@ pub fn stroke(chord: &KeyChord) -> Vec<crate::router::Event> {
 mod tests {
     #[test]
     fn shell_rows_use_only_keyboard_actions_but_may_claim_contract_buttons() {
-        let namespaces=vec!["key".into(),"quickshell".into(),"input".into()];
-        let keys=BTreeSet::new();
-        let ctx=super::Ctx {namespaces:&namespaces,tmux_prefix_keys:&keys,contexts:&["shell"],deadzone:0.15};
-        let parse=|body:&str| {
-            let value:toml::Value=format!("enabled=true\n[contexts]\nshell='shell'\n[shell]\n{body}").parse().unwrap();
-            super::NavConfig::from_value(Some(&value),&ctx)
+        let namespaces = vec!["key".into(), "quickshell".into(), "input".into()];
+        let keys = BTreeSet::new();
+        let ctx = super::Ctx {
+            namespaces: &namespaces,
+            tmux_prefix_keys: &keys,
+            contexts: &["shell"],
+            deadzone: 0.15,
         };
-        assert!(parse("BTN_NORTH='key:COMPOSE'\nBTN_START='key:ENTER'\nTOGGLE_CHORD='key:ESC'").is_ok());
-        assert!(parse("BTN_NORTH='quickshell:drawer-toggle'").unwrap_err().contains("shell navigation"));
-        let value:toml::Value="enabled=true\n[contexts]\nshell='vpad'".parse().unwrap();
-        assert!(super::NavConfig::from_value(Some(&value),&ctx).unwrap_err().contains("no virtual-pad consumer"));
+        let parse = |body: &str| {
+            let value: toml::Value =
+                format!("enabled=true\n[contexts]\nshell='shell'\n[shell]\n{body}")
+                    .parse()
+                    .unwrap();
+            super::NavConfig::from_value(Some(&value), &ctx)
+        };
+        assert!(
+            parse("BTN_NORTH='key:COMPOSE'\nBTN_START='key:ENTER'\nTOGGLE_CHORD='key:ESC'").is_ok()
+        );
+        assert!(parse("BTN_NORTH='quickshell:drawer-toggle'")
+            .unwrap_err()
+            .contains("shell navigation"));
+        let value: toml::Value = "enabled=true\n[contexts]\nshell='vpad'".parse().unwrap();
+        assert!(super::NavConfig::from_value(Some(&value), &ctx)
+            .unwrap_err()
+            .contains("no virtual-pad consumer"));
     }
 
     use super::*;
     #[test]
     fn key_chords_parse_to_us_codes() {
-        assert_eq!(parse_key_chord("SHIFT+ENTER").unwrap(), KeyChord { mods: vec![42], key: 28 });
-        assert_eq!(parse_key_chord("CTRL+SHIFT+TAB").unwrap(), KeyChord { mods: vec![29, 42], key: 15 });
+        assert_eq!(
+            parse_key_chord("SHIFT+ENTER").unwrap(),
+            KeyChord {
+                mods: vec![42],
+                key: 28
+            }
+        );
+        assert_eq!(
+            parse_key_chord("CTRL+SHIFT+TAB").unwrap(),
+            KeyChord {
+                mods: vec![29, 42],
+                key: 15
+            }
+        );
         assert_eq!(parse_key_chord("CTRL+t").unwrap().key, 20);
         assert_eq!(parse_key_chord("CTRL+0").unwrap().key, 11);
         assert_eq!(parse_key_chord("COMPOSE").unwrap().key, 127);
-        assert_eq!(parse_key_chord("ALT+LEFT").unwrap(), KeyChord { mods: vec![56], key: 105 });
+        assert_eq!(
+            parse_key_chord("ALT+LEFT").unwrap(),
+            KeyChord {
+                mods: vec![56],
+                key: 105
+            }
+        );
         for bad in ["", "CTRL+", "HYPER+a", "CTRL+CTRL+a", "ab", "SHIFT+PAGEUPP"] {
             assert!(parse_key_chord(bad).is_err(), "{bad}");
         }
-        assert_eq!(keysym(&parse_key_chord("CTRL+SHIFT+TAB").unwrap()), ("Tab".into(), "CTRL SHIFT".into()));
+        assert_eq!(
+            keysym(&parse_key_chord("CTRL+SHIFT+TAB").unwrap()),
+            ("Tab".into(), "CTRL SHIFT".into())
+        );
         assert_eq!(keysym(&parse_key_chord("CTRL+t").unwrap()).0, "t");
         let codes = keyboard_codes();
         for c in [1u16, 11, 15, 20, 28, 29, 42, 56, 103, 104, 109, 125, 127] {
@@ -543,22 +796,52 @@ mod tests {
     }
     fn console_edit(table: &str, input: &str, value: toml::Value) -> Result<(), String> {
         crate::config::tests::try_fixture_nav_with(|v| {
-            v["keybindings"]["global"]["controller"]["nav"][table].as_table_mut().unwrap().insert(input.into(), value);
-        }).map(|_| ())
+            v["keybindings"]["global"]["controller"]["nav"][table]
+                .as_table_mut()
+                .unwrap()
+                .insert(input.into(), value);
+        })
+        .map(|_| ())
     }
     #[test]
     fn console_rows_use_vt_capable_projections_only() {
         let (cfg, _) = crate::config::tests::fixture_nav();
-        assert_eq!(cfg.controller.nav.profile_name("console", true).as_deref(), Some("console_tmux"));
-        assert!(cfg.controller.nav.profiles["console_tmux"].values().flat_map(|v| v.actions()).all(console_capable), "inherited rows too");
-        let e = console_edit("console_plain", "BTN_SOUTH", "hypr:movefocus left".into()).unwrap_err();
+        assert_eq!(
+            cfg.controller.nav.profile_name("console", true).as_deref(),
+            Some("console_tmux")
+        );
+        assert!(
+            cfg.controller.nav.profiles["console_tmux"]
+                .values()
+                .flat_map(|v| v.actions())
+                .all(console_capable),
+            "inherited rows too"
+        );
+        let e =
+            console_edit("console_plain", "BTN_SOUTH", "hypr:movefocus left".into()).unwrap_err();
         assert!(e.contains("cannot reach a VT"), "{e}");
-        let e = console_edit("console_tmux", "BTN_MODE", "quickshell:drawer-toggle".into()).unwrap_err();
+        let e = console_edit(
+            "console_tmux",
+            "BTN_MODE",
+            "quickshell:drawer-toggle".into(),
+        )
+        .unwrap_err();
         assert!(e.contains("cannot reach a VT"), "{e}");
-        assert!(console_edit("console_plain", "BTN_NORTH", "key:ENTER".into()).is_ok(), "a VT may claim the contract inputs");
+        assert!(
+            console_edit("console_plain", "BTN_NORTH", "key:ENTER".into()).is_ok(),
+            "a VT may claim the contract inputs"
+        );
         let e = console_edit("desktop", "TOGGLE_CHORD", "mios:graphical-vt".into()).unwrap_err();
-        assert!(e.contains("capture contract"), "the desktop toggle chord stays the room's: {e}");
-        let e = console_edit("console_plain", "TOGGLE_CHORD", toml::Value::Array(vec!["none".into(), "mios:graphical-vt".into()])).unwrap_err();
+        assert!(
+            e.contains("capture contract"),
+            "the desktop toggle chord stays the room's: {e}"
+        );
+        let e = console_edit(
+            "console_plain",
+            "TOGGLE_CHORD",
+            toml::Value::Array(vec!["none".into(), "mios:graphical-vt".into()]),
+        )
+        .unwrap_err();
         assert!(e.contains("toggle chord takes one action"), "{e}");
         let e = console_edit("console_plain", "RS_UP", "pointer:cursor".into()).unwrap_err();
         assert!(e.contains("only a button"), "{e}");
@@ -569,16 +852,31 @@ mod tests {
     fn map_text_lists_contexts_and_both_halves() {
         let (cfg, _) = crate::config::tests::fixture_nav();
         let t = cfg.controller.nav.text(500);
-        assert!(t.contains("console          console_tmux (tmux client) / console_plain"), "{t}");
-        assert!(t.contains("[console_tmux]") && t.contains("BTN_WEST        tap key:TAB  hold key:SHIFT+TAB"), "{t}");
+        assert!(
+            t.contains("console          console_tmux (tmux client) / console_plain"),
+            "{t}"
+        );
+        assert!(
+            t.contains("[console_tmux]")
+                && t.contains("BTN_WEST        tap key:TAB  hold key:SHIFT+TAB"),
+            "{t}"
+        );
     }
     #[test]
     fn vt_bytes_follow_the_linux_console_keymap() {
         let b = |s: &str| vt_bytes(&parse_key_chord(s).unwrap());
         assert_eq!(b("ENTER").unwrap(), b"\r");
         assert_eq!(b("TAB").unwrap(), b"\t");
-        assert_eq!(b("SHIFT+TAB").unwrap(), b"\x1b\t", "T-I3-4: shift keycode 15 = Meta_Tab = ESC TAB, the linux terminfo kcbt (O-6)");
-        assert_eq!(b("ALT+TAB").unwrap(), b"\x1b\t", "alt keycode 15 = Meta_Tab too");
+        assert_eq!(
+            b("SHIFT+TAB").unwrap(),
+            b"\x1b\t",
+            "T-I3-4: shift keycode 15 = Meta_Tab = ESC TAB, the linux terminfo kcbt (O-6)"
+        );
+        assert_eq!(
+            b("ALT+TAB").unwrap(),
+            b"\x1b\t",
+            "alt keycode 15 = Meta_Tab too"
+        );
         assert_eq!(b("CTRL+TAB").unwrap(), b"\t");
         assert_eq!(b("PAGEDOWN").unwrap(), b"\x1b[6~");
         assert_eq!(b("ESC").unwrap(), b"\x1b");
@@ -586,7 +884,11 @@ mod tests {
         assert_eq!(b("UP").unwrap(), b"\x1b[A");
         assert_eq!(b("PAGEUP").unwrap(), b"\x1b[5~");
         assert_eq!(b("F1").unwrap(), b"\x1b[[A");
-        assert_eq!(b("CTRL+ALT+F2"), None, "Console_2 switches the VT and sends nothing");
+        assert_eq!(
+            b("CTRL+ALT+F2"),
+            None,
+            "Console_2 switches the VT and sends nothing"
+        );
         assert_eq!(b("t").unwrap(), b"t");
         assert_eq!(b("SHIFT+t").unwrap(), b"T");
     }
@@ -595,7 +897,11 @@ mod tests {
         let s = stroke(&parse_key_chord("CTRL+SHIFT+TAB").unwrap());
         let mut held = BTreeSet::new();
         for e in s.iter().filter(|e| e.kind == 1) {
-            if e.value == 1 { held.insert(e.code); } else { held.remove(&e.code); }
+            if e.value == 1 {
+                held.insert(e.code);
+            } else {
+                held.remove(&e.code);
+            }
         }
         assert!(held.is_empty());
         assert_eq!(s.iter().filter(|e| e.kind == 0).count(), 2);

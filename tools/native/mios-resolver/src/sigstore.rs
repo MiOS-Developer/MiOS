@@ -85,7 +85,11 @@ impl Requirement {
     }
 }
 
-fn str_field<'a>(t: &'a toml::map::Map<String, Value>, key: &str, at: &str) -> Result<&'a str, String> {
+fn str_field<'a>(
+    t: &'a toml::map::Map<String, Value>,
+    key: &str,
+    at: &str,
+) -> Result<&'a str, String> {
     t.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{at}.{key} is absent or not a string"))
@@ -102,9 +106,15 @@ fn one_of(value: &str, allowed: &[&str], at: &str) -> Result<(), String> {
     }
 }
 
-fn parse_scope(t: &toml::map::Map<String, Value>, at: &str) -> Result<(String, String, Requirement), String> {
+fn parse_scope(
+    t: &toml::map::Map<String, Value>,
+    at: &str,
+) -> Result<(String, String, Requirement), String> {
     if let Some(unknown) = t.keys().find(|k| !SCOPE_KEYS.contains(&k.as_str())) {
-        return Err(format!("{at}.{unknown} is not a scope field ({})", SCOPE_KEYS.join(", ")));
+        return Err(format!(
+            "{at}.{unknown} is not a scope field ({})",
+            SCOPE_KEYS.join(", ")
+        ));
     }
     let transport = str_field(t, "transport", at)?.to_string();
     one_of(&transport, &TRANSPORTS, &format!("{at}.transport"))?;
@@ -123,7 +133,9 @@ fn parse_scope(t: &toml::map::Map<String, Value>, at: &str) -> Result<(String, S
                 .as_str()
                 .ok_or_else(|| format!("{at}.key_paths holds a non-string"))?;
             if !p.starts_with('/') || p.contains("/../") || p.ends_with('/') {
-                return Err(format!("{at}.key_paths entry \"{p}\" is not an absolute file path"));
+                return Err(format!(
+                    "{at}.key_paths entry \"{p}\" is not an absolute file path"
+                ));
             }
             if key_paths.iter().any(|k: &String| k == p) {
                 return Err(format!("{at}.key_paths lists \"{p}\" twice"));
@@ -131,11 +143,17 @@ fn parse_scope(t: &toml::map::Map<String, Value>, at: &str) -> Result<(String, S
             key_paths.push(p.to_string());
         }
         if key_paths.is_empty() {
-            return Err(format!("{at}.key_paths is empty: a sigstoreSigned scope trusting no key accepts nothing"));
+            return Err(format!(
+                "{at}.key_paths is empty: a sigstoreSigned scope trusting no key accepts nothing"
+            ));
         }
         identity = t
             .get("signed_identity")
-            .map(|v| v.as_str().map(str::to_string).ok_or_else(|| format!("{at}.signed_identity is not a string")))
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{at}.signed_identity is not a string"))
+            })
             .transpose()?
             .unwrap_or_else(|| "matchRepository".to_string());
         one_of(&identity, &IDENTITIES, &format!("{at}.signed_identity"))?;
@@ -144,7 +162,15 @@ fn parse_scope(t: &toml::map::Map<String, Value>, at: &str) -> Result<(String, S
             "{at} is type {kind}, which takes no key_paths or signed_identity (they would be silently unused)"
         ));
     }
-    Ok((transport, scope, Requirement { kind, key_paths, identity }))
+    Ok((
+        transport,
+        scope,
+        Requirement {
+            kind,
+            key_paths,
+            identity,
+        },
+    ))
 }
 
 /// The requirement containers/image applies to a docker repository: the most
@@ -183,10 +209,9 @@ fn effective<'a>(
 
 fn mios_signed(r: &Requirement) -> bool {
     r.kind == "sigstoreSigned"
-        && r
-            .key_paths
-            .iter()
-            .all(|k| k.starts_with(&format!("{ANCHOR_DIR}/")) && !k[ANCHOR_DIR.len() + 1..].contains('/'))
+        && r.key_paths.iter().all(|k| {
+            k.starts_with(&format!("{ANCHOR_DIR}/")) && !k[ANCHOR_DIR.len() + 1..].contains('/')
+        })
 }
 
 /// Render the projection from a resolved SSOT. Any policy that would accept an
@@ -205,18 +230,28 @@ pub fn render(ssot: &Value) -> Result<Policy, String> {
         .filter(|s| !s.is_empty())
         .ok_or("[security.sigstore].policy_mode is absent or not a string")?;
     one_of(mode, &DEFAULT_TYPES, "[security.sigstore].policy_mode")?;
-    let default = Requirement { kind: mode.to_string(), key_paths: Vec::new(), identity: String::new() };
+    let default = Requirement {
+        kind: mode.to_string(),
+        key_paths: Vec::new(),
+        identity: String::new(),
+    };
 
     let mut transports: BTreeMap<String, BTreeMap<String, Requirement>> = BTreeMap::new();
     if let Some(v) = sig.get("scopes") {
-        let arr = v.as_array().ok_or("[security.sigstore].scopes is not an array of tables")?;
+        let arr = v
+            .as_array()
+            .ok_or("[security.sigstore].scopes is not an array of tables")?;
         for (i, item) in arr.iter().enumerate() {
             let at = format!("[[security.sigstore.scopes]] #{}", i + 1);
-            let t = item.as_table().ok_or_else(|| format!("{at} is not a table"))?;
+            let t = item
+                .as_table()
+                .ok_or_else(|| format!("{at} is not a table"))?;
             let (transport, scope, req) = parse_scope(t, &at)?;
             let slot = transports.entry(transport.clone()).or_default();
             if slot.insert(scope.clone(), req).is_some() {
-                return Err(format!("{at} repeats transport \"{transport}\" scope \"{scope}\""));
+                return Err(format!(
+                    "{at} repeats transport \"{transport}\" scope \"{scope}\""
+                ));
             }
         }
     }
@@ -271,8 +306,14 @@ pub fn render(ssot: &Value) -> Result<Policy, String> {
         }
         root.insert("transports".into(), Json::Object(tr));
     }
-    let json = serde_json::to_string_pretty(&Json::Object(root)).map_err(|e| format!("cannot format policy.json: {e}"))? + "\n";
-    Ok(Policy { json, mios_namespace: namespace, anchors })
+    let json = serde_json::to_string_pretty(&Json::Object(root))
+        .map_err(|e| format!("cannot format policy.json: {e}"))?
+        + "\n";
+    Ok(Policy {
+        json,
+        mios_namespace: namespace,
+        anchors,
+    })
 }
 
 /// [`render`] over the vendor tier of `root` (never this host's /etc or $HOME layers).
@@ -295,7 +336,9 @@ mod tests {
     }
 
     fn with(mode: &str, scopes: &str) -> Result<Policy, String> {
-        render(&ssot(&format!("{MIOS}[security.sigstore]\npolicy_mode = \"{mode}\"\n{scopes}")))
+        render(&ssot(&format!(
+            "{MIOS}[security.sigstore]\npolicy_mode = \"{mode}\"\n{scopes}"
+        )))
     }
 
     #[test]
@@ -340,7 +383,10 @@ mod tests {
     #[test]
     fn no_mios_scope_means_the_default_accepts_mios_images_and_is_refused() {
         let e = with("insecureAcceptAnything", "").unwrap_err();
-        assert!(e.contains("MiOS-owned") && e.contains("the global default"), "{e}");
+        assert!(
+            e.contains("MiOS-owned") && e.contains("the global default"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -370,7 +416,10 @@ mod tests {
 
     #[test]
     fn a_host_etc_key_is_not_a_mios_anchor() {
-        let etc = SIGNED.replace("/usr/share/pki/containers/mios-cosign.pub", "/etc/pki/containers/mios-cosign.pub");
+        let etc = SIGNED.replace(
+            "/usr/share/pki/containers/mios-cosign.pub",
+            "/etc/pki/containers/mios-cosign.pub",
+        );
         let e = with("insecureAcceptAnything", &etc).unwrap_err();
         assert!(e.contains("/etc/pki/containers"), "{e}");
     }
@@ -385,14 +434,34 @@ mod tests {
 
     #[test]
     fn typed_fields_are_enforced() {
-        assert!(with("insecureAcceptAnything", &SIGNED.replace("\"docker\"", "\"dockr\"")).is_err());
-        assert!(with("insecureAcceptAnything", &format!("{SIGNED}signed_identity = \"remapIdentity\"\n")).is_err());
-        assert!(with("insecureAcceptAnything", &format!("{SIGNED}keyPath = \"/x\"\n")).is_err());
-        assert!(with("insecureAcceptAnything", &SIGNED.replace("/usr/share/pki/containers/mios-cosign.pub", "relative.pub")).is_err());
+        assert!(with(
+            "insecureAcceptAnything",
+            &SIGNED.replace("\"docker\"", "\"dockr\"")
+        )
+        .is_err());
+        assert!(with(
+            "insecureAcceptAnything",
+            &format!("{SIGNED}signed_identity = \"remapIdentity\"\n")
+        )
+        .is_err());
+        assert!(with(
+            "insecureAcceptAnything",
+            &format!("{SIGNED}keyPath = \"/x\"\n")
+        )
+        .is_err());
+        assert!(with(
+            "insecureAcceptAnything",
+            &SIGNED.replace("/usr/share/pki/containers/mios-cosign.pub", "relative.pub")
+        )
+        .is_err());
         let dup = format!("{SIGNED}{SIGNED}");
-        assert!(with("insecureAcceptAnything", &dup).unwrap_err().contains("repeats"));
+        assert!(with("insecureAcceptAnything", &dup)
+            .unwrap_err()
+            .contains("repeats"));
         let empty = "[[security.sigstore.scopes]]\ntransport = \"docker\"\nscope = \"ghcr.io/mios-dev\"\ntype = \"sigstoreSigned\"\nkey_paths = []\n";
-        assert!(with("insecureAcceptAnything", empty).unwrap_err().contains("empty"));
+        assert!(with("insecureAcceptAnything", empty)
+            .unwrap_err()
+            .contains("empty"));
     }
 
     #[test]
@@ -403,8 +472,17 @@ mod tests {
         );
         let p = with("insecureAcceptAnything", &extra).unwrap();
         let v: Json = serde_json::from_str(&p.json).unwrap();
-        assert_eq!(v["transports"]["docker"]["ghcr.io/ublue-os"][0]["keyPath"], "/etc/pki/containers/ublue-os.pub");
-        assert_eq!(v["transports"]["docker-daemon"][""][0]["type"], "insecureAcceptAnything");
-        assert!(!p.anchors.iter().any(|a| a.contains("ublue")), "a base-image scope is not a MiOS anchor");
+        assert_eq!(
+            v["transports"]["docker"]["ghcr.io/ublue-os"][0]["keyPath"],
+            "/etc/pki/containers/ublue-os.pub"
+        );
+        assert_eq!(
+            v["transports"]["docker-daemon"][""][0]["type"],
+            "insecureAcceptAnything"
+        );
+        assert!(
+            !p.anchors.iter().any(|a| a.contains("ublue")),
+            "a base-image scope is not a MiOS anchor"
+        );
     }
 }

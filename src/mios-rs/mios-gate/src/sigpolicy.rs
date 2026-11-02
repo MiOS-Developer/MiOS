@@ -59,7 +59,11 @@ pub fn check(root: &Path) -> Report {
     // policy (invalid type, or a MiOS image accepted unsigned) this gate exists for.
     let policy = match sigstore::render(&resolved) {
         Ok(p) => p,
-        Err(e) => return violation(vec![format!("[security.sigstore] does not project to a sound policy: {e}")]),
+        Err(e) => {
+            return violation(vec![format!(
+                "[security.sigstore] does not project to a sound policy: {e}"
+            )])
+        }
     };
 
     let Ok(current) = std::fs::read_to_string(&artifact_path) else {
@@ -125,7 +129,11 @@ mod tests {
         }
         if key {
             fs::create_dir_all(d.path().join("usr/share/pki/containers")).unwrap();
-            fs::write(d.path().join("usr/share/pki/containers/mios-cosign.pub"), "-----BEGIN PUBLIC KEY-----\n").unwrap();
+            fs::write(
+                d.path().join("usr/share/pki/containers/mios-cosign.pub"),
+                "-----BEGIN PUBLIC KEY-----\n",
+            )
+            .unwrap();
         }
         d
     }
@@ -142,26 +150,47 @@ mod tests {
         let d = tree(SSOT, false);
         let r = check(d.path());
         assert!(!r.ok && r.could_not_run.is_none());
-        assert!(r.findings.iter().any(|f| f.contains("mios-cosign.pub")), "{:?}", r.findings);
+        assert!(
+            r.findings.iter().any(|f| f.contains("mios-cosign.pub")),
+            "{:?}",
+            r.findings
+        );
     }
 
     #[test]
     fn an_insecure_ssot_is_a_finding_not_a_skip() {
-        let d = tree(&SSOT.replace("\"sigstoreSigned\"", "\"insecureAcceptAnything\"").replace(
-            "key_paths = [\"/usr/share/pki/containers/mios-cosign.pub\"]\n", ""), true);
+        let d = tree(
+            &SSOT
+                .replace("\"sigstoreSigned\"", "\"insecureAcceptAnything\"")
+                .replace(
+                    "key_paths = [\"/usr/share/pki/containers/mios-cosign.pub\"]\n",
+                    "",
+                ),
+            true,
+        );
         // The renderer refuses it, so tree() wrote no artifact; plant the old one.
         fs::create_dir_all(d.path().join("usr/lib/containers")).unwrap();
         fs::write(d.path().join(sigstore::ARTIFACT), "{}\n").unwrap();
         let r = check(d.path());
-        assert!(!r.ok && r.could_not_run.is_none(), "{:?} {:?}", r.could_not_run, r.findings);
-        assert!(r.findings.iter().any(|f| f.contains("MiOS-owned")), "{:?}", r.findings);
+        assert!(
+            !r.ok && r.could_not_run.is_none(),
+            "{:?} {:?}",
+            r.could_not_run,
+            r.findings
+        );
+        assert!(
+            r.findings.iter().any(|f| f.contains("MiOS-owned")),
+            "{:?}",
+            r.findings
+        );
     }
 
     #[test]
     fn same_meaning_other_bytes_is_a_finding() {
         let d = tree(SSOT, true);
         let compact: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(d.path().join(sigstore::ARTIFACT)).unwrap()).unwrap();
+            serde_json::from_str(&fs::read_to_string(d.path().join(sigstore::ARTIFACT)).unwrap())
+                .unwrap();
         fs::write(d.path().join(sigstore::ARTIFACT), compact.to_string()).unwrap();
         assert!(!check(d.path()).ok);
     }
@@ -170,7 +199,11 @@ mod tests {
     fn a_symlinked_anchor_is_not_shipped() {
         let d = tree(SSOT, false);
         fs::create_dir_all(d.path().join("usr/share/pki/containers")).unwrap();
-        std::os::unix::fs::symlink("/etc/pki/containers/mios-cosign.pub", d.path().join("usr/share/pki/containers/mios-cosign.pub")).unwrap();
+        std::os::unix::fs::symlink(
+            "/etc/pki/containers/mios-cosign.pub",
+            d.path().join("usr/share/pki/containers/mios-cosign.pub"),
+        )
+        .unwrap();
         assert!(!check(d.path()).ok);
     }
 }

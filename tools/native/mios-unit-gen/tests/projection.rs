@@ -776,7 +776,12 @@ fn shipped_user_session_units_match_ssot() {
 fn test_undeclared_units_sit_at_their_ceiling() {
     let ssot = ssot();
     for (user, key) in [(false, "max_undeclared"), (true, "max_undeclared_user")] {
-        let p = if user { mios_unit_gen::project_user(&root()) } else { project(&root()) }.unwrap();
+        let p = if user {
+            mios_unit_gen::project_user(&root())
+        } else {
+            project(&root())
+        }
+        .unwrap();
         let max = mios_unit_gen::projection_ceiling(&ssot, key).unwrap();
         assert_eq!(
             Some(p.undeclared.len()),
@@ -785,8 +790,16 @@ fn test_undeclared_units_sit_at_their_ceiling() {
             p.undeclared
         );
         if user {
-            assert!(p.drifted.is_empty(), "[user_units.*] drifted: {:#?}", p.drifted);
-            assert!(p.missing.is_empty(), "[user_units.*] missing: {:#?}", p.missing);
+            assert!(
+                p.drifted.is_empty(),
+                "[user_units.*] drifted: {:#?}",
+                p.drifted
+            );
+            assert!(
+                p.missing.is_empty(),
+                "[user_units.*] missing: {:#?}",
+                p.missing
+            );
         }
     }
 }
@@ -820,7 +833,11 @@ fn test_strict_no_write_list_is_exact() {
         .unwrap();
         let mut listed = mios_unit_gen::projection_list(&ssot, key).unwrap();
         listed.sort();
-        assert_eq!(mios_unit_gen::strict_without_write_grant(&rendered), listed, "[unit_projection].{key}");
+        assert_eq!(
+            mios_unit_gen::strict_without_write_grant(&rendered),
+            listed,
+            "[unit_projection].{key}"
+        );
     }
 }
 
@@ -833,15 +850,27 @@ fn test_hand_edited_projected_unit_is_drift_and_write_restores_it() {
     let written = mios_unit_gen::write_projection(temp.path(), false).unwrap();
     assert!(!written.is_empty());
     let p = project(temp.path()).unwrap();
-    assert!(p.drifted.iter().all(|d| drift_register(&ssot()).unwrap().contains(d)), "{:#?}", p.drifted);
+    assert!(
+        p.drifted
+            .iter()
+            .all(|d| drift_register(&ssot()).unwrap().contains(d)),
+        "{:#?}",
+        p.drifted
+    );
     let victim = p.faithful.first().expect("a faithful unit").clone();
     let path = temp.path().join("usr/lib/systemd/system").join(&victim);
     let mut body = fs::read_to_string(&path).unwrap();
     body.push_str("# hand edit\n");
     fs::write(&path, &body).unwrap();
     let p = project(temp.path()).unwrap();
-    assert!(p.drifted.contains(&victim), "a hand edit of {victim} was not drift");
-    assert_eq!(mios_unit_gen::write_projection(temp.path(), false).unwrap(), vec![victim.clone()]);
+    assert!(
+        p.drifted.contains(&victim),
+        "a hand edit of {victim} was not drift"
+    );
+    assert_eq!(
+        mios_unit_gen::write_projection(temp.path(), false).unwrap(),
+        vec![victim.clone()]
+    );
     assert!(project(temp.path()).unwrap().faithful.contains(&victim));
 }
 

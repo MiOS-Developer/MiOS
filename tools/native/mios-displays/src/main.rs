@@ -54,7 +54,11 @@ fn main() {
 }
 
 fn run(mut args: Vec<String>) -> Result<Value, String> {
-    if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help" || a == "help") {
+    if args.is_empty()
+        || args
+            .iter()
+            .any(|a| a == "-h" || a == "--help" || a == "help")
+    {
         println!("{USAGE}");
         std::process::exit(if args.is_empty() { 2 } else { 0 });
     }
@@ -146,7 +150,11 @@ fn instance() -> Result<String, String> {
         .map_err(|e| format!("{}: {e}", base.display()))?
         .flatten()
         .filter(|e| e.path().join(".socket.sock").exists())
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH))
+        .max_by_key(|e| {
+            e.metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(UNIX_EPOCH)
+        })
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .ok_or_else(|| "no running Hyprland instance".into())
 }
@@ -174,7 +182,11 @@ fn ignore_prefixes() -> &'static [String] {
             .ok()
             .and_then(|d| at(&d, "desktop.displays.ignore_prefixes").cloned())
             .and_then(|v| v.as_array().cloned())
-            .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default()
     })
 }
@@ -191,7 +203,11 @@ fn monitors() -> Result<Vec<Monitor>, String> {
     let skip = ignore_prefixes();
     Ok(all
         .into_iter()
-        .filter(|m| !skip.iter().any(|p| !p.is_empty() && m.name.starts_with(p.as_str())))
+        .filter(|m| {
+            !skip
+                .iter()
+                .any(|p| !p.is_empty() && m.name.starts_with(p.as_str()))
+        })
         .collect())
 }
 
@@ -232,17 +248,21 @@ fn wait_for(rules: &[Rule]) -> Result<Vec<Monitor>, String> {
     let mut last = Vec::new();
     for _ in 0..30 {
         last = monitors()?;
-        if rules
-            .iter()
-            .all(|r| last.iter().find(|m| m.name == r.output).is_some_and(|m| shows(m, r)))
-        {
+        if rules.iter().all(|r| {
+            last.iter()
+                .find(|m| m.name == r.output)
+                .is_some_and(|m| shows(m, r))
+        }) {
             return Ok(last);
         }
         thread::sleep(Duration::from_millis(100));
     }
     Err(format!(
         "Hyprland did not reach the requested state; live: {}",
-        last.iter().map(|m| m.to_json().to_string()).collect::<Vec<_>>().join(" ")
+        last.iter()
+            .map(|m| m.to_json().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
     ))
 }
 
@@ -255,7 +275,10 @@ fn state_dir() -> Result<PathBuf, String> {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn rule_json(r: &Rule) -> Value {
@@ -342,14 +365,20 @@ fn cmd_apply(mut args: Vec<String>) -> Result<Value, String> {
         change.transform = Some(v.parse().map_err(|_| format!("invalid transform {v:?}"))?);
     }
     let confirm = match take(&mut args, "--confirm")? {
-        Some(v) => v.parse::<u64>().map_err(|_| format!("invalid --confirm {v:?}"))?,
+        Some(v) => v
+            .parse::<u64>()
+            .map_err(|_| format!("invalid --confirm {v:?}"))?,
         None => s
             .get("confirm_seconds")
             .and_then(toml::Value::as_integer)
             .filter(|n| *n >= 0)
-            .ok_or("[desktop.displays].confirm_seconds must be a non-negative integer")? as u64,
+            .ok_or("[desktop.displays].confirm_seconds must be a non-negative integer")?
+            as u64,
     };
-    match (switch(&mut args, "--enable"), switch(&mut args, "--disable")) {
+    match (
+        switch(&mut args, "--enable"),
+        switch(&mut args, "--disable"),
+    ) {
         (true, true) => return Err("--enable and --disable are exclusive".into()),
         (true, false) => change.disabled = Some(false),
         (false, true) => change.disabled = Some(true),
@@ -369,7 +398,14 @@ fn cmd_apply(mut args: Vec<String>) -> Result<Value, String> {
         .as_ref()
         .and_then(|p| p.get("snapshot").cloned())
         .unwrap_or_else(|| Value::Array(before.iter().map(|m| rule_json(&Rule::of(m))).collect()));
-    let token = format!("{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    let token = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
     let pend = json!({"token": token, "deadline": now() + confirm, "snapshot": snapshot});
     let path = state_dir()?.join("pending.json");
     fs::write(&path, pend.to_string()).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -378,7 +414,9 @@ fn cmd_apply(mut args: Vec<String>) -> Result<Value, String> {
     let after = match applied {
         Ok(after) => after,
         Err(e) => {
-            let restored = restore(&pend).map(|_| "restored").unwrap_or("restore failed");
+            let restored = restore(&pend)
+                .map(|_| "restored")
+                .unwrap_or("restore failed");
             return Err(format!("{e} ({restored} the previous settings)"));
         }
     };
@@ -387,7 +425,13 @@ fn cmd_apply(mut args: Vec<String>) -> Result<Value, String> {
     } else {
         let exe = env::current_exe().map_err(|e| e.to_string())?;
         Command::new(exe)
-            .args(["revert", "--if-pending", &token, "--after", &confirm.to_string()])
+            .args([
+                "revert",
+                "--if-pending",
+                &token,
+                "--after",
+                &confirm.to_string(),
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -413,7 +457,10 @@ fn cmd_confirm() -> Result<Value, String> {
 fn cmd_revert(mut args: Vec<String>) -> Result<Value, String> {
     let only = take(&mut args, "--if-pending")?;
     let after = take(&mut args, "--after")?
-        .map(|v| v.parse::<u64>().map_err(|_| format!("invalid --after {v:?}")))
+        .map(|v| {
+            v.parse::<u64>()
+                .map_err(|_| format!("invalid --after {v:?}"))
+        })
         .transpose()?;
     no_extra(&args)?;
     if let Some(secs) = after {
@@ -421,7 +468,10 @@ fn cmd_revert(mut args: Vec<String>) -> Result<Value, String> {
         let deadline = now() + secs;
         while now() < deadline {
             let current = pending()?;
-            let token = current.as_ref().and_then(|p| p.get("token")).and_then(Value::as_str);
+            let token = current
+                .as_ref()
+                .and_then(|p| p.get("token"))
+                .and_then(Value::as_str);
             if only.is_some() && token != only.as_deref() {
                 return Ok(json!({"ok": true, "reverted": false}));
             }
@@ -442,7 +492,11 @@ fn cmd_revert(mut args: Vec<String>) -> Result<Value, String> {
 /// non-interactive sudo when the tier is root-owned. The temp name has no `.toml` extension,
 /// so a reader never layers a half-written fragment.
 fn write_fragment(dest: &Path, body: &str) -> Result<(), String> {
-    let name = dest.file_name().ok_or("fragment has no file name")?.to_string_lossy().into_owned();
+    let name = dest
+        .file_name()
+        .ok_or("fragment has no file name")?
+        .to_string_lossy()
+        .into_owned();
     let parent = dest.parent().ok_or("fragment has no parent directory")?;
     let staged = parent.join(format!(".{name}.new"));
     let direct = fs::create_dir_all(parent)
@@ -468,7 +522,13 @@ fn write_fragment(dest: &Path, body: &str) -> Result<(), String> {
     } else {
         let _ = sudo(&["sync", "--"], &[parent]);
     }
-    moved.map_err(|e| format!("cannot write {} ({}; {e})", dest.display(), direct.err().unwrap_or_default()))
+    moved.map_err(|e| {
+        format!(
+            "cannot write {} ({}; {e})",
+            dest.display(),
+            direct.err().unwrap_or_default()
+        )
+    })
 }
 
 /// Write `body` to a new file and fsync it before it is renamed into place.
@@ -501,7 +561,9 @@ fn remove_fragment(path: &Path) -> Result<(), String> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => sudo(&["rm", "-f", "--"], &[path]).map_err(|s| format!("{}: {e} ({s})", path.display())),
+        Err(e) => {
+            sudo(&["rm", "-f", "--"], &[path]).map_err(|s| format!("{}: {e} ({s})", path.display()))
+        }
     }
 }
 
@@ -533,13 +595,18 @@ struct Tiers {
 /// layout is rendered before anything live changes.
 fn projection_lines(staged: Option<&Tiers>) -> Result<Vec<String>, String> {
     let mut cmd = Command::new("mios-gen");
-    cmd.args(["render-hyprland", "--root", "/", "--runtime"]).stdin(Stdio::null());
+    cmd.args(["render-hyprland", "--root", "/", "--runtime"])
+        .stdin(Stdio::null());
     if let Some(t) = staged {
-        cmd.env("MIOS_HOST_TOML_D", &t.host_d).env("MIOS_USER_TOML_D", &t.user_d);
+        cmd.env("MIOS_HOST_TOML_D", &t.host_d)
+            .env("MIOS_USER_TOML_D", &t.user_d);
     }
     let out = cmd.output().map_err(|e| format!("mios-gen: {e}"))?;
     if !out.status.success() {
-        return Err(format!("mios-gen render-hyprland failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!(
+            "mios-gen render-hyprland failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
     Ok(String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -552,7 +619,10 @@ fn projection_lines(staged: Option<&Tiers>) -> Result<Vec<String>, String> {
 /// silently, so a missing rule is how a bad drop-in shows).
 fn check_projection(lines: &[String], outputs: &[String]) -> Result<(), String> {
     for o in outputs {
-        let needle = format!("[\"output\"] = {}", serde_json::to_string(o).unwrap_or_default());
+        let needle = format!(
+            "[\"output\"] = {}",
+            serde_json::to_string(o).unwrap_or_default()
+        );
         if !lines.iter().any(|l| l.contains(&needle)) {
             return Err(format!("the projection has no rule for {o}"));
         }
@@ -567,10 +637,15 @@ type Monitors = toml::map::Map<String, toml::Value>;
 fn saved_entries(paths: &[PathBuf]) -> Result<Monitors, String> {
     let mut out = Monitors::new();
     for p in paths {
-        let Some(text) = read_optional(p)? else { continue };
-        let v: toml::Value = text
-            .parse()
-            .map_err(|e| format!("{}: {e} (fix or remove it; refusing to overwrite saved layouts it cannot read)", p.display()))?;
+        let Some(text) = read_optional(p)? else {
+            continue;
+        };
+        let v: toml::Value = text.parse().map_err(|e| {
+            format!(
+                "{}: {e} (fix or remove it; refusing to overwrite saved layouts it cannot read)",
+                p.display()
+            )
+        })?;
         if let Some(t) = at(&v, "desktop.hyprland.monitors").and_then(toml::Value::as_table) {
             for (k, v) in t {
                 out.insert(k.clone(), v.clone());
@@ -582,7 +657,12 @@ fn saved_entries(paths: &[PathBuf]) -> Result<Monitors, String> {
 
 /// The drop-in body: live outputs as `rules`, plus every saved entry for an output that is
 /// not connected now (an unplugged monitor keeps its layout). `primary` is the only primary.
-fn merged_fragment(rules: &[Rule], primary: Option<&str>, saved: &Monitors, skip: &[String]) -> Result<String, String> {
+fn merged_fragment(
+    rules: &[Rule],
+    primary: Option<&str>,
+    saved: &Monitors,
+    skip: &[String],
+) -> Result<String, String> {
     let live = model::fragment_toml(rules, primary)?;
     let (header, body) = live.split_once("\n\n").ok_or("fragment without a header")?;
     let mut doc: toml::Value = body.parse().map_err(|e| format!("fragment: {e}"))?;
@@ -593,7 +673,11 @@ fn merged_fragment(rules: &[Rule], primary: Option<&str>, saved: &Monitors, skip
         .and_then(toml::Value::as_table_mut)
         .ok_or("fragment without [desktop.hyprland.monitors]")?;
     for (name, entry) in saved {
-        if monitors.contains_key(name) || skip.iter().any(|p| !p.is_empty() && name.starts_with(p.as_str())) {
+        if monitors.contains_key(name)
+            || skip
+                .iter()
+                .any(|p| !p.is_empty() && name.starts_with(p.as_str()))
+        {
             continue;
         }
         let mut entry = entry.clone();
@@ -621,19 +705,36 @@ fn fragment_outputs(body: &str) -> Result<Vec<String>, String> {
 
 /// Copy the *.toml fragments of `tiers` into `dir`, then place `body` as the candidate
 /// drop-in (and drop the user shadow for a host save), the way the save would leave them.
-fn stage(tiers: &Tiers, fragment: &str, to_user: bool, body: &str, dir: &Path) -> Result<Tiers, String> {
-    let staged = Tiers { host_d: dir.join("host.d"), user_d: dir.join("user.d") };
-    for (from, to) in [(&tiers.host_d, &staged.host_d), (&tiers.user_d, &staged.user_d)] {
+fn stage(
+    tiers: &Tiers,
+    fragment: &str,
+    to_user: bool,
+    body: &str,
+    dir: &Path,
+) -> Result<Tiers, String> {
+    let staged = Tiers {
+        host_d: dir.join("host.d"),
+        user_d: dir.join("user.d"),
+    };
+    for (from, to) in [
+        (&tiers.host_d, &staged.host_d),
+        (&tiers.user_d, &staged.user_d),
+    ] {
         fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
         let Ok(rd) = fs::read_dir(from) else { continue };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_file() && p.extension().is_some_and(|x| x == "toml") {
-                fs::copy(&p, to.join(e.file_name())).map_err(|err| format!("{}: {err}", p.display()))?;
+                fs::copy(&p, to.join(e.file_name()))
+                    .map_err(|err| format!("{}: {err}", p.display()))?;
             }
         }
     }
-    let target = if to_user { &staged.user_d } else { &staged.host_d };
+    let target = if to_user {
+        &staged.user_d
+    } else {
+        &staged.host_d
+    };
     fs::write(target.join(fragment), body).map_err(|e| e.to_string())?;
     if !to_user {
         let _ = fs::remove_file(staged.user_d.join(fragment));
@@ -673,19 +774,35 @@ fn save_to(
         .and_then(|staged| project(Some(&staged)))
         .and_then(|lines| check_projection(&lines, outputs));
     let _ = fs::remove_dir_all(stage_dir);
-    checked.map_err(|e| SaveError::Failed(format!("not saved, nothing changed: the new layout fails the projection: {e}")))?;
+    checked.map_err(|e| {
+        SaveError::Failed(format!(
+            "not saved, nothing changed: the new layout fails the projection: {e}"
+        ))
+    })?;
 
-    let target = if to_user { &tiers.user_d } else { &tiers.host_d }.join(fragment);
+    let target = if to_user {
+        &tiers.user_d
+    } else {
+        &tiers.host_d
+    }
+    .join(fragment);
     let shadow = tiers.user_d.join(fragment);
     let prev_target = read_optional(&target).map_err(SaveError::Failed)?;
-    let prev_shadow = if to_user { None } else { read_optional(&shadow).map_err(SaveError::Failed)? };
+    let prev_shadow = if to_user {
+        None
+    } else {
+        read_optional(&shadow).map_err(SaveError::Failed)?
+    };
     write_fragment(&target, body).map_err(SaveError::Write)?;
     let mut notes = Vec::new();
     let verified = (|| {
         if prev_shadow.is_some() {
             // A user-tier copy of this drop-in would outrank a host save; the app owns both names.
             fs::remove_file(&shadow).map_err(|e| format!("{}: {e}", shadow.display()))?;
-            notes.push(format!("removed the shadowing user-tier {}", shadow.display()));
+            notes.push(format!(
+                "removed the shadowing user-tier {}",
+                shadow.display()
+            ));
         }
         let lines = project(None)?;
         check_projection(&lines, outputs)?;
@@ -700,9 +817,16 @@ fn save_to(
             }
             let undo: Vec<String> = undo.into_iter().filter_map(Result::err).collect();
             Err(SaveError::Failed(if undo.is_empty() {
-                format!("saved {} but {e}; rolled back to the previous layout", target.display())
+                format!(
+                    "saved {} but {e}; rolled back to the previous layout",
+                    target.display()
+                )
             } else {
-                format!("saved {} but {e}; ROLLBACK FAILED: {}", target.display(), undo.join("; "))
+                format!(
+                    "saved {} but {e}; ROLLBACK FAILED: {}",
+                    target.display(),
+                    undo.join("; ")
+                )
             }))
         }
     }
@@ -721,7 +845,9 @@ fn cmd_save(mut args: Vec<String>) -> Result<Value, String> {
         return Err(format!("unknown tier {tier:?}: expected host|user"));
     }
     if pending()?.is_some() {
-        return Err("a change is still waiting for confirmation; confirm or revert it first".into());
+        return Err(
+            "a change is still waiting for confirmation; confirm or revert it first".into(),
+        );
     }
     let fragment = setting_str(&s, "fragment")?;
     if fragment.contains('/') || !fragment.ends_with(".toml") {
@@ -743,33 +869,52 @@ fn cmd_save(mut args: Vec<String>) -> Result<Value, String> {
     });
     if let Some(p) = &primary {
         if !ms.iter().any(|m| &m.name == p) && !saved.contains_key(p) {
-            return Err(format!("primary {p:?} is not a known output ({})", model::names(&ms)));
+            return Err(format!(
+                "primary {p:?} is not a known output ({})",
+                model::names(&ms)
+            ));
         }
     }
     let rules: Vec<Rule> = ms.iter().map(Rule::of).collect();
     let body = merged_fragment(&rules, primary.as_deref(), &saved, ignore_prefixes())?;
     let outputs = fragment_outputs(&body)?;
-    let fallback = s.get("fallback_user_tier").and_then(toml::Value::as_bool).unwrap_or(false);
+    let fallback = s
+        .get("fallback_user_tier")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
     let stage_dir = state_dir()?.join(format!("stage-{}", std::process::id()));
     let project = |t: Option<&Tiers>| projection_lines(t);
-    let save = |to_user| save_to(&tiers, &fragment, to_user, &body, &outputs, &project, &stage_dir);
+    let save = |to_user| {
+        save_to(
+            &tiers, &fragment, to_user, &body, &outputs, &project, &stage_dir,
+        )
+    };
     let (written, mut notes, lines) = match tier.as_str() {
         "host" => match save(false) {
             Ok(r) => r,
             Err(SaveError::Write(e)) if fallback => {
                 let (p, mut n, l) = save(true).map_err(SaveError::text)?;
-                n.insert(0, format!("host tier refused ({e}); saved to the user tier"));
+                n.insert(
+                    0,
+                    format!("host tier refused ({e}); saved to the user tier"),
+                );
                 (p, n, l)
             }
             Err(e) => return Err(e.text()),
         },
         _ => save(true).map_err(SaveError::text)?,
     };
-    let kept: Vec<&String> = outputs.iter().filter(|o| !ms.iter().any(|m| &&m.name == o)).collect();
+    let kept: Vec<&String> = outputs
+        .iter()
+        .filter(|o| !ms.iter().any(|m| &&m.name == o))
+        .collect();
     if !kept.is_empty() {
         notes.push(format!(
             "kept the saved layout of disconnected {}",
-            kept.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            kept.iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     Ok(json!({"ok": true, "path": written, "notes": notes, "projection": lines}))
@@ -790,7 +935,8 @@ fn cmd_gui(mut args: Vec<String>) -> Result<Value, String> {
 }
 
 fn setup_table(s: &toml::Value) -> Result<&toml::Value, String> {
-    s.get("setup").ok_or_else(|| "missing SSOT [desktop.displays.setup]".into())
+    s.get("setup")
+        .ok_or_else(|| "missing SSOT [desktop.displays.setup]".into())
 }
 
 fn cmd_suggest() -> Result<Value, String> {
@@ -804,7 +950,11 @@ fn cmd_suggest() -> Result<Value, String> {
     let scales: Vec<f64> = s
         .get("scales")
         .and_then(toml::Value::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                .collect()
+        })
         .unwrap_or_default();
     if scales.is_empty() {
         return Err("[desktop.displays].scales must list at least one scale".into());
@@ -882,9 +1032,15 @@ mod save_tests {
             let root = env::temp_dir().join(format!(
                 "mios-displays-test-{tag}-{}-{}",
                 std::process::id(),
-                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
             ));
-            let tiers = Tiers { host_d: root.join("etc/mios/mios.d"), user_d: root.join("home/.config/mios/mios.d") };
+            let tiers = Tiers {
+                host_d: root.join("etc/mios/mios.d"),
+                user_d: root.join("home/.config/mios/mios.d"),
+            };
             fs::create_dir_all(&tiers.host_d).unwrap();
             fs::create_dir_all(&tiers.user_d).unwrap();
             TempTiers { root, tiers }
@@ -907,7 +1063,14 @@ mod save_tests {
     }
 
     fn rule(output: &str, mode: &str, position: &str) -> Rule {
-        Rule { output: output.into(), mode: mode.into(), position: position.into(), scale: 1.0, transform: 0, disabled: false }
+        Rule {
+            output: output.into(),
+            mode: mode.into(),
+            position: position.into(),
+            scale: 1.0,
+            transform: 0,
+            disabled: false,
+        }
     }
 
     const SAVED: &str = "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"1920x1080@144.00\"\nposition = \"0x0\"\nscale = 1\ntransform = 0\nprimary = true\n\n[desktop.hyprland.monitors.DP-2]\nmode = \"2560x1440@165.00\"\nposition = \"1920x0\"\nscale = 1\ntransform = 0\n";
@@ -918,19 +1081,35 @@ mod save_tests {
         let mut merged = Monitors::new();
         for d in [&t.host_d, &t.user_d] {
             let mut files: Vec<PathBuf> = fs::read_dir(d)
-                .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect())
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+                        .collect()
+                })
                 .unwrap_or_default();
             files.sort();
             for f in files {
-                let Ok(v) = fs::read_to_string(&f).unwrap().parse::<toml::Value>() else { continue };
-                if let Some(m) = at(&v, "desktop.hyprland.monitors").and_then(toml::Value::as_table) {
+                let Ok(v) = fs::read_to_string(&f).unwrap().parse::<toml::Value>() else {
+                    continue;
+                };
+                if let Some(m) = at(&v, "desktop.hyprland.monitors").and_then(toml::Value::as_table)
+                {
                     for (k, v) in m {
                         merged.insert(k.clone(), v.clone());
                     }
                 }
             }
         }
-        merged.keys().map(|k| format!("hl.monitor({{[\"output\"] = {}}})", serde_json::to_string(k).unwrap())).collect()
+        merged
+            .keys()
+            .map(|k| {
+                format!(
+                    "hl.monitor({{[\"output\"] = {}}})",
+                    serde_json::to_string(k).unwrap()
+                )
+            })
+            .collect()
     }
 
     /// Sorted: entry order depends on toml's `preserve_order` feature, which a shared workspace
@@ -947,7 +1126,13 @@ mod save_tests {
         fs::write(t.host(), SAVED).unwrap();
         let saved = saved_entries(&[t.host()]).unwrap();
         // POSITIVE: DP-2 is unplugged now; its saved layout survives, HDMI-A-1 takes the live values.
-        let body = merged_fragment(&[rule("HDMI-A-1", "1920x1080@60.00", "0x0")], Some("HDMI-A-1"), &saved, &[]).unwrap();
+        let body = merged_fragment(
+            &[rule("HDMI-A-1", "1920x1080@60.00", "0x0")],
+            Some("HDMI-A-1"),
+            &saved,
+            &[],
+        )
+        .unwrap();
         let v: toml::Value = body.split_once("\n\n").unwrap().1.parse().unwrap();
         let m = &v["desktop"]["hyprland"]["monitors"];
         assert_eq!(m["HDMI-A-1"]["mode"].as_str(), Some("1920x1080@60.00"));
@@ -957,16 +1142,37 @@ mod save_tests {
         assert!(m["DP-2"].get("primary").is_none());
         assert!(body.starts_with("# AI-hint:"));
         // NEGATIVE (the defect): the live-only body drops DP-2.
-        let live_only = model::fragment_toml(&[rule("HDMI-A-1", "1920x1080@60.00", "0x0")], Some("HDMI-A-1")).unwrap();
+        let live_only = model::fragment_toml(
+            &[rule("HDMI-A-1", "1920x1080@60.00", "0x0")],
+            Some("HDMI-A-1"),
+        )
+        .unwrap();
         assert!(!outputs_of(&live_only).contains(&"DP-2".to_string()));
         assert_eq!(outputs_of(&body), ["DP-2", "HDMI-A-1"]);
         // Primary moves to the kept output, and only one entry stays primary.
-        let body = merged_fragment(&[rule("HDMI-A-1", "1920x1080@60.00", "0x0")], Some("DP-2"), &saved, &[]).unwrap();
+        let body = merged_fragment(
+            &[rule("HDMI-A-1", "1920x1080@60.00", "0x0")],
+            Some("DP-2"),
+            &saved,
+            &[],
+        )
+        .unwrap();
         let v: toml::Value = body.split_once("\n\n").unwrap().1.parse().unwrap();
-        assert_eq!(v["desktop"]["hyprland"]["monitors"]["DP-2"]["primary"].as_bool(), Some(true));
-        assert!(v["desktop"]["hyprland"]["monitors"]["HDMI-A-1"].get("primary").is_none());
+        assert_eq!(
+            v["desktop"]["hyprland"]["monitors"]["DP-2"]["primary"].as_bool(),
+            Some(true)
+        );
+        assert!(v["desktop"]["hyprland"]["monitors"]["HDMI-A-1"]
+            .get("primary")
+            .is_none());
         // Ignored virtual outputs are never carried over.
-        let body = merged_fragment(&[rule("HDMI-A-1", "1920x1080@60.00", "0x0")], None, &saved, &["DP-".into()]).unwrap();
+        let body = merged_fragment(
+            &[rule("HDMI-A-1", "1920x1080@60.00", "0x0")],
+            None,
+            &saved,
+            &["DP-".into()],
+        )
+        .unwrap();
         assert_eq!(outputs_of(&body), ["HDMI-A-1"]);
     }
 
@@ -974,10 +1180,16 @@ mod save_tests {
     fn unreadable_saved_fragment_is_refused_not_overwritten() {
         let t = TempTiers::new("corrupt");
         fs::write(t.host(), "[desktop.hyprland.monitors.DP-2\nmode = ").unwrap();
-        assert!(saved_entries(&[t.host(), t.shadow()]).unwrap_err().contains("refusing to overwrite"));
+        assert!(saved_entries(&[t.host(), t.shadow()])
+            .unwrap_err()
+            .contains("refusing to overwrite"));
         // The user copy outranks the host copy.
         fs::write(t.host(), SAVED).unwrap();
-        fs::write(t.shadow(), "[desktop.hyprland.monitors.DP-2]\nmode = \"preferred\"\n").unwrap();
+        fs::write(
+            t.shadow(),
+            "[desktop.hyprland.monitors.DP-2]\nmode = \"preferred\"\n",
+        )
+        .unwrap();
         let s = saved_entries(&[t.host(), t.shadow()]).unwrap();
         assert_eq!(s["DP-2"]["mode"].as_str(), Some("preferred"));
         assert_eq!(s["HDMI-A-1"]["mode"].as_str(), Some("1920x1080@144.00"));
@@ -987,9 +1199,19 @@ mod save_tests {
     fn host_save_validates_writes_atomically_and_removes_the_shadow() {
         let t = TempTiers::new("ok");
         fs::write(t.host(), SAVED).unwrap();
-        fs::write(t.shadow(), "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"preferred\"\n").unwrap();
+        fs::write(
+            t.shadow(),
+            "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"preferred\"\n",
+        )
+        .unwrap();
         let saved = saved_entries(&[t.host(), t.shadow()]).unwrap();
-        let body = merged_fragment(&[rule("HDMI-A-1", "1920x1080@144.00", "0x0")], Some("HDMI-A-1"), &saved, &[]).unwrap();
+        let body = merged_fragment(
+            &[rule("HDMI-A-1", "1920x1080@144.00", "0x0")],
+            Some("HDMI-A-1"),
+            &saved,
+            &[],
+        )
+        .unwrap();
         let outputs = outputs_of(&body);
         let staged_seen = Cell::new(false);
         let project = |s: Option<&Tiers>| {
@@ -1002,7 +1224,8 @@ mod save_tests {
             }
             Ok(fake_project(tiers))
         };
-        let (path, notes, lines) = save_to(&t.tiers, FRAG, false, &body, &outputs, &project, &t.stage()).unwrap();
+        let (path, notes, lines) =
+            save_to(&t.tiers, FRAG, false, &body, &outputs, &project, &t.stage()).unwrap();
         assert!(staged_seen.get());
         assert_eq!(path, t.host());
         assert_eq!(fs::read_to_string(t.host()).unwrap(), body);
@@ -1010,7 +1233,11 @@ mod save_tests {
         assert!(notes.iter().any(|n| n.contains("shadowing")));
         assert_eq!(lines.len(), 2);
         assert!(!t.stage().exists());
-        let leftovers: Vec<_> = fs::read_dir(&t.tiers.host_d).unwrap().flatten().map(|e| e.file_name()).collect();
+        let leftovers: Vec<_> = fs::read_dir(&t.tiers.host_d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
         assert_eq!(leftovers, [std::ffi::OsString::from(FRAG)]);
     }
 
@@ -1018,20 +1245,56 @@ mod save_tests {
     fn invalid_layout_is_rejected_before_anything_is_written() {
         let t = TempTiers::new("invalid");
         fs::write(t.host(), SAVED).unwrap();
-        fs::write(t.shadow(), "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"preferred\"\n").unwrap();
+        fs::write(
+            t.shadow(),
+            "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"preferred\"\n",
+        )
+        .unwrap();
         let project = |s: Option<&Tiers>| {
-            assert!(s.is_some(), "the live projection must not run for a rejected layout");
-            Err::<Vec<String>, _>("desktop.hyprland.monitors.HDMI-A-1.mode must be preferred|...".to_string())
+            assert!(
+                s.is_some(),
+                "the live projection must not run for a rejected layout"
+            );
+            Err::<Vec<String>, _>(
+                "desktop.hyprland.monitors.HDMI-A-1.mode must be preferred|...".to_string(),
+            )
         };
-        let body = merged_fragment(&[rule("HDMI-A-1", "1920x1080@144.00", "0x0")], None, &Monitors::new(), &[]).unwrap();
-        let err = save_to(&t.tiers, FRAG, false, &body, &["HDMI-A-1".into()], &project, &t.stage()).unwrap_err();
-        assert!(matches!(&err, SaveError::Failed(e) if e.contains("nothing changed")), "{err:?}");
+        let body = merged_fragment(
+            &[rule("HDMI-A-1", "1920x1080@144.00", "0x0")],
+            None,
+            &Monitors::new(),
+            &[],
+        )
+        .unwrap();
+        let err = save_to(
+            &t.tiers,
+            FRAG,
+            false,
+            &body,
+            &["HDMI-A-1".into()],
+            &project,
+            &t.stage(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, SaveError::Failed(e) if e.contains("nothing changed")),
+            "{err:?}"
+        );
         // NEGATIVE control on the defect: host drop-in and the user copy are untouched.
         assert_eq!(fs::read_to_string(t.host()).unwrap(), SAVED);
         assert!(t.shadow().exists());
         // A staged projection that silently skips a bad drop-in (no rule) is a failure too.
         let skipping = |_: Option<&Tiers>| Ok(Vec::<String>::new());
-        assert!(save_to(&t.tiers, FRAG, false, &body, &["HDMI-A-1".into()], &skipping, &t.stage()).is_err());
+        assert!(save_to(
+            &t.tiers,
+            FRAG,
+            false,
+            &body,
+            &["HDMI-A-1".into()],
+            &skipping,
+            &t.stage()
+        )
+        .is_err());
         assert_eq!(fs::read_to_string(t.host()).unwrap(), SAVED);
     }
 
@@ -1041,18 +1304,45 @@ mod save_tests {
         fs::write(t.host(), SAVED).unwrap();
         let shadow = "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"preferred\"\n";
         fs::write(t.shadow(), shadow).unwrap();
-        let body = merged_fragment(&[rule("HDMI-A-1", "1920x1080@60.00", "0x0")], None, &Monitors::new(), &[]).unwrap();
+        let body = merged_fragment(
+            &[rule("HDMI-A-1", "1920x1080@60.00", "0x0")],
+            None,
+            &Monitors::new(),
+            &[],
+        )
+        .unwrap();
         let project = |s: Option<&Tiers>| match s {
             Some(st) => Ok(fake_project(st)),
             None => Err("mios-gen render-hyprland failed: boom".to_string()),
         };
-        let err = save_to(&t.tiers, FRAG, false, &body, &["HDMI-A-1".into()], &project, &t.stage()).unwrap_err();
-        assert!(matches!(&err, SaveError::Failed(e) if e.contains("rolled back")), "{err:?}");
+        let err = save_to(
+            &t.tiers,
+            FRAG,
+            false,
+            &body,
+            &["HDMI-A-1".into()],
+            &project,
+            &t.stage(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, SaveError::Failed(e) if e.contains("rolled back")),
+            "{err:?}"
+        );
         assert_eq!(fs::read_to_string(t.host()).unwrap(), SAVED);
         assert_eq!(fs::read_to_string(t.shadow()).unwrap(), shadow);
         // A first save (no previous drop-in) is removed again on failure.
         fs::remove_file(t.host()).unwrap();
-        assert!(save_to(&t.tiers, FRAG, false, &body, &["HDMI-A-1".into()], &project, &t.stage()).is_err());
+        assert!(save_to(
+            &t.tiers,
+            FRAG,
+            false,
+            &body,
+            &["HDMI-A-1".into()],
+            &project,
+            &t.stage()
+        )
+        .is_err());
         assert!(!t.host().exists());
     }
 
@@ -1067,13 +1357,33 @@ mod save_tests {
         }
         let t = TempTiers::new("real");
         let project = |s: Option<&Tiers>| projection_lines(Some(s.unwrap_or(&t.tiers)));
-        let good = merged_fragment(&[rule("TEST-9", "1280x720@60.00", "5000x0")], None, &Monitors::new(), &[]).unwrap();
+        let good = merged_fragment(
+            &[rule("TEST-9", "1280x720@60.00", "5000x0")],
+            None,
+            &Monitors::new(),
+            &[],
+        )
+        .unwrap();
         let staged = stage(&t.tiers, FRAG, false, &good, &t.stage()).unwrap();
         let lines = projection_lines(Some(&staged)).unwrap();
-        assert!(check_projection(&lines, &["TEST-9".into()]).is_ok(), "{lines:?}");
+        assert!(
+            check_projection(&lines, &["TEST-9".into()]).is_ok(),
+            "{lines:?}"
+        );
         let bad = good.replace("1280x720@60.00", "garbage");
-        let err = save_to(&t.tiers, FRAG, false, &bad, &["TEST-9".into()], &project, &t.stage());
-        assert!(matches!(&err, Err(SaveError::Failed(e)) if e.contains("nothing changed")), "{err:?}");
+        let err = save_to(
+            &t.tiers,
+            FRAG,
+            false,
+            &bad,
+            &["TEST-9".into()],
+            &project,
+            &t.stage(),
+        );
+        assert!(
+            matches!(&err, Err(SaveError::Failed(e)) if e.contains("nothing changed")),
+            "{err:?}"
+        );
         assert!(!t.host().exists());
     }
 }

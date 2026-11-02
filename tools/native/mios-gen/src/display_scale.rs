@@ -79,16 +79,22 @@ impl Policy {
             t.get(k)
                 .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                 .filter(|v| v.is_finite() && *v >= lo && *v <= hi)
-                .ok_or(format!("desktop.scaling.{k} must be a number in {lo}..={hi}"))
+                .ok_or(format!(
+                    "desktop.scaling.{k} must be a number in {lo}..={hi}"
+                ))
         };
         let int = |k: &str, lo: i64, hi: i64| -> Result<i64, String> {
             t.get(k)
                 .and_then(Value::as_integer)
                 .filter(|v| (lo..=hi).contains(v))
-                .ok_or(format!("desktop.scaling.{k} must be an integer in {lo}..={hi}"))
+                .ok_or(format!(
+                    "desktop.scaling.{k} must be an integer in {lo}..={hi}"
+                ))
         };
         let flag = |k: &str| -> Result<bool, String> {
-            t.get(k).and_then(Value::as_bool).ok_or(format!("desktop.scaling.{k} must be a boolean"))
+            t.get(k)
+                .and_then(Value::as_bool)
+                .ok_or(format!("desktop.scaling.{k} must be a boolean"))
         };
         let apply_to = t
             .get("apply_to")
@@ -99,7 +105,10 @@ impl Policy {
                 v.as_str()
                     .filter(|s| *s == "local" || *s == "remote")
                     .map(str::to_owned)
-                    .ok_or("desktop.scaling.apply_to entries must be \"local\" or \"remote\"".to_string())
+                    .ok_or(
+                        "desktop.scaling.apply_to entries must be \"local\" or \"remote\""
+                            .to_string(),
+                    )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let p = Policy {
@@ -127,7 +136,10 @@ impl Policy {
             return Err("desktop.scaling.min_scale must not exceed max_scale".into());
         }
         if p.handheld_max_diagonal_in >= p.desktop_min_diagonal_in {
-            return Err("desktop.scaling.handheld_max_diagonal_in must be below desktop_min_diagonal_in".into());
+            return Err(
+                "desktop.scaling.handheld_max_diagonal_in must be below desktop_min_diagonal_in"
+                    .into(),
+            );
         }
         let step = (p.snap_step * GRID as f64).round();
         if (p.snap_step * GRID as f64 - step).abs() > 1e-6 {
@@ -189,17 +201,26 @@ pub fn compute(p: &Policy, i: &Input) -> Decision {
         && diag_mm >= p.min_physical_diagonal_mm
         && ((pw / ph) / (wf / hf) - 1.0).abs() <= p.edid_aspect_tolerance;
     let hint = i.dpi.filter(|d| d.is_finite() && *d > 0.0);
-    let handheld_shape =
-        i.remote && short <= p.handheld_shape_max_short_px && (h > w || aspect >= p.handheld_shape_min_aspect);
+    let handheld_shape = i.remote
+        && short <= p.handheld_shape_max_short_px
+        && (h > w || aspect >= p.handheld_shape_min_aspect);
     let (source, dpi, diag_in) = if let Some(d) = hint {
         ("dpi-hint", d, diag_px / d)
     } else if edid_ok {
         let din = diag_mm / 25.4;
         ("edid", diag_px / din, din)
     } else if handheld_shape {
-        ("fallback-handheld", p.fallback_handheld_dpi, diag_px / p.fallback_handheld_dpi)
+        (
+            "fallback-handheld",
+            p.fallback_handheld_dpi,
+            diag_px / p.fallback_handheld_dpi,
+        )
     } else {
-        ("fallback-desktop", diag_px / p.fallback_desktop_diagonal_in, p.fallback_desktop_diagonal_in)
+        (
+            "fallback-desktop",
+            diag_px / p.fallback_desktop_diagonal_in,
+            p.fallback_desktop_diagonal_in,
+        )
     };
     let target = if diag_in <= p.handheld_max_diagonal_in {
         p.handheld_logical_dpi
@@ -207,7 +228,8 @@ pub fn compute(p: &Policy, i: &Input) -> Decision {
         p.target_logical_dpi
     } else {
         p.handheld_logical_dpi
-            + (p.target_logical_dpi - p.handheld_logical_dpi) * (diag_in - p.handheld_max_diagonal_in)
+            + (p.target_logical_dpi - p.handheld_logical_dpi)
+                * (diag_in - p.handheld_max_diagonal_in)
                 / (p.desktop_min_diagonal_in - p.handheld_max_diagonal_in)
     };
     let step = round_i(p.snap_step * g);
@@ -249,8 +271,8 @@ pub fn compute(p: &Policy, i: &Input) -> Decision {
     let lw = round_i(wf / scale);
     let lh = round_i(hf / scale);
     let (ls, ll) = (lw.min(lh), lw.max(lh));
-    let mobile =
-        (ls < p.mobile_short_side_px && ll < p.mobile_max_long_side_px) || (p.portrait_is_mobile && lh > lw);
+    let mobile = (ls < p.mobile_short_side_px && ll < p.mobile_max_long_side_px)
+        || (p.portrait_is_mobile && lh > lw);
     let origin = if i.remote { "remote" } else { "local" };
     Decision {
         scale,
@@ -309,9 +331,17 @@ pub struct CliArgs {
 }
 
 fn parse_pair(s: &str) -> Result<(f64, f64), String> {
-    let (a, b) = s.split_once(['x', 'X']).ok_or(format!("--phys-mm must be WxH, got {s:?}"))?;
-    let a: f64 = a.trim().parse().map_err(|_| format!("--phys-mm must be WxH, got {s:?}"))?;
-    let b: f64 = b.trim().parse().map_err(|_| format!("--phys-mm must be WxH, got {s:?}"))?;
+    let (a, b) = s
+        .split_once(['x', 'X'])
+        .ok_or(format!("--phys-mm must be WxH, got {s:?}"))?;
+    let a: f64 = a
+        .trim()
+        .parse()
+        .map_err(|_| format!("--phys-mm must be WxH, got {s:?}"))?;
+    let b: f64 = b
+        .trim()
+        .parse()
+        .map_err(|_| format!("--phys-mm must be WxH, got {s:?}"))?;
     if !(a.is_finite() && b.is_finite() && a >= 0.0 && b >= 0.0) {
         return Err(format!("--phys-mm must be non-negative, got {s:?}"));
     }
@@ -326,7 +356,9 @@ fn parse_rect(s: &str) -> Result<(i64, i64, i64, i64), String> {
         .map_err(|_| format!("--attach-below must be X,Y,W,H integers, got {s:?}"))?;
     match v[..] {
         [x, y, w, h] if w > 0 && h > 0 => Ok((x, y, w, h)),
-        _ => Err(format!("--attach-below must be X,Y,W,H with W,H > 0, got {s:?}")),
+        _ => Err(format!(
+            "--attach-below must be X,Y,W,H with W,H > 0, got {s:?}"
+        )),
     }
 }
 
@@ -349,7 +381,11 @@ pub fn run_cli(root: std::path::PathBuf, a: CliArgs, json_out: bool) -> Result<S
         }
     }
     if let Some(name) = &a.output {
-        if name.is_empty() || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
             return Err("--output must be a connector name [A-Za-z0-9_-]".into());
         }
     }
@@ -389,7 +425,14 @@ pub fn run_cli(root: std::path::PathBuf, a: CliArgs, json_out: bool) -> Result<S
     } else {
         Ok(format!(
             "scale={} logical={}x{} mobile={} explicit={} auto_apply={} source={} dpi={:.1}",
-            v["scale"], d.logical_width, d.logical_height, d.mobile, d.explicit, d.auto_apply, d.source, d.dpi
+            v["scale"],
+            d.logical_width,
+            d.logical_height,
+            d.mobile,
+            d.explicit,
+            d.auto_apply,
+            d.source,
+            d.dpi
         ))
     }
 }
@@ -477,22 +520,52 @@ mod tests {
         let p = policy();
         // EDID path (a local phone panel) and the RDP client-DPI path agree.
         for i in [
-            Input { width: 1100, height: 2080, phys_mm: Some(mm_at(1100, 2080, 568.0)), ..Default::default() },
-            Input { width: 1100, height: 2080, dpi: Some(568.0), remote: true, ..Default::default() },
+            Input {
+                width: 1100,
+                height: 2080,
+                phys_mm: Some(mm_at(1100, 2080, 568.0)),
+                ..Default::default()
+            },
+            Input {
+                width: 1100,
+                height: 2080,
+                dpi: Some(568.0),
+                remote: true,
+                ..Default::default()
+            },
         ] {
             let d = compute(&p, &i);
             assert!((2.5..=3.0).contains(&d.scale), "{d:?}");
-            assert!(d.logical_width.min(d.logical_height) < p.mobile_short_side_px, "{d:?}");
+            assert!(
+                d.logical_width.min(d.logical_height) < p.mobile_short_side_px,
+                "{d:?}"
+            );
             assert!(d.mobile, "{d:?}");
-            assert_eq!(d.logical_width * d.scale_120, 1100 * GRID, "logical size must be integral: {d:?}");
-            assert_eq!(d.logical_height * d.scale_120, 2080 * GRID, "logical size must be integral: {d:?}");
+            assert_eq!(
+                d.logical_width * d.scale_120,
+                1100 * GRID,
+                "logical size must be integral: {d:?}"
+            );
+            assert_eq!(
+                d.logical_height * d.scale_120,
+                2080 * GRID,
+                "logical size must be integral: {d:?}"
+            );
         }
     }
 
     #[test]
     fn desktop_24in_1080p_is_scale_1_not_mobile() {
         // The operator's LG 24GL600F reports 530x300 mm.
-        let d = compute(&policy(), &Input { width: 1920, height: 1080, phys_mm: Some((530.0, 300.0)), ..Default::default() });
+        let d = compute(
+            &policy(),
+            &Input {
+                width: 1920,
+                height: 1080,
+                phys_mm: Some((530.0, 300.0)),
+                ..Default::default()
+            },
+        );
         assert_eq!(d.scale, 1.0, "{d:?}");
         assert_eq!((d.logical_width, d.logical_height), (1920, 1080));
         assert!(!d.mobile && d.source == "edid", "{d:?}");
@@ -500,7 +573,15 @@ mod tests {
 
     #[test]
     fn uhd_27in_scales_1_5_to_2_not_mobile() {
-        let d = compute(&policy(), &Input { width: 3840, height: 2160, phys_mm: Some(mm_diag(27.0)), ..Default::default() });
+        let d = compute(
+            &policy(),
+            &Input {
+                width: 3840,
+                height: 2160,
+                phys_mm: Some(mm_diag(27.0)),
+                ..Default::default()
+            },
+        );
         assert!((1.5..=2.0).contains(&d.scale), "{d:?}");
         assert_eq!(d.logical_width * d.scale_120, 3840 * GRID, "{d:?}");
         assert!(!d.mobile, "{d:?}");
@@ -509,40 +590,118 @@ mod tests {
     #[test]
     fn portrait_low_dpi_tablet_is_orientation_invariant() {
         let p = policy();
-        let portrait = compute(&p, &Input { width: 1080, height: 1920, dpi: Some(150.0), remote: true, ..Default::default() });
+        let portrait = compute(
+            &p,
+            &Input {
+                width: 1080,
+                height: 1920,
+                dpi: Some(150.0),
+                remote: true,
+                ..Default::default()
+            },
+        );
         // Same panel scanned out landscape and rotated by the compositor (transform 1).
-        let rotated =
-            compute(&p, &Input { width: 1920, height: 1080, dpi: Some(150.0), transform: 1, remote: true, ..Default::default() });
+        let rotated = compute(
+            &p,
+            &Input {
+                width: 1920,
+                height: 1080,
+                dpi: Some(150.0),
+                transform: 1,
+                remote: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(portrait, rotated);
         assert!((1.0..=1.75).contains(&portrait.scale), "{portrait:?}");
-        assert!(portrait.logical_height > portrait.logical_width, "{portrait:?}");
+        assert!(
+            portrait.logical_height > portrait.logical_width,
+            "{portrait:?}"
+        );
         // Short logical side >= the breakpoint: a tablet, not a phone (portrait_is_mobile = false).
         assert!(!portrait.mobile, "{portrait:?}");
         let mut q = p.clone();
         q.portrait_is_mobile = true;
-        assert!(compute(&q, &Input { width: 1080, height: 1920, dpi: Some(150.0), ..Default::default() }).mobile);
+        assert!(
+            compute(
+                &q,
+                &Input {
+                    width: 1080,
+                    height: 1920,
+                    dpi: Some(150.0),
+                    ..Default::default()
+                }
+            )
+            .mobile
+        );
     }
 
     #[test]
     fn unknown_physical_size_falls_back_by_resolution() {
         let p = policy();
-        let uhd = compute(&p, &Input { width: 3840, height: 2160, phys_mm: Some((0.0, 0.0)), ..Default::default() });
+        let uhd = compute(
+            &p,
+            &Input {
+                width: 3840,
+                height: 2160,
+                phys_mm: Some((0.0, 0.0)),
+                ..Default::default()
+            },
+        );
         assert_eq!(uhd.source, "fallback-desktop");
         assert!(uhd.scale > 1.5 && !uhd.mobile, "{uhd:?}");
-        let fhd = compute(&p, &Input { width: 1920, height: 1080, ..Default::default() });
+        let fhd = compute(
+            &p,
+            &Input {
+                width: 1920,
+                height: 1080,
+                ..Default::default()
+            },
+        );
         assert_eq!((fhd.scale, fhd.mobile), (1.0, false), "{fhd:?}");
         // A remote phone-shaped display with no DPI hint (headless: 0 mm) is a handheld.
-        let phone = compute(&p, &Input { width: 1100, height: 2080, remote: true, ..Default::default() });
+        let phone = compute(
+            &p,
+            &Input {
+                width: 1100,
+                height: 2080,
+                remote: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(phone.source, "fallback-handheld");
         assert!(phone.mobile && phone.scale >= 2.0, "{phone:?}");
         // Negative: the same pixels on a LOCAL output are not guessed to be a phone.
-        let local = compute(&p, &Input { width: 1100, height: 2080, ..Default::default() });
+        let local = compute(
+            &p,
+            &Input {
+                width: 1100,
+                height: 2080,
+                ..Default::default()
+            },
+        );
         assert_eq!(local.source, "fallback-desktop");
         // Negative: a landscape 1280x720 remote window is a desktop client.
-        let rdp = compute(&p, &Input { width: 1280, height: 720, remote: true, ..Default::default() });
+        let rdp = compute(
+            &p,
+            &Input {
+                width: 1280,
+                height: 720,
+                remote: true,
+                ..Default::default()
+            },
+        );
         assert_eq!((rdp.scale, rdp.mobile), (1.0, false), "{rdp:?}");
         // Bogus EDID (aspect-only 16x9 cm on a 1080p TV) is rejected, not read as a 7" panel.
-        let tv = compute(&p, &Input { width: 1920, height: 1080, phys_mm: Some((16.0, 9.0)), ..Default::default() });
+        let tv = compute(
+            &p,
+            &Input {
+                width: 1920,
+                height: 1080,
+                phys_mm: Some((16.0, 9.0)),
+                ..Default::default()
+            },
+        );
         assert_eq!(tv.source, "fallback-desktop", "{tv:?}");
     }
 
@@ -558,38 +717,96 @@ mod tests {
             ..Default::default()
         };
         let d = compute(&p, &i);
-        assert_eq!((d.scale, d.explicit, d.auto_apply, d.source), (1.0, true, false, "explicit"), "{d:?}");
-        assert_eq!((d.logical_width, d.logical_height, d.mobile), (1920, 1080, false));
+        assert_eq!(
+            (d.scale, d.explicit, d.auto_apply, d.source),
+            (1.0, true, false, "explicit"),
+            "{d:?}"
+        );
+        assert_eq!(
+            (d.logical_width, d.logical_height, d.mobile),
+            (1920, 1080, false)
+        );
         // Positive control: without the explicit scale the same input IS auto-scaled.
-        let auto = compute(&p, &Input { explicit_scale: None, ..i });
+        let auto = compute(
+            &p,
+            &Input {
+                explicit_scale: None,
+                ..i
+            },
+        );
         assert!(auto.scale > 1.0 && auto.auto_apply, "{auto:?}");
     }
 
     #[test]
     fn explicit_scale_snaps_to_a_hyprland_valid_scale() {
         let p = policy();
-        let base = Input { width: 1100, height: 2080, phys_mm: None, dpi: None, transform: 0, remote: true, explicit_scale: None };
-        for (w, h, ex) in [(1100, 2080, 2.4), (1920, 1080, 1.33), (2560, 1440, 1.7), (1100, 2080, 2.5), (3840, 2160, 1.5)] {
-            let d = compute(&p, &Input { width: w, height: h, explicit_scale: Some(ex), ..base });
+        let base = Input {
+            width: 1100,
+            height: 2080,
+            phys_mm: None,
+            dpi: None,
+            transform: 0,
+            remote: true,
+            explicit_scale: None,
+        };
+        for (w, h, ex) in [
+            (1100, 2080, 2.4),
+            (1920, 1080, 1.33),
+            (2560, 1440, 1.7),
+            (1100, 2080, 2.5),
+            (3840, 2160, 1.5),
+        ] {
+            let d = compute(
+                &p,
+                &Input {
+                    width: w,
+                    height: h,
+                    explicit_scale: Some(ex),
+                    ..base
+                },
+            );
             assert_eq!(d.source, "explicit");
             assert!(d.explicit && !d.auto_apply, "{d:?}");
             // scale and scale_120 are one value, on the grid, with an integral logical size
             assert_eq!(round_i(d.scale * GRID as f64), d.scale_120, "{d:?}");
-            assert!((d.scale * GRID as f64 - d.scale_120 as f64).abs() < 1e-9, "{d:?}");
+            assert!(
+                (d.scale * GRID as f64 - d.scale_120 as f64).abs() < 1e-9,
+                "{d:?}"
+            );
             assert_eq!((w * GRID) % d.scale_120, 0, "{d:?}");
             assert_eq!((h * GRID) % d.scale_120, 0, "{d:?}");
             // onto the grid (nearest 1/120), then down to a valid one -- never above the grid value
             assert!(d.scale_120 <= round_i(ex * GRID as f64), "{d:?}");
         }
         // Valid explicit scales are kept exactly (positive control) ...
-        let d = compute(&p, &Input { explicit_scale: Some(2.5), ..base });
+        let d = compute(
+            &p,
+            &Input {
+                explicit_scale: Some(2.5),
+                ..base
+            },
+        );
         assert_eq!((d.scale, d.scale_120), (2.5, 300));
-        let d = compute(&p, &Input { width: 1920, height: 1080, explicit_scale: Some(1.33), ..base });
+        let d = compute(
+            &p,
+            &Input {
+                width: 1920,
+                height: 1080,
+                explicit_scale: Some(1.33),
+                ..base
+            },
+        );
         assert_eq!(d.scale_120, 160);
         // ... and an invalid one is never passed through raw (negative control: 2.4 -> 288/120 has a
         // fractional logical size for 1100x2080, which Hyprland would refuse).
         assert_ne!((1100 * GRID) % 288, 0);
-        let d = compute(&p, &Input { explicit_scale: Some(2.4), ..base });
+        let d = compute(
+            &p,
+            &Input {
+                explicit_scale: Some(2.4),
+                ..base
+            },
+        );
         assert_ne!(d.scale, 2.4);
         assert!(d.scale_120 < 288);
     }
@@ -597,12 +814,32 @@ mod tests {
     #[test]
     fn remote_auto_apply_follows_apply_to_and_disabled_means_1() {
         let p = policy();
-        let d = compute(&p, &Input { width: 1100, height: 2080, dpi: Some(568.0), remote: true, ..Default::default() });
+        let d = compute(
+            &p,
+            &Input {
+                width: 1100,
+                height: 2080,
+                dpi: Some(568.0),
+                remote: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(d.auto_apply, p.apply_to.iter().any(|a| a == "remote"));
         let mut q = p.clone();
         q.enabled = false;
-        let off = compute(&q, &Input { width: 3840, height: 2160, phys_mm: Some(mm_diag(13.0)), ..Default::default() });
-        assert_eq!((off.scale, off.source, off.auto_apply), (1.0, "disabled", false));
+        let off = compute(
+            &q,
+            &Input {
+                width: 3840,
+                height: 2160,
+                phys_mm: Some(mm_diag(13.0)),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            (off.scale, off.source, off.auto_apply),
+            (1.0, "disabled", false)
+        );
     }
 
     #[test]
@@ -611,12 +848,18 @@ mod tests {
         for (k, v) in [
             ("min_scale", Value::Float(5.0)),
             ("snap_step", Value::Float(0.3333)),
-            ("apply_to", Value::Array(vec![Value::String("phone".into())])),
+            (
+                "apply_to",
+                Value::Array(vec![Value::String("phone".into())]),
+            ),
             ("target_logical_dpi", Value::String("96".into())),
             ("handheld_max_diagonal_in", Value::Float(30.0)),
         ] {
             let mut d = vendor();
-            d["desktop"]["scaling"].as_table_mut().unwrap().insert(k.into(), v.clone());
+            d["desktop"]["scaling"]
+                .as_table_mut()
+                .unwrap()
+                .insert(k.into(), v.clone());
             assert!(Policy::from_ssot(&d).is_err(), "{k}={v:?} accepted");
         }
         let mut d = vendor();
@@ -627,7 +870,13 @@ mod tests {
     #[test]
     fn attach_below_centres_on_the_main_display_bottom_edge() {
         let p = policy();
-        let i = Input { width: 1100, height: 2080, dpi: Some(568.0), remote: true, ..Default::default() };
+        let i = Input {
+            width: 1100,
+            height: 2080,
+            dpi: Some(568.0),
+            remote: true,
+            ..Default::default()
+        };
         let d = compute(&p, &i);
         let j = d.to_json(&i, Some((0, 0, 1920, 1080)));
         assert_eq!(j["position"]["y"], 1080);
@@ -637,7 +886,11 @@ mod tests {
 
     /// printf("%.9g") for the parity comparison.
     fn fmt_g(x: f64) -> String {
-        let exp = if x == 0.0 { 0 } else { x.abs().log10().floor() as i32 };
+        let exp = if x == 0.0 {
+            0
+        } else {
+            x.abs().log10().floor() as i32
+        };
         let decimals = (8 - exp).max(0) as usize;
         let s = format!("{x:.decimals$}");
         if s.contains('.') {
@@ -660,22 +913,50 @@ mod tests {
         q.apply_to = vec!["local".into(), "remote".into()];
         let mut cases = Vec::new();
         for (w, h) in [
-            (1100, 2080), (1920, 1080), (3840, 2160), (1080, 1920), (2560, 1440), (2880, 1800),
-            (1280, 720), (2400, 1080), (572, 1081), (800, 1280), (5120, 2880),
+            (1100, 2080),
+            (1920, 1080),
+            (3840, 2160),
+            (1080, 1920),
+            (2560, 1440),
+            (2880, 1800),
+            (1280, 720),
+            (2400, 1080),
+            (572, 1081),
+            (800, 1280),
+            (5120, 2880),
         ] {
-            for phys in [None, Some(mm_diag(6.1)), Some(mm_diag(13.3)), Some(mm_diag(24.0)), Some(mm_diag(32.0)), Some((16.0, 9.0))] {
+            for phys in [
+                None,
+                Some(mm_diag(6.1)),
+                Some(mm_diag(13.3)),
+                Some(mm_diag(24.0)),
+                Some(mm_diag(32.0)),
+                Some((16.0, 9.0)),
+            ] {
                 for dpi in [None, Some(96.0), Some(150.0), Some(568.0)] {
                     for transform in [0, 1] {
                         for remote in [false, true] {
                             for explicit in [None, Some(1.25), Some(2.4)] {
-                                cases.push(Input { width: w, height: h, phys_mm: phys, dpi, transform, remote, explicit_scale: explicit });
+                                cases.push(Input {
+                                    width: w,
+                                    height: h,
+                                    phys_mm: phys,
+                                    dpi,
+                                    transform,
+                                    remote,
+                                    explicit_scale: explicit,
+                                });
                             }
                         }
                     }
                 }
             }
         }
-        let mut script = format!("{LUA}\nlocal P = {{{}, {}}}\nlocal C = {{\n", p.lua_table(), q.lua_table());
+        let mut script = format!(
+            "{LUA}\nlocal P = {{{}, {}}}\nlocal C = {{\n",
+            p.lua_table(),
+            q.lua_table()
+        );
         for c in &cases {
             let (pw, ph) = c.phys_mm.unwrap_or((0.0, 0.0));
             script += &format!(
@@ -695,8 +976,15 @@ mod tests {
         let path = dir.path().join("parity.lua");
         std::fs::write(&path, script).unwrap();
         let out = std::process::Command::new(lua).arg(&path).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        let got: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(str::to_owned).collect();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let got: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect();
         let mut want = Vec::new();
         for pol in [&p, &q] {
             for c in &cases {

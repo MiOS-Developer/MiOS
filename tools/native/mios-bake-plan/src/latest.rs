@@ -336,11 +336,14 @@ pub fn resolve_portal(
     let version = parse_json_string(&fetch(&versions_url)?, "LATEST_FIREFOX_VERSION")
         .ok_or(format!("{versions_url} has no LATEST_FIREFOX_VERSION"))?;
     if !is_firefox_release(&version) {
-        return Err(format!("{versions_url}: LATEST_FIREFOX_VERSION {version:?} is not a release version"));
+        return Err(format!(
+            "{versions_url}: LATEST_FIREFOX_VERSION {version:?} is not a release version"
+        ));
     }
     let releases_url = format!("{}/firefox.json", src.product_details);
-    let build = parse_release_build(&fetch(&releases_url)?, &version)
-        .ok_or(format!("{releases_url} lists no build_number for firefox-{version}"))?;
+    let build = parse_release_build(&fetch(&releases_url)?, &version).ok_or(format!(
+        "{releases_url} lists no build_number for firefox-{version}"
+    ))?;
     let buildhub_url = format!(
         "{}/candidates/{version}-candidates/build{build}/linux-x86_64/en-US/buildhub.json",
         src.archive
@@ -349,7 +352,11 @@ pub fn resolve_portal(
         .ok_or(format!("{buildhub_url} has no 40-hex source.revision"))?;
     let npm_url = format!("{}/{}/latest", src.npm_registry, src.surfer_package);
     let surfer = parse_json_string(&fetch(&npm_url)?, "version")
-        .filter(|v| Regex::new(r"^\d+\.\d+\.\d+$").expect("latest: literal regex").is_match(v))
+        .filter(|v| {
+            Regex::new(r"^\d+\.\d+\.\d+$")
+                .expect("latest: literal regex")
+                .is_match(v)
+        })
         .ok_or(format!("{npm_url} has no release `version`"))?;
     eprintln!("mios-bake-plan: firefox {version} build{build} rev {revision}; surfer {surfer}");
     Ok(vec![
@@ -604,19 +611,29 @@ mod tests {
         let get = |k: &str| got.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("firefox_version"), Some("158.0"));
         assert_eq!(get("firefox_build"), Some("2"));
-        assert_eq!(get("firefox_revision"), Some("eb9a6e3a736802c8e080a76c44dc81f409d99d54"));
+        assert_eq!(
+            get("firefox_revision"),
+            Some("eb9a6e3a736802c8e080a76c44dc81f409d99d54")
+        );
         assert_eq!(get("surfer_version"), Some("1.14.9"));
     }
 
     #[test]
     fn negative_control_a_failed_lookup_is_an_error_not_a_fallback() {
         let src = portal_sources();
-        let down = |_: &str| -> Result<String, String> { Err("curl: (6) could not resolve".into()) };
+        let down =
+            |_: &str| -> Result<String, String> { Err("curl: (6) could not resolve".into()) };
         assert!(resolve_portal(&src, &down).is_err());
         let no_key = |u: &str| -> Result<String, String> {
-            if u.ends_with("/firefox_versions.json") { Ok("{}".into()) } else { portal_fetch(u) }
+            if u.ends_with("/firefox_versions.json") {
+                Ok("{}".into())
+            } else {
+                portal_fetch(u)
+            }
         };
-        assert!(resolve_portal(&src, &no_key).unwrap_err().contains("LATEST_FIREFOX_VERSION"));
+        assert!(resolve_portal(&src, &no_key)
+            .unwrap_err()
+            .contains("LATEST_FIREFOX_VERSION"));
         let beta = |u: &str| -> Result<String, String> {
             if u.ends_with("/firefox_versions.json") {
                 Ok("{\"LATEST_FIREFOX_VERSION\": \"159.0b3\"}".into())
@@ -624,12 +641,22 @@ mod tests {
                 portal_fetch(u)
             }
         };
-        assert!(resolve_portal(&src, &beta).unwrap_err().contains("not a release"));
+        assert!(resolve_portal(&src, &beta)
+            .unwrap_err()
+            .contains("not a release"));
         let no_rev = |u: &str| -> Result<String, String> {
-            if u.ends_with("buildhub.json") { Ok("{\"source\": {\"revision\": \"abc\"}}".into()) } else { portal_fetch(u) }
+            if u.ends_with("buildhub.json") {
+                Ok("{\"source\": {\"revision\": \"abc\"}}".into())
+            } else {
+                portal_fetch(u)
+            }
         };
-        assert!(resolve_portal(&src, &no_rev).unwrap_err().contains("source.revision"));
-        let mut broken: toml::Value = "[desktop.portal.builder]\nproduct_details_url = \"\"\n".parse().unwrap();
+        assert!(resolve_portal(&src, &no_rev)
+            .unwrap_err()
+            .contains("source.revision"));
+        let mut broken: toml::Value = "[desktop.portal.builder]\nproduct_details_url = \"\"\n"
+            .parse()
+            .unwrap();
         assert!(PortalSources::from_value(&broken).is_err());
         broken = "x = 1".parse().unwrap();
         assert!(PortalSources::from_value(&broken).is_err());

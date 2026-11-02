@@ -88,7 +88,8 @@ fn relative_scope(raw: &str) -> Option<PathBuf> {
     let p = PathBuf::from(raw.trim_end_matches('/'));
     let ok = !raw.is_empty()
         && p.is_relative()
-        && p.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+        && p.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
     ok.then_some(p)
 }
 
@@ -102,7 +103,12 @@ fn load_policy(root: &Path) -> Policy {
     else {
         return policy;
     };
-    for raw in linux.get("audit_scopes").and_then(|a| a.as_array()).into_iter().flatten() {
+    for raw in linux
+        .get("audit_scopes")
+        .and_then(|a| a.as_array())
+        .into_iter()
+        .flatten()
+    {
         match raw.as_str().and_then(relative_scope) {
             Some(p) => policy.audit_scopes.push(p),
             None => policy.errors.push(format!(
@@ -127,7 +133,10 @@ fn load_policy(root: &Path) -> Policy {
         if let Some(one) = item.get("binary").and_then(|b| b.as_str()) {
             binaries.insert(one.to_string());
         }
-        let scope = item.get("scope").and_then(|s| s.as_str()).and_then(relative_scope);
+        let scope = item
+            .get("scope")
+            .and_then(|s| s.as_str())
+            .and_then(relative_scope);
         let reason = item
             .get("reason")
             .and_then(|r| r.as_str())
@@ -492,7 +501,10 @@ pub fn check(opts: &Options) -> Report {
                 check: CHECK.to_string(),
                 ok: false,
                 could_not_run: None,
-                summary: format!("static linkage policy is malformed: {} finding(s)", findings.len()),
+                summary: format!(
+                    "static linkage policy is malformed: {} finding(s)",
+                    findings.len()
+                ),
                 findings,
             }
         }
@@ -500,13 +512,7 @@ pub fn check(opts: &Options) -> Report {
     };
 
     for b in &binaries {
-        check_single_binary(
-            b,
-            opts.arch.as_deref(),
-            &opts.root,
-            &policy,
-            &mut findings,
-        );
+        check_single_binary(b, opts.arch.as_deref(), &opts.root, &policy, &mut findings);
     }
 
     let ok = findings.is_empty();
@@ -535,8 +541,15 @@ pub fn check(opts: &Options) -> Report {
 /// package name plus any [[bin]] names. None when they cannot be derived (no SSOT or workspace in
 /// the root), in which case the directory scan keeps every ELF file.
 fn native_binary_names(root: &Path) -> Option<std::collections::HashSet<String>> {
-    let ssot: toml::Value = std::fs::read_to_string(root.join("usr/share/mios/mios.toml")).ok()?.parse().ok()?;
-    let workspaces = ssot.get("build")?.get("native")?.get("workspaces")?.as_array()?;
+    let ssot: toml::Value = std::fs::read_to_string(root.join("usr/share/mios/mios.toml"))
+        .ok()?
+        .parse()
+        .ok()?;
+    let workspaces = ssot
+        .get("build")?
+        .get("native")?
+        .get("workspaces")?
+        .as_array()?;
     let mut names = std::collections::HashSet::new();
     for ws in workspaces.iter().filter_map(|w| w.as_str()) {
         let ws_dir = root.join(ws);
@@ -559,10 +572,19 @@ fn native_binary_names(root: &Path) -> Option<std::collections::HashSet<String>>
             else {
                 continue;
             };
-            if let Some(name) = crate_toml.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()) {
+            if let Some(name) = crate_toml
+                .get("package")
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+            {
                 names.insert(name.to_string());
             }
-            for bin in crate_toml.get("bin").and_then(|b| b.as_array()).into_iter().flatten() {
+            for bin in crate_toml
+                .get("bin")
+                .and_then(|b| b.as_array())
+                .into_iter()
+                .flatten()
+            {
                 if let Some(name) = bin.get("name").and_then(|n| n.as_str()) {
                     names.insert(name.to_string());
                 }
@@ -637,7 +659,11 @@ fn scanned(opts: &Options) -> Result<Vec<PathBuf>, Report> {
             collect_elf_files_recursive(&bin_sub, &mut found);
         }
         if let Some(names) = &native {
-            found.retain(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| names.contains(n)));
+            found.retain(|f| {
+                f.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| names.contains(n))
+            });
         }
         binaries.extend(found);
     }
@@ -1125,7 +1151,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let ssot = tmp.path().join("usr/share/mios");
         std::fs::create_dir_all(&ssot).unwrap();
-        let mut text = String::from("[build.native.linux]\naudit_scopes = [\"usr/lib/mios/portal\"]\n");
+        let mut text =
+            String::from("[build.native.linux]\naudit_scopes = [\"usr/lib/mios/portal\"]\n");
         if let Some(ex) = exception {
             text.push_str(ex);
         }
@@ -1135,14 +1162,22 @@ mod tests {
         for name in ["mios-portal", "libxul.so", "plugin-container"] {
             std::fs::write(portal.join(name), make_needs_libfoo()).unwrap();
         }
-        std::fs::write(portal.join("gmp-clearkey/0.1/libclearkey.so"), make_dynamic_needed()).unwrap();
+        std::fs::write(
+            portal.join("gmp-clearkey/0.1/libclearkey.so"),
+            make_dynamic_needed(),
+        )
+        .unwrap();
         tmp
     }
 
     const GECKO: &str = "[[build.native.linux.exceptions]]\nscope = \"usr/lib/mios/portal\"\nreason = \"upstream Gecko\"\nbinaries = [\"mios-portal\", \"libxul.so\", \"plugin-container\", \"libclearkey.so\"]\n";
 
     fn opts(root: &Path) -> Options {
-        Options { root: root.to_path_buf(), binary: None, arch: Some("x86_64".into()) }
+        Options {
+            root: root.to_path_buf(),
+            binary: None,
+            arch: Some("x86_64".into()),
+        }
     }
 
     #[test]
@@ -1164,11 +1199,24 @@ mod tests {
     #[test]
     fn negative_control_an_unlisted_dynamic_elf_in_scope_fails() {
         let tmp = gecko_root(Some(GECKO));
-        std::fs::write(tmp.path().join("usr/lib/mios/portal/libsneaky.so"), make_needs_libfoo()).unwrap();
+        std::fs::write(
+            tmp.path().join("usr/lib/mios/portal/libsneaky.so"),
+            make_needs_libfoo(),
+        )
+        .unwrap();
         let report = check(&opts(tmp.path()));
         assert_eq!(report.code(), 1);
-        assert!(report.findings.iter().any(|f| f.contains("libsneaky.so")), "{:?}", report.findings);
-        assert_eq!(report.findings.len(), 1, "only the unlisted one: {:?}", report.findings);
+        assert!(
+            report.findings.iter().any(|f| f.contains("libsneaky.so")),
+            "{:?}",
+            report.findings
+        );
+        assert_eq!(
+            report.findings.len(),
+            1,
+            "only the unlisted one: {:?}",
+            report.findings
+        );
     }
 
     #[test]
@@ -1185,13 +1233,19 @@ mod tests {
         let tmp = gecko_root(Some(GECKO));
         let elsewhere = tmp.path().join("libxul.so");
         std::fs::write(&elsewhere, make_needs_libfoo()).unwrap();
-        let report = check(&Options { binary: Some(elsewhere), ..opts(tmp.path()) });
+        let report = check(&Options {
+            binary: Some(elsewhere),
+            ..opts(tmp.path())
+        });
         assert_eq!(report.code(), 1, "{:?}", report.findings);
         // The same name inside a staged copy of the scope is exempt.
         let staged = tmp.path().join("stage/usr/lib/mios/portal");
         std::fs::create_dir_all(&staged).unwrap();
         std::fs::write(staged.join("libxul.so"), make_needs_libfoo()).unwrap();
-        let report = check(&Options { binary: Some(staged.join("libxul.so")), ..opts(tmp.path()) });
+        let report = check(&Options {
+            binary: Some(staged.join("libxul.so")),
+            ..opts(tmp.path())
+        });
         assert_eq!(report.code(), 0, "{:?}", report.findings);
     }
 
@@ -1200,7 +1254,10 @@ mod tests {
         let tmp = gecko_root(Some(&GECKO.replace("reason = \"upstream Gecko\"\n", "")));
         let report = check(&opts(tmp.path()));
         assert_eq!(report.code(), 1);
-        assert!(report.findings.iter().any(|f| f.contains("needs binaries, a relative scope and a reason")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.contains("needs binaries, a relative scope and a reason")));
         let tmp = gecko_root(Some(&GECKO.replace("usr/lib/mios/portal", "/abs/portal")));
         assert_eq!(check(&opts(tmp.path())).code(), 1);
     }
@@ -1228,9 +1285,16 @@ mod tests {
     fn positive_control_single_binary_approved_exception_succeeds() {
         let tmp = gecko_root(Some(GECKO));
         let portal = tmp.path().join("usr/lib/mios/portal/mios-portal");
-        let report = check(&Options { binary: Some(portal), ..opts(tmp.path()) });
+        let report = check(&Options {
+            binary: Some(portal),
+            ..opts(tmp.path())
+        });
         assert_eq!(report.code(), 0, "{:?}", report.findings);
-        assert!(report.summary.contains("approved dynamic exception"), "{:?}", report.summary);
+        assert!(
+            report.summary.contains("approved dynamic exception"),
+            "{:?}",
+            report.summary
+        );
     }
 
     #[test]
@@ -1247,12 +1311,16 @@ mod tests {
         );
         let tmp_bad = gecko_root(Some(&ex_bad));
         let report_bad = check(&opts(tmp_bad.path()));
-        assert_eq!(report_bad.code(), 1, "unapproved DT_NEEDED must fail: {:?}", report_bad.findings);
+        assert_eq!(
+            report_bad.code(),
+            1,
+            "unapproved DT_NEEDED must fail: {:?}",
+            report_bad.findings
+        );
         assert!(
-            report_bad
-                .findings
-                .iter()
-                .any(|f| f.contains("mios-portal") && f.contains("unapproved DT_NEEDED") && f.contains("libfoo.so")),
+            report_bad.findings.iter().any(|f| f.contains("mios-portal")
+                && f.contains("unapproved DT_NEEDED")
+                && f.contains("libfoo.so")),
             "{:?}",
             report_bad.findings
         );

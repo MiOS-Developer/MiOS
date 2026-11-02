@@ -1,9 +1,8 @@
 // AI-hint: CLI driver for mios-unit-gen rendering systemd unit files from SSOT.
 use mios_unit_gen::{
     drift_register, import_unit, project, project_deployment, project_user, projection_ceiling,
-    projection_list, strict_without_write_grant,
-    render_keybindings, render_units, render_user_units, unexpandable_placeholders, write_projection,
-    DeploymentKind,
+    projection_list, render_keybindings, render_units, render_user_units,
+    strict_without_write_grant, unexpandable_placeholders, write_projection, DeploymentKind,
 };
 use std::env;
 use std::fs;
@@ -140,7 +139,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(i) = args.iter().position(|a| a == "--import") {
         let user = args.iter().any(|a| a == "--user");
         let ssot = read_ssot(&root);
-        let p = if user { project_user(&root)? } else { project(&root)? };
+        let p = if user {
+            project_user(&root)?
+        } else {
+            project(&root)?
+        };
         let mut names: Vec<String> = args[i + 1..]
             .iter()
             .filter(|a| !a.starts_with("--"))
@@ -153,7 +156,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             names.sort();
             names.dedup();
         }
-        let dir = root.join(if user { "usr/lib/systemd/user" } else { "usr/lib/systemd/system" });
+        let dir = root.join(if user {
+            "usr/lib/systemd/user"
+        } else {
+            "usr/lib/systemd/system"
+        });
         let table = if user { "user_units" } else { "units" };
         let mut failed = 0;
         for name in &names {

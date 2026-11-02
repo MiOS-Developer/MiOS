@@ -16,16 +16,31 @@ impl VmConfig {
                 return Err("invalid VM escape keysym".into());
             }
         }
-        for class in self.looking_glass_classes.iter().chain(&self.x11_rdp_classes).chain(&self.other_classes) {
+        for class in self
+            .looking_glass_classes
+            .iter()
+            .chain(&self.x11_rdp_classes)
+            .chain(&self.other_classes)
+        {
             if class.is_empty() || class.chars().any(char::is_control) {
                 return Err("invalid VM class".into());
             }
         }
         Ok(())
     }
-    pub fn lua(&self, action: &str, address: &str, pid: u64, class: &str) -> Result<String, String> {
+    pub fn lua(
+        &self,
+        action: &str,
+        address: &str,
+        pid: u64,
+        class: &str,
+    ) -> Result<String, String> {
         self.validate()?;
-        if !address.starts_with("0x") || address.len() < 3 || !address[2..].bytes().all(|b| b.is_ascii_hexdigit()) || pid == 0 {
+        if !address.starts_with("0x")
+            || address.len() < 3
+            || !address[2..].bytes().all(|b| b.is_ascii_hexdigit())
+            || pid == 0
+        {
             return Err("invalid focused VM identity".into());
         }
         let lg = self.looking_glass_classes.iter().any(|v| v == class);
@@ -50,9 +65,48 @@ impl VmConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn config() -> VmConfig { VmConfig { looking_glass_classes:vec!["looking-glass-client".into()],x11_rdp_classes:vec!["xfreerdp".into()],other_classes:vec!["remote-viewer".into()],looking_glass_escape_key:"Scroll_Lock".into(),x11_rdp_escape_key:"Control_R".into() } }
-    #[test] fn escapes_guard_address_pid_and_class() { let s=config().lua("vm-capture-toggle","0xabc",42,"looking-glass-client").unwrap(); assert!(s.contains("w.address~=\"0xabc\"")); assert!(s.contains("w.pid~=42")); assert!(s.contains("key=\"Scroll_Lock\"")); assert!(s.contains("window=\"address:0xabc\"")); }
-    #[test] fn x11_rdp_uses_its_native_escape() { assert!(config().lua("vm-capture-toggle","0xabc",42,"xfreerdp").unwrap().contains("Control_R")); }
-    #[test] fn unsupported_client_and_injection_fail() { for (a,p,c) in [("0xabc",42,"Alacritty"),("0xabc",0,"xfreerdp"),("0xabc');x()",42,"xfreerdp"),("0xabc",42,"wlfreerdp"),("0xabc",42,"remote-viewer")] {assert!(config().lua("vm-capture-toggle",a,p,c).is_err());} }
-    #[test] fn generic_clients_can_fullscreen_without_fake_capture_state() {assert!(config().lua("vm-fullscreen","0xabc",42,"remote-viewer").is_ok());}
+    fn config() -> VmConfig {
+        VmConfig {
+            looking_glass_classes: vec!["looking-glass-client".into()],
+            x11_rdp_classes: vec!["xfreerdp".into()],
+            other_classes: vec!["remote-viewer".into()],
+            looking_glass_escape_key: "Scroll_Lock".into(),
+            x11_rdp_escape_key: "Control_R".into(),
+        }
+    }
+    #[test]
+    fn escapes_guard_address_pid_and_class() {
+        let s = config()
+            .lua("vm-capture-toggle", "0xabc", 42, "looking-glass-client")
+            .unwrap();
+        assert!(s.contains("w.address~=\"0xabc\""));
+        assert!(s.contains("w.pid~=42"));
+        assert!(s.contains("key=\"Scroll_Lock\""));
+        assert!(s.contains("window=\"address:0xabc\""));
+    }
+    #[test]
+    fn x11_rdp_uses_its_native_escape() {
+        assert!(config()
+            .lua("vm-capture-toggle", "0xabc", 42, "xfreerdp")
+            .unwrap()
+            .contains("Control_R"));
+    }
+    #[test]
+    fn unsupported_client_and_injection_fail() {
+        for (a, p, c) in [
+            ("0xabc", 42, "Alacritty"),
+            ("0xabc", 0, "xfreerdp"),
+            ("0xabc');x()", 42, "xfreerdp"),
+            ("0xabc", 42, "wlfreerdp"),
+            ("0xabc", 42, "remote-viewer"),
+        ] {
+            assert!(config().lua("vm-capture-toggle", a, p, c).is_err());
+        }
+    }
+    #[test]
+    fn generic_clients_can_fullscreen_without_fake_capture_state() {
+        assert!(config()
+            .lua("vm-fullscreen", "0xabc", 42, "remote-viewer")
+            .is_ok());
+    }
 }

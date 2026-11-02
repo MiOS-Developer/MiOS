@@ -44,14 +44,18 @@ fn event_loop(terminal: &mut DefaultTerminal, c: &Client, cfg: &Config) -> Resul
     let mut snap = Snapshot::fetch(c);
     let mut last = Instant::now();
     loop {
-        terminal.draw(|f| draw(f, &snap, cfg)).map_err(|e| e.to_string())?;
+        terminal
+            .draw(|f| draw(f, &snap, cfg))
+            .map_err(|e| e.to_string())?;
         let wait = refresh.saturating_sub(last.elapsed());
         if event::poll(wait).map_err(|e| e.to_string())? {
             if let Event::Key(k) = event::read().map_err(|e| e.to_string())? {
                 if k.kind == KeyEventKind::Press {
                     match k.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+                        KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(())
+                        }
                         KeyCode::Char('r') => {
                             snap = Snapshot::fetch(c);
                             last = Instant::now();
@@ -95,33 +99,63 @@ fn draw(f: &mut Frame, snap: &Snapshot, cfg: &Config) {
             let g = |k: &str| st.get(k).and_then(Value::as_str).unwrap_or("?").to_string();
             let thermal = g("thermal_state");
             let overall = g("overall_status");
-            let profile = snap.active.as_ref().map(view::active_profile).unwrap_or_else(|e| e.clone());
+            let profile = snap
+                .active
+                .as_ref()
+                .map(view::active_profile)
+                .unwrap_or_else(|e| e.clone());
             vec![
                 Line::from(vec![
                     Span::raw("ventulusd "),
-                    Span::styled(g("daemon_version"), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(format!("  up {}s   overall ", st.get("uptime_seconds").and_then(Value::as_u64).unwrap_or(0))),
+                    Span::styled(
+                        g("daemon_version"),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!(
+                        "  up {}s   overall ",
+                        st.get("uptime_seconds")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                    )),
                     Span::styled(overall.clone(), Style::default().fg(state_color(&overall))),
                     Span::raw("   thermal "),
-                    Span::styled(thermal.clone(), Style::default().fg(state_color(&thermal)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        thermal.clone(),
+                        Style::default()
+                            .fg(state_color(&thermal))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]),
                 Line::from(format!("profile  {profile}")),
                 Line::from(format!(
                     "readiness {}",
-                    st.pointer("/readiness/top_summary").and_then(Value::as_str).unwrap_or("-")
+                    st.pointer("/readiness/top_summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or("-")
                 )),
             ]
         }
-        Err(e) => vec![Line::styled(format!("daemon unreachable: {e}"), Style::default().fg(Color::Red))],
+        Err(e) => vec![Line::styled(
+            format!("daemon unreachable: {e}"),
+            Style::default().fg(Color::Red),
+        )],
     };
     f.render_widget(
-        Paragraph::new(header_lines).block(Block::default().borders(Borders::ALL).title(" MiOS fan control ")),
+        Paragraph::new(header_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" MiOS fan control "),
+        ),
         top,
     );
 
     // Fans.
     let rows = fan_rows.iter().map(|r| {
-        let mode_style = if r.daemon_owned { Style::default().fg(Color::Cyan) } else { Style::default() };
+        let mode_style = if r.daemon_owned {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
         Row::new(vec![
             Cell::from(r.header.clone()),
             Cell::from(r.role.clone()),
@@ -149,7 +183,10 @@ fn draw(f: &mut Frame, snap: &Snapshot, cfg: &Config) {
                 Constraint::Min(6),
             ],
         )
-        .header(Row::new(vec!["HEADER", "ROLE", "MODE", "DUTY", "", "RPM", "FLAGS"]).style(Style::default().add_modifier(Modifier::BOLD)))
+        .header(
+            Row::new(vec!["HEADER", "ROLE", "MODE", "DUTY", "", "RPM", "FLAGS"])
+                .style(Style::default().add_modifier(Modifier::BOLD)),
+        )
         .block(Block::default().borders(Borders::ALL).title(fans_title)),
         mid,
     );
@@ -164,17 +201,40 @@ fn draw(f: &mut Frame, snap: &Snapshot, cfg: &Config) {
                     Cell::from(s.kind),
                     Cell::from(s.chip),
                     Cell::from(s.label),
-                    Cell::from(s.value_c.map(|t| format!("{t:>6.1} C")).unwrap_or("-".into()))
-                        .style(if hot { Style::default().fg(Color::Red) } else { Style::default() }),
+                    Cell::from(
+                        s.value_c
+                            .map(|t| format!("{t:>6.1} C"))
+                            .unwrap_or("-".into()),
+                    )
+                    .style(if hot {
+                        Style::default().fg(Color::Red)
+                    } else {
+                        Style::default()
+                    }),
                 ])
             })
             .collect(),
         Err(e) => vec![Row::new(vec![Cell::from(e.clone())])],
     };
     f.render_widget(
-        Table::new(srows, [Constraint::Length(12), Constraint::Length(16), Constraint::Length(30), Constraint::Min(9)])
-            .header(Row::new(vec!["KIND", "CHIP", "LABEL", "TEMP"]).style(Style::default().add_modifier(Modifier::BOLD)))
-            .block(Block::default().borders(Borders::ALL).title(" Temperatures ")),
+        Table::new(
+            srows,
+            [
+                Constraint::Length(12),
+                Constraint::Length(16),
+                Constraint::Length(30),
+                Constraint::Min(9),
+            ],
+        )
+        .header(
+            Row::new(vec!["KIND", "CHIP", "LABEL", "TEMP"])
+                .style(Style::default().add_modifier(Modifier::BOLD)),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Temperatures "),
+        ),
         bot,
     );
 

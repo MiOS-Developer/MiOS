@@ -46,7 +46,10 @@ fn sealed_env(root: &Path, vendor: &Path) -> BTreeMap<String, String> {
         ("XDG_CONFIG_HOME".into(), "/nonexistent/.config".into()),
         ("MIOS_ROOT".into(), root.clone()),
         ("MIOS_TOML_ROOT".into(), root),
-        ("MIOS_VENDOR_TOML".into(), vendor.to_string_lossy().into_owned()),
+        (
+            "MIOS_VENDOR_TOML".into(),
+            vendor.to_string_lossy().into_owned(),
+        ),
         ("MIOS_USER_TOML".into(), "/nonexistent/user.toml".into()),
         ("MIOS_USER_TOML_D".into(), "/nonexistent/user.d".into()),
     ])
@@ -54,7 +57,10 @@ fn sealed_env(root: &Path, vendor: &Path) -> BTreeMap<String, String> {
 
 /// `${name:-default}`: an empty value counts as unset.
 fn or_default<'a>(env: &'a BTreeMap<String, String>, name: &str, default: &'a str) -> &'a str {
-    env.get(name).map(String::as_str).filter(|v| !v.is_empty()).unwrap_or(default)
+    env.get(name)
+        .map(String::as_str)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(default)
 }
 
 /// The exported MIOS_* environment after `source userenv.sh`, values raw.
@@ -63,8 +69,11 @@ pub fn snapshot(root: &Path, vendor: &Path) -> Result<BTreeMap<String, String>, 
         return Err(format!("vendor SSOT not found: {}", vendor.display()));
     }
     let mut layers: Vec<PathBuf> = vec![vendor.to_path_buf()];
-    layers.extend(mios_resolver::layers::fragments(&root.join("usr/lib/mios/mios.d")));
-    let mut merged = mios_resolver::layers::merge_layer_files(&layers).map_err(|e| e.to_string())?;
+    layers.extend(mios_resolver::layers::fragments(
+        &root.join("usr/lib/mios/mios.d"),
+    ));
+    let mut merged =
+        mios_resolver::layers::merge_layer_files(&layers).map_err(|e| e.to_string())?;
     mios_resolver::ports::derive_ports(&mut merged);
 
     let sealed = sealed_env(root, vendor);
@@ -80,7 +89,9 @@ pub fn snapshot(root: &Path, vendor: &Path) -> Result<BTreeMap<String, String>, 
     }
     // userenv.sh's own derivation, after the resolver's.
     let bind = match or_default(&env, "MIOS_PGVECTOR_LISTEN_LOOPBACK", "true") {
-        "false" | "False" | "FALSE" | "0" | "no" | "off" => or_default(&env, "MIOS_NETWORK_BIND_ALL", "0.0.0.0"),
+        "false" | "False" | "FALSE" | "0" | "no" | "off" => {
+            or_default(&env, "MIOS_NETWORK_BIND_ALL", "0.0.0.0")
+        }
         _ => or_default(&env, "MIOS_NETWORK_LOOPBACK", "127.0.0.1"),
     }
     .to_string();
@@ -95,7 +106,12 @@ pub fn render(env: &BTreeMap<String, String>) -> String {
     let mut lines: Vec<String> = env
         .iter()
         .filter(|(name, _)| !LOCATION_NAMES.contains(&name.as_str()))
-        .map(|(name, value)| format!("{name}={}", value.replace('\\', "\\\\").replace('\n', "\\n")))
+        .map(|(name, value)| {
+            format!(
+                "{name}={}",
+                value.replace('\\', "\\\\").replace('\n', "\\n")
+            )
+        })
         .collect();
     lines.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     let mut out = lines.join("\n");
@@ -107,18 +123,33 @@ pub fn render(env: &BTreeMap<String, String>) -> String {
 
 /// `mios-gen env-snapshot`: print the snapshot, write it with `out`, or with
 /// `check` compare it to a committed file without writing anything.
-pub fn run(root: &Path, vendor: Option<&Path>, out: Option<&Path>, check: Option<&Path>) -> Result<String, String> {
-    let vendor = vendor.map(Path::to_path_buf).unwrap_or_else(|| root.join("usr/share/mios/mios.toml"));
+pub fn run(
+    root: &Path,
+    vendor: Option<&Path>,
+    out: Option<&Path>,
+    check: Option<&Path>,
+) -> Result<String, String> {
+    let vendor = vendor
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("usr/share/mios/mios.toml"));
     let body = render(&snapshot(root, &vendor)?);
     if body.is_empty() {
         return Err("environment snapshot produced no values".into());
     }
     if let Some(path) = check {
-        let committed = fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let committed =
+            fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         if committed != body.as_bytes() {
-            return Err(format!("{} is stale: it differs from a fresh environment snapshot", path.display()));
+            return Err(format!(
+                "{} is stale: it differs from a fresh environment snapshot",
+                path.display()
+            ));
         }
-        return Ok(format!("{} matches the resolved environment ({} values)\n", path.display(), body.lines().count()));
+        return Ok(format!(
+            "{} matches the resolved environment ({} values)\n",
+            path.display(),
+            body.lines().count()
+        ));
     }
     if let Some(path) = out {
         crate::greeter::write_atomic(path, &body)?;
@@ -151,15 +182,22 @@ mod tests {
         sorted.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
         assert_eq!(lines, sorted);
         assert!(lines.iter().all(|l| l.starts_with("MIOS_")));
-        assert!(!lines.iter().any(|l| l.starts_with("MIOS_ROOT=") || l.starts_with("MIOS_VENDOR_TOML=")));
+        assert!(!lines
+            .iter()
+            .any(|l| l.starts_with("MIOS_ROOT=") || l.starts_with("MIOS_VENDOR_TOML=")));
     }
 
     #[test]
     fn pg_bind_follows_userenv_sh() {
-        let open = tree("[pgvector]\nlisten_loopback = false\n[network]\nbind_all = \"10.0.0.1\"\n");
-        assert!(run(open.path(), None, None, None).unwrap().contains("MIOS_PG_BIND_ADDR=10.0.0.1\n"));
+        let open =
+            tree("[pgvector]\nlisten_loopback = false\n[network]\nbind_all = \"10.0.0.1\"\n");
+        assert!(run(open.path(), None, None, None)
+            .unwrap()
+            .contains("MIOS_PG_BIND_ADDR=10.0.0.1\n"));
         let closed = tree("[pgvector]\nlisten_loopback = true\n");
-        assert!(run(closed.path(), None, None, None).unwrap().contains("MIOS_PG_BIND_ADDR=127.0.0.1\n"));
+        assert!(run(closed.path(), None, None, None)
+            .unwrap()
+            .contains("MIOS_PG_BIND_ADDR=127.0.0.1\n"));
     }
 
     #[test]
@@ -173,7 +211,10 @@ mod tests {
         fs::create_dir_all(host.parent().unwrap()).unwrap();
         fs::write(&host, "[a]\nv = \"host\"\n").unwrap();
         let body = run(dir.path(), None, None, None).unwrap();
-        assert!(body.contains("MIOS_A_V=vendor\n") && body.contains("MIOS_A_F=fragment\n"), "{body}");
+        assert!(
+            body.contains("MIOS_A_V=vendor\n") && body.contains("MIOS_A_F=fragment\n"),
+            "{body}"
+        );
     }
 
     #[test]
@@ -186,6 +227,8 @@ mod tests {
         let err = run(dir.path(), None, None, Some(&base)).unwrap_err();
         assert!(err.contains("is stale"), "{err}");
         assert_eq!(fs::read_to_string(&base).unwrap(), "MIOS_A_V=2\n");
-        assert!(run(&dir.path().join("absent"), None, None, None).unwrap_err().contains("vendor SSOT not found"));
+        assert!(run(&dir.path().join("absent"), None, None, None)
+            .unwrap_err()
+            .contains("vendor SSOT not found"));
     }
 }

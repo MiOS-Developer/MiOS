@@ -6,7 +6,10 @@
 // AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/gpu_topology.rs,
 //   usr/share/doc/mios/desktop-gpu-routing.md, linux-dmabuf-v1.xml (zwp_linux_dmabuf_feedback_v1)
 
-use rustix::net::{recvmsg, sendmsg, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, SendAncillaryBuffer, SendAncillaryMessage, SendFlags};
+use rustix::net::{
+    recvmsg, sendmsg, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, SendAncillaryBuffer,
+    SendAncillaryMessage, SendFlags,
+};
 use std::{
     collections::{HashMap, VecDeque},
     io::{self, IoSlice, IoSliceMut, Write},
@@ -14,10 +17,16 @@ use std::{
     net::Shutdown,
     os::{
         fd::{AsFd, OwnedFd},
-        unix::{fs::FileExt, net::{UnixListener, UnixStream}},
+        unix::{
+            fs::FileExt,
+            net::{UnixListener, UnixStream},
+        },
     },
     path::PathBuf,
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 
@@ -49,7 +58,8 @@ pub struct Rewrite {
 }
 
 fn u32_at(b: &[u8], o: usize) -> Option<u32> {
-    b.get(o..o + 4).map(|s| u32::from_ne_bytes(s.try_into().unwrap()))
+    b.get(o..o + 4)
+        .map(|s| u32::from_ne_bytes(s.try_into().unwrap()))
 }
 
 fn pad4(n: usize) -> usize {
@@ -76,7 +86,9 @@ fn note_request(objs: &mut Objects, id: u32, op: u16, args: &[u8]) {
             }
         }
         (_, Some(Kind::Registry), 0) => {
-            let Some((iface, o)) = string_at(args, 4) else { return };
+            let Some((iface, o)) = string_at(args, 4) else {
+                return;
+            };
             let Some(n) = new(o + 4) else { return };
             match iface {
                 "wl_seat" => objs.kinds.insert(n, Kind::Seat),
@@ -151,14 +163,24 @@ fn filter_table(fd: &OwnedFd, size: u32) -> Option<(OwnedFd, u32, Vec<Option<u16
             return None;
         }
     }
-    let memfd = rustix::fs::memfd_create("mios-dmabuf-linear-table", rustix::fs::MemfdFlags::CLOEXEC).ok()?;
+    let memfd =
+        rustix::fs::memfd_create("mios-dmabuf-linear-table", rustix::fs::MemfdFlags::CLOEXEC)
+            .ok()?;
     let mut out = std::fs::File::from(memfd);
     out.write_all(&kept).ok()?;
     Some((OwnedFd::from(out), kept.len() as u32, map))
 }
 
 /// Rewrite one event; `fds` is the queue of fds received from the parent, in order.
-fn rewrite_event(objs: &mut Objects, rw: &Rewrite, id: u32, op: u16, args: &[u8], fds: &mut VecDeque<OwnedFd>, out_fds: &mut Vec<OwnedFd>) -> Vec<u8> {
+fn rewrite_event(
+    objs: &mut Objects,
+    rw: &Rewrite,
+    id: u32,
+    op: u16,
+    args: &[u8],
+    fds: &mut VecDeque<OwnedFd>,
+    out_fds: &mut Vec<OwnedFd>,
+) -> Vec<u8> {
     let kind = objs.kinds.get(&id).copied();
     match (id, kind, op) {
         (1, _, 1) => {
@@ -169,7 +191,9 @@ fn rewrite_event(objs: &mut Objects, rw: &Rewrite, id: u32, op: u16, args: &[u8]
         }
         (_, Some(Kind::Keyboard), 0) => out_fds.extend(fds.pop_front()),
         (_, Some(Kind::Feedback), 1) => {
-            let Some(fd) = fds.pop_front() else { return message(id, op, args) };
+            let Some(fd) = fds.pop_front() else {
+                return message(id, op, args);
+            };
             let size = u32_at(args, 0).unwrap_or(0);
             if rw.linear_only {
                 if let Some((table, new_size, map)) = filter_table(&fd, size) {
@@ -191,7 +215,11 @@ fn rewrite_event(objs: &mut Objects, rw: &Rewrite, id: u32, op: u16, args: &[u8]
                 let mut seen = std::collections::HashSet::new();
                 let kept: Vec<u8> = idx
                     .chunks_exact(2)
-                    .filter_map(|c| map.get(u16::from_ne_bytes([c[0], c[1]]) as usize).copied().flatten())
+                    .filter_map(|c| {
+                        map.get(u16::from_ne_bytes([c[0], c[1]]) as usize)
+                            .copied()
+                            .flatten()
+                    })
                     .filter(|i| seen.insert(*i))
                     .flat_map(u16::to_ne_bytes)
                     .collect();
@@ -207,7 +235,12 @@ fn recv(sock: &UnixStream, buf: &mut [u8], fds: &mut VecDeque<OwnedFd>) -> io::R
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(64))];
     let mut cmsg = RecvAncillaryBuffer::new(&mut space);
     loop {
-        match recvmsg(sock, &mut [IoSliceMut::new(buf)], &mut cmsg, RecvFlags::CMSG_CLOEXEC) {
+        match recvmsg(
+            sock,
+            &mut [IoSliceMut::new(buf)],
+            &mut cmsg,
+            RecvFlags::CMSG_CLOEXEC,
+        ) {
             Ok(r) => {
                 for m in cmsg.drain() {
                     if let RecvAncillaryMessage::ScmRights(it) = m {
@@ -229,12 +262,18 @@ fn send(sock: &UnixStream, data: &[u8], fds: Vec<OwnedFd>) -> io::Result<()> {
     while off < data.len() || fds.is_some() {
         let held = fds.take().unwrap_or_default();
         let borrowed: Vec<_> = held.iter().map(|f| f.as_fd()).collect();
-        let mut space = vec![MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(borrowed.len().max(1)))];
+        let mut space =
+            vec![MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(borrowed.len().max(1)))];
         let mut cmsg = SendAncillaryBuffer::new(&mut space);
         if !borrowed.is_empty() && !cmsg.push(SendAncillaryMessage::ScmRights(&borrowed)) {
             return Err(io::Error::other("too many fds for one message"));
         }
-        match sendmsg(sock, &[IoSlice::new(&data[off..])], &mut cmsg, SendFlags::NOSIGNAL) {
+        match sendmsg(
+            sock,
+            &[IoSlice::new(&data[off..])],
+            &mut cmsg,
+            SendFlags::NOSIGNAL,
+        ) {
             Ok(n) => off += n,
             Err(rustix::io::Errno::INTR) => {
                 fds = Some(held).filter(|f| !f.is_empty());
@@ -258,7 +297,9 @@ fn split(pending: &[u8]) -> Result<(Vec<(u32, u16, std::ops::Range<usize>)>, usi
         let w = u32_at(pending, o + 4).unwrap();
         let size = (w >> 16) as usize;
         if size < 8 || size % 4 != 0 {
-            return Err(format!("malformed Wayland message (object {id}, size {size})"));
+            return Err(format!(
+                "malformed Wayland message (object {id}, size {size})"
+            ));
         }
         if pending.len() - o < size {
             break;
@@ -292,7 +333,12 @@ fn pump_requests(from: &UnixStream, to: &UnixStream, objs: &Mutex<Objects>) -> R
     }
 }
 
-fn pump_events(from: &UnixStream, to: &UnixStream, objs: &Mutex<Objects>, rw: &Rewrite) -> Result<(), String> {
+fn pump_events(
+    from: &UnixStream,
+    to: &UnixStream,
+    objs: &Mutex<Objects>,
+    rw: &Rewrite,
+) -> Result<(), String> {
     let mut buf = vec![0u8; 1 << 16];
     let mut pending = Vec::new();
     let mut fds = VecDeque::new();
@@ -347,7 +393,11 @@ fn connection(client: UnixStream, server: UnixStream, rw: Arc<Rewrite>) -> io::R
 }
 
 /// Serve `listener`: every connection is paired with a new connection to `upstream` (the parent's socket).
-pub fn serve(listener: UnixListener, upstream: PathBuf, rw: Arc<Rewrite>) -> thread::JoinHandle<()> {
+pub fn serve(
+    listener: UnixListener,
+    upstream: PathBuf,
+    rw: Arc<Rewrite>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         for conn in listener.incoming() {
             let Ok(client) = conn else { break };
@@ -357,7 +407,10 @@ pub fn serve(listener: UnixListener, upstream: PathBuf, rw: Arc<Rewrite>) -> thr
                         eprintln!("mios-gen wl-device-proxy: {e}");
                     }
                 }
-                Err(e) => eprintln!("mios-gen wl-device-proxy: parent {}: {e}", upstream.display()),
+                Err(e) => eprintln!(
+                    "mios-gen wl-device-proxy: parent {}: {e}",
+                    upstream.display()
+                ),
             }
         }
     })
@@ -385,16 +438,39 @@ mod tests {
         let parent_path = dir.path().join("parent");
         let parent = UnixListener::bind(&parent_path).unwrap();
         let proxy_path = dir.path().join("proxy");
-        let rw = Arc::new(Rewrite { rdev: 0xe280, linear_only: true, devices_rewritten: AtomicU64::new(0), tables_filtered: AtomicU64::new(0) });
-        let _h = serve(UnixListener::bind(&proxy_path).unwrap(), parent_path, rw.clone());
+        let rw = Arc::new(Rewrite {
+            rdev: 0xe280,
+            linear_only: true,
+            devices_rewritten: AtomicU64::new(0),
+            tables_filtered: AtomicU64::new(0),
+        });
+        let _h = serve(
+            UnixListener::bind(&proxy_path).unwrap(),
+            parent_path,
+            rw.clone(),
+        );
         let client = UnixStream::connect(&proxy_path).unwrap();
         let (server, _) = parent.accept().unwrap();
         let mut sbuf = vec![0u8; 4096];
         // Client: get_registry(2), bind(name 7, zwp_linux_dmabuf_v1 v4 -> 3), get_default_feedback(4), bind wl_seat -> 5, get_keyboard(6).
         let mut req = message(1, 1, &arg_u32(2));
-        req.extend(message(2, 0, &[arg_u32(7), arg_str("zwp_linux_dmabuf_v1"), arg_u32(4), arg_u32(3)].concat()));
+        req.extend(message(
+            2,
+            0,
+            &[
+                arg_u32(7),
+                arg_str("zwp_linux_dmabuf_v1"),
+                arg_u32(4),
+                arg_u32(3),
+            ]
+            .concat(),
+        ));
         req.extend(message(3, 2, &arg_u32(4)));
-        req.extend(message(2, 0, &[arg_u32(8), arg_str("wl_seat"), arg_u32(9), arg_u32(5)].concat()));
+        req.extend(message(
+            2,
+            0,
+            &[arg_u32(8), arg_str("wl_seat"), arg_u32(9), arg_u32(5)].concat(),
+        ));
         req.extend(message(5, 1, &arg_u32(6)));
         send(&client, &req, vec![]).unwrap();
         let mut got = Vec::new();
@@ -406,19 +482,30 @@ mod tests {
         // Parent: keymap fd on the keyboard, format table (2 entries: AMD-tiled, LINEAR), main device 0xe281, tranche
         // formats [0, 1], an unrelated event on object 9.
         let keymap = rustix::fs::memfd_create("keymap", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
-        std::fs::File::from(keymap.try_clone().unwrap()).write_all(b"xkb").unwrap();
+        std::fs::File::from(keymap.try_clone().unwrap())
+            .write_all(b"xkb")
+            .unwrap();
         let table = rustix::fs::memfd_create("table", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
         let mut t = Vec::new();
-        for (fmt, m) in [(0x34325258u32, 0x0200_0000_0000_0001u64), (0x34325258, LINEAR)] {
+        for (fmt, m) in [
+            (0x34325258u32, 0x0200_0000_0000_0001u64),
+            (0x34325258, LINEAR),
+        ] {
             t.extend_from_slice(&fmt.to_ne_bytes());
             t.extend_from_slice(&[0; 4]);
             t.extend_from_slice(&m.to_ne_bytes());
         }
-        std::fs::File::from(table.try_clone().unwrap()).write_all(&t).unwrap();
+        std::fs::File::from(table.try_clone().unwrap())
+            .write_all(&t)
+            .unwrap();
         let mut ev = message(6, 0, &[arg_u32(1), arg_u32(3)].concat());
         ev.extend(message(4, 1, &arg_u32(32)));
         ev.extend(message(4, 2, &array_arg(&0xe281u64.to_ne_bytes())));
-        ev.extend(message(4, 5, &array_arg(&[0u16.to_ne_bytes(), 1u16.to_ne_bytes()].concat())));
+        ev.extend(message(
+            4,
+            5,
+            &array_arg(&[0u16.to_ne_bytes(), 1u16.to_ne_bytes()].concat()),
+        ));
         ev.extend(message(9, 0, &arg_u32(42)));
         send(&server, &ev, vec![keymap, table]).unwrap();
         let mut cfds = VecDeque::new();
@@ -432,15 +519,31 @@ mod tests {
         assert_eq!((msgs[0].0, msgs[0].1), (6, 0));
         assert_eq!(cfds.len(), 2, "keymap and the filtered table both arrive");
         let mut km = [0u8; 3];
-        std::fs::File::from(cfds.pop_front().unwrap()).read_exact_at(&mut km, 0).unwrap();
+        std::fs::File::from(cfds.pop_front().unwrap())
+            .read_exact_at(&mut km, 0)
+            .unwrap();
         assert_eq!(&km, b"xkb", "the keymap fd is the parent's own");
         assert_eq!(u32_at(body(1), 0), Some(16), "table keeps one LINEAR entry");
         let mut nt = [0u8; 16];
-        std::fs::File::from(cfds.pop_front().unwrap()).read_exact_at(&mut nt, 0).unwrap();
+        std::fs::File::from(cfds.pop_front().unwrap())
+            .read_exact_at(&mut nt, 0)
+            .unwrap();
         assert_eq!(u64::from_ne_bytes(nt[8..16].try_into().unwrap()), LINEAR);
-        assert_eq!(body(2), &array_arg(&0xe280u64.to_ne_bytes())[..], "main device = the chosen render node");
-        assert_eq!(body(3), &array_arg(&0u16.to_ne_bytes())[..], "tranche index remapped: LINEAR (old 1) is new 0");
-        assert_eq!((msgs[4].0, body(4)), (9, &arg_u32(42)[..]), "unrelated events unchanged");
+        assert_eq!(
+            body(2),
+            &array_arg(&0xe280u64.to_ne_bytes())[..],
+            "main device = the chosen render node"
+        );
+        assert_eq!(
+            body(3),
+            &array_arg(&0u16.to_ne_bytes())[..],
+            "tranche index remapped: LINEAR (old 1) is new 0"
+        );
+        assert_eq!(
+            (msgs[4].0, body(4)),
+            (9, &arg_u32(42)[..]),
+            "unrelated events unchanged"
+        );
         assert_eq!(rw.devices_rewritten.load(Ordering::Relaxed), 1);
         assert_eq!(rw.tables_filtered.load(Ordering::Relaxed), 1);
     }
@@ -449,12 +552,18 @@ mod tests {
     fn a_table_without_linear_gets_linear_per_format() {
         let table = rustix::fs::memfd_create("t", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
         let mut t = Vec::new();
-        for (fmt, m) in [(1u32, 0x0300_0000_0000_0011u64), (2, 0x0300_0000_0000_0011), (1, 0x00ff_ffff_ffff_ffff)] {
+        for (fmt, m) in [
+            (1u32, 0x0300_0000_0000_0011u64),
+            (2, 0x0300_0000_0000_0011),
+            (1, 0x00ff_ffff_ffff_ffff),
+        ] {
             t.extend_from_slice(&fmt.to_ne_bytes());
             t.extend_from_slice(&[0; 4]);
             t.extend_from_slice(&m.to_ne_bytes());
         }
-        std::fs::File::from(table.try_clone().unwrap()).write_all(&t).unwrap();
+        std::fs::File::from(table.try_clone().unwrap())
+            .write_all(&t)
+            .unwrap();
         let (fd, size, map) = filter_table(&table, 48).unwrap();
         assert_eq!(size, 32, "two formats, one LINEAR entry each");
         assert_eq!(map, vec![Some(0), Some(1), Some(0)]);
@@ -466,20 +575,45 @@ mod tests {
 
     #[test]
     fn negative_unknown_objects_and_deleted_ids_are_not_rewritten() {
-        let rw = Rewrite { rdev: 1, linear_only: true, devices_rewritten: AtomicU64::new(0), tables_filtered: AtomicU64::new(0) };
+        let rw = Rewrite {
+            rdev: 1,
+            linear_only: true,
+            devices_rewritten: AtomicU64::new(0),
+            tables_filtered: AtomicU64::new(0),
+        };
         let mut o = Objects::default();
         let dev = array_arg(&5u64.to_ne_bytes());
         // Object 4 was never created as a feedback: its opcode-2 event passes unchanged.
         let m = rewrite_event(&mut o, &rw, 4, 2, &dev, &mut VecDeque::new(), &mut vec![]);
         assert_eq!(m, message(4, 2, &dev));
         o.kinds.insert(4, Kind::Feedback);
-        assert_ne!(rewrite_event(&mut o, &rw, 4, 2, &dev, &mut VecDeque::new(), &mut vec![]), message(4, 2, &dev));
+        assert_ne!(
+            rewrite_event(&mut o, &rw, 4, 2, &dev, &mut VecDeque::new(), &mut vec![]),
+            message(4, 2, &dev)
+        );
         // wl_display.delete_id(4): the id may be reused for anything; it is forgotten.
-        rewrite_event(&mut o, &rw, 1, 1, &arg_u32(4), &mut VecDeque::new(), &mut vec![]);
-        assert_eq!(rewrite_event(&mut o, &rw, 4, 2, &dev, &mut VecDeque::new(), &mut vec![]), message(4, 2, &dev));
-        assert!(split(&message(1, 0, &[])[..4]).unwrap().0.is_empty(), "a partial header waits");
+        rewrite_event(
+            &mut o,
+            &rw,
+            1,
+            1,
+            &arg_u32(4),
+            &mut VecDeque::new(),
+            &mut vec![],
+        );
+        assert_eq!(
+            rewrite_event(&mut o, &rw, 4, 2, &dev, &mut VecDeque::new(), &mut vec![]),
+            message(4, 2, &dev)
+        );
+        assert!(
+            split(&message(1, 0, &[])[..4]).unwrap().0.is_empty(),
+            "a partial header waits"
+        );
         let mut bad = message(1, 0, &[]);
         bad[4..8].copy_from_slice(&(4u32 << 16).to_ne_bytes());
-        assert!(split(&bad).is_err(), "a message smaller than its header is rejected");
+        assert!(
+            split(&bad).is_err(),
+            "a message smaller than its header is rejected"
+        );
     }
 }

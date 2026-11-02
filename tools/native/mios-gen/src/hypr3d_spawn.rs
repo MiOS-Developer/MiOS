@@ -69,7 +69,9 @@ pub struct Policy {
 }
 
 fn num(v: &Value) -> Option<f64> {
-    v.as_float().or_else(|| v.as_integer().map(|i| i as f64)).filter(|f| f.is_finite())
+    v.as_float()
+        .or_else(|| v.as_integer().map(|i| i as f64))
+        .filter(|f| f.is_finite())
 }
 
 /// A dotted SSOT path ("theme.shell.edge_margin_px").
@@ -81,81 +83,134 @@ impl Policy {
     /// `[desktop.hyprland.hypr3d.spawn]`, validated. `None`: absent, disabled, or criterion "fixed" (the plugin's
     /// own window_scale / spawn_distance / spawn_size, or explicit `[config.windows]` keys).
     pub fn from_ssot(data: &Value) -> Result<Option<Policy>, String> {
-        let Some(t) = lookup(data, "desktop.hyprland.hypr3d.spawn") else { return Ok(None) };
-        let t = t.as_table().ok_or("desktop.hyprland.hypr3d.spawn must be a table")?;
+        let Some(t) = lookup(data, "desktop.hyprland.hypr3d.spawn") else {
+            return Ok(None);
+        };
+        let t = t
+            .as_table()
+            .ok_or("desktop.hyprland.hypr3d.spawn must be a table")?;
         let key = |k: &str| format!("desktop.hyprland.hypr3d.spawn.{k}");
-        let enabled = t.get("enabled").and_then(Value::as_bool).ok_or_else(|| format!("{} must be a boolean", key("enabled")))?;
-        let criterion = t.get("criterion").and_then(Value::as_str)
+        let enabled = t
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| format!("{} must be a boolean", key("enabled")))?;
+        let criterion = t
+            .get("criterion")
+            .and_then(Value::as_str)
             .ok_or_else(|| format!("{} must be \"retina\" or \"fixed\"", key("criterion")))?;
         match criterion {
             "retina" => {}
             "fixed" => return Ok(None),
-            _ => return Err(format!("{} must be \"retina\" or \"fixed\"", key("criterion"))),
+            _ => {
+                return Err(format!(
+                    "{} must be \"retina\" or \"fixed\"",
+                    key("criterion")
+                ))
+            }
         }
         if !enabled {
             return Ok(None);
         }
         let number = |k: &str, lo: f64, hi: f64| -> Result<f64, String> {
-            t.get(k).and_then(num).filter(|v| *v >= lo && *v <= hi)
+            t.get(k)
+                .and_then(num)
+                .filter(|v| *v >= lo && *v <= hi)
                 .ok_or_else(|| format!("{} must be a number in {lo}..={hi}", key(k)))
         };
         // a number, or the SSOT key it follows
         let follow = |k: &str, lo: f64, hi: f64| -> Result<f64, String> {
-            let v = t.get(k).ok_or_else(|| format!("{} must be a number or an SSOT key", key(k)))?;
+            let v = t
+                .get(k)
+                .ok_or_else(|| format!("{} must be a number or an SSOT key", key(k)))?;
             let resolved = match v {
                 Value::String(path) => lookup(data, path)
                     .and_then(num)
                     .ok_or_else(|| format!("{} follows {path}, which is not a number", key(k)))?,
-                other => num(other).ok_or_else(|| format!("{} must be a number or an SSOT key", key(k)))?,
+                other => num(other)
+                    .ok_or_else(|| format!("{} must be a number or an SSOT key", key(k)))?,
             };
             if (lo..=hi).contains(&resolved) {
                 Ok(resolved)
             } else {
-                Err(format!("{} must be in {lo}..={hi} (got {resolved})", key(k)))
+                Err(format!(
+                    "{} must be in {lo}..={hi} (got {resolved})",
+                    key(k)
+                ))
             }
         };
         let cells = |k: &str| -> Result<(i64, i64), String> {
-            let a = t.get(k).and_then(Value::as_array).filter(|a| a.len() == 2)
+            let a = t
+                .get(k)
+                .and_then(Value::as_array)
+                .filter(|a| a.len() == 2)
                 .ok_or_else(|| format!("{} must be [columns, rows]", key(k)))?;
             let c = a[0].as_integer().filter(|v| (1..=1000).contains(v));
             let r = a[1].as_integer().filter(|v| (1..=1000).contains(v));
-            c.zip(r).ok_or_else(|| format!("{} must be [columns, rows] in 1..=1000", key(k)))
+            c.zip(r)
+                .ok_or_else(|| format!("{} must be [columns, rows] in 1..=1000", key(k)))
         };
         let fit = match t.get("fit").and_then(Value::as_str) {
             Some("resize") => Fit::Resize,
             Some("distance") => Fit::Distance,
             Some("off") => Fit::Off,
-            _ => return Err(format!("{} must be \"resize\", \"distance\" or \"off\"", key("fit"))),
+            _ => {
+                return Err(format!(
+                    "{} must be \"resize\", \"distance\" or \"off\"",
+                    key("fit")
+                ))
+            }
         };
         let mobile_fill = match t.get("mobile").and_then(Value::as_str) {
             Some("fill") => true,
             Some("cells") => false,
             _ => return Err(format!("{} must be \"fill\" or \"cells\"", key("mobile"))),
         };
-        let source = t.get("text_size_source").and_then(Value::as_str)
+        let source = t
+            .get("text_size_source")
+            .and_then(Value::as_str)
             .ok_or_else(|| format!("{} must name the SSOT font table", key("text_size_source")))?;
-        let font = lookup(data, source).and_then(Value::as_table)
+        let font = lookup(data, source)
+            .and_then(Value::as_table)
             .ok_or_else(|| format!("{}: {source} is not a table", key("text_size_source")))?;
         let metric = |k: &str, lo: f64, hi: f64| -> Result<f64, String> {
-            font.get(k).and_then(num).filter(|v| *v >= lo && *v <= hi)
-                .ok_or_else(|| format!("{source}.{k} must be a number in {lo}..={hi} (text_size_source)"))
+            font.get(k)
+                .and_then(num)
+                .filter(|v| *v >= lo && *v <= hi)
+                .ok_or_else(|| {
+                    format!("{source}.{k} must be a number in {lo}..={hi} (text_size_source)")
+                })
         };
         let text = Text {
             size_px: metric("size", 4.0, 200.0)?,
-            cell: (metric("cell_w_px", 1.0, 200.0)?, metric("cell_h_px", 1.0, 400.0)?),
-            chrome: (metric("chrome_w_px", 0.0, 2000.0)?, metric("chrome_h_px", 0.0, 2000.0)?),
+            cell: (
+                metric("cell_w_px", 1.0, 200.0)?,
+                metric("cell_h_px", 1.0, 400.0)?,
+            ),
+            chrome: (
+                metric("chrome_w_px", 0.0, 2000.0)?,
+                metric("chrome_h_px", 0.0, 2000.0)?,
+            ),
         };
-        let shell = lookup(data, "theme.shell").and_then(Value::as_table)
+        let shell = lookup(data, "theme.shell")
+            .and_then(Value::as_table)
             .ok_or("theme.shell must be a table for Hypr3D safe insets")?;
-        let shell_num = |k: &str| shell.get(k).and_then(num).filter(|v| *v >= 0.0 && *v <= 512.0)
-            .ok_or_else(|| format!("theme.shell.{k} must be a number in 0..=512 for Hypr3D safe insets"));
+        let shell_num = |k: &str| {
+            shell
+                .get(k)
+                .and_then(num)
+                .filter(|v| *v >= 0.0 && *v <= 512.0)
+                .ok_or_else(|| {
+                    format!("theme.shell.{k} must be a number in 0..=512 for Hypr3D safe insets")
+                })
+        };
         let top = shell_num("top_height_px")?;
         let dock = shell_num("dock_height_px")?;
         let edge = shell_num("edge_margin_px")?;
         let opt_number = |k: &str, default: f64, lo: f64, hi: f64| -> Result<f64, String> {
             match t.get(k) {
                 None => Ok(default),
-                Some(v) => num(v).filter(|x| *x >= lo && *x <= hi)
+                Some(v) => num(v)
+                    .filter(|x| *x >= lo && *x <= hi)
                     .ok_or_else(|| format!("{} must be a number in {lo}..={hi}", key(k))),
             }
         };
@@ -163,7 +218,9 @@ impl Policy {
             match t.get(k) {
                 None => Ok(default.to_owned()),
                 Some(v) => {
-                    let s = v.as_str().ok_or_else(|| format!("{} must be a string", key(k)))?;
+                    let s = v
+                        .as_str()
+                        .ok_or_else(|| format!("{} must be a string", key(k)))?;
                     if allowed.contains(&s) {
                         Ok(s.to_owned())
                     } else {
@@ -177,7 +234,11 @@ impl Policy {
             eyeline_offset_m: opt_number("eyeline_offset_m", 0.0, -2.0, 2.0)?,
             tilt_angle_deg: opt_number("tilt_angle_deg", 0.0, -60.0, 60.0)?,
             open_effect_3d: opt_str("open_effect_3d", "magic-lamp", &["magic-lamp", "none"])?,
-            close_effect_3d: opt_str("close_effect_3d", "glass-dissolve", &["glass-dissolve", "magic-lamp", "none"])?,
+            close_effect_3d: opt_str(
+                "close_effect_3d",
+                "glass-dissolve",
+                &["glass-dissolve", "magic-lamp", "none"],
+            )?,
             fit,
             fit_margin_px: follow("fit_margin_px", 0.0, 512.0)?,
             safe_insets_px: [0.0, top + 2.0 * edge, 0.0, dock + 2.0 * edge],
@@ -187,7 +248,9 @@ impl Policy {
             portrait_cells: cells("portrait_cells")?,
             mobile_fill,
             cascade_px: number("cascade_px", 0.0, 512.0)?,
-            pixel_snap: t.get("pixel_snap").and_then(Value::as_bool)
+            pixel_snap: t
+                .get("pixel_snap")
+                .and_then(Value::as_bool)
                 .ok_or_else(|| format!("{} must be a boolean", key("pixel_snap")))?,
             opening: mios_resolver::window_opening::Policy::from_ssot(data)?,
         }))
@@ -211,7 +274,9 @@ pub struct Output {
 impl Output {
     pub fn from_hyprctl(m: &Json) -> Option<Output> {
         let f = |k: &str| m.get(k).and_then(Json::as_f64);
-        let reserved = m.get("reserved").and_then(Json::as_array)
+        let reserved = m
+            .get("reserved")
+            .and_then(Json::as_array)
             .map(|a| a.iter().filter_map(Json::as_f64).collect::<Vec<_>>())
             .filter(|a| a.len() == 4)
             .map(|a| [a[0], a[1], a[2], a[3]])
@@ -223,7 +288,10 @@ impl Output {
             scale: f("scale").filter(|s| *s > 0.0)?,
             transform: f("transform").unwrap_or(0.0) as i64,
             reserved,
-            phys_mm: (f("physicalWidth").unwrap_or(0.0), f("physicalHeight").unwrap_or(0.0)),
+            phys_mm: (
+                f("physicalWidth").unwrap_or(0.0),
+                f("physicalHeight").unwrap_or(0.0),
+            ),
             focused: m.get("focused").and_then(Json::as_bool).unwrap_or(false),
             mobile: false,
         };
@@ -232,7 +300,11 @@ impl Output {
 
     /// Hypr3D's `m_size`: the transformed mode / scale (logical px).
     pub fn logical(&self) -> (f64, f64) {
-        let (w, h) = if self.transform.rem_euclid(2) == 1 { (self.height, self.width) } else { (self.width, self.height) };
+        let (w, h) = if self.transform.rem_euclid(2) == 1 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
         (w as f64 / self.scale, h as f64 / self.scale)
     }
 }
@@ -278,20 +350,34 @@ pub fn plan(p: &Policy, o: &Output, distance: f64, render_scale: f64) -> Plan {
     let r = r.max(p.safe_insets_px[2]);
     let b = b.max(p.safe_insets_px[3]);
     let m = p.fit_margin_px;
-    let fit_box = ((wl - l - r - 2.0 * m).max(16.0), (hl - t - b - 2.0 * m).max(16.0));
+    let fit_box = (
+        (wl - l - r - 2.0 * m).max(16.0),
+        (hl - t - b - 2.0 * m).max(16.0),
+    );
     let portrait = hl > wl;
     let spawn_box = if o.mobile && p.mobile_fill {
         (fit_box.0.floor() as i64, fit_box.1.floor() as i64)
     } else if let Some(opening) = &p.opening {
-        let width_mm = if o.transform.rem_euclid(2) == 1 { o.phys_mm.1 } else { o.phys_mm.0 };
+        let width_mm = if o.transform.rem_euclid(2) == 1 {
+            o.phys_mm.1
+        } else {
+            o.phys_mm.0
+        };
         let ppm = (width_mm > 0.0).then_some(wl / width_mm);
-        let (w,h) = opening.size((wl-l-r).max(1.0), (hl-t-b).max(1.0), ppm);
-        (w as i64,h as i64)
+        let (w, h) = opening.size((wl - l - r).max(1.0), (hl - t - b).max(1.0), ppm);
+        (w as i64, h as i64)
     } else {
-        let (cols, rows) = if portrait { p.portrait_cells } else { p.landscape_cells };
+        let (cols, rows) = if portrait {
+            p.portrait_cells
+        } else {
+            p.landscape_cells
+        };
         let w = cols as f64 * p.text.cell.0 + p.text.chrome.0;
         let h = rows as f64 * p.text.cell.1 + p.text.chrome.1;
-        (w.min(fit_box.0).floor() as i64, h.min(fit_box.1).floor() as i64)
+        (
+            w.min(fit_box.0).floor() as i64,
+            h.min(fit_box.1).floor() as i64,
+        )
     };
     let r = render_scale.max(1.0);
     Plan {
@@ -331,8 +417,18 @@ pub fn place(plan: &Plan, p: &Policy, w: f64, h: f64, min: Option<(f64, f64)>) -
         bh = h.min(fh).max(mh);
         resized = bw != w || bh != h;
     }
-    let m = if p.fit == Fit::Off { 1.0 } else { (fw / bw).min(fh / bh).min(1.0) };
-    Placement { box_px: (bw, bh), m, resized, pushed: m < 1.0, small: m < plan.m_min - 1e-9 }
+    let m = if p.fit == Fit::Off {
+        1.0
+    } else {
+        (fw / bw).min(fh / bh).min(1.0)
+    };
+    Placement {
+        box_px: (bw, bh),
+        m,
+        resized,
+        pushed: m < 1.0,
+        small: m < plan.m_min - 1e-9,
+    }
 }
 
 /// The plugin keys for the planned output (hypr3d-mios-retina-spawn.patch; an unpatched plugin reads only
@@ -362,8 +458,14 @@ pub fn windows_table(plan: &Plan, p: &Policy) -> toml::map::Map<String, Value> {
         t.insert("tilt_angle_deg".into(), r4(p.tilt_angle_deg));
     }
     if p.eyeline_offset_m.abs() > 1e-6 || p.tilt_angle_deg.abs() > 1e-6 {
-        t.insert("open_effect_3d".into(), Value::String(p.open_effect_3d.clone()));
-        t.insert("close_effect_3d".into(), Value::String(p.close_effect_3d.clone()));
+        t.insert(
+            "open_effect_3d".into(),
+            Value::String(p.open_effect_3d.clone()),
+        );
+        t.insert(
+            "close_effect_3d".into(),
+            Value::String(p.close_effect_3d.clone()),
+        );
     }
     t
 }
@@ -375,21 +477,34 @@ pub fn target(outputs: &[Output], wanted: Option<&str>) -> Option<usize> {
             return Some(i);
         }
     }
-    outputs.iter().position(|o| o.focused).or(if outputs.is_empty() { None } else { Some(0) })
+    outputs
+        .iter()
+        .position(|o| o.focused)
+        .or(if outputs.is_empty() { None } else { Some(0) })
 }
 
 /// The [desktop.mobile] verdict for an output: the handler's published file, else the same rule applied to the
 /// output's actual logical size (display_scale::compute with its current scale as the explicit scale).
 pub fn mobile_verdict(data: &Value, o: &Output, published: Option<&Json>) -> bool {
-    if let Some(v) = published.and_then(|j| j.get("outputs")).and_then(|o2| o2.get(&o.name)).and_then(|v| v.get("mobile")).and_then(Json::as_bool) {
+    if let Some(v) = published
+        .and_then(|j| j.get("outputs"))
+        .and_then(|o2| o2.get(&o.name))
+        .and_then(|v| v.get("mobile"))
+        .and_then(Json::as_bool)
+    {
         return v;
     }
-    let Some(mobile) = lookup(data, "desktop.mobile").and_then(Value::as_table) else { return false };
+    let Some(mobile) = lookup(data, "desktop.mobile").and_then(Value::as_table) else {
+        return false;
+    };
     if mobile.get("enabled").and_then(Value::as_bool) != Some(true) {
         return false;
     }
-    let prefixes: Vec<&str> = mobile.get("remote_name_prefixes").and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let prefixes: Vec<&str> = mobile
+        .get("remote_name_prefixes")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
     let remote = prefixes.iter().any(|p| o.name.starts_with(p));
     let origin = if remote { "remote" } else { "local" };
     if let Some(applies) = mobile.get("applies_to").and_then(Value::as_array) {
@@ -397,7 +512,9 @@ pub fn mobile_verdict(data: &Value, o: &Output, published: Option<&Json>) -> boo
             return false;
         }
     }
-    let Ok(policy) = crate::display_scale::Policy::from_ssot(data) else { return false };
+    let Ok(policy) = crate::display_scale::Policy::from_ssot(data) else {
+        return false;
+    };
     let input = crate::display_scale::Input {
         width: o.width,
         height: o.height,
@@ -417,26 +534,52 @@ fn config_windows(config: &Value) -> Option<&toml::map::Map<String, Value>> {
 /// The toggle overlay: plan the target output and add the windows keys the SSOT config does not set explicitly.
 /// An explicit `[config.windows].window_scale` is an operator-fixed scale: pixel_exact is then not sent.
 /// Returns the plan (None: the policy is off, or no output was found).
-pub fn overlay(data: &Value, config: &mut Value, monitors: &Json, published: Option<&Json>) -> Result<Option<Plan>, String> {
-    let Some(policy) = Policy::from_ssot(data)? else { return Ok(None) };
-    let mut outputs: Vec<Output> = monitors.as_array().map(|a| a.iter().filter_map(Output::from_hyprctl).collect()).unwrap_or_default();
-    let wanted = config.get("world").and_then(|w| w.get("monitor")).and_then(Value::as_str).map(str::to_owned);
-    let Some(i) = target(&outputs, wanted.as_deref()) else { return Ok(None) };
+pub fn overlay(
+    data: &Value,
+    config: &mut Value,
+    monitors: &Json,
+    published: Option<&Json>,
+) -> Result<Option<Plan>, String> {
+    let Some(policy) = Policy::from_ssot(data)? else {
+        return Ok(None);
+    };
+    let mut outputs: Vec<Output> = monitors
+        .as_array()
+        .map(|a| a.iter().filter_map(Output::from_hyprctl).collect())
+        .unwrap_or_default();
+    let wanted = config
+        .get("world")
+        .and_then(|w| w.get("monitor"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let Some(i) = target(&outputs, wanted.as_deref()) else {
+        return Ok(None);
+    };
     outputs[i].mobile = mobile_verdict(data, &outputs[i], published);
     let explicit = config_windows(config).cloned().unwrap_or_default();
     let distance = match explicit.get("spawn_distance") {
-        Some(v) => num(v).filter(|d| *d > 0.0).ok_or("desktop.hyprland.hypr3d.config.windows.spawn_distance must be a positive number")?,
+        Some(v) => num(v).filter(|d| *d > 0.0).ok_or(
+            "desktop.hyprland.hypr3d.config.windows.spawn_distance must be a positive number",
+        )?,
         None => policy.reading_distance_m,
     };
-    let render_scale = config.get("render").and_then(|r| r.get("scale")).and_then(num).unwrap_or(1.0);
+    let render_scale = config
+        .get("render")
+        .and_then(|r| r.get("scale"))
+        .and_then(num)
+        .unwrap_or(1.0);
     let plan = plan(&policy, &outputs[i], distance, render_scale);
     let mut keys = windows_table(&plan, &policy);
     if explicit.contains_key("window_scale") {
         keys.remove("pixel_exact");
     }
-    let table = config.as_table_mut().ok_or("desktop.hyprland.hypr3d.config must be a table")?
-        .entry("windows").or_insert_with(|| Value::Table(Default::default()))
-        .as_table_mut().ok_or("desktop.hyprland.hypr3d.config.windows must be a table")?;
+    let table = config
+        .as_table_mut()
+        .ok_or("desktop.hyprland.hypr3d.config must be a table")?
+        .entry("windows")
+        .or_insert_with(|| Value::Table(Default::default()))
+        .as_table_mut()
+        .ok_or("desktop.hyprland.hypr3d.config.windows must be a table")?;
     for (k, v) in keys {
         table.entry(k).or_insert(v);
     }
@@ -472,14 +615,26 @@ pub fn plan_json(plan: &Plan, p: &Policy) -> Json {
 }
 
 /// `mios-gen hyprland-3d-spawn`: the plan for every output (or one), from a monitors file or the compositor.
-pub fn run_cli(data: &Value, monitors: &Json, published: Option<&Json>, only: Option<&str>, render_scale: Option<f64>,
-               windows: &[(f64, f64)]) -> Result<String, String> {
-    let policy = Policy::from_ssot(data)?.ok_or("desktop.hyprland.hypr3d.spawn is off (absent, disabled or criterion \"fixed\")")?;
-    let outputs: Vec<Output> = monitors.as_array().map(|a| a.iter().filter_map(Output::from_hyprctl).collect()).unwrap_or_default();
+pub fn run_cli(
+    data: &Value,
+    monitors: &Json,
+    published: Option<&Json>,
+    only: Option<&str>,
+    render_scale: Option<f64>,
+    windows: &[(f64, f64)],
+) -> Result<String, String> {
+    let policy = Policy::from_ssot(data)?
+        .ok_or("desktop.hyprland.hypr3d.spawn is off (absent, disabled or criterion \"fixed\")")?;
+    let outputs: Vec<Output> = monitors
+        .as_array()
+        .map(|a| a.iter().filter_map(Output::from_hyprctl).collect())
+        .unwrap_or_default();
     if outputs.is_empty() {
         return Err("no outputs in the monitors list".into());
     }
-    let r = render_scale.or_else(|| lookup(data, "desktop.hyprland.hypr3d.config.render.scale").and_then(num)).unwrap_or(1.0);
+    let r = render_scale
+        .or_else(|| lookup(data, "desktop.hyprland.hypr3d.config.render.scale").and_then(num))
+        .unwrap_or(1.0);
     let mut rows = Vec::new();
     for o in outputs.iter().filter(|o| only.is_none_or(|n| n == o.name)) {
         let mut o = o.clone();
@@ -498,8 +653,10 @@ pub fn run_cli(data: &Value, monitors: &Json, published: Option<&Json>, only: Op
     if rows.is_empty() {
         return Err(format!("no output named {}", only.unwrap_or("")));
     }
-    serde_json::to_string_pretty(&json!({"version": 1, "fov_deg": FOV_DEG, "px_per_unit": PX_PER_UNIT, "outputs": rows}))
-        .map_err(|e| e.to_string())
+    serde_json::to_string_pretty(
+        &json!({"version": 1, "fov_deg": FOV_DEG, "px_per_unit": PX_PER_UNIT, "outputs": rows}),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -507,7 +664,8 @@ mod tests {
     use super::*;
 
     fn ssot() -> Value {
-        toml::from_str(r#"
+        toml::from_str(
+            r#"
 [theme.font]
 size = 12
 cell_w_px = 10
@@ -557,13 +715,25 @@ fallback_desktop_diagonal_in = 24.0
 fallback_handheld_dpi = 460.0
 handheld_shape_min_aspect = 1.6
 handheld_shape_max_short_px = 1600
-"#).unwrap()
+"#,
+        )
+        .unwrap()
     }
 
     const BARS: [f64; 4] = [0.0, 44.0, 0.0, 72.0];
 
     fn out(name: &str, w: i64, h: i64, s: f64, t: i64) -> Output {
-        Output { name: name.into(), width: w, height: h, scale: s, transform: t, reserved: BARS, phys_mm: (0.0, 0.0), focused: false, mobile: false }
+        Output {
+            name: name.into(),
+            width: w,
+            height: h,
+            scale: s,
+            transform: t,
+            reserved: BARS,
+            phys_mm: (0.0, 0.0),
+            focused: false,
+            mobile: false,
+        }
     }
 
     fn close(a: f64, b: f64, eps: f64) -> bool {
@@ -575,20 +745,53 @@ handheld_shape_max_short_px = 1600
         let p = Policy::from_ssot(&ssot()).unwrap().unwrap();
         // (output, logical, d1, window_scale) -- spawn_math.py / DESIGN.md section 4
         let cases = [
-            (out("DP-1", 1920, 1080, 1.0, 0), (1920.0, 1080.0), 8.4763, 0.589880),
-            (out("DP-2", 1920, 1080, 1.0, 1), (1080.0, 1920.0), 15.0690, 0.331807),
-            (out("DP-3", 2560, 1440, 1.25, 0), (2048.0, 1152.0), 9.0414, 0.553012),
-            (out("HEADLESS-PHONE", 1170, 2532, 3.0, 0), (390.0, 844.0), 6.6241, 0.754823),
+            (
+                out("DP-1", 1920, 1080, 1.0, 0),
+                (1920.0, 1080.0),
+                8.4763,
+                0.589880,
+            ),
+            (
+                out("DP-2", 1920, 1080, 1.0, 1),
+                (1080.0, 1920.0),
+                15.0690,
+                0.331807,
+            ),
+            (
+                out("DP-3", 2560, 1440, 1.25, 0),
+                (2048.0, 1152.0),
+                9.0414,
+                0.553012,
+            ),
+            (
+                out("HEADLESS-PHONE", 1170, 2532, 3.0, 0),
+                (390.0, 844.0),
+                6.6241,
+                0.754823,
+            ),
         ];
         for (o, logical, want_d1, want_s) in cases {
             let pl = plan(&p, &o, 5.0, 2.0);
             assert_eq!(pl.logical, logical, "{}", o.name);
             assert!(close(pl.d1, want_d1, 1e-4), "{}: d1 {}", o.name, pl.d1);
-            assert!(close(pl.window_scale, want_s, 1e-6), "{}: S {}", o.name, pl.window_scale);
+            assert!(
+                close(pl.window_scale, want_s, 1e-6),
+                "{}: S {}",
+                o.name,
+                pl.window_scale
+            );
             // the criterion: M = 1, one texel per output pixel
-            assert!(close(magnification(pl.window_scale, pl.spawn_distance, logical.1), 1.0, 1e-12));
+            assert!(close(
+                magnification(pl.window_scale, pl.spawn_distance, logical.1),
+                1.0,
+                1e-12
+            ));
             // negative control: the stock 0.5 / 5.0 is NOT 1:1 on any of these outputs
-            assert!((magnification(0.5, 5.0, logical.1) - 1.0).abs() > 0.05, "{}", o.name);
+            assert!(
+                (magnification(0.5, 5.0, logical.1) - 1.0).abs() > 0.05,
+                "{}",
+                o.name
+            );
         }
         // the stock values the nest measured (landscape 0.8476, phone 0.6625)
         assert!(close(magnification(0.5, 5.0, 1080.0), 0.8476, 5e-4));
@@ -601,13 +804,22 @@ handheld_shape_max_short_px = 1600
     fn fit_box_spawn_box_and_orientation_follow_the_output() {
         let p = Policy::from_ssot(&ssot()).unwrap().unwrap();
         let land = plan(&p, &out("DP-1", 1920, 1080, 1.0, 0), 5.0, 2.0);
-        assert_eq!((land.fit_box, land.spawn_box, land.orientation), ((1904.0, 948.0), (960, 692), "landscape"));
+        assert_eq!(
+            (land.fit_box, land.spawn_box, land.orientation),
+            ((1904.0, 948.0), (960, 692), "landscape")
+        );
         let mut no_bars = out("DP-1-no-reservations", 1920, 1080, 1.0, 0);
         no_bars.reserved = [0.0; 4];
-        assert_eq!(plan(&p, &no_bars, 5.0, 2.0).fit_box, (1904.0, 948.0),
-                   "SSOT topbar and dock insets still protect outputs with zero layer-shell reservations");
+        assert_eq!(
+            plan(&p, &no_bars, 5.0, 2.0).fit_box,
+            (1904.0, 948.0),
+            "SSOT topbar and dock insets still protect outputs with zero layer-shell reservations"
+        );
         let port = plan(&p, &out("DP-2", 1920, 1080, 1.0, 1), 5.0, 2.0);
-        assert_eq!((port.fit_box, port.spawn_box, port.orientation), ((1064.0, 1788.0), (680, 932), "portrait"));
+        assert_eq!(
+            (port.fit_box, port.spawn_box, port.orientation),
+            ((1064.0, 1788.0), (680, 932), "portrait")
+        );
         let qhd = plan(&p, &out("DP-3", 2560, 1440, 1.25, 0), 5.0, 1.5);
         assert_eq!((qhd.fit_box, qhd.spawn_box), ((2032.0, 1020.0), (960, 692)));
         assert!(close(qhd.m_min, 10.0 / 12.0, 1e-12)); // the text floor dominates 1 / 1.5
@@ -618,7 +830,10 @@ handheld_shape_max_short_px = 1600
         let mut phone = out("HEADLESS-PHONE", 1170, 2532, 3.0, 0);
         phone.mobile = true;
         let ph = plan(&p, &phone, 5.0, 2.0);
-        assert_eq!((ph.fit_box, ph.spawn_box, ph.orientation), ((374.0, 712.0), (374, 712), "portrait"));
+        assert_eq!(
+            (ph.fit_box, ph.spawn_box, ph.orientation),
+            ((374.0, 712.0), (374, 712), "portrait")
+        );
         // negative control: the same phone NOT mobile gets the (clamped) portrait cells, not the whole box
         phone.mobile = false;
         let pn = plan(&p, &phone, 5.0, 2.0);
@@ -627,7 +842,11 @@ handheld_shape_max_short_px = 1600
         cells.portrait_cells = (30, 20);
         assert_eq!(plan(&cells, &phone, 5.0, 2.0).spawn_box, (320, 412));
         phone.mobile = true;
-        assert_eq!(plan(&cells, &phone, 5.0, 2.0).spawn_box, (374, 712), "mobile fill ignores the cells");
+        assert_eq!(
+            plan(&cells, &phone, 5.0, 2.0).spawn_box,
+            (374, 712),
+            "mobile fill ignores the cells"
+        );
         // the legibility floor: max(1 / render.scale, 10 / 12)
         assert!(close(land.m_min, 10.0 / 12.0, 1e-12));
     }
@@ -638,15 +857,23 @@ handheld_shape_max_short_px = 1600
         let land = plan(&p, &out("DP-1", 1920, 1080, 1.0, 0), 5.0, 2.0);
         // small: untouched, M = 1
         let s = place(&land, &p, 640.0, 400.0, None);
-        assert_eq!((s.box_px, s.m, s.resized, s.pushed), ((640.0, 400.0), 1.0, false, false));
+        assert_eq!(
+            (s.box_px, s.m, s.resized, s.pushed),
+            ((640.0, 400.0), 1.0, false, false)
+        );
         // large: resized into the fit box, M stays 1
         let l = place(&land, &p, 2400.0, 1400.0, None);
-        assert_eq!((l.box_px, l.m, l.resized, l.pushed), ((1904.0, 948.0), 1.0, true, false));
+        assert_eq!(
+            (l.box_px, l.m, l.resized, l.pushed),
+            ((1904.0, 948.0), 1.0, true, false)
+        );
         // a client whose minimum is larger: pushed back to fit, never cropped
         let m = place(&land, &p, 2400.0, 1400.0, Some((2000.0, 1000.0)));
         assert_eq!(m.box_px, (2000.0, 1000.0));
         assert!(close(m.m, 0.948, 1e-12) && m.pushed && !m.small);
-        assert!(m.box_px.0 * m.m <= land.fit_box.0 + 1e-9 && m.box_px.1 * m.m <= land.fit_box.1 + 1e-9);
+        assert!(
+            m.box_px.0 * m.m <= land.fit_box.0 + 1e-9 && m.box_px.1 * m.m <= land.fit_box.1 + 1e-9
+        );
         // far too large: below the legibility floor -> flagged
         let f = place(&land, &p, 4000.0, 3000.0, Some((4000.0, 3000.0)));
         assert!(f.pushed && f.small && f.m < land.m_min);
@@ -669,18 +896,34 @@ handheld_shape_max_short_px = 1600
         let p = Policy::from_ssot(&data).unwrap().unwrap();
         assert_eq!(p.fit_margin_px, 8.0, "follows theme.shell.edge_margin_px");
         assert_eq!(p.safe_insets_px, [0.0, 44.0, 0.0, 72.0]);
-        assert_eq!(p.text, Text { size_px: 12.0, cell: (10.0, 20.0), chrome: (20.0, 12.0) });
+        assert_eq!(
+            p.text,
+            Text {
+                size_px: 12.0,
+                cell: (10.0, 20.0),
+                chrome: (20.0, 12.0)
+            }
+        );
         // the margin follows its source
         let mut m = data.clone();
         m["theme"]["shell"]["edge_margin_px"] = Value::Integer(20);
         assert_eq!(Policy::from_ssot(&m).unwrap().unwrap().fit_margin_px, 20.0);
         m["theme"]["shell"]["dock_height_px"] = Value::Integer(72);
-        assert_eq!(Policy::from_ssot(&m).unwrap().unwrap().safe_insets_px[3], 112.0);
+        assert_eq!(
+            Policy::from_ssot(&m).unwrap().unwrap().safe_insets_px[3],
+            112.0
+        );
         // off: absent, disabled, criterion fixed
         let mut off = data.clone();
-        off["desktop"]["hyprland"]["hypr3d"].as_table_mut().unwrap().remove("spawn");
+        off["desktop"]["hyprland"]["hypr3d"]
+            .as_table_mut()
+            .unwrap()
+            .remove("spawn");
         assert!(Policy::from_ssot(&off).unwrap().is_none());
-        for (k, v) in [("enabled", Value::Boolean(false)), ("criterion", Value::String("fixed".into()))] {
+        for (k, v) in [
+            ("enabled", Value::Boolean(false)),
+            ("criterion", Value::String("fixed".into())),
+        ] {
             let mut d = data.clone();
             d["desktop"]["hyprland"]["hypr3d"]["spawn"][k] = v;
             assert!(Policy::from_ssot(&d).unwrap().is_none(), "{k}");
@@ -693,7 +936,10 @@ handheld_shape_max_short_px = 1600
             ("fit_margin_px", Value::String("theme.shell.nope".into())),
             ("fit_margin_px", Value::Float(-1.0)),
             ("landscape_cells", Value::Array(vec![Value::Integer(94)])),
-            ("portrait_cells", Value::Array(vec![Value::Integer(0), Value::Integer(10)])),
+            (
+                "portrait_cells",
+                Value::Array(vec![Value::Integer(0), Value::Integer(10)]),
+            ),
             ("mobile", Value::String("full".into())),
             ("text_size_source", Value::String("theme.nofont".into())),
             ("cascade_px", Value::Float(1000.0)),
@@ -706,8 +952,13 @@ handheld_shape_max_short_px = 1600
             assert!(e.contains(&format!("spawn.{k}")), "{k} = {v:?}: {e}");
         }
         let mut nosize = data.clone();
-        nosize["theme"]["font"].as_table_mut().unwrap().remove("cell_h_px");
-        assert!(Policy::from_ssot(&nosize).unwrap_err().contains("theme.font.cell_h_px"));
+        nosize["theme"]["font"]
+            .as_table_mut()
+            .unwrap()
+            .remove("cell_h_px");
+        assert!(Policy::from_ssot(&nosize)
+            .unwrap_err()
+            .contains("theme.font.cell_h_px"));
     }
 
     fn monitors() -> Json {
@@ -724,57 +975,117 @@ handheld_shape_max_short_px = 1600
         let data = ssot();
         // the focused output (the phone, mobile by its logical size 390x844)
         let mut config: Value = toml::from_str("[render]\nscale = 2.0\n").unwrap();
-        let pl = overlay(&data, &mut config, &monitors(), None).unwrap().unwrap();
-        assert_eq!((pl.output.as_str(), pl.mobile, pl.spawn_box), ("HEADLESS-PHONE", true, (374, 712)));
+        let pl = overlay(&data, &mut config, &monitors(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (pl.output.as_str(), pl.mobile, pl.spawn_box),
+            ("HEADLESS-PHONE", true, (374, 712))
+        );
         let w = &config["windows"];
         assert_eq!(w["window_scale"].as_float(), Some(0.754823));
         assert_eq!(w["spawn_distance"].as_float(), Some(5.0));
-        assert_eq!((w["spawn_size"]["x"].as_integer(), w["spawn_size"]["y"].as_integer()), (Some(374), Some(712)));
+        assert_eq!(
+            (
+                w["spawn_size"]["x"].as_integer(),
+                w["spawn_size"]["y"].as_integer()
+            ),
+            (Some(374), Some(712))
+        );
         assert_eq!(w["safe_top"].as_float(), Some(44.0));
         assert_eq!(w["safe_bottom"].as_float(), Some(72.0));
-        assert_eq!((w["pixel_exact"].as_bool(), w["fit"].as_str(), w["cascade"].as_float()), (Some(true), Some("resize"), Some(32.0)));
+        assert_eq!(
+            (
+                w["pixel_exact"].as_bool(),
+                w["fit"].as_str(),
+                w["cascade"].as_float()
+            ),
+            (Some(true), Some("resize"), Some(32.0))
+        );
         assert_eq!(w["min_magnification"].as_float(), Some(0.8333));
         // world.monitor wins over focus; the published verdict wins over the computed one
         let mut config: Value = toml::from_str("[world]\nmonitor = \"DP-1\"\n").unwrap();
         let published = json!({"outputs": {"DP-1": {"mobile": true}}});
-        let pl = overlay(&data, &mut config, &monitors(), Some(&published)).unwrap().unwrap();
-        assert_eq!((pl.output.as_str(), pl.mobile, pl.spawn_box), ("DP-1", true, (1904, 948)));
+        let pl = overlay(&data, &mut config, &monitors(), Some(&published))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (pl.output.as_str(), pl.mobile, pl.spawn_box),
+            ("DP-1", true, (1904, 948))
+        );
         let mut config: Value = toml::from_str("[world]\nmonitor = \"DP-1\"\n").unwrap();
-        let pl = overlay(&data, &mut config, &monitors(), None).unwrap().unwrap();
-            assert_eq!((pl.mobile, pl.spawn_box), (false, (960, 692)));
+        let pl = overlay(&data, &mut config, &monitors(), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!((pl.mobile, pl.spawn_box), (false, (960, 692)));
         assert_eq!(config["windows"]["window_scale"].as_float(), Some(0.58988));
         // explicit [config.windows] keys win; an explicit window_scale turns pixel_exact off
-        let mut config: Value = toml::from_str("[world]\nmonitor = \"DP-1\"\n[windows]\nwindow_scale = 0.5\nspawn_distance = 4.0\n").unwrap();
-        overlay(&data, &mut config, &monitors(), None).unwrap().unwrap();
+        let mut config: Value = toml::from_str(
+            "[world]\nmonitor = \"DP-1\"\n[windows]\nwindow_scale = 0.5\nspawn_distance = 4.0\n",
+        )
+        .unwrap();
+        overlay(&data, &mut config, &monitors(), None)
+            .unwrap()
+            .unwrap();
         let w = &config["windows"];
-        assert_eq!((w["window_scale"].as_float(), w["spawn_distance"].as_float()), (Some(0.5), Some(4.0)));
+        assert_eq!(
+            (w["window_scale"].as_float(), w["spawn_distance"].as_float()),
+            (Some(0.5), Some(4.0))
+        );
         assert!(w.get("pixel_exact").is_none());
-        let mut config: Value = toml::from_str("[world]\nmonitor = \"DP-1\"\n[windows]\nspawn_distance = 4.0\n").unwrap();
-        let pl = overlay(&data, &mut config, &monitors(), None).unwrap().unwrap();
+        let mut config: Value =
+            toml::from_str("[world]\nmonitor = \"DP-1\"\n[windows]\nspawn_distance = 4.0\n")
+                .unwrap();
+        let pl = overlay(&data, &mut config, &monitors(), None)
+            .unwrap()
+            .unwrap();
         assert!(close(pl.window_scale, 4.0 / d1(1080.0), 1e-12));
         // negative controls: policy off sends nothing; no outputs sends nothing
         let mut off = data.clone();
         off["desktop"]["hyprland"]["hypr3d"]["spawn"]["criterion"] = Value::String("fixed".into());
         let mut config: Value = toml::from_str("[render]\nscale = 2.0\n").unwrap();
-        assert!(overlay(&off, &mut config, &monitors(), None).unwrap().is_none());
+        assert!(overlay(&off, &mut config, &monitors(), None)
+            .unwrap()
+            .is_none());
         assert!(config.get("windows").is_none());
-        assert!(overlay(&data, &mut config, &json!([]), None).unwrap().is_none());
+        assert!(overlay(&data, &mut config, &json!([]), None)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn cli_plan_lists_every_output() {
-        let out = run_cli(&ssot(), &monitors(), None, None, None, &[(2400.0, 1400.0), (640.0, 400.0)]).unwrap();
+        let out = run_cli(
+            &ssot(),
+            &monitors(),
+            None,
+            None,
+            None,
+            &[(2400.0, 1400.0), (640.0, 400.0)],
+        )
+        .unwrap();
         let j: Json = serde_json::from_str(&out).unwrap();
         let rows = j["outputs"].as_array().unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["magnification"].as_f64(), Some(1.0));
         assert_eq!(rows[0]["stock_magnification"].as_f64(), Some(0.8476));
         // the SSOT 12 px text: 12 output px flat and in the room (1080p, scale 1); 36 px on the phone at scale 3
-        assert_eq!(rows[0]["text_px"], json!({"font": 12.0, "flat": 12.0, "room": 12.0, "stock_room": 10.172}));
-        assert_eq!((rows[1]["text_px"]["flat"].as_f64(), rows[1]["text_px"]["room"].as_f64()), (Some(36.0), Some(36.0)));
+        assert_eq!(
+            rows[0]["text_px"],
+            json!({"font": 12.0, "flat": 12.0, "room": 12.0, "stock_room": 10.172})
+        );
+        assert_eq!(
+            (
+                rows[1]["text_px"]["flat"].as_f64(),
+                rows[1]["text_px"]["room"].as_f64()
+            ),
+            (Some(36.0), Some(36.0))
+        );
         assert!(rows[1]["text_px"]["stock_room"].as_f64().unwrap() < 24.0); // the plugin default shrinks it to 2/3
         assert_eq!(rows[0]["windows"][0]["box"], json!([1904.0, 948.0]));
         assert_eq!(rows[1]["mobile"].as_bool(), Some(true));
-        assert!(run_cli(&ssot(), &monitors(), None, Some("NOPE"), None, &[]).unwrap_err().contains("NOPE"));
+        assert!(run_cli(&ssot(), &monitors(), None, Some("NOPE"), None, &[])
+            .unwrap_err()
+            .contains("NOPE"));
     }
 }

@@ -97,7 +97,11 @@ pub async fn run(action: &AppmenuAction) -> Result<(), String> {
             );
             Ok(())
         }
-        AppmenuAction::Activate { app_id, item_id, window } => activate(app_id, item_id, window.as_deref()).await,
+        AppmenuAction::Activate {
+            app_id,
+            item_id,
+            window,
+        } => activate(app_id, item_id, window.as_deref()).await,
     }
 }
 
@@ -180,7 +184,11 @@ fn chord(mods: &[String], key: &str) -> Option<String> {
         (&["shift"][..], "Shift"),
         (&["super", "mod4", "hyper"][..], "Super"),
     ] {
-        if mods.iter().any(|m| names.contains(&m.to_ascii_lowercase().as_str())) && !out.contains(&shown) {
+        if mods
+            .iter()
+            .any(|m| names.contains(&m.to_ascii_lowercase().as_str()))
+            && !out.contains(&shown)
+        {
             out.push(shown);
         }
     }
@@ -201,7 +209,9 @@ fn chord(mods: &[String], key: &str) -> Option<String> {
         _ if key.chars().count() == 1 => key.to_uppercase(),
         _ => {
             let mut c = key.chars();
-            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
         }
     };
     let mut s = out.join("+");
@@ -226,12 +236,16 @@ pub fn gtk_accel(accel: &str) -> Option<String> {
 
 /// dbusmenu `shortcut` (aas: one array of names per chord, modifiers first) in display form.
 fn dbm_shortcut(v: &Value<'_>) -> Option<String> {
-    let Value::Array(chords) = unwrap_variant(v) else { return None };
+    let Value::Array(chords) = unwrap_variant(v) else {
+        return None;
+    };
     let shown: Vec<String> = chords
         .inner()
         .iter()
         .filter_map(|c| {
-            let Value::Array(keys) = unwrap_variant(c) else { return None };
+            let Value::Array(keys) = unwrap_variant(c) else {
+                return None;
+            };
             let mut names: Vec<String> = keys.inner().iter().filter_map(as_str).collect();
             let key = names.pop()?;
             chord(&names, &key)
@@ -243,7 +257,11 @@ fn dbm_shortcut(v: &Value<'_>) -> Option<String> {
 /// AT-SPI action key binding in display form. GTK reports "mnemonic;path;accelerator" with GTK accelerator syntax,
 /// Qt the accelerator itself ("Ctrl+O"); only the accelerator is a shortcut (mnemonics stay inside the app).
 fn a11y_shortcut(binding: &str) -> Option<String> {
-    let accel = if binding.contains(';') { binding.rsplit(';').next()? } else { binding };
+    let accel = if binding.contains(';') {
+        binding.rsplit(';').next()?
+    } else {
+        binding
+    };
     let accel = accel.trim();
     if accel.is_empty() {
         None
@@ -331,7 +349,11 @@ fn client_from(v: &serde_json::Value) -> Option<Client> {
             .to_string(),
         pid: v.get("pid").and_then(|p| p.as_i64()).unwrap_or(0).max(0) as u32,
         xwayland: v.get("xwayland").and_then(|x| x.as_bool()).unwrap_or(false),
-        title: v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+        title: v
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
         stable_id: v
             .get("stableId")
             .and_then(|s| s.as_str())
@@ -363,16 +385,29 @@ fn kde_appmenu_table() -> Vec<KdeBinding> {
 }
 
 fn kde_appmenu_parse(v: Option<serde_json::Value>) -> Vec<KdeBinding> {
-    let Some(menus) = v.as_ref().and_then(|v| v.get("menus")).and_then(|m| m.as_array()) else {
+    let Some(menus) = v
+        .as_ref()
+        .and_then(|v| v.get("menus"))
+        .and_then(|m| m.as_array())
+    else {
         return Vec::new();
     };
     menus
         .iter()
         .filter_map(|m| {
-            let s = |k: &str| m.get(k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(str::to_string);
+            let s = |k: &str| {
+                m.get(k)
+                    .and_then(|x| x.as_str())
+                    .filter(|x| !x.is_empty())
+                    .map(str::to_string)
+            };
             Some(KdeBinding {
                 address: s("address")?,
-                pid: m.get("pid").and_then(|p| p.as_u64()).and_then(|p| u32::try_from(p).ok()).unwrap_or(0),
+                pid: m
+                    .get("pid")
+                    .and_then(|p| p.as_u64())
+                    .and_then(|p| u32::try_from(p).ok())
+                    .unwrap_or(0),
                 service: s("service")?,
                 path: s("path")?,
             })
@@ -383,7 +418,11 @@ fn kde_appmenu_parse(v: Option<serde_json::Value>) -> Vec<KdeBinding> {
 
 /// Whether the compositor holds a binding for another window of this client's process.
 fn kde_process_announces(table: &[KdeBinding], client: &Client) -> bool {
-    client.pid != 0 && !client.xwayland && table.iter().any(|b| b.pid == client.pid && b.address != client.address)
+    client.pid != 0
+        && !client.xwayland
+        && table
+            .iter()
+            .any(|b| b.pid == client.pid && b.address != client.address)
 }
 
 fn focused_client() -> Option<Client> {
@@ -443,7 +482,14 @@ impl X11 {
         use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
         let (c, _, _) = self.conn.as_ref()?;
         let atom = |name: &str| -> Option<u32> {
-            Some(c.intern_atom(true, name.as_bytes()).ok()?.reply().ok()?.atom).filter(|a| *a != 0)
+            Some(
+                c.intern_atom(true, name.as_bytes())
+                    .ok()?
+                    .reply()
+                    .ok()?
+                    .atom,
+            )
+            .filter(|a| *a != 0)
         };
         let text = |name: &str| -> Option<String> {
             let a = atom(name)?;
@@ -701,11 +747,23 @@ async fn gtk_actions(conn: &Connection, bus: &str, path: &str) -> ActionStates {
         return HashMap::new();
     };
     map.into_iter()
-        .map(|(k, (enabled, _, state))| (k, ActionInfo { enabled, state: state.first().map(|v| val(v)) }))
+        .map(|(k, (enabled, _, state))| {
+            (
+                k,
+                ActionInfo {
+                    enabled,
+                    state: state.first().map(|v| val(v)),
+                },
+            )
+        })
         .collect()
 }
 
-fn gtk_action<'a>(action: &str, app: &'a ActionStates, win: Option<&'a ActionStates>) -> Option<&'a ActionInfo> {
+fn gtk_action<'a>(
+    action: &str,
+    app: &'a ActionStates,
+    win: Option<&'a ActionStates>,
+) -> Option<&'a ActionInfo> {
     match action_target(action) {
         Some((ActionScope::App, name)) => app.get(name),
         Some((ActionScope::Win, name)) => win.and_then(|w| w.get(name)),
@@ -721,7 +779,9 @@ fn gtk_action_enabled(action: &str, app: &ActionStates, win: Option<&ActionState
 /// (toggle kind, checked) of a GMenu item from its action's state: a boolean state is a check item, a state
 /// matched against the item's target is a radio item (GTK's own menu model semantics).
 fn gtk_toggle(info: Option<&ActionInfo>, target: Option<&Value<'_>>) -> (Option<String>, bool) {
-    let Some(state) = info.and_then(|i| i.state.as_ref()) else { return (None, false) };
+    let Some(state) = info.and_then(|i| i.state.as_ref()) else {
+        return (None, false);
+    };
     match (unwrap_variant(state), target.map(unwrap_variant)) {
         (Value::Bool(b), None) => (Some("check".into()), *b),
         (st, Some(t)) => (Some("radio".into()), st == t),
@@ -769,7 +829,10 @@ fn gtk_items(
             });
             continue;
         }
-        let info = attrs.get("action").and_then(|v| as_str(v)).and_then(|a| gtk_action(&a, app, win));
+        let info = attrs
+            .get("action")
+            .and_then(|v| as_str(v))
+            .and_then(|a| gtk_action(&a, app, win));
         let target = attrs.get("target").map(|t| val(t));
         let (toggle, checked) = gtk_toggle(info, target.as_ref());
         let shortcut = ["accel", "x-canonical-accel"]
@@ -862,7 +925,10 @@ fn dbm_items(children: &[Value<'_>], depth: usize) -> Vec<Item> {
             _ => None,
         };
         let checked = toggle.is_some()
-            && matches!(prop("toggle-state").as_ref().map(unwrap_variant), Some(Value::I32(1)));
+            && matches!(
+                prop("toggle-state").as_ref().map(unwrap_variant),
+                Some(Value::I32(1))
+            );
         out.push(Item {
             id: format!("dbm:{id}"),
             label,
@@ -871,7 +937,11 @@ fn dbm_items(children: &[Value<'_>], depth: usize) -> Vec<Item> {
             separator_before: std::mem::take(&mut sep),
             toggle,
             checked,
-            shortcut: if has_sub { None } else { prop("shortcut").as_ref().and_then(dbm_shortcut) },
+            shortcut: if has_sub {
+                None
+            } else {
+                prop("shortcut").as_ref().and_then(dbm_shortcut)
+            },
         });
     }
     out
@@ -944,7 +1014,11 @@ async fn dbm_layout(
     let mut asked: BTreeSet<i32> = BTreeSet::new();
     for _ in 0..MAX_DEPTH {
         let empty = dbm_empty_submenus(&kids, 0);
-        let fresh: Vec<i32> = empty.into_iter().filter(|id| !asked.contains(id)).take(64).collect();
+        let fresh: Vec<i32> = empty
+            .into_iter()
+            .filter(|id| !asked.contains(id))
+            .take(64)
+            .collect();
         if fresh.is_empty() || asked.len() >= 256 {
             break;
         }
@@ -952,7 +1026,16 @@ async fn dbm_layout(
         for id in fresh {
             asked.insert(id);
             // A delivered AboutToShow counts as a change (Qt fills synchronously but always answers false).
-            changed |= call(conn, bus, path, "com.canonical.dbusmenu", "AboutToShow", &(id,)).await.is_ok();
+            changed |= call(
+                conn,
+                bus,
+                path,
+                "com.canonical.dbusmenu",
+                "AboutToShow",
+                &(id,),
+            )
+            .await
+            .is_ok();
         }
         if !changed {
             break;
@@ -969,10 +1052,15 @@ fn dbm_empty_submenus(children: &[Value<'_>], depth: usize) -> Vec<i32> {
         return out;
     }
     for child in children {
-        let Value::Structure(s) = unwrap_variant(child) else { continue };
-        let [Value::I32(id), Value::Dict(props), Value::Array(kids)] = s.fields() else { continue };
+        let Value::Structure(s) = unwrap_variant(child) else {
+            continue;
+        };
+        let [Value::I32(id), Value::Dict(props), Value::Array(kids)] = s.fields() else {
+            continue;
+        };
         let submenu = props.iter().any(|(k, v)| {
-            as_str(k).as_deref() == Some("children-display") && as_str(v).as_deref() == Some("submenu")
+            as_str(k).as_deref() == Some("children-display")
+                && as_str(v).as_deref() == Some("submenu")
         });
         if kids.inner().is_empty() {
             if submenu && depth > 0 {
@@ -1008,8 +1096,29 @@ fn dbm_menus(kids: &[Value<'_>]) -> Vec<Menu> {
 // the application's own accessibility cache; no per-application labels,
 // shortcuts or command lists are fabricated here.
 type A11yRef = (String, OwnedObjectPath);
-type A11yLegacyCacheRow = (A11yRef, A11yRef, A11yRef, Vec<A11yRef>, Vec<String>, String, u32, String, Vec<u32>);
-type A11yCacheRow = (A11yRef, A11yRef, A11yRef, i32, i32, Vec<String>, String, u32, String, Vec<u32>);
+type A11yLegacyCacheRow = (
+    A11yRef,
+    A11yRef,
+    A11yRef,
+    Vec<A11yRef>,
+    Vec<String>,
+    String,
+    u32,
+    String,
+    Vec<u32>,
+);
+type A11yCacheRow = (
+    A11yRef,
+    A11yRef,
+    A11yRef,
+    i32,
+    i32,
+    Vec<String>,
+    String,
+    u32,
+    String,
+    Vec<u32>,
+);
 
 #[derive(Clone, Debug)]
 struct A11yNode {
@@ -1031,32 +1140,45 @@ struct A11yAction {
 }
 
 fn a11y_state(states: &[u32], bit: usize) -> bool {
-    states.get(bit / 32).is_some_and(|word| word & (1 << (bit % 32)) != 0)
+    states
+        .get(bit / 32)
+        .is_some_and(|word| word & (1 << (bit % 32)) != 0)
 }
 
 fn a11y_in_frame(nodes: &HashMap<String, A11yNode>, path: &str, frame: &str) -> bool {
     let mut current = path;
     for _ in 0..64 {
-        if current == frame { return true; }
-        let Some(node) = nodes.get(current) else { return false; };
+        if current == frame {
+            return true;
+        }
+        let Some(node) = nodes.get(current) else {
+            return false;
+        };
         // Never turn webpage controls, document content or file-list
         // context menus into application-wide menu pills.
-        if matches!(node.role, 31 | 55 | 66 | 82 | 95) { return false; }
-        if node.parent == current { return false; }
+        if matches!(node.role, 31 | 55 | 66 | 82 | 95) {
+            return false;
+        }
+        if node.parent == current {
+            return false;
+        }
         current = &node.parent;
     }
     false
 }
 
 fn a11y_enabled(node: &A11yNode) -> bool {
-    !a11y_state(&node.states, 6) &&
-        (a11y_state(&node.states, 8) || a11y_state(&node.states, 24))
+    !a11y_state(&node.states, 6) && (a11y_state(&node.states, 8) || a11y_state(&node.states, 24))
 }
 
 fn a11y_native_button(node: &A11yNode) -> bool {
-    matches!(node.role, 43 | 62 | 129) && a11y_state(&node.states, 42) &&
-        !node.label.trim().is_empty() &&
-        node.interfaces.iter().any(|iface| iface == "org.a11y.atspi.Action")
+    matches!(node.role, 43 | 62 | 129)
+        && a11y_state(&node.states, 42)
+        && !node.label.trim().is_empty()
+        && node
+            .interfaces
+            .iter()
+            .any(|iface| iface == "org.a11y.atspi.Action")
 }
 
 fn a11y_menubar_entry(node: &A11yNode, parent: Option<&A11yNode>) -> bool {
@@ -1066,32 +1188,75 @@ fn a11y_menubar_entry(node: &A11yNode, parent: Option<&A11yNode>) -> bool {
 }
 
 fn a11y_press_index(actions: &[(String, String, String)]) -> Option<i32> {
-    actions.iter().position(|(name, _, _)| matches!(name.to_ascii_lowercase().as_str(),
-        "click" | "press" | "activate" | "toggle" | "showmenu" | "show-menu" | "open"))
+    actions
+        .iter()
+        .position(|(name, _, _)| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "click" | "press" | "activate" | "toggle" | "showmenu" | "show-menu" | "open"
+            )
+        })
         .map(|i| i as i32)
-        .or_else(|| (actions.len() == 1 && !actions[0].0.to_ascii_lowercase().contains("focus")).then_some(0))
+        .or_else(|| {
+            (actions.len() == 1 && !actions[0].0.to_ascii_lowercase().contains("focus"))
+                .then_some(0)
+        })
 }
 
 async fn a11y_connection(session: &Connection) -> Result<Connection, String> {
-    let message = call(session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", &())
-        .await.map_err(|e| e.to_string())?;
+    let message = call(
+        session,
+        "org.a11y.Bus",
+        "/org/a11y/bus",
+        "org.a11y.Bus",
+        "GetAddress",
+        &(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let address: String = message.body().deserialize().map_err(|e| e.to_string())?;
-    tokio::time::timeout(CALL_TIMEOUT,
-        zbus::connection::Builder::address(address.as_str()).map_err(|e| e.to_string())?.build())
-        .await.map_err(|_| "accessibility bus connection timed out".to_string())?
-        .map_err(|e| e.to_string())
+    tokio::time::timeout(
+        CALL_TIMEOUT,
+        zbus::connection::Builder::address(address.as_str())
+            .map_err(|e| e.to_string())?
+            .build(),
+    )
+    .await
+    .map_err(|_| "accessibility bus connection timed out".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 async fn a11y_owner_matches(bus: &Connection, name: &str, client: &Client) -> bool {
-    let Ok(reply) = call(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
-        "org.freedesktop.DBus", "GetConnectionUnixProcessID", &(name,)).await else { return false; };
-    let Ok(pid) = reply.body().deserialize::<u32>() else { return false; };
-    pid == client.pid || (flatpak_scope(client.pid).is_some() && flatpak_scope(pid) == flatpak_scope(client.pid))
+    let Ok(reply) = call(
+        bus,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "GetConnectionUnixProcessID",
+        &(name,),
+    )
+    .await
+    else {
+        return false;
+    };
+    let Ok(pid) = reply.body().deserialize::<u32>() else {
+        return false;
+    };
+    pid == client.pid
+        || (flatpak_scope(client.pid).is_some() && flatpak_scope(pid) == flatpak_scope(client.pid))
 }
 
 async fn a11y_cache(bus: &Connection, name: &str) -> Result<HashMap<String, A11yNode>, String> {
-    let reply = call(bus, name, "/org/a11y/atspi/cache", "org.a11y.atspi.Cache", "GetItems", &())
-        .await.map_err(|e| e.to_string())?;
+    let reply = call(
+        bus,
+        name,
+        "/org/a11y/atspi/cache",
+        "org.a11y.atspi.Cache",
+        "GetItems",
+        &(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let body = reply.body();
     let rows = match body.deserialize::<Vec<A11yCacheRow>>() {
         Ok(rows) => rows,
@@ -1099,57 +1264,131 @@ async fn a11y_cache(bus: &Connection, name: &str) -> Result<HashMap<String, A11y
             // Qt still exports the pre-2015 cache signature. Reconstruct
             // sibling order from its real child-reference arrays.
             let legacy: Vec<A11yLegacyCacheRow> = body.deserialize().map_err(|e| e.to_string())?;
-            if legacy.len() > 16384 { return Err("application accessibility cache exceeds menu discovery bound".into()); }
-            let order: HashMap<_, _> = legacy.iter().filter(|r| r.0.0 == name)
-                .flat_map(|r| r.3.iter().enumerate().filter(|(_, child)| child.0 == name)
-                    .map(|(i, child)| (child.1.to_string(), i as i32))).collect();
-            legacy.into_iter().map(|r| {
-                let index = order.get(r.0.1.as_str()).copied().unwrap_or(-1);
-                (r.0, r.1, r.2, index, r.3.len() as i32, r.4, r.5, r.6, r.7, r.8)
-            }).collect()
+            if legacy.len() > 16384 {
+                return Err("application accessibility cache exceeds menu discovery bound".into());
+            }
+            let order: HashMap<_, _> = legacy
+                .iter()
+                .filter(|r| r.0 .0 == name)
+                .flat_map(|r| {
+                    r.3.iter()
+                        .enumerate()
+                        .filter(|(_, child)| child.0 == name)
+                        .map(|(i, child)| (child.1.to_string(), i as i32))
+                })
+                .collect();
+            legacy
+                .into_iter()
+                .map(|r| {
+                    let index = order.get(r.0 .1.as_str()).copied().unwrap_or(-1);
+                    (
+                        r.0,
+                        r.1,
+                        r.2,
+                        index,
+                        r.3.len() as i32,
+                        r.4,
+                        r.5,
+                        r.6,
+                        r.7,
+                        r.8,
+                    )
+                })
+                .collect()
         }
     };
-    if rows.len() > 16384 { return Err("application accessibility cache exceeds menu discovery bound".into()); }
-    Ok(rows.into_iter().filter(|r| r.0.0 == name).map(|r| (r.0.1.to_string(), A11yNode {
-        parent: r.2.1.to_string(), index: r.3, interfaces: r.5,
-        label: r.6, role: r.7, states: r.9,
-    })).collect())
+    if rows.len() > 16384 {
+        return Err("application accessibility cache exceeds menu discovery bound".into());
+    }
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.0 .0 == name)
+        .map(|r| {
+            (
+                r.0 .1.to_string(),
+                A11yNode {
+                    parent: r.2 .1.to_string(),
+                    index: r.3,
+                    interfaces: r.5,
+                    label: r.6,
+                    role: r.7,
+                    states: r.9,
+                },
+            )
+        })
+        .collect())
 }
 
 async fn a11y_tree(bus: &Connection, name: &str, root: &str) -> HashMap<String, A11yNode> {
     // Some Qt bridges publish an empty cache. Walk the standard accessible
     // interface in bounded batches instead; never traverse document content.
-    let mut pending = std::collections::VecDeque::from([(root.to_string(), String::new(), 0, 0usize)]);
+    let mut pending =
+        std::collections::VecDeque::from([(root.to_string(), String::new(), 0, 0usize)]);
     let mut visited = BTreeSet::new();
     let mut nodes = HashMap::new();
     while !pending.is_empty() && visited.len() < 2048 {
         let mut batch = Vec::new();
         while batch.len() < 8 && visited.len() < 2048 {
-            let Some(entry) = pending.pop_front() else { break; };
-            if visited.insert(entry.0.clone()) { batch.push(entry); }
+            let Some(entry) = pending.pop_front() else {
+                break;
+            };
+            if visited.insert(entry.0.clone()) {
+                batch.push(entry);
+            }
         }
-        let fetched = futures_util::future::join_all(batch.into_iter().map(|(path, parent, index, depth)| async move {
-            let interface = "org.a11y.atspi.Accessible";
-            let property_args = (interface, "Name");
-            let (properties, role, states, interfaces) = tokio::join!(
-                call(bus, name, &path, "org.freedesktop.DBus.Properties", "Get", &property_args),
-                call(bus, name, &path, interface, "GetRole", &()),
-                call(bus, name, &path, interface, "GetState", &()),
-                call(bus, name, &path, interface, "GetInterfaces", &()));
-            let role: u32 = role.ok()?.body().deserialize().ok()?;
-            let states = states.ok()?.body().deserialize().ok()?;
-            let interfaces = interfaces.ok()?.body().deserialize().ok()?;
-            // Qt's accessibility adaptor implements Properties.Get but
-            // rejects GetAll on this virtual interface. Missing names must
-            // not hide the descendants of otherwise valid containers.
-            let label = properties.ok().and_then(|r| r.body().deserialize::<OwnedValue>().ok())
-                .and_then(|v| as_str(&v)).unwrap_or_default();
-            let children = if depth < 64 && !matches!(role, 31 | 55 | 66 | 82 | 95) {
-                call(bus, name, &path, interface, "GetChildren", &()).await.ok()
-                    .and_then(|r| r.body().deserialize::<Vec<A11yRef>>().ok()).unwrap_or_default()
-            } else { Vec::new() };
-            Some((path, A11yNode { parent, index, label, role, states, interfaces }, children, depth))
-        })).await;
+        let fetched = futures_util::future::join_all(batch.into_iter().map(
+            |(path, parent, index, depth)| async move {
+                let interface = "org.a11y.atspi.Accessible";
+                let property_args = (interface, "Name");
+                let (properties, role, states, interfaces) = tokio::join!(
+                    call(
+                        bus,
+                        name,
+                        &path,
+                        "org.freedesktop.DBus.Properties",
+                        "Get",
+                        &property_args
+                    ),
+                    call(bus, name, &path, interface, "GetRole", &()),
+                    call(bus, name, &path, interface, "GetState", &()),
+                    call(bus, name, &path, interface, "GetInterfaces", &())
+                );
+                let role: u32 = role.ok()?.body().deserialize().ok()?;
+                let states = states.ok()?.body().deserialize().ok()?;
+                let interfaces = interfaces.ok()?.body().deserialize().ok()?;
+                // Qt's accessibility adaptor implements Properties.Get but
+                // rejects GetAll on this virtual interface. Missing names must
+                // not hide the descendants of otherwise valid containers.
+                let label = properties
+                    .ok()
+                    .and_then(|r| r.body().deserialize::<OwnedValue>().ok())
+                    .and_then(|v| as_str(&v))
+                    .unwrap_or_default();
+                let children = if depth < 64 && !matches!(role, 31 | 55 | 66 | 82 | 95) {
+                    call(bus, name, &path, interface, "GetChildren", &())
+                        .await
+                        .ok()
+                        .and_then(|r| r.body().deserialize::<Vec<A11yRef>>().ok())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                Some((
+                    path,
+                    A11yNode {
+                        parent,
+                        index,
+                        label,
+                        role,
+                        states,
+                        interfaces,
+                    },
+                    children,
+                    depth,
+                ))
+            },
+        ))
+        .await;
         for (path, node, children, depth) in fetched.into_iter().flatten() {
             for (index, (owner, child)) in children.into_iter().take(256).enumerate() {
                 if owner == name && pending.len() < 2048 {
@@ -1171,11 +1410,21 @@ async fn a11y_nodes(bus: &Connection, name: &str, root: &str) -> HashMap<String,
 }
 
 fn a11y_frame(nodes: &HashMap<String, A11yNode>) -> Option<String> {
-    let frames: Vec<_> = nodes.iter().filter(|(_, n)| matches!(n.role, 16 | 23) && !a11y_state(&n.states, 6)).collect();
-    let active: Vec<_> = frames.iter().filter(|(_, n)| a11y_state(&n.states, 1)).collect();
-    if active.len() == 1 { Some(active[0].0.clone()) }
-    else if frames.len() == 1 { Some(frames[0].0.clone()) }
-    else { None } // Multiple inactive windows are never paired by guesswork.
+    let frames: Vec<_> = nodes
+        .iter()
+        .filter(|(_, n)| matches!(n.role, 16 | 23) && !a11y_state(&n.states, 6))
+        .collect();
+    let active: Vec<_> = frames
+        .iter()
+        .filter(|(_, n)| a11y_state(&n.states, 1))
+        .collect();
+    if active.len() == 1 {
+        Some(active[0].0.clone())
+    } else if frames.len() == 1 {
+        Some(frames[0].0.clone())
+    } else {
+        None
+    } // Multiple inactive windows are never paired by guesswork.
 }
 
 /// The accessible frame of exactly the focused window: among several windows of one process the frame whose name is
@@ -1186,7 +1435,9 @@ fn a11y_frame_for(nodes: &HashMap<String, A11yNode>, client: &Client) -> Option<
     if !title.is_empty() {
         let named: HashMap<String, A11yNode> = nodes
             .iter()
-            .filter(|(_, n)| matches!(n.role, 16 | 23) && !a11y_state(&n.states, 6) && n.label.trim() == title)
+            .filter(|(_, n)| {
+                matches!(n.role, 16 | 23) && !a11y_state(&n.states, 6) && n.label.trim() == title
+            })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         if !named.is_empty() {
@@ -1197,46 +1448,83 @@ fn a11y_frame_for(nodes: &HashMap<String, A11yNode>, client: &Client) -> Option<
 }
 
 fn a11y_id(bus: &str, path: &str, frame: &str, client: &Client, index: i32) -> String {
-    format!("a11y:{}", serde_json::to_string(&A11yAction {
-        bus: bus.into(), path: path.into(), frame: frame.into(),
-        address: client.address.clone(), index,
-    }).expect("serializable accessibility reference"))
+    format!(
+        "a11y:{}",
+        serde_json::to_string(&A11yAction {
+            bus: bus.into(),
+            path: path.into(),
+            frame: frame.into(),
+            address: client.address.clone(),
+            index,
+        })
+        .expect("serializable accessibility reference")
+    )
 }
 
 fn a11y_order(nodes: &HashMap<String, A11yNode>, path: &str) -> Vec<i32> {
     let mut order = Vec::new();
     let mut current = path;
     for _ in 0..64 {
-        let Some(node) = nodes.get(current) else { break; };
+        let Some(node) = nodes.get(current) else {
+            break;
+        };
         order.push(node.index);
-        if node.parent == current { break; }
+        if node.parent == current {
+            break;
+        }
         current = &node.parent;
     }
     order.reverse();
     order
 }
 
-fn a11y_items(nodes: &HashMap<String, A11yNode>, bus: &str, parent: &str, frame: &str, client: &Client, depth: usize) -> Vec<Item> {
-    if depth > MAX_DEPTH { return Vec::new(); }
+fn a11y_items(
+    nodes: &HashMap<String, A11yNode>,
+    bus: &str,
+    parent: &str,
+    frame: &str,
+    client: &Client,
+    depth: usize,
+) -> Vec<Item> {
+    if depth > MAX_DEPTH {
+        return Vec::new();
+    }
     let mut children: Vec<_> = nodes.iter().filter(|(_, n)| n.parent == parent).collect();
     children.sort_by_key(|(_, n)| n.index);
     let mut result = Vec::new();
     let mut separator = false;
     for (path, node) in children {
-        if node.role == 50 { separator = true; continue; }
+        if node.role == 50 {
+            separator = true;
+            continue;
+        }
         if matches!(node.role, 8 | 33 | 35 | 45) && !node.label.trim().is_empty() {
             let sub = a11y_items(nodes, bus, path, frame, client, depth + 1);
             // CHECK_MENU_ITEM / RADIO_MENU_ITEM carry the app's own CHECKED state (bit 4).
-            let toggle = match node.role { 8 => Some("check".to_string()), 45 => Some("radio".to_string()), _ => None };
+            let toggle = match node.role {
+                8 => Some("check".to_string()),
+                45 => Some("radio".to_string()),
+                _ => None,
+            };
             let checked = toggle.is_some() && a11y_state(&node.states, 4);
-            result.push(Item { id: a11y_id(bus, path, frame, client, 0), label: strip_mnemonic(&node.label),
-                enabled: a11y_enabled(node), submenu: (!sub.is_empty()).then_some(sub), separator_before: separator,
-                toggle, checked, shortcut: None });
+            result.push(Item {
+                id: a11y_id(bus, path, frame, client, 0),
+                label: strip_mnemonic(&node.label),
+                enabled: a11y_enabled(node),
+                submenu: (!sub.is_empty()).then_some(sub),
+                separator_before: separator,
+                toggle,
+                checked,
+                shortcut: None,
+            });
             separator = false;
         } else if matches!(node.role, 20 | 30 | 39 | 41 | 46 | 33) {
             // Containers between a menu and its items: fillers/panels and Qt's POPUP_MENU under a menu item.
             let mut nested = a11y_items(nodes, bus, path, frame, client, depth + 1);
-            if separator && !nested.is_empty() { nested[0].separator_before = true; separator = false; }
+            if separator && !nested.is_empty() {
+                nested[0].separator_before = true;
+                separator = false;
+            }
             result.extend(nested);
         }
     }
@@ -1249,7 +1537,11 @@ fn a11y_leaf_paths(items: &[Item], out: &mut Vec<String>) {
         match &it.submenu {
             Some(sub) => a11y_leaf_paths(sub, out),
             None => {
-                if let Some(a) = it.id.strip_prefix("a11y:").and_then(|j| serde_json::from_str::<A11yAction>(j).ok()) {
+                if let Some(a) = it
+                    .id
+                    .strip_prefix("a11y:")
+                    .and_then(|j| serde_json::from_str::<A11yAction>(j).ok())
+                {
                     out.push(a.path);
                 }
             }
@@ -1262,7 +1554,11 @@ fn a11y_apply_shortcuts(items: &mut [Item], found: &HashMap<String, String>) {
         match &mut it.submenu {
             Some(sub) => a11y_apply_shortcuts(sub, found),
             None => {
-                let path = it.id.strip_prefix("a11y:").and_then(|j| serde_json::from_str::<A11yAction>(j).ok()).map(|a| a.path);
+                let path = it
+                    .id
+                    .strip_prefix("a11y:")
+                    .and_then(|j| serde_json::from_str::<A11yAction>(j).ok())
+                    .map(|a| a.path);
                 if let Some(s) = path.and_then(|p| found.get(&p)) {
                     it.shortcut = Some(s.clone());
                 }
@@ -1283,30 +1579,66 @@ async fn a11y_shortcuts(bus: &Connection, name: &str, items: &mut [Item]) {
             break;
         }
         let replies = futures_util::future::join_all(chunk.iter().map(|p| async move {
-            let r = call(bus, name, p, "org.a11y.atspi.Action", "GetActions", &()).await.ok()?;
-            let actions = r.body().deserialize::<Vec<(String, String, String)>>().ok()?;
+            let r = call(bus, name, p, "org.a11y.atspi.Action", "GetActions", &())
+                .await
+                .ok()?;
+            let actions = r
+                .body()
+                .deserialize::<Vec<(String, String, String)>>()
+                .ok()?;
             let i = a11y_press_index(&actions)? as usize;
             Some((p.clone(), a11y_shortcut(&actions.get(i)?.2)?))
-        })).await;
+        }))
+        .await;
         found.extend(replies.into_iter().flatten());
     }
     a11y_apply_shortcuts(items, &found);
 }
 
-async fn a11y_menus(session: &Connection, client: &Client, provider: &Arc<Mutex<Option<String>>>) -> Vec<Menu> {
-    if let Ok(mut current) = provider.lock() { *current = None; }
-    let Ok(bus) = a11y_connection(session).await else { return Vec::new(); };
-    let Ok(reply) = call(&bus, "org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root",
-        "org.a11y.atspi.Accessible", "GetChildren", &()).await else { return Vec::new(); };
-    let Ok(apps) = reply.body().deserialize::<Vec<A11yRef>>() else { return Vec::new(); };
+async fn a11y_menus(
+    session: &Connection,
+    client: &Client,
+    provider: &Arc<Mutex<Option<String>>>,
+) -> Vec<Menu> {
+    if let Ok(mut current) = provider.lock() {
+        *current = None;
+    }
+    let Ok(bus) = a11y_connection(session).await else {
+        return Vec::new();
+    };
+    let Ok(reply) = call(
+        &bus,
+        "org.a11y.atspi.Registry",
+        "/org/a11y/atspi/accessible/root",
+        "org.a11y.atspi.Accessible",
+        "GetChildren",
+        &(),
+    )
+    .await
+    else {
+        return Vec::new();
+    };
+    let Ok(apps) = reply.body().deserialize::<Vec<A11yRef>>() else {
+        return Vec::new();
+    };
     for (name, root) in apps.into_iter().take(256) {
-        if !a11y_owner_matches(&bus, &name, client).await { continue; }
-        if let Ok(mut current) = provider.lock() { *current = Some(name.clone()); }
+        if !a11y_owner_matches(&bus, &name, client).await {
+            continue;
+        }
+        if let Ok(mut current) = provider.lock() {
+            *current = Some(name.clone());
+        }
         let nodes = a11y_nodes(&bus, &name, root.as_str()).await;
-        let Some(frame) = a11y_frame_for(&nodes, client) else { continue; };
-        let mut candidates: Vec<_> = nodes.iter().filter(|(path, node)|
-            a11y_in_frame(&nodes, path, &frame) &&
-            (a11y_native_button(node) || a11y_menubar_entry(node, nodes.get(&node.parent))))
+        let Some(frame) = a11y_frame_for(&nodes, client) else {
+            continue;
+        };
+        let mut candidates: Vec<_> = nodes
+            .iter()
+            .filter(|(path, node)| {
+                a11y_in_frame(&nodes, path, &frame)
+                    && (a11y_native_button(node)
+                        || a11y_menubar_entry(node, nodes.get(&node.parent)))
+            })
             .collect();
         // Menu buttons commonly all have sibling index zero inside separate
         // wrappers. Compare their complete ancestry, then path, so refreshes
@@ -1314,17 +1646,44 @@ async fn a11y_menus(session: &Connection, client: &Client, provider: &Arc<Mutex<
         candidates.sort_by_key(|(path, _)| (a11y_order(&nodes, path), (*path).clone()));
         let mut result = Vec::new();
         for (path, node) in candidates {
-            if node.label.trim().is_empty() { continue; }
+            if node.label.trim().is_empty() {
+                continue;
+            }
             let mut items = a11y_items(&nodes, &name, path, &frame, client, 0);
             a11y_shortcuts(&bus, &name, &mut items).await;
             let action = if items.is_empty() {
-                let Ok(actions) = call(&bus, &name, path, "org.a11y.atspi.Action", "GetActions", &()).await else { continue; };
-                let Ok(actions) = actions.body().deserialize::<Vec<(String, String, String)>>() else { continue; };
-                let Some(index) = a11y_press_index(&actions) else { continue; };
+                let Ok(actions) = call(
+                    &bus,
+                    &name,
+                    path,
+                    "org.a11y.atspi.Action",
+                    "GetActions",
+                    &(),
+                )
+                .await
+                else {
+                    continue;
+                };
+                let Ok(actions) = actions
+                    .body()
+                    .deserialize::<Vec<(String, String, String)>>()
+                else {
+                    continue;
+                };
+                let Some(index) = a11y_press_index(&actions) else {
+                    continue;
+                };
                 Some(a11y_id(&name, path, &frame, client, index))
-            } else { None };
-            result.push(Menu { id: a11y_id(&name, path, &frame, client, 0), label: strip_mnemonic(&node.label),
-                items, action, enabled: a11y_enabled(node) });
+            } else {
+                None
+            };
+            result.push(Menu {
+                id: a11y_id(&name, path, &frame, client, 0),
+                label: strip_mnemonic(&node.label),
+                items,
+                action,
+                enabled: a11y_enabled(node),
+            });
         }
         return result;
     }
@@ -1332,25 +1691,60 @@ async fn a11y_menus(session: &Connection, client: &Client, provider: &Arc<Mutex<
 }
 
 async fn a11y_activate(session: &Connection, client: &Client, id: &str) -> Result<(), String> {
-    let action: A11yAction = serde_json::from_str(id.strip_prefix("a11y:").ok_or("invalid accessibility menu reference")?)
-        .map_err(|e| e.to_string())?;
-    if action.address != client.address || action.index < 0 { return Err("menu belongs to a different window".into()); }
+    let action: A11yAction = serde_json::from_str(
+        id.strip_prefix("a11y:")
+            .ok_or("invalid accessibility menu reference")?,
+    )
+    .map_err(|e| e.to_string())?;
+    if action.address != client.address || action.index < 0 {
+        return Err("menu belongs to a different window".into());
+    }
     let bus = a11y_connection(session).await?;
-    if !a11y_owner_matches(&bus, &action.bus, client).await { return Err("menu provider does not belong to the focused application".into()); }
+    if !a11y_owner_matches(&bus, &action.bus, client).await {
+        return Err("menu provider does not belong to the focused application".into());
+    }
     let nodes = a11y_nodes(&bus, &action.bus, &action.frame).await;
-    let node = nodes.get(&action.path).ok_or("application menu is no longer available")?;
-    if !a11y_in_frame(&nodes, &action.path, &action.frame) || a11y_frame_for(&nodes, client).as_deref() != Some(action.frame.as_str()) {
+    let node = nodes
+        .get(&action.path)
+        .ok_or("application menu is no longer available")?;
+    if !a11y_in_frame(&nodes, &action.path, &action.frame)
+        || a11y_frame_for(&nodes, client).as_deref() != Some(action.frame.as_str())
+    {
         return Err("application menu window changed".into());
     }
-    if !a11y_enabled(node) { return Err("application menu action is disabled".into()); }
-    let actions = call(&bus, &action.bus, &action.path, "org.a11y.atspi.Action", "GetActions", &()).await
+    if !a11y_enabled(node) {
+        return Err("application menu action is disabled".into());
+    }
+    let actions = call(
+        &bus,
+        &action.bus,
+        &action.path,
+        "org.a11y.atspi.Action",
+        "GetActions",
+        &(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let actions = actions
+        .body()
+        .deserialize::<Vec<(String, String, String)>>()
         .map_err(|e| e.to_string())?;
-    let actions = actions.body().deserialize::<Vec<(String, String, String)>>().map_err(|e| e.to_string())?;
     let index = a11y_press_index(&actions).ok_or("application menu has no activation action")?;
-    let reply = call(&bus, &action.bus, &action.path, "org.a11y.atspi.Action", "DoAction", &(index,))
-        .await.map_err(|e| e.to_string())?;
-    if reply.body().deserialize::<bool>().unwrap_or(false) { Ok(()) }
-    else { Err("application rejected the menu action".into()) }
+    let reply = call(
+        &bus,
+        &action.bus,
+        &action.path,
+        "org.a11y.atspi.Action",
+        "DoAction",
+        &(index,),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    if reply.body().deserialize::<bool>().unwrap_or(false) {
+        Ok(())
+    } else {
+        Err("application rejected the menu action".into())
+    }
 }
 
 struct Ctx {
@@ -1374,7 +1768,11 @@ struct Ctx {
 #[derive(Debug)]
 enum Resolved {
     Gtk(GtkTarget, &'static str),
-    Dbm { bus: String, path: String, binding: &'static str },
+    Dbm {
+        bus: String,
+        path: String,
+        binding: &'static str,
+    },
     None,
 }
 
@@ -1453,7 +1851,9 @@ impl Ctx {
                 Err(_) => Vec::new(),
             };
             for n in names.into_iter().filter(|n| n.starts_with(':')) {
-                let Some(pid) = self.pid_of(&n).await else { continue };
+                let Some(pid) = self.pid_of(&n).await else {
+                    continue;
+                };
                 let mine = pid == client.pid
                     || (scope.is_some() && flatpak_scope(pid).as_ref() == scope.as_ref());
                 if mine && !out.contains(&n) {
@@ -1529,16 +1929,28 @@ impl Ctx {
     /// The compositor's KDE appmenu binding of this exact window (mios-appmenu plugin), trusted only when the D-Bus
     /// connection that owns the announced service belongs to the window's process (or its Flatpak scope): a client
     /// can only name its own surfaces, but the service string is its claim.
-    async fn kde_appmenu(&mut self, client: &Client, table: &[KdeBinding]) -> Option<(String, String)> {
+    async fn kde_appmenu(
+        &mut self,
+        client: &Client,
+        table: &[KdeBinding],
+    ) -> Option<(String, String)> {
         if client.xwayland || client.pid == 0 {
             return None;
         }
-        let KdeBinding { service, path, .. } = table.iter().find(|b| b.address == client.address)?.clone();
-        let owner = if service.starts_with(':') { service } else { self.owner_of(&service).await? };
+        let KdeBinding { service, path, .. } =
+            table.iter().find(|b| b.address == client.address)?.clone();
+        let owner = if service.starts_with(':') {
+            service
+        } else {
+            self.owner_of(&service).await?
+        };
         let pid = self.pid_of(&owner).await?;
         let scope = flatpak_scope(client.pid);
         if pid != client.pid && !(scope.is_some() && flatpak_scope(pid) == scope) {
-            eprintln!("[appmenu] {} announced {owner}{path}, owned by pid {pid}: ignored", client.address);
+            eprintln!(
+                "[appmenu] {} announced {owner}{path}, owned by pid {pid}: ignored",
+                client.address
+            );
             return None;
         }
         Some((owner, path))
@@ -1547,7 +1959,11 @@ impl Ctx {
     async fn resolve(&mut self, client: &Client, skip_gtk: bool) -> Resolved {
         let table = kde_appmenu_table();
         if let Some((bus, path)) = self.kde_appmenu(client, &table).await {
-            return Resolved::Dbm { bus, path, binding: "kde-appmenu" };
+            return Resolved::Dbm {
+                bus,
+                path,
+                binding: "kde-appmenu",
+            };
         }
         // A process that announces its menubars per surface has none for this window (a dialog, a tool window):
         // never hand it another window's menu through the process-wide guesses below.
@@ -1570,12 +1986,15 @@ impl Ctx {
                 if let Some(x) = self.x11.gtk_export(xid) {
                     if x.pid.is_none() || x.pid == Some(client.pid) {
                         let app_path = x.app_path.unwrap_or_else(|| x.menubar_path.clone());
-                        return Resolved::Gtk(GtkTarget {
-                            bus: x.bus,
-                            app_path,
-                            menubar_path: x.menubar_path,
-                            window_path: x.window_path,
-                        }, "x11");
+                        return Resolved::Gtk(
+                            GtkTarget {
+                                bus: x.bus,
+                                app_path,
+                                menubar_path: x.menubar_path,
+                                window_path: x.window_path,
+                            },
+                            "x11",
+                        );
                     }
                 }
             }
@@ -1608,12 +2027,15 @@ impl Ctx {
         if let Some((bus, menubar_path)) = hit {
             let app_path = menubar_path.trim_end_matches("/menus/menubar").to_string();
             let window_path = self.window_path(&bus, &app_path, client).await;
-            return Resolved::Gtk(GtkTarget {
-                bus,
-                app_path,
-                menubar_path,
-                window_path,
-            }, "bus");
+            return Resolved::Gtk(
+                GtkTarget {
+                    bus,
+                    app_path,
+                    menubar_path,
+                    window_path,
+                },
+                "bus",
+            );
         }
         let regs: Vec<(u32, (String, OwnedObjectPath))> = self
             .regs
@@ -1621,7 +2043,11 @@ impl Ctx {
             .map(|r| r.iter().map(|(k, v)| (*k, v.clone())).collect())
             .unwrap_or_default();
         if regs.is_empty() {
-            return if announced { Resolved::None } else { self.wayland_dbusmenu(client, &all_buses).await };
+            return if announced {
+                Resolved::None
+            } else {
+                self.wayland_dbusmenu(client, &all_buses).await
+            };
         }
         if client.xwayland {
             if let Some(xid) = self.x11.active_window() {
@@ -1681,7 +2107,11 @@ impl Ctx {
         }
         if hits.len() == 1 {
             let (bus, path) = hits.remove(0);
-            return Resolved::Dbm { bus, path, binding: "bus" };
+            return Resolved::Dbm {
+                bus,
+                path,
+                binding: "bus",
+            };
         }
         // One menubar per window (Firefox numbers them /com/canonical/menu/<n> in creation order,
         // Qt /MenuBar/<n>): pair them with the process's windows by creation rank, only when the
@@ -1706,7 +2136,11 @@ impl Ctx {
         match mine.iter().position(|c| c.address == client.address) {
             Some(rank) => {
                 let (bus, path) = hits.swap_remove(rank);
-                Resolved::Dbm { bus, path, binding: "bus" }
+                Resolved::Dbm {
+                    bus,
+                    path,
+                    binding: "bus",
+                }
             }
             None => Resolved::None,
         }
@@ -1726,7 +2160,11 @@ impl Ctx {
                 }
                 let path = format!("{base}/{c}");
                 if let Some(x) = introspect(&self.conn, bus, &path).await {
-                    if parse_introspection(&x).1.iter().any(|i| i == "com.canonical.dbusmenu") {
+                    if parse_introspection(&x)
+                        .1
+                        .iter()
+                        .any(|i| i == "com.canonical.dbusmenu")
+                    {
                         out.push((bus.to_string(), path));
                     }
                 }
@@ -1749,7 +2187,9 @@ impl Ctx {
             self.set_current(None);
             return empty(client);
         };
-        if let Ok(mut provider) = self.current_a11y.lock() { *provider = None; }
+        if let Ok(mut provider) = self.current_a11y.lock() {
+            *provider = None;
+        }
         let resolved = self.resolve(c, false).await;
         if !matches!(resolved, Resolved::Dbm { .. }) {
             self.dbm_primed = None;
@@ -1757,18 +2197,18 @@ impl Ctx {
         let snap = match resolved {
             Resolved::Gtk(t, binding) => match {
                 let conn = self.conn.clone();
-                let inflight = self
-                    .gtk_inflight
-                    .insert((t.bus.clone(), t.menubar_path.clone(), Vec::new()));
+                let inflight =
+                    self.gtk_inflight
+                        .insert((t.bus.clone(), t.menubar_path.clone(), Vec::new()));
                 gtk_fetch(&conn, &t.bus, &t.menubar_path, &mut inflight.2).await
             } {
                 Ok((groups, subscribed)) => {
                     self.gtk_inflight = None;
                     // Subscribe-new-then-End-old: GTK reference-counts per group, so a
                     // re-snapshot of the same menubar keeps exactly one subscription.
-                    let old = self
-                        .gtk_sub
-                        .replace((t.bus.clone(), t.menubar_path.clone(), subscribed));
+                    let old =
+                        self.gtk_sub
+                            .replace((t.bus.clone(), t.menubar_path.clone(), subscribed));
                     end_detached(&self.conn, old.into_iter().collect());
                     let app = gtk_actions(&self.conn, &t.bus, &t.app_path).await;
                     let win = match &t.window_path {
@@ -1830,7 +2270,10 @@ impl Ctx {
         // No exported model (or an exported but empty one): the toolkit-neutral accessibility menus.
         let menus = a11y_menus(&self.conn, c, &self.current_a11y).await;
         if menus.is_empty() {
-            return Snapshot { binding: None, ..snap };
+            return Snapshot {
+                binding: None,
+                ..snap
+            };
         }
         Snapshot {
             app_id: c.class.clone(),
@@ -1886,7 +2329,9 @@ fn reg_insert(
         Some(_) => {}
         None => {
             if map.len() >= MAX_REGISTRATIONS {
-                return Err(zbus::fdo::Error::LimitsExceeded("registrar table is full".into()));
+                return Err(zbus::fdo::Error::LimitsExceeded(
+                    "registrar table is full".into(),
+                ));
             }
             if map.values().filter(|(o, _)| o == sender).count() >= MAX_REGISTRATIONS_PER_SENDER {
                 return Err(zbus::fdo::Error::LimitsExceeded(format!(
@@ -2096,31 +2541,59 @@ async fn spawn_owner_watch(
     Ok(())
 }
 
-async fn spawn_a11y_watch(session: &Connection, current: Arc<Mutex<Option<String>>>,
-    tx: tokio::sync::mpsc::UnboundedSender<()>) -> Result<(), String> {
+async fn spawn_a11y_watch(
+    session: &Connection,
+    current: Arc<Mutex<Option<String>>>,
+    tx: tokio::sync::mpsc::UnboundedSender<()>,
+) -> Result<(), String> {
     let conn = a11y_connection(session).await?;
     for interface in ["org.a11y.atspi.Cache", "org.a11y.atspi.Event.Object"] {
-        let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal)
-            .interface(interface).map_err(|e| e.to_string())?.build();
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface(interface)
+            .map_err(|e| e.to_string())?
+            .build();
         let mut stream = zbus::MessageStream::for_match_rule(rule, &conn, Some(64))
-            .await.map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
         let current = current.clone();
         let tx = tx.clone();
         tokio::spawn(async move {
             while let Some(Ok(msg)) = stream.next().await {
                 let hdr = msg.header();
-                let mine = current.lock().map(|p| p.as_deref().is_some_and(|p|
-                    hdr.sender().is_some_and(|s| s.as_str() == p))).unwrap_or(false);
-                let registry = hdr.path().is_some_and(|p| p.as_str() == "/org/a11y/atspi/accessible/root");
-                if (mine || registry) && tx.send(()).is_err() { return; }
+                let mine = current
+                    .lock()
+                    .map(|p| {
+                        p.as_deref()
+                            .is_some_and(|p| hdr.sender().is_some_and(|s| s.as_str() == p))
+                    })
+                    .unwrap_or(false);
+                let registry = hdr
+                    .path()
+                    .is_some_and(|p| p.as_str() == "/org/a11y/atspi/accessible/root");
+                if (mine || registry) && tx.send(()).is_err() {
+                    return;
+                }
             }
         });
     }
     // Register only menu-relevant structural/state changes, never key or
     // pointer capture. These registrations vanish with this bus connection.
-    for event in ["object:children-changed", "object:state-changed", "object:property-change:accessible-name"] {
-        call(&conn, "org.a11y.atspi.Registry", "/org/a11y/atspi/registry", "org.a11y.atspi.Registry",
-            "RegisterEvent", &(event, Vec::<String>::new(), "")).await.map_err(|e| e.to_string())?;
+    for event in [
+        "object:children-changed",
+        "object:state-changed",
+        "object:property-change:accessible-name",
+    ] {
+        call(
+            &conn,
+            "org.a11y.atspi.Registry",
+            "/org/a11y/atspi/registry",
+            "org.a11y.atspi.Registry",
+            "RegisterEvent",
+            &(event, Vec::<String>::new(), ""),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -2154,8 +2627,16 @@ async fn serve() -> Result<(), String> {
     // This desktop consumes native application menus through AT-SPI too.
     // Advertising an accessibility consumer makes running toolkits expose
     // their trees; it does not enable screen-reader behavior or alter speech.
-    if let Err(e) = call(&conn, "org.a11y.Bus", "/org/a11y/bus", "org.freedesktop.DBus.Properties",
-        "Set", &("org.a11y.Status", "IsEnabled", Value::from(true))).await {
+    if let Err(e) = call(
+        &conn,
+        "org.a11y.Bus",
+        "/org/a11y/bus",
+        "org.freedesktop.DBus.Properties",
+        "Set",
+        &("org.a11y.Status", "IsEnabled", Value::from(true)),
+    )
+    .await
+    {
         eprintln!("[appmenu] accessibility integration unavailable: {e}");
     }
     let mut ctx = Ctx::new(conn.clone(), regs.clone());
@@ -2234,7 +2715,8 @@ async fn serve() -> Result<(), String> {
 
 async fn activate(app_id: &str, item_id: &str, window: Option<&str>) -> Result<(), String> {
     let conn = Connection::session().await.map_err(|e| e.to_string())?;
-    let client = focused_client().filter(|c| c.class == app_id)
+    let client = focused_client()
+        .filter(|c| c.class == app_id)
         .ok_or("the focused application changed before menu activation")?;
     if window.is_some_and(|address| address != client.address) {
         return Err("menu belongs to a different window".into());
@@ -2246,14 +2728,22 @@ async fn activate(app_id: &str, item_id: &str, window: Option<&str>) -> Result<(
     if item_id.starts_with("dbm:") {
         // The registrar lives in `serve`; read its registrations over the bus. Without it a compositor (KDE
         // appmenu) or bus-discovered menu still resolves.
-        let list: Vec<(u32, String, OwnedObjectPath)> =
-            match call(&conn, REGISTRAR_NAME, REGISTRAR_PATH, REGISTRAR_NAME, "GetMenus", &()).await {
-                Ok(msg) => msg.body().deserialize().unwrap_or_default(),
-                Err(e) => {
-                    eprintln!("[appmenu] registrar: {e}");
-                    Vec::new()
-                }
-            };
+        let list: Vec<(u32, String, OwnedObjectPath)> = match call(
+            &conn,
+            REGISTRAR_NAME,
+            REGISTRAR_PATH,
+            REGISTRAR_NAME,
+            "GetMenus",
+            &(),
+        )
+        .await
+        {
+            Ok(msg) => msg.body().deserialize().unwrap_or_default(),
+            Err(e) => {
+                eprintln!("[appmenu] registrar: {e}");
+                Vec::new()
+            }
+        };
         if let Ok(mut r) = regs.lock() {
             for (id, bus, path) in list {
                 r.insert(id, (bus, path));
@@ -2289,7 +2779,11 @@ async fn activate(app_id: &str, item_id: &str, window: Option<&str>) -> Result<(
                     ),
                     None => return Err(format!("{action}: unsupported action namespace")),
                 };
-                if !gtk_actions(&conn, &t.bus, &path).await.get(&name).is_some_and(|a| a.enabled) {
+                if !gtk_actions(&conn, &t.bus, &path)
+                    .await
+                    .get(&name)
+                    .is_some_and(|a| a.enabled)
+                {
                     return Err(format!("{action}: action is disabled or not exported"));
                 }
                 let params: Vec<Value<'_>> = match attrs.get("target") {
@@ -2356,15 +2850,26 @@ mod tests {
 
     fn accessible(role: u32, label: &str, parent: &str, flags: &[usize]) -> A11yNode {
         let mut states = vec![0, 0];
-        for &bit in flags { states[bit / 32] |= 1 << (bit % 32); }
-        A11yNode { parent: parent.into(), index: 0, label: label.into(), role,
-            interfaces: vec!["org.a11y.atspi.Action".into()], states }
+        for &bit in flags {
+            states[bit / 32] |= 1 << (bit % 32);
+        }
+        A11yNode {
+            parent: parent.into(),
+            index: 0,
+            label: label.into(),
+            role,
+            interfaces: vec!["org.a11y.atspi.Action".into()],
+            states,
+        }
     }
 
     #[test]
     fn accessibility_menu_activation_selects_press_instead_of_focus() {
         let action = |name: &str| (name.into(), String::new(), String::new());
-        assert_eq!(a11y_press_index(&[action("SetFocus"), action("Press")]), Some(1));
+        assert_eq!(
+            a11y_press_index(&[action("SetFocus"), action("Press")]),
+            Some(1)
+        );
         assert_eq!(a11y_press_index(&[action("click")]), Some(0));
         assert_eq!(a11y_press_index(&[action("ShowMenu")]), Some(0));
         assert_eq!(a11y_press_index(&[action("SetFocus")]), None);
@@ -2373,8 +2878,14 @@ mod tests {
 
     #[test]
     fn accessibility_menubar_entries_support_native_qt_quick_roles() {
-        let mut bar = A11yNode { parent: String::new(), index: 0, label: String::new(),
-            role: 34, interfaces: Vec::new(), states: Vec::new() };
+        let mut bar = A11yNode {
+            parent: String::new(),
+            index: 0,
+            label: String::new(),
+            role: 34,
+            interfaces: Vec::new(),
+            states: Vec::new(),
+        };
         let mut item = bar.clone();
         item.label = "File".into();
         for role in [33, 34, 35] {
@@ -2383,22 +2894,30 @@ mod tests {
         }
         item.role = 29; // labels inside bars are not menu entries
         assert!(!a11y_menubar_entry(&item, Some(&bar)));
-        item.role = 34;bar.role = 20;
+        item.role = 34;
+        bar.role = 20;
         assert!(!a11y_menubar_entry(&item, Some(&bar)));
         assert!(!a11y_menubar_entry(&item, None));
     }
 
     #[test]
     fn accessibility_nested_menu_buttons_follow_application_order() {
-        let node = |parent: &str, index| A11yNode { parent: parent.into(), index,
-            label: String::new(), role: 43, interfaces: Vec::new(), states: Vec::new() };
+        let node = |parent: &str, index| A11yNode {
+            parent: parent.into(),
+            index,
+            label: String::new(),
+            role: 43,
+            interfaces: Vec::new(),
+            states: Vec::new(),
+        };
         let nodes: HashMap<String, A11yNode> = [
             ("/frame".into(), node("/", 0)),
             ("/first".into(), node("/frame", 2)),
             ("/second".into(), node("/frame", 4)),
             ("/z_button".into(), node("/first", 0)),
             ("/a_button".into(), node("/second", 0)),
-        ].into();
+        ]
+        .into();
         assert!(a11y_order(&nodes, "/z_button") < a11y_order(&nodes, "/a_button"));
     }
 
@@ -2409,16 +2928,46 @@ mod tests {
         assert!(a11y_enabled(&node)); // GTK4 reports Sensitive without Enabled.
         assert!(!a11y_state(&[24, 42], 42));
         assert!(!a11y_state(&[], 42));
-        assert!(!a11y_enabled(&accessible(62, "Menu", "/frame", &[6, 24, 42])));
+        assert!(!a11y_enabled(&accessible(
+            62,
+            "Menu",
+            "/frame",
+            &[6, 24, 42]
+        )));
     }
 
     #[test]
     fn accessibility_menu_buttons_use_semantics_not_app_names_or_labels() {
-        assert!(a11y_native_button(&accessible(62, "Menu principal", "/frame", &[24, 42])));
-        assert!(a11y_native_button(&accessible(129, "Options", "/frame", &[24, 42])));
-        assert!(!a11y_native_button(&accessible(62, "Menu", "/frame", &[24])));
-        assert!(!a11y_native_button(&accessible(62, "", "/frame", &[24, 42])));
-        assert!(!a11y_native_button(&accessible(43, "Save", "/frame", &[24])));
+        assert!(a11y_native_button(&accessible(
+            62,
+            "Menu principal",
+            "/frame",
+            &[24, 42]
+        )));
+        assert!(a11y_native_button(&accessible(
+            129,
+            "Options",
+            "/frame",
+            &[24, 42]
+        )));
+        assert!(!a11y_native_button(&accessible(
+            62,
+            "Menu",
+            "/frame",
+            &[24]
+        )));
+        assert!(!a11y_native_button(&accessible(
+            62,
+            "",
+            "/frame",
+            &[24, 42]
+        )));
+        assert!(!a11y_native_button(&accessible(
+            43,
+            "Save",
+            "/frame",
+            &[24]
+        )));
     }
 
     #[test]
@@ -2437,17 +2986,36 @@ mod tests {
     #[test]
     fn accessibility_pairs_the_frame_named_like_the_focused_window() {
         let mut nodes = HashMap::from([
-            ("/main".into(), accessible(23, "Qt menubar fixture", "/app", &[1])),
-            ("/tool".into(), accessible(23, "Qt tool window", "/app", &[])),
+            (
+                "/main".into(),
+                accessible(23, "Qt menubar fixture", "/app", &[1]),
+            ),
+            (
+                "/tool".into(),
+                accessible(23, "Qt tool window", "/app", &[]),
+            ),
         ]);
-        let tool = Client { title: "Qt tool window".into(), ..Client::default() };
-        let main = Client { title: "Qt menubar fixture".into(), ..Client::default() };
+        let tool = Client {
+            title: "Qt tool window".into(),
+            ..Client::default()
+        };
+        let main = Client {
+            title: "Qt menubar fixture".into(),
+            ..Client::default()
+        };
         // negative control: the active-state rule alone hands the tool window the (still active) main frame
         assert_eq!(a11y_frame(&nodes).as_deref(), Some("/main"));
         assert_eq!(a11y_frame_for(&nodes, &tool).as_deref(), Some("/tool"));
         assert_eq!(a11y_frame_for(&nodes, &main).as_deref(), Some("/main"));
-        let other = Client { title: "Unrelated title".into(), ..Client::default() };
-        assert_eq!(a11y_frame_for(&nodes, &other).as_deref(), Some("/main"), "no name match: the active frame");
+        let other = Client {
+            title: "Unrelated title".into(),
+            ..Client::default()
+        };
+        assert_eq!(
+            a11y_frame_for(&nodes, &other).as_deref(),
+            Some("/main"),
+            "no name match: the active frame"
+        );
         nodes.get_mut("/main").unwrap().states[0] = 0;
         assert_eq!(a11y_frame_for(&nodes, &other), None, "ambiguous: nothing");
     }
@@ -2457,11 +3025,23 @@ mod tests {
         let mut nodes = HashMap::from([
             ("/frame".into(), accessible(23, "Application", "/app", &[1])),
             ("/toolbar".into(), accessible(39, "", "/frame", &[])),
-            ("/menu".into(), accessible(62, "Main Menu", "/toolbar", &[24, 42])),
-            ("/document".into(), accessible(95, "Web content", "/frame", &[])),
-            ("/webmenu".into(), accessible(62, "Page menu", "/document", &[24, 42])),
+            (
+                "/menu".into(),
+                accessible(62, "Main Menu", "/toolbar", &[24, 42]),
+            ),
+            (
+                "/document".into(),
+                accessible(95, "Web content", "/frame", &[]),
+            ),
+            (
+                "/webmenu".into(),
+                accessible(62, "Page menu", "/document", &[24, 42]),
+            ),
             ("/files".into(), accessible(55, "Files", "/frame", &[])),
-            ("/filemenu".into(), accessible(62, "Context menu", "/files", &[24, 42])),
+            (
+                "/filemenu".into(),
+                accessible(62, "Context menu", "/files", &[24, 42]),
+            ),
         ]);
         assert!(a11y_in_frame(&nodes, "/menu", "/frame"));
         assert!(!a11y_in_frame(&nodes, "/webmenu", "/frame"));
@@ -2473,7 +3053,11 @@ mod tests {
 
     #[test]
     fn accessibility_references_bind_the_original_window_and_exact_object() {
-        let client = Client { address: "0x1234".into(), class: "app.example.Editor".into(), ..Client::default() };
+        let client = Client {
+            address: "0x1234".into(),
+            class: "app.example.Editor".into(),
+            ..Client::default()
+        };
         let id = a11y_id(":1.42", "/app/menu/3", "/app/window/2", &client, 0);
         let decoded: A11yAction = serde_json::from_str(id.strip_prefix("a11y:").unwrap()).unwrap();
         assert_eq!(decoded.address, "0x1234");
@@ -2509,7 +3093,10 @@ mod tests {
             reg_insert(&mut m, 7, ":1.66", path("/evil")),
             Err(zbus::fdo::Error::AccessDenied(_))
         ));
-        assert!(matches!(reg_remove(&mut m, 7, ":1.66"), Err(zbus::fdo::Error::AccessDenied(_))));
+        assert!(matches!(
+            reg_remove(&mut m, 7, ":1.66"),
+            Err(zbus::fdo::Error::AccessDenied(_))
+        ));
         assert_eq!(m[&7], (":1.10".to_owned(), path("/MenuBar/1")));
     }
 
@@ -2562,8 +3149,14 @@ mod tests {
         // Defect: the timeout path did `gtk_sub = None`, so the app kept streaming Changed.
         let (mut live, mut inflight) = (sub(":1.5", &[0, 1, 2]), sub(":1.9", &[0]));
         let ended = take_subs(&mut live, &mut inflight);
-        assert_eq!(ended, vec![sub(":1.5", &[0, 1, 2]).unwrap(), sub(":1.9", &[0]).unwrap()]);
-        assert!(live.is_none() && inflight.is_none(), "slots must be cleared");
+        assert_eq!(
+            ended,
+            vec![sub(":1.5", &[0, 1, 2]).unwrap(), sub(":1.9", &[0]).unwrap()]
+        );
+        assert!(
+            live.is_none() && inflight.is_none(),
+            "slots must be cleared"
+        );
     }
 
     #[test]
@@ -2576,13 +3169,22 @@ mod tests {
     #[test]
     fn about_to_show_only_when_the_menu_source_changes() {
         let mut primed = None;
-        assert!(should_prime(&primed, ":1.4", "/MenuBar/1"), "first sight primes");
+        assert!(
+            should_prime(&primed, ":1.4", "/MenuBar/1"),
+            "first sight primes"
+        );
         primed = Some((":1.4".to_owned(), "/MenuBar/1".to_owned()));
         // Negative control: the signal-driven re-snapshot of the same source must not send
         // AboutToShow again (that LayoutUpdated -> snapshot -> AboutToShow loop never ended).
         assert!(!should_prime(&primed, ":1.4", "/MenuBar/1"));
-        assert!(should_prime(&primed, ":1.4", "/MenuBar/2"), "other window primes");
-        assert!(should_prime(&primed, ":1.7", "/MenuBar/1"), "other app primes");
+        assert!(
+            should_prime(&primed, ":1.4", "/MenuBar/2"),
+            "other window primes"
+        );
+        assert!(
+            should_prime(&primed, ":1.7", "/MenuBar/1"),
+            "other app primes"
+        );
     }
 
     #[test]
@@ -2650,37 +3252,62 @@ mod tests {
 
     #[test]
     fn unity_actions_resolve_to_the_menubar_action_group() {
-        assert_eq!(action_target("unity.-Open---"), Some((ActionScope::App, "-Open---")));
+        assert_eq!(
+            action_target("unity.-Open---"),
+            Some((ActionScope::App, "-Open---"))
+        );
         assert_eq!(action_target("app.quit"), Some((ActionScope::App, "quit")));
-        assert_eq!(action_target("win.close"), Some((ActionScope::Win, "close")));
+        assert_eq!(
+            action_target("win.close"),
+            Some((ActionScope::Win, "close"))
+        );
         assert_eq!(action_target("doc.save"), None);
-        let app: ActionStates =
-            [("-Copy".to_string(), on()), ("Disabled-Item".to_string(), ActionInfo::default())].into();
+        let app: ActionStates = [
+            ("-Copy".to_string(), on()),
+            ("Disabled-Item".to_string(), ActionInfo::default()),
+        ]
+        .into();
         assert!(gtk_action_enabled("unity.-Copy", &app, None));
         assert!(!gtk_action_enabled("unity.Disabled-Item", &app, None));
         assert!(!gtk_action_enabled("unity.missing", &app, None));
     }
 
     fn on() -> ActionInfo {
-        ActionInfo { enabled: true, state: None }
+        ActionInfo {
+            enabled: true,
+            state: None,
+        }
     }
 
     #[test]
     fn shortcuts_render_in_one_display_form_for_every_toolkit() {
-        assert_eq!(gtk_accel("<Primary><Shift>s").as_deref(), Some("Ctrl+Shift+S"));
+        assert_eq!(
+            gtk_accel("<Primary><Shift>s").as_deref(),
+            Some("Ctrl+Shift+S")
+        );
         assert_eq!(gtk_accel("<Control>q").as_deref(), Some("Ctrl+Q"));
         assert_eq!(gtk_accel("F11").as_deref(), Some("F11"));
         assert_eq!(gtk_accel("<Alt>Return").as_deref(), Some("Alt+Enter"));
         assert_eq!(gtk_accel("<Control>plus").as_deref(), Some("Ctrl++"));
         assert_eq!(gtk_accel(""), None);
         assert_eq!(gtk_accel("<Control"), None, "malformed modifier");
-        let aas = Value::from(vec![vec!["Control".to_string(), "Shift".to_string(), "n".to_string()]]);
+        let aas = Value::from(vec![vec![
+            "Control".to_string(),
+            "Shift".to_string(),
+            "n".to_string(),
+        ]]);
         assert_eq!(dbm_shortcut(&aas).as_deref(), Some("Ctrl+Shift+N"));
-        let two = Value::from(vec![vec!["Control".to_string(), "x".to_string()], vec!["Shift".to_string(), "Delete".to_string()]]);
+        let two = Value::from(vec![
+            vec!["Control".to_string(), "x".to_string()],
+            vec!["Shift".to_string(), "Delete".to_string()],
+        ]);
         assert_eq!(dbm_shortcut(&two).as_deref(), Some("Ctrl+X, Shift+Del"));
         assert_eq!(dbm_shortcut(&Value::from(Vec::<Vec<String>>::new())), None);
         // AT-SPI: GTK "mnemonic;path;accel", Qt the accelerator itself; a bare mnemonic is no shortcut
-        assert_eq!(a11y_shortcut("o;<Alt>f:o;<Primary>o").as_deref(), Some("Ctrl+O"));
+        assert_eq!(
+            a11y_shortcut("o;<Alt>f:o;<Primary>o").as_deref(),
+            Some("Ctrl+O")
+        );
         assert_eq!(a11y_shortcut("g;;").as_deref(), None);
         assert_eq!(a11y_shortcut("Ctrl+G").as_deref(), Some("Ctrl+G"));
         assert_eq!(a11y_shortcut("O"), None);
@@ -2690,40 +3317,92 @@ mod tests {
     #[test]
     fn dbusmenu_items_carry_toggle_kind_state_and_shortcut() {
         let item = |id: i32, pairs: Vec<(&str, Value<'static>)>| {
-            let props: HashMap<String, Value<'static>> = pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            let props: HashMap<String, Value<'static>> =
+                pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
             Value::from((id, props, Vec::<Value<'static>>::new()))
         };
         let shortcut = Value::from(vec![vec!["Control".to_string(), "g".to_string()]]);
         let kids = vec![
-            Value::Value(Box::new(item(1, vec![("label", Value::from("Show _Grid")), ("toggle-type", Value::from("checkmark")),
-                ("toggle-state", Value::I32(1)), ("shortcut", shortcut)]))),
-            Value::Value(Box::new(item(2, vec![("label", Value::from("Zoom")), ("toggle-type", Value::from("radio")),
-                ("toggle-state", Value::I32(0))]))),
-            Value::Value(Box::new(item(3, vec![("label", Value::from("Plain")), ("toggle-state", Value::I32(1))]))),
+            Value::Value(Box::new(item(
+                1,
+                vec![
+                    ("label", Value::from("Show _Grid")),
+                    ("toggle-type", Value::from("checkmark")),
+                    ("toggle-state", Value::I32(1)),
+                    ("shortcut", shortcut),
+                ],
+            ))),
+            Value::Value(Box::new(item(
+                2,
+                vec![
+                    ("label", Value::from("Zoom")),
+                    ("toggle-type", Value::from("radio")),
+                    ("toggle-state", Value::I32(0)),
+                ],
+            ))),
+            Value::Value(Box::new(item(
+                3,
+                vec![
+                    ("label", Value::from("Plain")),
+                    ("toggle-state", Value::I32(1)),
+                ],
+            ))),
         ];
         let items = dbm_items(&kids, 0);
         assert_eq!(items[0].label, "Show Grid");
-        assert_eq!((items[0].toggle.as_deref(), items[0].checked), (Some("check"), true));
+        assert_eq!(
+            (items[0].toggle.as_deref(), items[0].checked),
+            (Some("check"), true)
+        );
         assert_eq!(items[0].shortcut.as_deref(), Some("Ctrl+G"));
-        assert_eq!((items[1].toggle.as_deref(), items[1].checked), (Some("radio"), false));
+        assert_eq!(
+            (items[1].toggle.as_deref(), items[1].checked),
+            (Some("radio"), false)
+        );
         // negative control: a toggle-state without toggle-type is no toggle (never invented)
-        assert_eq!((items[2].toggle.as_deref(), items[2].checked, items[2].shortcut.as_deref()), (None, false, None));
+        assert_eq!(
+            (
+                items[2].toggle.as_deref(),
+                items[2].checked,
+                items[2].shortcut.as_deref()
+            ),
+            (None, false, None)
+        );
         let json = serde_json::to_value(&items[2]).unwrap();
-        assert!(json.get("toggle").is_none() && json.get("checked").is_none() && json.get("shortcut").is_none(),
-            "absent fields stay out of the contract: {json}");
+        assert!(
+            json.get("toggle").is_none()
+                && json.get("checked").is_none()
+                && json.get("shortcut").is_none(),
+            "absent fields stay out of the contract: {json}"
+        );
     }
 
     #[test]
     fn gtk_action_state_makes_check_and_radio_items() {
-        let check = ActionInfo { enabled: true, state: Some(Value::Bool(true)) };
+        let check = ActionInfo {
+            enabled: true,
+            state: Some(Value::Bool(true)),
+        };
         assert_eq!(gtk_toggle(Some(&check), None), (Some("check".into()), true));
-        let radio = ActionInfo { enabled: true, state: Some(Value::from("100")) };
-        assert_eq!(gtk_toggle(Some(&radio), Some(&Value::from("100"))), (Some("radio".into()), true));
-        assert_eq!(gtk_toggle(Some(&radio), Some(&Value::from("200"))), (Some("radio".into()), false));
+        let radio = ActionInfo {
+            enabled: true,
+            state: Some(Value::from("100")),
+        };
+        assert_eq!(
+            gtk_toggle(Some(&radio), Some(&Value::from("100"))),
+            (Some("radio".into()), true)
+        );
+        assert_eq!(
+            gtk_toggle(Some(&radio), Some(&Value::from("200"))),
+            (Some("radio".into()), false)
+        );
         // stateless actions and a boolean state with a target are no toggles
         assert_eq!(gtk_toggle(Some(&on()), None), (None, false));
         assert_eq!(gtk_toggle(None, Some(&Value::from("x"))), (None, false));
-        assert_eq!(gtk_toggle(Some(&check), Some(&Value::from("x"))), (Some("radio".into()), false));
+        assert_eq!(
+            gtk_toggle(Some(&check), Some(&Value::from("x"))),
+            (Some("radio".into()), false)
+        );
     }
 
     #[test]
@@ -2733,23 +3412,68 @@ mod tests {
             {"address": "0xb", "pid": 42, "service": "", "path": "/MenuBar/2"},
             {"address": "0xc", "pid": "x", "service": ":1.9", "path": "/com/canonical/menu/4C0000A"}]});
         let t = kde_appmenu_parse(Some(v));
-        assert_eq!(t.len(), 2, "an entry with an empty service is skipped: {t:?}");
-        assert_eq!(t[0], KdeBinding { address: "0xa".into(), pid: 42, service: ":1.7".into(), path: "/MenuBar/1".into() });
+        assert_eq!(
+            t.len(),
+            2,
+            "an entry with an empty service is skipped: {t:?}"
+        );
+        assert_eq!(
+            t[0],
+            KdeBinding {
+                address: "0xa".into(),
+                pid: 42,
+                service: ":1.7".into(),
+                path: "/MenuBar/1".into()
+            }
+        );
         assert_eq!(t[1].pid, 0);
-        assert!(kde_appmenu_parse(None).is_empty() && kde_appmenu_parse(Some(serde_json::json!("ok"))).is_empty());
-        let tool = Client { address: "0xd".into(), pid: 42, ..Client::default() };
-        assert!(kde_process_announces(&t, &tool), "the tool window of an announcing process");
-        let main = Client { address: "0xa".into(), pid: 42, ..Client::default() };
-        assert!(!kde_process_announces(&t[..1], &main), "its own binding is not another window's");
-        let other = Client { address: "0xe".into(), pid: 7, ..Client::default() };
-        assert!(!kde_process_announces(&t, &other), "negative control: another process keeps bus discovery");
-        let x = Client { xwayland: true, ..tool };
-        assert!(!kde_process_announces(&t, &x), "Xwayland windows never use the Wayland protocol");
+        assert!(
+            kde_appmenu_parse(None).is_empty()
+                && kde_appmenu_parse(Some(serde_json::json!("ok"))).is_empty()
+        );
+        let tool = Client {
+            address: "0xd".into(),
+            pid: 42,
+            ..Client::default()
+        };
+        assert!(
+            kde_process_announces(&t, &tool),
+            "the tool window of an announcing process"
+        );
+        let main = Client {
+            address: "0xa".into(),
+            pid: 42,
+            ..Client::default()
+        };
+        assert!(
+            !kde_process_announces(&t[..1], &main),
+            "its own binding is not another window's"
+        );
+        let other = Client {
+            address: "0xe".into(),
+            pid: 7,
+            ..Client::default()
+        };
+        assert!(
+            !kde_process_announces(&t, &other),
+            "negative control: another process keeps bus discovery"
+        );
+        let x = Client {
+            xwayland: true,
+            ..tool
+        };
+        assert!(
+            !kde_process_announces(&t, &x),
+            "Xwayland windows never use the Wayland protocol"
+        );
     }
 
     #[test]
     fn accessibility_items_cross_qt_popup_menus_and_carry_toggle_state() {
-        let client = Client { address: "0x1".into(), ..Client::default() };
+        let client = Client {
+            address: "0x1".into(),
+            ..Client::default()
+        };
         let n = |role: u32, label: &str, parent: &str, index: i32, flags: &[usize]| {
             let mut a = accessible(role, label, parent, flags);
             a.index = index;
@@ -2758,20 +3482,44 @@ mod tests {
         let nodes: HashMap<String, A11yNode> = [
             ("/bar/view".into(), n(35, "&View", "/bar", 0, &[8, 24])),
             ("/bar/view/popup".into(), n(41, "", "/bar/view", 0, &[])),
-            ("/grid".into(), n(8, "Show Grid", "/bar/view/popup", 0, &[4, 8, 24])),
+            (
+                "/grid".into(),
+                n(8, "Show Grid", "/bar/view/popup", 0, &[4, 8, 24]),
+            ),
             ("/sep".into(), n(50, "", "/bar/view/popup", 1, &[])),
-            ("/zoom1".into(), n(45, "Zoom 100%", "/bar/view/popup", 2, &[8, 24])),
-            ("/zoom2".into(), n(45, "Zoom 200%", "/bar/view/popup", 3, &[4, 8, 24])),
+            (
+                "/zoom1".into(),
+                n(45, "Zoom 100%", "/bar/view/popup", 2, &[8, 24]),
+            ),
+            (
+                "/zoom2".into(),
+                n(45, "Zoom 200%", "/bar/view/popup", 3, &[4, 8, 24]),
+            ),
             ("/off".into(), n(35, "Disabled", "/bar/view/popup", 4, &[])),
-        ].into();
+        ]
+        .into();
         let items = a11y_items(&nodes, ":1.5", "/bar/view", "/frame", &client, 0);
-        let got: Vec<_> = items.iter().map(|i| (i.label.as_str(), i.toggle.as_deref(), i.checked, i.enabled, i.separator_before)).collect();
-        assert_eq!(got, vec![
-            ("Show Grid", Some("check"), true, true, false),
-            ("Zoom 100%", Some("radio"), false, true, true),
-            ("Zoom 200%", Some("radio"), true, true, false),
-            ("Disabled", None, false, false, false),
-        ]);
+        let got: Vec<_> = items
+            .iter()
+            .map(|i| {
+                (
+                    i.label.as_str(),
+                    i.toggle.as_deref(),
+                    i.checked,
+                    i.enabled,
+                    i.separator_before,
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Show Grid", Some("check"), true, true, false),
+                ("Zoom 100%", Some("radio"), false, true, true),
+                ("Zoom 200%", Some("radio"), true, true, false),
+                ("Disabled", None, false, false, false),
+            ]
+        );
         // negative control: without the POPUP_MENU container role the Qt items are unreachable
         let mut flat = nodes.clone();
         flat.get_mut("/bar/view/popup").unwrap().role = 27; // IMAGE: not a container
@@ -2780,7 +3528,10 @@ mod tests {
         a11y_leaf_paths(&items, &mut paths);
         assert_eq!(paths, vec!["/grid", "/zoom1", "/zoom2", "/off"]);
         let mut items = items;
-        a11y_apply_shortcuts(&mut items, &[("/grid".to_string(), "Ctrl+G".to_string())].into());
+        a11y_apply_shortcuts(
+            &mut items,
+            &[("/grid".to_string(), "Ctrl+G".to_string())].into(),
+        );
         assert_eq!(items[0].shortcut.as_deref(), Some("Ctrl+G"));
         assert_eq!(items[1].shortcut, None);
     }
@@ -2794,9 +3545,23 @@ mod tests {
             }
             Value::Value(Box::new(Value::from((id, props, kids))))
         };
-        let tree = vec![node(1, true, vec![node(2, true, vec![]), node(3, false, vec![]), node(4, true, vec![node(5, false, vec![])])]),
-            node(6, true, vec![])];
-        assert_eq!(dbm_empty_submenus(&tree, 0), vec![2], "top-level 6 is primed separately; 4 is populated");
+        let tree = vec![
+            node(
+                1,
+                true,
+                vec![
+                    node(2, true, vec![]),
+                    node(3, false, vec![]),
+                    node(4, true, vec![node(5, false, vec![])]),
+                ],
+            ),
+            node(6, true, vec![]),
+        ];
+        assert_eq!(
+            dbm_empty_submenus(&tree, 0),
+            vec![2],
+            "top-level 6 is primed separately; 4 is populated"
+        );
     }
 
     #[test]

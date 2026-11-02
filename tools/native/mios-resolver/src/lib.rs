@@ -47,8 +47,8 @@ pub mod error {
     }
 }
 pub mod expand;
-pub mod layers;
 pub mod keybindings;
+pub mod layers;
 pub mod merge;
 pub mod model {
     use serde::{Deserialize, Serialize};
@@ -177,7 +177,13 @@ pub fn resolve_below_user(root_dir: Option<&Path>) -> Result<Value, ResolverErro
 /// (Policy readers such as mios-gate host_parity rely on the host layer being included;
 /// generators that write tracked files use [`resolve_vendor_projection`].)
 pub fn resolve_projection(root: &Path) -> Result<Value, ResolverError> {
-    projection_of(root, &[("usr/share/mios/mios.toml", "usr/lib/mios/mios.d"), ("etc/mios/mios.toml", "etc/mios/mios.d")])
+    projection_of(
+        root,
+        &[
+            ("usr/share/mios/mios.toml", "usr/lib/mios/mios.d"),
+            ("etc/mios/mios.toml", "etc/mios/mios.d"),
+        ],
+    )
 }
 
 /// The VENDOR tier only (usr/share/mios/mios.toml + usr/lib/mios/mios.d), for generators
@@ -389,7 +395,10 @@ mod projection_tests {
         p("usr/lib/mios/mios.d/10-x.toml", "[a]\nfrag = true\n");
         // A deployed host's admin tier (e.g. a saved monitor layout) must not leak in.
         p("etc/mios/mios.toml", "[a]\nv = 2\n");
-        p("etc/mios/mios.d/50-displays.toml", "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\n");
+        p(
+            "etc/mios/mios.d/50-displays.toml",
+            "[desktop.hyprland.monitors.HDMI-A-1]\nmode = \"1920x1080@144\"\n",
+        );
         let merged = resolve_vendor_projection(root.path()).unwrap();
         assert_eq!(merged["a"]["v"].as_integer(), Some(1));
         assert_eq!(merged["a"]["frag"].as_bool(), Some(true));
@@ -445,10 +454,15 @@ pub mod window_opening {
         key.split('.').try_fold(doc, |v, k| v.get(k))
     }
     fn numeric(v: &Value) -> Option<f64> {
-        v.as_float().or_else(|| v.as_integer().map(|n| n as f64)).filter(|n| n.is_finite())
+        v.as_float()
+            .or_else(|| v.as_integer().map(|n| n as f64))
+            .filter(|n| n.is_finite())
     }
     fn number(table: &Value, key: &str, low: f64, high: f64) -> Result<f64, String> {
-        table.get(key).and_then(numeric).filter(|v| *v >= low && *v <= high)
+        table
+            .get(key)
+            .and_then(numeric)
+            .filter(|v| *v >= low && *v <= high)
             .ok_or_else(|| format!("window opening {key} must be finite in {low}..={high}"))
     }
 
@@ -456,16 +470,30 @@ pub mod window_opening {
         /// Retina's text-cell policy is shared when float-first placement is enabled.
         /// Legacy/fixed policies keep their existing independent sizing behavior.
         pub fn from_ssot(doc: &Value) -> Result<Option<Self>, String> {
-            let Some(spawn) = at(doc, "desktop.hyprland.hypr3d.spawn") else { return Ok(None) };
+            let Some(spawn) = at(doc, "desktop.hyprland.hypr3d.spawn") else {
+                return Ok(None);
+            };
             if spawn.get("enabled").and_then(Value::as_bool) != Some(true)
-                || spawn.get("criterion").and_then(Value::as_str) != Some("retina") { return Ok(None); }
-            let Some(placement) = at(doc, "desktop.hyprland.placement") else { return Ok(None) };
-            if placement.get("enabled").and_then(Value::as_bool) != Some(true) { return Ok(None); }
-            let source = spawn.get("text_size_source").and_then(Value::as_str).ok_or("window opening text_size_source missing")?;
+                || spawn.get("criterion").and_then(Value::as_str) != Some("retina")
+            {
+                return Ok(None);
+            }
+            let Some(placement) = at(doc, "desktop.hyprland.placement") else {
+                return Ok(None);
+            };
+            if placement.get("enabled").and_then(Value::as_bool) != Some(true) {
+                return Ok(None);
+            }
+            let source = spawn
+                .get("text_size_source")
+                .and_then(Value::as_str)
+                .ok_or("window opening text_size_source missing")?;
             let font = at(doc, source).ok_or("window opening font source missing")?;
             let font_size = number(font, "size", 4.0, 200.0)?;
             let reference = match spawn.get("text_reference_px") {
-                Some(v) => numeric(v).filter(|v| *v >= 4.0 && *v <= 200.0).ok_or("window opening text_reference_px must be 4..=200")?,
+                Some(v) => numeric(v)
+                    .filter(|v| *v >= 4.0 && *v <= 200.0)
+                    .ok_or("window opening text_reference_px must be 4..=200")?,
                 None => font_size,
             };
             let font_scale = font_size / reference;
@@ -474,9 +502,17 @@ pub mod window_opening {
             let chrome_w = number(font, "chrome_w_px", 0.0, 2000.0)?;
             let chrome_h = number(font, "chrome_h_px", 0.0, 2000.0)?;
             let cells = |key: &str| -> Result<(f64, f64), String> {
-                let pair = spawn.get(key).and_then(Value::as_array).filter(|v| v.len() == 2).ok_or_else(|| format!("window opening {key} must contain two cell counts"))?;
-                let c = numeric(&pair[0]).filter(|n| (1.0..=1000.0).contains(n)).ok_or("window opening invalid columns")?;
-                let r = numeric(&pair[1]).filter(|n| (1.0..=1000.0).contains(n)).ok_or("window opening invalid rows")?;
+                let pair = spawn
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .filter(|v| v.len() == 2)
+                    .ok_or_else(|| format!("window opening {key} must contain two cell counts"))?;
+                let c = numeric(&pair[0])
+                    .filter(|n| (1.0..=1000.0).contains(n))
+                    .ok_or("window opening invalid columns")?;
+                let r = numeric(&pair[1])
+                    .filter(|n| (1.0..=1000.0).contains(n))
+                    .ok_or("window opening invalid rows")?;
                 Ok((c * cell_w + chrome_w, r * cell_h + chrome_h))
             };
             let shell = at(doc, "theme.shell").ok_or("window opening shell metrics missing")?;
@@ -487,14 +523,21 @@ pub mod window_opening {
                 Some(Value::String(path)) => at(doc, path).and_then(numeric),
                 Some(v) => numeric(v),
                 None => None,
-            }.filter(|v| *v >= 0.0 && *v <= 512.0).ok_or("window opening fit_margin_px is invalid")?;
+            }
+            .filter(|v| *v >= 0.0 && *v <= 512.0)
+            .ok_or("window opening fit_margin_px is invalid")?;
             let paper_long_edge_mm = match spawn.get("paper_long_edge_mm") {
-                Some(v) => numeric(v).filter(|v| *v >= 0.0 && *v <= 2000.0).ok_or("window opening paper_long_edge_mm must be 0..=2000")?,
+                Some(v) => numeric(v)
+                    .filter(|v| *v >= 0.0 && *v <= 2000.0)
+                    .ok_or("window opening paper_long_edge_mm must be 0..=2000")?,
                 None => 0.0,
             };
             Ok(Some(Self {
-                landscape: cells("landscape_cells")?, portrait: cells("portrait_cells")?, font_scale,
-                safe_insets: [0.0, top, 0.0, bottom], margin,
+                landscape: cells("landscape_cells")?,
+                portrait: cells("portrait_cells")?,
+                font_scale,
+                safe_insets: [0.0, top, 0.0, bottom],
+                margin,
                 min_width: number(placement, "min_width_px", 1.0, 10000.0)?,
                 min_height: number(placement, "min_height_px", 1.0, 10000.0)?,
                 max_width: number(placement, "max_width_px", 1.0, 10000.0)?,
@@ -511,36 +554,82 @@ pub mod window_opening {
 
         /// Uniform fit preserves the chosen paper/text-grid aspect. Workarea
         /// and physical caps take precedence over minimum client dimensions.
-        pub fn size(&self, usable_w: f64, usable_h: f64, logical_px_per_mm: Option<f64>) -> (f64, f64) {
+        pub fn size(
+            &self,
+            usable_w: f64,
+            usable_h: f64,
+            logical_px_per_mm: Option<f64>,
+        ) -> (f64, f64) {
             let portrait = usable_h > usable_w;
-            let (w, h) = if portrait { self.portrait } else { self.landscape };
-            let mut cap_w = (usable_w * self.max_width_ratio).min(self.max_width).min((usable_w - 2.0 * self.margin).max(1.0));
-            let mut cap_h = (usable_h * self.max_height_ratio).min((usable_h - 2.0 * self.margin).max(1.0));
+            let (w, h) = if portrait {
+                self.portrait
+            } else {
+                self.landscape
+            };
+            let mut cap_w = (usable_w * self.max_width_ratio)
+                .min(self.max_width)
+                .min((usable_w - 2.0 * self.margin).max(1.0));
+            let mut cap_h =
+                (usable_h * self.max_height_ratio).min((usable_h - 2.0 * self.margin).max(1.0));
             if let Some(ppm) = logical_px_per_mm.filter(|v| v.is_finite() && *v > 0.0) {
-                if self.max_width_mm > 0.0 { cap_w = cap_w.min(self.max_width_mm * ppm); }
+                if self.max_width_mm > 0.0 {
+                    cap_w = cap_w.min(self.max_width_mm * ppm);
+                }
                 if self.paper_long_edge_mm > 0.0 {
-                    if portrait { cap_h = cap_h.min(self.paper_long_edge_mm * ppm); }
-                    else { cap_w = cap_w.min(self.paper_long_edge_mm * ppm); }
+                    if portrait {
+                        cap_h = cap_h.min(self.paper_long_edge_mm * ppm);
+                    } else {
+                        cap_w = cap_w.min(self.paper_long_edge_mm * ppm);
+                    }
                 }
             }
-            let scale = (self.min_width / w).max(self.min_height / h).max(1.0)
-                .min(cap_w / w).min(cap_h / h);
+            let scale = (self.min_width / w)
+                .max(self.min_height / h)
+                .max(1.0)
+                .min(cap_w / w)
+                .min(cap_h / h);
             ((w * scale).floor().max(1.0), (h * scale).floor().max(1.0))
         }
 
         /// The first configure cannot query EDID, but uses identical text,
         /// orientation and HUD bounds. The native mapper applies physical caps.
         pub fn rule_expression(&self) -> String {
-            let n = |v: f64| format!("{v:.6}").trim_end_matches('0').trim_end_matches('.').to_owned();
-            let uw = format!("max(monitor_w-{},1)", n(self.safe_insets[0] + self.safe_insets[2]));
-            let uh = format!("max(monitor_h-{},1)", n(self.safe_insets[1] + self.safe_insets[3]));
-            let cap_w = format!("min(min(({uw})*{},{}),max(({uw})-{},1))",n(self.max_width_ratio),n(self.max_width),n(2.0*self.margin));
-            let cap_h = format!("min(({uh})*{},max(({uh})-{},1))",n(self.max_height_ratio),n(2.0*self.margin));
-            let expr = |(w,h): (f64,f64)| {
-                let scale = format!("min(min({},({cap_w})/{}),({cap_h})/{})",n((self.min_width/w).max(self.min_height/h).max(1.0)),n(w),n(h));
-                (format!("{}*({scale})",n(w)),format!("{}*({scale})",n(h)))
+            let n = |v: f64| {
+                format!("{v:.6}")
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .to_owned()
             };
-            let (lw,lh)=expr(self.landscape);let (pw,ph)=expr(self.portrait);
+            let uw = format!(
+                "max(monitor_w-{},1)",
+                n(self.safe_insets[0] + self.safe_insets[2])
+            );
+            let uh = format!(
+                "max(monitor_h-{},1)",
+                n(self.safe_insets[1] + self.safe_insets[3])
+            );
+            let cap_w = format!(
+                "min(min(({uw})*{},{}),max(({uw})-{},1))",
+                n(self.max_width_ratio),
+                n(self.max_width),
+                n(2.0 * self.margin)
+            );
+            let cap_h = format!(
+                "min(({uh})*{},max(({uh})-{},1))",
+                n(self.max_height_ratio),
+                n(2.0 * self.margin)
+            );
+            let expr = |(w, h): (f64, f64)| {
+                let scale = format!(
+                    "min(min({},({cap_w})/{}),({cap_h})/{})",
+                    n((self.min_width / w).max(self.min_height / h).max(1.0)),
+                    n(w),
+                    n(h)
+                );
+                (format!("{}*({scale})", n(w)), format!("{}*({scale})", n(h)))
+            };
+            let (lw, lh) = expr(self.landscape);
+            let (pw, ph) = expr(self.portrait);
             format!("(({uw})>=({uh})?{lw}:{pw}) (({uw})>=({uh})?{lh}:{ph})")
         }
     }
@@ -582,47 +671,96 @@ pub mod window_opening {
     }
 
     fn tag(t: &Value, key: &str) -> Result<String, String> {
-        t.get(key).and_then(Value::as_str)
-            .filter(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'))
+        t.get(key)
+            .and_then(Value::as_str)
+            .filter(|s| {
+                !s.is_empty()
+                    && s.bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+            })
             .map(str::to_owned)
-            .ok_or_else(|| format!("desktop.hyprland.placement.games.{key} must be a [A-Za-z0-9_-] string"))
+            .ok_or_else(|| {
+                format!("desktop.hyprland.placement.games.{key} must be a [A-Za-z0-9_-] string")
+            })
     }
 
     impl Games {
         /// None when placement or the games table is disabled or absent.
         pub fn from_ssot(doc: &Value) -> Result<Option<Self>, String> {
-            let Some(placement) = at(doc, "desktop.hyprland.placement") else { return Ok(None) };
-            if placement.get("enabled").and_then(Value::as_bool) != Some(true) { return Ok(None); }
-            let Some(g) = placement.get("games") else { return Ok(None) };
-            if g.get("enabled").and_then(Value::as_bool) != Some(true) { return Ok(None); }
+            let Some(placement) = at(doc, "desktop.hyprland.placement") else {
+                return Ok(None);
+            };
+            if placement.get("enabled").and_then(Value::as_bool) != Some(true) {
+                return Ok(None);
+            }
+            let Some(g) = placement.get("games") else {
+                return Ok(None);
+            };
+            if g.get("enabled").and_then(Value::as_bool) != Some(true) {
+                return Ok(None);
+            }
             let list = |v: &Value, what: &str| -> Result<Vec<String>, String> {
-                v.as_array().ok_or_else(|| format!("{what} must be an array of regex strings"))?.iter()
-                    .map(|s| s.as_str().filter(|s| !s.is_empty() && !s.contains('\n')).map(str::to_owned)
-                        .ok_or_else(|| format!("{what} entries must be nonempty single-line strings")))
+                v.as_array()
+                    .ok_or_else(|| format!("{what} must be an array of regex strings"))?
+                    .iter()
+                    .map(|s| {
+                        s.as_str()
+                            .filter(|s| !s.is_empty() && !s.contains('\n'))
+                            .map(str::to_owned)
+                            .ok_or_else(|| {
+                                format!("{what} entries must be nonempty single-line strings")
+                            })
+                    })
                     .collect()
             };
             // `class` is the SSOT key of one shared class list (the keybinding game context), or an inline array.
             let mut classes = match g.get("class") {
-                Some(Value::String(path)) => list(at(doc, path).ok_or_else(|| format!("desktop.hyprland.placement.games.class: {path} missing"))?, path)?,
+                Some(Value::String(path)) => list(
+                    at(doc, path).ok_or_else(|| {
+                        format!("desktop.hyprland.placement.games.class: {path} missing")
+                    })?,
+                    path,
+                )?,
                 Some(v) => list(v, "desktop.hyprland.placement.games.class")?,
                 None => return Err("desktop.hyprland.placement.games.class missing".into()),
             };
-            if let Some(extra) = g.get("extra_class") { classes.extend(list(extra, "desktop.hyprland.placement.games.extra_class")?); }
-            let flag = |k: &str| g.get(k).and_then(Value::as_bool).ok_or_else(|| format!("desktop.hyprland.placement.games.{k} must be a boolean"));
+            if let Some(extra) = g.get("extra_class") {
+                classes.extend(list(extra, "desktop.hyprland.placement.games.extra_class")?);
+            }
+            let flag = |k: &str| {
+                g.get(k).and_then(Value::as_bool).ok_or_else(|| {
+                    format!("desktop.hyprland.placement.games.{k} must be a boolean")
+                })
+            };
             let content_game = flag("content_game")?;
-            if classes.is_empty() && !content_game { return Err("desktop.hyprland.placement.games matches nothing (no class, content_game false)".into()); }
+            if classes.is_empty() && !content_game {
+                return Err("desktop.hyprland.placement.games matches nothing (no class, content_game false)".into());
+            }
             let oversize = match g.get("oversize").and_then(Value::as_str) {
                 Some("fit") => Oversize::Fit,
                 Some("keep") => Oversize::Keep,
-                _ => return Err("desktop.hyprland.placement.games.oversize must be fit|keep".into()),
+                _ => {
+                    return Err("desktop.hyprland.placement.games.oversize must be fit|keep".into())
+                }
             };
             let games = Self {
-                classes, content_game, suppress_client_geometry: flag("suppress_client_geometry")?,
+                classes,
+                content_game,
+                suppress_client_geometry: flag("suppress_client_geometry")?,
                 pin_fixed_size: flag("pin_fixed_size")?,
-                tag: tag(g, "tag")?, fixed_tag: tag(g, "fixed_tag")?, candidate_tag: tag(g, "candidate_tag")?, oversize,
+                tag: tag(g, "tag")?,
+                fixed_tag: tag(g, "fixed_tag")?,
+                candidate_tag: tag(g, "candidate_tag")?,
+                oversize,
             };
-            if games.tag == games.fixed_tag || games.tag == games.candidate_tag || games.fixed_tag == games.candidate_tag {
-                return Err("desktop.hyprland.placement.games tag, fixed_tag and candidate_tag must differ".into());
+            if games.tag == games.fixed_tag
+                || games.tag == games.candidate_tag
+                || games.fixed_tag == games.candidate_tag
+            {
+                return Err(
+                    "desktop.hyprland.placement.games tag, fixed_tag and candidate_tag must differ"
+                        .into(),
+                );
             }
             Ok(Some(games))
         }
@@ -640,8 +778,12 @@ pub mod window_opening {
         pub fn window_rules(&self, size: &str) -> Vec<Value> {
             let mut out = Vec::new();
             let mut matchers = Vec::new();
-            if let Some(re) = self.class_regex() { matchers.push(("", "class", re)); }
-            if self.content_game { matchers.push(("-content", "content", "game".to_owned())); }
+            if let Some(re) = self.class_regex() {
+                matchers.push(("", "class", re));
+            }
+            if self.content_game {
+                matchers.push(("-content", "content", "game".to_owned()));
+            }
             for (suffix, key, pattern) in matchers {
                 for fixed in [false, true] {
                     let mut m = toml::map::Map::new();
@@ -652,14 +794,30 @@ pub mod window_opening {
                         m.insert("modal".into(), Value::Boolean(false));
                     }
                     let mut r = toml::map::Map::new();
-                    r.insert("name".into(), Value::String(format!("mios-placement-games{suffix}{}", if fixed { "-fixed" } else { "" })));
+                    r.insert(
+                        "name".into(),
+                        Value::String(format!(
+                            "mios-placement-games{suffix}{}",
+                            if fixed { "-fixed" } else { "" }
+                        )),
+                    );
                     r.insert("match".into(), Value::Table(m));
                     if !fixed {
                         r.insert("center".into(), Value::Boolean(true));
                         r.insert("float".into(), Value::Boolean(true));
                         r.insert("size".into(), Value::String(size.to_owned()));
                     }
-                    r.insert("tag".into(), Value::String(format!("+{}", if fixed { &self.candidate_tag } else { &self.tag })));
+                    r.insert(
+                        "tag".into(),
+                        Value::String(format!(
+                            "+{}",
+                            if fixed {
+                                &self.candidate_tag
+                            } else {
+                                &self.tag
+                            }
+                        )),
+                    );
                     out.push(Value::Table(r));
                 }
             }
@@ -672,13 +830,30 @@ pub mod window_opening {
     /// opening geometry); a fixed-size one keeps (w, h): centred in the usable area when it fits, else centred
     /// on the whole output when it fits there, else `oversize` decides. Returns (x, y, w, h, resized).
     pub fn game_geometry(
-        fixed: Option<(f64, f64)>, usable: (f64, f64, f64, f64), output: (f64, f64, f64, f64),
-        policy: (f64, f64, f64, f64), oversize: Oversize,
+        fixed: Option<(f64, f64)>,
+        usable: (f64, f64, f64, f64),
+        output: (f64, f64, f64, f64),
+        policy: (f64, f64, f64, f64),
+        oversize: Oversize,
     ) -> (f64, f64, f64, f64, bool) {
-        let Some((w, h)) = fixed else { return (policy.0, policy.1, policy.2, policy.3, true) };
-        let centre = |b: (f64, f64, f64, f64)| ((b.0 + (b.2 - w) / 2.0).round(), (b.1 + (b.3 - h) / 2.0).round(), w, h, false);
-        if w <= usable.2 && h <= usable.3 { return centre(usable); }
-        if w <= output.2 && h <= output.3 { return centre(output); }
+        let Some((w, h)) = fixed else {
+            return (policy.0, policy.1, policy.2, policy.3, true);
+        };
+        let centre = |b: (f64, f64, f64, f64)| {
+            (
+                (b.0 + (b.2 - w) / 2.0).round(),
+                (b.1 + (b.3 - h) / 2.0).round(),
+                w,
+                h,
+                false,
+            )
+        };
+        if w <= usable.2 && h <= usable.3 {
+            return centre(usable);
+        }
+        if w <= output.2 && h <= output.3 {
+            return centre(output);
+        }
         match oversize {
             Oversize::Fit => (policy.0, policy.1, policy.2, policy.3, true),
             Oversize::Keep => centre(output),
@@ -689,7 +864,8 @@ pub mod window_opening {
     mod game_tests {
         use super::*;
         fn doc(extra: &str) -> Value {
-            toml::from_str(&format!(r#"
+            toml::from_str(&format!(
+                r#"
 [keybindings.global.contexts]
 game = ["steam_app_.*", "gamescope"]
 [desktop.hyprland.placement]
@@ -706,15 +882,28 @@ fixed_tag = "mios-place-game-fixed"
 candidate_tag = "mios-place-game-candidate"
 oversize = "fit"
 {extra}
-"#)).unwrap()
+"#
+            ))
+            .unwrap()
         }
         #[test]
         fn one_shared_class_list_feeds_two_rules_per_matcher() {
             let g = Games::from_ssot(&doc("")).unwrap().unwrap();
-            assert_eq!(g.class_regex().unwrap(), r"^(?:steam_app_.*|gamescope|.+\.exe)$");
+            assert_eq!(
+                g.class_regex().unwrap(),
+                r"^(?:steam_app_.*|gamescope|.+\.exe)$"
+            );
             let rules = g.window_rules("960 692");
             let names: Vec<_> = rules.iter().map(|r| r["name"].as_str().unwrap()).collect();
-            assert_eq!(names, ["mios-placement-games", "mios-placement-games-fixed", "mios-placement-games-content", "mios-placement-games-content-fixed"]);
+            assert_eq!(
+                names,
+                [
+                    "mios-placement-games",
+                    "mios-placement-games-fixed",
+                    "mios-placement-games-content",
+                    "mios-placement-games-content-fixed"
+                ]
+            );
             let (resizable, fixed) = (&rules[0], &rules[1]);
             assert_eq!(resizable["match"]["float"].as_bool(), Some(false));
             assert_eq!(resizable["size"].as_str(), Some("960 692"));
@@ -722,13 +911,28 @@ oversize = "fit"
             assert_eq!(resizable["tag"].as_str(), Some("+mios-place-game"));
             // A fixed-size (min == max) game is never sized by the compositor: that is what turned it black. The
             // floated-window rule only tags: a Wine dialog (class *.exe, floated by Hyprland) must keep its place.
-            assert!(fixed.get("size").is_none() && fixed.get("float").is_none() && fixed.get("center").is_none());
+            assert!(
+                fixed.get("size").is_none()
+                    && fixed.get("float").is_none()
+                    && fixed.get("center").is_none()
+            );
             assert_eq!(fixed["match"]["float"].as_bool(), Some(true));
-            assert_eq!(fixed["match"]["modal"].as_bool(), Some(false), "modal dialogs are never candidates");
-            assert_eq!(fixed["tag"].as_str(), Some("+mios-place-game-candidate"), "a candidate, not a claim");
+            assert_eq!(
+                fixed["match"]["modal"].as_bool(),
+                Some(false),
+                "modal dialogs are never candidates"
+            );
+            assert_eq!(
+                fixed["tag"].as_str(),
+                Some("+mios-place-game-candidate"),
+                "a candidate, not a claim"
+            );
             assert_eq!(rules[2]["match"]["content"].as_str(), Some("game"));
             // No rule suppresses ConfigureRequests: a game may change its own windowed resolution.
-            assert!(rules.iter().all(|r| r.get("suppress_event").is_none()), "{rules:?}");
+            assert!(
+                rules.iter().all(|r| r.get("suppress_event").is_none()),
+                "{rules:?}"
+            );
         }
         #[test]
         fn disabled_or_invalid_tables_are_reported() {
@@ -737,35 +941,91 @@ oversize = "fit"
             assert_eq!(Games::from_ssot(&d).unwrap(), None);
             let mut d = doc("");
             d["desktop"]["hyprland"]["placement"]["enabled"] = Value::Boolean(false);
-            assert_eq!(Games::from_ssot(&d).unwrap(), None, "placement off turns game placement off");
-            for (k, v) in [("oversize", Value::String("stretch".into())), ("tag", Value::String("a b".into())),
-                           ("fixed_tag", Value::String("mios-place-game".into())), ("candidate_tag", Value::String("mios-place-game-fixed".into())),
-                           ("class", Value::String("no.such.key".into())),
-                           ("suppress_client_geometry", Value::String("yes".into())),
-                           ("pin_fixed_size", Value::Integer(1))] {
+            assert_eq!(
+                Games::from_ssot(&d).unwrap(),
+                None,
+                "placement off turns game placement off"
+            );
+            for (k, v) in [
+                ("oversize", Value::String("stretch".into())),
+                ("tag", Value::String("a b".into())),
+                ("fixed_tag", Value::String("mios-place-game".into())),
+                (
+                    "candidate_tag",
+                    Value::String("mios-place-game-fixed".into()),
+                ),
+                ("class", Value::String("no.such.key".into())),
+                ("suppress_client_geometry", Value::String("yes".into())),
+                ("pin_fixed_size", Value::Integer(1)),
+            ] {
                 let mut d = doc("");
                 d["desktop"]["hyprland"]["placement"]["games"][k] = v;
                 assert!(Games::from_ssot(&d).is_err(), "{k}");
             }
             let mut d = doc("");
-            d["desktop"]["hyprland"]["placement"]["games"]["suppress_client_geometry"] = Value::Boolean(false);
-            assert!(!Games::from_ssot(&d).unwrap().unwrap().suppress_client_geometry);
+            d["desktop"]["hyprland"]["placement"]["games"]["suppress_client_geometry"] =
+                Value::Boolean(false);
+            assert!(
+                !Games::from_ssot(&d)
+                    .unwrap()
+                    .unwrap()
+                    .suppress_client_geometry
+            );
         }
         #[test]
         fn fixed_games_keep_their_size_and_never_leave_the_output() {
             let usable = (0.0, 60.0, 1920.0, 948.0);
             let output = (0.0, 0.0, 1920.0, 1080.0);
             let policy = (480.0, 188.0, 960.0, 692.0);
-            assert_eq!(game_geometry(None, usable, output, policy, Oversize::Fit), (480.0, 188.0, 960.0, 692.0, true));
+            assert_eq!(
+                game_geometry(None, usable, output, policy, Oversize::Fit),
+                (480.0, 188.0, 960.0, 692.0, true)
+            );
             // The recorded spawn: 640x480 requested at 700,500 of a smaller output -> centred, same size.
-            assert_eq!(game_geometry(Some((640.0, 480.0)), usable, output, policy, Oversize::Fit), (640.0, 294.0, 640.0, 480.0, false));
+            assert_eq!(
+                game_geometry(Some((640.0, 480.0)), usable, output, policy, Oversize::Fit),
+                (640.0, 294.0, 640.0, 480.0, false)
+            );
             // 1920x1080 fits the output but not the HUD-free area: centred on the output, not resized.
-            assert_eq!(game_geometry(Some((1920.0, 1080.0)), usable, output, policy, Oversize::Fit), (0.0, 0.0, 1920.0, 1080.0, false));
+            assert_eq!(
+                game_geometry(
+                    Some((1920.0, 1080.0)),
+                    usable,
+                    output,
+                    policy,
+                    Oversize::Fit
+                ),
+                (0.0, 0.0, 1920.0, 1080.0, false)
+            );
             // 3840x1080 (Forza's XWayland-root remap) cannot be shown: fit resizes, keep centres and crops.
-            assert_eq!(game_geometry(Some((3840.0, 1080.0)), usable, output, policy, Oversize::Fit), (480.0, 188.0, 960.0, 692.0, true));
-            assert_eq!(game_geometry(Some((3840.0, 1080.0)), usable, output, policy, Oversize::Keep), (-960.0, 0.0, 3840.0, 1080.0, false));
+            assert_eq!(
+                game_geometry(
+                    Some((3840.0, 1080.0)),
+                    usable,
+                    output,
+                    policy,
+                    Oversize::Fit
+                ),
+                (480.0, 188.0, 960.0, 692.0, true)
+            );
+            assert_eq!(
+                game_geometry(
+                    Some((3840.0, 1080.0)),
+                    usable,
+                    output,
+                    policy,
+                    Oversize::Keep
+                ),
+                (-960.0, 0.0, 3840.0, 1080.0, false)
+            );
             // Second output to the right: every coordinate stays inside it.
-            let (x, ..) = game_geometry(Some((640.0, 480.0)), (1920.0, 60.0, 1920.0, 948.0), (1920.0, 0.0, 1920.0, 1080.0), policy, Oversize::Fit);
+            let (x, ..) = game_geometry(
+                Some((640.0, 480.0)),
+                (1920.0, 60.0, 1920.0, 948.0),
+                (1920.0, 0.0, 1920.0, 1080.0),
+                policy,
+                Oversize::Fit,
+            );
             assert_eq!(x, 2560.0);
         }
     }
@@ -774,7 +1034,8 @@ oversize = "fit"
     mod tests {
         use super::*;
         fn doc() -> Value {
-            toml::from_str(r#"
+            toml::from_str(
+                r#"
 [theme.font]
 size=12
 cell_w_px=10
@@ -802,41 +1063,45 @@ paper_long_edge_mm=297
 landscape_cells=[94,34]
 portrait_cells=[66,46]
 fit_margin_px="theme.shell.edge_margin_px"
-"#).unwrap()
+"#,
+            )
+            .unwrap()
         }
         #[test]
         fn opening_is_one_text_grid_across_output_resolutions() {
-            let p=Policy::from_ssot(&doc()).unwrap().unwrap();
-            assert_eq!(p.size(1920.0,964.0,Some(1920.0/530.0)),(960.0,692.0));
-            assert_eq!(p.size(2560.0,1324.0,Some(2560.0/697.0)),(960.0,692.0));
-            assert_eq!(p.size(1080.0,1804.0,Some(1080.0/299.0)),(680.0,932.0));
+            let p = Policy::from_ssot(&doc()).unwrap().unwrap();
+            assert_eq!(p.size(1920.0, 964.0, Some(1920.0 / 530.0)), (960.0, 692.0));
+            assert_eq!(p.size(2560.0, 1324.0, Some(2560.0 / 697.0)), (960.0, 692.0));
+            assert_eq!(p.size(1080.0, 1804.0, Some(1080.0 / 299.0)), (680.0, 932.0));
         }
         #[test]
         fn output_workarea_and_mobile_bounds_win_over_client_minimum() {
-            let p=Policy::from_ssot(&doc()).unwrap().unwrap();
-            let (w,h)=p.size(390.0,728.0,None);
-            assert!(w<=351.0 && h<=655.0,"{w}x{h}");
-            assert!((w/h-680.0/932.0).abs()<0.003);
-            assert_eq!(p.insets([0.0;4]),[0.0,44.0,0.0,72.0]);
-            assert_eq!(p.insets([20.0,60.0,30.0,90.0]),[20.0,60.0,30.0,90.0]);
+            let p = Policy::from_ssot(&doc()).unwrap().unwrap();
+            let (w, h) = p.size(390.0, 728.0, None);
+            assert!(w <= 351.0 && h <= 655.0, "{w}x{h}");
+            assert!((w / h - 680.0 / 932.0).abs() < 0.003);
+            assert_eq!(p.insets([0.0; 4]), [0.0, 44.0, 0.0, 72.0]);
+            assert_eq!(p.insets([20.0, 60.0, 30.0, 90.0]), [20.0, 60.0, 30.0, 90.0]);
         }
         #[test]
         fn font_size_changes_grow_the_opening_cells_and_physical_cap_is_uniform() {
-            let mut data=doc();data["theme"]["font"]["size"]=Value::Integer(18);
-            let p=Policy::from_ssot(&data).unwrap().unwrap();
-            assert_eq!(p.font_scale,1.5);
-            assert_eq!(p.landscape,(1430.0,1032.0));
-            let (w,h)=p.size(2560.0,1324.0,Some(2560.0/697.0));
-            assert!(w<=297.0*2560.0/697.0 && w>1080.0);
-            assert!((w/h-1430.0/1032.0).abs()<0.003);
+            let mut data = doc();
+            data["theme"]["font"]["size"] = Value::Integer(18);
+            let p = Policy::from_ssot(&data).unwrap().unwrap();
+            assert_eq!(p.font_scale, 1.5);
+            assert_eq!(p.landscape, (1430.0, 1032.0));
+            let (w, h) = p.size(2560.0, 1324.0, Some(2560.0 / 697.0));
+            assert!(w <= 297.0 * 2560.0 / 697.0 && w > 1080.0);
+            assert!((w / h - 1430.0 / 1032.0).abs() < 0.003);
         }
         #[test]
         fn invalid_text_reference_is_rejected_and_fixed_mode_keeps_legacy_sizing() {
-            let mut data=doc();data["desktop"]["hyprland"]["hypr3d"]["spawn"]["text_reference_px"]=Value::Integer(0);
+            let mut data = doc();
+            data["desktop"]["hyprland"]["hypr3d"]["spawn"]["text_reference_px"] = Value::Integer(0);
             assert!(Policy::from_ssot(&data).is_err());
-            data["desktop"]["hyprland"]["hypr3d"]["spawn"]["criterion"]=Value::String("fixed".into());
+            data["desktop"]["hyprland"]["hypr3d"]["spawn"]["criterion"] =
+                Value::String("fixed".into());
             assert!(Policy::from_ssot(&data).unwrap().is_none());
         }
     }
-
 }

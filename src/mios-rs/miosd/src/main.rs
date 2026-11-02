@@ -4,19 +4,19 @@
 
 #![warn(clippy::unwrap_used, clippy::panic, clippy::todo)]
 
-mod drift;
 #[cfg(target_os = "linux")]
 mod appmenu;
-#[cfg(target_os = "linux")]
-mod placement;
-#[cfg(target_os = "linux")]
-mod shaderglass;
+mod drift;
 #[cfg(target_os = "linux")]
 mod framerate;
 #[cfg(target_os = "linux")]
+mod launcher;
+#[cfg(target_os = "linux")]
+mod placement;
+#[cfg(target_os = "linux")]
 mod sessions;
 #[cfg(target_os = "linux")]
-mod launcher;
+mod shaderglass;
 use miosd::fhs_sync;
 use miosd::native_generator;
 use miosd::rde;
@@ -338,45 +338,86 @@ mod topbar_runtime {
     use std::os::unix::fs::OpenOptionsExt;
     use std::path::Path;
 
-    pub const ITEMS: &[&str] = &["app_menu", "workspaces", "network", "sound", "batteries", "sysmon", "date", "clock", "power", "fps", "shaderglass", "remote"];
+    pub const ITEMS: &[&str] = &[
+        "app_menu",
+        "workspaces",
+        "network",
+        "sound",
+        "batteries",
+        "sysmon",
+        "date",
+        "clock",
+        "power",
+        "fps",
+        "shaderglass",
+        "remote",
+    ];
 
     pub fn set_visibility(path: &Path, item: &str, visible: bool) -> Result<(), String> {
-        if !ITEMS.contains(&item) { return Err(format!("unknown topbar item {item:?}")); }
+        if !ITEMS.contains(&item) {
+            return Err(format!("unknown topbar item {item:?}"));
+        }
         let parent = path.parent().ok_or("user TOML has no parent")?;
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600)
-            .open(parent.join(".mios-topbar.lock")).map_err(|e| e.to_string())?;
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 { return Err("cannot lock user settings".into()); }
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(parent.join(".mios-topbar.lock"))
+            .map_err(|e| e.to_string())?;
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err("cannot lock user settings".into());
+        }
         let text = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(e.to_string()),
         };
-        let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|e| format!("user TOML: {e}"))?;
+        let mut doc = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("user TOML: {e}"))?;
         let mut table = doc.as_table_mut();
         for key in ["desktop", "topbar", "visibility"] {
-            if !table.contains_key(key) { table[key] = toml_edit::Item::Table(toml_edit::Table::new()); }
-            table = table[key].as_table_mut().ok_or_else(|| format!("{key} must be a TOML table"))?;
+            if !table.contains_key(key) {
+                table[key] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+            table = table[key]
+                .as_table_mut()
+                .ok_or_else(|| format!("{key} must be a TOML table"))?;
         }
         table[item] = toml_edit::value(visible);
         let tmp = parent.join(format!(".mios-topbar-{}.tmp", std::process::id()));
-        let mut f = OpenOptions::new().create_new(true).write(true).mode(0o600).open(&tmp).map_err(|e| e.to_string())?;
+        let mut f = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| e.to_string())?;
         let result = (|| {
-            f.write_all(doc.to_string().as_bytes()).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
+            f.write_all(doc.to_string().as_bytes())
+                .and_then(|_| f.sync_all())
+                .map_err(|e| e.to_string())?;
             fs::rename(&tmp, path).map_err(|e| e.to_string())
         })();
-        if result.is_err() { let _ = fs::remove_file(&tmp); }
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
         result
     }
 
     pub fn run(item: Option<&str>, visible: Option<bool>) -> Result<(), String> {
         match (item, visible) {
             (Some(k), Some(v)) => set_visibility(&mios_resolver::user_toml_path(None), k, v)?,
-            (None, None) => {},
+            (None, None) => {}
             _ => return Err("--item and --visible must be supplied together".into()),
         }
         let doc = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
-        let bar = doc.get("desktop").and_then(|d| d.get("topbar")).ok_or("desktop.topbar is missing")?;
+        let bar = doc
+            .get("desktop")
+            .and_then(|d| d.get("topbar"))
+            .ok_or("desktop.topbar is missing")?;
         println!("{}", serde_json::to_string(bar).map_err(|e| e.to_string())?);
         Ok(())
     }
@@ -394,8 +435,14 @@ mod topbar_runtime {
             let doc: toml::Value = raw.parse().unwrap();
             assert!(raw.contains("# operator choices"));
             assert_eq!(doc["identity"]["username"].as_str(), Some("operator"));
-            assert_eq!(doc["desktop"]["topbar"]["visibility"]["clock"].as_bool(), Some(false));
-            assert_eq!(doc["desktop"]["topbar"]["visibility"]["fps"].as_bool(), Some(true));
+            assert_eq!(
+                doc["desktop"]["topbar"]["visibility"]["clock"].as_bool(),
+                Some(false)
+            );
+            assert_eq!(
+                doc["desktop"]["topbar"]["visibility"]["fps"].as_bool(),
+                Some(true)
+            );
             assert!(set_visibility(&p, "unknown", false).is_err());
             assert_eq!(fs::read_to_string(&p).unwrap(), raw);
         }

@@ -23,7 +23,14 @@ pub const MODES_ADVERTISED: &str = "advertised";
 pub const MODES_EXTENDED_VBLANK: &str = "extended-vblank";
 
 /// Every tier the policy table must define, in precedence order (the power-profile tiers last).
-pub const TIERS: [&str; 6] = ["unlocked", "gaming", "battery", "performance", "balanced", "power-saver"];
+pub const TIERS: [&str; 6] = [
+    "unlocked",
+    "gaming",
+    "battery",
+    "performance",
+    "balanced",
+    "power-saver",
+];
 /// The tiers a power profile may map to: never one of the opt-in or signal tiers.
 pub const PROFILE_TIERS: [&str; 3] = ["performance", "balanced", "power-saver"];
 /// The power-profiles-daemon profile names (net.hadess.PowerProfiles ActiveProfile).
@@ -124,7 +131,9 @@ fn get<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
 fn int(t: &Value, key: &str, lo: i64, hi: i64) -> Result<u64, String> {
     match t.get(key).and_then(Value::as_integer) {
         Some(i) if (lo..=hi).contains(&i) => Ok(i as u64),
-        _ => Err(format!("[desktop.framerate] {key} must be an integer in {lo}..={hi}")),
+        _ => Err(format!(
+            "[desktop.framerate] {key} must be an integer in {lo}..={hi}"
+        )),
     }
 }
 
@@ -142,10 +151,15 @@ fn rel_path(t: &Value, key: &str) -> Result<String, String> {
             !s.is_empty()
                 && !s.starts_with('/')
                 && s.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
-                && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./".contains(&b))
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_./".contains(&b))
         })
         .map(str::to_owned)
-        .ok_or_else(|| format!("[desktop.framerate] {key} must be a relative path of [A-Za-z0-9._/-] without .."))
+        .ok_or_else(|| {
+            format!(
+                "[desktop.framerate] {key} must be a relative path of [A-Za-z0-9._/-] without .."
+            )
+        })
 }
 
 impl Policy {
@@ -210,10 +224,15 @@ impl Policy {
             .get("pacing_plugin")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
-            .ok_or("[desktop.framerate] pacing_plugin must name a [desktop.hyprland.<plugin>] entry")?
+            .ok_or(
+                "[desktop.framerate] pacing_plugin must name a [desktop.hyprland.<plugin>] entry",
+            )?
             .to_owned();
         let mut tiers = BTreeMap::new();
-        let table = t.get("tiers").filter(|v| v.is_table()).ok_or("[desktop.framerate.tiers] is missing")?;
+        let table = t
+            .get("tiers")
+            .filter(|v| v.is_table())
+            .ok_or("[desktop.framerate.tiers] is missing")?;
         for name in TIERS {
             let tier = table
                 .get(name)
@@ -222,7 +241,9 @@ impl Policy {
             let n = |key: &str, lo: i64, hi: i64| -> Result<u32, String> {
                 match tier.get(key).and_then(Value::as_integer) {
                     Some(i) if (lo..=hi).contains(&i) => Ok(i as u32),
-                    _ => Err(format!("[desktop.framerate.tiers.{name}] {key} must be an integer in {lo}..={hi}")),
+                    _ => Err(format!(
+                        "[desktop.framerate.tiers.{name}] {key} must be an integer in {lo}..={hi}"
+                    )),
                 }
             };
             tiers.insert(
@@ -236,7 +257,10 @@ impl Policy {
         }
         for extra in table.as_table().into_iter().flat_map(|m| m.keys()) {
             if !TIERS.contains(&extra.as_str()) {
-                return Err(format!("[desktop.framerate.tiers.{extra}] is not a tier ({})", TIERS.join(", ")));
+                return Err(format!(
+                    "[desktop.framerate.tiers.{extra}] is not a tier ({})",
+                    TIERS.join(", ")
+                ));
             }
         }
         // 0 = the output maximum is only meaningful for the opt-in tier; a profile tier must name a rate.
@@ -245,20 +269,31 @@ impl Policy {
                 return Err(format!("[desktop.framerate.tiers.{name}] desktop_hz must be 1..=1000 (0 = no cap is the unlocked tier only)"));
             }
         }
-        let map = t.get("profiles").and_then(Value::as_table).ok_or("[desktop.framerate.profiles] is missing")?;
+        let map = t
+            .get("profiles")
+            .and_then(Value::as_table)
+            .ok_or("[desktop.framerate.profiles] is missing")?;
         let mut profiles = BTreeMap::new();
         let mut unknown_profile = None;
         for (profile, tier) in map {
             let tier = tier
                 .as_str()
                 .filter(|s| PROFILE_TIERS.contains(s))
-                .ok_or_else(|| format!("[desktop.framerate.profiles] {profile} must map to one of {}", PROFILE_TIERS.join(", ")))?;
+                .ok_or_else(|| {
+                    format!(
+                        "[desktop.framerate.profiles] {profile} must map to one of {}",
+                        PROFILE_TIERS.join(", ")
+                    )
+                })?;
             if profile == "unknown" {
                 unknown_profile = Some(tier.to_owned());
             } else if PPD_PROFILES.contains(&profile.as_str()) {
                 profiles.insert(profile.clone(), tier.to_owned());
             } else {
-                return Err(format!("[desktop.framerate.profiles] {profile} is not a power profile ({} or unknown)", PPD_PROFILES.join(", ")));
+                return Err(format!(
+                    "[desktop.framerate.profiles] {profile} is not a power profile ({} or unknown)",
+                    PPD_PROFILES.join(", ")
+                ));
             }
         }
         for profile in PPD_PROFILES {
@@ -266,8 +301,12 @@ impl Policy {
                 return Err(format!("[desktop.framerate.profiles] {profile} is missing"));
             }
         }
-        let unknown_profile = unknown_profile.ok_or("[desktop.framerate.profiles] unknown is missing")?;
-        let g = t.get("gaming").filter(|v| v.is_table()).ok_or("[desktop.framerate.gaming] is missing")?;
+        let unknown_profile =
+            unknown_profile.ok_or("[desktop.framerate.profiles] unknown is missing")?;
+        let g = t
+            .get("gaming")
+            .filter(|v| v.is_table())
+            .ok_or("[desktop.framerate.gaming] is missing")?;
         let game_class = g
             .get("game_class")
             .and_then(Value::as_str)
@@ -275,7 +314,10 @@ impl Policy {
             .ok_or("[desktop.framerate.gaming] game_class must be a non-empty regex")?
             .to_owned();
         let gaming = Gaming {
-            gamemode: g.get("gamemode").and_then(Value::as_bool).ok_or("[desktop.framerate.gaming] gamemode must be a boolean")?,
+            gamemode: g
+                .get("gamemode")
+                .and_then(Value::as_bool)
+                .ok_or("[desktop.framerate.gaming] gamemode must be a boolean")?,
             fullscreen_game: g
                 .get("fullscreen_game")
                 .and_then(Value::as_bool)
@@ -299,8 +341,13 @@ impl Policy {
             exclude_prefixes,
             pacing_plugin,
             state_file: rel_path(t, "state_file")?,
-            user_fragment: rel_path(t, "user_fragment")
-                .and_then(|f| if f.contains('/') || !f.ends_with(".toml") { Err("[desktop.framerate] user_fragment must be a *.toml file name".into()) } else { Ok(f) })?,
+            user_fragment: rel_path(t, "user_fragment").and_then(|f| {
+                if f.contains('/') || !f.ends_with(".toml") {
+                    Err("[desktop.framerate] user_fragment must be a *.toml file name".into())
+                } else {
+                    Ok(f)
+                }
+            })?,
             profiles,
             unknown_profile,
             gaming,
@@ -332,7 +379,11 @@ impl Policy {
     /// and W = D / wallpaper_divisor, rounded down. With an unknown maximum the unlocked tier reports 0 for D, G and W:
     /// "every output frame" (the consumers' uncapped value) until the outputs are known.
     pub fn rates(&self, tier: &str, max_hz: Option<u32>) -> Rates {
-        let t = self.tiers.get(tier).copied().unwrap_or(self.tiers[&self.unknown_profile]);
+        let t = self
+            .tiers
+            .get(tier)
+            .copied()
+            .unwrap_or(self.tiers[&self.unknown_profile]);
         let max = max_hz.filter(|m| *m > 0);
         let desktop = match (t.desktop_hz, max) {
             (0, m) => m.unwrap_or(0),
@@ -366,7 +417,9 @@ impl Policy {
 
     /// True when `output` is left alone (a virtual/remote output: no cap, no modeset).
     pub fn excluded(&self, output: &str) -> bool {
-        self.exclude_prefixes.iter().any(|p| output.starts_with(p.as_str()))
+        self.exclude_prefixes
+            .iter()
+            .any(|p| output.starts_with(p.as_str()))
     }
 
     pub fn state_path(&self, runtime_dir: &Path) -> PathBuf {
@@ -399,7 +452,9 @@ pub fn ppd_profile_for_tuned(ppd_conf: &str, tuned_profile: &str) -> Option<Stri
             section = name.trim().to_owned();
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let (key, value) = (key.trim(), value.trim());
         if value != tuned_profile || !PPD_PROFILES.contains(&key) {
             continue;
@@ -449,7 +504,11 @@ pub fn on_battery(supplies: &[PowerSupply]) -> bool {
 /// Every supply under `<root>/sys/class/power_supply`.
 pub fn read_power_supplies(root: &Path) -> Vec<PowerSupply> {
     let dir = root.join("sys/class/power_supply");
-    let read = |p: PathBuf| std::fs::read_to_string(p).map(|s| s.trim().to_owned()).unwrap_or_default();
+    let read = |p: PathBuf| {
+        std::fs::read_to_string(p)
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default()
+    };
     let mut out: Vec<PowerSupply> = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
@@ -532,7 +591,10 @@ impl State {
         if let Some(m) = v.as_object_mut() {
             for (name, o) in &self.outputs {
                 if let Some(mode) = &o.mode {
-                    m.insert(format!("mode.{name}"), serde_json::Value::String(mode.clone()));
+                    m.insert(
+                        format!("mode.{name}"),
+                        serde_json::Value::String(mode.clone()),
+                    );
                 }
             }
         }
@@ -544,7 +606,10 @@ impl State {
     pub fn parse(text: &str) -> Result<State, String> {
         let s: State = serde_json::from_str(text).map_err(|e| format!("framerate state: {e}"))?;
         if s.version != STATE_VERSION {
-            return Err(format!("framerate state version {} (expected {STATE_VERSION})", s.version));
+            return Err(format!(
+                "framerate state version {} (expected {STATE_VERSION})",
+                s.version
+            ));
         }
         Ok(s)
     }
@@ -617,11 +682,17 @@ wallpaper_divisor = 2
 "#;
 
     fn policy() -> Policy {
-        Policy::from_ssot(&VENDOR.parse::<Value>().unwrap()).unwrap().unwrap()
+        Policy::from_ssot(&VENDOR.parse::<Value>().unwrap())
+            .unwrap()
+            .unwrap()
     }
 
     fn inputs(profile: &str, battery: bool, gaming: bool) -> Inputs {
-        Inputs { gaming, on_battery: battery, profile: Some(profile.into()) }
+        Inputs {
+            gaming,
+            on_battery: battery,
+            profile: Some(profile.into()),
+        }
     }
 
     fn triple(r: &Rates) -> (u32, u32, u32) {
@@ -630,25 +701,50 @@ wallpaper_divisor = 2
 
     #[test]
     fn mode_sources_advertised_and_extended_vblank() {
-        assert!(!policy().extended_vblank(), "the vendor default applies only advertised (EDID) modes");
-        let doc: Value = VENDOR.replace(r#"modes = "advertised""#, r#"modes = "extended-vblank""#).parse().unwrap();
+        assert!(
+            !policy().extended_vblank(),
+            "the vendor default applies only advertised (EDID) modes"
+        );
+        let doc: Value = VENDOR
+            .replace(r#"modes = "advertised""#, r#"modes = "extended-vblank""#)
+            .parse()
+            .unwrap();
         assert!(Policy::from_ssot(&doc).unwrap().unwrap().extended_vblank());
     }
 
     #[test]
     fn mode_outputs_and_tolerance_default_and_parse() {
         let p = policy();
-        assert!(p.mode_outputs.is_empty() && !p.mode_output("DP-3"), "absent: no output is forced onto modes");
+        assert!(
+            p.mode_outputs.is_empty() && !p.mode_output("DP-3"),
+            "absent: no output is forced onto modes"
+        );
         assert_eq!(p.mode_tolerance_hz, 0.5);
         let doc: Value = VENDOR
-            .replace(r#"modes = "advertised""#, "modes = \"extended-vblank\"\nmode_outputs = [\"DP-3\"]\nmode_tolerance_hz = 0.25")
+            .replace(
+                r#"modes = "advertised""#,
+                "modes = \"extended-vblank\"\nmode_outputs = [\"DP-3\"]\nmode_tolerance_hz = 0.25",
+            )
             .parse()
             .unwrap();
         let q = Policy::from_ssot(&doc).unwrap().unwrap();
         assert!(q.mode_output("DP-3") && !q.mode_output("HDMI-A-1") && !q.mode_output("DP-"));
         assert_eq!(q.mode_tolerance_hz, 0.25);
-        for bad in ["mode_outputs = \"DP-3\"", "mode_outputs = [\"\"]", "mode_outputs = [\"DP 3\"]", "mode_tolerance_hz = 0", "mode_tolerance_hz = 9.5", "mode_tolerance_hz = \"1\""] {
-            let doc: Value = VENDOR.replace(r#"modes = "advertised""#, &format!("modes = \"advertised\"\n{bad}")).parse().unwrap();
+        for bad in [
+            "mode_outputs = \"DP-3\"",
+            "mode_outputs = [\"\"]",
+            "mode_outputs = [\"DP 3\"]",
+            "mode_tolerance_hz = 0",
+            "mode_tolerance_hz = 9.5",
+            "mode_tolerance_hz = \"1\"",
+        ] {
+            let doc: Value = VENDOR
+                .replace(
+                    r#"modes = "advertised""#,
+                    &format!("modes = \"advertised\"\n{bad}"),
+                )
+                .parse()
+                .unwrap();
             let e = Policy::from_ssot(&doc).unwrap_err();
             assert!(e.contains(bad.split(' ').next().unwrap()), "{bad}: {e}");
         }
@@ -659,29 +755,64 @@ wallpaper_divisor = 2
         let p = policy();
         let max = Some(144);
         // tier: (D, G, W) -- DESIGN.md section 0
-        assert_eq!(triple(&p.plan(&inputs("power-saver", false, false), max)), (60, 20, 30));
-        assert_eq!(triple(&p.plan(&inputs("balanced", false, false), max)), (60, 20, 30));
-        assert_eq!(triple(&p.plan(&inputs("performance", false, false), max)), (90, 30, 45));
-        assert_eq!(triple(&p.plan(&inputs("performance", true, false), max)), (60, 20, 30));
-        assert_eq!(triple(&p.plan(&inputs("power-saver", false, true), max)), (120, 60, 60));
+        assert_eq!(
+            triple(&p.plan(&inputs("power-saver", false, false), max)),
+            (60, 20, 30)
+        );
+        assert_eq!(
+            triple(&p.plan(&inputs("balanced", false, false), max)),
+            (60, 20, 30)
+        );
+        assert_eq!(
+            triple(&p.plan(&inputs("performance", false, false), max)),
+            (90, 30, 45)
+        );
+        assert_eq!(
+            triple(&p.plan(&inputs("performance", true, false), max)),
+            (60, 20, 30)
+        );
+        assert_eq!(
+            triple(&p.plan(&inputs("power-saver", false, true), max)),
+            (120, 60, 60)
+        );
         let mut u = p.clone();
         u.unlocked = true;
         let r = u.plan(&inputs("power-saver", true, true), max);
-        assert_eq!((r.tier.as_str(), triple(&r), r.cap_hz), ("unlocked", (144, 72, 144), 0));
+        assert_eq!(
+            (r.tier.as_str(), triple(&r), r.cap_hz),
+            ("unlocked", (144, 72, 144), 0)
+        );
     }
 
     #[test]
     fn wallpaper_is_half_the_desktop_rate_except_unlocked() {
         let mut p = policy();
         for max in [60, 75, 100, 120, 144, 165, 240] {
-            for (profile, battery, gaming) in [("power-saver", false, false), ("balanced", false, false), ("performance", false, false), ("balanced", true, false), ("balanced", false, true)] {
+            for (profile, battery, gaming) in [
+                ("power-saver", false, false),
+                ("balanced", false, false),
+                ("performance", false, false),
+                ("balanced", true, false),
+                ("balanced", false, true),
+            ] {
                 let r = p.plan(&inputs(profile, battery, gaming), Some(max));
-                assert_eq!(r.wallpaper_fps, r.desktop_hz / 2, "{profile} battery={battery} gaming={gaming} max={max}");
-                assert_ne!(r.wallpaper_fps, r.desktop_hz, "negative control: a locked tier never runs the wallpaper at D");
+                assert_eq!(
+                    r.wallpaper_fps,
+                    r.desktop_hz / 2,
+                    "{profile} battery={battery} gaming={gaming} max={max}"
+                );
+                assert_ne!(
+                    r.wallpaper_fps, r.desktop_hz,
+                    "negative control: a locked tier never runs the wallpaper at D"
+                );
             }
             p.unlocked = true;
             let r = p.plan(&Inputs::default(), Some(max));
-            assert_eq!((r.wallpaper_fps, r.desktop_hz), (max, max), "unlocked: wallpaper at the full desktop rate");
+            assert_eq!(
+                (r.wallpaper_fps, r.desktop_hz),
+                (max, max),
+                "unlocked: wallpaper at the full desktop rate"
+            );
             p.unlocked = false;
         }
     }
@@ -703,9 +834,24 @@ wallpaper_divisor = 2
         let mut p = policy();
         assert_eq!(p.tier_for(&inputs("performance", true, true)), "gaming");
         assert_eq!(p.tier_for(&inputs("performance", true, false)), "battery");
-        assert_eq!(p.tier_for(&inputs("performance", false, false)), "performance");
-        assert_eq!(p.tier_for(&Inputs { gaming: false, on_battery: false, profile: None }), "balanced", "no profile daemon");
-        assert_eq!(p.tier_for(&inputs("turbo", false, false)), "balanced", "unknown profile");
+        assert_eq!(
+            p.tier_for(&inputs("performance", false, false)),
+            "performance"
+        );
+        assert_eq!(
+            p.tier_for(&Inputs {
+                gaming: false,
+                on_battery: false,
+                profile: None
+            }),
+            "balanced",
+            "no profile daemon"
+        );
+        assert_eq!(
+            p.tier_for(&inputs("turbo", false, false)),
+            "balanced",
+            "unknown profile"
+        );
         p.unlocked = true;
         assert_eq!(p.tier_for(&inputs("power-saver", true, true)), "unlocked");
     }
@@ -713,13 +859,27 @@ wallpaper_divisor = 2
     #[test]
     fn rates_cap_at_the_output_maximum() {
         let p = policy();
-        assert_eq!(triple(&p.plan(&inputs("performance", false, false), Some(60))), (60, 20, 30));
+        assert_eq!(
+            triple(&p.plan(&inputs("performance", false, false), Some(60))),
+            (60, 20, 30)
+        );
         let r = p.plan(&inputs("power-saver", false, true), Some(75));
-        assert_eq!((r.desktop_hz, r.cap_hz), (75, 120), "the cap stays the tier's; D is what the output can show");
-        assert_eq!(triple(&p.plan(&inputs("performance", false, false), None)), (90, 30, 45));
+        assert_eq!(
+            (r.desktop_hz, r.cap_hz),
+            (75, 120),
+            "the cap stays the tier's; D is what the output can show"
+        );
+        assert_eq!(
+            triple(&p.plan(&inputs("performance", false, false), None)),
+            (90, 30, 45)
+        );
         let mut u = p.clone();
         u.unlocked = true;
-        assert_eq!(triple(&u.plan(&Inputs::default(), None)), (0, 0, 0), "unknown maximum: every output frame");
+        assert_eq!(
+            triple(&u.plan(&Inputs::default(), None)),
+            (0, 0, 0),
+            "unknown maximum: every output frame"
+        );
         assert_eq!(whole_hz(143.998), 144);
         assert_eq!(whole_hz(119.98), 120);
         assert_eq!(whole_hz(59.94), 60);
@@ -729,42 +889,93 @@ wallpaper_divisor = 2
     #[test]
     fn invalid_policies_are_rejected_naming_the_key() {
         let base: Value = VENDOR.parse().unwrap();
-        assert!(Policy::from_ssot(&"[desktop]\nx = 1".parse::<Value>().unwrap()).unwrap().is_none(), "absent section");
+        assert!(
+            Policy::from_ssot(&"[desktop]\nx = 1".parse::<Value>().unwrap())
+                .unwrap()
+                .is_none(),
+            "absent section"
+        );
         let cases: &[(&str, Value, &str)] = &[
-            ("tiers.performance.desktop_hz", Value::Integer(0), "desktop_hz"),
-            ("tiers.performance.desktop_hz", Value::Integer(1001), "desktop_hz"),
-            ("tiers.gaming.glass_divisor", Value::Integer(0), "glass_divisor"),
-            ("tiers.battery.wallpaper_divisor", Value::Float(2.0), "wallpaper_divisor"),
+            (
+                "tiers.performance.desktop_hz",
+                Value::Integer(0),
+                "desktop_hz",
+            ),
+            (
+                "tiers.performance.desktop_hz",
+                Value::Integer(1001),
+                "desktop_hz",
+            ),
+            (
+                "tiers.gaming.glass_divisor",
+                Value::Integer(0),
+                "glass_divisor",
+            ),
+            (
+                "tiers.battery.wallpaper_divisor",
+                Value::Float(2.0),
+                "wallpaper_divisor",
+            ),
             ("mechanism", Value::String("magic".into()), "mechanism"),
             ("modes", Value::String("any".into()), "modes"),
             ("modes", Value::String("custom".into()), "modes"),
-            ("profiles.balanced", Value::String("unlocked".into()), "balanced"),
+            (
+                "profiles.balanced",
+                Value::String("unlocked".into()),
+                "balanced",
+            ),
             ("profiles.turbo", Value::String("balanced".into()), "turbo"),
             ("state_file", Value::String("../x".into()), "state_file"),
             ("state_file", Value::String("/run/x".into()), "state_file"),
-            ("user_fragment", Value::String("a/b.toml".into()), "user_fragment"),
+            (
+                "user_fragment",
+                Value::String("a/b.toml".into()),
+                "user_fragment",
+            ),
             ("debounce_ms", Value::Integer(-1), "debounce_ms"),
             ("mode_confirm_s", Value::Integer(601), "mode_confirm_s"),
-            ("mode_confirm_s", Value::String("15".into()), "mode_confirm_s"),
-            ("exclude_prefixes", Value::Array(vec![Value::String("A B".into())]), "exclude_prefixes"),
+            (
+                "mode_confirm_s",
+                Value::String("15".into()),
+                "mode_confirm_s",
+            ),
+            (
+                "exclude_prefixes",
+                Value::Array(vec![Value::String("A B".into())]),
+                "exclude_prefixes",
+            ),
             ("unlocked", Value::String("yes".into()), "unlocked"),
         ];
         for (path, value, needle) in cases {
             let mut doc = base.clone();
-            let mut cur = doc.get_mut("desktop").unwrap().get_mut("framerate").unwrap();
+            let mut cur = doc
+                .get_mut("desktop")
+                .unwrap()
+                .get_mut("framerate")
+                .unwrap();
             let keys: Vec<&str> = path.split('.').collect();
             for k in &keys[..keys.len() - 1] {
                 cur = cur.get_mut(*k).unwrap();
             }
-            cur.as_table_mut().unwrap().insert(keys[keys.len() - 1].into(), value.clone());
+            cur.as_table_mut()
+                .unwrap()
+                .insert(keys[keys.len() - 1].into(), value.clone());
             let err = Policy::from_ssot(&doc).unwrap_err();
             assert!(err.contains(needle), "{path} = {value:?}: {err}");
         }
         let mut doc = base.clone();
-        doc["desktop"]["framerate"]["tiers"].as_table_mut().unwrap().remove("battery");
-        assert!(Policy::from_ssot(&doc).unwrap_err().contains("tiers.battery"));
+        doc["desktop"]["framerate"]["tiers"]
+            .as_table_mut()
+            .unwrap()
+            .remove("battery");
+        assert!(Policy::from_ssot(&doc)
+            .unwrap_err()
+            .contains("tiers.battery"));
         let mut doc = base;
-        doc["desktop"]["framerate"]["tiers"].as_table_mut().unwrap().insert("turbo".into(), Value::Table(Default::default()));
+        doc["desktop"]["framerate"]["tiers"]
+            .as_table_mut()
+            .unwrap()
+            .insert("turbo".into(), Value::Table(Default::default()));
         assert!(Policy::from_ssot(&doc).unwrap_err().contains("turbo"));
     }
 
@@ -774,20 +985,42 @@ wallpaper_divisor = 2
         assert_eq!(p.exclude_prefixes, vec!["HEADLESS-".to_string()]);
         assert!(p.excluded("HEADLESS-MIOS-RDP") && !p.excluded("DP-3"));
         let mut doc: Value = VENDOR.parse().unwrap();
-        doc["desktop"]["framerate"].as_table_mut().unwrap().insert("exclude_prefixes".into(), Value::Array(vec![]));
+        doc["desktop"]["framerate"]
+            .as_table_mut()
+            .unwrap()
+            .insert("exclude_prefixes".into(), Value::Array(vec![]));
         let p = Policy::from_ssot(&doc).unwrap().unwrap();
-        assert!(!p.excluded("HEADLESS-1"), "an explicit empty list excludes nothing (nested tests)");
+        assert!(
+            !p.excluded("HEADLESS-1"),
+            "an explicit empty list excludes nothing (nested tests)"
+        );
     }
 
     #[test]
     fn tuned_profiles_map_back_to_ppd_names() {
         let conf = "[main]\ndefault=balanced\n[profiles]\n# PPD = TuneD\npower-saver=mios-host-powersave\nbalanced=mios-host\nperformance=mios-host-performance\n[battery]\nbalanced=balanced-battery\n";
-        assert_eq!(ppd_profile_for_tuned(conf, "mios-host-powersave").as_deref(), Some("power-saver"));
-        assert_eq!(ppd_profile_for_tuned(conf, "mios-host").as_deref(), Some("balanced"));
-        assert_eq!(ppd_profile_for_tuned(conf, "mios-host-performance").as_deref(), Some("performance"));
-        assert_eq!(ppd_profile_for_tuned(conf, "balanced-battery").as_deref(), Some("balanced"));
+        assert_eq!(
+            ppd_profile_for_tuned(conf, "mios-host-powersave").as_deref(),
+            Some("power-saver")
+        );
+        assert_eq!(
+            ppd_profile_for_tuned(conf, "mios-host").as_deref(),
+            Some("balanced")
+        );
+        assert_eq!(
+            ppd_profile_for_tuned(conf, "mios-host-performance").as_deref(),
+            Some("performance")
+        );
+        assert_eq!(
+            ppd_profile_for_tuned(conf, "balanced-battery").as_deref(),
+            Some("balanced")
+        );
         assert_eq!(ppd_profile_for_tuned(conf, "virtual-guest"), None);
-        assert_eq!(ppd_profile_for_tuned("[main]\ndefault=mios-host\n", "mios-host"), None, "only [profiles]/[battery]");
+        assert_eq!(
+            ppd_profile_for_tuned("[main]\ndefault=mios-host\n", "mios-host"),
+            None,
+            "only [profiles]/[battery]"
+        );
     }
 
     #[test]
@@ -800,9 +1033,18 @@ wallpaper_divisor = 2
         };
         // this host: a game controller's battery only
         assert!(!on_battery(&[s("Battery", "Device", None, "Discharging")]));
-        assert!(on_battery(&[s("Battery", "", None, "Discharging"), s("Mains", "", Some(false), "")]));
-        assert!(!on_battery(&[s("Battery", "", None, "Discharging"), s("Mains", "", Some(true), "")]));
-        assert!(!on_battery(&[s("Battery", "System", None, "Charging"), s("Mains", "", Some(false), "")]));
+        assert!(on_battery(&[
+            s("Battery", "", None, "Discharging"),
+            s("Mains", "", Some(false), "")
+        ]));
+        assert!(!on_battery(&[
+            s("Battery", "", None, "Discharging"),
+            s("Mains", "", Some(true), "")
+        ]));
+        assert!(!on_battery(&[
+            s("Battery", "System", None, "Charging"),
+            s("Mains", "", Some(false), "")
+        ]));
         assert!(on_battery(&[s("Battery", "System", None, "Discharging")]));
         assert!(!on_battery(&[]));
     }
@@ -821,10 +1063,24 @@ wallpaper_divisor = 2
         std::fs::create_dir_all(&ac).unwrap();
         std::fs::write(ac.join("type"), "Mains\n").unwrap();
         std::fs::write(ac.join("online"), "0\n").unwrap();
-        assert_eq!(login_inputs(root), Inputs { gaming: false, on_battery: true, profile: Some("performance".into()) });
+        assert_eq!(
+            login_inputs(root),
+            Inputs {
+                gaming: false,
+                on_battery: true,
+                profile: Some("performance".into())
+            }
+        );
         std::fs::write(ac.join("online"), "1\n").unwrap();
         std::fs::write(root.join("etc/tuned/ppd_base_profile"), "custom\n").unwrap();
-        assert_eq!(login_inputs(root), Inputs { gaming: false, on_battery: false, profile: None });
+        assert_eq!(
+            login_inputs(root),
+            Inputs {
+                gaming: false,
+                on_battery: false,
+                profile: None
+            }
+        );
     }
 
     #[test]
@@ -832,7 +1088,13 @@ wallpaper_divisor = 2
         let mut outputs = BTreeMap::new();
         outputs.insert(
             "DP-3".to_string(),
-            OutputState { mechanism: "mode".into(), cap_hz: 0, max_hz: 144, mode: Some("1920x1080@60.00".into()), refresh_hz: 60.0 },
+            OutputState {
+                mechanism: "mode".into(),
+                cap_hz: 0,
+                max_hz: 144,
+                mode: Some("1920x1080@60.00".into()),
+                refresh_hz: 60.0,
+            },
         );
         let s = State {
             version: STATE_VERSION,
@@ -850,12 +1112,23 @@ wallpaper_divisor = 2
             outputs,
         };
         let text = s.to_json();
-        assert!(text.contains("\"desktop_hz\": 90") && text.contains("\"mode.DP-3\": \"1920x1080@60.00\""), "{text}");
-        assert!(text.contains("\"wallpaper_paced\": true"), "Host.qml reads the flat key: {text}");
+        assert!(
+            text.contains("\"desktop_hz\": 90")
+                && text.contains("\"mode.DP-3\": \"1920x1080@60.00\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"wallpaper_paced\": true"),
+            "Host.qml reads the flat key: {text}"
+        );
         assert_eq!(State::parse(&text).unwrap(), s);
         // a state file written before the key existed still parses (unpaced)
         let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert!(v.as_object_mut().unwrap().remove("wallpaper_paced").is_some());
+        assert!(v
+            .as_object_mut()
+            .unwrap()
+            .remove("wallpaper_paced")
+            .is_some());
         let old = v.to_string();
         assert!(!old.contains("wallpaper_paced"));
         assert!(!State::parse(&old).unwrap().wallpaper_paced);
@@ -867,7 +1140,10 @@ wallpaper_divisor = 2
         std::fs::write(proc_root.join(format!("proc/{}/comm", s.pid)), "miosd\n").unwrap();
         assert!(State::read_live(&path, &proc_root).is_some());
         std::fs::write(proc_root.join(format!("proc/{}/comm", s.pid)), "bash\n").unwrap();
-        assert!(State::read_live(&path, &proc_root).is_none(), "a reused pid is not the writer");
+        assert!(
+            State::read_live(&path, &proc_root).is_none(),
+            "a reused pid is not the writer"
+        );
         assert!(State::parse(&text.replace("\"version\": 1", "\"version\": 9")).is_err());
     }
 }

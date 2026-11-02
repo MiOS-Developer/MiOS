@@ -10,33 +10,33 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod agent_interaction;
+mod ai;
+mod ai_metadata;
 #[cfg(unix)]
 mod app_preflight;
-mod ai;
 mod btop_theme;
 mod display_scale;
-mod env_snapshot;
-mod ai_metadata;
-mod flatpak_overrides;
-mod hypr3d_spawn;
-mod hyprland_build;
-mod docs;
 mod dock;
+mod docs;
+mod env_snapshot;
+mod flatpak_overrides;
 mod gpu_topology;
 mod greeter;
 mod grub;
+mod hypr3d_spawn;
+mod hyprland_build;
 use render::desktop_boot;
+mod device_forwarding;
+mod global_bindings;
 mod image;
 mod indexes;
-mod metal_vs_hosted;
-mod pod_quadlets;
-mod global_bindings;
-mod nested_session;
 mod mem_admit;
+mod metal_vs_hosted;
 mod nested_devices;
-mod device_forwarding;
-mod session_scale;
+mod nested_session;
+mod pod_quadlets;
 mod render;
+mod session_scale;
 mod sync;
 mod terminal;
 mod tmux_os;
@@ -427,78 +427,108 @@ enum Commands {
     /// Validate a desktop launch and recover a missing document-portal mount before sandbox creation.
     #[cfg(unix)]
     AppPreflight {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(long,conflicts_with_all=["flatpak","all","portal_only"])] desktop: Option<String>,
-        #[arg(long,conflicts_with_all=["desktop","all","portal_only"])] flatpak: Option<String>,
-        #[arg(long,conflicts_with_all=["desktop","flatpak","portal_only"])] all: bool,
-        #[arg(long,conflicts_with_all=["desktop","flatpak","all"])] portal_only: bool,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long,conflicts_with_all=["flatpak","all","portal_only"])]
+        desktop: Option<String>,
+        #[arg(long,conflicts_with_all=["desktop","all","portal_only"])]
+        flatpak: Option<String>,
+        #[arg(long,conflicts_with_all=["desktop","flatpak","portal_only"])]
+        all: bool,
+        #[arg(long,conflicts_with_all=["desktop","flatpak","all"])]
+        portal_only: bool,
     },
 
     /// Memory admission: exit 0 when MemAvailable is at least [system.memory_admission].min_available_mb, 3 when not (JSON verdict on stdout).
     #[command(name = "mem-admit")]
     MemAdmit {
-        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)]
+        root: Option<PathBuf>,
         /// Poll until admitted or [system.memory_admission].wait_timeout_s passes.
-        #[arg(long)] wait: bool,
+        #[arg(long)]
+        wait: bool,
         /// Read this meminfo file instead of /proc/meminfo (tests).
-        #[arg(long)] meminfo: Option<PathBuf>,
+        #[arg(long)]
+        meminfo: Option<PathBuf>,
     },
 
     /// Run an isolated MiOS desktop session: a parent PiP/window, a whole output, the remote display or a Hypr3D room window.
     #[command(name = "nested-session")]
     NestedSession {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(long)] dry_run: bool,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
         /// Launch target ([desktop.nested].launch_layout): pip, window, side-by-side, output, remote or hypr3d.
-        #[arg(long="target",visible_alias="layout",value_parser=["pip","window","side-by-side","output","remote","hypr3d"])] layout: Option<String>,
+        #[arg(long="target",visible_alias="layout",value_parser=["pip","window","side-by-side","output","remote","hypr3d"])]
+        layout: Option<String>,
         /// Parent output for the output target (required there) or an explicit remote display output.
-        #[arg(long)] output: Option<String>,
+        #[arg(long)]
+        output: Option<String>,
         /// Seat label (a-z, 0-9, '-'): the session's identity, tmux namespace suffix and [desktop.nested.seats.<seat>] preset.
-        #[arg(long)] seat: Option<String>,
+        #[arg(long)]
+        seat: Option<String>,
         /// Display name of the session's user (default: the seat label).
-        #[arg(long)] user: Option<String>,
+        #[arg(long)]
+        user: Option<String>,
         /// Assign an input device (repeatable): /dev/input/eventN or a by-id/by-path link, name:<evdev name>, or virtual-pad.
-        #[arg(long="device")] device: Vec<String>,
+        #[arg(long = "device")]
+        device: Vec<String>,
         /// Assign no device, overriding the seat preset and [desktop.nested.devices].default.
-        #[arg(long,conflicts_with="device")] no_devices: bool,
+        #[arg(long, conflicts_with = "device")]
+        no_devices: bool,
         /// Print the resolved launch (target, identity, resolved devices) as JSON and exit without starting anything.
-        #[arg(long)] plan: bool,
+        #[arg(long)]
+        plan: bool,
         /// List the host's input devices with their kind and current session assignment (JSON).
-        #[arg(long)] list_devices: bool,
+        #[arg(long)]
+        list_devices: bool,
         /// List live nested sessions from the registry (JSON).
-        #[arg(long)] list_sessions: bool,
+        #[arg(long)]
+        list_sessions: bool,
     },
 
     /// Generic USB forwarding ([remote.device_forwarding]): capability report for RDP URBDRC (USB/IP vhci), USB/IP, SPICE usbredir and nested sessions; per-session target selection; the SPICE usbredir filter from the shared policy.
     #[command(name = "device-forwarding")]
     DeviceForwarding {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(value_parser=["report","select","spice-filter"])] action: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(value_parser=["report","select","spice-filter"])]
+        action: String,
         /// Session: rdp, nested:<seat> or spice:<domain> (select, spice-filter).
-        #[arg(long)] session: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
         /// Target for select: auto, none or the session's transport (host-vhci, nested-evdev, spice-usbredir).
-        #[arg(long)] target: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
         /// Runtime directory holding the target file and live stats (default $XDG_RUNTIME_DIR).
-        #[arg(long)] runtime_dir: Option<PathBuf>,
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
         /// Alternative sysfs root for the read-only probes (tests); modules.dep is read from <sys>/lib-modules.
-        #[arg(long)] sys: Option<PathBuf>,
+        #[arg(long)]
+        sys: Option<PathBuf>,
         /// Skip the libvirt domain inventory.
-        #[arg(long)] no_libvirt: bool,
+        #[arg(long)]
+        no_libvirt: bool,
     },
 
     /// Print the Super+Escape overlay rows (JSON [{keys,label}]) generated from the binding tables; writes nothing.
     #[command(name = "keymap-overlay")]
     KeymapOverlay {
-        #[arg(long)] root: Option<PathBuf>,
+        #[arg(long)]
+        root: Option<PathBuf>,
         /// Read the merged SSOT as JSON from this file ("-" = stdin) instead of resolving --root's layers.
-        #[arg(long)] from_json: Option<PathBuf>,
+        #[arg(long)]
+        from_json: Option<PathBuf>,
     },
 
     /// Scale the whole session on the focused output (or zoom a focused nested session): up, down or reset.
     #[command(name = "session-scale")]
     SessionScale {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(value_parser=["up","down","reset","+","-","0"])] direction: String,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(value_parser=["up","down","reset","+","-","0"])]
+        direction: String,
     },
 
     /// Load and toggle the live 3D engine through compositor IPC.
@@ -945,24 +975,36 @@ enum Commands {
 enum DockAction {
     /// Where windows can go and how each move really happens (JSON); with --address, how that window's app moves.
     Targets {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(long)] address: Option<String>,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        address: Option<String>,
     },
     /// Move one window to a target and verify it (output: live; session: migrate a containerized/stateless app).
     Move {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(long)] target: String,
-        #[arg(long)] address: String,
-        #[arg(long)] dry_run: bool,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        address: String,
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Run the Phosh on-screen keyboard inside the expanded dock (layer surface rewritten to the dock's rect).
     Osk {
-        #[arg(long)] root: Option<PathBuf>,
-        #[arg(long)] width: u32,
-        #[arg(long)] height: Option<u32>,
-        #[arg(long)] bottom: i32,
-        #[arg(long)] force_show: bool,
-        #[arg(long)] private_bus: bool,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        width: u32,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long)]
+        bottom: i32,
+        #[arg(long)]
+        force_show: bool,
+        #[arg(long)]
+        private_bus: bool,
     },
 }
 
@@ -1216,42 +1258,88 @@ fn run_egress_firewall(root: &Path, check: bool) -> Result<(), (String, i32)> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let (subcommand, target, result) = match cli.command {
-        Commands::Hyprland3dSpawn { root, monitors, mobile, output, render_scale, window } => {
+        Commands::Hyprland3dSpawn {
+            root,
+            monitors,
+            mobile,
+            output,
+            render_scale,
+            window,
+        } => {
             let run = || -> Result<String, String> {
-                let root = root.or_else(|| env::var_os("MIOS_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from))
+                let root = root
+                    .or_else(|| {
+                        env::var_os("MIOS_ROOT")
+                            .filter(|v| !v.is_empty())
+                            .map(PathBuf::from)
+                    })
                     .unwrap_or_else(|| PathBuf::from("/"));
                 let data = crate::terminal::tmux_theme::tmux_runtime::load_layered(&root)?;
                 let text = match &monitors {
-                    Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+                    Some(path) => std::fs::read_to_string(path)
+                        .map_err(|e| format!("{}: {e}", path.display()))?,
                     None => {
-                        let out = std::process::Command::new("/usr/bin/hyprctl").args(["-j", "monitors"]).output()
+                        let out = std::process::Command::new("/usr/bin/hyprctl")
+                            .args(["-j", "monitors"])
+                            .output()
                             .map_err(|e| format!("hyprctl: {e}"))?;
                         if !out.status.success() {
-                            return Err("hyprctl -j monitors failed (no compositor? pass --monitors)".into());
+                            return Err(
+                                "hyprctl -j monitors failed (no compositor? pass --monitors)"
+                                    .into(),
+                            );
                         }
                         String::from_utf8_lossy(&out.stdout).into_owned()
                     }
                 };
-                let monitors: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("monitors JSON: {e}"))?;
-                let mobile_path = mobile.clone().or_else(|| env::var_os("XDG_RUNTIME_DIR")
-                    .map(|r| PathBuf::from(r).join("mios-mobile-outputs.json")));
+                let monitors: serde_json::Value =
+                    serde_json::from_str(&text).map_err(|e| format!("monitors JSON: {e}"))?;
+                let mobile_path = mobile.clone().or_else(|| {
+                    env::var_os("XDG_RUNTIME_DIR")
+                        .map(|r| PathBuf::from(r).join("mios-mobile-outputs.json"))
+                });
                 let published: Option<serde_json::Value> = match (&mobile, mobile_path) {
-                    (Some(path), _) => Some(serde_json::from_str(&std::fs::read_to_string(path)
-                        .map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("mobile JSON: {e}"))?),
-                    (None, Some(path)) => std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()),
+                    (Some(path), _) => Some(
+                        serde_json::from_str(
+                            &std::fs::read_to_string(path)
+                                .map_err(|e| format!("{}: {e}", path.display()))?,
+                        )
+                        .map_err(|e| format!("mobile JSON: {e}"))?,
+                    ),
+                    (None, Some(path)) => std::fs::read_to_string(path)
+                        .ok()
+                        .and_then(|t| serde_json::from_str(&t).ok()),
                     (None, None) => None,
                 };
-                let windows = window.iter().map(|w| {
-                    let (a, b) = w.split_once('x').ok_or_else(|| format!("--window {w}: expected WxH"))?;
-                    let parse = |v: &str| v.parse::<f64>().ok().filter(|f| f.is_finite() && *f >= 1.0 && *f <= 32768.0);
-                    parse(a).zip(parse(b)).ok_or_else(|| format!("--window {w}: expected WxH in 1..=32768"))
-                }).collect::<Result<Vec<_>, _>>()?;
+                let windows = window
+                    .iter()
+                    .map(|w| {
+                        let (a, b) = w
+                            .split_once('x')
+                            .ok_or_else(|| format!("--window {w}: expected WxH"))?;
+                        let parse = |v: &str| {
+                            v.parse::<f64>()
+                                .ok()
+                                .filter(|f| f.is_finite() && *f >= 1.0 && *f <= 32768.0)
+                        };
+                        parse(a)
+                            .zip(parse(b))
+                            .ok_or_else(|| format!("--window {w}: expected WxH in 1..=32768"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 if let Some(r) = render_scale {
                     if !(1.0..=4.0).contains(&r) {
                         return Err("--render-scale must be in 1..=4".into());
                     }
                 }
-                hypr3d_spawn::run_cli(&data, &monitors, published.as_ref(), output.as_deref(), render_scale, &windows)
+                hypr3d_spawn::run_cli(
+                    &data,
+                    &monitors,
+                    published.as_ref(),
+                    output.as_deref(),
+                    render_scale,
+                    &windows,
+                )
             };
             return match run() {
                 Ok(text) => {
@@ -1277,8 +1365,23 @@ fn main() -> ExitCode {
             attach_below,
         } => {
             return match display_scale::run_cli(
-                root.or_else(|| env::var_os("MIOS_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
-                display_scale::CliArgs { width, height, phys_mm, dpi, transform, remote, output, explicit_scale, attach_below },
+                root.or_else(|| {
+                    env::var_os("MIOS_ROOT")
+                        .filter(|v| !v.is_empty())
+                        .map(PathBuf::from)
+                })
+                .unwrap_or_else(|| PathBuf::from("/")),
+                display_scale::CliArgs {
+                    width,
+                    height,
+                    phys_mm,
+                    dpi,
+                    transform,
+                    remote,
+                    output,
+                    explicit_scale,
+                    attach_below,
+                },
                 cli.format == "json",
             ) {
                 Ok(text) => {
@@ -1366,9 +1469,19 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Commands::EnvSnapshot { root, vendor, out, check } => {
+        Commands::EnvSnapshot {
+            root,
+            vendor,
+            out,
+            check,
+        } => {
             let root = resolve_root(root);
-            return match env_snapshot::run(&root, vendor.as_deref(), out.as_deref(), check.as_deref()) {
+            return match env_snapshot::run(
+                &root,
+                vendor.as_deref(),
+                out.as_deref(),
+                check.as_deref(),
+            ) {
                 Ok(text) => {
                     print!("{text}");
                     ExitCode::SUCCESS
@@ -1379,7 +1492,11 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Commands::AiMetadata { root, export, check_fresh } => {
+        Commands::AiMetadata {
+            root,
+            export,
+            check_fresh,
+        } => {
             let root = resolve_root(root);
             return match ai_metadata::run(&root, export.as_deref(), check_fresh) {
                 Ok(text) => {
@@ -1392,7 +1509,11 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Commands::Sync { root, plan, check_copies } => {
+        Commands::Sync {
+            root,
+            plan,
+            check_copies,
+        } => {
             let root = resolve_root(root);
             if check_copies {
                 return match sync::check_copies(&root) {
@@ -1469,7 +1590,12 @@ fn main() -> ExitCode {
                     if let Some(list) = env::var_os("TERMINFO_DIRS") {
                         dirs.extend(env::split_paths(&list).filter(|d| !d.as_os_str().is_empty()));
                     }
-                    for d in ["/etc/terminfo", "/usr/share/terminfo", "/usr/lib/terminfo", "/lib/terminfo"] {
+                    for d in [
+                        "/etc/terminfo",
+                        "/usr/share/terminfo",
+                        "/usr/lib/terminfo",
+                        "/lib/terminfo",
+                    ] {
                         dirs.push(PathBuf::from(d));
                     }
                     if let Some((term, colorterm)) =
@@ -1488,15 +1614,32 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Commands::TmuxMenu { which, root, console, rows, section } => {
+        Commands::TmuxMenu {
+            which,
+            root,
+            console,
+            rows,
+            section,
+        } => {
             let root = resolve_root(root);
             let result = (|| -> Result<Option<Vec<String>>, String> {
                 if which != "apps" {
                     return Err("tmux-menu: only the apps menu is dynamic".into());
                 }
-                let console = match console.as_str() { "1" => true, "0" => false, _ => return Err("--console must be 0 or 1".into()) };
-                let merged = mios_resolver::resolve_merged(Some(&root), false).map_err(|e| e.to_string())?;
-                tmux_os::menu_argv(&merged, console, rows, section.as_deref(), mios_resolver::terminal_tuis::is_installed)
+                let console = match console.as_str() {
+                    "1" => true,
+                    "0" => false,
+                    _ => return Err("--console must be 0 or 1".into()),
+                };
+                let merged =
+                    mios_resolver::resolve_merged(Some(&root), false).map_err(|e| e.to_string())?;
+                tmux_os::menu_argv(
+                    &merged,
+                    console,
+                    rows,
+                    section.as_deref(),
+                    mios_resolver::terminal_tuis::is_installed,
+                )
             })();
             return match result {
                 Ok(Some(argv)) => {
@@ -1518,9 +1661,19 @@ fn main() -> ExitCode {
         Commands::TuiSpec { id, root, console } => {
             let root = resolve_root(root);
             let result = (|| -> Result<Option<Vec<String>>, String> {
-                let console = match console.as_str() { "1" => true, "0" => false, _ => return Err("--console must be 0 or 1".into()) };
-                let merged = mios_resolver::resolve_merged(Some(&root), false).map_err(|e| e.to_string())?;
-                tmux_os::tui_spec(&merged, &id, console, mios_resolver::terminal_tuis::is_installed)
+                let console = match console.as_str() {
+                    "1" => true,
+                    "0" => false,
+                    _ => return Err("--console must be 0 or 1".into()),
+                };
+                let merged =
+                    mios_resolver::resolve_merged(Some(&root), false).map_err(|e| e.to_string())?;
+                tmux_os::tui_spec(
+                    &merged,
+                    &id,
+                    console,
+                    mios_resolver::terminal_tuis::is_installed,
+                )
             })();
             return match result {
                 Ok(Some(fields)) => {
@@ -1727,12 +1880,23 @@ fn main() -> ExitCode {
                 },
             )
         }
-        Commands::BuildHyprland { root, srpm, out, check } => {
+        Commands::BuildHyprland {
+            root,
+            srpm,
+            out,
+            check,
+        } => {
             let r = resolve_root(root);
             (
                 "build-hyprland",
                 "usr/share/mios/hyprland/patches",
-                hyprland_build::run(&r, srpm.as_deref(), &out, check).map(|msg| { if cli.format != "json" { print!("{msg}"); } }).map_err(|e| (e, 1)),
+                hyprland_build::run(&r, srpm.as_deref(), &out, check)
+                    .map(|msg| {
+                        if cli.format != "json" {
+                            print!("{msg}");
+                        }
+                    })
+                    .map_err(|e| (e, 1)),
             )
         }
         Commands::BuildHyprlandPlugin { name, root, srpm } => {
@@ -1768,97 +1932,271 @@ fn main() -> ExitCode {
             )
         }
         Commands::Dock { action } => (
-            "dock", "desktop",
+            "dock",
+            "desktop",
             match action {
-                DockAction::Targets { root, address } => dock::targets(&root.unwrap_or_else(|| PathBuf::from("/")), address.as_deref()).map(|v| println!("{v}")),
-                DockAction::Move { root, target, address, dry_run } => dock::move_window(&root.unwrap_or_else(|| PathBuf::from("/")), &target, &address, dry_run).map(|v| println!("{v}")),
-                DockAction::Osk { root, width, height, bottom, force_show, private_bus } => dock::osk(&root.unwrap_or_else(|| PathBuf::from("/")), &dock::OskOptions { width, height, bottom, force_show, private_bus }),
-            }.map_err(|e| (e, 1)),
+                DockAction::Targets { root, address } => dock::targets(
+                    &root.unwrap_or_else(|| PathBuf::from("/")),
+                    address.as_deref(),
+                )
+                .map(|v| println!("{v}")),
+                DockAction::Move {
+                    root,
+                    target,
+                    address,
+                    dry_run,
+                } => dock::move_window(
+                    &root.unwrap_or_else(|| PathBuf::from("/")),
+                    &target,
+                    &address,
+                    dry_run,
+                )
+                .map(|v| println!("{v}")),
+                DockAction::Osk {
+                    root,
+                    width,
+                    height,
+                    bottom,
+                    force_show,
+                    private_bus,
+                } => dock::osk(
+                    &root.unwrap_or_else(|| PathBuf::from("/")),
+                    &dock::OskOptions {
+                        width,
+                        height,
+                        bottom,
+                        force_show,
+                        private_bus,
+                    },
+                ),
+            }
+            .map_err(|e| (e, 1)),
         ),
         #[cfg(unix)]
-        Commands::AppPreflight {root,desktop,flatpak,all,portal_only} => (
-            "app-preflight", "desktop",
-            app_preflight::run(&root.unwrap_or_else(||PathBuf::from("/")),desktop.as_deref(),flatpak.as_deref(),all,portal_only).map_err(|e|(e,1)),
+        Commands::AppPreflight {
+            root,
+            desktop,
+            flatpak,
+            all,
+            portal_only,
+        } => (
+            "app-preflight",
+            "desktop",
+            app_preflight::run(
+                &root.unwrap_or_else(|| PathBuf::from("/")),
+                desktop.as_deref(),
+                flatpak.as_deref(),
+                all,
+                portal_only,
+            )
+            .map_err(|e| (e, 1)),
         ),
-        Commands::MemAdmit {root,wait,meminfo} => (
-            "mem-admit", "desktop",
-            mem_admit::run(&root.unwrap_or_else(||PathBuf::from("/")),wait,meminfo.as_deref()),
+        Commands::MemAdmit {
+            root,
+            wait,
+            meminfo,
+        } => (
+            "mem-admit",
+            "desktop",
+            mem_admit::run(
+                &root.unwrap_or_else(|| PathBuf::from("/")),
+                wait,
+                meminfo.as_deref(),
+            ),
         ),
-        Commands::NestedSession {root,dry_run,layout,output,seat,user,device,no_devices,plan,list_devices,list_sessions} => (
-            "nested-session", "desktop",
-            nested_session::run(&root.unwrap_or_else(||PathBuf::from("/")),dry_run,&nested_session::Options{target:layout,output,seat,user,devices:device,no_devices,plan,list_devices,list_sessions}).map_err(|e|(e,1)),
+        Commands::NestedSession {
+            root,
+            dry_run,
+            layout,
+            output,
+            seat,
+            user,
+            device,
+            no_devices,
+            plan,
+            list_devices,
+            list_sessions,
+        } => (
+            "nested-session",
+            "desktop",
+            nested_session::run(
+                &root.unwrap_or_else(|| PathBuf::from("/")),
+                dry_run,
+                &nested_session::Options {
+                    target: layout,
+                    output,
+                    seat,
+                    user,
+                    devices: device,
+                    no_devices,
+                    plan,
+                    list_devices,
+                    list_sessions,
+                },
+            )
+            .map_err(|e| (e, 1)),
         ),
-        Commands::DeviceForwarding {root,action,session,target,runtime_dir,sys,no_libvirt} => (
-            "device-forwarding", "remote",
-            device_forwarding::run(&root.unwrap_or_else(||PathBuf::from("/")),&action,session.as_deref(),target.as_deref(),runtime_dir,sys,no_libvirt).map_err(|e|(e,1)),
+        Commands::DeviceForwarding {
+            root,
+            action,
+            session,
+            target,
+            runtime_dir,
+            sys,
+            no_libvirt,
+        } => (
+            "device-forwarding",
+            "remote",
+            device_forwarding::run(
+                &root.unwrap_or_else(|| PathBuf::from("/")),
+                &action,
+                session.as_deref(),
+                target.as_deref(),
+                runtime_dir,
+                sys,
+                no_libvirt,
+            )
+            .map_err(|e| (e, 1)),
         ),
-        Commands::KeymapOverlay {root,from_json} => (
-            "keymap-overlay", "desktop",
+        Commands::KeymapOverlay { root, from_json } => (
+            "keymap-overlay",
+            "desktop",
             (|| -> Result<(), String> {
                 let data: toml::Value = match from_json {
                     Some(p) => {
                         let mut raw = String::new();
                         if p.as_os_str() == "-" {
-                            std::io::Read::read_to_string(&mut std::io::Read::take(std::io::stdin(), 16 << 20), &mut raw).map_err(|e| e.to_string())?;
+                            std::io::Read::read_to_string(
+                                &mut std::io::Read::take(std::io::stdin(), 16 << 20),
+                                &mut raw,
+                            )
+                            .map_err(|e| e.to_string())?;
                         } else {
-                            raw = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                            raw = std::fs::read_to_string(&p)
+                                .map_err(|e| format!("{}: {e}", p.display()))?;
                         }
                         serde_json::from_str(&raw).map_err(|e| format!("merged SSOT JSON: {e}"))?
                     }
-                    None => mios_resolver::resolve_merged(Some(&root.unwrap_or_else(||PathBuf::from("/"))), false).map_err(|e| e.to_string())?,
+                    None => mios_resolver::resolve_merged(
+                        Some(&root.unwrap_or_else(|| PathBuf::from("/"))),
+                        false,
+                    )
+                    .map_err(|e| e.to_string())?,
                 };
                 println!("{}", global_bindings::keymap_overlay_json(&data)?);
                 Ok(())
-            })().map_err(|e|(e,1)),
+            })()
+            .map_err(|e| (e, 1)),
         ),
-        Commands::SessionScale {root,direction} => (
-            "session-scale", "desktop",
+        Commands::SessionScale { root, direction } => (
+            "session-scale",
+            "desktop",
             session_scale::Dir::parse(&direction)
-                .and_then(|d| session_scale::run(&root.unwrap_or_else(||PathBuf::from("/")), d))
+                .and_then(|d| session_scale::run(&root.unwrap_or_else(|| PathBuf::from("/")), d))
                 .map(|msg| println!("{msg}"))
-                .map_err(|e|(e,1)),
+                .map_err(|e| (e, 1)),
         ),
         Commands::Hyprland3dToggle => (
-            "hyprland-3d-toggle", "desktop",
-            render::render_hyprland::toggle_3d(Path::new("/")).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+            "hyprland-3d-toggle",
+            "desktop",
+            render::render_hyprland::toggle_3d(Path::new("/"))
+                .map(|msg| {
+                    println!("{msg}");
+                })
+                .map_err(|msg| (msg, 1)),
         ),
-        Commands::HyprlandGreeter { kind, dry_run, root, hardware_profile, hosted, command } => {
+        Commands::HyprlandGreeter {
+            kind,
+            dry_run,
+            root,
+            hardware_profile,
+            hosted,
+            command,
+        } => {
             if hosted {
                 // The launcher reads the status file; the exit code is the hosted greeter's.
                 return match greeter::hosted(&command) {
                     Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
-                    Err(e) => { eprintln!("mios-gen hyprland-greeter --hosted: {e}"); ExitCode::from(1) }
+                    Err(e) => {
+                        eprintln!("mios-gen hyprland-greeter --hosted: {e}");
+                        ExitCode::from(1)
+                    }
                 };
             }
             (
-                "hyprland-greeter", "desktop",
-                greeter::runtime(&root.unwrap_or_else(|| PathBuf::from("/")), kind.as_deref(), hardware_profile.as_deref(), dry_run)
-                    .map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+                "hyprland-greeter",
+                "desktop",
+                greeter::runtime(
+                    &root.unwrap_or_else(|| PathBuf::from("/")),
+                    kind.as_deref(),
+                    hardware_profile.as_deref(),
+                    dry_run,
+                )
+                .map(|msg| {
+                    println!("{msg}");
+                })
+                .map_err(|msg| (msg, 1)),
             )
         }
-        Commands::BootDisplayReport { root, kmsg, cmdline, sysfs_drm, dri, vtconsole } => {
+        Commands::BootDisplayReport {
+            root,
+            kmsg,
+            cmdline,
+            sysfs_drm,
+            dri,
+            vtconsole,
+        } => {
             let root = root.unwrap_or_else(|| PathBuf::from("/"));
             let cmd = fs::read_to_string(&cmdline).unwrap_or_default();
             let doc = mios_resolver::resolve_projection(&root).ok();
-            let profile = doc.as_ref().and_then(|d| render::desktop_boot::boot_profile(d, &cmd).ok());
+            let profile = doc
+                .as_ref()
+                .and_then(|d| render::desktop_boot::boot_profile(d, &cmd).ok());
             let pci = match (&doc, &profile) {
                 (Some(d), Some(p)) => gpu_topology::profile_pci(&root, d, p),
                 _ => None,
             };
             let log = gpu_topology::kmsg(&kmsg);
-            let report = gpu_topology::boot_display_report(&gpu_topology::Host { dri: &dri, sys: &sysfs_drm }, &vtconsole, &cmd, &log, profile.as_deref(), pci.as_deref());
+            let report = gpu_topology::boot_display_report(
+                &gpu_topology::Host {
+                    dri: &dri,
+                    sys: &sysfs_drm,
+                },
+                &vtconsole,
+                &cmd,
+                &log,
+                profile.as_deref(),
+                pci.as_deref(),
+            );
             println!("{report}");
             return ExitCode::SUCCESS;
         }
-        Commands::HyprlandBootProfile { hardware_profile, prepare_only, dry_run } => (
-            "hyprland-boot-profile", "desktop",
-            desktop_boot::select(&hardware_profile, prepare_only, dry_run).map(|msg| { println!("{msg}"); }).map_err(|msg| (msg, 1)),
+        Commands::HyprlandBootProfile {
+            hardware_profile,
+            prepare_only,
+            dry_run,
+        } => (
+            "hyprland-boot-profile",
+            "desktop",
+            desktop_boot::select(&hardware_profile, prepare_only, dry_run)
+                .map(|msg| {
+                    println!("{msg}");
+                })
+                .map_err(|msg| (msg, 1)),
         ),
-        Commands::HyprlandSession { root, hardware_profile, dry_run } => {
+        Commands::HyprlandSession {
+            root,
+            hardware_profile,
+            dry_run,
+        } => {
             // Runtime launcher started by greetd from $HOME: never resolve the SSOT
             // relative to the working directory. Default to the live root.
             let r = root
-                .or_else(|| env::var_os("MIOS_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from))
+                .or_else(|| {
+                    env::var_os("MIOS_ROOT")
+                        .filter(|v| !v.is_empty())
+                        .map(PathBuf::from)
+                })
                 .unwrap_or_else(|| PathBuf::from("/"));
             (
                 "hyprland-session",
@@ -1885,9 +2223,14 @@ fn main() -> ExitCode {
                 "render-hyprland",
                 "usr/share/mios/hyprland/hyprland.lua",
                 match if let Some(entry) = boot_entry.as_deref() {
-                    if runtime { Err(("boot-entry and runtime cannot be combined".into(), 1)) }
-                    else { render::render_hyprland::run_boot_profiles(&r, entry, check) }
-                } else { render::render_hyprland::run(&r, check, runtime) } {
+                    if runtime {
+                        Err(("boot-entry and runtime cannot be combined".into(), 1))
+                    } else {
+                        render::render_hyprland::run_boot_profiles(&r, entry, check)
+                    }
+                } else {
+                    render::render_hyprland::run(&r, check, runtime)
+                } {
                     Ok((msg, _)) => {
                         if cli.format != "json" {
                             print!("{msg}");
@@ -1930,7 +2273,12 @@ fn main() -> ExitCode {
                 },
             )
         }
-        Commands::RenderAgentInteraction { root, home, runtime, check } => {
+        Commands::RenderAgentInteraction {
+            root,
+            home,
+            runtime,
+            check,
+        } => {
             let r = resolve_root(root);
             (
                 "render-agent-interaction",
@@ -1942,8 +2290,18 @@ fn main() -> ExitCode {
                             eprintln!("[agent-interaction] {name}: left untouched: {why}");
                         }
                         if check && !out.changed.is_empty() {
-                            let list: Vec<String> = out.changed.iter().map(|p| p.display().to_string()).collect();
-                            Err((format!("client files differ from [agent_cli.interaction]: {}", list.join(", ")), 1))
+                            let list: Vec<String> = out
+                                .changed
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect();
+                            Err((
+                                format!(
+                                    "client files differ from [agent_cli.interaction]: {}",
+                                    list.join(", ")
+                                ),
+                                1,
+                            ))
                         } else {
                             // Silent on a runtime projection: agent launches run it every time.
                             if cli.format != "json" && !runtime {
@@ -2263,7 +2621,15 @@ fn main() -> ExitCode {
                 },
             )
         }
-        Commands::RenderGrub { root, sysroot, check, stage, apply, kernel_event, kernel_version } => {
+        Commands::RenderGrub {
+            root,
+            sysroot,
+            check,
+            stage,
+            apply,
+            kernel_event,
+            kernel_version,
+        } => {
             let r = root.unwrap_or_else(|| PathBuf::from("/"));
             let mode = if check {
                 grub::Mode::Check
@@ -2277,7 +2643,13 @@ fn main() -> ExitCode {
             (
                 "render-grub",
                 "/etc/default/grub",
-                match grub::run(&r, &sysroot, mode, kernel_event.as_deref(), kernel_version.as_deref()) {
+                match grub::run(
+                    &r,
+                    &sysroot,
+                    mode,
+                    kernel_event.as_deref(),
+                    kernel_version.as_deref(),
+                ) {
                     Ok(msg) => {
                         if cli.format != "json" {
                             print!("{msg}");
@@ -2307,10 +2679,16 @@ fn main() -> ExitCode {
                 match greeter::run(&r, &sysroot, mode) {
                     Ok(res) => {
                         for why in &res.degraded {
-                            eprintln!("[greetd] WARNING: glass greeter degraded to tuigreet: {why}");
+                            eprintln!(
+                                "[greetd] WARNING: glass greeter degraded to tuigreet: {why}"
+                            );
                         }
                         if cli.format != "json" && !stdout {
-                            println!("[greetd] greeter = {} (projection {} bytes)", res.effective, res.text.len());
+                            println!(
+                                "[greetd] greeter = {} (projection {} bytes)",
+                                res.effective,
+                                res.text.len()
+                            );
                         }
                         Ok(())
                     }

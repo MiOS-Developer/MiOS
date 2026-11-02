@@ -45,7 +45,14 @@ pub const NAMED_MODES: [&str; 4] = ["preferred", "highres", "highrr", "maxwidth"
 pub fn parse_mode(s: &str) -> Option<(u32, u32, Option<f64>)> {
     let s = s.trim().trim_end_matches("Hz");
     let (size, hz) = match s.split_once('@') {
-        Some((size, hz)) => (size, Some(hz.parse::<f64>().ok().filter(|r| r.is_finite() && *r > 0.0)?)),
+        Some((size, hz)) => (
+            size,
+            Some(
+                hz.parse::<f64>()
+                    .ok()
+                    .filter(|r| r.is_finite() && *r > 0.0)?,
+            ),
+        ),
         None => (s, None),
     };
     let (w, h) = size.split_once('x')?;
@@ -55,7 +62,12 @@ pub fn parse_mode(s: &str) -> Option<(u32, u32, Option<f64>)> {
 
 impl Monitor {
     pub fn from_json(v: &Value) -> Result<Monitor, String> {
-        let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+        let s = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
         let n = |k: &str| v.get(k).and_then(Value::as_f64);
         let name = s("name");
         if name.is_empty() {
@@ -77,7 +89,12 @@ impl Monitor {
             available: v
                 .get("availableModes")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default(),
             name,
         })
@@ -88,7 +105,11 @@ impl Monitor {
         let mut out: Vec<Mode> = Vec::new();
         for m in &self.available {
             if let Some((width, height, Some(refresh))) = parse_mode(m) {
-                let mode = Mode { width, height, refresh };
+                let mode = Mode {
+                    width,
+                    height,
+                    refresh,
+                };
                 if !out.iter().any(|o| o.render() == mode.render()) {
                     out.push(mode);
                 }
@@ -98,7 +119,11 @@ impl Monitor {
     }
 
     pub fn current_mode(&self) -> Mode {
-        Mode { width: self.width, height: self.height, refresh: self.refresh }
+        Mode {
+            width: self.width,
+            height: self.height,
+            refresh: self.refresh,
+        }
     }
 
     pub fn position(&self) -> String {
@@ -143,7 +168,9 @@ pub struct Recommendation {
 /// pixel density that maps to scale 1 ([desktop.displays.setup].reference_dpi).
 pub fn recommend(m: &Monitor, scales: &[f64], reference_dpi: f64) -> Option<Recommendation> {
     let modes = m.modes();
-    let native = modes.iter().max_by_key(|a| (a.width as u64 * a.height as u64, a.width))?;
+    let native = modes
+        .iter()
+        .max_by_key(|a| (a.width as u64 * a.height as u64, a.width))?;
     let mode = modes
         .iter()
         .filter(|a| a.width == native.width && a.height == native.height)
@@ -160,7 +187,12 @@ pub fn recommend(m: &Monitor, scales: &[f64], reference_dpi: f64) -> Option<Reco
         .filter(|s| *s >= 1.0 && scale_ok(mode.width, mode.height, *s))
         .min_by(|a, b| (a - wanted).abs().total_cmp(&(b - wanted).abs()))
         .unwrap_or(1.0);
-    Some(Recommendation { output: m.name.clone(), mode, scale, dpi })
+    Some(Recommendation {
+        output: m.name.clone(),
+        mode,
+        scale,
+        dpi,
+    })
 }
 
 /// A requested change to one output; `None` keeps the live value.
@@ -208,7 +240,10 @@ fn scale_ok(width: u32, height: u32, scale: f64) -> bool {
 }
 
 fn position_ok(p: &str) -> bool {
-    if p == "auto" || p.strip_prefix("auto-").is_some_and(|d| ["left", "right", "up", "down"].contains(&d)) {
+    if p == "auto"
+        || p.strip_prefix("auto-")
+            .is_some_and(|d| ["left", "right", "up", "down"].contains(&d))
+    {
         return true;
     }
     p.split_once('x')
@@ -221,7 +256,13 @@ impl Change {
         let m = monitors
             .iter()
             .find(|m| m.name == self.output)
-            .ok_or_else(|| format!("unknown output {:?} (known: {})", self.output, names(monitors)))?;
+            .ok_or_else(|| {
+                format!(
+                    "unknown output {:?} (known: {})",
+                    self.output,
+                    names(monitors)
+                )
+            })?;
         let mut rule = Rule::of(m);
         // A disabled output reports 0x0; give it its preferred mode when re-enabled.
         if m.disabled || m.width == 0 {
@@ -235,12 +276,20 @@ impl Change {
                     size = (first.width, first.height);
                 }
             } else {
-                let (w, h, hz) =
-                    parse_mode(mode).ok_or_else(|| format!("invalid mode {mode:?}: expected WxH@Hz or one of {}", NAMED_MODES.join("|")))?;
+                let (w, h, hz) = parse_mode(mode).ok_or_else(|| {
+                    format!(
+                        "invalid mode {mode:?}: expected WxH@Hz or one of {}",
+                        NAMED_MODES.join("|")
+                    )
+                })?;
                 let found = m
                     .modes()
                     .into_iter()
-                    .find(|a| a.width == w && a.height == h && hz.is_none_or(|r| (a.refresh - r).abs() < 0.01))
+                    .find(|a| {
+                        a.width == w
+                            && a.height == h
+                            && hz.is_none_or(|r| (a.refresh - r).abs() < 0.01)
+                    })
                     .ok_or_else(|| format!("{} does not offer mode {mode:?}", m.name))?;
                 rule.mode = found.render();
                 size = (w, h);
@@ -248,7 +297,9 @@ impl Change {
         }
         if let Some(p) = &self.position {
             if !position_ok(p) {
-                return Err(format!("invalid position {p:?}: expected XxY or auto[-left|-right|-up|-down]"));
+                return Err(format!(
+                    "invalid position {p:?}: expected XxY or auto[-left|-right|-up|-down]"
+                ));
             }
             rule.position = p.clone();
         }
@@ -272,7 +323,10 @@ impl Change {
         }
         if let Some(d) = self.disabled {
             if d && !monitors.iter().any(|o| o.name != m.name && !o.disabled) {
-                return Err(format!("refusing to disable {}: it is the only enabled output", m.name));
+                return Err(format!(
+                    "refusing to disable {}: it is the only enabled output",
+                    m.name
+                ));
             }
             rule.disabled = d;
         }
@@ -281,7 +335,11 @@ impl Change {
 }
 
 pub fn names(monitors: &[Monitor]) -> String {
-    monitors.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ")
+    monitors
+        .iter()
+        .map(|m| m.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn lua_str(s: &str) -> String {
@@ -296,7 +354,10 @@ fn num(f: f64) -> String {
 /// `hl.monitor({...})` for `hyprctl eval`, same field names as the mios-gen projection.
 pub fn lua_rule(r: &Rule) -> String {
     if r.disabled {
-        return format!("hl.monitor({{output = {}, disabled = true}})", lua_str(&r.output));
+        return format!(
+            "hl.monitor({{output = {}, disabled = true}})",
+            lua_str(&r.output)
+        );
     }
     format!(
         "hl.monitor({{output = {}, mode = {}, position = {}, scale = {}, transform = {}}})",
@@ -355,11 +416,18 @@ mod tests {
                 "availableModes":["1920x1080@60.00Hz","1920x1080@144.00Hz","1920x1080@60.00Hz","1280x720@60.00Hz"]}]"#,
         )
         .unwrap();
-        v.as_array().unwrap().iter().map(|m| Monitor::from_json(m).unwrap()).collect()
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|m| Monitor::from_json(m).unwrap())
+            .collect()
     }
 
     fn change(f: impl FnOnce(&mut Change)) -> Change {
-        let mut c = Change { output: "HDMI-A-1".into(), ..Default::default() };
+        let mut c = Change {
+            output: "HDMI-A-1".into(),
+            ..Default::default()
+        };
         f(&mut c);
         c
     }
@@ -368,8 +436,14 @@ mod tests {
     fn modes_are_parsed_and_deduplicated() {
         let m = &hdmi()[0];
         let modes: Vec<String> = m.modes().iter().map(Mode::render).collect();
-        assert_eq!(modes, ["1920x1080@60.00", "1920x1080@144.00", "1280x720@60.00"]);
-        assert_eq!(parse_mode("1920x1080@144.00Hz"), Some((1920, 1080, Some(144.0))));
+        assert_eq!(
+            modes,
+            ["1920x1080@60.00", "1920x1080@144.00", "1280x720@60.00"]
+        );
+        assert_eq!(
+            parse_mode("1920x1080@144.00Hz"),
+            Some((1920, 1080, Some(144.0)))
+        );
         assert_eq!(parse_mode("1920x1080"), Some((1920, 1080, None)));
         assert_eq!(parse_mode("0x1080@60"), None);
         assert_eq!(parse_mode("huge"), None);
@@ -384,7 +458,9 @@ mod tests {
             lua_rule(&r),
             "hl.monitor({output = \"HDMI-A-1\", mode = \"1920x1080@60.00\", position = \"0x0\", scale = 1.25, transform = 0})"
         );
-        let r = change(|c| c.mode = Some("1920x1080@144".into())).validate(&hdmi()).unwrap();
+        let r = change(|c| c.mode = Some("1920x1080@144".into()))
+            .validate(&hdmi())
+            .unwrap();
         assert_eq!(r.mode, "1920x1080@144.00");
         let r = change(|c| {
             c.mode = Some("1280x720@60".into());
@@ -394,7 +470,10 @@ mod tests {
         })
         .validate(&hdmi())
         .unwrap();
-        assert_eq!((r.mode.as_str(), r.transform, r.position.as_str()), ("1280x720@60.00", 1, "auto-right"));
+        assert_eq!(
+            (r.mode.as_str(), r.transform, r.position.as_str()),
+            ("1280x720@60.00", 1, "auto-right")
+        );
     }
 
     #[test]
@@ -403,12 +482,22 @@ mod tests {
         // 24" 1080p (530 mm): ~92 dpi -> scale 1, highest refresh at native size.
         m.physical_w_mm = 530;
         let r = recommend(&m, &[1.0, 1.25, 1.5, 1.75, 2.0], 110.0).unwrap();
-        assert_eq!((r.mode.render(), r.scale), ("1920x1080@144.00".to_string(), 1.0));
+        assert_eq!(
+            (r.mode.render(), r.scale),
+            ("1920x1080@144.00".to_string(), 1.0)
+        );
         // 27" 4K (597 mm): ~163 dpi -> 1.5.
-        m.available = vec!["3840x2160@60.00Hz".into(), "2560x1440@144.00Hz".into(), "3840x2160@30.00Hz".into()];
+        m.available = vec![
+            "3840x2160@60.00Hz".into(),
+            "2560x1440@144.00Hz".into(),
+            "3840x2160@30.00Hz".into(),
+        ];
         m.physical_w_mm = 597;
         let r = recommend(&m, &[1.0, 1.25, 1.5, 1.75, 2.0], 110.0).unwrap();
-        assert_eq!((r.mode.render(), r.scale), ("3840x2160@60.00".to_string(), 1.5));
+        assert_eq!(
+            (r.mode.render(), r.scale),
+            ("3840x2160@60.00".to_string(), 1.5)
+        );
         // Virtual GPU / headless: no physical size -> scale 1.
         m.physical_w_mm = 0;
         assert_eq!(recommend(&m, &[1.0, 1.5, 2.0], 110.0).unwrap().scale, 1.0);
@@ -446,6 +535,9 @@ mod tests {
         assert_eq!(m["primary"].as_bool(), Some(true));
         r.scale = 1.0;
         let v: toml::Value = fragment_toml(&[r], None).unwrap().parse().unwrap();
-        assert_eq!(v["desktop"]["hyprland"]["monitors"]["HDMI-A-1"]["scale"].as_integer(), Some(1));
+        assert_eq!(
+            v["desktop"]["hyprland"]["monitors"]["HDMI-A-1"]["scale"].as_integer(),
+            Some(1)
+        );
     }
 }

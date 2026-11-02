@@ -72,13 +72,20 @@ fn run() -> Result<(), String> {
         println!("mios-fanctl {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    if args.iter().any(|a| a == "-h" || a == "--help" || a == "help") {
+    if args
+        .iter()
+        .any(|a| a == "-h" || a == "--help" || a == "help")
+    {
         println!("{USAGE}");
         return Ok(());
     }
     let socket = take_flag_value(&mut args, "--socket")?;
     let as_json = take_switch(&mut args, "--json");
-    let cmd = if args.is_empty() { "status".to_string() } else { args.remove(0) };
+    let cmd = if args.is_empty() {
+        "status".to_string()
+    } else {
+        args.remove(0)
+    };
     if cmd == "apply-roles" {
         // Pump roles are safety settings: a broken admin layer must not stop the vendor ones.
         let (mut cfg, layers, errors) = role_layers(&config_paths());
@@ -113,7 +120,12 @@ fn run() -> Result<(), String> {
             if as_json {
                 return print_json(&v);
             }
-            for p in v.get("profiles").and_then(Value::as_array).cloned().unwrap_or_default() {
+            for p in v
+                .get("profiles")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+            {
                 println!(
                     "{:<24} {}",
                     p.get("id").and_then(Value::as_str).unwrap_or("?"),
@@ -123,7 +135,10 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "activate" => {
-            let id = args.first().cloned().unwrap_or_else(|| cfg.client.default_profile.clone());
+            let id = args
+                .first()
+                .cloned()
+                .unwrap_or_else(|| cfg.client.default_profile.clone());
             let v = c.post("/profile/activate", &json!({ "profile_id": id }))?;
             if as_json {
                 print_json(&v)
@@ -144,8 +159,18 @@ fn run() -> Result<(), String> {
         "override" => cmd_override(&c, &cfg, &mut args),
         "tui" => tui::run(&c, &cfg),
         "config" => {
-            println!("# sources: {}", if cfg.sources.is_empty() { "(built-in defaults)".into() } else { cfg.sources.join(", ") });
-            print!("{}", toml::to_string_pretty(&cfg).map_err(|e| e.to_string())?);
+            println!(
+                "# sources: {}",
+                if cfg.sources.is_empty() {
+                    "(built-in defaults)".into()
+                } else {
+                    cfg.sources.join(", ")
+                }
+            );
+            print!(
+                "{}",
+                toml::to_string_pretty(&cfg).map_err(|e| e.to_string())?
+            );
             Ok(())
         }
         "raw" => {
@@ -157,7 +182,10 @@ fn run() -> Result<(), String> {
 }
 
 fn print_json(v: &Value) -> Result<(), String> {
-    println!("{}", serde_json::to_string_pretty(v).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(v).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -168,25 +196,47 @@ fn cmd_status(c: &api::Client, as_json: bool) -> Result<(), String> {
         return print_json(&json!({ "status": st, "profile": active }));
     }
     let s = |k: &str| st.get(k).and_then(Value::as_str).unwrap_or("?").to_string();
-    println!("daemon        ventulusd {} (up {}s)", s("daemon_version"), st.get("uptime_seconds").and_then(Value::as_u64).unwrap_or(0));
+    println!(
+        "daemon        ventulusd {} (up {}s)",
+        s("daemon_version"),
+        st.get("uptime_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    );
     println!("overall       {}", s("overall_status"));
     println!("thermal_state {}", s("thermal_state"));
     println!("profile       {}", view::active_profile(&active));
     if let Some(r) = st.pointer("/readiness/top_summary").and_then(Value::as_str) {
         println!("readiness     {r}");
     }
-    for o in st.get("overrides").and_then(Value::as_array).cloned().unwrap_or_default() {
+    for o in st
+        .get("overrides")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
         println!(
             "override      {} at {}% ({}s left)",
             o.get("control_id").and_then(Value::as_str).unwrap_or("?"),
             o.get("pwm_percent").and_then(Value::as_u64).unwrap_or(0),
-            o.get("expires_in_secs").and_then(Value::as_u64).unwrap_or(0)
+            o.get("expires_in_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
         );
     }
-    if let Some(causes) = st.get("emergency_causes").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+    if let Some(causes) = st
+        .get("emergency_causes")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+    {
         println!("EMERGENCY     {}", Value::Array(causes.clone()));
     }
-    for sub in st.get("subsystems").and_then(Value::as_array).cloned().unwrap_or_default() {
+    for sub in st
+        .get("subsystems")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
         println!(
             "  {:<9} {:<9} {}",
             sub.get("name").and_then(Value::as_str).unwrap_or("?"),
@@ -203,7 +253,10 @@ fn cmd_fans(c: &api::Client, as_json: bool) -> Result<(), String> {
     if as_json {
         return print_json(&json!({ "fans": fans, "headers": headers }));
     }
-    println!("{:<16} {:<12} {:<16} {:>5} {:>6}  {:<12} FLAGS", "HEADER", "ROLE", "MODE", "DUTY", "RPM", "BAR");
+    println!(
+        "{:<16} {:<12} {:<16} {:>5} {:>6}  {:<12} FLAGS",
+        "HEADER", "ROLE", "MODE", "DUTY", "RPM", "BAR"
+    );
     for r in view::fan_rows(&fans, &headers) {
         println!(
             "{:<16} {:<12} {:<16} {:>4}% {:>6}  {:<12} {}",
@@ -224,7 +277,10 @@ fn cmd_sensors(c: &api::Client, as_json: bool) -> Result<(), String> {
     if as_json {
         return print_json(&v);
     }
-    println!("{:<12} {:<16} {:<30} {:>8}", "KIND", "CHIP", "LABEL", "TEMP");
+    println!(
+        "{:<12} {:<16} {:<30} {:>8}",
+        "KIND", "CHIP", "LABEL", "TEMP"
+    );
     for r in view::sensor_rows(&v) {
         println!(
             "{:<12} {:<16} {:<30} {:>8}",
@@ -238,7 +294,9 @@ fn cmd_sensors(c: &api::Client, as_json: bool) -> Result<(), String> {
 }
 
 pub fn check_override_pct(pct: &str, floor: u8) -> Result<u8, String> {
-    let p: u8 = pct.parse().map_err(|_| format!("PCT must be 0-100, got {pct:?}"))?;
+    let p: u8 = pct
+        .parse()
+        .map_err(|_| format!("PCT must be 0-100, got {pct:?}"))?;
     if p > 100 {
         return Err(format!("PCT must be 0-100, got {p}"));
     }
@@ -248,9 +306,16 @@ pub fn check_override_pct(pct: &str, floor: u8) -> Result<u8, String> {
     Ok(p)
 }
 
-fn cmd_override(c: &api::Client, cfg: &config::Config, args: &mut Vec<String>) -> Result<(), String> {
+fn cmd_override(
+    c: &api::Client,
+    cfg: &config::Config,
+    args: &mut Vec<String>,
+) -> Result<(), String> {
     let secs: u64 = take_flag_value(args, "--secs")?
-        .map(|s| s.parse().map_err(|_| format!("--secs must be a number, got {s:?}")))
+        .map(|s| {
+            s.parse()
+                .map_err(|_| format!("--secs must be a number, got {s:?}"))
+        })
         .transpose()?
         .unwrap_or(30)
         .clamp(1, 600);
@@ -264,7 +329,13 @@ fn cmd_override(c: &api::Client, cfg: &config::Config, args: &mut Vec<String>) -
         .get("override_token")
         .and_then(Value::as_u64)
         .ok_or("daemon returned no override_token")?;
-    let renew = Duration::from_secs(grant.get("renew_secs").and_then(Value::as_u64).unwrap_or(5).max(1));
+    let renew = Duration::from_secs(
+        grant
+            .get("renew_secs")
+            .and_then(Value::as_u64)
+            .unwrap_or(5)
+            .max(1),
+    );
     println!("override {control} -> {pct}% for {secs}s (token {token}; it lapses on its own if this client dies)");
     let deadline = Instant::now() + Duration::from_secs(secs);
     let mut result = Ok(());
@@ -273,7 +344,10 @@ fn cmd_override(c: &api::Client, cfg: &config::Config, args: &mut Vec<String>) -
         if Instant::now() >= deadline {
             break;
         }
-        if let Err(e) = c.post(&format!("{base}/renew"), &json!({ "override_token": token })) {
+        if let Err(e) = c.post(
+            &format!("{base}/renew"),
+            &json!({ "override_token": token }),
+        ) {
             result = Err(format!("renew failed, override will lapse: {e}"));
             break;
         }
@@ -287,7 +361,10 @@ fn cmd_override(c: &api::Client, cfg: &config::Config, args: &mut Vec<String>) -
 
 /// The config layers, lowest first (same order as `config::load`).
 fn config_paths() -> Vec<String> {
-    let mut paths = vec![config::VENDOR_PATH.to_string(), config::ADMIN_PATH.to_string()];
+    let mut paths = vec![
+        config::VENDOR_PATH.to_string(),
+        config::ADMIN_PATH.to_string(),
+    ];
     if let Ok(p) = std::env::var("MIOS_FANCTL_CONFIG") {
         paths.push(p);
     }
@@ -321,7 +398,10 @@ fn role_layers(paths: &[String]) -> (config::Config, Vec<RoleLayer>, Vec<String>
         match config::load_from(std::slice::from_ref(p)) {
             Ok(c) => {
                 good.push(p.clone());
-                layers.push(RoleLayer { source: p.clone(), roles: c.roles });
+                layers.push(RoleLayer {
+                    source: p.clone(),
+                    roles: c.roles,
+                });
             }
             Err(e) if e.starts_with(p.as_str()) => errors.push(e),
             Err(e) => errors.push(format!("{p}: {e}")),
@@ -345,7 +425,11 @@ impl RoleApi for api::Client {
         self.get("/hwmon/headers")
     }
     fn set_role(&self, id: &str, role: &str) -> Result<(), String> {
-        self.post("/config/header-role", &json!({ "header_id": id, "role": role })).map(|_| ())
+        self.post(
+            "/config/header-role",
+            &json!({ "header_id": id, "role": role }),
+        )
+        .map(|_| ())
     }
 }
 
@@ -355,9 +439,16 @@ fn apply_role_layers(c: &dyn RoleApi, layers: &[RoleLayer]) -> Result<usize, Str
     let mut failed = 0;
     for layer in layers.iter().filter(|l| !l.roles.is_empty()) {
         let headers = c.headers()?;
-        let list = headers.get("headers").and_then(Value::as_array).cloned().unwrap_or_default();
+        let list = headers
+            .get("headers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         for (id, role) in &layer.roles {
-            let Some(h) = list.iter().find(|h| h.get("id").and_then(Value::as_str) == Some(id.as_str())) else {
+            let Some(h) = list
+                .iter()
+                .find(|h| h.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            else {
                 println!("skip {id}: header not present on this machine");
                 continue;
             };
@@ -368,7 +459,11 @@ fn apply_role_layers(c: &dyn RoleApi, layers: &[RoleLayer]) -> Result<usize, Str
                 continue;
             }
             match c.set_role(id, role) {
-                Ok(()) => println!("set  {} -> {role} ({})", view::short_header(id), layer.source),
+                Ok(()) => println!(
+                    "set  {} -> {role} ({})",
+                    view::short_header(id),
+                    layer.source
+                ),
                 Err(e) => {
                     failed += 1;
                     eprintln!("fail {id}: {e}");
@@ -389,9 +484,13 @@ fn cmd_apply_roles(c: &dyn RoleApi, layers: &[RoleLayer], errors: &[String]) -> 
     let failed = apply_role_layers(c, layers)?;
     match (failed, errors.len()) {
         (0, 0) => Ok(()),
-        (0, n) => Err(format!("{n} config layer(s) skipped; valid roles were applied")),
+        (0, n) => Err(format!(
+            "{n} config layer(s) skipped; valid roles were applied"
+        )),
         (f, 0) => Err(format!("{f} role assignment(s) failed")),
-        (f, n) => Err(format!("{f} role assignment(s) failed; {n} config layer(s) skipped")),
+        (f, n) => Err(format!(
+            "{f} role assignment(s) failed; {n} config layer(s) skipped"
+        )),
     }
 }
 
@@ -409,7 +508,10 @@ mod tests {
 
     #[test]
     fn flag_parsing() {
-        let mut a: Vec<String> = ["override", "c", "50", "--secs", "9"].iter().map(|s| s.to_string()).collect();
+        let mut a: Vec<String> = ["override", "c", "50", "--secs", "9"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(take_flag_value(&mut a, "--secs").unwrap(), Some("9".into()));
         assert_eq!(a.len(), 3);
         let mut b: Vec<String> = vec!["--secs".into()];
@@ -427,7 +529,11 @@ mod tests {
     impl FakeDaemon {
         fn new(ids: &[&str]) -> Self {
             FakeDaemon {
-                roles: RefCell::new(ids.iter().map(|i| (i.to_string(), "unknown".to_string())).collect()),
+                roles: RefCell::new(
+                    ids.iter()
+                        .map(|i| (i.to_string(), "unknown".to_string()))
+                        .collect(),
+                ),
                 posts: RefCell::new(Vec::new()),
             }
         }
@@ -455,7 +561,8 @@ mod tests {
     const VENDOR: &str = "[client]\nsocket = \"/run/ventulus/ventulus.sock\"\n[roles]\n\"hwmon:nct6799:nct6775.656:pwm6:pwm6\" = \"pump\"\n\"hwmon:nct6799:nct6775.656:pwm7:pwm7\" = \"pump\"\n";
 
     fn layer_files(tag: &str, admin: &str) -> (std::path::PathBuf, Vec<String>) {
-        let d = std::env::temp_dir().join(format!("mios-fanctl-roles-{tag}-{}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("mios-fanctl-roles-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("vendor.toml"), VENDOR).unwrap();
         std::fs::write(d.join("admin.toml"), admin).unwrap();
@@ -469,7 +576,10 @@ mod tests {
 
     #[test]
     fn valid_admin_overlay_applies_after_vendor_roles() {
-        let (d, paths) = layer_files("ok", "[client]\nrefresh_ms = 250\n[roles]\n\"hwmon:x:pwm2:pwm2\" = \"cpu_fan\"\n");
+        let (d, paths) = layer_files(
+            "ok",
+            "[client]\nrefresh_ms = 250\n[roles]\n\"hwmon:x:pwm2:pwm2\" = \"cpu_fan\"\n",
+        );
         let (cfg, layers, errors) = role_layers(&paths);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(cfg.client.refresh_ms, 250);
@@ -479,7 +589,11 @@ mod tests {
         let posts = daemon.posts.borrow().clone();
         assert_eq!(
             posts,
-            [(PUMP6.into(), "pump".into()), (PUMP7.into(), "pump".into()), ("hwmon:x:pwm2:pwm2".into(), "cpu_fan".into())]
+            [
+                (PUMP6.into(), "pump".into()),
+                (PUMP7.into(), "pump".into()),
+                ("hwmon:x:pwm2:pwm2".into(), "cpu_fan".into())
+            ]
         );
         // Idempotent: a second run assigns nothing.
         daemon.posts.borrow_mut().clear();
@@ -491,7 +605,10 @@ mod tests {
     #[test]
     fn broken_admin_config_still_applies_vendor_pump_roles() {
         for (tag, admin) in [
-            ("unknown-key", "[client]\nsokcet = \"/tmp/x\"\n[roles]\n\"hwmon:x:pwm2:pwm2\" = \"cpu_fan\"\n"),
+            (
+                "unknown-key",
+                "[client]\nsokcet = \"/tmp/x\"\n[roles]\n\"hwmon:x:pwm2:pwm2\" = \"cpu_fan\"\n",
+            ),
             ("parse", "[roles\n\"hwmon:x:pwm2:pwm2\" = "),
         ] {
             let (d, paths) = layer_files(tag, admin);
@@ -505,8 +622,15 @@ mod tests {
             let daemon = FakeDaemon::new(&[PUMP6, PUMP7, "hwmon:x:pwm2:pwm2"]);
             let r = cmd_apply_roles(&daemon, &layers, &errors);
             // The config error is reported (non-zero exit) but the pumps got their roles.
-            assert!(r.as_ref().is_err_and(|e| e.contains("skipped")), "{tag}: {r:?}");
-            assert_eq!(*daemon.posts.borrow(), [(PUMP6.into(), "pump".into()), (PUMP7.into(), "pump".into())], "{tag}");
+            assert!(
+                r.as_ref().is_err_and(|e| e.contains("skipped")),
+                "{tag}: {r:?}"
+            );
+            assert_eq!(
+                *daemon.posts.borrow(),
+                [(PUMP6.into(), "pump".into()), (PUMP7.into(), "pump".into())],
+                "{tag}"
+            );
             std::fs::remove_dir_all(&d).ok();
         }
     }

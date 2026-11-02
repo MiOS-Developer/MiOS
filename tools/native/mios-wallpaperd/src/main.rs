@@ -157,7 +157,10 @@ mod host {
             .build()
         {
             Ok(w) => w,
-            Err(e) => fail(Some(&data_dir), &format!("create webview (user data folder {data_dir}): {e}")),
+            Err(e) => fail(
+                Some(&data_dir),
+                &format!("create webview (user data folder {data_dir}): {e}"),
+            ),
         };
 
         event_loop.run(move |event, _target, control_flow| {
@@ -171,7 +174,9 @@ mod host {
     /// session-0 parent may have handed down); %LOCALAPPDATA% only when the API fails.
     fn local_app_data() -> Option<String> {
         use windows::Win32::System::Com::CoTaskMemFree;
-        use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+        use windows::Win32::UI::Shell::{
+            FOLDERID_LocalAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
+        };
         unsafe {
             if let Ok(p) = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, None) {
                 let s = p.to_string().ok();
@@ -191,7 +196,11 @@ mod host {
             if let Some(parent) = std::path::Path::new(&log).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log)
+            {
                 use std::io::Write;
                 let _ = writeln!(f, "[mios-wallpaperd host] {why}");
             }
@@ -330,7 +339,10 @@ impl RespawnBackoff {
     }
     /// The host was found dead at `now`.
     pub fn exited(&mut self, now: std::time::Instant) {
-        let lived = self.started.take().map(|s| now.saturating_duration_since(s));
+        let lived = self
+            .started
+            .take()
+            .map(|s| now.saturating_duration_since(s));
         self.delay = match lived {
             Some(l) if l >= Self::FAST_EXIT => std::time::Duration::ZERO,
             _ if self.delay.is_zero() => Self::MIN,
@@ -468,11 +480,15 @@ fn motion_query(config: &toml::Value) -> Result<Vec<String>, String> {
         let v = table
             .get(key)
             .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .ok_or(format!("Wallpaper motion key {key} is missing or not a number"))?;
+            .ok_or(format!(
+                "Wallpaper motion key {key} is missing or not a number"
+            ))?;
         if v.is_finite() && (lo..=hi).contains(&v) {
             Ok(v)
         } else {
-            Err(format!("Wallpaper motion key {key} = {v} is outside {lo}..={hi}"))
+            Err(format!(
+                "Wallpaper motion key {key} = {v} is outside {lo}..={hi}"
+            ))
         }
     };
     let motion = config
@@ -505,7 +521,9 @@ fn motion_query(config: &toml::Value) -> Result<Vec<String>, String> {
             .as_float()
             .or_else(|| w.as_integer().map(|i| i as f64))
             .filter(|w| (0.0..=1.0).contains(w))
-            .ok_or(format!("Wallpaper weight w{slot} must be a number in 0..=1"))?;
+            .ok_or(format!(
+                "Wallpaper weight w{slot} must be a number in 0..=1"
+            ))?;
         q.push(format!("w{slot}={}", fmt(w)));
     }
     Ok(q)
@@ -516,11 +534,16 @@ fn motion_query(config: &toml::Value) -> Result<Vec<String>, String> {
 /// reads once a second (wallpaper_fps). The URL's fps stays the look's reference rate. Nothing when the policy is
 /// absent or disabled (the host then steps at the reference rate, as before) or for the web host (the HTML's own FPS).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn rate_query(data: &toml::Value, renderer_native: bool, runtime: &std::path::Path) -> Result<Option<String>, String> {
+fn rate_query(
+    data: &toml::Value,
+    renderer_native: bool,
+    runtime: &std::path::Path,
+) -> Result<Option<String>, String> {
     if !renderer_native {
         return Ok(None);
     }
-    let Some(policy) = mios_resolver::framerate::Policy::from_ssot(data)?.filter(|p| p.enabled) else {
+    let Some(policy) = mios_resolver::framerate::Policy::from_ssot(data)?.filter(|p| p.enabled)
+    else {
         return Ok(None);
     };
     let path = policy.state_path(runtime);
@@ -543,7 +566,11 @@ fn linux_host(config: &toml::Value) -> Result<&str, String> {
     let key = match config.get("renderer").and_then(toml::Value::as_str) {
         Some("native") => "linux_host",
         Some("web") => "linux_web_host",
-        other => return Err(format!("Wallpaper renderer must be \"native\" or \"web\", not {other:?}")),
+        other => {
+            return Err(format!(
+                "Wallpaper renderer must be \"native\" or \"web\", not {other:?}"
+            ))
+        }
     };
     config
         .get(key)
@@ -754,14 +781,19 @@ mod shared_wallpaper_tests {
         let empty = toml::Value::Table(toml::map::Map::new());
         for windows in [true, false] {
             let r = std::panic::catch_unwind(|| wallpaper_url(&empty, windows));
-            assert!(r.expect("must not panic").unwrap_err().contains("[theme.wallpaper]"));
+            assert!(r
+                .expect("must not panic")
+                .unwrap_err()
+                .contains("[theme.wallpaper]"));
         }
         let mut no_wp: toml::Value = toml::from_str("[theme]\nname = \"x\"\n").unwrap();
         assert!(wallpaper_url(&no_wp, true).is_err());
         no_wp.as_table_mut().unwrap().remove("theme");
         assert!(wallpaper_url(&no_wp, false).is_err());
         // positive: the fixture SSOT still renders on both platforms
-        assert!(wallpaper_url(&fixture(), true).unwrap().starts_with("file:///"));
+        assert!(wallpaper_url(&fixture(), true)
+            .unwrap()
+            .starts_with("file:///"));
         assert!(wallpaper_url(&fixture(), false).is_ok());
     }
     #[test]
@@ -785,18 +817,36 @@ mod shared_wallpaper_tests {
         let linux = wallpaper_url(&doc, false).unwrap();
         let windows = wallpaper_url(&doc, true).unwrap();
         for key in [
-            "fps=30", "speed=0.4", "intro=3500", "dpr=1.5", "sim=0.6", "n=24", "nsim=0.25", "w0=1",
-            "w7=0.95", "w15=0.18",
+            "fps=30",
+            "speed=0.4",
+            "intro=3500",
+            "dpr=1.5",
+            "sim=0.6",
+            "n=24",
+            "nsim=0.25",
+            "w0=1",
+            "w7=0.95",
+            "w15=0.18",
         ] {
-            assert!(linux.contains(&format!("&{key}")), "{key} missing from {linux}");
-            assert!(windows.contains(&format!("&{key}")), "{key} missing from {windows}");
+            assert!(
+                linux.contains(&format!("&{key}")),
+                "{key} missing from {linux}"
+            );
+            assert!(
+                windows.contains(&format!("&{key}")),
+                "{key} missing from {windows}"
+            );
         }
         // Negative controls: a missing table, a short weight list, an out-of-range value, too many emitters.
         let mut doc = fixture();
-        doc["theme"]["wallpaper"].as_table_mut().unwrap().remove("motion");
+        doc["theme"]["wallpaper"]
+            .as_table_mut()
+            .unwrap()
+            .remove("motion");
         assert!(wallpaper_url(&doc, false).unwrap_err().contains("motion"));
         let mut doc = fixture();
-        doc["theme"]["wallpaper"]["motion"]["weights"] = toml::Value::Array(vec![toml::Value::Float(0.5); 15]);
+        doc["theme"]["wallpaper"]["motion"]["weights"] =
+            toml::Value::Array(vec![toml::Value::Float(0.5); 15]);
         assert!(wallpaper_url(&doc, false).unwrap_err().contains("16"));
         let mut doc = fixture();
         doc["theme"]["wallpaper"]["motion"]["speed"] = toml::Value::Float(-1.0);
@@ -809,16 +859,41 @@ mod shared_wallpaper_tests {
     fn native_host_gets_the_live_rate_file_and_the_web_host_does_not() {
         let mut doc = fixture();
         let rt = std::path::Path::new("/run/user/1000");
-        assert_eq!(rate_query(&doc, true, rt).unwrap(), None, "no [desktop.framerate]: the reference rate only");
+        assert_eq!(
+            rate_query(&doc, true, rt).unwrap(),
+            None,
+            "no [desktop.framerate]: the reference rate only"
+        );
         let policy: toml::Value = toml::from_str(FRAMERATE).unwrap();
-        doc.as_table_mut().unwrap().insert("desktop".into(), policy["desktop"].clone());
-        assert_eq!(rate_query(&doc, true, rt).unwrap().as_deref(), Some("ctl=/run/user/1000/mios/framerate/state.json"));
-        assert_eq!(rate_query(&doc, false, rt).unwrap(), None, "the web host keeps the HTML's own rate");
-        assert_eq!(rate_query(&doc, true, std::path::Path::new("/run/user/1 000")).unwrap().as_deref(), Some("ctl=/run/user/1%20000/mios/framerate/state.json"));
+        doc.as_table_mut()
+            .unwrap()
+            .insert("desktop".into(), policy["desktop"].clone());
+        assert_eq!(
+            rate_query(&doc, true, rt).unwrap().as_deref(),
+            Some("ctl=/run/user/1000/mios/framerate/state.json")
+        );
+        assert_eq!(
+            rate_query(&doc, false, rt).unwrap(),
+            None,
+            "the web host keeps the HTML's own rate"
+        );
+        assert_eq!(
+            rate_query(&doc, true, std::path::Path::new("/run/user/1 000"))
+                .unwrap()
+                .as_deref(),
+            Some("ctl=/run/user/1%20000/mios/framerate/state.json")
+        );
         doc["desktop"]["framerate"]["enabled"] = toml::Value::Boolean(false);
-        assert_eq!(rate_query(&doc, true, rt).unwrap(), None, "disabled: the reference rate only");
+        assert_eq!(
+            rate_query(&doc, true, rt).unwrap(),
+            None,
+            "disabled: the reference rate only"
+        );
         doc["desktop"]["framerate"]["enabled"] = toml::Value::String("yes".into());
-        assert!(rate_query(&doc, true, rt).is_err(), "a broken policy is an error, not a silent default");
+        assert!(
+            rate_query(&doc, true, rt).is_err(),
+            "a broken policy is an error, not a silent default"
+        );
         // the shared query is unchanged: fps stays the reference rate on both platforms
         let linux = wallpaper_url(&doc, false).unwrap();
         assert!(linux.contains("fps=30") && !linux.contains("ctl="));
@@ -879,12 +954,21 @@ wallpaper_divisor = 2
     #[test]
     fn renderer_selects_the_native_or_web_host() {
         let mut doc = fixture();
-        assert_eq!(linux_host(&doc["theme"]["wallpaper"]).unwrap(), "/h/Host.qml");
+        assert_eq!(
+            linux_host(&doc["theme"]["wallpaper"]).unwrap(),
+            "/h/Host.qml"
+        );
         doc["theme"]["wallpaper"]["renderer"] = toml::Value::String("web".into());
-        assert_eq!(linux_host(&doc["theme"]["wallpaper"]).unwrap(), "/h/WebHost.qml");
+        assert_eq!(
+            linux_host(&doc["theme"]["wallpaper"]).unwrap(),
+            "/h/WebHost.qml"
+        );
         doc["theme"]["wallpaper"]["renderer"] = toml::Value::String("chromium".into());
         assert!(linux_host(&doc["theme"]["wallpaper"]).is_err());
-        doc["theme"]["wallpaper"].as_table_mut().unwrap().remove("renderer");
+        doc["theme"]["wallpaper"]
+            .as_table_mut()
+            .unwrap()
+            .remove("renderer");
         assert!(linux_host(&doc["theme"]["wallpaper"]).is_err());
     }
     #[test]
@@ -1039,7 +1123,11 @@ mod session {
             };
             let mut env: *mut core::ffi::c_void = std::ptr::null_mut();
             let have_env = CreateEnvironmentBlock(&mut env, token, false).is_ok() && !env.is_null();
-            let flags = if have_env { CREATE_UNICODE_ENVIRONMENT } else { PROCESS_CREATION_FLAGS(0) };
+            let flags = if have_env {
+                CREATE_UNICODE_ENVIRONMENT
+            } else {
+                PROCESS_CREATION_FLAGS(0)
+            };
             let mut pi = PROCESS_INFORMATION::default();
             let ok = CreateProcessAsUserW(
                 token,
@@ -1049,7 +1137,11 @@ mod session {
                 None,
                 false,
                 flags,
-                if have_env { Some(env as *const core::ffi::c_void) } else { None },
+                if have_env {
+                    Some(env as *const core::ffi::c_void)
+                } else {
+                    None
+                },
                 None,
                 &si,
                 &mut pi,
@@ -1148,8 +1240,14 @@ mod tests {
         // positive: the signed-in user's LocalAppData (round-1 guest), with or without a trailing separator
         let d = webview_data_dir(Some(r"C:\Users\user\AppData\Local")).unwrap();
         assert_eq!(d, r"C:\Users\user\AppData\Local\MiOS\wallpaperd\WebView2");
-        assert_eq!(webview_data_dir(Some("C:\\Users\\user\\AppData\\Local\\")).unwrap(), d);
-        assert_eq!(host_log_path(&d).unwrap(), r"C:\Users\user\AppData\Local\MiOS\wallpaperd\host.log");
+        assert_eq!(
+            webview_data_dir(Some("C:\\Users\\user\\AppData\\Local\\")).unwrap(),
+            d
+        );
+        assert_eq!(
+            host_log_path(&d).unwrap(),
+            r"C:\Users\user\AppData\Local\MiOS\wallpaperd\host.log"
+        );
         // negative: no known folder -> no data dir (the host then fails with a record), never a Program Files
         // default; the WebView2 default the round-1 host used was <exe dir>\mios-wallpaperd.exe.WebView2
         assert_eq!(webview_data_dir(None), None);

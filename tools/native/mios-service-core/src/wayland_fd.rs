@@ -68,9 +68,8 @@ pub fn send_fds(fd: RawFd, data: &[u8], fds: &[OwnedFd]) -> io::Result<()> {
                 let c = libc::CMSG_FIRSTHDR(&mh);
                 (*c).cmsg_level = libc::SOL_SOCKET;
                 (*c).cmsg_type = libc::SCM_RIGHTS;
-                (*c).cmsg_len = libc::CMSG_LEN(
-                    (raw_fds.len() * std::mem::size_of::<RawFd>()) as u32,
-                ) as _;
+                (*c).cmsg_len =
+                    libc::CMSG_LEN((raw_fds.len() * std::mem::size_of::<RawFd>()) as u32) as _;
                 std::ptr::copy_nonoverlapping(
                     raw_fds.as_ptr(),
                     libc::CMSG_DATA(c) as *mut RawFd,

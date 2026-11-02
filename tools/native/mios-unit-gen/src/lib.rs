@@ -855,7 +855,11 @@ fn is_inline_comment(key: &str) -> bool {
 /// `#` is not legal in a systemd directive name, so nothing real is shadowed.
 fn directive_name(key: &str) -> &str {
     match key.rsplit_once('#') {
-        Some((name, n)) if !name.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => name,
+        Some((name, n))
+            if !name.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            name
+        }
         _ => key,
     }
 }
@@ -900,8 +904,8 @@ pub fn render_units(ssot_toml: &str) -> Result<BTreeMap<String, String>, UnitGen
                 fn section_rank(sec: &str) -> (usize, &str) {
                     match sec.to_lowercase().as_str() {
                         "unit" => (0, sec),
-                        "service" | "path" | "timer" | "socket" | "mount" | "automount" | "swap"
-                        | "slice" | "scope" => (1, sec),
+                        "service" | "path" | "timer" | "socket" | "mount" | "automount"
+                        | "swap" | "slice" | "scope" => (1, sec),
                         "install" => (2, sec),
                         _ => (3, sec),
                     }
@@ -1097,7 +1101,11 @@ pub fn projection_list(ssot_toml: &str, key: &str) -> Result<Vec<String>, UnitGe
         .get("unit_projection")
         .and_then(|t| t.get(key))
         .and_then(toml::Value::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default())
 }
 
@@ -1135,8 +1143,13 @@ pub fn strict_without_write_grant(rendered: &BTreeMap<String, String>) -> Vec<St
                 .map(|(k, v)| (k.trim(), v.trim()))
                 .collect();
             // The last ProtectSystem= wins, as in systemd.
-            kv.iter().rev().find(|(k, _)| *k == "ProtectSystem").is_some_and(|(_, v)| *v == "strict")
-                && !kv.iter().any(|(k, v)| WRITE_GRANTS.contains(k) && !v.is_empty())
+            kv.iter()
+                .rev()
+                .find(|(k, _)| *k == "ProtectSystem")
+                .is_some_and(|(_, v)| *v == "strict")
+                && !kv
+                    .iter()
+                    .any(|(k, v)| WRITE_GRANTS.contains(k) && !v.is_empty())
         })
         .map(|(n, _)| n.to_owned())
         .collect()
@@ -1162,7 +1175,11 @@ pub fn write_projection(root: &Path, user: bool) -> Result<Vec<String>, UnitGenE
     } else {
         render_units(&ssot)?
     };
-    let register = if user { Vec::new() } else { drift_register(&ssot)? };
+    let register = if user {
+        Vec::new()
+    } else {
+        drift_register(&ssot)?
+    };
     let unit_dir = root.join(if user {
         "usr/lib/systemd/user"
     } else {
@@ -1267,7 +1284,11 @@ pub fn import_unit(
         let trimmed = line.trim();
         i += 1;
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            pending.push(if trimmed.is_empty() { String::new() } else { line.to_owned() });
+            pending.push(if trimmed.is_empty() {
+                String::new()
+            } else {
+                line.to_owned()
+            });
             continue;
         }
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
@@ -1289,8 +1310,8 @@ pub fn import_unit(
                     }
                     None => {
                         return Err(fail(format!(
-                            "[{sec_name}] has no blank line above it (the projection always emits one)"
-                        )))
+                        "[{sec_name}] has no blank line above it (the projection always emits one)"
+                    )))
                     }
                 }
             }
@@ -1308,7 +1329,9 @@ pub fn import_unit(
             return Err(fail(format!("not a directive: {line:?}")));
         };
         if key.is_empty() || key != key.trim() {
-            return Err(fail(format!("directive key {key:?} is not written as Key=")));
+            return Err(fail(format!(
+                "directive key {key:?} is not written as Key="
+            )));
         }
         let mut value = first.to_owned();
         while value.ends_with('\\') && i < lines.len() {
@@ -1317,7 +1340,8 @@ pub fn import_unit(
             i += 1;
         }
         if !pending.is_empty() {
-            sec.entries.push((String::new(), std::mem::take(&mut pending), true));
+            sec.entries
+                .push((String::new(), std::mem::take(&mut pending), true));
         }
         match sec.entries.last_mut() {
             Some((k, vals, false)) if directive_name(k) == key => vals.push(value),
@@ -1351,13 +1375,19 @@ pub fn import_unit(
             toml_key(&sec.name)
         ));
         if !sec.above.is_empty() {
-            out.push_str(&format!("comment = {}\n", toml_string(&comment_block(&sec.above))));
+            out.push_str(&format!(
+                "comment = {}\n",
+                toml_string(&comment_block(&sec.above))
+            ));
         }
         let mut n = 0;
         for (key, vals, is_comment) in &sec.entries {
             if *is_comment {
                 n += 1;
-                out.push_str(&format!("comment_{n} = {}\n", toml_string(&comment_block(vals))));
+                out.push_str(&format!(
+                    "comment_{n} = {}\n",
+                    toml_string(&comment_block(vals))
+                ));
             } else if vals.len() == 1 {
                 out.push_str(&format!("{} = {}\n", toml_key(key), toml_string(&vals[0])));
             } else {
@@ -1378,7 +1408,9 @@ pub fn import_unit(
         .as_table_mut()
         .ok_or_else(|| fail("declaration is not a table".into()))?;
     if table != "units" {
-        let v = tbl.remove(table).unwrap_or(toml::Value::Table(Default::default()));
+        let v = tbl
+            .remove(table)
+            .unwrap_or(toml::Value::Table(Default::default()));
         tbl.insert("units".into(), v);
     }
     let identity = render_units(&toml::to_string(&doc).map_err(|e| fail(e.to_string()))?)?;
@@ -1405,9 +1437,7 @@ pub fn import_unit(
         }
     }
     let resolved = render_units(&toml::to_string(&doc).map_err(|e| fail(e.to_string()))?)?;
-    let changes = resolved
-        .get(name)
-        .is_none_or(|r| normalize(r) != want);
+    let changes = resolved.get(name).is_none_or(|r| normalize(r) != want);
     Ok((out, changes))
 }
 
@@ -1470,8 +1500,9 @@ mod tests {
         let ssot = include_str!("../../../../usr/share/mios/mios.toml");
         let profiles = super::render_keybindings(ssot).unwrap();
         assert_eq!(profiles.len(), 11);
-        assert!(profiles["usr/share/mios/tmux/mios-keys.tmux.conf"]
-            .contains(" Tab send-keys BTab\n"));
+        assert!(
+            profiles["usr/share/mios/tmux/mios-keys.tmux.conf"].contains(" Tab send-keys BTab\n")
+        );
         assert!(profiles["usr/share/mios/hyprland/mios-keys.conf"]
             .contains("bind = CTRL ALT SHIFT, a, exec,"));
         let editor: serde_json::Value =
@@ -1496,7 +1527,8 @@ mod tests {
         let tmux = &profiles["usr/share/mios/tmux/mios-keys.tmux.conf"];
         // Right-click passes through when the application tracks the mouse (stock tmux 3.7c rule; copy and
         // view mode keep the menu) and otherwise opens the generated pane menu alias.
-        assert!(tmux.contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
+        assert!(tmux
+            .contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
         assert!(tmux.contains("'send-keys -M' \"if-shell -F '#{e|<:#{client_height},"));
         assert!(tmux.contains("mios-menu-pane=display-menu"));
         assert!(tmux.contains("\"mios-menu-root=display-menu -T \\\"#[align=centre]MiOS\\\" -x "));
@@ -1519,22 +1551,42 @@ mod tests {
     /// U1 C-18: mouse_terms gives the Linux VT the tmux mouse feature; without it (or with mouse off) nothing changes.
     #[test]
     fn mouse_terms_add_the_mouse_terminal_feature() {
-        let doc: toml::Value = toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
-        assert!(tmux_conf(&doc).unwrap().contains("set -s terminal-features[130] 'linux:mouse'\n"));
+        let doc: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        assert!(tmux_conf(&doc)
+            .unwrap()
+            .contains("set -s terminal-features[130] 'linux:mouse'\n"));
         let mut none = doc.clone();
-        none["keybindings"]["tmux"].as_table_mut().unwrap().remove("mouse_terms");
+        none["keybindings"]["tmux"]
+            .as_table_mut()
+            .unwrap()
+            .remove("mouse_terms");
         assert!(!tmux_conf(&none).unwrap().contains(":mouse'"));
         let mut off = doc.clone();
         off["keybindings"]["mouse"] = toml::Value::Boolean(false);
         let off_conf = tmux_conf(&off).unwrap();
-        assert!(!off_conf.contains(":mouse'"), "the mouse master toggle wins");
-        assert!(off_conf.contains("set -su terminal-features[130]\n"), "the owned slots are still cleared on reload");
+        assert!(
+            !off_conf.contains(":mouse'"),
+            "the mouse master toggle wins"
+        );
+        assert!(
+            off_conf.contains("set -su terminal-features[130]\n"),
+            "the owned slots are still cleared on reload"
+        );
         let mut bad = doc.clone();
-        bad["keybindings"]["tmux"]["mouse_terms"] = toml::Value::Array(vec![toml::Value::String("linux\" ; run-shell x".into())]);
-        assert!(tmux_conf(&bad).unwrap_err().contains("invalid terminal pattern"));
+        bad["keybindings"]["tmux"]["mouse_terms"] =
+            toml::Value::Array(vec![toml::Value::String("linux\" ; run-shell x".into())]);
+        assert!(tmux_conf(&bad)
+            .unwrap_err()
+            .contains("invalid terminal pattern"));
         let mut overlap = doc.clone();
         overlap["keybindings"]["tmux"]["mouse_features_index"] = toml::Value::Integer(125);
-        assert!(tmux_conf(&overlap).unwrap_err().contains("overlaps the extended-keys"), "never clobber the extkeys slots");
+        assert!(
+            tmux_conf(&overlap)
+                .unwrap_err()
+                .contains("overlaps the extended-keys"),
+            "never clobber the extkeys slots"
+        );
     }
 
     #[test]
@@ -1741,7 +1793,10 @@ Environment = ["H=${MIOS_PORT_IGPU:-11436}", "E=$${MIOS_PORTS_AGENT_PIPE}"]
     fn test_unexpandable_placeholders_names_each_survivor() {
         let body = "# ${DOC:-ok}\n[Service]\nExecStart=/bin/x ${RUNTIME} \\\n  --p ${MIOS_PORTS_X:-1}\n\
                     Environment=A=${MIOS_ABSENT}\nEnvironment=B=$${LITERAL}\nExecStop=/bin/y ${Z}\n";
-        let found: Vec<usize> = unexpandable_placeholders(body).into_iter().map(|(l, _)| l).collect();
+        let found: Vec<usize> = unexpandable_placeholders(body)
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect();
         assert_eq!(found, vec![4, 5]);
     }
 
@@ -1757,13 +1812,25 @@ Environment = ["H=${MIOS_PORT_IGPU:-11436}", "E=$${MIOS_PORTS_AGENT_PIPE}"]
         };
         let units = r(&[
             ("a.service", "[Service]\nProtectSystem=strict\n"),
-            ("b.service", "[Service]\nProtectSystem=strict\nStateDirectory=b\n"),
+            (
+                "b.service",
+                "[Service]\nProtectSystem=strict\nStateDirectory=b\n",
+            ),
             ("c.service", "[Service]\nProtectSystem=strict\n"),
-            ("c.service.d/10-rw.conf", "[Service]\nReadWritePaths=/var/lib/c\n"),
-            ("d.service", "[Service]\nProtectSystem=strict\nReadWritePaths=\n"),
+            (
+                "c.service.d/10-rw.conf",
+                "[Service]\nReadWritePaths=/var/lib/c\n",
+            ),
+            (
+                "d.service",
+                "[Service]\nProtectSystem=strict\nReadWritePaths=\n",
+            ),
             ("e.service", "[Service]\nProtectSystem=full\n"),
         ]);
-        assert_eq!(strict_without_write_grant(&units), vec!["a.service", "d.service"]);
+        assert_eq!(
+            strict_without_write_grant(&units),
+            vec!["a.service", "d.service"]
+        );
     }
 
     /// The importer is the renderer's inverse: comments above and inside
@@ -1773,7 +1840,10 @@ Environment = ["H=${MIOS_PORT_IGPU:-11436}", "E=$${MIOS_PORTS_AGENT_PIPE}"]
         let unit = "# AI-hint: x\n\n[Unit]\nDescription=x\nAfter=a.service\nAfter=b.service\n# why c\nAfter=c.service\n\n\n# above service\n[Service]\nExecStart=/bin/x \\\n  --flag 'q'\nEnvironment=\n# tail\n\n[Install]\nWantedBy=multi-user.target\n";
         let (decl, changes) = import_unit("", "units", "x.service", unit).unwrap();
         assert!(!changes);
-        assert!(decl.contains("After = ['a.service', 'b.service']"), "{decl}");
+        assert!(
+            decl.contains("After = ['a.service', 'b.service']"),
+            "{decl}"
+        );
         assert!(decl.contains("\"After#2\" = 'c.service'"), "{decl}");
         let rendered = render_units(&decl).unwrap();
         assert_eq!(rendered["x.service"], unit);
@@ -1789,7 +1859,10 @@ Environment = ["H=${MIOS_PORT_IGPU:-11436}", "E=$${MIOS_PORTS_AGENT_PIPE}"]
             "[Unit]\nA=1\n\n[Unit]\nB=2\n",
             "A=1\n",
         ] {
-            assert!(import_unit("", "units", "bad.service", bad).is_err(), "{bad:?}");
+            assert!(
+                import_unit("", "units", "bad.service", bad).is_err(),
+                "{bad:?}"
+            );
         }
         let (_, changes) = import_unit(
             "[ports]\nhermes = 8720\n",
@@ -1798,7 +1871,10 @@ Environment = ["H=${MIOS_PORT_IGPU:-11436}", "E=$${MIOS_PORTS_AGENT_PIPE}"]
             "[Service]\nEnvironment=PORT=${MIOS_PORTS_HERMES:-8720}\n",
         )
         .unwrap();
-        assert!(changes, "a resolving placeholder must be reported as a rewrite");
+        assert!(
+            changes,
+            "a resolving placeholder must be reported as a rewrite"
+        );
     }
 
     /// `normalize` must forgive line endings and a trailing newline, and NOTHING
