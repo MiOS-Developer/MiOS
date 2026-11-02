@@ -1,6 +1,6 @@
 // AI-hint: Shared native application preflight: validate desktop entries, recover only a missing document-portal mount under a user lock, and probe installed Flatpak sandboxes with bounded commands.
 // AI-related: usr/share/mios/mios.toml [desktop.launch], usr/share/mios/quickshell/AppLaunch.qml, usr/libexec/mios/mios-flatpak-preflight
-// AI-functions: run, check, ensure_portal, bounded, portal_mounted
+// AI-functions: resolve, resolve_desktop, desktop_directories, run, check, ensure_portal, bounded, portal_mounted
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -303,6 +303,207 @@ fn desktop_path(policy: &Policy, id: &str) -> Result<PathBuf, String> {
     }
     Err("Application desktop entry is no longer installed".into())
 }
+
+fn desktop_directories(policy: &Policy, home: Option<&Path>) -> Result<Vec<PathBuf>, String> {
+    let mut directories = Vec::new();
+    for configured in &policy.application_dirs {
+        let directory = match home {
+            Some(home) if configured.starts_with("$XDG_DATA_HOME/") => home
+                .join(".local/share")
+                .join(configured.trim_start_matches("$XDG_DATA_HOME/")),
+            Some(home) if configured.starts_with("~/") => home.join(&configured[2..]),
+            _ => expand(configured)?,
+        };
+        if !directory.is_absolute() {
+            return Err("Application directories must be absolute or user-relative".into());
+        }
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    for base in env::split_paths(&env::var_os("XDG_DATA_DIRS").unwrap_or_default()) {
+        let directory = base.join("applications");
+        if directory.is_absolute() && !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    Ok(directories)
+}
+
+/// Resolve only registry metadata; an Exec value is never evaluated as shell input.
+fn resolve_desktop(policy: &Policy, query: &str, home: Option<&Path>) -> Result<Value, String> {
+    let query = query.trim();
+    if !valid_id(query) {
+        return Err("Invalid application name or desktop ID".into());
+    }
+    let normalized = query.trim_end_matches(".desktop").to_lowercase();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut matches = Vec::new();
+    for directory in desktop_directories(policy, home)? {
+        for entry in walkdir::WalkDir::new(&directory)
+            .max_depth(5)
+            .follow_links(false)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            if !path.is_file() || path.extension().is_none_or(|s| s != "desktop") {
+                continue;
+            }
+            let id = path
+                .strip_prefix(&directory)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('/', "-")
+                .trim_end_matches(".desktop")
+                .to_owned();
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let mut source = String::new();
+            if fs::File::open(path)
+                .and_then(|file| file.take(1024 * 1024 + 1).read_to_string(&mut source))
+                .is_err()
+                || source.len() > 1024 * 1024
+            {
+                continue;
+            }
+            let fields = desktop_fields(&source);
+            if fields.get("Hidden").is_some_and(|s| s == "true")
+                || fields.get("Type").is_some_and(|s| s != "Application")
+                || (!fields.get("Exec").is_some_and(|s| !s.is_empty())
+                    && !fields.get("DBusActivatable").is_some_and(|s| s == "true"))
+            {
+                continue;
+            }
+            let name = fields.get("Name").cloned().unwrap_or_default();
+            let score = if id == query.trim_end_matches(".desktop") {
+                Some(0)
+            } else if id.to_lowercase() == normalized {
+                Some(1)
+            } else if fields.iter().any(|(key, value)| {
+                (key == "Name" || (key.starts_with("Name[") && key.ends_with(']')))
+                    && value.to_lowercase() == normalized
+            }) {
+                Some(2)
+            } else if fields
+                .get("StartupWMClass")
+                .is_some_and(|v| v.to_lowercase() == normalized)
+            {
+                Some(3)
+            } else if id
+                .rsplit('.')
+                .next()
+                .is_some_and(|v| v.to_lowercase() == normalized)
+            {
+                Some(4)
+            } else {
+                None
+            };
+            if let Some(score) = score {
+                matches.push((score, id, path.to_owned(), name));
+            }
+        }
+    }
+    matches.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let Some(best) = matches.first() else {
+        return Err("Application desktop entry is not installed".into());
+    };
+    if matches.iter().filter(|item| item.0 == best.0).count() != 1 {
+        return Err(format!(
+            "Ambiguous desktop application: {}",
+            matches
+                .iter()
+                .filter(|item| item.0 == best.0)
+                .map(|item| item.1.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(
+        json!({"ok":true,"verb":"app_resolve","query":query,"desktop_id":best.1,"desktop_file":best.2,"name":best.3,"overall_timeout_ms":policy.overall_timeout_ms}),
+    )
+}
+
+fn operator_lookup(ssot: &toml::Value) -> Result<String, String> {
+    if let Some(value) = ssot
+        .get("remote")
+        .and_then(|v| v.get("rdp"))
+        .and_then(|v| v.get("operator_uid"))
+    {
+        return value
+            .as_integer()
+            .filter(|uid| *uid > 0 && *uid <= u32::MAX as i64)
+            .map(|uid| uid.to_string())
+            .ok_or_else(|| "Configured desktop operator UID is invalid".into());
+    }
+    ssot.get("identity")
+        .and_then(|v| v.get("username"))
+        .and_then(toml::Value::as_str)
+        .filter(|v| {
+            !v.is_empty()
+                && !v.starts_with('-')
+                && v.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+        })
+        .map(String::from)
+        .ok_or_else(|| "Configured operator is unavailable".into())
+}
+
+pub fn resolve(root: &Path, query: &str) -> Result<(), String> {
+    let policy = Policy::read(root)?;
+    let ssot = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let lookup = operator_lookup(&ssot)?;
+    let (code, account) = bounded(
+        &policy,
+        "getent",
+        &["passwd".into(), lookup],
+        Instant::now() + Duration::from_millis(policy.overall_timeout_ms),
+    )?;
+    if code != 0 {
+        return Err("Configured desktop operator account is not installed".into());
+    }
+    let fields: Vec<_> = account.trim().split(':').collect();
+    let operator = fields
+        .first()
+        .copied()
+        .filter(|v| !v.is_empty())
+        .ok_or("Configured operator is unavailable")?;
+    let uid = fields
+        .get(2)
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|uid| *uid > 0)
+        .ok_or("Desktop operator must be an unprivileged account")?;
+    let home = fields
+        .get(5)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .ok_or("Configured operator home is unavailable")?;
+    match resolve_desktop(&policy, query, Some(&home)) {
+        Ok(mut value) => {
+            value["operator_user"] = json!(operator);
+            value["operator_uid"] = json!(uid);
+            println!("{value}");
+            Ok(())
+        }
+        Err(error) => {
+            let status = if error.starts_with("Ambiguous") {
+                "ambiguous"
+            } else if error.starts_with("Invalid") {
+                "invalid"
+            } else {
+                "not_found"
+            };
+            println!(
+                "{}",
+                json!({"ok":false,"verb":"app_resolve","status":status,"query":query,"error":error})
+            );
+            Err(error)
+        }
+    }
+}
+
 fn desktop_fields(source: &str) -> std::collections::BTreeMap<String, String> {
     let mut active = false;
     let mut result = std::collections::BTreeMap::new();
@@ -502,6 +703,114 @@ mod tests {
             application_dirs: vec!["/usr/share/applications".into()],
         }
     }
+
+    #[test]
+    fn desktop_operator_uses_existing_live_uid_policy_not_an_installer_placeholder() {
+        let ssot: toml::Value =
+            toml::from_str("[identity]\nusername='user'\n[remote.rdp]\noperator_uid=1000\n")
+                .unwrap();
+        assert_eq!(operator_lookup(&ssot).unwrap(), "1000");
+        let fallback: toml::Value =
+            toml::from_str("[identity]\nusername='operator-name'\n").unwrap();
+        assert_eq!(operator_lookup(&fallback).unwrap(), "operator-name");
+        for value in ["0", "-1", "'1000'"] {
+            let ssot: toml::Value = toml::from_str(&format!(
+                "[identity]\nusername='user'\n[remote.rdp]\noperator_uid={value}\n"
+            ))
+            .unwrap();
+            assert!(operator_lookup(&ssot).is_err());
+        }
+    }
+
+    #[test]
+    fn registry_resolves_labels_ids_and_window_class_without_executing_exec() {
+        let dir = tempfile::tempdir().unwrap();
+        let proof = dir.path().join("must-not-exist");
+        fs::write(dir.path().join("org.example.Recorder.desktop"),
+            format!("[Desktop Entry]\nType=Application\nName=Example Studio\nName[fr]=Studio Exemple\nStartupWMClass=recorder\nExec=example \"$(touch {})\" %U\n[Desktop Action Other]\nName=Wrong Action\n",proof.display())).unwrap();
+        let mut p = policy();
+        p.application_dirs = vec![dir.path().display().to_string()];
+        for query in [
+            "Example Studio",
+            "example studio",
+            "Studio Exemple",
+            "org.example.Recorder",
+            "org.example.recorder.desktop",
+            "recorder",
+        ] {
+            let value = resolve_desktop(&p, query, None).unwrap();
+            assert_eq!(value["desktop_id"], "org.example.Recorder");
+            assert_eq!(
+                value["desktop_file"],
+                dir.path()
+                    .join("org.example.Recorder.desktop")
+                    .display()
+                    .to_string()
+            );
+        }
+        assert!(resolve_desktop(&p, "Wrong Action", None).is_err());
+        assert!(
+            !proof.exists(),
+            "Exec metadata must never execute during resolution"
+        );
+    }
+
+    #[test]
+    fn registry_rejects_missing_ambiguous_and_path_queries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = policy();
+        p.application_dirs = vec![dir.path().display().to_string()];
+        for id in ["org.example.One", "org.example.Two"] {
+            fs::write(
+                dir.path().join(format!("{id}.desktop")),
+                "[Desktop Entry]\nType=Application\nName=Shared Editor\nExec=true\n",
+            )
+            .unwrap();
+        }
+        assert!(resolve_desktop(&p, "Shared Editor", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        assert!(resolve_desktop(&p, "Missing Editor", None)
+            .unwrap_err()
+            .contains("not installed"));
+        for query in ["../escape", "/bin/sh", "bad\napp", "-option", ""] {
+            assert!(resolve_desktop(&p, query, None).is_err());
+        }
+        assert_eq!(
+            resolve_desktop(&p, "org.example.One", None).unwrap()["desktop_id"],
+            "org.example.One"
+        );
+    }
+
+    #[test]
+    fn registry_honors_hidden_overrides_and_flatpak_export_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        fs::write(
+            first.join("org.example.Hidden.desktop"),
+            "[Desktop Entry]\nHidden=true\n",
+        )
+        .unwrap();
+        fs::write(
+            second.join("org.example.Hidden.desktop"),
+            "[Desktop Entry]\nName=Masked App\nExec=true\n",
+        )
+        .unwrap();
+        let target = dir.path().join("export.desktop");
+        fs::write(&target,"[Desktop Entry]\nName=Export App\nExec=flatpak run org.example.Export\nX-Flatpak=org.example.Export\n").unwrap();
+        std::os::unix::fs::symlink(&target, second.join("org.example.Export.desktop")).unwrap();
+        let mut p = policy();
+        p.application_dirs = vec![first.display().to_string(), second.display().to_string()];
+        assert!(resolve_desktop(&p, "Masked App", None).is_err());
+        assert_eq!(
+            resolve_desktop(&p, "Export App", None).unwrap()["desktop_id"],
+            "org.example.Export"
+        );
+    }
+
     #[test]
     fn bounded_probe_reports_real_failure_and_kills_its_timed_out_group() {
         let policy = policy();

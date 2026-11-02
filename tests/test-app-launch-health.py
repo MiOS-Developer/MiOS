@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided compiled launcher checks with private document-portal buses/runtime dirs: mount recovery, concurrent coalescing, disabled recovery, sandbox errors, timeouts and invalid desktop IDs. Never restart the operator's portal.
 # AI-related: tools/native/mios-gen/src/app_preflight.rs, tests/test-document-portal-isolation.py, usr/share/mios/quickshell/AppLaunch.qml
-# AI-functions: LauncherHealth
+# AI-functions: LauncherHealth, BrokerEnvironmentTests, DesktopDispatchTests
 
 import json
 import os
@@ -107,5 +107,219 @@ subprocess.run(['gdbus','call','--session','--dest','org.freedesktop.portal.Docu
     def test_invalid_desktop_id_fails_before_recovery(self):
         result=self.call('--desktop','../escape');self.assertNotEqual(result.returncode,0)
         self.assertIn('Invalid application ID',result.stdout);self.assertFalse(self.calls.exists())
+
+
+
+class BrokerEnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        import importlib.machinery,importlib.util,socket
+        path=ROOT/"usr/libexec/mios/mios-launcher-daemon"
+        loader=importlib.machinery.SourceFileLoader("mios_launcher_fixture",str(path))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        self.module=importlib.util.module_from_spec(spec);loader.exec_module(self.module)
+        self.temp=tempfile.TemporaryDirectory(prefix="mios-broker-context-")
+        self.runtime=Path(self.temp.name)/"runtime";self.runtime.mkdir(mode=0o700)
+        self.signature="current-fixture";self.folder=self.runtime/"hypr"/self.signature;self.folder.mkdir(parents=True)
+        self.control=self.folder/".socket.sock";self.display=self.runtime/"wayland-test"
+        self.control_server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);self.control_server.bind(str(self.control));self.control_server.listen(8)
+        self.display_server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);self.display_server.bind(str(self.display))
+        self.base={"HOME":"/operator","XDG_RUNTIME_DIR":str(self.runtime),"HYPRLAND_INSTANCE_SIGNATURE":"stale","WAYLAND_DISPLAY":"stale","BROKER_SETTING":"keep"}
+        self.manager="XDG_CURRENT_DESKTOP=Hyprland\nHYPRLAND_INSTANCE_SIGNATURE=current-fixture\nWAYLAND_DISPLAY=wayland-test\nDISPLAY=:91\nPRIVATE_SESSION_VALUE=must-not-import\nLD_PRELOAD=must-not-import\nHOME=/must-not-import\n"
+
+    def tearDown(self):
+        self.control_server.close();self.display_server.close();self.temp.cleanup()
+
+    def refresh(self,text=None,uid=None):
+        return self.module._refresh_gui_environment(self.base,self.manager if text is None else text,self.runtime,os.getuid() if uid is None else uid,.2)
+
+    def test_refresh_uses_only_gui_allowlist_and_live_owned_sockets(self):
+        result=self.refresh()
+        self.assertEqual(result["HOME"],"/operator")
+        self.assertEqual(result["HYPRLAND_INSTANCE_SIGNATURE"],self.signature)
+        self.assertEqual(result["WAYLAND_DISPLAY"],"wayland-test")
+        self.assertEqual(result["BROKER_SETTING"],"keep")
+        self.assertNotIn("PRIVATE_SESSION_VALUE",result);self.assertNotIn("LD_PRELOAD",result)
+        self.assertEqual(self.base["HYPRLAND_INSTANCE_SIGNATURE"],"stale","refresh must not mutate shared broker environment")
+        target=self.module._execution_context(result)
+        self.assertEqual(target,{"id":str(self.control.resolve()),"platform":"linux","session_id":self.signature,"backend":"hyprland"})
+
+    def test_removed_manager_values_do_not_retain_stale_compositor_identity(self):
+        result=self.refresh("XDG_CURRENT_DESKTOP=GNOME\nDISPLAY=:91\n")
+        self.assertNotIn("HYPRLAND_INSTANCE_SIGNATURE",result)
+        self.assertNotIn("WAYLAND_DISPLAY",result)
+
+    def test_missing_or_escaped_compositor_identity_is_rejected(self):
+        for signature in ("../escape","-bad/name",""):
+            text=self.manager.replace("HYPRLAND_INSTANCE_SIGNATURE=current-fixture","HYPRLAND_INSTANCE_SIGNATURE="+signature)
+            with self.assertRaises(RuntimeError):self.refresh(text)
+
+    def test_foreign_runtime_owner_is_rejected(self):
+        with self.assertRaises(RuntimeError):self.refresh(uid=os.getuid()+1)
+
+    def test_foreign_socket_owner_is_rejected(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        original=Path.lstat
+        control=self.control
+        def metadata(path):
+            found=original(path)
+            return SimpleNamespace(st_mode=found.st_mode,st_uid=os.getuid()+1) if path==control else found
+        with mock.patch.object(Path,"lstat",metadata):
+            with self.assertRaises(RuntimeError):self.refresh()
+
+    def test_dead_compositor_socket_and_display_symlink_are_rejected(self):
+        import socket
+        self.control_server.close()
+        with self.assertRaises(OSError):self.refresh()
+        self.control.unlink()
+        self.control_server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);self.control_server.bind(str(self.control));self.control_server.listen(2)
+        self.display.unlink();self.display.symlink_to(self.control)
+        with self.assertRaises(RuntimeError):self.refresh()
+
+    def test_private_capture_reports_context_failure_without_executing_request(self):
+        import socket,threading
+        from unittest import mock
+        server,client=socket.socketpair()
+        with mock.patch.object(self.module,"_operator_environment",side_effect=RuntimeError("stale context")), mock.patch.object(self.module.subprocess,"run",side_effect=AssertionError("must not execute")):
+            thread=threading.Thread(target=self.module.handle,args=(server,),daemon=True);thread.start()
+            client.sendall(b"CAPTURE_JSON: printf forbidden\n")
+            response=bytearray()
+            while not response.endswith(b"\n"):
+                chunk=client.recv(4096)
+                if not chunk:break
+                response.extend(chunk)
+            thread.join(timeout=2);client.close()
+        record=json.loads(response);self.assertEqual(record["exit_code"],1)
+        self.assertIn("stale context",record["stderr"]);self.assertEqual(record["stdout"],"")
+
+
+class DesktopDispatchTests(unittest.TestCase):
+    """Exercise the actual launcher bridge with a private broker and fake GUI."""
+    def setUp(self):
+        import pwd
+        self.temp=tempfile.TemporaryDirectory(prefix="mios-desktop-dispatch-")
+        self.base=Path(self.temp.name);self.bin=self.base/"bin";self.bin.mkdir()
+        self.private=self.base/"private-home";self.private.mkdir()
+        self.calls=self.base/"launch.json";self.preflight=self.base/"preflight.json"
+        self.user=pwd.getpwuid(os.getuid()).pw_name
+        self.home=pwd.getpwuid(os.getuid()).pw_dir
+        self.sock=self.base/"broker.sock";self.request=""
+        source=(ROOT/"usr/libexec/mios/mios-launch").read_text()
+        self.code=source.split("<<'MIOS_DESKTOP_DISPATCH'\n",1)[1].split("\nMIOS_DESKTOP_DISPATCH",1)[0]
+        self.env=dict(os.environ,PATH=str(self.bin)+os.pathsep+os.defpath,
+            HOME=str(self.private),MIOS_LAUNCHER_SOCK=str(self.sock))
+        self.env.pop("DISPLAY",None);self.env.pop("WAYLAND_DISPLAY",None)
+        self.env["MIOS_APP_TEST_CALLS"]=str(self.calls)
+        self.env["MIOS_APP_TEST_PREFLIGHT"]=str(self.preflight)
+        self.program("systemctl","""import os,sys
+if os.environ.get('MIOS_APP_TEST_MANAGER_FAIL'): raise SystemExit(7)
+print('WAYLAND_DISPLAY=wayland-test')
+print('DISPLAY=:91')
+print('HYPRLAND_INSTANCE_SIGNATURE=current-fixture')
+print('HOME=/must-not-import')
+print('LD_PRELOAD=/must-not-import')
+""")
+        self.program("mios-gen","""import json,os,sys
+from pathlib import Path
+Path(os.environ['MIOS_APP_TEST_PREFLIGHT']).write_text(json.dumps(sys.argv[1:]))
+if os.environ.get('MIOS_APP_TEST_PREFLIGHT_FAIL'): raise SystemExit(7)
+print(json.dumps({'ok':True}))
+""")
+        self.launcher=self.program("desktop-launch","""import json,os,sys
+from pathlib import Path
+with Path(os.environ['MIOS_APP_TEST_CALLS']+".count").open("a") as receipt:receipt.write("1\\n")
+Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1:],'home':os.environ['HOME'],'xdg_config':os.environ['XDG_CONFIG_HOME'],'wayland':os.environ.get('WAYLAND_DISPLAY'),'signature':os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'),'preload':os.environ.get('LD_PRELOAD')}))
+""")
+        self.record={"ok":True,"desktop_id":"org.example.Recorder","desktop_file":str(self.base/"record.desktop"),"operator_user":self.user,"overall_timeout_ms":3000}
+
+    def program(self,name,code):
+        import sys
+        p=self.bin/name;p.write_text("#!"+sys.executable+"\n"+code);p.chmod(0o755);return p
+
+    def broker(self):
+        import socket,threading
+        server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);server.bind(str(self.sock));server.listen(1)
+        def serve():
+            with server,server.accept()[0] as connection:
+                data=bytearray()
+                while not data.endswith(b"\n"):
+                    part=connection.recv(4096)
+                    if not part:break
+                    data.extend(part)
+                self.request=data.decode()
+                if self.request.count("\n")!=1:
+                    result={"stdout":"","stderr":"invalid request framing","exit_code":2}
+                else:
+                    command=self.request.removeprefix("CAPTURE_JSON: ").rstrip("\n")
+                    done=subprocess.run(["bash","--noprofile","--norc","-c",command],env=self.env,capture_output=True,text=True,timeout=5)
+                    result={"stdout":done.stdout,"stderr":done.stderr,"exit_code":done.returncode}
+                    if getattr(self,"corrupt_receipt",False):result["stdout"]="malformed"
+                connection.sendall((json.dumps(result)+"\n").encode())
+        self.thread=threading.Thread(target=serve,daemon=True);self.thread.start()
+
+    def invoke(self,*args,record=None):
+        import sys
+        return subprocess.run([sys.executable,"-c",self.code,json.dumps(record or self.record),str(self.launcher),*args],env=self.env,capture_output=True,text=True,timeout=8)
+
+    def tearDown(self):
+        if hasattr(self,"thread"):self.thread.join(timeout=6)
+        self.temp.cleanup()
+
+    def test_operator_broker_restores_home_and_current_manager_environment(self):
+        self.broker();result=self.invoke("a file")
+        self.assertEqual(result.returncode,0,result.stderr)
+        receipt=json.loads(result.stdout);self.assertTrue(receipt["dispatched"]);self.assertFalse(receipt["confirmed"])
+        self.assertIsNone(receipt["execution_target"],"fake GUI fixture must not claim an actual compositor destination")
+        call=json.loads(self.calls.read_text())
+        self.assertEqual(call["home"],self.home)
+        self.assertEqual(call["xdg_config"],self.home+"/.config")
+        self.assertEqual(call["wayland"],"wayland-test")
+        self.assertEqual(call["signature"],"current-fixture")
+        self.assertNotEqual(call["preload"],"/must-not-import")
+        self.assertEqual(json.loads(self.preflight.read_text()),["app-preflight","--desktop","org.example.Recorder"])
+
+    def test_shell_metacharacters_and_newlines_remain_literal_argv(self):
+        proof=self.base/"must-not-execute"
+        literal="a'; $(touch "+str(proof)+")\nsecond line"
+        self.record["desktop_file"]=str(self.base/"a ' quoted.desktop")
+        self.broker();result=self.invoke(literal)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(proof.exists())
+        self.assertEqual(json.loads(self.calls.read_text())["argv"],[self.record["desktop_file"],literal])
+        self.assertEqual(self.request.count("\n"),1)
+
+    def test_unknown_broker_outcome_never_repeats_an_already_dispatched_launch(self):
+        self.corrupt_receipt=True;self.broker()
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("outcome unavailable",result.stderr)
+        self.assertTrue(self.calls.exists())
+        self.assertEqual(len(Path(str(self.calls)+".count").read_text().splitlines()),1)
+
+    def test_preflight_failure_does_not_dispatch_or_fall_back(self):
+        self.env["MIOS_APP_TEST_PREFLIGHT_FAIL"]="1";self.broker()
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertTrue(self.preflight.exists());self.assertFalse(self.calls.exists())
+
+    def test_unavailable_manager_does_not_dispatch(self):
+        self.env["MIOS_APP_TEST_MANAGER_FAIL"]="1";self.broker()
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertFalse(self.preflight.exists());self.assertFalse(self.calls.exists())
+
+    def test_missing_and_ambiguous_registry_entries_are_not_dispatched(self):
+        missing=self.invoke(record={"ok":False,"status":"not_found","error":"not installed"})
+        self.assertEqual(missing.returncode,64)
+        ambiguous=self.invoke(record={"ok":False,"status":"ambiguous","error":"Ambiguous application"})
+        self.assertEqual(ambiguous.returncode,2)
+        self.assertFalse(self.calls.exists())
+
+    def test_missing_broker_never_launches_as_another_identity(self):
+        import pwd
+        other=next((p for p in pwd.getpwall() if p.pw_uid!=os.getuid()),None)
+        self.assertIsNotNone(other)
+        self.record["operator_user"]=other.pw_name
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("refusing privileged GUI fallback",result.stderr)
+        self.assertFalse(self.calls.exists())
+
 
 if __name__=='__main__':unittest.main()

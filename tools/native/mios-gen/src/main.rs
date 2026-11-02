@@ -440,6 +440,8 @@ enum Commands {
     AppPreflight {
         #[arg(long)]
         root: Option<PathBuf>,
+        #[arg(long, conflicts_with_all=["desktop","flatpak","all","portal_only"])]
+        resolve: Option<String>,
         #[arg(long,conflicts_with_all=["flatpak","all","portal_only"])]
         desktop: Option<String>,
         #[arg(long,conflicts_with_all=["desktop","all","portal_only"])]
@@ -1986,6 +1988,7 @@ fn main() -> ExitCode {
         #[cfg(unix)]
         Commands::AppPreflight {
             root,
+            resolve,
             desktop,
             flatpak,
             all,
@@ -1993,6 +1996,9 @@ fn main() -> ExitCode {
         } => (
             "app-preflight",
             "desktop",
+            if let Some(query) = resolve {
+                app_preflight::resolve(&root.unwrap_or_else(|| PathBuf::from("/")), &query)
+            } else {
             app_preflight::run(
                 &root.unwrap_or_else(|| PathBuf::from("/")),
                 desktop.as_deref(),
@@ -2000,6 +2006,7 @@ fn main() -> ExitCode {
                 all,
                 portal_only,
             )
+            }
             .map_err(|e| (e, 1)),
         ),
         Commands::MemAdmit {
