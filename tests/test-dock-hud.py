@@ -147,8 +147,66 @@ def osk_toggle_user_tier(ref=None):
     return p
 
 
+def shell_input_state_and_focus(ref=None):
+    config = read(f"{QS}/Config.qml", ref)
+    expanded = read(f"{QS}/DockExpanded.qml", ref)
+    required = ["function inputSnapshot(closed)", "function inputPath(runtime, name)", "timestamp_ms: Date.now()",
+                "input_state_file", "input_state_interval_ms", "Math.min(250", "atomicWrites: true",
+                "Component.onDestruction: shellRoot.publishInputState(true)", "onDrawerOpenChanged:",
+                "onSearchOpenChanged:", "onPathChanged:"]
+    errors = [f"missing input-state contract: {item}" for item in required if item not in config]
+    if "Qt.callLater(ex.focusSection)" not in expanded:
+        errors.append("dock focus is not deferred until the expanded item is visible")
+    if errors:
+        return errors
+
+    def method(text, name):
+        start = text.index("function " + name + "(")
+        brace = text.index("{", start)
+        depth, end = 1, brace + 1
+        while depth and end < len(text):
+            depth += (text[end] == "{") - (text[end] == "}")
+            end += 1
+        return text[start:end]
+
+    import json
+    methods = json.dumps({name: method(text, name) for name, text in
+                         [("inputSnapshot", config), ("inputPath", config), ("focusSection", expanded)]})
+    script = r"""
+const assert = require('assert'), vm = require('vm');
+const methods = METHODS;
+const ctx = vm.createContext({drawerOpen:false,searchOpen:false,drawerScreen:'LOCAL',searchScreen:'OTHER',Date:{now:()=>1000}});
+const snapshot = vm.runInContext('('+methods.inputSnapshot+')',ctx);
+assert.deepStrictEqual(JSON.parse(JSON.stringify(snapshot(false))),{version:1,open:false,surface:'',output:'',timestamp_ms:1000});
+ctx.drawerOpen=true;
+assert.equal(snapshot(false).surface,'drawer');assert.equal(snapshot(false).output,'LOCAL');
+assert.equal(snapshot(true).open,false);assert.equal(snapshot(true).output,'');
+ctx.drawerOpen=false;ctx.searchOpen=true;
+assert.equal(snapshot(false).surface,'search');assert.equal(snapshot(false).output,'OTHER');
+ctx.Date.now=()=>1250;assert.equal(snapshot(false).timestamp_ms,1250);
+const path=vm.runInContext('('+methods.inputPath+')',ctx);
+assert.equal(path('/run/user/1000','mios-shell-input.json'),'/run/user/1000/mios-shell-input.json');
+for(const bad of ['../other.json','/tmp/other.json','x\ny.json','',null,{},'x.txt'])assert.equal(path('/run/user/1000',bad),'');
+assert.equal(path('','mios-shell-input.json'),'');
+let calls=[];
+const focus=vm.createContext({open:false,visible:true,section:0,
+ search:{forceActiveFocus(){calls.push('search');}},targetRow:{forceActiveFocus(){calls.push('targets');}},
+ windowRow:{forceActiveFocus(){calls.push('windows');}},appGrid:{forceActiveFocus(){calls.push('apps');}}});
+const focusSection=vm.runInContext('('+methods.focusSection+')',focus);
+focusSection();assert.equal(calls.length,0);
+focus.open=true;focus.visible=false;focusSection();assert.equal(calls.length,0);
+focus.visible=true;
+for(let i=0;i<4;i++){focus.section=i;focusSection();}
+assert.deepStrictEqual(calls,['search','targets','windows','apps']);
+""".replace("METHODS", methods)
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    if result.returncode:
+        errors.append("input-state or deferred-focus behavior failed: " + result.stderr[-1200:])
+    return errors
+
+
 CONTRACTS = [grows_upward_at_bar_width, config_fallbacks_match_ssot, configurator_has_every_scalar, previews_capture_safe_and_flat,
-             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier]
+             labels_fit_and_tooltip, remote_item_in_topbar_not_dock, osk_toggle_user_tier, shell_input_state_and_focus]
 
 
 class Positive(unittest.TestCase):

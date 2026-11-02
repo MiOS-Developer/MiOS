@@ -59,7 +59,14 @@ FocusScope {
         const e = appId ? QS.DesktopEntries.heuristicLookup(appId) : null
         return e && e.icon ? e.icon : appId
     }
-    onOpenChanged: if (open) { Hyprland.refreshToplevels(); targetsProc.refresh(); search.text = ""; section = 0; search.forceActiveFocus() }
+    function focusSection() {
+        if (open && visible) [search, targetRow, windowRow, appGrid][section].forceActiveFocus()
+    }
+    onOpenChanged: if (open) {
+        Hyprland.refreshToplevels(); targetsProc.refresh(); search.text = ""; section = 0
+        Qt.callLater(ex.focusSection)
+    }
+    onVisibleChanged: if (visible && open) Qt.callLater(ex.focusSection)
 
     // ---- targets ------------------------------------------------------------------------------------------------------
     property var targets: []
@@ -105,7 +112,7 @@ FocusScope {
     Keys.onEscapePressed: ex.closeRequested()
     Keys.onTabPressed: ex.section = (ex.section + 1) % 4
     Keys.onBacktabPressed: ex.section = (ex.section + 3) % 4
-    onSectionChanged: [search, targetRow, windowRow, appGrid][section].forceActiveFocus()
+    onSectionChanged: Qt.callLater(ex.focusSection)
 
     Column {
         id: col

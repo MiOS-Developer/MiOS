@@ -7,6 +7,35 @@ import Quickshell.Services.Notifications
 import "." as MiOS
 
 QS.ShellRoot {
+    id: shellRoot
+    function inputPath(runtime, name) {
+        return runtime && typeof name === "string" && /^[a-z0-9][a-z0-9.-]*\.json$/.test(name)
+            ? runtime + "/" + name : ""
+    }
+    readonly property string inputStatePath: inputPath(QS.Quickshell.env("XDG_RUNTIME_DIR") || "", MiOS.DockConfig.table.input_state_file)
+    readonly property int inputHeartbeatMs: {
+        const value = Number(MiOS.DockConfig.table.input_state_interval_ms)
+        return isFinite(value) && value > 0 ? Math.max(1, Math.min(250, Math.floor(value))) : 0
+    }
+    function publishInputState(closed) {
+        if (inputStatePath && workspaceState) inputStateFile.setText(JSON.stringify(workspaceState.inputSnapshot(closed)) + "\n")
+    }
+    FileView {
+        id: inputStateFile
+        path: shellRoot.inputStatePath
+        atomicWrites: true
+        watchChanges: false
+        printErrors: false
+        onPathChanged: if (path) shellRoot.publishInputState(false)
+    }
+    Timer {
+        interval: Math.max(1, shellRoot.inputHeartbeatMs)
+        repeat: true
+        running: shellRoot.inputStatePath !== "" && shellRoot.inputHeartbeatMs > 0
+            && (workspaceState.drawerOpen || workspaceState.searchOpen)
+        onTriggered: shellRoot.publishInputState(false)
+    }
+    Component.onDestruction: shellRoot.publishInputState(true)
     QtObject {
         id: workspaceState
         property bool drawerOpen: false
@@ -14,6 +43,16 @@ QS.ShellRoot {
         property bool searchOpen: false
         property string searchScreen: ""
         property string searchQuery: ""
+        function inputSnapshot(closed) {
+            const open = !closed && (drawerOpen || searchOpen)
+            const surface = open ? (drawerOpen ? "drawer" : "search") : ""
+            const output = open ? (drawerOpen ? drawerScreen : searchScreen) : ""
+            return {version: 1, open: open, surface: surface, output: output, timestamp_ms: Date.now()}
+        }
+        onDrawerOpenChanged: shellRoot.publishInputState(false)
+        onDrawerScreenChanged: shellRoot.publishInputState(false)
+        onSearchOpenChanged: shellRoot.publishInputState(false)
+        onSearchScreenChanged: shellRoot.publishInputState(false)
         // One settings model and one sampler for every output's island.
         property var topbarConfig: ({})
         property var topbarWrites: []
@@ -235,6 +274,7 @@ QS.ShellRoot {
 
     Component.onCompleted: {
         QS.Quickshell.inhibitReloadPopup()
+        shellRoot.publishInputState(true)
     }
 
     Connections {
