@@ -197,7 +197,10 @@ def _route_remote(ep: str, sub: str, args: list[str], as_json: bool) -> int:
             return 0
         if sub == "window-list":
             resp = _http_get(ep, "/windows")
-            return _emit_windows(resp.get("windows") or [], as_json)
+            if not isinstance(resp, dict) or resp.get("ok") is False or resp.get("success") is False or not isinstance(resp.get("windows"), list):
+                _die("remote executor did not return a successful window list")
+            return _emit_windows(resp["windows"], as_json, local=False,
+                                 execution_target=resp.get("execution_target"))
         if sub == "screen-layout":
             print(json.dumps(_http_get(ep, "/screen-layout")))
             return 0
@@ -803,9 +806,13 @@ def _keyname_to_keysym(name):
     return out
 
 
-def _emit_windows(windows, as_json) -> int:
+def _emit_windows(windows, as_json, *, local=False, execution_target=None) -> int:
     if as_json:
-        print(json.dumps({"windows": windows}))
+        result = {"windows": windows, "local": local is True}
+        keys = ("id", "platform", "session_id", "backend")
+        if isinstance(execution_target, dict) and all(isinstance(execution_target.get(key), str) and execution_target[key].strip() for key in keys):
+            result["execution_target"] = {key: execution_target[key] for key in keys}
+        print(json.dumps(result))
     else:
         print("id pid x y w h title")
         for w in windows:
@@ -818,32 +825,39 @@ def _emit_windows(windows, as_json) -> int:
 def _list_windows(as_json) -> int:
     if shutil.which("hyprctl"):
         try:
-            data = json.loads(subprocess.run(
+            probe = subprocess.run(
                 ["hyprctl", "clients", "-j"], capture_output=True, text=True,
-                timeout=5).stdout)
+                timeout=5)
+            if probe.returncode != 0:
+                raise RuntimeError("Hyprland window query failed")
+            data = json.loads(probe.stdout)
             wins = [{"id": c.get("address"), "pid": c.get("pid"),
                      "x": c.get("at", [0, 0])[0], "y": c.get("at", [0, 0])[1],
                      "w": c.get("size", [0, 0])[0], "h": c.get("size", [0, 0])[1],
-                     "title": c.get("title", "")} for c in data]
-            return _emit_windows(wins, as_json)
+                     "title": c.get("title", ""), "class": c.get("class", ""),
+                     "mapped": c.get("mapped")} for c in data]
+            return _emit_windows(wins, as_json, local=True)
         except Exception:
             pass
     if shutil.which("wmctrl"):
         try:
-            out = subprocess.run(["wmctrl", "-lpG"], capture_output=True,
-                                 text=True, timeout=5).stdout
+            probe = subprocess.run(["wmctrl", "-lpG"], capture_output=True,
+                                   text=True, timeout=5)
+            if probe.returncode != 0:
+                raise RuntimeError("X11 window query failed")
+            out = probe.stdout
             wins = []
             for line in out.splitlines():
                 f = line.split(None, 8)
                 if len(f) >= 9:
                     wins.append({"id": f[0], "pid": f[2], "x": f[3], "y": f[4],
                                  "w": f[5], "h": f[6], "title": f[8]})
-            return _emit_windows(wins, as_json)
+            return _emit_windows(wins, as_json, local=True)
         except Exception:
             pass
     wins = _atspi_frames()
     if wins is not None:
-        return _emit_windows(wins, as_json)
+        return _emit_windows(wins, as_json, local=True)
     _die("no window-list backend (install wmctrl, or run hyprctl/AT-SPI)")
     return 1
 

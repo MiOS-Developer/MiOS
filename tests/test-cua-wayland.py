@@ -46,6 +46,58 @@ LIBEI = load_module("usr/libexec/mios/ui/libei_input.py", "libei_input_cua")
 CU = load_module("usr/libexec/mios/mios-computer-use", "mios_computer_use_cua")
 
 
+
+class TestWindowDestinationProvenance(unittest.TestCase):
+    def capture(self, call):
+        import contextlib,io
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result=call()
+        self.assertEqual(result,0)
+        return json.loads(output.getvalue())
+
+    def test_native_hyprland_windows_preserve_local_class_mapping_and_pid(self):
+        from types import SimpleNamespace
+        windows=[{"address":"0xfixture","pid":123,"title":"Recorder","class":"org.example.Recorder","mapped":True,"at":[4,8],"size":[320,240]}]
+        with patch.object(CU.shutil,"which",side_effect=lambda name:name if name=="hyprctl" else None),patch.object(CU.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=json.dumps(windows))):
+            result=self.capture(lambda:CU._list_windows(True))
+        self.assertIs(result["local"],True)
+        self.assertEqual(result["windows"][0]["class"],"org.example.Recorder")
+        self.assertEqual(result["windows"][0]["pid"],123)
+        self.assertIs(result["windows"][0]["mapped"],True)
+        self.assertNotIn("execution_target",result,"native origin must not invent an unvalidated session ID")
+
+    def test_native_successful_empty_is_distinct_from_query_failure(self):
+        from types import SimpleNamespace
+        with patch.object(CU.shutil,"which",side_effect=lambda name:name if name=="hyprctl" else None),patch.object(CU.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout="[]")):
+            result=self.capture(lambda:CU._list_windows(True))
+        self.assertEqual(result,{"windows":[],"local":True})
+        with patch.object(CU.shutil,"which",side_effect=lambda name:name if name=="hyprctl" else None),patch.object(CU.subprocess,"run",return_value=SimpleNamespace(returncode=1,stdout="[]")),patch.object(CU,"_atspi_frames",return_value=None):
+            with self.assertRaises(SystemExit):CU._list_windows(True)
+
+    def test_forwarded_windows_remain_remote_and_preserve_declared_destination(self):
+        target={"id":"registered-guest","platform":"windows","session_id":"guest-session","backend":"enrolled","extra":"not-propagated"}
+        response={"windows":[{"id":"remote-1","title":"Recorder"}],"local":True,"execution_target":target}
+        with patch.object(CU,"_http_get",return_value=response):
+            result=self.capture(lambda:CU._route_remote("http://fixture.invalid","window-list",[],True))
+        self.assertIs(result["local"],False)
+        self.assertEqual(result["execution_target"],{k:target[k] for k in ("id","platform","session_id","backend")})
+
+    def test_forwarded_empty_without_target_cannot_borrow_local_context(self):
+        with patch.object(CU,"_http_get",return_value={"windows":[],"local":True}):
+            result=self.capture(lambda:CU._route_remote("http://fixture.invalid","window-list",[],True))
+        self.assertEqual(result,{"windows":[],"local":False})
+
+    def test_remote_error_or_invalid_window_shape_is_not_a_successful_empty(self):
+        for response in ({"ok":False,"windows":[]},{"success":False,"windows":[]},{"error":"unavailable"},{"windows":{}}):
+            with self.subTest(response=response),patch.object(CU,"_http_get",return_value=response):
+                with self.assertRaises(SystemExit):CU._route_remote("http://fixture.invalid","window-list",[],True)
+
+    def test_malformed_target_and_truthy_local_strings_are_not_attestations(self):
+        result=self.capture(lambda:CU._emit_windows([],True,local="true",execution_target={"id":"partial"}))
+        self.assertEqual(result,{"windows":[],"local":False})
+
+
 class TestWaylandCuaPositiveControls(unittest.TestCase):
     """Positive controls verifying genuine Wayland CUA functionality."""
 
