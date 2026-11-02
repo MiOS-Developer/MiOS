@@ -102,10 +102,10 @@ new file mode 100644
 +        periodMs=static_cast<int>(period); deadline=now+std::chrono::milliseconds(static_cast<int>(lease));
 +        return true;
 +    }
-+    float pulse(Clock::time_point now) const {
++    float orbitPhase(Clock::time_point now) const {
 +        if (!live(now)) return 0.f;
-+        const double phase=std::chrono::duration<double,std::milli>(now-phaseOrigin).count()/periodMs;
-+        return static_cast<float>(0.35+0.65*(0.5+0.5*std::sin(phase*6.283185307179586)));
++        const double turns=std::chrono::duration<double,std::milli>(now-phaseOrigin).count()/periodMs;
++        return std::min(static_cast<float>(turns-std::floor(turns)),std::nextafter(1.f,0.f));
 +    }
 +};
 +}
@@ -117,7 +117,7 @@ diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
          // the opacity the client was composited with (the desktop's transmission).
          std::array<float,4> glassDeco{0.f,0.f,0.f,0.f};
 +        std::array<float,4> dockCaptureColor{};
-+        std::array<float,2> dockCaptureGlow{}; // logical width, lease pulse
++        std::array<float,2> dockCaptureGlow{}; // logical width, 1 + lease orbit phase (0 disables)
          float glassWindowAlpha = 1.0f;
          float alpha = 1.0f;
          bool crtEnabled = false;
@@ -155,11 +155,11 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  uniform vec4 uGlassMetrics;
  uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
 +uniform vec4 uDockCaptureColor;
-+uniform vec2 uDockCaptureGlow; // width in the window's logical pixels, pulse strength
++uniform vec2 uDockCaptureGlow; // logical border width, 1 + normalized orbit phase (0 disables feedback)
  uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
  uniform vec2 uControls; // per-window reveal and configured horizontal inset
  uniform vec4 uControlStyle[12];
-@@ -1258,6 +1264,25 @@
+@@ -1258,6 +1264,33 @@
      return vec4((1.0 - h) * ((1.0 - s) * L * b + F), 1.0 - (1.0 - h) * (1.0 - s) * (1.0 - b));
  }
  
@@ -176,7 +176,15 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +    float width=max(uDockCaptureGlow.x,0.001);
 +    float rim=1.0-smoothstep(max(width-pixel,0.0),width+pixel,inside);
 +    float halo=0.22*exp(-inside/max(width*1.75,0.001));
-+    float a=clamp(max(rim,halo)*coverage*uDockCaptureColor.a*uDockCaptureGlow.y*uColor.a,0.0,1.0);
++    // Clockwise conical comet, evaluated in the same aspect-correct local
++    // material coordinates as the rounded/CRT edge. The centre has no angle.
++    vec2 edge=(coord-vec2(0.5))*fullSize;
++    float angle=dot(edge,edge)>0.00000001 ? atan(edge.x,-edge.y)/6.283185307179586 : 0.0;
++    float orbit=fract(angle-(uDockCaptureGlow.y-1.0));
++    float comet=orbit<0.12 ? mix(1.0,0.6,orbit/0.12) :
++                orbit<0.4 ? mix(0.6,0.0,(orbit-0.12)/0.28) :
++                orbit<0.9 ? 0.0 : (orbit-0.9)/0.1;
++    float a=clamp(max(rim,halo)*coverage*uDockCaptureColor.a*comet*uColor.a,0.0,1.0);
 +    float combined=a+base.a*(1.0-a);
 +    vec3 rgb=combined>0.00001 ? (uDockCaptureColor.rgb*a+base.rgb*base.a*(1.0-a))/combined : vec3(0.0);
 +    return vec4(rgb,combined);
@@ -185,7 +193,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  void main() {
      if (uTextured != 0 && uGlassWall != 0) {
          vec4 t=texSS(uTexture, vUV);
-@@ -1399,10 +1424,18 @@
+@@ -1399,10 +1432,18 @@
              float dissolveGlow = clamp(1.0 - abs(v_texcoord.y) * 3.5, 0.0, 1.0) * abs(lampP);
              rgb = mix(rgb, bevelColor, dissolveGlow * 0.65);
          }
@@ -205,7 +213,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
      // Premultiplied mode (the 2D<->3D view morph): the scene buffer holds
      // color-already-multiplied-by-alpha, so the composite can stack the
-@@ -1771,6 +1804,8 @@
+@@ -1771,6 +1812,8 @@
      m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
      m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
      m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
@@ -214,7 +222,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      m_controls = glGetUniformLocation(m_sceneProgram, "uControls");
      m_controlStyle = glGetUniformLocation(m_sceneProgram, "uControlStyle[0]");
      m_crtCurvature = glGetUniformLocation(m_sceneProgram, "uCrtCurvature");
-@@ -2309,6 +2344,7 @@
+@@ -2309,6 +2352,7 @@
      float r, float g, float b, float a
  ) {
      glUseProgram(m_sceneProgram);
@@ -222,7 +230,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
      glUniformMatrix4fv(
          m_sceneMVP,
-@@ -2838,6 +2874,7 @@
+@@ -2838,6 +2882,7 @@
      // Lines, not triangles, and translucent: the grid is the visual floor and
      // sits just above the solid ground quad so the two never z-fight.
      glUseProgram(m_sceneProgram);
@@ -230,7 +238,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
      glUniformMatrix4fv(
          m_sceneMVP,
-@@ -3168,6 +3205,8 @@
+@@ -3168,6 +3213,8 @@
          slab.front.glassMetrics = window.glassMetrics;
          slab.front.glassDeco = window.glassDeco;
          slab.front.glassWindowAlpha = window.glassWindowAlpha;
@@ -239,7 +247,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          slab.front.glassUV = {window.u0, window.v0,
                               window.u1 - window.u0, window.v1 - window.v0};
  
-@@ -3212,6 +3251,8 @@
+@@ -3212,6 +3259,8 @@
              slab.back.glassMetrics = slab.front.glassMetrics;
              slab.back.glassDeco = slab.front.glassDeco;
              slab.back.glassWindowAlpha = slab.front.glassWindowAlpha;
@@ -248,7 +256,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              slab.back.glassUV = slab.front.glassUV;
  
              for (int c = 0; c < 4; ++c) {
-@@ -3374,6 +3415,7 @@
+@@ -3374,6 +3423,7 @@
      }
  
      glUseProgram(m_sceneProgram);
@@ -256,7 +264,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, vp.m.data());
      glUniform4f(m_sceneUVRect, 0.f, 0.f, 1.f, 1.f);
      glUniform1i(m_sceneTexture, 0);
-@@ -3459,6 +3501,8 @@
+@@ -3459,6 +3509,8 @@
                 ordered[j].glassMetrics == ordered[i].glassMetrics &&
                 ordered[j].glassDeco == ordered[i].glassDeco &&
                 ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha &&
@@ -265,7 +273,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
                 ordered[j].crtEnabled == ordered[i].crtEnabled &&
                 ordered[j].controls == ordered[i].controls &&
                 ordered[j].controlStyle == ordered[i].controlStyle)
-@@ -3564,6 +3608,7 @@
+@@ -3564,6 +3616,7 @@
              }
              }
              glUseProgram(m_sceneProgram);
@@ -273,7 +281,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              glBindVertexArray(m_polyVAO);
              glBindBuffer(GL_ARRAY_BUFFER, m_polyVBO);
              glViewport(0, 0, m_sceneWidth, m_sceneHeight);
-@@ -3576,6 +3621,24 @@
+@@ -3576,6 +3629,24 @@
              glActiveTexture(GL_TEXTURE0);
              glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
          }
@@ -298,7 +306,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          glDrawArrays(GL_TRIANGLES, 0,
                       static_cast<GLint>(verts.size() / 5));
  
-@@ -3584,6 +3647,7 @@
+@@ -3584,6 +3655,7 @@
  
      glUniform1i(m_glassFace, 0);
      glUniform1i(m_glassWall, 0);
@@ -306,7 +314,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      // MiOS frame rate: a due frame drops the slots no batch used (closed or hidden windows).
      if (GLASS_DUE && m_glassFps > 0.f) {
          for (auto it = m_glassSlots.begin(); it != m_glassSlots.end();) {
-@@ -3661,6 +3725,7 @@
+@@ -3661,6 +3733,7 @@
          addRect(verts, -halfTX, -outerY, halfTX, -innerY);
  
          glUseProgram(m_sceneProgram);
@@ -314,7 +322,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
          const Mat4 IDENTITY = Mat4::identity();
          glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
-@@ -3764,6 +3829,7 @@
+@@ -3764,6 +3837,7 @@
          }
  
          glUseProgram(m_sceneProgram);
@@ -322,7 +330,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
          const Mat4 IDENTITY = Mat4::identity();
          glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
-@@ -3808,6 +3874,7 @@
+@@ -3808,6 +3882,7 @@
          }
  
          glUseProgram(m_sceneProgram);
@@ -330,7 +338,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
          const Mat4 IDENTITY = Mat4::identity();
          glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
-@@ -3934,6 +4001,7 @@
+@@ -3934,6 +4009,7 @@
      }
  
      glUseProgram(m_sceneProgram);
@@ -338,7 +346,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
      const Mat4 IDENTITY = Mat4::identity();
      glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
-@@ -4071,6 +4139,7 @@
+@@ -4071,6 +4147,7 @@
          Mat4::scale(Vec3{2.0f / width, -2.0f / height, 1.0f});
  
      glUseProgram(m_sceneProgram);
@@ -346,7 +354,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, ORTHO.m.data());
      glUniform4f(m_sceneUVRect, 0.f, 0.f, 1.f, 1.f);
      glUniform1i(m_sceneTextured, 0);
-@@ -4308,6 +4377,7 @@
+@@ -4308,6 +4385,7 @@
  
      // Everything after the windows (F3 HUD text) draws straight again.
      glUseProgram(m_sceneProgram);
@@ -454,7 +462,7 @@ diff --git a/src/main.cpp b/src/main.cpp
 +        window.dockCaptureColor={};window.dockCaptureGlow={};
 +        if (!visible || !window.texture || window.alpha<=0.f || window.glassMetrics[3]<=.5f) continue;
 +        window.dockCaptureColor=g_dockCaptureFeedback.rgba;
-+        window.dockCaptureGlow={g_dockCaptureFeedback.widthPx,g_dockCaptureFeedback.pulse(now)};
++        window.dockCaptureGlow={g_dockCaptureFeedback.widthPx,1.f+g_dockCaptureFeedback.orbitPhase(now)};
 +        painted=true;
 +    }
 +    g_dockCapturePainted=painted;
@@ -578,7 +586,7 @@ diff --git a/tests/mios-dock-capture-feedback.cpp b/tests/mios-dock-capture-feed
 new file mode 100644
 --- /dev/null
 +++ b/tests/mios-dock-capture-feedback.cpp
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,84 @@
 +// AI-hint: Deterministic clock, fail-closed validation and enter/exit visibility regression tests.
 +// AI-related: src/Input/DockCaptureFeedback.hpp, src/main.cpp dock_capture_feedback
 +#include "../src/Input/DockCaptureFeedback.hpp"
@@ -599,9 +607,9 @@ new file mode 100644
 +    require(!f.live(t+std::chrono::milliseconds(1000)),"deadline exclusive");
 +    const auto origin=f.phaseOrigin;
 +    const auto quarter=t+std::chrono::milliseconds(250);
-+    const float phase=f.pulse(quarter);
++    const float phase=f.orbitPhase(quarter);
 +    require(valid(quarter),"heartbeat");
-+    require(f.phaseOrigin==origin && std::abs(f.pulse(quarter)-phase)<0.00001f,"heartbeat preserves phase");
++    require(f.phaseOrigin==origin && std::abs(f.orbitPhase(quarter)-phase)<0.00001f,"heartbeat preserves phase");
 +    require(f.live(t+std::chrono::milliseconds(1249)),"heartbeat extends lease");
 +    require(f.expire(t+std::chrono::milliseconds(1250)) && !f.active,"lease clears at deadline");
 +    require(!f.expire(t+std::chrono::milliseconds(1251)),"expiry idempotent");
@@ -632,10 +640,17 @@ new file mode 100644
 +    require(!sceneVisible(true,1.f,true,true,true),"native fullscreen flat");
 +    require(!sceneVisible(false,1.f,true,true,false),"inactive flat");
 +    require(!sceneVisible(true,0.f,false,false,false),"closed transition flat");
-+    require(valid(),"restore pulse");
-+    require(std::abs(f.pulse(t)-f.pulse(t+std::chrono::milliseconds(1000)))>0.1f,"expired pulse zero");
++    require(valid(),"restore phase");
++    require(f.orbitPhase(t+std::chrono::milliseconds(1000))==0.f,"expired phase zero");
 +    require(f.update("DP-1","#ffffff",2,1000,10000,t),"long lease");
-+    require(std::abs(f.pulse(t)-f.pulse(t+std::chrono::milliseconds(1000)))<0.00001f,"periodic pulse");
++    require(std::abs(f.orbitPhase(t)-f.orbitPhase(t+std::chrono::milliseconds(1000)))<0.00001f,"periodic orbit phase");
++    require(std::abs(f.orbitPhase(t+std::chrono::milliseconds(250))-.25f)<0.00001f,"quarter orbit");
++    require(std::abs(f.orbitPhase(t+std::chrono::milliseconds(1250))-.25f)<0.00001f,"phase wraps after full orbit");
++    require(f.orbitPhase(t+std::chrono::milliseconds(999))>=0.f && f.orbitPhase(t+std::chrono::milliseconds(999))<1.f,"normalized phase before wrap");
++    const auto continued=t+std::chrono::milliseconds(1250);
++    const float beforeHeartbeat=f.orbitPhase(continued);
++    require(f.update("DP-1","#ffffff",2,1000,10000,continued),"renew orbit lease");
++    require(std::abs(f.orbitPhase(continued)-beforeHeartbeat)<0.00001f,"heartbeat preserves wrapped orbit phase");
 +    // The old heartbeat-only path does not suppress this first render frame.
 +    require(suppressFlatLayer("mios-dock-capture-glow","DP-1","DP-1",true),"same-frame layer suppression before shell heartbeat");
 +    require(!suppressFlatLayer("mios-dock","DP-1","DP-1",true),"other layers preserved");
@@ -654,7 +669,7 @@ new file mode 100644
 +    require(!removeFactor(factors,ours) && factors.size()==2,"stale factor token harmless");
 +    *factors[0]=0.f; // native unmap/fade is never restored to an earlier alpha.
 +    require(!removeFactor(factors,ours) && *factors[0]==0.f,"unmapped layer never revived");
-+    std::cout<<"dock capture validation, lease, pulse and morph regressions passed\n";
++    std::cout<<"dock capture validation, lease, circling phase and morph regressions passed\n";
 +}
 diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 --- a/tests/mios-bsp-regression.cpp
@@ -668,7 +683,7 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
  #include <EGL/egl.h>
  #include <EGL/eglext.h>
  
-@@ -146,6 +148,64 @@
+@@ -146,6 +148,75 @@
      glDeleteProgram(program);
      glDeleteShader(vs);
      glDeleteShader(fs);
@@ -710,7 +725,7 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 +    glUniform4f(uniform("uGlassUV"),0,0,1,1);glUniform4f(uniform("uGlassSurface"),0,0,1,1);
 +    glUniform4f(uniform("uGlassMetrics"),640,400,24,1);
 +    glUniform4f(uniform("uDockCaptureColor"),1,0,0,1);
-+    glUniform2f(uniform("uDockCaptureGlow"),4,1);
++    glUniform2f(uniform("uDockCaptureGlow"),4,1.75f);
 +    const auto capturePixel=[&](float x,float y) {
 +        glUniform2f(uniform("coord"),x,y);glDrawArrays(GL_TRIANGLES,0,3);
 +        std::array<unsigned char,4> pixel{};
@@ -720,6 +735,17 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 +    require(capturePixel(.001f,.5f)[0]>240); // exact logical left border
 +    require(capturePixel(.5f,.5f)[0]<2); // centre does not become a frame fill
 +    require(capturePixel(.001f,.001f)[0]<2); // rounded corner clips the glow
++    // A uniform pulse fails: at each quarter cycle one new side is bright
++    // while the side a quarter turn behind is dark, with unchanged material.
++    const std::array<std::array<float,2>,4> sides{{{{.5f,.999f}},{{.999f,.5f}},{{.5f,.001f}},{{.001f,.5f}}}};
++    for (size_t quarter=0;quarter<sides.size();++quarter) {
++        glUniform2f(uniform("uDockCaptureGlow"),4,1.f+static_cast<float>(quarter)*.25f);
++        const auto& head=sides[quarter];const auto& previous=sides[(quarter+3)%4];
++        require(capturePixel(head[0],head[1])[0]>240); // circling head moves to next side
++        require(capturePixel(previous[0],previous[1])[0]<2); // previous side is no longer lit
++        require(capturePixel(.5f,.5f)[0]<2); // finite atan at centre, no fill
++    }
++    glUniform2f(uniform("uDockCaptureGlow"),4,1.75f);
 +    glUniform4f(uniform("uDockCaptureColor"),1,0,0,0);
 +    require(capturePixel(.001f,.5f)[0]<2); // transparent operator style
 +    glUniform4f(uniform("uDockCaptureColor"),1,0,0,1);
@@ -733,7 +759,7 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
      eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
      eglDestroyContext(display, context);
      eglDestroySurface(display, surface);
-@@ -199,6 +259,8 @@
+@@ -199,6 +270,8 @@
      warped.glassUV = {0.1f, 0.2f, 0.8f, 0.6f};
      warped.glassSurface = {0.05f, 0.05f, 0.9f, 0.9f};
      warped.glassMetrics = {640.f, 400.f, 24.f, 1.f};
@@ -742,7 +768,7 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
      // Rounding/clipping can leave the fourth vertex off the plane selected
      // from the first triangle. The splitter must still leave the input set.
      warped.verts = {{{0,0,0},0,0}, {{1,0,0},1,0},
-@@ -234,6 +296,8 @@
+@@ -234,6 +307,8 @@
          require(p->glassSurface == warped.glassSurface);
          require(p->glassMetrics == warped.glassMetrics);
          require(p->controlStyle == warped.controlStyle);

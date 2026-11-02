@@ -56,6 +56,25 @@ class DockCapture(unittest.TestCase):
         self.assertNotIn("projectedBounds", renderer)
         self.assertGreaterEqual(renderer.count("glUniform2f(m_dockCaptureGlow,0.f,0.f)"), 5)
 
+    def test_native_glow_orbits_instead_of_uniform_pulse(self):
+        source = added("src/main.cpp")
+        self.assertIn("1.f+g_dockCaptureFeedback.orbitPhase(now)", source)
+        shader = added("src/Render/GLScene.cpp")
+        self.assertIn("atan(edge.x,-edge.y)", shader)
+        self.assertIn("dot(edge,edge)>0.00000001", shader)
+        self.assertIn("orbit<0.12", shader)
+        self.assertIn("orbit<0.4", shader)
+        self.assertIn("orbit<0.9", shader)
+        self.assertIn("uDockCaptureColor.a*comet*uColor.a", shader)
+        pixels = added("tests/mios-bsp-regression.cpp")
+        self.assertIn("circling head moves to next side", pixels)
+        self.assertIn("previous side is no longer lit", pixels)
+        self.assertIn("finite atan at centre", pixels)
+        phase = added("tests/mios-dock-capture-feedback.cpp")
+        for case in ("quarter orbit", "phase wraps after full orbit", "normalized phase before wrap",
+                     "heartbeat preserves wrapped orbit phase"):
+            self.assertIn(case, phase)
+
     def test_same_frame_layer_filter_is_wired(self):
         source = added("src/main.cpp")
         self.assertIn("syncDockCaptureLayerFactors(mon)", source)
