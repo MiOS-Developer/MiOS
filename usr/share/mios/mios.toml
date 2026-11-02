@@ -11190,6 +11190,7 @@ allocation_unit     = 4096       # NTFS default cluster size
 # ----------------------------------------------------------------------------
 [bootstrap.dev_vm]
 machine_name        = "MiOS-DEV"   # podman derives "podman-MiOS-DEV"
+minimum_cpus        = 4            # minimum allocation for MiOS hosts, guests and build containers
 wsl_distro          = "MiOS"        # the eventual MiOS WSL distro (built from the OCI image)
 base_image          = "quay.io/podman/machine-os:6.2"   # LOCKED base
 # Maximalist allocation — the dev VM IS the builder, so it gets every CPU
@@ -17751,6 +17752,7 @@ mirror_toml_tables = ["ports", "colors"]
 
 # Single keys "<dotted.table>.<key>" mirrored by value; the rest of each table stays repo-owned.
 mirror_toml_keys = [
+  "bootstrap.dev_vm.minimum_cpus",
   "theme.padding",
   "theme.scrollbar_state",
   "bootstrap.windows_install_mode",

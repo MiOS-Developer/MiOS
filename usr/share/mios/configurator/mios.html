@@ -2730,7 +2730,9 @@
         <label for="f-dvm-wsl">wsl_distro (eventual MiOS WSL distro)</label>
         <input type="text" id="f-dvm-wsl" data-key="bootstrap.dev_vm.wsl_distro" placeholder="MiOS">
         <label for="f-dvm-image">base_image (machine-os 6.0+ LOCKED)</label>
-        <input type="text" id="f-dvm-image" data-key="bootstrap.dev_vm.base_image" placeholder="quay.io/podman/machine-os:6.1">
+        <input type="text" id="f-dvm-image" data-key="bootstrap.dev_vm.base_image" placeholder="quay.io/podman/machine-os:6.2">
+        <label for="f-dvm-minimum-cpus">minimum_cpus (at least four per MiOS system)</label>
+        <input type="number" id="f-dvm-minimum-cpus" data-key="bootstrap.dev_vm.minimum_cpus" min="4" step="1">
         <label for="f-dvm-cpus">cpus ("max" or integer; max = host_cpus − host_reserve)</label>
         <input type="text" id="f-dvm-cpus" data-key="bootstrap.dev_vm.cpus" placeholder="max">
         <label for="f-dvm-mem">memory_mb ("max" or integer)</label>

@@ -1549,6 +1549,31 @@ function Get-PasswordHash([string]$Plain) {
     throw "Cannot generate sha512crypt hash -- install openssl or run from a distro."
 }
 
+function Get-MiosCpuMinimum {
+    param([int]$AvailableCpus = [Environment]::ProcessorCount)
+    $raw = Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'minimum_cpus' -Default 4
+    $minimum = 0
+    if (-not [int]::TryParse([string]$raw, [ref]$minimum) -or $minimum -lt 4) {
+        throw 'bootstrap.dev_vm.minimum_cpus must be an integer of at least four.'
+    }
+    if ($AvailableCpus -lt $minimum) {
+        throw "MiOS requires at least $minimum CPUs; only $AvailableCpus are available."
+    }
+    return $minimum
+}
+
+function Resolve-MiosCpuAllocation {
+    param([int]$AvailableCpus, [int]$ReservedCpus = 0, [int]$RequestedCpus = 0)
+    $minimum = Get-MiosCpuMinimum -AvailableCpus $AvailableCpus
+    if ($RequestedCpus -ne 0) {
+        if ($RequestedCpus -lt $minimum) {
+            throw "MiOS CPU allocation $RequestedCpus is below the required minimum $minimum."
+        }
+        return $RequestedCpus
+    }
+    return [math]::Max($minimum, $AvailableCpus - [math]::Max(0, $ReservedCpus))
+}
+
 function Get-Hardware {
     $hostRamGB = try { [math]::Round((Get-CimInstance Win32_PhysicalMemory|Measure-Object Capacity -Sum).Sum/1GB) } catch { 16 }
     # OS-reported RAM (bytes) -- this is what podman validates against; may be less than nominal GB count
@@ -1604,7 +1629,7 @@ function Get-Hardware {
 
     # Compute maximalist dev-VM allocation = host - reserve.
     $reservedCpus = [math]::Max($cpuReserveMin, [math]::Floor($hostCpus * $cpuReservePct / 100))
-    $devCpus = [math]::Max(1, $hostCpus - $reservedCpus)
+    $devCpus = Resolve-MiosCpuAllocation -AvailableCpus $hostCpus -ReservedCpus $reservedCpus
     $reservedRamGB = [math]::Max($memReserveGB, [math]::Floor($hostRamGB * $memReservePct / 100))
     $devRamGB = [math]::Max(4, $hostRamGB - $reservedRamGB)
     $devDiskGB = [math]::Max(80, $diskFreeGB - $diskReserveGB)
@@ -1614,6 +1639,8 @@ function Get-Hardware {
     if ($env:MIOS_DEV_VM_CPUS      -and $env:MIOS_DEV_VM_CPUS      -notmatch '^(max|0|)$') { $devCpus   = [int]$env:MIOS_DEV_VM_CPUS      }
     if ($env:MIOS_DEV_VM_MEMORY_MB -and $env:MIOS_DEV_VM_MEMORY_MB -notmatch '^(max|0|)$') { $devRamGB  = [math]::Max(4, [math]::Floor([int]$env:MIOS_DEV_VM_MEMORY_MB / 1024)) }
     if ($env:MIOS_DEV_VM_DISK_GB   -and $env:MIOS_DEV_VM_DISK_GB   -notmatch '^(max|0|)$') { $devDiskGB = [int]$env:MIOS_DEV_VM_DISK_GB   }
+
+    $devCpus = Resolve-MiosCpuAllocation -AvailableCpus $hostCpus -RequestedCpus $devCpus
 
     Write-Log "Get-Hardware: host=${hostCpus}c/${hostRamGB}GB/${diskFreeGB}GB  reserve=${reservedCpus}c/${reservedRamGB}GB/${diskReserveGB}GB  dev-vm=${devCpus}c/${devRamGB}GB/${devDiskGB}GB  gpu=[$gpuNames]"
 
@@ -1837,7 +1864,7 @@ function Get-PodmanMachineOsImage {
         # / .machine_os_tag (SSOT). Hardcoded fallbacks below are vendor
         # defaults only -- operators bump the tag (6.0 -> 6.1) via mios.html.
         [string]$Repo = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_repo' -Default 'quay.io/podman/machine-os'),
-        [string]$Tag  = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_tag'  -Default '6.1'),
+        [string]$Tag  = (Get-MiosTomlValue -Section 'image' -Key 'machine_os_tag'  -Default '6.2'),
         [string]$Architecture = 'x86_64',
         [string]$DiskType = 'wsl',
         [Parameter(Mandatory)] [string]$CacheDir
@@ -2057,11 +2084,11 @@ function New-BuilderDistro([hashtable]$HW) {
     # the data disk. $HW.DiskGB has also been clamped there.
     $diskGB = $HW.DiskGB
 
-    $_tomlBase   = Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'base_image' -Default 'quay.io/podman/machine-os:6.1'
+    $_tomlBase   = Get-MiosTomlValue -Section 'bootstrap.dev_vm' -Key 'base_image' -Default 'quay.io/podman/machine-os:6.2'
     if ($_tomlBase -match '^(.+):([^:]+)$') {
         $_tomlRepo = $Matches[1]; $_tomlTag = $Matches[2]
     } else {
-        $_tomlRepo = $_tomlBase;  $_tomlTag = '6.1'
+        $_tomlRepo = $_tomlBase;  $_tomlTag = '6.2'
     }
     $machineTag = if ($env:MIOS_MACHINE_TAG) { $env:MIOS_MACHINE_TAG } else { $_tomlTag }
     $machineRepo = $_tomlRepo
@@ -3818,7 +3845,7 @@ function New-MiosHyperVVm([string]$RawPath, [int]$RamGB = 8) {
     $vm = New-VM -Name $vmName -MemoryStartupBytes ($RamGB * 1GB) `
                  -VHDPath $vhdxPath -Generation 2 -EA Stop
     Set-VMFirmware  -VMName $vmName -EnableSecureBoot Off
-    Set-VMProcessor -VMName $vmName -Count ([math]::Max(2, [int]([Environment]::ProcessorCount / 2)))
+    Set-VMProcessor -VMName $vmName -Count ([math]::Max((Get-MiosCpuMinimum), [int]([Environment]::ProcessorCount / 2)))
     Set-VMMemory    -VMName $vmName -DynamicMemoryEnabled $true `
                     -MinimumBytes 2GB -MaximumBytes ($RamGB * 1GB)
     Log-Ok "Hyper-V VM '$vmName' created from $([System.IO.Path]::GetFileName($vhdxPath))"
@@ -4130,8 +4157,11 @@ function Set-MiosWslConfig {
         $RamGB = if ($script:HW -and $script:HW.RamGB) { $script:HW.RamGB } else { 8 }
     }
     if ($Cpus -le 0) {
-        $Cpus = if ($script:HW -and $script:HW.Cpus) { $script:HW.Cpus } else { [Math]::Max(2, [Environment]::ProcessorCount) }
+        $Cpus = if ($script:HW -and $script:HW.Cpus) { $script:HW.Cpus } else { [Environment]::ProcessorCount }
     }
+
+    $cpuMinimum = Get-MiosCpuMinimum
+    $Cpus = Resolve-MiosCpuAllocation -AvailableCpus ([Environment]::ProcessorCount) -RequestedCpus $Cpus
 
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
     $winBuild = [Environment]::OSVersion.Version.Build
@@ -4182,6 +4212,12 @@ function Set-MiosWslConfig {
             $key = $Matches[1]
             $val = $Matches[2].Trim()
             if ($deprecatedKeys -contains $key -or $bootSectionKeys -contains $key) { continue }
+            if ($key -ieq 'processors') {
+                if ($val -notmatch '^([0-9]+)(\s*[#;].*)?$') {
+                    throw 'Existing WSL processors value must be an integer.'
+                }
+                if ([int]$Matches[1] -lt $cpuMinimum) { $val = "$cpuMinimum" }
+            }
             if ($defaultKeys.Contains($key)) {
                 # Preserve existing memory and processors limits unless -Force is specified
                 if (-not $Force -and ($key -ieq 'memory' -or $key -ieq 'processors') -and $val) {
