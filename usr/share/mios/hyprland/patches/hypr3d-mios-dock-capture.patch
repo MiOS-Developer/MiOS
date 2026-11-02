@@ -140,7 +140,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +    std::array<float,2> dockCaptureGlow{};
      float glassWindowAlpha = 1.0f;                       // MiOS: the client's composite opacity
  };
- 
+
 @@ -160,6 +162,8 @@
      front.glassMetrics = back.glassMetrics = poly.glassMetrics;
      front.glassDeco = back.glassDeco = poly.glassDeco;
@@ -148,7 +148,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +    front.dockCaptureColor = back.dockCaptureColor = poly.dockCaptureColor;
 +    front.dockCaptureGlow = back.dockCaptureGlow = poly.dockCaptureGlow;
      hasFront = hasBack = false;
- 
+
      const size_t COUNT = poly.verts.size();
 @@ -610,6 +614,8 @@
  uniform vec4 uGlassSurface;
@@ -162,7 +162,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 @@ -1258,6 +1264,33 @@
      return vec4((1.0 - h) * ((1.0 - s) * L * b + F), 1.0 - (1.0 - h) * (1.0 - s) * (1.0 - b));
  }
- 
+
 +// The same rounded material SDF and interpolated mesh UVs as the window face.
 +// No screen-space bounds, extra quad, depth change or second texture capture.
 +vec4 miosDockCapture(vec4 base, vec2 coord) {
@@ -210,7 +210,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +        vec2 coord=(capture-uGlassSurface.xy)/uGlassSurface.zw;
 +        c=miosDockCapture(c,coord);
 +    }
- 
+
      // Premultiplied mode (the 2D<->3D view morph): the scene buffer holds
      // color-already-multiplied-by-alpha, so the composite can stack the
 @@ -1771,6 +1812,8 @@
@@ -227,7 +227,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  ) {
      glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
- 
+
      glUniformMatrix4fv(
          m_sceneMVP,
 @@ -2838,6 +2882,7 @@
@@ -235,7 +235,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      // sits just above the solid ground quad so the two never z-fight.
      glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
- 
+
      glUniformMatrix4fv(
          m_sceneMVP,
 @@ -3168,6 +3213,8 @@
@@ -246,7 +246,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +        slab.front.dockCaptureGlow = window.dockCaptureGlow;
          slab.front.glassUV = {window.u0, window.v0,
                               window.u1 - window.u0, window.v1 - window.v0};
- 
+
 @@ -3212,6 +3259,8 @@
              slab.back.glassMetrics = slab.front.glassMetrics;
              slab.back.glassDeco = slab.front.glassDeco;
@@ -254,11 +254,11 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +            slab.back.dockCaptureColor = slab.front.dockCaptureColor;
 +            slab.back.dockCaptureGlow = slab.front.dockCaptureGlow;
              slab.back.glassUV = slab.front.glassUV;
- 
+
              for (int c = 0; c < 4; ++c) {
 @@ -3374,6 +3423,7 @@
      }
- 
+
      glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
      glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, vp.m.data());
@@ -305,9 +305,9 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +        } else glUniform2f(m_dockCaptureGlow,0.f,0.f);
          glDrawArrays(GL_TRIANGLES, 0,
                       static_cast<GLint>(verts.size() / 5));
- 
+
 @@ -3584,6 +3655,7 @@
- 
+
      glUniform1i(m_glassFace, 0);
      glUniform1i(m_glassWall, 0);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
@@ -316,51 +316,51 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          for (auto it = m_glassSlots.begin(); it != m_glassSlots.end();) {
 @@ -3661,6 +3733,7 @@
          addRect(verts, -halfTX, -outerY, halfTX, -innerY);
- 
+
          glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
- 
+
          const Mat4 IDENTITY = Mat4::identity();
          glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
 @@ -3764,6 +3837,7 @@
          }
- 
+
          glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
- 
+
          const Mat4 IDENTITY = Mat4::identity();
          glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
 @@ -3808,6 +3882,7 @@
          }
- 
+
          glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
- 
+
          const Mat4 IDENTITY = Mat4::identity();
          glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
 @@ -3934,6 +4009,7 @@
      }
- 
+
      glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
- 
+
      const Mat4 IDENTITY = Mat4::identity();
      glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, IDENTITY.m.data());
 @@ -4071,6 +4147,7 @@
          Mat4::scale(Vec3{2.0f / width, -2.0f / height, 1.0f});
- 
+
      glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
      glUniformMatrix4fv(m_sceneMVP, 1, GL_FALSE, ORTHO.m.data());
      glUniform4f(m_sceneUVRect, 0.f, 0.f, 1.f, 1.f);
      glUniform1i(m_sceneTextured, 0);
 @@ -4308,6 +4385,7 @@
- 
+
      // Everything after the windows (F3 HUD text) draws straight again.
      glUseProgram(m_sceneProgram);
 +    glUniform2f(m_dockCaptureGlow,0.f,0.f);
      glUniform1i(m_scenePremult, 0);
- 
+
      glDepthMask(GL_TRUE);
 diff --git a/src/main.cpp b/src/main.cpp
 --- a/src/main.cpp
@@ -380,17 +380,17 @@ diff --git a/src/main.cpp b/src/main.cpp
  #include <cstring>
 @@ -113,6 +116,8 @@
  static Compat::CWindowCapture g_environmentCapture;
- 
+
  static bool g_active = false;
 +static MiosDockCapture::Feedback g_dockCaptureFeedback;
 +static bool g_dockCapturePainted = false;
- 
+
  static float g_transition = 0.0f;
  static float g_transitionTarget = 0.0f;
 @@ -1489,6 +1494,83 @@
      return g_monitor;
  }
- 
+
 +// Per-output room visibility includes both transition directions, not only input ownership.
 +static bool dockCaptureSceneVisible(std::string_view output = {}) {
 +    if (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked()) return false;
@@ -486,7 +486,7 @@ diff --git a/src/main.cpp b/src/main.cpp
      // run together, applyViewMorph lands instantly when a FS phase starts).
      applyViewMorph(MON);
 +    applyDockCaptureFeedback(MON);
- 
+
      // Normal client interaction is a virtual pointer located exactly at the
      // crosshair. It is updated every frame after camera motion, so buttons,
 @@ -8540,6 +8626,54 @@
@@ -547,7 +547,7 @@ diff --git a/src/main.cpp b/src/main.cpp
 @@ -10853,6 +10987,9 @@
      }))
          throw std::runtime_error("[hypr3d] failed to register Lua posture");
- 
+
 +    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "dock_capture_feedback", luaDockCaptureFeedback))
 +        throw std::runtime_error("[hypr3d] failed to register Lua dock_capture_feedback");
 +
@@ -564,7 +564,7 @@ diff --git a/src/main.cpp b/src/main.cpp
                  } catch (...) {
 @@ -11100,6 +11238,7 @@
  }
- 
+
  APICALL EXPORT void PLUGIN_EXIT() {
 +    clearDockCaptureLayerFactors();
      // No event may call back into an unmapped plugin, even after a failed reload.
@@ -576,12 +576,12 @@ diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCo
 @@ -139,7 +139,7 @@
          for (const auto& LSREF : LAYERLIST) {
              const auto LS = LSREF.lock();
- 
+
 -            if (!LS || !LS->visible() || LS->m_layer == LAYER_BACKGROUND ||
 +            if (!LS || LS->m_namespace=="mios-dock-capture-glow" || !LS->visible() || LS->m_layer == LAYER_BACKGROUND ||
                  (underLayers && LS->m_layer != LAYER_BOTTOM))
                  continue;
- 
+
 diff --git a/tests/mios-dock-capture-feedback.cpp b/tests/mios-dock-capture-feedback.cpp
 new file mode 100644
 --- /dev/null
@@ -676,13 +676,13 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 +++ b/tests/mios-bsp-regression.cpp
 @@ -3,6 +3,8 @@
  #include "../src/Render/GLScene.cpp"
- 
+
  #include <stdexcept>
 +#include <fstream>
 +#include <iterator>
  #include <EGL/egl.h>
  #include <EGL/eglext.h>
- 
+
 @@ -146,6 +148,75 @@
      glDeleteProgram(program);
      glDeleteShader(vs);
