@@ -16,6 +16,7 @@ import http.server
 import socket
 import threading
 import shutil
+import tomllib
 
 ROOT = pathlib.Path(os.environ.get("MIOS_TEST_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 FETCHER = ROOT / "usr/libexec/mios/mios-models-firstboot"
@@ -93,6 +94,89 @@ class FirstbootLatest(unittest.TestCase):
 
     def _run(self):
         return subprocess.run([sys.executable, str(FETCHER)], env=self._env(), capture_output=True, text=True, timeout=120)
+
+    def _run_with_selinux(self, *, deny=False):
+        wrapper = self.t / "mios-model-label-probe.py"
+        label_log = self.t / "label-probe.jsonl"
+        wrapper.write_text(
+            "import os,pathlib,runpy,json\n"
+            "original=pathlib.Path.is_file\n"
+            "pathlib.Path.is_file=lambda p: True if str(p)=='/sys/fs/selinux/enforce' else original(p)\n"
+            "labels={}\n"
+            "def get(fd,key):\n"
+            " return labels.get(os.fstat(fd).st_ino,b'system_u:object_r:var_lib_t:s0')\n"
+            "def put(fd,key,value):\n"
+            " path=os.readlink('/proc/self/fd/'+str(fd))\n"
+            f" with open({str(label_log)!r},'a') as log: log.write(json.dumps({{'path':path,'label':value.rstrip(bytes([0])).decode()}})+'\\n')\n"
+            f" if {deny!r}: raise PermissionError('planted SELinux label denial')\n"
+            " labels[os.fstat(fd).st_ino]=value\n"
+            "os.getxattr=get;os.setxattr=put\n"
+            f"runpy.run_path({str(FETCHER)!r},run_name='__main__')\n")
+        result = subprocess.run([sys.executable, str(wrapper)], env=self._env(),
+                                capture_output=True, text=True, timeout=120)
+        records = [json.loads(line) for line in label_log.read_text().splitlines()] if label_log.exists() else []
+        return result, records
+
+    def test_shared_readonly_labels_apply_to_real_target_not_usr_link(self):
+        served = self.t / "usr/share/mios/llamacpp/models"
+        served.parent.mkdir(parents=True)
+        self.models.mkdir()
+        served.symlink_to(self.models, target_is_directory=True)
+        with self.toml.open("a") as config:
+            config.write(f'\n[llamacpp]\nmodels_dir="{served}"\nbake_models="lfm2-700m.gguf={REPO}:{FILE}"\n')
+        result, labels = self._run_with_selinux()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue((self.state / ".models-firstboot-done").exists(), result.stdout)
+        self.assertTrue((served / ".ready").exists())
+        paths = {row["path"] for row in labels}
+        self.assertIn(str(self.models), paths)
+        self.assertIn(str(self.models / ".ready"), paths)
+        self.assertTrue(any(path.endswith("lfm2-700m.gguf.part") for path in paths))
+        self.assertFalse(any(str(served) in path for path in paths))
+        self.assertEqual({"system_u:object_r:container_ro_file_t:s0"}, {row["label"] for row in labels})
+
+    def test_selinux_denial_invalidates_ready_and_completion_for_retry(self):
+        with self.toml.open("a") as config:
+            config.write(f'\n[llamacpp]\nbake_models="lfm2-700m.gguf={REPO}:{FILE}"\n')
+        result = self._run()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertTrue((self.models / ".ready").exists())
+        before = (self.models / "lfm2-700m.gguf").read_bytes()
+        result, labels = self._run_with_selinux(deny=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("planted SELinux label denial", result.stdout)
+        self.assertFalse((self.models / ".ready").exists())
+        self.assertFalse((self.state / ".models-firstboot-done").exists())
+        self.assertEqual(before, (self.models / "lfm2-700m.gguf").read_bytes())
+        self.assertTrue(labels)
+
+    def test_enabled_selinux_does_not_relabel_or_rewrite_baked_seed(self):
+        seed = self.t / "usr/share/mios/llamacpp/models"
+        seed.mkdir(parents=True)
+        (seed / "lfm2-700m.gguf").write_bytes(self.weights)
+        (seed / ".ready").touch()
+        digest = hashlib.sha256(self.weights).hexdigest()
+        (seed / "models.tsv").write_text("name\tsource\tcommit\tsha256\trecorded_at\n"
+            f"lfm2-700m.gguf\thttps://huggingface.co/{REPO}/resolve/{COMMIT}/{FILE}\t{COMMIT}\t{digest}\tbuilt\n")
+        before = {f.name:(f.read_bytes(),f.stat().st_mtime_ns,f.stat().st_mode) for f in seed.iterdir()}
+        with self.toml.open("a") as config:
+            config.write(f'\n[llamacpp]\nmodels_dir="{seed}"\nbake_models="lfm2-700m.gguf={REPO}:{FILE}"\n')
+        result, labels = self._run_with_selinux(deny=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual([], labels)
+        self.assertEqual(before, {f.name:(f.read_bytes(),f.stat().st_mtime_ns,f.stat().st_mode) for f in seed.iterdir()})
+        self.assertTrue((self.state / ".models-firstboot-done").exists(), result.stdout)
+
+    def test_shared_model_and_static_config_mounts_do_not_relabel_usr(self):
+        with (ROOT / "usr/share/mios/mios.toml").open("rb") as stream:
+            config = tomllib.load(stream)
+        for name in ("mios-cpu-node","mios-llm-light","mios-llm-worker@"):
+            volumes = config["containers"][name]["Container"]["Volume"]
+            model = [v for v in volumes if ":/models:" in v]
+            self.assertEqual(["/usr/share/mios/llamacpp/models:/models:ro"], model)
+        volumes = config["containers"]["mios-llm-light"]["Container"]["Volume"]
+        self.assertIn("/usr/share/mios/llamacpp/mios-llm-light.yaml:/app/config.yaml:ro", volumes)
+        self.assertTrue(any(v.endswith(":Z") and "/slots" in v for v in volumes))
 
     def test_real_curl_retries_interrupted_range_without_publishing_partial_readiness(self):
         payload = b"GGUF" + bytes(range(256)) * 64

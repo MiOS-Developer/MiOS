@@ -11,6 +11,7 @@ import re
 import time
 import tempfile
 import stat
+import errno
 
 MODELS_DIR = pathlib.Path("/var/lib/mios/llamacpp/models")
 SENTINEL = pathlib.Path("/var/lib/mios/.models-firstboot-done")
@@ -83,6 +84,24 @@ def _resolve_hf(source):
     raise RuntimeError(f"{path} is not in {repo}@{commit}")
 
 
+def _publish_model_label(descriptor):
+    """Shared read-only model content; never label the logical /usr symlink."""
+    if not pathlib.Path("/sys/fs/selinux/enforce").is_file():
+        return False
+    label = b"system_u:object_r:container_ro_file_t:s0"
+    try:
+        current = os.getxattr(descriptor, "security.selinux").rstrip(b"\0")
+    except OSError as error:
+        if error.errno != errno.ENODATA:
+            raise
+        current = b""
+    if current != label:
+        # The descriptor is already verified as this artifact or its real
+        # serving directory. A label failure withholds readiness and retries.
+        os.setxattr(descriptor, "security.selinux", label + b"\0")
+    return True
+
+
 def _publish_access(path, directory):
     """Verified public model artifacts inherit their serving directory's reader identity."""
     if os.name != "posix":
@@ -96,6 +115,13 @@ def _publish_access(path, directory):
         if (current.st_uid, current.st_gid) != (owner.st_uid, owner.st_gid):
             os.fchown(descriptor, owner.st_uid, owner.st_gid)
         os.fchmod(descriptor, 0o640)
+        if _publish_model_label(descriptor):
+            directory_descriptor = os.open(directory.resolve(strict=True),
+                                           os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                _publish_model_label(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
     finally:
         os.close(descriptor)
 
@@ -332,6 +358,7 @@ def _provision():
     if required and required.issubset(verified) and not invalid_required:
         if not baked:
             _ready_marker.touch()
+            _publish_access(_ready_marker, serving)
     elif required or invalid_required or failures:
         _clear_marker(_ready_marker)
     missing = sorted(set(models) - verified)
