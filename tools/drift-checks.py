@@ -4731,50 +4731,104 @@ def check_generator_host_parity() -> int:
 
 
 def check_doc_port_scheme() -> int:
-    import os, sys, tomllib
+    import tomllib
 
     root = os.environ.get("MIOS_DRIFT_ROOT", ".")
     toml_path = os.path.join(root, "usr/share/mios/mios.toml")
-    if not os.path.isfile(toml_path):
-        # A tracked deliverable. Its absence is the anomaly, not a
-        # reason to report success.
-        print('check_doc_port_scheme: a required SSOT file is missing, so nothing was'
-              ' compared', file=sys.stderr)
+    try:
+        with open(toml_path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, ValueError) as exc:
+        print(f"check_doc_port_scheme: cannot read required SSOT: {exc}", file=sys.stderr)
+        return 1
+    docs = data.get("docs")
+    if not isinstance(docs, dict):
+        print("check_doc_port_scheme: [docs] is missing or malformed", file=sys.stderr)
         return 1
 
-    with open(toml_path, "rb") as fh:
-        docs = tomllib.load(fh).get("docs", {}) or {}
-
-    ret_ports = "|".join(str(p) for p in docs.get("retired_ports", []))
-    port_clean = docs.get("port_clean", [])
-
-    if not ret_ports:
-        print("check_doc_port_scheme: [docs].retired_ports is empty or unreadable", file=sys.stderr)
+    retired = docs.get("retired_ports")
+    port_clean = docs.get("port_clean")
+    exemptions = docs.get("retired_code_exemptions", [])
+    if (not isinstance(retired, list) or not retired
+            or any(type(p) is not int or not 1 <= p <= 65535 for p in retired)):
+        print("check_doc_port_scheme: [docs].retired_ports must be a nonempty port list",
+              file=sys.stderr)
         return 1
+    for key, paths, required in (("port_clean", port_clean, True),
+                                 ("retired_code_exemptions", exemptions, False)):
+        if (not isinstance(paths, list) or (required and not paths)
+                or any(not isinstance(p, str) or not p.strip() for p in paths)):
+            print(f"check_doc_port_scheme: [docs].{key} must name "
+                  "readable files in a path list", file=sys.stderr)
+            return 1
 
-    import re
     viol = []
-    pat = re.compile(rf"(^|[^0-9])({ret_ports})([^0-9]|$)")
+    pat = re.compile(rf"(^|[^0-9])({'|'.join(str(p) for p in retired)})([^0-9]|$)")
+    # Only this renderer-owned comment is provenance. Remove the comment, not
+    # its entire line: a port reference following it must still fail.
+    provenance = re.compile(
+        r"<!-- mios-src:[0-9a-f]{12} from [^<>\r\n]+:[1-9][0-9]*-[1-9][0-9]* -->")
+    block_start = re.compile(r"<!-- MIOS-GEN:ports:([a-z0-9_-]+) -->")
+    ports = data.get("ports", {})
+    categories = ports.get("categories", {}) if isinstance(ports, dict) else {}
+    pinned_rows = {}
+    if isinstance(categories, dict):
+        for category, spec in categories.items():
+            if not isinstance(spec, dict) or not isinstance(spec.get("pinned"), dict):
+                continue
+            # A current pinned allocation is not a retired endpoint. Accept
+            # only its exact SSOT row in that category's generated block;
+            # prose, URLs, stale values and unpinned bindings still fail.
+            pinned_rows[category] = {
+                f"| {category} | {key} (pinned) | {value} |"
+                for key, value in spec["pinned"].items()
+                if type(value) is int and ports.get(key) == value
+            }
+
+    def text_lines(path, binary_ok=False):
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            if binary_ok:
+                head = raw[:8192]
+                # Recognize shipped artifact formats by bytes, never by their
+                # path/extension. An invalid source file is not a binary waiver.
+                magic = (b"\x7fELF", b"MZ", b"\x89PNG\r\n\x1a\n",
+                         b"\x00\x01\x00\x00", b"OTTO", b"ttcf", b"wOFF", b"wOF2",
+                         b"PK\x03\x04")
+                payload = head.split(b"\n", 1)[1] if head.startswith(b"#!") and b"\n" in head else head
+                if b"\x00" in head and (head.startswith(magic) or payload.startswith(b"PK\x03\x04")):
+                    return []
+            text = raw.decode("utf-8")
+            if "\x00" in text:
+                raise ValueError("NUL byte in a text input")
+            return text.splitlines()
+        except (OSError, ValueError) as exc:
+            viol.append(f"check_doc_port_scheme: cannot read text input {_under(path, root)}: {exc}")
+            return []
 
     for f in port_clean:
-        if not f:
-            continue
         full_p = os.path.join(root, f)
         if not os.path.isfile(full_p):
             viol.append(f"[docs].port_clean names a missing file: {f}")
             continue
-        try:
-            with open(full_p, "r", encoding="utf-8", errors="ignore") as fh:
-                for idx, line in enumerate(fh, 1):
-                    if pat.search(line):
-                        viol.append(f"retired port literal in {f}:{idx}: {line.strip()}")
-        except OSError:
-            pass
+        category = None
+        for idx, raw_line in enumerate(text_lines(full_p), 1):
+            line = provenance.sub("", raw_line)
+            marker = block_start.fullmatch(line.strip())
+            if marker:
+                category = marker.group(1)
+            elif line.strip().startswith("<!-- /MIOS-GEN:ports:"):
+                category = None
+            if pat.search(line) and line.strip() not in pinned_rows.get(category, set()):
+                viol.append(f"retired port literal in {f}:{idx}: {raw_line.strip()}")
 
-    # Code surface scanning (task_946 / LAW5-01):
-    code_exemptions, scanned_exempt_hits = set(docs.get("retired_code_exemptions", [])), set()
+    # Code surface scanning (task_946 / LAW5-01).
+    code_exemptions, scanned_exempt_hits = set(exemptions), set()
     max_ex = docs.get("max_retired_code_exemptions")
-    if max_ex is not None and len(code_exemptions) != max_ex:
+    if max_ex is not None and (type(max_ex) is not int or max_ex < 0):
+        viol.append("[docs].max_retired_code_exemptions must be a nonnegative integer")
+    elif max_ex is not None and len(code_exemptions) != max_ex:
         tag = "EXCEEDS ceiling" if len(code_exemptions) > max_ex else "is BELOW ceiling"
         viol.append(f"[docs].retired_code_exemptions count {len(code_exemptions)} {tag} {max_ex}" +
                     (" -- lower max_retired_code_exemptions to lock in progress" if len(code_exemptions) < max_ex else ""))
@@ -4785,23 +4839,24 @@ def check_doc_port_scheme() -> int:
         full_c = os.path.join(root, c_dir)
         if not os.path.isdir(full_c):
             continue
-        for dp, _, files in os.walk(full_c):
-            if "__pycache__" in dp or ".git" in dp:
-                continue
+        def walk_error(exc):
+            viol.append(f"check_doc_port_scheme: cannot scan {c_dir}: {exc}")
+        for dp, dirs, files in os.walk(full_c, onerror=walk_error):
+            dirs[:] = [d for d in dirs if d not in {"__pycache__", ".git"}]
             for fname in files:
                 full_path = os.path.join(dp, fname)
+                # An alias is path metadata, not a second source file. Never
+                # follow a host-absolute link out of the checkout being checked.
+                if os.path.islink(full_path):
+                    continue
                 rel_path = os.path.relpath(full_path, root).replace("\\", "/")
-                try:
-                    with open(full_path, "r", encoding="utf-8", errors="ignore") as fh:
-                        for idx, line in enumerate(fh, 1):
-                            m = pat.search(line)
-                            if m:
-                                if rel_path in code_exemptions:
-                                    scanned_exempt_hits.add(rel_path)
-                                else:
-                                    viol.append(f"retired port {m.group(2)} in code file {rel_path}:{idx}: {line.strip()}")
-                except OSError:
-                    pass
+                for idx, line in enumerate(text_lines(full_path, binary_ok=True), 1):
+                    m = pat.search(line)
+                    if m:
+                        if rel_path in code_exemptions:
+                            scanned_exempt_hits.add(rel_path)
+                        else:
+                            viol.append(f"retired port {m.group(2)} in code file {rel_path}:{idx}: {line.strip()}")
     for sf in sorted(code_exemptions - scanned_exempt_hits):
         viol.append(f"[docs].retired_code_exemptions contains clean file {sf} -- remove it to shrink the register")
     if viol:
@@ -4809,6 +4864,7 @@ def check_doc_port_scheme() -> int:
             print(v, file=sys.stderr)
         return 1
     return 0
+
 
 def check_blade_reconcile_schema() -> int:
     import os, re, sys

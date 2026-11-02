@@ -7,6 +7,8 @@ that they are now reachable from a test, so this asserts exactly that.
 """
 import ast
 import importlib.util
+import contextlib
+import io
 import os
 import re
 import shutil
@@ -14,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -51,6 +55,205 @@ class TestConfiguredResolver(unittest.TestCase):
             self.assertIn("execution failed", r.stderr)
             self.assertIn(path, r.stderr)
             self.assertNotIn("Traceback", r.stderr)
+
+
+class TestDocPortScheme(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="mios-doc-port-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.write("README.md", "Use the SSOT port keys.\n")
+        self.policy()
+
+    def write(self, path, body):
+        full = self.root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(body, bytes):
+            full.write_bytes(body)
+        else:
+            full.write_text(body, encoding="utf-8")
+        return full
+
+    def policy(self, retired="[11450, 8888, 8640]", paths='["README.md"]',
+               exemptions="[]", ceiling=0):
+        self.write("usr/share/mios/mios.toml", f"""
+[ports]
+win_llm_light = 11450
+searxng_internal = 8888
+[ports.categories.inference.pinned]
+win_llm_light = 11450
+[ports.categories.webtools.pinned]
+searxng_internal = 8888
+[docs]
+retired_ports = {retired}
+port_clean = {paths}
+retired_code_exemptions = {exemptions}
+max_retired_code_exemptions = {ceiling}
+""")
+
+    def check(self):
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, MIOS_DRIFT_ROOT=str(self.root)):
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                code = MOD.check_doc_port_scheme()
+        return code, output.getvalue()
+
+    def test_plain_source_and_current_port_keys_pass(self):
+        self.write("usr/libexec/mios/serve", '#!/bin/sh\nexec service "$MIOS_PORT_LLM_LIGHT"\n')
+        self.assertEqual((0, ""), self.check())
+
+    def test_real_elf_font_png_and_zipapp_are_not_source(self):
+        for rel in ("usr/libexec/mios/wayvnc/wayvnc",
+                    "usr/lib/mios/portal/fonts/TwemojiMozilla.ttf",
+                    "usr/lib/mios/portal/browser/chrome/icons/default/default16.png",
+                    "usr/libexec/mios/mios-dashboard"):
+            source = Path(_ROOT) / rel
+            # These are shipped artifacts, rather than fake UTF-8 bytes with
+            # a binary extension. Embed retired digits to make the control fail
+            # under the former lossy text scanner, regardless of build contents.
+            if not source.is_file():
+                if rel.endswith("default16.png"):
+                    source = next((Path(_ROOT) / "usr/lib/mios/portal").rglob("*.png"))
+                else:
+                    self.fail(f"required artifact fixture absent: {source}")
+            self.write("usr/lib/mios/artifacts/" + source.name,
+                       source.read_bytes() + b"\n11450\n8888\n")
+        self.assertEqual((0, ""), self.check())
+
+    def test_binary_extension_cannot_hide_text_port(self):
+        self.write("usr/lib/mios/renamed.so", "PORT = 8640\n")
+        code, output = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("retired port 8640 in code file usr/lib/mios/renamed.so:1", output)
+
+    def test_generated_provenance_ranges_are_not_ports(self):
+        for first, last in ((8432, 8432), (8640, 8672), (11450, 11450)):
+            with self.subTest(first=first):
+                self.write("README.md",
+                           f"<!-- mios-src:f9c9aeeb4bbd from usr/share/mios/mios.toml:{first}-{last} -->\n")
+                self.assertEqual((0, ""), self.check())
+
+    def test_provenance_cannot_hide_adjacent_or_malformed_reference(self):
+        for body in (
+            "<!-- mios-src:f9c9aeeb4bbd from source.py:8640-8641 --> http://localhost:11450/v1",
+            "<!-- mios-src:not-a-hash from source.py:8640-8641 -->",
+            "<!-- unrelated comment: 11450 -->",
+        ):
+            with self.subTest(body=body):
+                self.write("README.md", body + "\n")
+                code, output = self.check()
+                self.assertEqual(1, code)
+                self.assertIn("retired port literal in README.md:1", output)
+
+    def test_current_pinned_rows_in_own_generated_blocks_pass(self):
+        self.write("README.md", """<!-- MIOS-GEN:ports:inference -->
+| inference | win_llm_light (pinned) | 11450 |
+<!-- /MIOS-GEN:ports:inference -->
+<!-- MIOS-GEN:ports:webtools -->
+| webtools | searxng_internal (pinned) | 8888 |
+<!-- /MIOS-GEN:ports:webtools -->
+""")
+        self.assertEqual((0, ""), self.check())
+
+    def test_pinned_numbers_still_fail_outside_exact_current_row(self):
+        for body in (
+            "| inference | win_llm_light (pinned) | 11450 |",
+            "<!-- MIOS-GEN:ports:webtools -->\n| inference | win_llm_light (pinned) | 11450 |",
+            "<!-- MIOS-GEN:ports:inference -->\n| inference | win_llm_light (pinned) | 8888 |",
+            "<!-- MIOS-GEN:ports:inference -->\n| inference | win_llm_light | 11450 |",
+            "<!-- MIOS-GEN:ports:inference -->\nhttp://localhost:11450/v1",
+            "<!-- MIOS-GEN:ports:inference -->\n<!-- /MIOS-GEN:ports:inference -->\n| inference | win_llm_light (pinned) | 11450 |",
+        ):
+            with self.subTest(body=body):
+                self.write("README.md", body + "\n")
+                code, output = self.check()
+                self.assertEqual(1, code)
+                self.assertIn("retired port literal", output)
+
+    def test_stale_pinned_allocation_fails(self):
+        p = self.root / "usr/share/mios/mios.toml"
+        p.write_text(p.read_text().replace("[ports]\nwin_llm_light = 11450",
+                                          "[ports]\nwin_llm_light = 8500"))
+        self.write("README.md", "<!-- MIOS-GEN:ports:inference -->\n"
+                   "| inference | win_llm_light (pinned) | 11450 |\n")
+        self.assertEqual(1, self.check()[0])
+
+    def test_live_retired_literals_in_docs_and_code_fail(self):
+        for path in ("README.md", "usr/libexec/mios/serve",
+                     "usr/lib/mios/renamed-without-extension"):
+            for body in ("http://localhost:11450/v1", "LEGACY_PORT = 8640"):
+                with self.subTest(path=path, body=body):
+                    p = self.write(path, body + "\n")
+                    code, output = self.check()
+                    self.assertEqual(1, code)
+                    self.assertIn(path + ":1", output)
+                    p.unlink()
+                    self.write("README.md", "Clean again.\n")
+
+    def test_declared_doc_binary_or_invalid_utf8_fails_closed(self):
+        for body in (b"\x7fELF\x00\n11450", b"clean\n\xff", b"clean\x00text"):
+            with self.subTest(body=body):
+                self.write("README.md", body)
+                code, output = self.check()
+                self.assertEqual(1, code)
+                self.assertIn("cannot read text input README.md", output)
+
+    def test_invalid_source_bytes_are_not_silently_ignored(self):
+        for body in (b"#!/bin/sh\nPORT=8640\x00", b"PORT=\xff8640"):
+            with self.subTest(body=body):
+                self.write("usr/libexec/mios/serve", body)
+                code, output = self.check()
+                self.assertEqual(1, code)
+                self.assertIn("cannot read text input usr/libexec/mios/serve", output)
+
+    def test_unreadable_doc_or_source_fails_closed(self):
+        original_open = open
+        for rel in ("README.md", "usr/libexec/mios/serve"):
+            denied = self.write(rel, "clean\n")
+            def deny(path, *args, **kwargs):
+                if os.fspath(path) == str(denied):
+                    raise PermissionError("planted unreadable file")
+                return original_open(path, *args, **kwargs)
+            with self.subTest(rel=rel), mock.patch("builtins.open", side_effect=deny):
+                code, output = self.check()
+                self.assertEqual(1, code)
+                self.assertIn("planted unreadable file", output)
+                self.assertIn(rel, output)
+
+    def test_missing_or_malformed_declared_policy_cannot_pass(self):
+        for retired, paths in (("[]", '["README.md"]'), ('["11450"]', '["README.md"]'),
+                               ("[true]", '["README.md"]'), ("[65536]", '["README.md"]'),
+                               ("[11450]", "[]"), ("[11450]", '"README.md"'),
+                               ("[11450]", '[""]'), ("[11450]", '["missing.md"]')):
+            with self.subTest(retired=retired, paths=paths):
+                self.policy(retired=retired, paths=paths)
+                self.assertEqual(1, self.check()[0])
+        self.write("usr/share/mios/mios.toml", "not = [valid")
+        code, output = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("cannot read required SSOT", output)
+        (self.root / "usr/share/mios/mios.toml").unlink()
+        self.assertEqual(1, self.check()[0])
+
+    def test_alias_metadata_is_not_followed_outside_checkout(self):
+        alias = self.root / "usr/libexec/mios/alias"
+        alias.parent.mkdir(parents=True)
+        alias.symlink_to("/nonexistent/mios-runtime-target")
+        self.assertEqual((0, ""), self.check())
+        self.policy(paths='["usr/libexec/mios/alias"]')
+        self.assertEqual(1, self.check()[0])
+
+    def test_exemption_register_remains_shrink_only(self):
+        path = "usr/lib/mios/fixture.py"
+        self.write(path, "PORT = 8640\n")
+        self.policy(exemptions=f'["{path}"]', ceiling=1)
+        self.assertEqual((0, ""), self.check())
+        self.write(path, "PORT_KEY = 'llm_light'\n")
+        code, output = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("contains clean file", output)
+        self.policy(exemptions=f'["{path}"]', ceiling=0)
+        self.assertIn("EXCEEDS ceiling", self.check()[1])
 
 
 class TestExtractedChecks(unittest.TestCase):
