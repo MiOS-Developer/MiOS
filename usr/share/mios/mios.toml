@@ -14888,7 +14888,7 @@ Environment = [
   "POSTGRES_DB=${MIOS_PGVECTOR_DB:-mios}",
   "PGDATA=/var/lib/postgresql/data/pgdata"
 ]
-Exec = "postgres -c port=${MIOS_PORTS_PGVECTOR:-8600} -c listen_addresses=${MIOS_PG_BIND_ADDR:-127.0.0.1} -c hnsw.iterative_scan=${MIOS_PGVECTOR_HNSW_ITERATIVE_SCAN:-strict_order} -c hnsw.max_scan_tuples=${MIOS_PGVECTOR_HNSW_MAX_SCAN_TUPLES:-20000} -c hnsw.scan_mem_multiplier=${MIOS_PGVECTOR_HNSW_SCAN_MEM_MULTIPLIER:-1}"
+Exec = "postgres -c port=${MIOS_PORTS_PGVECTOR} -c listen_addresses=${MIOS_PG_BIND_ADDR:-127.0.0.1} -c hnsw.iterative_scan=${MIOS_PGVECTOR_HNSW_ITERATIVE_SCAN:-strict_order} -c hnsw.max_scan_tuples=${MIOS_PGVECTOR_HNSW_MAX_SCAN_TUPLES:-20000} -c hnsw.scan_mem_multiplier=${MIOS_PGVECTOR_HNSW_SCAN_MEM_MULTIPLIER:-1}"
 Group = "${MIOS_SERVICES_PGVECTOR_GID:-826}"
 Image = "${MIOS_PGVECTOR_IMAGE:-docker.io/pgvector/pgvector:pg18}"
 Label = [
