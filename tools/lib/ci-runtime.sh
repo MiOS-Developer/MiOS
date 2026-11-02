@@ -109,6 +109,9 @@ mios_ci_build_portal() (
     # Buildah context-overlay upper/work stays on the runner filesystem.
     mkdir -m 1777 "$state/tmp"
     overlay="$state/paths.toml"
+    # Buildah's OCI RUN lacks a systemd bus. Keep its cgroup manager private
+    # to this nested CI builder; host builds retain their normal configuration.
+    printf '%s\n' '[engine]' 'cgroup_manager = "cgroupfs"' >"$state/containers.conf"
     [[ "$PB_ICON_SRC" = /* && "$PB_ICON_SRC" != *"/../"* ]] || {
         echo "Portal icon must be an absolute checkout path" >&2; exit 1;
     }
@@ -146,6 +149,7 @@ PY
     trap 'sudo podman rm --force podman-MiOS-DEV >/dev/null' EXIT
     ts="$(date -u +%Y%m%dT%H%M%SZ)"
     sudo podman exec \
+        -e CONTAINERS_CONF_OVERRIDE=/var/lib/mios-build/containers.conf \
         -e MIOS_PORTAL_BOOTSTRAP_PACKAGES="$bootstrap_packages" \
         -e MIOS_VENDOR_TOML="$workspace/usr/share/mios/mios.toml" \
         -e MIOS_HOST_TOML=/var/lib/mios-build/paths.toml \

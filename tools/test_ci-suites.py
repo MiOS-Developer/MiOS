@@ -701,7 +701,8 @@ class TestPortalRuntimeContext(unittest.TestCase):
     """Execute the CI producer with a private runtime that rejects overlay-backed temp."""
 
     def _run_producer(self, *, omit_temp_mount=False, runtime_failure=False, collision=False,
-                      requested_cpus="4", minimum="4", host_cpus=4, operation="portal"):
+                      requested_cpus="4", minimum="4", host_cpus=4, operation="portal",
+                      omit_manager_override=False, manager="cgroupfs"):
         with tempfile.TemporaryDirectory(prefix="mios-portal-context-") as tmp:
             base = Path(tmp)
             root, state, calls = base / "checkout", base / "private state", base / "calls.jsonl"
@@ -738,6 +739,12 @@ else:
                 mount = '-v "$state/tmp:/var/tmp:rw" '
                 self.assertEqual(helper.count(mount), 1)
                 helper = helper.replace(mount, "")
+            if omit_manager_override:
+                override = "-e CONTAINERS_CONF_OVERRIDE=/var/lib/mios-build/containers.conf "
+                self.assertEqual(helper.count(override), 1)
+                helper = helper.replace(override, "")
+            if manager != "cgroupfs":
+                helper = helper.replace('cgroup_manager = "cgroupfs"', f'cgroup_manager = "{manager}"')
             source = base / "runtime.sh"
             source.write_text(helper)
             shipped_helper = root / "tools/lib/ci-runtime.sh"
@@ -747,7 +754,7 @@ else:
             shim.mkdir()
             sudo = shim / "sudo"
             sudo.write_text(f"""#!{sys.executable}
-import json, pathlib, sys
+import json, pathlib, sys, tomllib
 calls = pathlib.Path({str(calls)!r})
 args = sys.argv[1:]
 with calls.open("a") as output:
@@ -763,6 +770,14 @@ if args[:2] == ["podman", "exec"]:
     path = pathlib.Path(temp[0].rsplit(":", 2)[0])
     assert path.is_dir() and path.parent == pathlib.Path({str(state)!r})
     assert path.stat().st_mode & 0o7777 == 0o1777
+    state_mount = next(item for item in mounts if item.endswith(":/var/lib/mios-build:rw"))
+    state_path = pathlib.Path(state_mount.rsplit(":", 2)[0])
+    config = state_path / "containers.conf"
+    configured = (tomllib.loads(config.read_text()).get("engine") or {{}}).get("cgroup_manager")
+    if ("CONTAINERS_CONF_OVERRIDE=/var/lib/mios-build/containers.conf" not in args
+            or configured != "cgroupfs"):
+        print("crun: cannot open sd-bus: No such file or directory", file=sys.stderr)
+        sys.exit(87)
     if {runtime_failure!r}:
         print("fixture: inner builder failed", file=sys.stderr)
         sys.exit(43)
@@ -797,6 +812,25 @@ if args[:2] == ["podman", "exec"]:
         self.assertTrue(any(row[:2] == ["podman", "exec"] for row in calls))
         self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
         self.assertTrue(any(row[0] == "chown" for row in calls))
+
+    def test_nested_manager_override_is_private_to_the_exec(self):
+        result, calls, _ = self._run_producer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = next(row for row in calls if row[:2] == ["podman", "run"])
+        execute = next(row for row in calls if row[:2] == ["podman", "exec"])
+        setting = "CONTAINERS_CONF_OVERRIDE=/var/lib/mios-build/containers.conf"
+        self.assertIn(setting, execute)
+        self.assertNotIn(setting, run)
+        self.assertFalse(any("/etc/containers" in arg for row in calls for arg in row))
+
+    def test_missing_or_systemd_manager_reproduces_bus_failure_and_cleans_container(self):
+        for options in ({"omit_manager_override": True}, {"manager": "systemd"}):
+            with self.subTest(options=options):
+                result, calls, _ = self._run_producer(**options)
+                self.assertEqual(result.returncode, 87, result.stderr)
+                self.assertIn("cannot open sd-bus", result.stderr)
+                self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
+                self.assertFalse(any(row[0] == "chown" for row in calls))
 
     def test_missing_temp_bind_reproduces_context_failure_and_cleans_owned_container(self):
         result, calls, _ = self._run_producer(omit_temp_mount=True)
