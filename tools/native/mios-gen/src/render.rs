@@ -7198,7 +7198,8 @@ pub mod hyprglass_build {
 
     /// Upstream repository of a cloned plugin. `source_revision` pins are refused: the policy is
     /// latest upstream (resolved and logged at build time), so a stale pin cannot silently hold a
-    /// plugin back or be mistaken for what was built.
+    /// plugin back or be mistaken for what was built. Reviewed compositor-specific
+    /// compatibility holds are validated separately against the installed SDK.
     fn upstream_source<'a>(p: &'a Value, plugin: &str) -> Result<&'a str, String> {
         if p.get("source_revision").is_some() {
             return Err(format!(
@@ -7206,6 +7207,30 @@ pub mod hyprglass_build {
             ));
         }
         value(p, "source_repository")
+    }
+
+    /// An explicit reviewed hold is tied to one installed compositor version. Default upstream
+    /// policy remains unchanged; upgrading the compositor requires reviewing the hold and patches.
+    fn compatibility_pin(p: &Value, plugin: &str, installed: &str) -> Result<Option<String>, String> {
+        let Some(raw) = p.get("compatibility") else { return Ok(None); };
+        let table = raw.as_table().ok_or_else(|| format!("{plugin}: compatibility must be a table"))?;
+        if table.keys().any(|k| !matches!(k.as_str(), "hyprland_version" | "revision" | "reason")) {
+            return Err(format!("{plugin}: compatibility has an unknown field"));
+        }
+        let required = |key: &str| -> Result<&str, String> {
+            table.get(key).and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| format!("{plugin}: compatibility.{key} must be a non-empty string"))
+        };
+        let version = required("hyprland_version")?;
+        let revision = required("revision")?;
+        required("reason")?;
+        if revision.len() != 40 || !revision.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("{plugin}: compatibility.revision must be a full Git commit"));
+        }
+        if version != installed {
+            return Err(format!("{plugin}: compatibility hold targets Hyprland {version}, installed {installed}; review the hold and patch stack before upgrading"));
+        }
+        Ok(Some(revision.to_ascii_lowercase()))
     }
 
     /// Fixed prefix the plugin SDK temp dir is mapped to (`-ffile-prefix-map`), so two builds of the
@@ -7340,6 +7365,24 @@ pub mod hyprglass_build {
                 .unwrap()
                 .success();
             assert!(ok, "git {args:?}");
+        }
+        #[test]
+        fn compatibility_hold_requires_matching_sdk_and_documented_full_commit() {
+            let pin = "9301dcf6d0625daf632d5be04f2a3cefabec1769";
+            let p: Value = toml::from_str(&format!(
+                "[compatibility]\nhyprland_version = '0.56.2'\nrevision = '{pin}'\nreason = 'The reviewed patches target this SDK.'\n"
+            )).unwrap();
+            assert_eq!(compatibility_pin(&p, "hypr3d", "0.56.2").unwrap().as_deref(), Some(pin));
+            assert!(compatibility_pin(&p, "hypr3d", "0.57.0").unwrap_err().contains("review the hold"));
+            assert_eq!(compatibility_pin(&Value::Table(Default::default()), "hypr3d", "0.56.2").unwrap(), None);
+            for (key, val) in [("revision", "abc"), ("reason", ""), ("hyprland_version", "")] {
+                let mut bad = p.clone();
+                bad["compatibility"][key] = Value::String(val.into());
+                assert!(compatibility_pin(&bad, "hypr3d", "0.56.2").is_err(), "{key}");
+            }
+            let mut bad = p.clone();
+            bad["compatibility"]["typo"] = Value::Boolean(true);
+            assert!(compatibility_pin(&bad, "hypr3d", "0.56.2").unwrap_err().contains("unknown field"));
         }
         #[test]
         fn plugins_build_latest_upstream_and_refuse_pins() {
@@ -7563,9 +7606,11 @@ pub mod hyprglass_build {
             format!("tree:{rel}")
         } else {
             // Policy (operator, 2026-10-16): latest upstream, fail loudly. The SSOT names the
-            // repository only; the build takes its default-branch HEAD, logs the resolved commit,
-            // and the reviewed MiOS patches below are the drift gate.
+            // repository; default builds take its HEAD. An explicit reviewed compatibility
+            // hold is valid only for its declared compositor version. Every selected commit
+            // is logged and the reviewed MiOS patches below remain the drift gate.
             let url = upstream_source(p, plugin)?;
+            let held = compatibility_pin(p, plugin, &installed)?;
             command(
                 "git",
                 &[
@@ -7583,7 +7628,17 @@ pub mod hyprglass_build {
             // publishes hyprpm.toml commit_pins (Hyprland commit -> plugin commit, the map hyprpm itself
             // uses; HEAD follows hyprland-git) is moved to the entry for the installed Hyprland release,
             // whose commit is resolved now from its tag. No hyprpm.toml or no entry keeps HEAD. Nothing is
-            // pinned in the SSOT: the resolved commit is only logged.
+            // held by default; a declared compositor-specific compatibility hold is checked first.
+            if let Some(pin) = held {
+                if pin != head {
+                    command("git", &["fetch".into(), "-q".into(), "--depth=1".into(), "origin".into(), pin.clone()], &repo)
+                        .map_err(|e| format!("{plugin}: fetching reviewed compatibility commit {pin}: {e}"))?;
+                    command("git", &["checkout".into(), "-q".into(), pin.clone()], &repo)?;
+                }
+                let reason = value(&p["compatibility"], "reason")?;
+                eprintln!("[build-hyprland-plugin] {plugin}: reviewed compatibility hold {pin} for Hyprland {installed}: {reason}");
+                pin
+            } else {
             match fs::read_to_string(repo.join("hyprpm.toml")) {
                 Ok(text) => match hyprpm_pin(&text, &hyprland_commit(h, &installed, sdk)?)? {
                     Some(pin) if pin != head => {
@@ -7600,6 +7655,7 @@ pub mod hyprglass_build {
                     }
                 },
                 Err(_) => head,
+            }
             }
         };
         if plugin == "hyprglass" {

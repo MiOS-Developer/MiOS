@@ -454,3 +454,8 @@ transitions. The shell waits for a fresh reply before drawing flat feedback
 and suppresses its flat rings while the room owns rendering. Unknown or
 expired replies do not create flat rings over transformed windows. Keyboard
 shortcuts and double Guide use this same capture path.
+
+A reviewed `desktop.hyprland.hypr3d.compatibility` hold ties the renderer's
+source commit to its installed compositor version and records the reason.
+An incompatible compositor version fails the build until the hold and patch
+stack are reviewed. Plugins without a hold retain the upstream source policy.

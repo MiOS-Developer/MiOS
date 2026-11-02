@@ -9512,6 +9512,13 @@ path = "/usr/lib64/mios/hypr3d.so"
 patches = ["usr/share/mios/hyprland/patches/hypr3d-mios-glass.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-render-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-ssaa.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-stills.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-frame-rate.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-retina-spawn.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-transform.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-enter-morph-scale.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch", "usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch"]
 toggle_key = "SUPER + F12"
 
+# The existing MiOS patch stack targets this compositor ABI. Upstream HEAD changed its
+# render interfaces; review and rebase the stack before advancing this explicit hold.
+[desktop.hyprland.hypr3d.compatibility]
+hyprland_version = "0.56.2"
+revision = "9301dcf6d0625daf632d5be04f2a3cefabec1769"
+reason = "Reviewed MiOS Hypr3D patch stack for the installed Hyprland 0.56.2 SDK; newer upstream render interfaces require a patch-stack rebase."
+
 [desktop.hyprland.hypr3d.config]
 # One glass look (MiOS rule): the room's glass is the [desktop.hyprland.hyprglass.presets] entry the desktop draws
 # windows with. mios-gen hyprland-3d-toggle resolves it as hyprglass does (theme table, preset, inherits, hyprglass
