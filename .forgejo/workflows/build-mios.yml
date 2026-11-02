@@ -44,6 +44,12 @@ jobs:
             fi
           fi
 
+      - name: Admit runner CPU capacity
+        shell: bash
+        run: |
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_require_host_cpus .
+
       - name: Provision the analysis toolchain
         # The package list is [ci.python] in the SSOT, so this runner installs
         # exactly what the GitHub publisher installs.

@@ -149,22 +149,24 @@ def _effective_cpu_capacity(*, affinity=None,
     return capacity
 
 
-def cmd_require_cpus(root: str, requested: str) -> int:
+def cmd_require_cpus(root: str, requested=None) -> int:
     """Reject invalid allocation before a caller creates a container or VM."""
     try:
         minimum = _cpu_minimum(root)
-        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", requested):
-            raise ValueError("CPU allocation must be a finite positive number")
-        allocation = Fraction(requested)
-        if allocation < minimum:
-            raise ValueError(f"CPU allocation {requested} is below required minimum {minimum}")
+        if requested is not None:
+            if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", requested):
+                raise ValueError("CPU allocation must be a finite positive number")
+            allocation = Fraction(requested)
+            if allocation < minimum:
+                raise ValueError(f"CPU allocation {requested} is below required minimum {minimum}")
         available = _effective_cpu_capacity()
         if available < minimum:
             raise ValueError(f"effective host CPU capacity {float(available):g} is below required minimum {minimum}")
     except (OSError, ValueError, TypeError) as error:
         print(f"CPU admission rejected: {error}", file=sys.stderr)
         return 1
-    print(f"[ci-cpu] minimum={minimum} requested={requested} effective_host={float(available):g}")
+    label = requested if requested is not None else "host-only"
+    print(f"[ci-cpu] minimum={minimum} requested={label} effective_host={float(available):g}")
     return 0
 
 def _tokens(value, name: str) -> list:
@@ -538,6 +540,11 @@ def suite_timeout(ci: dict):
 
 def main(argv: list) -> int:
     root = _root()
+    if "--require-host-cpus" in argv:
+        if argv != ["--require-host-cpus"]:
+            print("usage: ci-suites.py --require-host-cpus", file=sys.stderr)
+            return 2
+        return cmd_require_cpus(root)
     if "--require-cpus" in argv:
         if len(argv) != 2 or argv[0] != "--require-cpus":
             print("usage: ci-suites.py --require-cpus <allocation>", file=sys.stderr)
@@ -586,7 +593,7 @@ def main(argv: list) -> int:
             return cmd_list(root, ci, argv[i + 1])
         if a.startswith("--tier="):
             return cmd_list(root, ci, a.split("=", 1)[1])
-    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation>",
+    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation> | --require-host-cpus",
           file=sys.stderr)
     return 2
 

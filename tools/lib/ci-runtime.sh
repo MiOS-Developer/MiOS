@@ -10,6 +10,7 @@
 # shellcheck shell=bash
 
 mios_ci_prepare_storage() {
+    mios_ci_require_host_cpus "${1:-.}" || return
     sudo mkdir -p /etc/containers /mnt/tmp
     printf '%s\n' \
         '[storage]' \
@@ -76,6 +77,11 @@ mios_ci_verify_bootc_labels() {
 }
 
 # Every CI producer shares the vendor CPU floor and the runner's effective limits.
+mios_ci_require_host_cpus() {
+    local root="${1:?usage: mios_ci_require_host_cpus ROOT}"
+    MIOS_DRIFT_ROOT="$root" MIOS_ROOT="$root" python3 "$root/tools/ci-suites.py" --require-host-cpus
+}
+
 mios_ci_require_cpus() {
     local root="${1:?usage: mios_ci_require_cpus ROOT ALLOCATION}" requested="${2-}"
     MIOS_DRIFT_ROOT="$root" MIOS_ROOT="$root" python3 "$root/tools/ci-suites.py" --require-cpus "$requested"

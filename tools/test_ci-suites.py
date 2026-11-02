@@ -24,8 +24,8 @@ from unittest import mock
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 
-def workflow_script(name):
-    workflow = Path(_ROOT, ".github/workflows/mios-ci.yml").read_text()
+def workflow_script(name, path=".github/workflows/mios-ci.yml"):
+    workflow = Path(_ROOT, path).read_text()
     block = workflow.split(f"      - name: {name}\n", 1)[1].split("        run: |\n", 1)[1]
     lines = []
     for line in block.splitlines():
@@ -701,7 +701,7 @@ class TestPortalRuntimeContext(unittest.TestCase):
     """Execute the CI producer with a private runtime that rejects overlay-backed temp."""
 
     def _run_producer(self, *, omit_temp_mount=False, runtime_failure=False, collision=False,
-                      requested_cpus="4", minimum="4", host_cpus=4):
+                      requested_cpus="4", minimum="4", host_cpus=4, operation="portal"):
         with tempfile.TemporaryDirectory(prefix="mios-portal-context-") as tmp:
             base = Path(tmp)
             root, state, calls = base / "checkout", base / "private state", base / "calls.jsonl"
@@ -740,6 +740,9 @@ else:
                 helper = helper.replace(mount, "")
             source = base / "runtime.sh"
             source.write_text(helper)
+            shipped_helper = root / "tools/lib/ci-runtime.sh"
+            shipped_helper.parent.mkdir(parents=True, exist_ok=True)
+            shipped_helper.write_text(helper)
             shim = base / "bin"
             shim.mkdir()
             sudo = shim / "sudo"
@@ -766,13 +769,19 @@ if args[:2] == ["podman", "exec"]:
     pathlib.Path({str(root / ".staged-portal")!r}).mkdir()
 """)
             sudo.chmod(0o755)
+            (shim / "rm").symlink_to("sudo")  # storage controls never delete real files
             if collision:
                 state.mkdir()
                 (state / "owner").write_text("preserve")
             env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ["PATH"])
-            result = subprocess.run(["bash", "-c", 'source "$1"; mios_ci_build_portal "$2" "$3"',
+            if operation == "forgejo-host":
+                command = workflow_script("Admit runner CPU capacity", ".forgejo/workflows/build-mios.yml")
+            else:
+                command = ('source "$1"; mios_ci_prepare_storage "$2"' if operation == "storage" else
+                           'source "$1"; mios_ci_build_portal "$2" "$3"')
+            result = subprocess.run(["bash", "-c", command,
                                      "mios-portal-fixture", str(source), str(root), str(state)],
-                                    env=env, text=True, capture_output=True, timeout=10)
+                                    env=env, cwd=root, text=True, capture_output=True, timeout=10)
             history = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
             result.state_created = state.exists()
             return result, history, (state / "owner").read_text() if collision else None
@@ -849,6 +858,27 @@ if args[:2] == ["podman", "exec"]:
         self.assertEqual(result.returncode, 0, result.stderr)
         run = next(row for row in calls if row[:2] == ["podman", "run"])
         self.assertEqual(run[run.index("--cpus") + 1], "4.0")
+
+    def test_ci_host_below_floor_is_rejected_before_storage_reset(self):
+        result, calls, _ = self._run_producer(operation="storage", host_cpus=3)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("effective host CPU capacity", result.stderr)
+        self.assertEqual(calls, [])
+        self.assertFalse(result.state_created)
+
+    def test_ci_host_four_cpu_admission_preserves_storage_operations(self):
+        result, calls, _ = self._run_producer(operation="storage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("requested=host-only", result.stdout)
+        self.assertTrue(any(row[:3] == ["podman", "system", "reset"] for row in calls))
+
+    def test_forgejo_host_step_enforces_the_same_floor_before_work(self):
+        for available, expected in ((3, 1), (4, 0)):
+            with self.subTest(available=available):
+                result, calls, _ = self._run_producer(operation="forgejo-host", host_cpus=available)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertEqual(calls, [], "host admission must not start/reset containers")
+                self.assertFalse(result.state_created)
 
     def test_existing_private_state_is_preserved_without_runtime_calls(self):
         result, calls, owner = self._run_producer(collision=True)
