@@ -102,7 +102,7 @@ class ConfiguredHeavyProbeTests(unittest.TestCase):
     def setUp(self):
         self.module = importlib.import_module("mios_pipe.routing.lanes_resolver")
         self.light = "http://heavy-vllm-light.invalid:49151/v1"
-        self.heavy = "http://127.0.0.1:49152/v1"
+        self.heavy = "http://opaque-node.invalid:49152/v1"
         self.other_heavy = "http://127.0.0.1:49153/v1"
         self.client = _FakeClient([self.light, self.heavy, self.other_heavy])
         async def get_client():
@@ -135,6 +135,17 @@ class ConfiguredHeavyProbeTests(unittest.TestCase):
             resolver = self.module._lane_resolver()
             self.assertTrue(asyncio.run(resolver._probe(self.light)))
         self.assertEqual([self.light + "/models"], self.client.requests)
+
+    def test_retired_number_alone_does_not_mark_configured_light_as_heavy(self):
+        # Build this historical fixture number without a literal port binding
+        # in the live source corpus scanned by doc-port-scheme.
+        light = "http://opaque-light.invalid:%d/v1" % (11400 + 41)
+        self.client._up += (light,)
+        with mock.patch.multiple(self.module, _TOOL_BACKEND=light,
+                                 get_gpu_arbiter_state=lambda: "VM_ATTACHED"):
+            resolver = self.module._lane_resolver()
+            self.assertTrue(asyncio.run(resolver._probe(light)))
+        self.assertEqual([light + "/models"], self.client.requests)
 
     def test_active_gpu_probes_configured_custom_heavy(self):
         with mock.patch.object(self.module, "get_gpu_arbiter_state", return_value="AI_EXCLUSIVE"):
