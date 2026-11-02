@@ -18022,6 +18022,7 @@ unit = [
     "tests/test-bootc-rollback-recovery.sh",
     "tests/test-vscode-custom-css.sh",
     "tests/test-code-server-bake.py",
+    "tests/test-machine-os-mirror.py",
     "tests/test-cloud-overlay.py",
     "tests/test-quadlet-state-mounts.py",
     "tests/test-swarm-pack-arming.sh",
