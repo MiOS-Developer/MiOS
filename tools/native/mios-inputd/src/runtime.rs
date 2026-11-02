@@ -309,7 +309,11 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
         return None;
     }
     let tty = std::fs::read_link(dir.join("fd/0")).ok()?.to_str()?.to_owned();
-    if !(tty.starts_with("/dev/pts/") || tty.starts_with("/dev/tty")) {
+    let alias = tty == "/dev/tty" || tty == "/dev/console";
+    if alias {
+        // Aliases name this process's tty, never whichever VT is currently active.
+        crate::console::vt_from_proc_stat(&std::fs::read_to_string(dir.join("stat")).ok()?)?;
+    } else if !(tty.starts_with("/dev/pts/") || tty.starts_with("/dev/tty")) {
         return None;
     }
     Some(TmuxClient { pid, tty, socket })
@@ -332,7 +336,13 @@ pub fn tmux_client_on_tty(proc_root: &Path, tty: &Path, sockets: &[String], uid:
     let mut on_tty: Vec<u32> = vec![];
     for entry in std::fs::read_dir(proc_root).ok()?.filter_map(Result::ok) {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        if std::fs::read_link(entry.path().join("fd/0")).ok().as_deref() == Some(tty) {
+        let stdin = std::fs::read_link(entry.path().join("fd/0")).ok();
+        let on_alias = stdin.as_deref().is_some_and(|p| p == Path::new("/dev/tty") || p == Path::new("/dev/console"))
+            && tty.to_str().and_then(|p| p.strip_prefix("/dev/tty")).and_then(|n| n.parse::<u32>().ok())
+                .filter(|n| (1..=63).contains(n))
+                .is_some_and(|vt| std::fs::read_to_string(entry.path().join("stat")).ok()
+                    .and_then(|s| crate::console::vt_from_proc_stat(&s)) == Some(vt));
+        if stdin.as_deref() == Some(tty) || on_alias {
             on_tty.push(pid);
         }
         if on_tty.len() > 256 {
@@ -1915,6 +1925,34 @@ mod tests {
         assert!(tmux_client_on_tty(&p, Path::new("/dev/tty4"), &socks, 1000).is_none(), "a bare VT shell: console_plain");
         fake_proc(&p, 21, 20, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &tmpdir, "/dev/tty4");
         assert_eq!(tmux_client_on_tty(&p, Path::new("/dev/tty4"), &socks, 1000).map(|c| c.tty).as_deref(), Some("/dev/tty4"), "a client attached directly");
+        std::fs::remove_dir_all(&t).unwrap();
+    }
+    #[test]
+    fn vt_aliases_require_the_requested_controlling_tty() {
+        let t = std::env::temp_dir().join(format!("mios-inputd-vt-alias-{}", std::process::id()));
+        assert!(!t.exists(), "private fixture path already exists");
+        let sockdir = t.join("sock/tmux-1000");
+        std::fs::create_dir_all(&sockdir).unwrap();
+        let _human = std::os::unix::net::UnixListener::bind(sockdir.join("mios-human")).unwrap();
+        let env = format!("TMUX_TMPDIR={}\0", t.join("sock").display());
+        let socks = vec!["mios-human".to_owned()];
+        for (index, alias) in ["/dev/console", "/dev/tty"].into_iter().enumerate() {
+            let p = t.join(format!("proc-{index}"));
+            fake_proc(&p, 10, 1, "bash", &["bash"], "", alias);
+            fake_proc(&p, 11, 10, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &env, "/dev/pts/9");
+            for device in [0, 4 * 256 + 4, 136 * 256 + 3] {
+                std::fs::write(p.join("10/stat"), format!("10 (shell ) name) S 1 10 10 {device} 0")).unwrap();
+                assert!(tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).is_none(), "{alias}: unrelated controlling tty {device}");
+            }
+            std::fs::write(p.join("10/stat"), "10 (shell ) name) S 1 10 10 1027 0").unwrap();
+            assert_eq!(tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).map(|c| c.pid), Some(11));
+            // A client attached directly through an alias also needs physical VT evidence.
+            std::fs::remove_file(p.join("11/fd/0")).unwrap();
+            fake_proc(&p, 11, 10, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &env, alias);
+            assert!(tmux_client_at(&p, 11, &socks, 1000).is_none());
+            std::fs::write(p.join("11/stat"), "11 (tmux: client) S 10 11 11 1027 0").unwrap();
+            assert_eq!(tmux_client_at(&p, 11, &socks, 1000).map(|c| c.tty).as_deref(), Some(alias));
+        }
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]

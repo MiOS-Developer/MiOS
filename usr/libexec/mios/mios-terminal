@@ -239,9 +239,12 @@ if (( _mios_launcher )); then
     # run-shell after attach-session runs in the attaching client's context: #{q:client_name} is this client.
     _mios_attach+=(\; run-shell -b "TMUX_PANE=#{pane_id} $_miosd launcher open --root / --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}")
 fi
-if [[ -z "${MIOS_CONSOLE_BRIDGE:-}" && -t 0 && "$(readlink /proc/$$/fd/0)" =~ ^/dev/tty[0-9]+$ \
+if [[ -z "${MIOS_CONSOLE_BRIDGE:-}" && -t 0 \
       && "$(/usr/bin/mios-toml-get keybindings.global.controller.console bridge 2>/dev/null)" == true \
-      && -x /usr/libexec/mios/mios-inputd ]] && /usr/libexec/mios/mios-inputd console-bridge --help >/dev/null 2>&1; then
-    exec /usr/libexec/mios/mios-inputd console-bridge -- "${_mios_attach[@]}"
+      && -x /usr/libexec/mios/mios-inputd ]] \
+      && _mios_vt=$(/usr/libexec/mios/mios-inputd console-vt 2>/dev/null) \
+      && [[ "$_mios_vt" =~ ^[0-9]+$ ]] \
+      && /usr/libexec/mios/mios-inputd console-bridge --help >/dev/null 2>&1; then
+    exec /usr/libexec/mios/mios-inputd console-bridge --vt "$_mios_vt" -- "${_mios_attach[@]}"
 fi
 exec "${_mios_attach[@]}"

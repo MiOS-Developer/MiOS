@@ -212,11 +212,32 @@ class Grammar(Base):
     def test_mios_terminal_wraps_only_a_local_vt_client(self):
         text = (ROOT / 'usr/libexec/mios/mios-terminal').read_text()
         hook = text[text.index('# A local VT client runs under the native console bridge'):]
-        self.assertIn('=~ ^/dev/tty[0-9]+$', hook, 'only a VT (never a pts: SSH, a desktop terminal)')
+        self.assertIn('console-vt 2>/dev/null', hook, 'the native kernel identity probe resolves VT aliases')
+        self.assertNotIn('readlink', hook, 'the spelling of stdin cannot identify its underlying tty')
         self.assertIn('MIOS_CONSOLE_BRIDGE', hook, 'never nested inside its own bridge')
         self.assertIn('keybindings.global.controller.console bridge', hook)
-        self.assertIn('exec /usr/libexec/mios/mios-inputd console-bridge -- tmux', hook)
+        self.assertIn('console-bridge --vt "$_mios_vt" -- "${_mios_attach[@]}"', hook)
         self.assertNotRegex(hook, r'python|perl|ruby|node', 'no interpreter at login')
+        for alias in (False, True):
+            master, slave = pty.openpty()
+            try:
+                def controlling_pty():
+                    os.setsid()
+                    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+                    if alias:
+                        fd = os.open('/dev/tty', os.O_RDWR)
+                        os.dup2(fd, 0)
+                        os.close(fd)
+                # This must run before config loading, without a live broker or a graphical session.
+                r = subprocess.run([str(BIN), '--root', '/nonexistent', 'console-vt'], stdin=slave,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   env=self.env, preexec_fn=controlling_pty, timeout=5)
+                self.assertNotEqual(r.returncode, 0, 'a PTY is never a Linux VT, even through /dev/tty')
+                self.assertEqual(r.stdout, '')
+                self.assertIn('controlling Linux VT', r.stderr)
+            finally:
+                os.close(master)
+                os.close(slave)
 
 
 class GpmFixture:

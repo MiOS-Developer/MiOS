@@ -369,10 +369,34 @@ fn read_fd(fd: RawFd, buf: &mut [u8]) -> io::Result<usize> {
     let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
     if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
 }
-/// The VT number of fd 0 (/dev/tty<N>), for gpm's per-console client stack.
-fn own_vt() -> Option<u32> {
-    let link = std::fs::read_link("/proc/self/fd/0").ok()?;
-    link.to_str()?.strip_prefix("/dev/tty")?.parse().ok().filter(|n| *n > 0)
+/// Decode a Linux tty device number, accepting only physical VTs (not tty0, serial ports or PTYs).
+pub(crate) fn vt_from_device(device: u32) -> Option<u32> {
+    let major = (device >> 8) & 0xfff;
+    let minor = (device & 0xff) | ((device >> 12) & 0xfff00);
+    (major == 4 && (1..=63).contains(&minor)).then_some(minor)
+}
+/// /proc/<pid>/stat field 7 is the controlling tty's encoded device number.
+/// The command name can contain spaces and closing parentheses.
+pub(crate) fn vt_from_proc_stat(stat: &str) -> Option<u32> {
+    let fields = stat.get(stat.rfind(')')? + 1..)?;
+    let device = fields.split_whitespace().nth(4)?.parse::<i32>().ok()? as u32;
+    vt_from_device(device)
+}
+fn matching_vt(stat: &str, stdin_device: u32) -> Option<u32> {
+    let vt = vt_from_proc_stat(stat)?;
+    (vt_from_device(stdin_device) == Some(vt)).then_some(vt)
+}
+/// The physical VT backing stdin and this process's controlling tty.
+/// TIOCGDEV resolves /dev/tty and /dev/console without guessing the active VT.
+pub fn own_vt() -> Option<u32> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let mut device = 0u32;
+    // SAFETY: TIOCGDEV writes one unsigned int to a live buffer and does not change the terminal.
+    // _IOR('T', 0x32, unsigned int), the Linux tty device-identity request.
+    if unsafe { libc::ioctl(libc::STDIN_FILENO, 0x80045432 as libc::c_ulong, &mut device) } < 0 {
+        return None;
+    }
+    matching_vt(&stat, device)
 }
 fn gpm_connect(path: &Path, vt: u32) -> io::Result<std::os::unix::net::UnixStream> {
     let mut s = std::os::unix::net::UnixStream::connect(path)?;
@@ -634,6 +658,20 @@ pub fn run(opt: Options) -> Result<i32, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn physical_vt_identity_requires_matching_stdin_and_controlling_tty() {
+        let stat = |device: u32| format!("12 (shell ) with spaces) S 1 12 12 {device} 0");
+        assert_eq!(vt_from_proc_stat(&stat(4 * 256 + 3)), Some(3));
+        assert_eq!(matching_vt(&stat(4 * 256 + 3), 4 * 256 + 3), Some(3));
+        for device in [0, 4 * 256, 4 * 256 + 64, 136 * 256 + 3, 5 * 256 + 1] {
+            assert_eq!(vt_from_proc_stat(&stat(device)), None, "{device}");
+            assert_eq!(matching_vt(&stat(4 * 256 + 3), device), None, "{device}");
+        }
+        assert_eq!(matching_vt(&stat(4 * 256 + 3), 4 * 256 + 4), None);
+        assert_eq!(vt_from_proc_stat("malformed"), None);
+        assert_eq!(vt_from_proc_stat("12 (shell) S 1"), None);
+    }
+
     use super::*;
     #[test]
     fn mouse_modes_are_consumed_and_other_private_modes_pass() {
