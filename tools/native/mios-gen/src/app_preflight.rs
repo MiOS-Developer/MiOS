@@ -504,6 +504,333 @@ pub fn resolve(root: &Path, query: &str) -> Result<(), String> {
     }
 }
 
+// Invocation-time inventory: local entries need a real, owned compositor reply.
+// Registered remote endpoints are candidates until their existing executor probe
+// returns an authoritative execution_target. A configured VM is not a session.
+fn inventory_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && value != "."
+        && value != ".."
+}
+fn inventory_owned(path: &Path, uid: u32, socket: bool) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    fs::symlink_metadata(path).is_ok_and(|m| {
+        m.uid() == uid
+            && !m.file_type().is_symlink()
+            && if socket {
+                m.file_type().is_socket()
+            } else {
+                m.is_dir() && m.mode() & 0o022 == 0
+            }
+    })
+}
+fn inventory_version(socket: &Path, uid: u32, deadline: Instant) -> Result<(), String> {
+    use rustix::net::{socket_with, AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    if Instant::now() >= deadline || !inventory_owned(socket, uid, true) {
+        return Err("Compositor socket is unavailable or not owned by the operator".into());
+    }
+    let fd = socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        SocketFlags::CLOEXEC | SocketFlags::NONBLOCK,
+        None,
+    )
+    .map_err(|_| "Cannot create compositor probe")?;
+    let address = SocketAddrUnix::new(socket).map_err(|_| "Invalid compositor socket path")?;
+    // A saturated listener is unavailable now; never block in connect().
+    rustix::net::connect(&fd, &address).map_err(|_| "Compositor socket is not accepting probes")?;
+    #[cfg(target_os = "linux")]
+    if rustix::net::sockopt::socket_peercred(&fd)
+        .map_err(|_| "Cannot establish compositor owner")?
+        .uid
+        .as_raw()
+        != uid
+    {
+        return Err("Compositor peer is not the operator".into());
+    }
+    let mut stream = UnixStream::from(fd);
+    let request = b"j/version";
+    let mut sent = 0;
+    let mut response = Vec::new();
+    loop {
+        if Instant::now() >= deadline {
+            return Err("Compositor probe timed out".into());
+        }
+        if sent < request.len() {
+            match stream.write(&request[sent..]) {
+                Ok(0) => return Err("Compositor probe could not be sent".into()),
+                Ok(n) => sent += n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return Err("Compositor probe write failed".into()),
+            }
+        } else {
+            let mut buffer = [0u8; 4096];
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    response.extend_from_slice(&buffer[..n]);
+                    if response.len() > 65536 {
+                        return Err("Compositor probe response exceeds its bound".into());
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return Err("Compositor probe read failed".into()),
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let value: Value =
+        serde_json::from_slice(&response).map_err(|_| "Invalid compositor probe response")?;
+    if value
+        .get("version")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+        && value
+            .get("tag")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return Err("Compositor did not identify its version".into());
+    }
+    Ok(())
+}
+fn inventory_endpoint(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('/');
+    let rest = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))?;
+    let authority = rest.split('/').next()?;
+    if authority.is_empty()
+        || value.len() > 4096
+        || value.chars().any(|c| {
+            c.is_control() || c.is_whitespace() || matches!(c, '@' | '?' | '#' | '\\' | '"' | '\'')
+        })
+    {
+        return None;
+    }
+    let port = if let Some(ipv6) = authority.strip_prefix('[') {
+        let (host, suffix) = ipv6.split_once(']')?;
+        host.parse::<std::net::Ipv6Addr>().ok()?;
+        if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.strip_prefix(':')?)
+        }
+    } else {
+        let (host, port) = authority
+            .rsplit_once(':')
+            .map_or((authority, None), |(host, port)| (host, Some(port)));
+        if host.is_empty()
+            || host
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && !matches!(c, '.' | '-' | '_'))
+        {
+            return None;
+        }
+        port
+    };
+    if let Some(port) = port {
+        if port.parse::<u16>().ok().is_none_or(|p| p == 0) {
+            return None;
+        }
+    }
+    Some(value.to_owned())
+}
+fn inventory_endpoints(ssot: &toml::Value) -> Vec<Value> {
+    let mut endpoints = Vec::new();
+    for section in ["os_control", "computer_use"] {
+        let Some(table) = ssot.get(section) else {
+            continue;
+        };
+        let mut registered = Vec::new();
+        if let Some(endpoint) = table.get("executor_endpoint").and_then(toml::Value::as_str) {
+            registered.push((format!("{section}.executor_endpoint"), endpoint));
+        }
+        if let Some(nodes) = table.get("nodes").and_then(toml::Value::as_table) {
+            for (name, node) in nodes {
+                if let Some(endpoint) = node.get("endpoint").and_then(toml::Value::as_str) {
+                    registered.push((format!("{section}.nodes.{name}"), endpoint));
+                }
+            }
+        }
+        for (registration, raw) in registered {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            match inventory_endpoint(raw) {
+                Some(endpoint) => endpoints.push(json!({
+                    "registration_id": registration, "endpoint": endpoint,
+                    "probed": false, "available": Value::Null,
+                    "execution_target": Value::Null,
+                    "reason": "An authoritative live executor window receipt is required"
+                })),
+                None => endpoints.push(json!({
+                    "registration_id": registration, "probed": false,
+                    "available": false, "execution_target": Value::Null,
+                    "reason": "Invalid registered executor endpoint"
+                })),
+            }
+        }
+    }
+    endpoints
+}
+fn inventory_local(
+    ssot: &toml::Value,
+    runtime: &Path,
+    uid: u32,
+    policy: &Policy,
+    deadline: Instant,
+) -> Value {
+    let mut sessions = Vec::new();
+    let mut unavailable = Vec::new();
+    let mut candidates = std::collections::BTreeSet::new();
+    let mut pending = std::collections::VecDeque::from([runtime.to_owned()]);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut truncated = false;
+    let relative = ssot
+        .get("desktop")
+        .and_then(|d| d.get("nested"))
+        .and_then(|d| d.get("registry_dir"))
+        .and_then(toml::Value::as_str)
+        .filter(|r| {
+            !r.is_empty()
+                && Path::new(r)
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)))
+        });
+    while let Some(directory) = pending.pop_front() {
+        if seen.contains(&directory) {
+            continue;
+        }
+        if seen.len() >= 64 || Instant::now() >= deadline {
+            truncated = true;
+            break;
+        }
+        seen.insert(directory.clone());
+        if !inventory_owned(&directory, uid, false) {
+            continue;
+        }
+        let hypr = directory.join("hypr");
+        if inventory_owned(&hypr, uid, false) {
+            let mut entries: Vec<_> = fs::read_dir(hypr)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .take(65)
+                .collect();
+            truncated |= entries.len() > 64;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries.into_iter().take(64) {
+                if candidates.len() >= 128 {
+                    truncated = true;
+                    break;
+                }
+                if let Some(signature) = entry.file_name().to_str().filter(|s| inventory_name(s)) {
+                    if inventory_owned(&entry.path(), uid, false) {
+                        candidates.insert((directory.clone(), signature.to_owned()));
+                    }
+                }
+            }
+        }
+        let Some(relative) = relative else {
+            continue;
+        };
+        let registry = directory.join(relative);
+        if !inventory_owned(&registry, uid, false) {
+            continue;
+        }
+        let files: Vec<_> = fs::read_dir(&registry)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .take(129)
+            .collect();
+        let bounded = files.len() <= 128
+            && files.iter().all(|entry| {
+                entry.path().extension().is_none_or(|x| x != "json")
+                    || fs::symlink_metadata(entry.path()).is_ok_and(|m| {
+                        m.is_file()
+                            && !m.file_type().is_symlink()
+                            && m.uid() == uid
+                            && m.len() <= 1024 * 1024
+                    })
+            });
+        if !bounded {
+            truncated = true;
+            unavailable.push(json!({"available":false,"probed":false,
+                "reason":"Nested session registry exceeds its safety bounds"}));
+            continue;
+        }
+        // Reuse the producer's launcher PID/start proof, including recursively
+        // nested sessions whose runtime moved back under the outermost runtime.
+        let live = crate::nested_devices::live_sessions(&registry, false);
+        truncated |= live.len() > 64;
+        for (_, entry) in live.into_iter().take(64) {
+            if entry["state"] != "running" {
+                continue;
+            }
+            if let Some(nested) = entry["runtime"].as_str().map(PathBuf::from).filter(|p| {
+                p.starts_with(runtime) && p != runtime && p.canonicalize().is_ok_and(|c| c == *p)
+            }) {
+                if pending.len() < 64 {
+                    pending.push_back(nested);
+                } else {
+                    truncated = true;
+                }
+            }
+        }
+    }
+    for (directory, signature) in candidates {
+        let socket = directory.join("hypr").join(&signature).join(".socket.sock");
+        let until = deadline.min(Instant::now() + Duration::from_millis(policy.probe_timeout_ms));
+        match inventory_version(&socket, uid, until) {
+            Ok(()) => sessions.push(json!({
+                "execution_target":{"id":socket,"platform":"linux","session_id":signature,"backend":"hyprland"},
+                "runtime":directory, "available":true, "probed":true,
+                "capabilities":["compositor-query"],
+                "scope": if directory == runtime { "operator" } else { "nested" }
+            })),
+            Err(reason) => {
+                truncated |= Instant::now() >= deadline;
+                unavailable.push(json!({"session_id":signature,"runtime":directory,
+                    "available":false,"probed":true,"reason":reason}));
+            }
+        }
+    }
+    json!({"ok":true,"verb":"runtime_sessions","discovery":"local-and-registered",
+        "operator_uid":uid,"sessions":sessions,"unavailable":unavailable,"truncated":truncated,
+        "registered_endpoints":inventory_endpoints(ssot)})
+}
+pub fn sessions(root: &Path) -> Result<(), String> {
+    let policy = Policy::read(root)?;
+    let ssot = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_millis(policy.overall_timeout_ms);
+    let lookup = operator_lookup(&ssot)?;
+    let (code, account) = bounded(&policy, "getent", &["passwd".into(), lookup], deadline)?;
+    if code != 0 {
+        return Err("Configured desktop operator account is not installed".into());
+    }
+    let uid = account
+        .trim()
+        .split(':')
+        .nth(2)
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|uid| *uid > 0)
+        .ok_or("Invalid desktop operator UID")?;
+    let runtime = PathBuf::from(format!("/run/user/{uid}"));
+    println!(
+        "{}",
+        inventory_local(&ssot, &runtime, uid, &policy, deadline)
+    );
+    Ok(())
+}
+
 fn desktop_fields(source: &str) -> std::collections::BTreeMap<String, String> {
     let mut active = false;
     let mut result = std::collections::BTreeMap::new();
@@ -702,6 +1029,275 @@ mod tests {
             terminal_command: vec!["true".into()],
             application_dirs: vec!["/usr/share/applications".into()],
         }
+    }
+
+    fn inventory_listener(
+        socket: &Path,
+        response: &'static [u8],
+        delay: Duration,
+    ) -> thread::JoinHandle<()> {
+        use std::io::Write;
+        use std::os::unix::net::UnixListener;
+        let listener = UnixListener::bind(socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("Expected bounded compositor probe: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut request = [0; 9];
+            stream.read_exact(&mut request).unwrap();
+            assert_eq!(&request, b"j/version");
+            thread::sleep(delay);
+            let _ = stream.write_all(response);
+        })
+    }
+    fn inventory_socket(runtime: &Path, name: &str) -> PathBuf {
+        let dir = runtime.join("hypr").join(name);
+        fs::create_dir_all(&dir).unwrap();
+        dir.join(".socket.sock")
+    }
+    #[test]
+    fn runtime_inventory_requires_live_owned_compositors_and_preserves_identity() {
+        use std::os::unix::net::UnixListener;
+        let runtime = tempfile::tempdir().unwrap();
+        let socket = inventory_socket(runtime.path(), "mios-live");
+        let uid = fs::metadata(runtime.path()).unwrap().uid();
+        let listener = inventory_listener(&socket, br#"{"version":"0.56"}"#, Duration::ZERO);
+        let stale = inventory_socket(runtime.path(), "mios-stale");
+        drop(UnixListener::bind(stale).unwrap());
+        let result = inventory_local(
+            &toml::Table::new().into(),
+            runtime.path(),
+            uid,
+            &policy(),
+            Instant::now() + Duration::from_secs(1),
+        );
+        listener.join().unwrap();
+        assert_eq!(result["sessions"].as_array().unwrap().len(), 1);
+        let row = &result["sessions"][0];
+        assert_eq!(
+            row["execution_target"]["id"],
+            socket.to_string_lossy().as_ref()
+        );
+        assert_eq!(row["execution_target"]["session_id"], "mios-live");
+        assert_eq!(row["execution_target"]["platform"], "linux");
+        assert_eq!(row["available"], true);
+        assert_eq!(result["unavailable"].as_array().unwrap().len(), 1);
+        // Same paths attributed to a different owner are never queried/available.
+        let other = inventory_local(
+            &toml::Table::new().into(),
+            runtime.path(),
+            uid + 1,
+            &policy(),
+            Instant::now() + Duration::from_secs(1),
+        );
+        assert!(other["sessions"].as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn runtime_inventory_follows_the_existing_live_nested_registry_without_pruning() {
+        let runtime = tempfile::tempdir().unwrap();
+        let nested = runtime.path().join("mios-nested-desktop-123");
+        fs::create_dir(&nested).unwrap();
+        let socket = inventory_socket(&nested, "mios-nested");
+        let uid = fs::metadata(runtime.path()).unwrap().uid();
+        let listener = inventory_listener(&socket, br#"{"tag":"v0.56"}"#, Duration::ZERO);
+        let registry = runtime.path().join("mios/nested-sessions");
+        let _claim = crate::nested_devices::Claim::take(
+            &registry,
+            "mios-seat",
+            &[],
+            false,
+            json!({"state":"running","runtime":nested,"instance":"mios-nested"}),
+        )
+        .unwrap();
+        fs::write(
+            registry.join("stale.json"),
+            r#"{"state":"running","launcher_pid":4294967295,"launcher_start":1}"#,
+        )
+        .unwrap();
+        let ssot: toml::Value =
+            toml::from_str("[desktop.nested]\nregistry_dir='mios/nested-sessions'\n").unwrap();
+        let result = inventory_local(
+            &ssot,
+            runtime.path(),
+            uid,
+            &policy(),
+            Instant::now() + Duration::from_secs(1),
+        );
+        listener.join().unwrap();
+        assert_eq!(result["sessions"].as_array().unwrap().len(), 1);
+        assert_eq!(result["sessions"][0]["scope"], "nested");
+        assert_eq!(
+            result["sessions"][0]["execution_target"]["id"],
+            socket.to_string_lossy().as_ref()
+        );
+        assert!(
+            registry.join("stale.json").exists(),
+            "read-only inventory must not prune the producer registry"
+        );
+        let live_record = fs::read(registry.join("mios-seat.json")).unwrap();
+        for index in 0..65 {
+            fs::write(registry.join(format!("extra-{index}.json")), &live_record).unwrap();
+        }
+        let bounded = inventory_local(
+            &ssot,
+            runtime.path(),
+            uid,
+            &policy(),
+            Instant::now() + Duration::from_secs(1),
+        );
+        assert_eq!(
+            bounded["truncated"], true,
+            "registry cap must be reported honestly"
+        );
+    }
+    #[test]
+    fn runtime_inventory_times_out_and_rejects_non_compositor_replies() {
+        let runtime = tempfile::tempdir().unwrap();
+        let uid = fs::metadata(runtime.path()).unwrap().uid();
+        let socket = inventory_socket(runtime.path(), "mios-timeout");
+        let listener = inventory_listener(
+            &socket,
+            br#"{"version":"late"}"#,
+            Duration::from_millis(150),
+        );
+        let start = Instant::now();
+        assert!(
+            inventory_version(&socket, uid, start + Duration::from_millis(25))
+                .unwrap_err()
+                .contains("timed out")
+        );
+        assert!(start.elapsed() < Duration::from_millis(100));
+        listener.join().unwrap();
+        fs::remove_file(&socket).unwrap();
+        let listener = inventory_listener(&socket, br#"{"ok":true}"#, Duration::ZERO);
+        assert!(inventory_version(&socket, uid, Instant::now() + Duration::from_secs(1)).is_err());
+        listener.join().unwrap();
+    }
+
+    #[test]
+    fn runtime_inventory_discovers_sessions_nested_beyond_one_level() {
+        let runtime = tempfile::tempdir().unwrap();
+        let uid = fs::metadata(runtime.path()).unwrap().uid();
+        let child = runtime.path().join("mios-nested-desktop-123");
+        let grandchild = runtime.path().join("mios-nested-desktop-456");
+        fs::create_dir(&child).unwrap();
+        fs::create_dir(&grandchild).unwrap();
+        let child_socket = inventory_socket(&child, "mios-child");
+        let grandchild_socket = inventory_socket(&grandchild, "mios-grandchild");
+        let first = inventory_listener(&child_socket, br#"{"tag":"v0.56"}"#, Duration::ZERO);
+        let second = inventory_listener(&grandchild_socket, br#"{"tag":"v0.56"}"#, Duration::ZERO);
+        let _child = crate::nested_devices::Claim::take(
+            &runtime.path().join("registry"),
+            "child",
+            &[],
+            false,
+            json!({"state":"running","runtime":child,"instance":"mios-child"}),
+        )
+        .unwrap();
+        let _grandchild = crate::nested_devices::Claim::take(
+            &child.join("registry"),
+            "grandchild",
+            &[],
+            false,
+            json!({"state":"running","runtime":grandchild,"instance":"mios-grandchild"}),
+        )
+        .unwrap();
+        let ssot: toml::Value =
+            toml::from_str("[desktop.nested]\nregistry_dir='registry'\n").unwrap();
+        let result = inventory_local(
+            &ssot,
+            runtime.path(),
+            uid,
+            &policy(),
+            Instant::now() + Duration::from_secs(1),
+        );
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(result["sessions"].as_array().unwrap().len(), 2);
+        assert_eq!(result["truncated"], false);
+        assert!(result["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["execution_target"]["session_id"] == "mios-grandchild"));
+    }
+
+    #[test]
+    fn runtime_inventory_remote_candidates_are_refreshed_unprobed_and_secret_free() {
+        let mut data: toml::Value = toml::from_str(
+            "[os_control]\nexecutor_endpoint='http://localhost:9000/'\n[os_control.nodes.console]\nendpoint='https://example.test/control'\n[computer_use.nodes.mobile]\nendpoint='http://localhost:9001'\n[computer_use.nodes.invalid]\nendpoint='http://user:password@example.test/private'\n").unwrap();
+        let rows = inventory_endpoints(&data);
+        assert_eq!(rows.len(), 4);
+        assert!(rows
+            .iter()
+            .all(|r| r["execution_target"].is_null() && r["probed"] == false));
+        assert!(rows
+            .iter()
+            .filter(|r| r.get("endpoint").is_some())
+            .all(|r| r["available"].is_null()));
+        assert!(!serde_json::to_string(&rows).unwrap().contains("password"));
+        data["os_control"]["executor_endpoint"] =
+            toml::Value::String("http://localhost:9999".into());
+        assert!(inventory_endpoints(&data)
+            .iter()
+            .any(|r| r["endpoint"] == "http://localhost:9999"));
+        for endpoint in [
+            "http://",
+            "file:///tmp/socket",
+            "https://host/?token=secret",
+            "https://host/#secret",
+            "http://host/ bad",
+            "http://host/\\path",
+            "http://host:0",
+            "http://host:999999",
+            "http://[bad]:80",
+        ] {
+            assert!(inventory_endpoint(endpoint).is_none(), "{endpoint}");
+        }
+    }
+    #[test]
+    fn runtime_inventory_refuses_redirected_or_oversized_registry_without_losing_the_operator() {
+        use std::os::unix::fs::symlink;
+        let runtime = tempfile::tempdir().unwrap();
+        let uid = fs::metadata(runtime.path()).unwrap().uid();
+        let socket = inventory_socket(runtime.path(), "mios-primary");
+        let listener = inventory_listener(&socket, br#"{"tag":"v0.56"}"#, Duration::ZERO);
+        let registry = runtime.path().join("registry");
+        fs::create_dir(&registry).unwrap();
+        fs::write(registry.join("large.json"), vec![b' '; 1024 * 1024 + 1]).unwrap();
+        let ssot: toml::Value =
+            toml::from_str("[desktop.nested]\nregistry_dir='registry'\n").unwrap();
+        let result = inventory_local(
+            &ssot,
+            runtime.path(),
+            uid,
+            &policy(),
+            Instant::now() + Duration::from_secs(1),
+        );
+        listener.join().unwrap();
+        assert_eq!(result["sessions"].as_array().unwrap().len(), 1);
+        assert!(result["unavailable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["reason"].as_str().unwrap().contains("safety bounds")));
+        let redirect = runtime.path().join("redirect");
+        symlink(runtime.path(), &redirect).unwrap();
+        assert!(!inventory_owned(&redirect, uid, false));
     }
 
     #[test]
