@@ -1448,11 +1448,19 @@ assert(not p.captured(window),'release overrides automatic capture')
     #[test]
     fn capture_predicate_matches_the_inputd_template() {
         let runtime = include_str!("../../mios-inputd/src/runtime.rs");
-        let start = runtime
-            .find("let template=r#\"")
-            .expect("inputd context template")
-            + "let template=r#\"".len();
-        let template = &runtime[start..start + runtime[start..].find("\"#;").unwrap()];
+        let (_, binding) = runtime
+            .split_once("let template")
+            .expect("inputd context template");
+        let quoted = binding
+            .trim_start()
+            .strip_prefix('=')
+            .expect("inputd context template assignment")
+            .trim_start()
+            .strip_prefix("r#\"")
+            .expect("inputd raw context template");
+        let (template, _) = quoted
+            .split_once("\"#;")
+            .expect("inputd context template terminator");
         let with_release = template.contains("RELEASE_TAG");
         for capture_fullscreen in [false, true] {
             let template = template
