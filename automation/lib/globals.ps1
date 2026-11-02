@@ -687,7 +687,7 @@ $script:MIOS_BUILD_IMAGES_RETRY_DELAY = if ($env:MIOS_BUILD_IMAGES_RETRY_DELAY) 
 $script:MIOS_BUILD_NATIVE_CATEGORIES_APPS_BINARIES = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_APPS_BINARIES) { $env:MIOS_BUILD_NATIVE_CATEGORIES_APPS_BINARIES } else { 'mios-launch' }
 $script:MIOS_BUILD_NATIVE_CATEGORIES_APPS_EXPOSE_BIN = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_APPS_EXPOSE_BIN) { $env:MIOS_BUILD_NATIVE_CATEGORIES_APPS_EXPOSE_BIN } else { 'false' }
 $script:MIOS_BUILD_NATIVE_CATEGORIES_APPS_INSTALL_DIR = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_APPS_INSTALL_DIR) { $env:MIOS_BUILD_NATIVE_CATEGORIES_APPS_INSTALL_DIR } else { '/usr/bin' }
-$script:MIOS_BUILD_NATIVE_CATEGORIES_CLI_BINARIES = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_BINARIES) { $env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_BINARIES } else { 'generate-names-registry,mios-ai-config,mios-aiplane-lint,mios-bake-plan,mios-browser,mios-comment-lex,mios-drift-runner,mios-edge-status,mios-hardcode-lint,mios-render-quadlets,mios-resolver,mios-size-ceiling,mios-ssot-lint,mios-task,mios-toml-get,mios-template-compile,mios-template-conform,mios-toolchain-pin,mios-unit-gen,mios-version-check,xtask,mios-gate,mios-probe,miosd,mios-install,mios-gen,mios-fanctl,mios-displays,mios-shot' }
+$script:MIOS_BUILD_NATIVE_CATEGORIES_CLI_BINARIES = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_BINARIES) { $env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_BINARIES } else { 'generate-names-registry,mios-ai-config,mios-aiplane-lint,mios-bake-plan,mios-browser,mios-comment-lex,mios-drift-runner,mios-edge-status,mios-hardcode-lint,mios-render-quadlets,mios-resolver,mios-size-ceiling,mios-ssot-lint,mios-task,mios-toml-get,mios-template-compile,mios-template-conform,mios-toolchain-pin,mios-unit-gen,mios-version-check,xtask,mios-gate,mios-probe,miosd,mios-install,mios-gen,mios-fanctl,mios-controls,mios-displays,mios-shot' }
 $script:MIOS_BUILD_NATIVE_CATEGORIES_CLI_COMPAT_DIRS = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_COMPAT_DIRS) { $env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_COMPAT_DIRS } else { '/usr/libexec/mios' }
 $script:MIOS_BUILD_NATIVE_CATEGORIES_CLI_EXPOSE_BIN = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_EXPOSE_BIN) { $env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_EXPOSE_BIN } else { 'false' }
 $script:MIOS_BUILD_NATIVE_CATEGORIES_CLI_INSTALL_DIR = if ($env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_INSTALL_DIR) { $env:MIOS_BUILD_NATIVE_CATEGORIES_CLI_INSTALL_DIR } else { '/usr/bin' }
@@ -1905,7 +1905,7 @@ $script:MIOS_DESKTOP_PORTAL_BUILDER_LANE = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_
 $script:MIOS_DESKTOP_PORTAL_BUILDER_MIN_FREE_GB = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_MIN_FREE_GB) { $env:MIOS_DESKTOP_PORTAL_BUILDER_MIN_FREE_GB } else { 40 }
 $script:MIOS_DESKTOP_PORTAL_BUILDER_NICE = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_NICE) { $env:MIOS_DESKTOP_PORTAL_BUILDER_NICE } else { 10 }
 $script:MIOS_DESKTOP_PORTAL_BUILDER_NPM_REGISTRY_URL = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_NPM_REGISTRY_URL) { $env:MIOS_DESKTOP_PORTAL_BUILDER_NPM_REGISTRY_URL } else { 'https://registry.npmjs.org' }
-$script:MIOS_DESKTOP_PORTAL_BUILDER_PACKAGES = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_PACKAGES) { $env:MIOS_DESKTOP_PORTAL_BUILDER_PACKAGES } else { 'git-core,curl,ca-certificates,gnupg2,tar,xz,unzip,zip,bzip2,patch,diffutils,findutils,which,file,procps-ng,time,util-linux,m4,perl,make,python3,python3-devel,python3-pip,nodejs,npm,ImageMagick,gcc,gcc-c++,clang,clang-devel,llvm,lld,nasm,cbindgen,rust,cargo,gtk3-devel,dbus-glib-devel,dbus-devel,alsa-lib-devel,pulseaudio-libs-devel,libXt-devel,libX11-devel,libXext-devel,libXrender-devel,libXtst-devel,libXrandr-devel,libXcomposite-devel,libXdamage-devel,libXfixes-devel,libXcursor-devel,libXi-devel,libxkbcommon-devel,wayland-devel,mesa-libgbm-devel,libdrm-devel,libnotify-devel,startup-notification-devel,freetype-devel,fontconfig-devel,pango-devel,cairo-devel,glib2-devel,zlib-devel,libffi-devel,mesa-dri-drivers,dejavu-sans-fonts,liberation-sans-fonts' }
+$script:MIOS_DESKTOP_PORTAL_BUILDER_PACKAGES = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_PACKAGES) { $env:MIOS_DESKTOP_PORTAL_BUILDER_PACKAGES } else { 'git-core,curl,ca-certificates,gnupg2,tar,xz,unzip,zip,bzip2,patch,diffutils,findutils,which,file,procps-ng,time,util-linux,m4,perl,make,python3,python3-devel,python3-pip,python3-pillow,nodejs,npm,ImageMagick,gcc,gcc-c++,clang,clang-devel,llvm,lld,nasm,cbindgen,rust,cargo,gtk3-devel,dbus-glib-devel,dbus-devel,alsa-lib-devel,pulseaudio-libs-devel,libXt-devel,libX11-devel,libXext-devel,libXrender-devel,libXtst-devel,libXrandr-devel,libXcomposite-devel,libXdamage-devel,libXfixes-devel,libXcursor-devel,libXi-devel,libxkbcommon-devel,wayland-devel,mesa-libgbm-devel,libdrm-devel,libnotify-devel,startup-notification-devel,freetype-devel,fontconfig-devel,pango-devel,cairo-devel,glib2-devel,zlib-devel,libffi-devel,mesa-dri-drivers,dejavu-sans-fonts,liberation-sans-fonts' }
 $script:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_APP_ID = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_APP_ID) { $env:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_APP_ID } else { 'os.mios.portal' }
 $script:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_BRAND = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_BRAND) { $env:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_BRAND } else { 'mios' }
 $script:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_VENDOR = if ($env:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_VENDOR) { $env:MIOS_DESKTOP_PORTAL_BUILDER_PLACEHOLDER_VENDOR } else { 'MiOS' }
@@ -2798,7 +2798,7 @@ $script:MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_VLLM_IMAGE_IMAGE = if ($env:MIOS_IMAGE
 $script:MIOS_IMAGES_MIOS_LLM_HEAVY_SERVICE_TIMEOUTSTARTSEC = if ($env:MIOS_IMAGES_MIOS_LLM_HEAVY_SERVICE_TIMEOUTSTARTSEC) { $env:MIOS_IMAGES_MIOS_LLM_HEAVY_SERVICE_TIMEOUTSTARTSEC } else { 3600 }
 $script:MIOS_IMAGES_MIOS_MICRO_IMAGE_IMAGE = if ($env:MIOS_IMAGES_MIOS_MICRO_IMAGE_IMAGE) { $env:MIOS_IMAGES_MIOS_MICRO_IMAGE_IMAGE } else { 'ghcr.io/mios-dev/mios-micro:latest' }
 $script:MIOS_IMAGES_MIOS_MICRO_SERVICE_TIMEOUTSTARTSEC = if ($env:MIOS_IMAGES_MIOS_MICRO_SERVICE_TIMEOUTSTARTSEC) { $env:MIOS_IMAGES_MIOS_MICRO_SERVICE_TIMEOUTSTARTSEC } else { 3600 }
-$script:MIOS_IMAGE_NAME = if ($env:MIOS_IMAGE_NAME) { $env:MIOS_IMAGE_NAME } else { 'ghcr.io/mios-dev/mios' }
+$script:MIOS_IMAGE_NAME = if ($env:MIOS_IMAGE_NAME) { $env:MIOS_IMAGE_NAME } else { 'ghcr.io/mios-developer/mios' }
 $script:MIOS_IMAGE_REF = if ($env:MIOS_IMAGE_REF) { $env:MIOS_IMAGE_REF } else { 'ghcr.io/mios-dev/mios:latest' }
 $script:MIOS_IMAGE_TAG = if ($env:MIOS_IMAGE_TAG) { $env:MIOS_IMAGE_TAG } else { 'latest' }
 $script:MIOS_PATHS_INSTALL_ENV = if ($env:MIOS_PATHS_INSTALL_ENV) { $env:MIOS_PATHS_INSTALL_ENV } else { Resolve-MiosInput -Canonical 'MIOS_PATHS_INSTALL_ENV' -Aliases @('MIOS_INSTALL_ENV') -Default ('/etc/mios/install.env') }
@@ -3287,7 +3287,7 @@ $script:MIOS_LEGIBILITY_MAX_PS_LINES = if ($env:MIOS_LEGIBILITY_MAX_PS_LINES) { 
 $script:MIOS_LEGIBILITY_MAX_SHELL_LINES = if ($env:MIOS_LEGIBILITY_MAX_SHELL_LINES) { $env:MIOS_LEGIBILITY_MAX_SHELL_LINES } else { 54941 }
 $script:MIOS_LEGIBILITY_MAX_TOOLING_PYTHON_LINES = if ($env:MIOS_LEGIBILITY_MAX_TOOLING_PYTHON_LINES) { $env:MIOS_LEGIBILITY_MAX_TOOLING_PYTHON_LINES } else { 80483 }
 $script:MIOS_LEGIBILITY_MAX_TRACKED_FILES = if ($env:MIOS_LEGIBILITY_MAX_TRACKED_FILES) { $env:MIOS_LEGIBILITY_MAX_TRACKED_FILES } else { 3250 }
-$script:MIOS_LEGIBILITY_MAX_TRACKED_MB = if ($env:MIOS_LEGIBILITY_MAX_TRACKED_MB) { $env:MIOS_LEGIBILITY_MAX_TRACKED_MB } else { 663 }
+$script:MIOS_LEGIBILITY_MAX_TRACKED_MB = if ($env:MIOS_LEGIBILITY_MAX_TRACKED_MB) { $env:MIOS_LEGIBILITY_MAX_TRACKED_MB } else { 665 }
 $script:MIOS_LEGIBILITY_PYTHON_AI_PLANE_PREFIXES = if ($env:MIOS_LEGIBILITY_PYTHON_AI_PLANE_PREFIXES) { $env:MIOS_LEGIBILITY_PYTHON_AI_PLANE_PREFIXES } else { 'usr/lib/mios/agent-pipe/,usr/lib/mios/agents/' }
 $script:MIOS_LEGIBILITY_TRACKED_MB_HEADROOM = if ($env:MIOS_LEGIBILITY_TRACKED_MB_HEADROOM) { $env:MIOS_LEGIBILITY_TRACKED_MB_HEADROOM } else { 1 }
 $script:MIOS_PATHS_LIBEXEC_DIR = if ($env:MIOS_PATHS_LIBEXEC_DIR) { $env:MIOS_PATHS_LIBEXEC_DIR } else { Resolve-MiosInput -Canonical 'MIOS_PATHS_LIBEXEC_DIR' -Aliases @('MIOS_LIBEXEC_DIR') -Default ('/usr/libexec/mios') }
@@ -7188,7 +7188,7 @@ $script:MIOS_WSL_DISTRO = if ($env:MIOS_WSL_DISTRO) { $env:MIOS_WSL_DISTRO } els
 $script:MIOS_XDG_CACHE_LOCAL_PATH = if ($env:MIOS_XDG_CACHE_LOCAL_PATH) { $env:MIOS_XDG_CACHE_LOCAL_PATH } else { "$($script:MIOS_STORAGE_CEPHFS_XDG_CACHE_HOME_OVERRIDE)" }
 
 # ── IMAGE DEFAULT (asserted by the image-parity drift check) ─────────
-$defaultImageName = 'ghcr.io/mios-dev/mios'
+$defaultImageName = 'ghcr.io/mios-developer/mios'
 
 # ── WINDOWS HOST PATHS (resolved from the live environment) ──────────
 $script:MIOS_WIN_APPDATA_DIR = if ($env:APPDATA)     { $env:APPDATA }     else { "$HOME/AppData/Roaming" }

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4116,
-  "total_metadata_entries": 3384,
-  "total_hints": 3378,
-  "total_functions_indexed": 2087,
-  "total_related_links": 6630,
+  "total_files_scanned": 4117,
+  "total_metadata_entries": 3385,
+  "total_hints": 3379,
+  "total_functions_indexed": 2088,
+  "total_related_links": 6635,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -400,10 +400,11 @@
     },
     {
       "path": ".github/workflows/machine-os-mirror.yml",
-      "hint": "Publishes [image].machine_os_mirror, the container-only and digest-identical copy of the podman machine OS that the MiOS dev image and the drift-gate container build FROM.",
+      "hint": "Publishes the SSOT container-only machine OS mirror before dependent CI container jobs can pull it.",
       "related": [
         "tools/mirror-machine-os.sh",
-        "usr/share/mios/mios.toml"
+        "usr/share/mios/mios.toml",
+        ".github/workflows/mios-ci.yml"
       ],
       "functions": [],
       "doc": null,
@@ -8476,6 +8477,22 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-machine-os-mirror.py",
+      "hint": "Exercises machine OS mirror publication with isolated registry commands, digest controls, namespace failures, and reusable workflow output contracts.",
+      "related": [
+        "tools/mirror-machine-os.sh",
+        ".github/workflows/machine-os-mirror.yml",
+        "usr/share/mios/templates/python-test",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-manifest-rag.py",
       "hint": "Tests for task_287: mios_manifest_rag \u2014 manifest-guided progressive RAG.",
       "related": [
@@ -11596,7 +11613,7 @@
     },
     {
       "path": "tools/mirror-machine-os.sh",
-      "hint": "Mirrors the container images (not the podman-machine disk images) of [image].machine_os_repo:machine_os_tag into [image].machine_os_mirror, digest-identical, so builders that cannot parse the disk-image artifacts (Codespaces) pull the same MiOS base.",
+      "hint": "Mirrors only the OCI container images from the SSOT machine OS index, preserving child digests and excluding disk-image artifacts.",
       "related": [
         "/usr/share/mios/templates/bash",
         "usr/share/mios/mios.toml",

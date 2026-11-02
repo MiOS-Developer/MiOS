@@ -805,6 +805,17 @@
         "build_router"
       ]
     },
+    "usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py": {
+      "configure_kwargs": [],
+      "public_symbols": [
+        "append_call",
+        "completion_status",
+        "envelope",
+        "event",
+        "output_items",
+        "response_usage"
+      ]
+    },
     "usr/lib/mios/agent-pipe/mios_pipe/routing/classify.py": {
       "configure_kwargs": [
         "db_create",
