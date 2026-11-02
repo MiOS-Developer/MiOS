@@ -707,7 +707,9 @@ async def chat_completions_logic(request: Request) -> Any:
     if str(body.get("tool_choice") or "").strip().lower() == "none":
         if _INGRESS_KEY:
             authorization = request.headers.get("authorization") or ""
-            if authorization.removeprefix("Bearer ").strip() != _INGRESS_KEY:
+            credential = authorization.removeprefix("Bearer ").strip()
+            from mios_pipe.access.authn import _check_inbound_principal
+            if credential != _INGRESS_KEY and not _check_inbound_principal(credential):
                 return JSONResponse(status_code=401, content={"error": {
                     "message": "unauthorized", "type": "invalid_request_error"}})
         _record_active.set(False)

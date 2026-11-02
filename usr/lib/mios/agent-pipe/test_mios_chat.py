@@ -837,6 +837,21 @@ def _test_tool_choice_none_stripping():
     check("authenticated plain API reaches the direct relay",
           result is S_PLAIN and CALLS == ["plain"])
 
+    from mios_pipe.access import authn
+    enrolled = {"fixture-enrolled": {"principal": "fixture", "scope": "read"},
+                "fixture-revoked": {"principal": "fixture", "scope": "read"}}
+    with mock.patch.object(authn, "_load_caller_keys", return_value=enrolled), \
+         mock.patch.dict(sys.modules, {"mios_a2a": types.SimpleNamespace(
+             _caller_key_revoked=lambda token, entry: token == "fixture-revoked")}):
+        for credential, expected in (("fixture-enrolled", 200), ("fixture-revoked", 401),
+                                     ("fixture-unknown", 401)):
+            _wire_common(_INGRESS_KEY="fixture-key")
+            result = _run({"messages": [{"role": "user", "content": "hello"}],
+                           "tool_choice": "none"}, {"Authorization": "Bearer " + credential})
+            check(f"plain API uses canonical enrolled-key and revocation rules: {credential}",
+                  (result is S_PLAIN and CALLS == ["plain"]) if expected == 200 else
+                  (result.status_code == expected and not CALLS))
+
     class Reply:
         def __init__(self, payload, status=200, chunks=()):
             self.payload, self.status_code, self.parts = payload, status, chunks
