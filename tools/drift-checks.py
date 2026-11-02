@@ -2322,17 +2322,30 @@ def check_bound_image_store() -> int:
             bad.append(f"{name}: expected one additionalimagestore={store} argument")
 
     # .gitkeep is the explicit source-only placeholder, removed by the bake.
+    from mios_tracked import rooted_resolve, rooted_target
     actual = {name for name in os.listdir(bdir) if name != ".gitkeep"} if os.path.isdir(bdir) else set()
     source_only = not actual and os.path.isfile(os.path.join(bdir, ".gitkeep"))
     if not source_only:
         for name in actual:
             link = os.path.join(bdir, name)
-            if not os.path.islink(link) or not os.path.exists(link):
+            if not os.path.islink(link):
                 bad.append(f"bound-images.d/{name}: missing or broken symlink")
+                continue
             if name in firstboot or name not in expected_bound:
                 bad.append(f"bound-images.d/{name}: not a declared bound Quadlet")
-            elif os.path.islink(link) and os.path.normcase(os.path.realpath(link)) != os.path.normcase(os.path.realpath(expected_bound[name])):
-                bad.append(f"bound-images.d/{name}: symlink targets wrong Quadlet")
+                continue
+            try:
+                target = rooted_target(root, link, os.readlink(link))
+                expected = os.path.abspath(expected_bound[name])
+                if os.path.normcase(str(target)) != os.path.normcase(expected):
+                    bad.append(f"bound-images.d/{name}: symlink targets wrong Quadlet")
+                resolved = rooted_resolve(root, link)
+                if not resolved.is_file():
+                    raise ValueError("target is not a Quadlet file")
+                with resolved.open("rb") as fh:
+                    fh.read(1)
+            except (OSError, ValueError) as exc:
+                bad.append(f"bound-images.d/{name}: missing or broken symlink: {exc}")
         for name in expected_bound.keys() - actual:
             bad.append(f"bound-images.d/{name}: missing bound Quadlet symlink")
 
@@ -2670,10 +2683,32 @@ def check_verb_backends() -> int:
         return _rc
     with open(p, "rb") as fh:
         d = _toml.load(fh)
-    libexec = os.path.join(root, "usr/libexec/mios")
-    usrbin = os.path.join(root, "usr/bin")
-    def _exists(t):
-        return os.path.isfile(os.path.join(libexec, t)) or os.path.isfile(os.path.join(usrbin, t))
+    from mios_tracked import NativeCatalogError, native_install_paths, rooted_resolve
+    native_paths = None
+    def _exists(token):
+        nonlocal native_paths
+        candidates = [token] if token.startswith("/") else [
+            "/usr/libexec/mios/" + token, "/usr/bin/" + token]
+        for path in candidates:
+            try:
+                resolved = rooted_resolve(root, path)
+                if resolved.is_file():
+                    with resolved.open("rb") as fh:
+                        fh.read(1)
+                    return True
+            except FileNotFoundError:
+                pass
+        if native_paths is None:
+            native_paths = native_install_paths(root)
+        for path in candidates:
+            try:
+                resolved = rooted_resolve(root, path, native_paths)
+                destination = "/" + resolved.relative_to(os.path.abspath(root)).as_posix()
+                if not resolved.exists() and destination in native_paths:
+                    return True
+            except FileNotFoundError:
+                continue
+        return False
     missing = {}
     for name, cfg in (d.get("verbs", {}) or {}).items():
         if not isinstance(cfg, dict):
@@ -2684,8 +2719,13 @@ def check_verb_backends() -> int:
             continue
         if not isinstance(cmd, str) or not cmd:
             continue
-        for tok in set(re.findall(r"\bmios-[a-z0-9-]+", cmd)):
-            if not _exists(tok):
+        for tok in set(re.findall(r"(?:/[A-Za-z0-9_./-]+/)?\bmios-[a-z0-9-]+", cmd)):
+            try:
+                exists = _exists(tok)
+            except (OSError, ValueError, NativeCatalogError) as exc:
+                sys.stderr.write(f"    {tok}: backend contract cannot be verified: {exc}\n")
+                exists = False
+            if not exists:
                 missing.setdefault(tok, []).append(name)
     for t, vs in sorted(missing.items()):
         sys.stderr.write(f"    {t} <- [verbs.*] {sorted(vs)} (backend not on disk)\n")

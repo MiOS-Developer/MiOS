@@ -597,6 +597,127 @@ class TestBoundImageStore(unittest.TestCase):
         self.check(1, "symlink targets wrong Quadlet")
 
 
+    def test_fhs_absolute_and_relative_binding_match_checkout_target(self):
+        marker = Path(self.root) / "usr/lib/bootc/bound-images.d/.gitkeep"
+        marker.unlink()
+        link = marker.parent / "core.container"
+        for target in ("/usr/share/containers/systemd/core.container",
+                       "../../../share/containers/systemd/core.container"):
+            with self.subTest(target=target):
+                link.symlink_to(target)
+                self.check(0)
+                link.unlink()
+
+    def test_broken_escaped_external_and_cyclic_bindings_fail(self):
+        marker = Path(self.root) / "usr/lib/bootc/bound-images.d/.gitkeep"
+        marker.unlink()
+        link = marker.parent / "core.container"
+        for target in ("/etc/passwd", "../../../../../../escape", "core.container",
+                       "/usr/share/containers/systemd/missing.container"):
+            with self.subTest(target=target):
+                link.symlink_to(target)
+                self.check(1, "missing or broken symlink")
+                link.unlink()
+
+    def test_unreadable_selected_target_does_not_pass(self):
+        marker = Path(self.root) / "usr/lib/bootc/bound-images.d/.gitkeep"
+        marker.unlink()
+        (marker.parent / "core.container").symlink_to("/usr/share/containers/systemd/core.container")
+        original = Path.open
+        def deny(path, *args, **kwargs):
+            if str(path) == self.unit and args and args[0] == "rb":
+                raise PermissionError("planted unreadable Quadlet")
+            return original(path, *args, **kwargs)
+        import contextlib, io
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, MIOS_DRIFT_ROOT=self.root), mock.patch.object(
+                Path, "open", deny), contextlib.redirect_stderr(output):
+            self.assertEqual(1, MOD.check_bound_image_store())
+        self.assertIn("planted unreadable Quadlet", output.getvalue())
+
+
+class TestNativeBackendContracts(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="mios-backend-contract-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.policy = self.root / "usr/share/mios/mios.toml"
+        self.policy.parent.mkdir(parents=True)
+        import mios_tracked
+        self.paths = mios_tracked
+        patch = mock.patch.dict(os.environ, MIOS_DRIFT_ROOT=str(self.root))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def check(self, command, declarations):
+        self.policy.write_text("[verbs.probe]\ncmd = " + repr(command) + "\n")
+        output = io.StringIO()
+        import contextlib
+        with mock.patch.object(self.paths, "native_install_paths", return_value=declarations):
+            with contextlib.redirect_stderr(output):
+                result = MOD.check_verb_backends()
+        return result, output.getvalue()
+
+    def test_exact_native_install_and_exposure_metadata_are_used(self):
+        declared = {"/usr/libexec/mios/mios-worker":"mios-worker"}
+        for command in ("mios-worker --help", "/usr/libexec/mios/mios-worker --help"):
+            with self.subTest(command=command):
+                self.assertEqual(0, self.check(command, declared)[0])
+        self.assertEqual(1, self.check("/usr/bin/mios-worker --help", declared)[0])
+        declared["/usr/bin/mios-worker"] = "mios-worker"
+        self.assertEqual(0, self.check("/usr/bin/mios-worker --help", declared)[0])
+
+    def test_arbitrary_path_name_and_unknown_backend_fail(self):
+        fake = self.root / "path/mios-unknown"
+        fake.parent.mkdir()
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        with mock.patch.dict(os.environ, PATH=str(fake.parent) + os.pathsep + os.environ["PATH"]):
+            code, output = self.check("mios-unknown", {"/usr/bin/mios-worker":"mios-worker"})
+        self.assertEqual(1, code)
+        self.assertIn("mios-unknown", output)
+
+    def test_existing_source_backend_is_still_valid(self):
+        source = self.root / "usr/libexec/mios/mios-script"
+        source.parent.mkdir(parents=True)
+        source.write_text("#!/bin/sh\nexit 0\n")
+        self.assertEqual(0, self.check("mios-script", {})[0])
+
+    def test_declared_name_does_not_hide_broken_alias_or_directory(self):
+        node = self.root / "usr/bin/mios-worker"
+        node.parent.mkdir(parents=True)
+        declared = {"/usr/bin/mios-worker":"mios-worker"}
+        node.symlink_to("/missing/mios-unknown")
+        self.assertEqual(1, self.check("/usr/bin/mios-worker", declared)[0])
+        node.unlink()
+        node.mkdir()
+        self.assertEqual(1, self.check("/usr/bin/mios-worker", declared)[0])
+
+    def test_unreadable_source_cannot_fall_back_to_native_declaration(self):
+        source = self.root / "usr/bin/mios-worker"
+        source.parent.mkdir(parents=True)
+        source.write_text("source")
+        original = Path.open
+        def deny(path, *args, **kwargs):
+            if path == source:
+                raise PermissionError("planted unreadable backend")
+            return original(path, *args, **kwargs)
+        with mock.patch.object(Path, "open", deny):
+            code, output = self.check("/usr/bin/mios-worker", {"/usr/bin/mios-worker":"mios-worker"})
+        self.assertEqual(1, code)
+        self.assertIn("planted unreadable backend", output)
+
+    def test_failed_native_metadata_is_a_diagnostic_failure(self):
+        self.policy.write_text('[verbs.probe]\ncmd="mios-worker"\n')
+        output = io.StringIO()
+        import contextlib
+        with mock.patch.object(self.paths, "native_install_paths", side_effect=
+                               self.paths.NativeCatalogError("planted invalid metadata")):
+            with contextlib.redirect_stderr(output):
+                self.assertEqual(1, MOD.check_verb_backends())
+        self.assertIn("planted invalid metadata", output.getvalue())
+
+
 # The bound-image-store projection left Python with tools/generate-pod-quadlets.py
 # (f22b85ff, ported to `mios-gen pod-quadlets`). Its six cases now run beside the
 # implementation as the bound_store_* tests in tools/native/mios-gen/src/pod_quadlets.rs.

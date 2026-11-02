@@ -39,7 +39,8 @@ lf_ALLOWED_PATHS = frozenset({
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mios_tracked import tracked, GitUnavailable  # noqa: E402
+from mios_tracked import (tracked, tracked_modes, GitUnavailable, NativeCatalogError,
+                          native_install_paths, rooted_resolve)  # noqa: E402
 
 def lf_main() -> int:
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.getcwd()
@@ -503,20 +504,51 @@ from mios_tracked import tracked, GitUnavailable  # noqa: E402
 
 
 def tr_scan(root: str):
-    """Returns (missing, unreadable) for the tracked tree under root."""
-    missing, unreadable = [], []
-    for rel in tracked(root):
-        full = os.path.join(root, rel)
-        if not os.path.exists(full):
-            missing.append(rel)
-            continue
+    """Returns (missing, unreadable) for source nodes, using image-root link semantics."""
+    import re
+    mask_path = re.compile(r"(?:^|/)(?:etc|usr/lib)/systemd/(?:system|user)/[^/]+\."
+                           r"(?:service|socket|target|timer|path|mount|automount|slice|scope|swap)$")
+    missing, unreadable, native_paths = [], [], None
+    for rel, mode in tracked_modes(root).items():
         try:
-            with open(full, "rb") as fh:
-                fh.read(1)
-        except OSError as exc:
+            if any(ord(char) < 32 for char in rel):
+                raise ValueError("control character in tracked source path")
+            if mode == "120000":
+                parent = rooted_resolve(root, os.path.dirname(rel))
+                node = parent / os.path.basename(rel)
+                if not os.path.lexists(node):
+                    raise FileNotFoundError(str(node))
+                if not node.is_symlink():
+                    raise ValueError("tracked symlink was replaced by a non-link node")
+                # A systemd mask declares a disabled unit, not source content
+                # borrowed from the host. /dev/null is a kernel ABI node that
+                # is materialized at boot, outside the tracked overlay.
+                if os.readlink(node) == "/dev/null" and mask_path.search(rel):
+                    continue
+            try:
+                resolved = rooted_resolve(root, rel)
+            except FileNotFoundError:
+                if mode != "120000":
+                    raise
+                if native_paths is None:
+                    native_paths = native_install_paths(root)
+                resolved = rooted_resolve(root, rel, native_paths)
+                # Only a declared native output may be absent before the build.
+                if "/" + resolved.relative_to(os.path.abspath(root)).as_posix() in native_paths:
+                    continue
+            if resolved.is_dir() and mode in {"120000", "160000"}:
+                with os.scandir(resolved) as entries:
+                    next(entries, None)
+            else:
+                if not resolved.is_file():
+                    raise ValueError("tracked source target is not a regular file")
+                with open(resolved, "rb") as fh:
+                    fh.read(1)
+        except FileNotFoundError:
+            missing.append(rel)
+        except (OSError, ValueError, NativeCatalogError) as exc:
             unreadable.append((rel, str(exc)))
     return missing, unreadable
-
 
 def tr_main() -> int:
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.getcwd()

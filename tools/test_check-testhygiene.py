@@ -515,10 +515,118 @@ def ttr_test_unlistable_repo_raises():
         ttr_check("dead-git-raises", raised, True)
 
 
+
+def ttr_test_rooted_directory_native_and_broken_aliases():
+    from pathlib import Path
+    from unittest import mock
+    with tempfile.TemporaryDirectory(prefix="mios-readable-links-") as tmp:
+        root = Path(tmp)
+        ttr__git(tmp, "init", "-q")
+        target = root / "usr/share/mios/generated/item.yaml"
+        target.parent.mkdir(parents=True)
+        target.write_text("valid")
+        alias = root / "usr/share/mios/manifests"
+        alias.symlink_to("generated")
+        native = root / "usr/libexec/mios/mios-worker"
+        native.parent.mkdir(parents=True)
+        native.symlink_to("/usr/bin/mios-worker")
+        ttr__git(tmp, "add", "-A")
+        declarations = {"/usr/bin/mios-worker":"mios-worker"}
+        with mock.patch.object(ttr_ctr, "native_install_paths", return_value=declarations):
+            ttr_check("directory-and-declared-native-alias-pass", ttr_ctr.tr_scan(tmp), ([], []))
+            native.unlink()
+            missing, _ = ttr_ctr.tr_scan(tmp)
+            ttr_check("missing-alias-node-is-not-a-build-output", str(native.relative_to(root)) in missing, True)
+            native.symlink_to("/usr/bin/mios-unknown")
+            missing, _ = ttr_ctr.tr_scan(tmp)
+            ttr_check("undeclared-native-target-fails", str(native.relative_to(root)) in missing, True)
+            native.unlink()
+            native.symlink_to("/etc/passwd")
+            missing, _ = ttr_ctr.tr_scan(tmp)
+            ttr_check("external-host-file-cannot-satisfy-alias", str(native.relative_to(root)) in missing, True)
+            native.unlink()
+            native.symlink_to("../../../../../../escape")
+            _, unreadable = ttr_ctr.tr_scan(tmp)
+            ttr_check("escaped-alias-fails", any("escapes" in why for _, why in unreadable), True)
+            native.unlink()
+            native.symlink_to("mios-worker")
+            _, unreadable = ttr_ctr.tr_scan(tmp)
+            ttr_check("cyclic-alias-fails", any("cycle" in why for _, why in unreadable), True)
+
+
+def ttr_test_unreadable_file_and_directory_cannot_pass():
+    from pathlib import Path
+    from unittest import mock
+    with tempfile.TemporaryDirectory(prefix="mios-readable-permissions-") as tmp:
+        root = Path(tmp)
+        ttr__git(tmp, "init", "-q")
+        source = root / "source.txt"
+        source.write_text("valid")
+        ttr__git(tmp, "add", "source.txt")
+        original = open
+        def deny(path, *args, **kwargs):
+            if os.fspath(path) == str(source):
+                raise PermissionError("planted unreadable text")
+            return original(path, *args, **kwargs)
+        with mock.patch("builtins.open", side_effect=deny):
+            missing, unreadable = ttr_ctr.tr_scan(tmp)
+        ttr_check("unreadable-text-is-not-missing", missing, [])
+        ttr_check("unreadable-text-fails", any("planted unreadable text" in why for _, why in unreadable), True)
+        target = root / "data"
+        target.mkdir()
+        alias = root / "directory"
+        alias.symlink_to("data")
+        ttr__git(tmp, "add", "directory")
+        original_scan = os.scandir
+        def deny_directory(path):
+            if os.fspath(path) == str(target):
+                raise PermissionError("planted unreadable directory")
+            return original_scan(path)
+        with mock.patch("os.scandir", side_effect=deny_directory):
+            _, unreadable = ttr_ctr.tr_scan(tmp)
+        ttr_check("unreadable-directory-fails", any("planted unreadable directory" in why for _, why in unreadable), True)
+
+
+def ttr_test_systemd_masks_are_typed_metadata_not_broken_source():
+    from pathlib import Path
+    with tempfile.TemporaryDirectory(prefix="mios-readable-masks-") as tmp:
+        root = Path(tmp)
+        ttr__git(tmp, "init", "-q")
+        masks = ["etc/systemd/system/masked.service",
+                 "docs/sample/overlay/usr/lib/systemd/user/masked.socket"]
+        invalid = ["usr/lib/mios/source.py", "etc/systemd/system/masked.service.wants/worker.service"]
+        for rel in masks + invalid:
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to("/dev/null")
+        ttr__git(tmp, "add", "-A")
+        missing, unreadable = ttr_ctr.tr_scan(tmp)
+        ttr_check("only-real-unit-mask-metadata-is-accepted", sorted(missing), sorted(invalid))
+        ttr_check("masks-do-not-read-host-device", unreadable, [])
+
+
+def ttr_test_special_file_cannot_be_opened_as_source():
+    from pathlib import Path
+    from unittest import mock
+    with tempfile.TemporaryDirectory(prefix="mios-readable-nodes-") as tmp:
+        root = Path(tmp)
+        ttr__git(tmp, "init", "-q")
+        path = root / "source.py"
+        path.write_text("valid")
+        ttr__git(tmp, "add", "source.py")
+        with mock.patch.object(Path, "is_file", return_value=False):
+            missing, unreadable = ttr_ctr.tr_scan(tmp)
+        ttr_check("nonregular-target-is-not-missing", missing, [])
+        ttr_check("nonregular-source-target-fails", any("not a regular file" in why for _, why in unreadable), True)
+
 def ttr_main() -> int:
     ttr_test_clean_repo_has_nothing_to_report()
     ttr_test_removed_tracked_file_is_named()
     ttr_test_unlistable_repo_raises()
+    ttr_test_rooted_directory_native_and_broken_aliases()
+    ttr_test_unreadable_file_and_directory_cannot_pass()
+    ttr_test_systemd_masks_are_typed_metadata_not_broken_source()
+    ttr_test_special_file_cannot_be_opened_as_source()
     print(f"[test_check-tracked-readable] {ttr_PASSED} passed, {len(ttr_FAILED)} failed")
     for f in ttr_FAILED:
         print(f"  FAIL {f}")
