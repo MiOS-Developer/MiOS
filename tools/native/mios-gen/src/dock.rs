@@ -492,7 +492,7 @@ fn wl_string(sv: &str) -> Vec<u8> {
     let mut v = ((sv.len() + 1) as u32).to_le_bytes().to_vec();
     v.extend_from_slice(sv.as_bytes());
     v.push(0);
-    while v.len() % 4 != 0 {
+    while !v.len().is_multiple_of(4) {
         v.push(0);
     }
     v
@@ -550,7 +550,7 @@ pub fn rewrite_request(t: &mut Tracker, r: &OskRect, m: &[u8]) -> Vec<u8> {
         }
         out.extend(wl_string(&r.namespace));
         let len = out.len() as u32;
-        out[4..8].copy_from_slice(&((len << 16) | 0u32).to_le_bytes());
+        out[4..8].copy_from_slice(&(len << 16).to_le_bytes());
         out.extend(placement(id, r));
         return out;
     } else if t.layer_surfaces.contains(&obj) {

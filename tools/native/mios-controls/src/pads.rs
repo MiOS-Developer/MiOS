@@ -98,7 +98,9 @@ pub fn button_name(code: u16) -> Option<&'static str> {
 /// Kernel input_event records (64-bit: timeval 16 bytes, type u16, code u16, value i32) from a read buffer.
 pub fn parse_events(bytes: &[u8]) -> Vec<(u16, u16, i32)> {
     bytes
-        .chunks_exact(24)
+        .as_chunks::<24>()
+        .0
+        .iter()
         .map(|c| {
             (
                 u16::from_ne_bytes([c[16], c[17]]),
@@ -248,7 +250,7 @@ impl Translator {
 
 enum Src {
     /// a controller opened through mios-inputd's guarded open (refuses keyboards and virtual devices); grabbable
-    Owned(mios_inputd::linux::Device),
+    Owned(Box<mios_inputd::linux::Device>),
     /// mios-inputd's virtual pad or a mouse: read only, never grabbed
     Plain(File),
 }
@@ -332,7 +334,7 @@ fn open_pads(infos: &[Info], cfg: &PadConfig) -> (Vec<Source>, Vec<String>) {
                 notes.push(d.name.clone());
                 out.push(Source {
                     name: d.name.clone(),
-                    src: Src::Owned(dev),
+                    src: Src::Owned(Box::new(dev)),
                     tr,
                     grabbed: false,
                 });

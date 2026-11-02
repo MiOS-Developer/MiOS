@@ -725,7 +725,7 @@ fn end_detached(conn: &Connection, subs: Vec<GtkSub>) {
 /// source changes; re-snapshots of the same source (signal-driven) read the layout only, so
 /// a snapshot never causes the signal that causes the next one.
 fn should_prime(primed: &Option<(String, String)>, bus: &str, path: &str) -> bool {
-    primed.as_ref().map_or(true, |(b, p)| b != bus || p != path)
+    primed.as_ref().is_none_or(|(b, p)| b != bus || p != path)
 }
 
 /// GAction description: enabled, and the state of a stateful action (boolean = check, string = radio).
@@ -2195,42 +2195,49 @@ impl Ctx {
             self.dbm_primed = None;
         }
         let snap = match resolved {
-            Resolved::Gtk(t, binding) => match {
-                let conn = self.conn.clone();
-                let inflight =
-                    self.gtk_inflight
-                        .insert((t.bus.clone(), t.menubar_path.clone(), Vec::new()));
-                gtk_fetch(&conn, &t.bus, &t.menubar_path, &mut inflight.2).await
-            } {
-                Ok((groups, subscribed)) => {
-                    self.gtk_inflight = None;
-                    // Subscribe-new-then-End-old: GTK reference-counts per group, so a
-                    // re-snapshot of the same menubar keeps exactly one subscription.
-                    let old =
-                        self.gtk_sub
-                            .replace((t.bus.clone(), t.menubar_path.clone(), subscribed));
-                    end_detached(&self.conn, old.into_iter().collect());
-                    let app = gtk_actions(&self.conn, &t.bus, &t.app_path).await;
-                    let win = match &t.window_path {
-                        Some(p) => Some(gtk_actions(&self.conn, &t.bus, p).await),
-                        None => None,
-                    };
-                    self.set_current(Some(t.bus.clone()));
-                    Snapshot {
-                        app_id: c.class.clone(),
-                        source: "gtk".into(),
-                        menus: gtk_menus(&groups, &app, win.as_ref()),
-                        address: c.address.clone(),
-                        binding: Some(binding.into()),
+            Resolved::Gtk(t, binding) => {
+                let result = {
+                    let conn = self.conn.clone();
+                    let inflight = self.gtk_inflight.insert((
+                        t.bus.clone(),
+                        t.menubar_path.clone(),
+                        Vec::new(),
+                    ));
+                    gtk_fetch(&conn, &t.bus, &t.menubar_path, &mut inflight.2).await
+                };
+                match result {
+                    Ok((groups, subscribed)) => {
+                        self.gtk_inflight = None;
+                        // Subscribe-new-then-End-old: GTK reference-counts per group, so a
+                        // re-snapshot of the same menubar keeps exactly one subscription.
+                        let old = self.gtk_sub.replace((
+                            t.bus.clone(),
+                            t.menubar_path.clone(),
+                            subscribed,
+                        ));
+                        end_detached(&self.conn, old.into_iter().collect());
+                        let app = gtk_actions(&self.conn, &t.bus, &t.app_path).await;
+                        let win = match &t.window_path {
+                            Some(p) => Some(gtk_actions(&self.conn, &t.bus, p).await),
+                            None => None,
+                        };
+                        self.set_current(Some(t.bus.clone()));
+                        Snapshot {
+                            app_id: c.class.clone(),
+                            source: "gtk".into(),
+                            menus: gtk_menus(&groups, &app, win.as_ref()),
+                            address: c.address.clone(),
+                            binding: Some(binding.into()),
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[appmenu] {e}");
+                        self.drop_gtk_sub();
+                        self.set_current(None);
+                        empty(client)
                     }
                 }
-                Err(e) => {
-                    eprintln!("[appmenu] {e}");
-                    self.drop_gtk_sub();
-                    self.set_current(None);
-                    empty(client)
-                }
-            },
+            }
             Resolved::Dbm { bus, path, binding } => {
                 self.drop_gtk_sub();
                 let prime = should_prime(&self.dbm_primed, &bus, &path);
@@ -3080,8 +3087,8 @@ mod tests {
         reg_insert(&mut m, 7, ":1.10", path("/MenuBar/1")).unwrap();
         reg_insert(&mut m, 7, ":1.10", path("/MenuBar/2")).unwrap();
         assert_eq!(m[&7].1.as_str(), "/MenuBar/2");
-        assert_eq!(reg_remove(&mut m, 8, ":1.10").unwrap(), false);
-        assert_eq!(reg_remove(&mut m, 7, ":1.10").unwrap(), true);
+        assert!(!reg_remove(&mut m, 8, ":1.10").unwrap());
+        assert!(reg_remove(&mut m, 7, ":1.10").unwrap());
         assert!(m.is_empty());
     }
 

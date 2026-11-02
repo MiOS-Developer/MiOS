@@ -593,18 +593,25 @@ pub struct DisplayPlan {
     pub argv: Vec<String>,
 }
 
+/// Selected display mode and DRM card for this boot's greeter.
+#[derive(Clone, Copy, Debug)]
+pub struct DisplayTarget<'a> {
+    pub display: &'a str,
+    pub card: Option<&'a Path>,
+}
+
 /// Put the login UI on the boot profile's display. `vt_argv` is the boot-selected greeter argv (tuigreet or the
 /// glass launcher); in "compositor" mode the same tuigreet becomes the hosted client and the VT fallback.
 pub fn display_plan(
     g: &Greeter,
     doc: &Value,
     kind: &str,
-    display: &str,
-    card: Option<&Path>,
+    target: DisplayTarget<'_>,
     sysroot: &Path,
     cfg: &Path,
     vt_argv: Vec<String>,
 ) -> Result<DisplayPlan, String> {
+    let DisplayTarget { display, card } = target;
     let vt = |reason: String| DisplayPlan {
         display: "vt".into(),
         drm_device: None,
@@ -711,8 +718,10 @@ pub fn runtime(
         &g,
         &doc,
         kind.unwrap_or(&g.kind),
-        &display,
-        card.as_deref(),
+        DisplayTarget {
+            display: &display,
+            card: card.as_deref(),
+        },
         root,
         &cfg,
         argv,
@@ -965,8 +974,10 @@ mod tests {
             &g,
             &doc,
             "tuigreet",
-            "compositor",
-            Some(card),
+            DisplayTarget {
+                display: "compositor",
+                card: Some(card),
+            },
             sys.path(),
             cfg,
             vt.clone(),
@@ -1009,8 +1020,10 @@ mod tests {
             &g2,
             &doc,
             "glass",
-            "compositor",
-            Some(card),
+            DisplayTarget {
+                display: "compositor",
+                card: Some(card),
+            },
             sys.path(),
             cfg,
             glass,
@@ -1028,8 +1041,10 @@ mod tests {
             &g3,
             &doc,
             "tuigreet",
-            &greeter_display(&doc, "igpu").unwrap(),
-            Some(card),
+            DisplayTarget {
+                display: &greeter_display(&doc, "igpu").unwrap(),
+                card: Some(card),
+            },
             sys.path(),
             cfg,
             vt3.clone(),
@@ -1055,8 +1070,10 @@ mod tests {
                 &g,
                 &doc,
                 "tuigreet",
-                "compositor",
-                card.map(Path::new),
+                DisplayTarget {
+                    display: "compositor",
+                    card: card.map(Path::new),
+                },
                 sys.path(),
                 cfg,
                 vt.clone(),

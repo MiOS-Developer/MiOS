@@ -225,15 +225,19 @@ mod runtime {
     fn validate_inference(body: &[u8], model: &str) -> Result<(), String> {
         let stream =
             std::str::from_utf8(body).map_err(|_| "inference probe returned invalid UTF-8")?;
-        let mut expected = 0_u64;
         let mut completed = false;
-        for line in stream.lines().filter_map(|line| line.strip_prefix("data:")) {
+        for (expected, line) in stream
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .enumerate()
+        {
             let value: Value = serde_json::from_str(line.trim())
                 .map_err(|_| "inference probe returned invalid Responses event JSON")?;
-            if completed || value.get("sequence_number").and_then(Value::as_u64) != Some(expected) {
+            if completed
+                || value.get("sequence_number").and_then(Value::as_u64) != Some(expected as u64)
+            {
                 return Err("inference probe returned an invalid Responses event sequence".into());
             }
-            expected += 1;
             match value.get("type").and_then(Value::as_str) {
                 Some("response.failed" | "error" | "response.incomplete") => {
                     return Err("configured inference backend failed; check first-boot model provisioning and inference service logs".into());

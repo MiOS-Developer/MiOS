@@ -30,6 +30,9 @@ use toml::Value;
 use mios_resolver::terminal_tuis;
 use mios_unit_gen::tmux_os::{self as policy, ItemTarget};
 
+/// Resolved desktop application label and command arguments.
+type AppInvocation = (String, Vec<String>);
+
 const TERMINAL: &str = "/usr/libexec/mios/mios-terminal";
 /// Never a launcher key: closes the launcher, as in every tmux menu.
 const CLOSE_KEY: char = 'q';
@@ -996,7 +999,7 @@ pub fn fresh_name(base: &str, taken: &[String]) -> String {
     }
     let mut name = b.clone();
     let mut n = 2;
-    while taken.iter().any(|t| *t == name) {
+    while taken.contains(&name) {
         name = format!("{b}-{n}");
         n += 1;
     }
@@ -1613,8 +1616,7 @@ impl<'a> Ui<'a> {
         let pick = if down {
             same.iter()
                 .copied()
-                .filter(|&i| self.sel_order[i].1 <= target)
-                .last()
+                .rfind(|&i| self.sel_order[i].1 <= target)
         } else {
             same.iter()
                 .copied()
@@ -1669,7 +1671,7 @@ impl<'a> Ui<'a> {
         &mut self,
         inp: Input,
         ctx: &Ctx,
-        app_argv: &dyn Fn(&str) -> Option<(String, Vec<String>)>,
+        app_argv: &dyn Fn(&str) -> Option<AppInvocation>,
     ) -> Outcome {
         if let Some(ov) = self.overlay.last_mut() {
             match inp {
@@ -1694,7 +1696,7 @@ impl<'a> Ui<'a> {
                 }
                 Input::Click { x, y, .. } => {
                     let r = self.overlay_rect;
-                    if x > r.x && x + 1 < r.x + r.width && y >= r.y + 1 && y + 1 < r.y + r.height {
+                    if x > r.x && x + 1 < r.x + r.width && y > r.y && y + 1 < r.y + r.height {
                         let i = ov.offset + (y - r.y - 1) as usize;
                         if let Some(e) = ov.entries.get(i).cloned().filter(|e| e.enabled) {
                             ov.sel = i;

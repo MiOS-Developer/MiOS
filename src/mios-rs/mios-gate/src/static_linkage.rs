@@ -1263,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_ssot_exempts_gecko_only_inside_the_portal_install_dir() {
+    fn the_shipped_ssot_exempts_gecko_only_inside_the_portal_install_dir() -> Result<(), String> {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let policy = load_policy(&root);
         assert!(policy.errors.is_empty(), "{:?}", policy.errors);
@@ -1271,7 +1271,7 @@ mod tests {
             .exceptions
             .iter()
             .find(|e| e.binaries.contains("libxul.so"))
-            .expect("[[build.native.linux.exceptions]] names libxul.so");
+            .ok_or("[[build.native.linux.exceptions]] names libxul.so")?;
         // Executables the Firefox 158 artifact actually ships (it has no plugin-container).
         for name in ["mios-portal", "firefox-bin", "pingsender"] {
             assert!(gecko.binaries.contains(name), "{name} is not exempt");
@@ -1279,6 +1279,7 @@ mod tests {
         assert_eq!(gecko.scope, PathBuf::from("usr/lib/mios/portal"));
         assert!(gecko.reason.len() > 20);
         assert!(policy.audit_scopes.contains(&gecko.scope));
+        Ok(())
     }
 
     #[test]

@@ -735,7 +735,10 @@ mod tests {
             value["keybindings"]["global"]["controller"]["sessions"] =
                 toml::Value::try_from(vec![expected.clone()]).unwrap();
         });
-        assert_eq!(cfg.controller.sessions, [expected.clone()]);
+        assert_eq!(
+            cfg.controller.sessions.as_slice(),
+            std::slice::from_ref(&expected)
+        );
         assert!(crate::config::tests::fixture_nav()
             .0
             .controller

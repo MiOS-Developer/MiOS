@@ -743,6 +743,7 @@ pub struct PrivilegedUnitsRoster {
 /// nowhere at all (it is shell syntax). So the projection resolves, from SSOT:
 ///   * `${NAME}` outside Exec*= -- systemd would hand the daemon the literal;
 ///   * `${NAME:-default}` ANYWHERE -- systemd never expands it, Exec*= included;
+///
 /// where NAME is `MIOS_PORTS_<key>` / `MIOS_PORT_<key>` ([ports].<key> +
 /// stack_id * 10000), `MIOS_NETWORK_<key>` ([network].<key>), or
 /// `MIOS_IDENTITY_USERNAME` ([identity].username). A bare `${NAME}`

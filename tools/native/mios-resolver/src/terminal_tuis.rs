@@ -255,7 +255,7 @@ pub fn is_installed(argv0: &str) -> bool {
 
 /// Rows a client may launch, in SSOT order: installed (per `is_exec` on the argv actually run) and, on a
 /// Linux console, only `vt_ok` rows.
-pub fn visible<'a>(tuis: &'a [Tui], console: bool, is_exec: impl Fn(&str) -> bool) -> Vec<&'a Tui> {
+pub fn visible(tuis: &[Tui], console: bool, is_exec: impl Fn(&str) -> bool) -> Vec<&Tui> {
     tuis.iter()
         .filter(|t| !console || t.vt_ok)
         .filter(|t| is_exec(&t.argv_for(console)[0]))

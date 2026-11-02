@@ -841,15 +841,19 @@ pub fn keymap_overlay(data: &Value) -> Result<Vec<(String, String)>, String> {
                     r.get("action").and_then(Value::as_str).unwrap_or(""),
                 )
             });
-            if !listed.contains_key(&c) {
+            if let std::collections::btree_map::Entry::Vacant(entry) = listed.entry(c) {
                 let vm = if r.get("tier").and_then(Value::as_integer) == Some(2) {
                     "VM: "
                 } else {
                     ""
                 };
-                let tag = if is_bypass(&c, &prefix) { OVER } else { "" };
+                let tag = if is_bypass(entry.key(), &prefix) {
+                    OVER
+                } else {
+                    ""
+                };
                 rows.push((spaced(chord), format!("{vm}{label}{tag}")));
-                listed.insert(c, label.clone());
+                entry.insert(label.clone());
             }
             if let Some(bypass) = r.get("bypass").and_then(Value::as_str) {
                 rows.push((spaced(bypass), format!("{label}{OVER}")));

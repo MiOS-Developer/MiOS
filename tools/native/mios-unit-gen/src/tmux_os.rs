@@ -797,16 +797,16 @@ fn parse_menus(
         let mut clean: Vec<Item> = Vec::new();
         for item in items {
             if divider(&item) {
-                if item.target == ItemTarget::Separator && clean.last().is_none_or(&divider) {
+                if item.target == ItemTarget::Separator && clean.last().is_none_or(divider) {
                     continue;
                 }
-                while clean.last().is_some_and(&divider) {
+                while clean.last().is_some_and(divider) {
                     clean.pop();
                 }
             }
             clean.push(item);
         }
-        while clean.last().is_some_and(&divider) {
+        while clean.last().is_some_and(divider) {
             clean.pop();
         }
         if clean.is_empty() {

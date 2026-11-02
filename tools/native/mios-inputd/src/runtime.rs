@@ -2864,7 +2864,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         // Suppress lazy local clone creation while resetting a pad whose sink is unavailable.
                         dev.suspended = true;
                         let out = dev.router.reset();
-                        emit(out, dev, &mut sinks, &focus)?;
+                        emit(out, dev, &mut sinks, focus)?;
                         dev.session_worker = None;
                         dev.capture = None;
                         dev.device.release();
@@ -2882,7 +2882,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         }
                         let (keys, axes) = dev.device.snapshot().map_err(|e| e.to_string())?;
                         let out = dev.router.resync(keys, axes);
-                        emit(out, dev, &mut sinks, &focus)?;
+                        emit(out, dev, &mut sinks, focus)?;
                         dev.suspended = false;
                         dev.session_worker = if sinks.execute_actions && !dev.suspended {
                             dev.session
@@ -2923,7 +2923,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     dev.router
                         .set_focus(&focus.name, target, focus.room_capture),
                 );
-                emit(transition, dev, &mut sinks, &focus)?;
+                emit(transition, dev, &mut sinks, focus)?;
                 let mismatch = dev.capture.as_ref().is_some_and(|b| {
                     focus.address.as_deref() != Some(b.address.as_str())
                         || focus.pid != Some(u64::from(b.pid))
@@ -2947,10 +2947,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     Ok(events) => {
                         if events.iter().any(|e| {
                             e.kind == crate::router::EV_KEY || e.kind == crate::router::EV_ABS
-                        }) {
-                            if dev.session.is_none() && dev.session_error.is_none() {
-                                selected = Some(path.clone());
-                            }
+                        }) && dev.session.is_none()
+                            && dev.session_error.is_none()
+                        {
+                            selected = Some(path.clone());
                         }
                         for event in events {
                             if event.kind == EV_SYN && event.code == SYN_DROPPED {
@@ -2961,12 +2961,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                     dev.device.snapshot().map_err(|e| e.to_string())?;
                                 let out = dev.router.resync(keys, axes);
                                 dev.dropped = false;
-                                emit(out, dev, &mut sinks, &focus)?;
+                                emit(out, dev, &mut sinks, focus)?;
                             } else {
                                 let out = dev
                                     .router
                                     .event(event, (linux::monotonic_ns() / 1_000_000) as u64);
-                                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? {
+                                if let Some(owned) = emit(out, dev, &mut sinks, focus)? {
                                     adopt.push((path.clone(), owned));
                                 }
                             }
@@ -2975,7 +2975,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     Err(e) => {
                         eprintln!("input disconnected {}: {e}", path.display());
                         let out = dev.router.reset();
-                        emit(out, dev, &mut sinks, &focus)?;
+                        emit(out, dev, &mut sinks, focus)?;
                         devices.remove(&path);
                         known_devices.lock().unwrap().remove(&path);
                         if selected.as_ref() == Some(&path) {
@@ -3001,13 +3001,13 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         let out = dev
                             .router
                             .reconcile(&held, (linux::monotonic_ns() / 1_000_000) as u64);
-                        if let Some(owned) = emit(out, dev, &mut sinks, &focus)? {
+                        if let Some(owned) = emit(out, dev, &mut sinks, focus)? {
                             adopt.push((path.clone(), owned));
                         }
                     }
                 }
                 let out = dev.router.tick(dt);
-                if let Some(owned) = emit(out, dev, &mut sinks, &focus)? {
+                if let Some(owned) = emit(out, dev, &mut sinks, focus)? {
                     adopt.push((path.clone(), owned));
                 }
                 // I4 --nested: a captured app in the session reads the assigned node itself, so the grab is released

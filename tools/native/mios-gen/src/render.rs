@@ -240,51 +240,6 @@ pub mod render_desktop {
         out
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::render_launcher;
-        use std::collections::BTreeMap;
-
-        #[test]
-        fn mime_type_and_actions_render_as_spec_groups() {
-            let cfg: toml::Value = toml::from_str(
-                r#"
-                title = "Browser"
-                exec_cmd = "browser %u"
-                flatpak_app_id = "org.example.Browser"
-                mime_type = "text/html;x-scheme-handler/https;"
-                actions = [
-                  { id = "new-window", name = "New Window", exec = "browser --new-window" },
-                  { id = "bad" },
-                ]
-                "#,
-            )
-            .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
-            let out = render_launcher("browser", &cfg, &BTreeMap::new());
-            assert!(out.contains("\nX-Flatpak=org.example.Browser\n"), "{out}");
-            assert!(
-                out.contains("\nMimeType=text/html;x-scheme-handler/https;\n"),
-                "{out}"
-            );
-            assert!(out.contains("\nActions=new-window;\n"), "{out}");
-            assert!(
-                out.ends_with(
-                    "\n\n[Desktop Action new-window]\nName=New Window\nExec=browser --new-window\n"
-                ),
-                "{out}"
-            );
-            let plain: toml::Value = toml::from_str("title = \"x\"")
-                .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
-            let out = render_launcher("x", &plain, &BTreeMap::new());
-            assert!(
-                !out.contains("MimeType=")
-                    && !out.contains("Actions=")
-                    && !out.contains("[Desktop Action"),
-                "{out}"
-            );
-        }
-    }
-
     pub fn run_render_desktop(root: &Path, check: bool) -> Result<(String, i32), (String, i32)> {
         let (ports, launchers) = load_ssot(root).map_err(|e| (e, 1))?;
         let apps_dir = root.join(APPLICATIONS_DIR);
@@ -391,6 +346,50 @@ pub mod render_desktop {
                 "[render-desktop] Rendered .desktop launchers from SSOT".to_string(),
                 0,
             ))
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::render_launcher;
+        use std::collections::BTreeMap;
+
+        #[test]
+        fn mime_type_and_actions_render_as_spec_groups() {
+            let cfg: toml::Value = toml::from_str(
+                r#"
+                title = "Browser"
+                exec_cmd = "browser %u"
+                flatpak_app_id = "org.example.Browser"
+                mime_type = "text/html;x-scheme-handler/https;"
+                actions = [
+                  { id = "new-window", name = "New Window", exec = "browser --new-window" },
+                  { id = "bad" },
+                ]
+                "#,
+            )
+            .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
+            let out = render_launcher("browser", &cfg, &BTreeMap::new());
+            assert!(out.contains("\nX-Flatpak=org.example.Browser\n"), "{out}");
+            assert!(
+                out.contains("\nMimeType=text/html;x-scheme-handler/https;\n"),
+                "{out}"
+            );
+            assert!(out.contains("\nActions=new-window;\n"), "{out}");
+            assert!(
+                out.ends_with(
+                    "\n\n[Desktop Action new-window]\nName=New Window\nExec=browser --new-window\n"
+                ),
+                "{out}"
+            );
+            let plain: toml::Value = toml::from_str("title = \"x\"")
+                .unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
+            let out = render_launcher("x", &plain, &BTreeMap::new());
+            assert!(
+                !out.contains("MimeType=")
+                    && !out.contains("Actions=")
+                    && !out.contains("[Desktop Action"),
+                "{out}"
+            );
         }
     }
 }

@@ -1591,7 +1591,7 @@ async fn modeline(
         let cfg = cfg
             .as_ref()
             .ok_or("[desktop.framerate] is absent or disabled (or pass --edid FILE --hz N)")?;
-        let (_, _, p, hypr, _, mons) = current_plan(&cfg).await;
+        let (_, _, p, hypr, _, mons) = current_plan(cfg).await;
         hypr.ok_or("no live Hyprland instance (or pass --edid FILE --hz N)")?;
         let m = match output {
             Some(o) => mons
@@ -1737,7 +1737,7 @@ mod tests {
             .collect();
         assert!(leftovers.is_empty(), "no temp files left behind");
         // the fragment is an ordinary mios.d layer for the resolver
-        let merged = mios_resolver::layers::merge_layer_files(&[p.clone()]).unwrap();
+        let merged = mios_resolver::layers::merge_layer_files(std::slice::from_ref(&p)).unwrap();
         assert_eq!(
             merged["desktop"]["framerate"]["unlocked"].as_bool(),
             Some(false)

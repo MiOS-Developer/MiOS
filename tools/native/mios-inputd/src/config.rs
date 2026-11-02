@@ -1708,8 +1708,7 @@ BTN_TR="hypr:workspace e+1"
                 value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] =
                     toml::Value::try_from(&contexts).unwrap();
             })
-            .err()
-            .expect("invalid captured navigation contexts accepted");
+            .expect_err("invalid captured navigation contexts accepted");
             assert!(error.contains("capture_navigation_contexts"), "{error}");
         }
         assert!(try_fixture_nav_with(|value| {

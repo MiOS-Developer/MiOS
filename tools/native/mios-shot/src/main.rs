@@ -306,7 +306,9 @@ mod img {
                 // JPEG has no alpha: uncovered pixels (between outputs) become black.
                 let rgb: Vec<u8> = c
                     .rgba
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|p| {
                         let a = p[3] as u32;
                         [
@@ -676,7 +678,7 @@ mod img {
 
         #[test]
         fn ten_bit_formats_convert_down() {
-            let v: u32 = (1023 << 20) | (512 << 10) | 0; // XRGB2101010: r=1023 g=512 b=0
+            let v: u32 = (1023 << 20) | (512 << 10); // XRGB2101010: r=1023 g=512 b=0
             let d = v.to_le_bytes();
             let p = Pixels {
                 width: 1,
@@ -1511,16 +1513,16 @@ mod wl {
 
     /// A y-inverted (wlr) buffer shown upright: compose the vertical flip with the transform.
     fn flip_y(t: wl_output::Transform) -> wl_output::Transform {
-        use wl_output::Transform::*;
+        use wl_output::Transform;
         match t {
-            Normal => Flipped180,
-            _90 => Flipped90,
-            _180 => Flipped,
-            _270 => Flipped270,
-            Flipped => _180,
-            Flipped90 => _90,
-            Flipped180 => Normal,
-            Flipped270 => _270,
+            Transform::Normal => Transform::Flipped180,
+            Transform::_90 => Transform::Flipped90,
+            Transform::_180 => Transform::Flipped,
+            Transform::_270 => Transform::Flipped270,
+            Transform::Flipped => Transform::_180,
+            Transform::Flipped90 => Transform::_90,
+            Transform::Flipped180 => Transform::Normal,
+            Transform::Flipped270 => Transform::_270,
             other => other,
         }
     }
@@ -1649,12 +1651,10 @@ mod wl {
                     format: WEnum::Value(f),
                 } => p.formats.push(f),
                 E::Done => p.constraints = true,
-                E::Stopped => {
-                    if !p.ready {
-                        p.failed.get_or_insert_with(|| {
-                            "capture session stopped (source gone or capture denied)".into()
-                        });
-                    }
+                E::Stopped if !p.ready => {
+                    p.failed.get_or_insert_with(|| {
+                        "capture session stopped (source gone or capture denied)".into()
+                    });
                 }
                 _ => {}
             }

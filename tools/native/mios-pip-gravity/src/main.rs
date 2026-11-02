@@ -1380,7 +1380,7 @@ mod pacing_tests {
             while Instant::now() < end {
                 let _ = tx.try_send(());
                 n += 1;
-                if n % 40 == 0 {
+                if n.is_multiple_of(40) {
                     std::thread::sleep(Duration::from_micros(1000));
                 }
             }

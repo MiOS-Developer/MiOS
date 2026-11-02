@@ -454,7 +454,7 @@ pub fn fbcon_map(cmdline: &str) -> Option<String> {
         .filter_map(|a| a.strip_prefix("fbcon="))
         .flat_map(|v| v.split(','))
         .filter_map(|o| o.strip_prefix("map:"))
-        .last()
+        .next_back()
         .map(str::to_string)
 }
 

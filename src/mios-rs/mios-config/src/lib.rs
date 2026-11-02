@@ -1150,8 +1150,11 @@ flag = true
         assert_eq!(config.get_i64("foo.bar.number_key"), Some(42));
         assert_eq!(config.get_bool("foo.bar.flag"), Some(true));
     }
-    fn typed(sample: &str) -> Result<MiosConfig, figment::Error> {
-        Figment::new().merge(Toml::string(sample)).extract()
+    fn typed(sample: &str) -> Result<MiosConfig, Box<figment::Error>> {
+        Figment::new()
+            .merge(Toml::string(sample))
+            .extract()
+            .map_err(Box::new)
     }
 
     #[test]

@@ -561,9 +561,7 @@ fn float(merged: &Value, a: &Args) -> Result<String, String> {
     match sub {
         "shell" => {
             if in_float {
-                if recorded() == *tty {
-                    tmux(&["detach-client", "-t", &client])?;
-                } else if tmux(&["switch-client", "-c", &client, "-l"]).is_err() {
+                if recorded() == *tty || tmux(&["switch-client", "-c", &client, "-l"]).is_err() {
                     tmux(&["detach-client", "-t", &client])?;
                 }
                 return Ok(String::new());

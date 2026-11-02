@@ -1098,7 +1098,7 @@ fn query_available_source_types() -> u32 {
         let text = String::from_utf8_lossy(&out.stdout);
         text.split_whitespace()
             .filter_map(|w| w.parse::<u32>().ok())
-            .last()
+            .next_back()
     };
 
     if let Ok(out) = Command::new("busctl")

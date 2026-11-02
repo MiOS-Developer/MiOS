@@ -132,7 +132,7 @@ fn filter_table(fd: &OwnedFd, size: u32) -> Option<(OwnedFd, u32, Vec<Option<u16
     file.read_exact_at(&mut table, 0).ok()?;
     let mut kept = Vec::new();
     let mut map = Vec::with_capacity(table.len() / 16);
-    for e in table.chunks_exact(16) {
+    for e in table.as_chunks::<16>().0 {
         let modifier = u64::from_ne_bytes(e[8..16].try_into().unwrap());
         if modifier == LINEAR && kept.len() / 16 < u16::MAX as usize {
             map.push(Some((kept.len() / 16) as u16));
@@ -146,7 +146,7 @@ fn filter_table(fd: &OwnedFd, size: u32) -> Option<(OwnedFd, u32, Vec<Option<u16
         // LINEAR for every format it lists: the nested GPU can render it and the parent's driver may import it.
         let mut formats: Vec<u32> = Vec::new();
         map.clear();
-        for e in table.chunks_exact(16) {
+        for e in table.as_chunks::<16>().0 {
             let f = u32::from_ne_bytes(e[0..4].try_into().unwrap());
             let i = formats.iter().position(|x| *x == f).unwrap_or_else(|| {
                 formats.push(f);
@@ -214,7 +214,9 @@ fn rewrite_event(
                 let idx = args.get(4..4 + len as usize).unwrap_or_default();
                 let mut seen = std::collections::HashSet::new();
                 let kept: Vec<u8> = idx
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .filter_map(|c| {
                         map.get(u16::from_ne_bytes([c[0], c[1]]) as usize)
                             .copied()
@@ -288,15 +290,18 @@ fn send(sock: &UnixStream, data: &[u8], fds: Vec<OwnedFd>) -> io::Result<()> {
     Ok(())
 }
 
-/// Complete messages at the front of `pending`: (id, opcode, args range) and the bytes consumed.
-fn split(pending: &[u8]) -> Result<(Vec<(u32, u16, std::ops::Range<usize>)>, usize), String> {
+/// Object id, opcode and argument byte range within the pending buffer.
+type PendingMessage = (u32, u16, std::ops::Range<usize>);
+
+/// Complete messages at the front of `pending` and the bytes consumed.
+fn split(pending: &[u8]) -> Result<(Vec<PendingMessage>, usize), String> {
     let mut msgs = Vec::new();
     let mut o = 0;
     while pending.len() - o >= 8 {
         let id = u32_at(pending, o).unwrap();
         let w = u32_at(pending, o + 4).unwrap();
         let size = (w >> 16) as usize;
-        if size < 8 || size % 4 != 0 {
+        if size < 8 || !size.is_multiple_of(4) {
             return Err(format!(
                 "malformed Wayland message (object {id}, size {size})"
             ));

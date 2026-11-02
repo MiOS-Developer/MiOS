@@ -1205,7 +1205,7 @@ mod tests {
             15,
             &dp3.identity,
             "1920x1080@144.00",
-            Some(r.mode.as_str()).filter(|_| r.exact),
+            r.exact.then_some(r.mode.as_str()),
             &none
         ));
     }

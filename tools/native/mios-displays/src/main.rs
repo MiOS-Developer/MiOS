@@ -758,6 +758,9 @@ impl SaveError {
     }
 }
 
+/// Generated monitor rules or a projection failure.
+type ProjectionResult = Result<Vec<String>, String>;
+
 /// Validate `body` in a staged copy of the tiers, then write it atomically, remove the user
 /// shadow (host save) and re-check the live projection; on failure restore both files.
 fn save_to(
@@ -766,7 +769,7 @@ fn save_to(
     to_user: bool,
     body: &str,
     outputs: &[String],
-    project: &dyn Fn(Option<&Tiers>) -> Result<Vec<String>, String>,
+    project: &dyn Fn(Option<&Tiers>) -> ProjectionResult,
     stage_dir: &Path,
 ) -> Result<(PathBuf, Vec<String>, Vec<String>), SaveError> {
     let _ = fs::remove_dir_all(stage_dir);

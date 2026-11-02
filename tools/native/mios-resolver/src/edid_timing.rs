@@ -168,7 +168,7 @@ impl Timing {
         let vsw = self.vsync_end - self.vsync_start;
         if clock == 0
             || clock > 0xFFFF
-            || self.clock_khz % 10 != 0
+            || !self.clock_khz.is_multiple_of(10)
             || self.hdisplay > 4095
             || hblank > 4095
             || self.vdisplay > 4095
@@ -240,7 +240,10 @@ pub fn parse_dtd(d: &[u8]) -> Option<Timing> {
 }
 
 fn blocks(edid: &[u8]) -> impl Iterator<Item = &[u8]> {
-    edid.chunks_exact(128)
+    edid.as_chunks::<128>()
+        .0
+        .iter()
+        .map(|block| block.as_slice())
 }
 
 /// Every detailed timing descriptor of an EDID: the base block's four descriptor slots, then each CTA-861 extension's
@@ -385,7 +388,7 @@ pub fn extended_vblank_modeline(
 /// descriptor (tag 0x10). Checksums are recomputed. None when there is no free slot or `t` does not fit a DTD.
 pub fn with_extra_dtd(edid: &[u8], t: &Timing) -> Option<Vec<u8>> {
     let dtd = t.to_dtd()?;
-    if edid.len() < 128 || edid.len() % 128 != 0 {
+    if edid.len() < 128 || !edid.len().is_multiple_of(128) {
         return None;
     }
     let mut out = edid.to_vec();
@@ -457,7 +460,7 @@ mod tests {
             0x86, 0x6f, 0x80, 0xa0, 0x70, 0x38, 0x40, 0x40, 0x30, 0x20, 0x35, 0x00, 0x13, 0x2a,
             0x21, 0x00, 0x00, 0x1e,
         ]);
-        for blk in b.chunks_exact_mut(128) {
+        for blk in b.as_chunks_mut::<128>().0 {
             let sum: u32 = blk[..127].iter().map(|x| u32::from(*x)).sum();
             blk[127] = ((256 - sum % 256) % 256) as u8;
         }
@@ -717,7 +720,7 @@ mod tests {
         );
         let out = with_extra_dtd(&e, &t).unwrap();
         assert_eq!(out.len(), e.len());
-        for blk in out.chunks_exact(128) {
+        for blk in out.as_chunks::<128>().0 {
             assert_eq!(
                 blk.iter().map(|b| u32::from(*b)).sum::<u32>() % 256,
                 0,

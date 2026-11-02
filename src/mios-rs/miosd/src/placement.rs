@@ -801,17 +801,7 @@ pub fn pin_restore(c: &Json, target: (f64, f64)) -> Option<String> {
     ))
 }
 
-/// A game's own geometry change that is refused: the XWayland root (the bounding box of every output, where
-/// Wine/Proton put a borderless "fullscreen" window: recorded Forza Horizon 6 at 3840x1080+0+0 over two outputs)
-/// or a size no single output can hold (wider or taller than every output). Position alone never makes a remap: a
-/// box partly off-screen or straddling two outputs is where the operator (or the game) put it, and miosd cannot
-/// tell who moved it (a keyboard move binding or a released drag leaves no trace), so it stands. Any other size a
-/// game asks for (a windowed resolution change) is its own business. Outputs reporting no size are ignored.
-pub fn is_remap(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> bool {
-    remap_kind(g, monitors).is_some()
-}
-
-/// Which kind of remap [`is_remap`] saw. A drag latch may excuse an oversize box (a drag-resize past every output)
+/// The kind of detected game remap. A drag latch may excuse an oversize box (a drag-resize past every output)
 /// but never the exact root: no operator drag lands within 2 px of the XWayland root, a game's remap does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Remap {
@@ -819,6 +809,12 @@ pub enum Remap {
     Oversize,
 }
 
+/// A game's own geometry change that is refused: the XWayland root (the bounding box of every output, where
+/// Wine/Proton put a borderless "fullscreen" window: recorded Forza Horizon 6 at 3840x1080+0+0 over two outputs)
+/// or a size no single output can hold (wider or taller than every output). Position alone never makes a remap: a
+/// box partly off-screen or straddling two outputs is where the operator (or the game) put it, and miosd cannot
+/// tell who moved it (a keyboard move binding or a released drag leaves no trace), so it stands. Any other size a
+/// game asks for (a windowed resolution change) is its own business. Outputs reporting no size are ignored.
 pub fn remap_kind(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> Option<Remap> {
     let live: Vec<&MonitorBox> = monitors
         .values()
@@ -923,6 +919,13 @@ pub enum GameStep {
     GiveUp,
 }
 
+/// Clock sample and settling interval for one game-geometry poll.
+#[derive(Clone, Copy, Debug)]
+pub struct GameTiming {
+    pub settle: Duration,
+    pub now: Instant,
+}
+
 /// One poll of a watched game: what to do about its current client JSON. `declared` is the current X11 min == max
 /// size (None for Wayland or a client that dropped the hints), `held` whether a pointer button is down (a drag is
 /// never fought), `settle` how long a fixed game's size may disagree with its declaration before it is restored
@@ -934,9 +937,9 @@ pub fn game_step(
     declared: Option<(f64, f64)>,
     refuse: bool,
     held: bool,
-    settle: Duration,
-    now: Instant,
+    timing: GameTiming,
 ) -> GameStep {
+    let GameTiming { settle, now } = timing;
     let Some(address) = c.get("address").and_then(Json::as_str) else {
         return GameStep::Nothing;
     };
@@ -1192,7 +1195,7 @@ impl X11 {
                     + (g.2 - r.width as f64).abs()
                     + (g.3 - r.height as f64).abs();
             }
-            if best.map_or(true, |(s, _)| score < s) {
+            if best.is_none_or(|(s, _)| score < s) {
                 best = Some((score, win));
             }
         }
@@ -1896,8 +1899,10 @@ impl Server {
                 declared,
                 refuse,
                 h,
-                settle,
-                Instant::now(),
+                GameTiming {
+                    settle,
+                    now: Instant::now(),
+                },
             );
             match step {
                 GameStep::Nothing => {}
@@ -2268,6 +2273,10 @@ pub fn run(cmd: &PlacementCommand) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn is_remap(g: (f64, f64, f64, f64), monitors: &HashMap<i64, MonitorBox>) -> bool {
+        remap_kind(g, monitors).is_some()
+    }
 
     fn cfg() -> Config {
         let doc: Value = toml::from_str(
@@ -2921,11 +2930,27 @@ candidate_tag = "mios-place-game-candidate"
         );
         c["workspace"] = serde_json::json!({"id": 2, "name": "2"});
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((480.0, 320.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         at(&mut c, (2640, 400, 640, 400));
-        let step = game_step(&mut w, &c, &m, Some((640.0, 400.0)), true, false, s, t0);
+        let step = game_step(
+            &mut w,
+            &c,
+            &m,
+            Some((640.0, 400.0)),
+            true,
+            false,
+            GameTiming { settle: s, now: t0 },
+        );
         assert!(
             matches!(&step, GameStep::Repin(l) if l.contains("value='640 400'")),
             "{step:?}"
@@ -2937,7 +2962,15 @@ candidate_tag = "mios-place-game-candidate"
         // Wine order: the ConfigureNotify first, the new hints right after. Within settle nothing is restored.
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((480.0, 320.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         let step = game_step(
@@ -2947,8 +2980,10 @@ candidate_tag = "mios-place-game-candidate"
             Some((640.0, 400.0)),
             true,
             false,
-            s,
-            t0 + Duration::from_millis(100),
+            GameTiming {
+                settle: s,
+                now: t0 + Duration::from_millis(100),
+            },
         );
         assert!(matches!(step, GameStep::Repin(_)), "{step:?}");
     }
@@ -2966,16 +3001,43 @@ candidate_tag = "mios-place-game-candidate"
         c["workspace"] = serde_json::json!({"id": 2, "name": "2"});
         at(&mut c, (2460, 260, 840, 600));
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, true, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((480.0, 320.0)),
+                true,
+                true,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing,
             "a drag is never fought"
         );
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((480.0, 320.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing,
             "settling"
         );
-        let step = game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0 + s);
+        let step = game_step(
+            &mut w,
+            &c,
+            &m,
+            Some((480.0, 320.0)),
+            true,
+            false,
+            GameTiming {
+                settle: s,
+                now: t0 + s,
+            },
+        );
         assert!(
             matches!(&step, GameStep::Restore(l) if l.contains("resize({x=480, y=320") && l.contains("move({x=2640, y=400")),
             "{step:?}"
@@ -2983,7 +3045,18 @@ candidate_tag = "mios-place-game-candidate"
         // Unpinned games are never restored.
         let mut u = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), false);
         assert_eq!(
-            game_step(&mut u, &c, &m, Some((480.0, 320.0)), true, false, s, t0 + s),
+            game_step(
+                &mut u,
+                &c,
+                &m,
+                Some((480.0, 320.0)),
+                true,
+                false,
+                GameTiming {
+                    settle: s,
+                    now: t0 + s
+                }
+            ),
             GameStep::Nothing
         );
         assert_eq!(u.ok, Some((2460.0, 260.0, 840.0, 600.0)));
@@ -3001,7 +3074,15 @@ candidate_tag = "mios-place-game-candidate"
         );
         at(&mut c, (0, 0, 3840, 1080));
         c["workspace"] = serde_json::json!({"id": 1, "name": "1"});
-        let step = game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0);
+        let step = game_step(
+            &mut w,
+            &c,
+            &m,
+            Some((3840.0, 1080.0)),
+            true,
+            false,
+            GameTiming { settle: s, now: t0 },
+        );
         assert!(
             matches!(&step, GameStep::Refuse(l) if l.contains("workspace='2'") && l.contains("resize({x=480, y=320") && l.contains("move({x=2640, y=400")),
             "{step:?}"
@@ -3010,14 +3091,30 @@ candidate_tag = "mios-place-game-candidate"
         // Back at the accepted geometry with the refused hints still set: nothing to follow.
         at(&mut c, (2640, 400, 480, 320));
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((3840.0, 1080.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         // suppress_client_geometry = false: the remap stands.
         let mut off = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         at(&mut c, (0, 0, 3840, 1080));
         assert_eq!(
-            game_step(&mut off, &c, &m, None, false, false, s, t0),
+            game_step(
+                &mut off,
+                &c,
+                &m,
+                None,
+                false,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         assert_eq!(off.ok, Some((0.0, 0.0, 3840.0, 1080.0)));
@@ -3025,13 +3122,29 @@ candidate_tag = "mios-place-game-candidate"
         let mut r = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         at(&mut c, (2400, 200, 1280, 720));
         assert_eq!(
-            game_step(&mut r, &c, &m, None, true, false, s, t0),
+            game_step(
+                &mut r,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         assert_eq!(r.ok, Some((2400.0, 200.0, 1280.0, 720.0)));
         at(&mut c, (0, 0, 3840, 1080));
         assert!(matches!(
-            game_step(&mut r, &c, &m, None, true, false, s, t0),
+            game_step(
+                &mut r,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Refuse(_)
         ));
     }
@@ -3079,7 +3192,15 @@ candidate_tag = "mios-place-game-candidate"
             at(&mut c, to);
             let d = pin.then_some((ok.2, ok.3));
             assert_eq!(
-                game_step(&mut w, &c, &m, d, true, false, s, t0),
+                game_step(
+                    &mut w,
+                    &c,
+                    &m,
+                    d,
+                    true,
+                    false,
+                    GameTiming { settle: s, now: t0 }
+                ),
                 GameStep::Nothing,
                 "{kind:?} to {to:?}"
             );
@@ -3096,13 +3217,29 @@ candidate_tag = "mios-place-game-candidate"
         let mut c = game("editor.exe", (2400, 200), (960, 692), &["mios-place-game*"]);
         at(&mut c, (100, 0, 2400, 1000));
         assert_eq!(
-            game_step(&mut w, &c, &m, None, true, true, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                true,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing,
             "held: never fought"
         );
         assert!(w.dragged);
         assert_eq!(
-            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing,
             "released after a drag"
         );
@@ -3111,23 +3248,55 @@ candidate_tag = "mios-place-game-candidate"
         // Negative control: the same oversize box with no button held at any poll is a game's remap, refused.
         let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         assert!(matches!(
-            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Refuse(_)
         ));
         // The latch does not survive an accepted geometry: a later remap is refused again.
         let mut w = watch(GameKind::Resizable, (2400.0, 200.0, 960.0, 692.0), false);
         at(&mut c, (2500, 220, 960, 692));
         assert_eq!(
-            game_step(&mut w, &c, &m, None, true, true, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                true,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         assert_eq!(
-            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         at(&mut c, (0, 0, 3840, 1080));
         assert!(matches!(
-            game_step(&mut w, &c, &m, None, true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Refuse(_)
         ));
     }
@@ -3144,25 +3313,57 @@ candidate_tag = "mios-place-game-candidate"
         );
         for _ in 0..GAME_CORRECTIONS {
             assert!(matches!(
-                game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+                game_step(
+                    &mut w,
+                    &c,
+                    &m,
+                    Some((3840.0, 1080.0)),
+                    true,
+                    false,
+                    GameTiming { settle: s, now: t0 }
+                ),
                 GameStep::Refuse(_)
             ));
         }
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((3840.0, 1080.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::GiveUp
         );
         let mut w = watch(GameKind::Fixed, (2640.0, 400.0, 480.0, 320.0), true);
         c["fullscreen"] = serde_json::json!(2);
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((3840.0, 1080.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((3840.0, 1080.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         assert_eq!(w.ok, None, "fullscreen: nothing accepted or refused");
         c["fullscreen"] = serde_json::json!(0);
         at(&mut c, (2640, 400, 480, 320));
         assert_eq!(
-            game_step(&mut w, &c, &m, Some((480.0, 320.0)), true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                Some((480.0, 320.0)),
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         assert_eq!(
@@ -3340,12 +3541,28 @@ title = '^ShaderGlass( \(.*\))?$'
         at(&mut c, (0, 0, 3840, 1080));
         let d = Some((480.0, 320.0));
         assert_eq!(
-            game_step(&mut w, &c, &m, d, true, true, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &m,
+                d,
+                true,
+                true,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing,
             "held"
         );
         assert!(w.dragged);
-        let r = game_step(&mut w, &c, &m, d, true, false, s, t0);
+        let r = game_step(
+            &mut w,
+            &c,
+            &m,
+            d,
+            true,
+            false,
+            GameTiming { settle: s, now: t0 },
+        );
         assert!(
             matches!(r, GameStep::Refuse(_)),
             "root after a click: {r:?}"
@@ -3358,11 +3575,27 @@ title = '^ShaderGlass( \(.*\))?$'
         let mut c = game("editor.exe", (100, 120), (800, 600), &["mios-place-game*"]);
         at(&mut c, (0, 0, 1392, 1002));
         assert_eq!(
-            game_step(&mut w, &c, &one, None, true, true, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &one,
+                None,
+                true,
+                true,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Nothing
         );
         assert!(matches!(
-            game_step(&mut w, &c, &one, None, true, false, s, t0),
+            game_step(
+                &mut w,
+                &c,
+                &one,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 }
+            ),
             GameStep::Refuse(_)
         ));
         // Control: a drag-resize past every output (oversize, not the root) still stands once released.
@@ -3388,7 +3621,15 @@ title = '^ShaderGlass( \(.*\))?$'
             let mut c = game("editor.exe", (2400, 200), (816, 588), &["mios-place-game*"]);
             at(&mut c, (2500, 220, 816, 588));
             assert_eq!(
-                game_step(&mut w, &c, &m, None, true, true, s, t0),
+                game_step(
+                    &mut w,
+                    &c,
+                    &m,
+                    None,
+                    true,
+                    true,
+                    GameTiming { settle: s, now: t0 }
+                ),
                 GameStep::Nothing
             );
             assert!(w.dragged, "{leave}: dragging");
@@ -3402,7 +3643,15 @@ title = '^ShaderGlass( \(.*\))?$'
                 _ => c["hidden"] = serde_json::json!(true),
             }
             assert_eq!(
-                game_step(&mut w, &c, &m, None, true, false, s, t0),
+                game_step(
+                    &mut w,
+                    &c,
+                    &m,
+                    None,
+                    true,
+                    false,
+                    GameTiming { settle: s, now: t0 }
+                ),
                 GameStep::Nothing
             );
             assert!(
@@ -3412,12 +3661,28 @@ title = '^ShaderGlass( \(.*\))?$'
             let mut c = back;
             at(&mut c, (2400, 200, 816, 588));
             assert_eq!(
-                game_step(&mut w, &c, &m, None, true, false, s, t0),
+                game_step(
+                    &mut w,
+                    &c,
+                    &m,
+                    None,
+                    true,
+                    false,
+                    GameTiming { settle: s, now: t0 }
+                ),
                 GameStep::Nothing,
                 "{leave}: re-adopted"
             );
             at(&mut c, (100, 0, 2400, 1000));
-            let r = game_step(&mut w, &c, &m, None, true, false, s, t0);
+            let r = game_step(
+                &mut w,
+                &c,
+                &m,
+                None,
+                true,
+                false,
+                GameTiming { settle: s, now: t0 },
+            );
             assert!(
                 matches!(r, GameStep::Refuse(_)),
                 "{leave}: stale latch let an oversize remap through: {r:?}"

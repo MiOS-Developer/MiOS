@@ -146,8 +146,7 @@ impl Validator {
                 let err = String::from_utf8_lossy(&out.stderr);
                 return Err(err
                     .lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .last()
+                    .rfind(|l| !l.trim().is_empty())
                     .unwrap_or("failed")
                     .trim()
                     .to_owned());

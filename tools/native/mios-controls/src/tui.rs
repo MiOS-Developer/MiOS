@@ -739,16 +739,8 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::ScrollDown => {
-                if !self.modal() {
-                    self.act(Act::Down)
-                }
-            }
-            MouseEventKind::ScrollUp => {
-                if !self.modal() {
-                    self.act(Act::Up)
-                }
-            }
+            MouseEventKind::ScrollDown if !self.modal() => self.act(Act::Down),
+            MouseEventKind::ScrollUp if !self.modal() => self.act(Act::Up),
             _ => {}
         }
     }

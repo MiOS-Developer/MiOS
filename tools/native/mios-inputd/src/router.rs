@@ -182,6 +182,9 @@ enum CaptureConfirmation {
     Pending,
     Selected(String),
 }
+/// Cursor mode, context and capture target saved while a shell overlay owns navigation.
+type SavedShellCursor = (bool, String, Option<(String, u64)>);
+
 pub struct Router {
     /// Room-table presses waiting for their release or hold (spec P1, C-14b).
     room_pending: BTreeMap<u16, RoomPending>,
@@ -235,7 +238,7 @@ pub struct Router {
     guide_single: Option<GuidePending>,
     /// Keyboard navigation belongs to the open shell surface, independently of window capture.
     shell_overlay: bool,
-    shell_cursor: Option<(bool, String, Option<(String, u64)>)>,
+    shell_cursor: Option<SavedShellCursor>,
     /// Guide + a toggle-chord button: the system-layer action waits for the release, so Guide+L3+R3 fires neither.
     guide_thumb: Option<u16>,
     guide_thumb_cancel: bool,
@@ -961,7 +964,7 @@ impl Router {
         let Some(axis) = self.axes.get(&e.code) else {
             return false;
         };
-        let mut axis = axis.clone();
+        let mut axis = *axis;
         axis.value = e.value;
         if e.code == 2 || e.code == 5 {
             axis.trigger() > self.legacy.trigger_threshold

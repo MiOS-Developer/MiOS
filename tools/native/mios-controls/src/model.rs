@@ -4,6 +4,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use toml::Value;
+/// A binding array path with its draft, default and current rows.
+type BindingArrayLayers<'a> = (
+    &'a str,
+    &'a [toml::Table],
+    &'a [toml::Table],
+    &'a [toml::Table],
+);
 
 /// The closed set of contexts a binding can be active in (the gate's schema). `console` (the Linux VT) is never in
 /// a row's default set: a row without `contexts` is active in every context except the console.
@@ -233,12 +240,7 @@ impl Layers {
         };
         let root = doc.as_table_mut();
         let empty = Vec::new();
-        let mut arrays: Vec<(
-            &str,
-            &Vec<toml::Table>,
-            &Vec<toml::Table>,
-            &Vec<toml::Table>,
-        )> = vec![
+        let mut arrays: Vec<BindingArrayLayers<'_>> = vec![
             (
                 GLOBAL_BINDINGS,
                 &draft.bindings,
@@ -465,7 +467,7 @@ pub fn import_fragment(text: &str, current: &Draft, editable: &[String]) -> Resu
             } else {
                 format!("{prefix}.{k}")
             };
-            if editable.iter().any(|e| *e == p) {
+            if editable.contains(&p) {
                 continue;
             }
             if child.is_table() && editable.iter().any(|e| e.starts_with(&format!("{p}."))) {
