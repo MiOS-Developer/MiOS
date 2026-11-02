@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1743 |
-| in_progress | 69 |
-| completed | 1847 |
+| in_progress | 70 |
+| completed | 1848 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3699 |
+| total | 3701 |
 
 0 record(s) carry at least one override.
 
@@ -4419,6 +4419,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3696` Restore exhaustive SSOT native executable catalog coverage -- completed · owner mios-ci-native-catalog · P0 · size S
 - `task_3697` Stage verified portal artifacts before CI image builds -- in_progress · owner mios-ci-portal-staging · P0 · size M
 - `task_3698` Publish machine OS mirror under the current repository organization -- in_progress · owner mios-ci-registry · P0 · size M
+- `task_3700` Repair remaining source CI fitness failures without relaxing shrink-only budgets -- in_progress · owner mios-controller-repair · P0 · size L
+- `task_3701` Fail closed when image signature evidence is unavailable -- completed · owner mios-signature-fail-closed · P0 · size M
 
 ## runtime
 
