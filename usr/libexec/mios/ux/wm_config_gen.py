@@ -74,6 +74,9 @@ class WmConfigGenEngine:
     def generate_hyprland_conf(self) -> str:
         """The hyprland.conf the image ships: geometry from [theme.edge].wm_*, colours from [colors]."""
         hexes = {k: v.lstrip("#") for k, v in self.palette.items()}
+        layer_alpha = mios_toml.section(self.data, "desktop.hyprland").get("shell_layer_alpha")
+        if isinstance(layer_alpha, bool) or not isinstance(layer_alpha, (int, float)) or not 0 <= layer_alpha <= 1:
+            raise ValueError("[desktop.hyprland].shell_layer_alpha must be a number between 0 and 1")
         return f"""# AI-hint: Hyprland config the image ships, rendered by wm_config_gen.py; gaps and border from mios.toml [theme.edge].wm_*
 monitor=,preferred,auto,1
 
@@ -159,7 +162,11 @@ animations {{
 }}
 
 layerrule = blur, quickshell
-layerrule = ignorealpha 0.2, quickshell
+layerrule = ignorealpha {layer_alpha:g}, quickshell
+layerrule = xray 0, quickshell
+layerrule = blur, ^(mios-.*)$
+layerrule = ignorealpha {layer_alpha:g}, ^(mios-.*)$
+layerrule = xray 0, ^(mios-.*)$
 layerrule = blur, rofi
 layerrule = ignorealpha 0.5, rofi
 layerrule = blur, notifications

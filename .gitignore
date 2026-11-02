@@ -1103,3 +1103,6 @@ usr/share/mios/virtio/*.iso
 !/tests/test-app-launch-qml.py
 
 !/usr/share/doc/mios/application-launching.md
+
+# Runtime resolver databases and downloaded filter state stay on the host.
+/var/lib/mios/adguard/data/

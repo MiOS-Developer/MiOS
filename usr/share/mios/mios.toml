@@ -8664,6 +8664,7 @@ application_dirs = ["$XDG_DATA_HOME/applications", "~/.local/share/flatpak/expor
 [desktop.hyprland]
 hardware_profile = "igpu"          # same desktop; only GPU device ordering changes
 main_modifier = "SUPER"
+shell_layer_alpha = 0.15          # alpha threshold for translucent shell layers in the compatibility compositor config
 # Compositor animation leaves, projected by mios-gen render-hyprland as hl.animation calls
 # (speed is in deciseconds). The window open/close shaders ([desktop.hyprland.windowshade]) own
 # the window's shape, so windowsIn/Out keep the box full size (popin 100%) and fadeIn/Out run for

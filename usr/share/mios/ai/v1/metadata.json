@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4113,
-  "total_metadata_entries": 3381,
-  "total_hints": 3375,
+  "total_files_scanned": 4114,
+  "total_metadata_entries": 3382,
+  "total_hints": 3376,
   "total_functions_indexed": 2085,
-  "total_related_links": 6623,
+  "total_related_links": 6625,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7642,6 +7642,18 @@
         "usr/share/mios/greeter/",
         "usr/libexec/mios/mios-greeter-session",
         "tools/native/mios-gen/src/greeter.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-gui-shell-unify.py",
+      "hint": "Two-sided contract test suite verifying the comprehensive fix for all 6 GUI/Shell defects:",
+      "related": [
+        "usr/share/mios/quickshell/VirtualKeyboard.qml",
+        "usr/share/mios/quickshell/DockExpanded.qml"
       ],
       "functions": [],
       "doc": null,

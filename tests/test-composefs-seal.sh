@@ -82,9 +82,8 @@ assert_fail() {
 }
 
 TMP_DIR="$(mktemp -d /tmp/test-cfs-seal.XXXXXX)"
-# Every path the seal script can write (repo and, when writable, host): each is restored, or removed if it did not exist.
-SEALED_FILES=("${ROOT_DIR}/usr/lib/bootc/kargs.d/50-composefs.toml" "${ROOT_DIR}/usr/lib/ostree/prepare-root.conf"
-              /usr/lib/bootc/kargs.d/50-composefs.toml /usr/lib/ostree/prepare-root.conf /etc/ostree/prepare-root.conf)
+# Restore only checkout fixtures. Mock/projection tests must never rewrite unrelated installed host configuration.
+SEALED_FILES=("${ROOT_DIR}/usr/lib/bootc/kargs.d/50-composefs.toml" "${ROOT_DIR}/usr/lib/ostree/prepare-root.conf")
 for _i in "${!SEALED_FILES[@]}"; do [[ -f "${SEALED_FILES[$_i]}" ]] && cp -p "${SEALED_FILES[$_i]}" "${TMP_DIR}/sealed.${_i}"; done
 _restore_sealed() {
     local _i
@@ -368,6 +367,124 @@ if [[ -f "$KARGS_CONF" ]]; then
     fi
 else
     assert_fail "kargs.d/50-composefs.toml not found at $KARGS_CONF"
+fi
+
+# ==============================================================================
+# Test 8: 77-composefs-verity.sh remount-fs mask guard & scoped terminal umask
+# ==============================================================================
+log "Test 8: 77-composefs-verity.sh remount-fs mask guard & scoped terminal umask"
+
+VERITY_SCRIPT="${ROOT_DIR}/automation/77-composefs-verity.sh"
+PROBE_CONF="${TMP_DIR}/probe-prepare-root.conf"
+PROBE_ETC="${TMP_DIR}/etc-systemd"
+mkdir -p "$PROBE_ETC"
+
+# 8a. Positive control: COMPOSEFS_CONF projection probe never masks systemd-remount-fs.service
+MIOS_TOML_ROOT="$ROOT_DIR" COMPOSEFS_CONF="$PROBE_CONF" SYSTEMD_ETC_DIR="$PROBE_ETC" bash "$VERITY_SCRIPT" >/dev/null 2>&1
+if [[ -f "$PROBE_CONF" && ! -L "$PROBE_ETC/systemd-remount-fs.service" ]]; then
+    assert_pass "77-composefs-verity.sh with COMPOSEFS_CONF skips masking systemd-remount-fs.service"
+else
+    assert_fail "77-composefs-verity.sh with COMPOSEFS_CONF unexpectedly masked systemd-remount-fs.service"
+fi
+
+# 8b. Positive control: Explicit isolated SYSTEMD_ETC_DIR without COMPOSEFS_CONF masks inside target dir only
+TARGET_CONF="${TMP_DIR}/target-prepare-root.conf"
+cp -p "${ROOT_DIR}/usr/lib/ostree/prepare-root.conf" "$TARGET_CONF"
+if MIOS_TOML_ROOT="$ROOT_DIR" COMPOSEFS_TARGET_CONF="$TARGET_CONF" SYSTEMD_ETC_DIR="$PROBE_ETC" bash "$VERITY_SCRIPT" >/dev/null 2>&1 && \
+   [[ -L "$PROBE_ETC/systemd-remount-fs.service" ]]; then
+    assert_pass "77-composefs-verity.sh masks systemd-remount-fs.service when targeting isolated SYSTEMD_ETC_DIR"
+else
+    assert_fail "77-composefs-verity.sh failed to mask systemd-remount-fs.service in isolated SYSTEMD_ETC_DIR"
+fi
+
+# 8c. Negative control: unguarded 77-composefs-verity.sh leaks mask during COMPOSEFS_CONF projection probe
+UNGUARDED_ETC="${TMP_DIR}/unguarded-etc-systemd"
+mkdir -p "$UNGUARDED_ETC"
+if python3 -c '
+import os, subprocess, sys
+root, script, unguarded_etc, probe_conf = sys.argv[1:5]
+with open(script, "r", encoding="utf-8") as f:
+    src = f.read()
+bad_src = src.replace("-z \"${COMPOSEFS_CONF:-}\" && ", "")
+tmp_script = probe_conf + ".unguarded.sh"
+with open(tmp_script, "w", encoding="utf-8") as f:
+    f.write(bad_src)
+env = dict(
+    os.environ,
+    MIOS_TOML_ROOT=root,
+    MIOS_AUTOMATION_DIR=os.path.join(root, "automation"),
+    COMPOSEFS_CONF=probe_conf,
+    SYSTEMD_ETC_DIR=unguarded_etc,
+)
+subprocess.call(["bash", tmp_script], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+sys.exit(0 if os.path.islink(os.path.join(unguarded_etc, "systemd-remount-fs.service")) else 1)
+' "$ROOT_DIR" "$VERITY_SCRIPT" "$UNGUARDED_ETC" "$PROBE_CONF"; then
+    assert_pass "Negative control: unguarded 77-composefs-verity.sh detected leaking systemd-remount-fs.service mask"
+else
+    assert_fail "Negative control failed: unguarded script did not trigger mask detection"
+fi
+
+# 8d. Render private terminal state under 077 without changing the caller's umask.
+# Run the actual scoped render line with a fake native generator; never launch a terminal or touch the host.
+if python3 - "$ROOT_DIR" "$TMP_DIR" <<'PY_UMASK'
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+root, scratch = map(Path, sys.argv[1:3])
+terminal = (root / "usr/libexec/mios/mios-terminal").read_text()
+render_lines = [
+    line.strip() for line in terminal.splitlines()
+    if line.lstrip().startswith("(")
+    and '"$_libgen" render-tmux-theme' in line
+    and '"$_mios_runtime"' in line
+]
+if len(render_lines) != 1 or not render_lines[0].endswith(")"):
+    raise SystemExit("Expected one scoped mios-terminal render-tmux-theme invocation")
+render_line = render_lines[0]
+
+for path in (root / "usr/libexec/mios/mios-terminal", root / "usr/share/mios/tmux/mios-bashrc"):
+    if re.search(r"^\s*umask\s+0?22\s*(?:#.*)?$", path.read_text(), re.MULTILINE):
+        raise SystemExit(f"{path}: a global umask 022 overrides the caller's policy")
+if not re.search(r"^umask 022$", (root / "tools/sync-generated.sh").read_text(), re.MULTILINE):
+    raise SystemExit("sync-generated.sh must normalize its own generator process umask")
+
+probe = scratch / "mios-umask-probe"
+probe.mkdir()
+fake_libgen = probe / "mios-fake-libgen"
+fake_libgen.write_text('#!/usr/bin/env bash\nset -eu\n[[ "$1" == render-tmux-theme && "$2" == --runtime ]]\numask > "$MIOS_UMASK_RECORD"\n')
+fake_libgen.chmod(0o755)
+
+def run(line, caller, label):
+    record = probe / f"{label}.umask"
+    env = dict(os.environ, MIOS_UMASK_RECORD=str(record))
+    env.pop("BASH_ENV", None)
+    shell = 'set -eu\numask "$1"\n_libgen="$2"\n_mios_runtime="$3"\n' + line + '\numask\n'
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-c", shell, "mios-umask-probe",
+         caller, str(fake_libgen), str(probe / "runtime")],
+        env=env, text=True, capture_output=True, timeout=5,
+    )
+    if result.returncode:
+        raise SystemExit(f"{label}: render failed: {result.stderr.strip()}")
+    return record.read_text().strip(), result.stdout.strip()
+
+for caller in ("0022", "0077"):
+    child, after = run(render_line, caller, f"scoped-{caller}")
+    if child != "0077" or after != caller:
+        raise SystemExit(f"Scoped render with {caller}: generator={child}, caller={after}")
+
+# Removing the subshell must reproduce the original leak; otherwise the positive probe is not discriminating.
+child, after = run(render_line[1:-1], "0022", "unscoped-0022")
+if child != "0077" or after != "0077":
+    raise SystemExit(f"Negative control did not expose the unscoped leak: generator={child}, caller={after}")
+PY_UMASK
+then
+    assert_pass "Terminal render uses umask 077, preserves caller 0022/0077, and the unscoped negative control leaks 077"
+else
+    assert_fail "Terminal render umask scope or caller policy preservation failed"
 fi
 
 # ==============================================================================

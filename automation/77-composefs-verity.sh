@@ -5,7 +5,7 @@
 set -euo pipefail
 # shellcheck source=/dev/null  # Resolve the repository or installed FHS logging library.
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="${MIOS_AUTOMATION_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/packages.sh"
 
@@ -54,7 +54,7 @@ if [[ "$MODE" == "off" ]]; then
     exit 0
 fi
 
-conf="${COMPOSEFS_CONF:-/usr/lib/ostree/prepare-root.conf}"
+conf="${COMPOSEFS_CONF:-${COMPOSEFS_TARGET_CONF:-/usr/lib/ostree/prepare-root.conf}}"
 if [[ -f "$conf" ]]; then
     if [[ ! -f "${conf}.orig" ]]; then
         mios_log "Backing up existing $conf -> ${conf}.orig"
@@ -77,10 +77,15 @@ transient = false
 transient = false
 EOF
 
-if [[ "$MODE" == "verity" && "$MASK_REMOUNT" =~ ^(true|TRUE|1|yes|YES)$ ]]; then
-    mios_log "Masking systemd-remount-fs.service"
-    install -d -m 0755 /etc/systemd/system
-    ln -sf /dev/null /etc/systemd/system/systemd-remount-fs.service
+if [[ -z "${COMPOSEFS_CONF:-}" && "$MODE" == "verity" && "$MASK_REMOUNT" =~ ^(true|TRUE|1|yes|YES)$ ]]; then
+    etc_systemd="${SYSTEMD_ETC_DIR:-/etc/systemd/system}"
+    if [[ "$etc_systemd" != "/etc/systemd/system" || -d /ostree || -d /sysroot/ostree || -f /run/.containerenv ]]; then
+        mios_log "Masking systemd-remount-fs.service in $etc_systemd"
+        install -d -m 0755 "$etc_systemd"
+        ln -sf /dev/null "$etc_systemd/systemd-remount-fs.service"
+    else
+        mios_log "Skipping systemd-remount-fs.service mask on non-ostree mutable host root"
+    fi
 fi
 
 mios_ok "Composefs mode=${MODE} configured"

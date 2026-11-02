@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+# AI-hint: Two-sided contract test suite verifying the comprehensive fix for all 6 GUI/Shell defects:
+#          - Defect 0: Global Keybinds Active (dock owns typing while open; generated drawer escapes bypass inhibition).
+#          - Defect 1: Full Liquid Glass Surfaces (glass backgrounds, border rims, specular highlights, compositor blur).
+#          - Defect 2: Phosh OSK Virtual Keyboard (embedded in 220px slot, Phosh header, direct targetInput typing + sendshortcut IPC, D-Bus unfold).
+#          - Defect 3: Maximize Workarea Bounds [0, 44, 0, 72] & TopBar Deconfliction (exclusiveZone 36px, fullscreen >= 2, tmux-os unoccluded).
+#          - Defect 4: Rounded Corner UI Highlights (Glass.radius / innerRadius / pillRadius, zero square highlights).
+#          - Defect 5: Dock App Launch Origin Animation (accurate icon coordinates, non-zero fallback, smooth zoom-out).
+#          - GNOME & Phosh App Launching (Calls DBusActivatable bypass, XDG_CURRENT_DESKTOP GNOME:Phosh, drawer dismiss).
+#          Two-sided verification: Every contract runs against working tree (must PASS) and git base commit (must FAIL).
+# AI-related: usr/share/mios/quickshell/VirtualKeyboard.qml, usr/share/mios/quickshell/DockExpanded.qml,
+#             usr/share/mios/quickshell/Sidebar.qml, usr/share/mios/quickshell/Search.qml,
+#             usr/share/mios/quickshell/Keymap.qml, usr/share/mios/quickshell/AppMenu.qml,
+#             usr/share/mios/quickshell/PanelWindow.qml, usr/share/mios/quickshell/Glass.qml,
+#             usr/share/mios/quickshell/DockPreview.qml, usr/share/mios/quickshell/AppLaunch.qml,
+#             usr/libexec/mios/mios-desktop-launch, usr/share/mios/hypr/hyprland-effects.conf
+import os
+import json
+import shutil
+import shlex
+import tomllib
+import re
+import subprocess
+import sys
+import unittest
+from unittest.mock import patch
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+QS = "usr/share/mios/quickshell"
+BASE_REV = "72bd86de9f98fa7abef0ddf4dbeaec947450ccd4"
+NEG_REF = os.environ.get("NEG_REF") or BASE_REV
+
+
+def read(rel: str, ref: str = None) -> str:
+    if ref is None:
+        p = os.path.join(ROOT, rel)
+        if not os.path.exists(p):
+            return ""
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    r = subprocess.run(["git", "-C", ROOT, "show", f"{ref}:{rel}"], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+
+# ---- Defect 0: Global Keybinds & Layer Keyboard Focus -----------------------------------------------------------------
+def contract_defect0_layer_keyboard_focus(ref: str = None) -> list[str]:
+    problems = []
+    # Search.qml: keyboard focus must NOT be unconditionally Exclusive when requestedOpen is true
+    s = read(f"{QS}/Search.qml", ref)
+    if not s:
+        problems.append("Search.qml missing")
+    else:
+        if re.search(r"WlrLayershell\.keyboardFocus:\s*requestedOpen\s*\?\s*WlrKeyboardFocus\.Exclusive\s*:\s*WlrKeyboardFocus\.None", s):
+            problems.append("Search.qml grabs unconditional Exclusive focus on requestedOpen")
+        if "activeFocus" not in s:
+            problems.append("Search.qml keyboardFocus not gated on activeFocus")
+        # Focus grab must use active: property
+        if re.search(r"HyprlandFocusGrab\s*\{[^}]*visible:", s):
+            problems.append("Search.qml HyprlandFocusGrab uses non-existent property 'visible'")
+
+    # The expanded drawer owns typing even with its non-focus-stealing OSK; collapsing releases keyboard focus.
+    sb = read(f"{QS}/Sidebar.qml", ref)
+    focus = re.search(r"WlrLayershell\.keyboardFocus:\s*([^\n]+)", sb)
+    if not focus:
+        problems.append("Sidebar.qml keyboard focus binding missing")
+    else:
+        script = """
+const focus = new Function("expanded", "root", "WlrKeyboardFocus", "return (" + EXPR + ")");
+const modes = {Exclusive: 1, None: 0, OnDemand: 2};
+for (const expanded of [false, true]) for (const oskWanted of [false, true]) {
+    if (focus(expanded, {oskWanted}, modes) !== (expanded ? modes.Exclusive : modes.None))
+        throw Error("dock keyboard ownership must follow expansion independently of OSK");
+}
+""".replace("EXPR", json.dumps(focus.group(1)))
+        try:
+            result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=5)
+            if result.returncode:
+                problems.append("Dock keyboard ownership does not follow expansion independently of OSK")
+        except (OSError, subprocess.TimeoutExpired):
+            problems.append("Dock keyboard ownership verification could not run")
+
+    # Keymap.qml: must use OnDemand focus and HyprlandFocusGrab
+    km = read(f"{QS}/Keymap.qml", ref)
+    if not km:
+        problems.append("Keymap.qml missing")
+    else:
+        if re.search(r"WlrLayershell\.keyboardFocus:\s*open\s*\?\s*WlrKeyboardFocus\.Exclusive", km):
+            problems.append("Keymap.qml grabs Exclusive focus instead of OnDemand")
+        if "HyprlandFocusGrab" not in km:
+            problems.append("Keymap.qml missing HyprlandFocusGrab for outside-click dismissal")
+        if re.search(r"HyprlandFocusGrab\s*\{[^}]*visible:", km):
+            problems.append("Keymap.qml HyprlandFocusGrab uses non-existent property 'visible'")
+
+    # AppMenu.qml: must use OnDemand focus
+    am = read(f"{QS}/AppMenu.qml", ref)
+    if not am:
+        problems.append("AppMenu.qml missing")
+    else:
+        if re.search(r"WlrLayershell\.keyboardFocus:\s*openMenu\s*>=\s*0\s*\?\s*WlrKeyboardFocus\.Exclusive", am):
+            problems.append("AppMenu.qml grabs Exclusive focus instead of OnDemand")
+
+    problems.extend(drawer_global_escape_contract(ref))
+    return problems
+
+
+def drawer_global_escape_contract(ref=None):
+    """Execute generated policy and bypass realization on stub handles, never the live compositor."""
+    source = read("usr/share/mios/hyprland/hyprland.lua", ref)
+    canonical = lambda key: re.sub(r"\s+", "", key).lower()
+    try:
+        data = tomllib.loads(read("usr/share/mios/mios.toml", ref))
+        global_config = data["keybindings"]["global"]
+        drawer = next(row for row in global_config["bindings"] if row.get("id") == "app-drawer")
+        chords = [drawer["chord"], drawer["bypass"]]
+        command = global_config["action_argv"][drawer["action"]]
+        start = source.index("-- MiOS global policy:")
+        stop = source.index('mios_section("virtual-keyboard"', start)
+        clone_start = source.index("local extra={}", stop)
+        clone_end = source.index("for _,v in ipairs(extra)", clone_start)
+        clone_end = source.index("\n", clone_end)
+    except (KeyError, ValueError, StopIteration, tomllib.TOMLDecodeError):
+        return ["Generated drawer global escape policy or SSOT binding missing"]
+    realized = None
+    escapes = {}
+    escape_lua = []
+    decoder = json.JSONDecoder()
+    for line in source.splitlines():
+        line = line.strip()
+        try:
+            if line.startswith("hl.bind("):
+                key, end = decoder.raw_decode(line[len("hl.bind("):])
+                tail = line[len("hl.bind(") + end:].lstrip(", ")
+                if not tail.startswith("hl.dsp.exec_cmd("):
+                    continue
+                text, _ = decoder.raw_decode(tail[len("hl.dsp.exec_cmd("):])
+                if canonical(key) == canonical(chords[0]) and shlex.split(text) == command:
+                    realized = key
+            elif line.startswith("escapes["):
+                key, end = decoder.raw_decode(line[len("escapes["):])
+                value, _ = decoder.raw_decode(line[len("escapes[") + end:].lstrip("]= "))
+                escapes[canonical(key)] = canonical(value)
+                escape_lua.append(line)
+        except ValueError:
+            continue
+    if not realized or escapes.get(canonical(chords[0])) != canonical(chords[1]):
+        return ["Generated drawer chord and bypass must both realize the SSOT drawer command"]
+    lua = shutil.which("luajit") or shutil.which("lua")
+    if not lua:
+        return ["Lua interpreter unavailable for generated drawer escape verification"]
+    script = """
+local recorded={}
+local function key_id(key) return key:gsub('%s',''):lower() end
+local hl={bind=function(key,dispatcher,flags)
+ recorded[key_id(key)]={flags=flags or {},dispatcher=dispatcher}; return {}
+end}
+""" + source[start:stop] + """
+local supplied={release=true}
+hl.bind(MAINKEY,{},supplied)
+local canonical=mios_input_canonical
+local escapes={}
+MAPS
+CLONE
+for _,key in ipairs(CHORDS) do
+ local bound=recorded[key_id(key)]
+ assert(bound and bound.flags.dont_inhibit and bound.flags.submap_universal,'drawer escape is inhibited: '..key)
+end
+assert(recorded[key_id(MAINKEY)].flags.release==true,'caller binding flags were lost')
+assert(recorded[key_id(MAINKEY)].dispatcher==recorded[key_id(BYPASS)].dispatcher,'bypass changed drawer action')
+assert(supplied.dont_inhibit==nil and supplied.submap_universal==nil,'caller flags were mutated')
+hl.bind('ALT+F2',{})
+assert(not recorded['alt+f2'].flags.dont_inhibit and not recorded['alt+f2'].flags.submap_universal,'ordinary bind became an escape')
+"""
+    script = (script.replace("MAINKEY", json.dumps(realized)).replace("BYPASS", json.dumps(chords[1]))
+              .replace("CHORDS", "{" + ",".join(json.dumps(chord) for chord in chords) + "}")
+              .replace("MAPS", "\n".join(escape_lua)).replace("CLONE", source[clone_start:clone_end]))
+    try:
+        result = subprocess.run([lua, "-"], input=script, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return ["Generated drawer escape verification could not run"]
+    return [] if result.returncode == 0 else ["Generated drawer escape flags do not preserve uninhibited universal access"]
+
+
+# ---- Defect 1: Full Liquid Glass Surfaces & Compositor Blur ----------------------------------------------------------
+def contract_defect1_glass_styling_and_compositor_blur(ref: str = None) -> list[str]:
+    problems = []
+    # Search.qml: must have canonical Glass.radius, visible hairline border, and borderColor
+    s = read(f"{QS}/Search.qml", ref)
+    if not s:
+        problems.append("Search.qml missing")
+    else:
+        if "radius: Glass.radius" not in s:
+            problems.append("Search.qml does not use canonical MiOS spec radius: Glass.radius")
+        if "hairline: true" not in s and "border.width:" not in s:
+            problems.append("Search.qml missing glass border hairline")
+        if "borderColor:" not in s and "border.color:" not in s:
+            problems.append("Search.qml missing glass borderColor")
+
+    # GlassSurface.qml: must have centralized concentric specular highlight rim
+    gs = read(f"{QS}/GlassSurface.qml", ref)
+    if not gs:
+        problems.append("GlassSurface.qml missing")
+    else:
+        if "innerSpecular" not in gs and "specular" not in gs.lower():
+            problems.append("GlassSurface.qml missing centralized concentric specular highlight rim")
+
+    # Hyprland effects: must define blur and ignorealpha for quickshell and mios-* layer surfaces
+    fx = read("usr/share/mios/hypr/hyprland-effects.conf", ref)
+    if not fx:
+        problems.append("hyprland-effects.conf missing")
+    else:
+        if "layerrule = blur, quickshell" not in fx:
+            problems.append("hyprland-effects.conf missing blur rule for quickshell")
+        if "mios-" not in fx and "^(mios-.*)$" not in fx:
+            problems.append("hyprland-effects.conf missing blur rule for mios-* layer surfaces (e.g. mios-search, mios-dock)")
+        if "xray 0" not in fx:
+            problems.append("hyprland-effects.conf missing xray 0 rule for glass opacity clarity")
+
+    return problems
+
+
+# ---- Defect 2: Phosh OSK Virtual Keyboard Keys & Typing -------------------------------------------------------------
+def contract_defect2_virtual_keyboard_osk(ref: str = None) -> list[str]:
+    problems = []
+    vk = read(f"{QS}/VirtualKeyboard.qml", ref)
+    if not vk:
+        problems.append("VirtualKeyboard.qml does not exist")
+    else:
+        # Check for Phosh-styled terminal/navigation header keys
+        for key in ["Esc", "Tab", "Ctrl", "Alt", "Super", "←", "↑", "↓", "→", "|", "/", "-"]:
+            if f'text: "{key}"' not in vk and f'"{key}"' not in vk:
+                problems.append(f"VirtualKeyboard.qml missing header key '{key}'")
+        # Check for dispatch logic: direct targetInput text insertion + sendshortcut fallback
+        if "dispatchChar" not in vk or "sendHyprShortcut" not in vk:
+            problems.append("VirtualKeyboard.qml missing input dispatching functions")
+        if "targetInput.text" not in vk:
+            problems.append("VirtualKeyboard.qml does not insert text directly into targetInput")
+        if "sendshortcut" not in vk:
+            problems.append("VirtualKeyboard.qml does not dispatch sendshortcut via Hyprland IPC")
+
+    # DockExpanded.qml: must embed VirtualKeyboard inside the 220px slot
+    de = read(f"{QS}/DockExpanded.qml", ref)
+    if not de:
+        problems.append("DockExpanded.qml missing")
+    else:
+        if "VirtualKeyboard" not in de:
+            problems.append("DockExpanded.qml does not embed VirtualKeyboard")
+        if "oskShown" not in de:
+            problems.append("DockExpanded.qml does not bind VirtualKeyboard visibility to oskShown")
+
+    # Sidebar.qml: must pass safe numeric arguments to mios-gen dock osk and issue D-Bus SetVisible
+    sb = read(f"{QS}/Sidebar.qml", ref)
+    if not sb:
+        problems.append("Sidebar.qml missing")
+    else:
+        if 'command: [DockConfig.backend, "dock", "osk"' in sb:
+            if '"--bottom"' not in sb or '"--width"' not in sb or '"--height"' not in sb:
+                problems.append("Sidebar.qml passes invalid or missing arguments to mios-gen dock osk")
+        if "sm.puri.OSK0" not in sb:
+            problems.append("Sidebar.qml does not interface with sm.puri.OSK0 D-Bus service for stevia unfolding")
+
+    return problems
+
+
+# ---- Defect 3: Maximize Workarea Bounds & HUD Pill Deconfliction -----------------------------------------------------
+def contract_defect3_maximize_workarea_and_deconfliction(ref: str = None) -> list[str]:
+    problems = []
+    pw = read(f"{QS}/PanelWindow.qml", ref)
+    if not pw:
+        problems.append("PanelWindow.qml missing")
+    else:
+        # exclusiveZone must incorporate Glass.gap so top reservation is 44px
+        if "zoneFor(overFullscreen, rowHeight, Glass.gap, ui)" not in pw:
+            problems.append("PanelWindow.qml exclusiveZone does not pass Glass.gap into zoneFor")
+
+    # EdgeReveal.qml: must check true fullscreen (fullscreen >= 2), NEVER maximized (fullscreen == 1)
+    er = read(f"{QS}/EdgeReveal.qml", ref)
+    if not er:
+        problems.append("EdgeReveal.qml missing")
+    else:
+        if "o.fullscreen >= 2" not in er:
+            problems.append("EdgeReveal.qml treats maximized windows as fullscreen (breaks topbar exclusiveZone under maximized windows)")
+
+    # AppMenu.qml: pills must be clipped before the status island to prevent overlap
+    am = read(f"{QS}/AppMenu.qml", ref)
+    if not am:
+        problems.append("AppMenu.qml missing")
+    else:
+        if "island.x - rowLeft - Glass.gap" not in am and "island.x - " not in am:
+            problems.append("AppMenu.qml does not deconflict width with status island (pills can overlap)")
+
+    return problems
+
+
+# ---- Defect 4: Rounded Corner UI Highlights (Zero Square Highlights) ------------------------------------------------
+def contract_defect4_rounded_ui_highlights(ref: str = None) -> list[str]:
+    problems = []
+    # Glass.qml: must expose canonical radius, innerRadius, and pillRadius
+    g = read(f"{QS}/Glass.qml", ref)
+    if not g:
+        problems.append("Glass.qml missing")
+    else:
+        if "readonly property real radius:" not in g:
+            problems.append("Glass.qml missing convenience property 'radius'")
+        if "readonly property real innerRadius:" not in g:
+            problems.append("Glass.qml missing convenience property 'innerRadius'")
+        if "readonly property real pillRadius:" not in g:
+            problems.append("Glass.qml missing convenience property 'pillRadius'")
+
+    # DockPreview.qml: bottom title scrim must use GlassSurface, not a plain sharp Rectangle
+    dp = read(f"{QS}/DockPreview.qml", ref)
+    if not dp:
+        problems.append("DockPreview.qml missing")
+    else:
+        if re.search(r"Rectangle\s*\{[^}]*anchors\.bottom:\s*parent\.bottom[^}]*color:\s*theme\.withAlpha", dp):
+            problems.append("DockPreview.qml uses a plain sharp Rectangle scrim at the card bottom")
+        if "radius: Glass.cornerFor(height)" not in dp and "radius: Glass." not in dp:
+            problems.append("DockPreview.qml title scrim missing rounded corner radius")
+
+    # Sidebar.qml: app and minimized tiles must have rounded corners
+    sb = read(f"{QS}/Sidebar.qml", ref)
+    if not sb:
+        problems.append("Sidebar.qml missing")
+    else:
+        if "radius: Glass.cornerFor(height)" not in sb and "Glass.corner(" not in sb:
+            problems.append("Sidebar.qml tiles missing rounded corner radius")
+
+    return problems
+
+
+# ---- Defect 5: Dock App Launch Origin Animation ---------------------------------------------------------------------
+def contract_defect5_launch_origin_animation(ref: str = None) -> list[str]:
+    problems = []
+    sb = read(f"{QS}/Sidebar.qml", ref)
+    if not sb:
+        problems.append("Sidebar.qml missing")
+    else:
+        if "return [0, 0, 48, 48]" in sb:
+            problems.append("Sidebar.qml:rectForEntry falls back to top-left [0, 0, 48, 48] (causes top-left launch animation)")
+        if "NEVER top-left" not in sb and "root.monX + Math.round" not in sb:
+            problems.append("Sidebar.qml:rectForEntry missing bottom-center dock fallback coordinates")
+
+    al = read(f"{QS}/AppLaunch.qml", ref)
+    if not al:
+        problems.append("AppLaunch.qml missing")
+    else:
+        if "[936, 1016, 48, 48]" not in al and "DockLamp.recordLaunch" not in al:
+            problems.append("AppLaunch.qml missing safe dock fallback coordinates for DockLamp.recordLaunch")
+
+    return problems
+
+
+# ---- GNOME & Phosh App Launching & DBusActivatable Bypass ------------------------------------------------------------
+def contract_gnome_phosh_app_launching(ref: str = None) -> list[str]:
+    problems = []
+    launch_sh = read("usr/libexec/mios/mios-desktop-launch", ref)
+    if not launch_sh:
+        problems.append("mios-desktop-launch missing")
+    else:
+        if "XDG_CURRENT_DESKTOP" not in launch_sh or "GNOME:Phosh" not in launch_sh:
+            problems.append("mios-desktop-launch does not set XDG_CURRENT_DESKTOP containing GNOME:Phosh")
+        if "DBusActivatable" not in launch_sh:
+            problems.append("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)")
+
+    sb = read(f"{QS}/Sidebar.qml", ref)
+    if not sb:
+        problems.append("Sidebar.qml missing")
+    else:
+        if "shellState.drawerOpen = false" not in sb:
+            problems.append("Sidebar.qml does not close drawer on app launch")
+
+    return problems
+
+
+class TestGuiShellUnify(unittest.TestCase):
+    """Automated test suite asserting genuine implementation and two-sided verification for GUI Shell unification."""
+
+    @classmethod
+    def setUpClass(cls):
+        result = subprocess.run(["git", "-C", ROOT, "cat-file", "-e", NEG_REF + "^{commit}"], capture_output=True)
+        if result.returncode:
+            raise RuntimeError("Negative GUI reference must resolve to a commit: " + NEG_REF)
+
+    def test_regression_osk_cannot_disable_expanded_drawer_typing(self):
+        original = read
+        sidebar = original(f"{QS}/Sidebar.qml")
+        mutated = re.sub(r"(WlrLayershell\.keyboardFocus:)\s*[^\n]+",
+                         r"\1 (expanded && !root.oskWanted) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None", sidebar, count=1)
+        self.assertNotEqual(sidebar, mutated)
+        def fixture(path, ref=None):
+            return mutated if ref is None and path == f"{QS}/Sidebar.qml" else original(path, ref)
+        with patch.dict(globals(), {"read": fixture}):
+            self.assertIn("Dock keyboard ownership does not follow expansion independently of OSK",
+                          contract_defect0_layer_keyboard_focus())
+
+    def test_regression_primary_drawer_chord_must_remain_a_global_escape(self):
+        original = read
+        path = "usr/share/mios/hyprland/hyprland.lua"
+        source = original(path)
+        mutated, count = re.subn(r"local mios_input_always = [^\n]+", "local mios_input_always = {}", source, count=1)
+        self.assertEqual(count, 1)
+        with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == path and ref is None else original(rel, ref)}):
+            self.assertIn("Generated drawer escape flags do not preserve uninhibited universal access",
+                          drawer_global_escape_contract())
+
+    def test_regression_bypass_drawer_chord_must_remain_a_global_escape(self):
+        original = read
+        path = "usr/share/mios/hyprland/hyprland.lua"
+        source = original(path)
+        begin = source.index("local extra={}")
+        before, clone = source[:begin], source[begin:]
+        mutated = before + clone.replace("dont_inhibit=true,submap_universal=true", "dont_inhibit=false,submap_universal=true", 1)
+        self.assertNotEqual(source, mutated)
+        with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == path and ref is None else original(rel, ref)}):
+            self.assertIn("Generated drawer escape flags do not preserve uninhibited universal access",
+                          drawer_global_escape_contract())
+
+    def test_positive_defect0_layer_keyboard_focus(self):
+        problems = contract_defect0_layer_keyboard_focus(None)
+        self.assertEqual(problems, [], f"Defect 0 contract failed on working tree: {problems}")
+
+    def test_negative_defect0_layer_keyboard_focus(self):
+        problems = contract_defect0_layer_keyboard_focus(NEG_REF)
+        self.assertTrue(len(problems) > 0, "Defect 0 negative control failed: base revision should have defects")
+
+    def test_positive_defect1_glass_styling_and_compositor_blur(self):
+        problems = contract_defect1_glass_styling_and_compositor_blur(None)
+        self.assertEqual(problems, [], f"Defect 1 contract failed on working tree: {problems}")
+
+    def test_negative_defect1_glass_styling_and_compositor_blur(self):
+        problems = contract_defect1_glass_styling_and_compositor_blur(NEG_REF)
+        self.assertTrue(len(problems) > 0, "Defect 1 negative control failed: base revision should have defects")
+
+    def test_positive_defect2_virtual_keyboard_osk(self):
+        problems = contract_defect2_virtual_keyboard_osk(None)
+        self.assertEqual(problems, [], f"Defect 2 contract failed on working tree: {problems}")
+
+    def test_negative_defect2_virtual_keyboard_osk(self):
+        problems = contract_defect2_virtual_keyboard_osk(NEG_REF)
+        self.assertTrue(len(problems) > 0, "Defect 2 negative control failed: base revision should have defects")
+
+    def test_positive_defect3_maximize_workarea_and_deconfliction(self):
+        problems = contract_defect3_maximize_workarea_and_deconfliction(None)
+        self.assertEqual(problems, [], f"Defect 3 contract failed on working tree: {problems}")
+
+    def test_negative_defect3_maximize_workarea_and_deconfliction(self):
+        problems = contract_defect3_maximize_workarea_and_deconfliction(NEG_REF)
+        self.assertTrue(len(problems) > 0, "Defect 3 negative control failed: base revision should have defects")
+
+    def test_positive_defect4_rounded_ui_highlights(self):
+        problems = contract_defect4_rounded_ui_highlights(None)
+        self.assertEqual(problems, [], f"Defect 4 contract failed on working tree: {problems}")
+
+    def test_negative_defect4_rounded_ui_highlights(self):
+        problems = contract_defect4_rounded_ui_highlights(NEG_REF)
+        self.assertTrue(len(problems) > 0, "Defect 4 negative control failed: base revision should have defects")
+
+    def test_positive_defect5_launch_origin_animation(self):
+        problems = contract_defect5_launch_origin_animation(None)
+        self.assertEqual(problems, [], f"Defect 5 contract failed on working tree: {problems}")
+
+    def test_negative_defect5_launch_origin_animation(self):
+        problems = contract_defect5_launch_origin_animation(NEG_REF)
+        self.assertTrue(len(problems) > 0, "Defect 5 negative control failed: base revision should have defects")
+
+    def test_positive_gnome_phosh_app_launching(self):
+        problems = contract_gnome_phosh_app_launching(None)
+        self.assertEqual(problems, [], f"GNOME/Phosh app launching contract failed on working tree: {problems}")
+
+    def test_negative_gnome_phosh_app_launching(self):
+        problems = contract_gnome_phosh_app_launching(NEG_REF)
+        self.assertTrue(len(problems) > 0, "GNOME/Phosh negative control failed: base revision should have defects")
+
+
+if __name__ == "__main__":
+    unittest.main()

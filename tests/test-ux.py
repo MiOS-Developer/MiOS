@@ -2246,6 +2246,25 @@ class wcg_TestWmConfigGen(unittest.TestCase):
                 self.assertIn("gaps outer 7\n", engine.generate_sway_config())
                 self.assertEqual(engine.gaps_inner, wcg_vendor_edge()["wm_gaps_inner_px"])
 
+    def test_shell_layer_alpha_follows_user_overlay(self):
+        with tempfile.TemporaryDirectory(prefix="mios-test-wcg-") as tmp:
+            user = os.path.join(tmp, "mios.toml")
+            with open(user, "w", encoding="utf-8") as fh:
+                fh.write("[desktop.hyprland]\nshell_layer_alpha = 0.37\n")
+            with wcg_env(user_toml=user):
+                conf = wm_config_gen.WmConfigGenEngine(mock=True).generate_hyprland_conf()
+                self.assertIn("layerrule = ignorealpha 0.37, quickshell", conf)
+                self.assertIn("layerrule = ignorealpha 0.37, ^(mios-.*)$", conf)
+
+    def test_shell_layer_alpha_rejects_invalid_values(self):
+        import copy
+        data = wm_config_gen.mios_toml.vendor_tree(wcg__ROOT)
+        for value in (-0.1, 1.1, True, "0.2", float("nan")):
+            altered = copy.deepcopy(data)
+            altered["desktop"]["hyprland"]["shell_layer_alpha"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "shell_layer_alpha"):
+                wm_config_gen.WmConfigGenEngine(mock=True, data=altered).generate_hyprland_conf()
+
     def test_missing_edge_key_names_it(self):
         with tempfile.TemporaryDirectory(prefix="mios-test-wcg-") as tmp:
             vendor = os.path.join(tmp, "mios.toml")
