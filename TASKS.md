@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1744 |
-| in_progress | 65 |
+| in_progress | 66 |
 | completed | 1845 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3694 |
+| total | 3695 |
 
 0 record(s) carry at least one override.
 
@@ -1374,6 +1374,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3624` M8: one tmux TUI desktop in every MiOS image -- a miosd applet rendered with ratatui inside tmux (WS-DESKTOP | P1 | XL) -- pending · P1 · size XL
 - `task_3693` Repair controller capture and independent local/remote/headless session routing -- completed · P0 · size L
 - `task_3694` Attach global dock input, double Guide, controller reticle and animated window feedback -- completed · P0 · size L
+- `task_3695` Render dock capture glow on transformed 3D window borders -- in_progress · owner mios-controller-repair · P1 · size L
 
 ### Epic task_3624
 

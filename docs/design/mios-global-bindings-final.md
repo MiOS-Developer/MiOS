@@ -433,3 +433,24 @@ and window identity. A route never falls back to desktop input. Unassigned
 pads retain the local logind/nested-session ownership rules. See
 [controller session assignments](../../usr/share/doc/mios/mcp-tmux.md#controller-session-assignments)
 for configuration and supported pane operations.
+
+### Capture feedback in 2D and 3D
+
+Dock and search capture share the settings in
+`desktop.dock.capture.border_glow`. The flat desktop draws input-transparent
+window rings from compositor window geometry. The 3D room draws the same
+feedback in each window's native material, using that window's transformed
+mesh, rounded shape and depth. A screen-space rectangle cannot represent a
+tilted or curved room window.
+
+The shell refreshes `hl.plugin.hypr3d.dock_capture_feedback(...)` while a local
+dock or search surface owns input. Its payload carries the output, color,
+width, orbit period and configured lease. Closing capture clears the lease;
+expiry also clears feedback if the shell exits or stops responding. This
+visual lease does not change controller ownership or window focus.
+
+The native reply reports whether the room scene is visible, including mode
+transitions. The shell waits for a fresh reply before drawing flat feedback
+and suppresses its flat rings while the room owns rendering. Unknown or
+expired replies do not create flat rings over transformed windows. Keyboard
+shortcuts and double Guide use this same capture path.
