@@ -478,11 +478,19 @@
     ]
   },
   {
+    "ordinal": 71,
+    "script": "71-bake-rdp-server.sh",
+    "stage": "container",
+    "deps": [
+      "70-bake-wayvnc-upstream.sh"
+    ]
+  },
+  {
     "ordinal": 72,
     "script": "72-hermes-agent.sh",
     "stage": "container",
     "deps": [
-      "70-bake-wayvnc-upstream.sh"
+      "71-bake-rdp-server.sh"
     ]
   },
   {
