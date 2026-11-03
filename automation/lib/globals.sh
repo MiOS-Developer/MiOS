@@ -5237,15 +5237,12 @@ _mios_input MIOS_UKI_VERITY_UKI_BUILD MIOS_UKI_VERITY_BUILD || { return 1 2>/dev
 # skills for launching applications anywhere in any environment(s)
 # (cross-platform)".'
 [ -n "${MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_COMMENT_2+x}" ] || MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_COMMENT_2='#
-# Run ONLY in the OPERATOR'"'"'s user manager. The broker binds the shared
-# /run/mios-launcher/launcher.sock; if root'"'"'s (uid 0) or a second user'"'"'s
-# (uid 1000) user manager ALSO starts it they contend for that socket, and
-# whichever wins launches GUI apps in the WRONG session (root -> invisible,
-# then the window dies). ConditionUser gates the broker to the operator so
-# exactly ONE instance owns the socket. ('"'"'mios'"'"' = MIOS_IDENTITY_USERNAME, the operator;
-# render from MIOS_IDENTITY_USERNAME if that default ever changes.) Operator-hit
-# 2026-06-06: multi-broker invisible launches recurring after WSL restarts.'
-[ -n "${MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER+x}" ] || MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER="${MIOS_IDENTITY_USERNAME:-}"
+# Run only in the configured desktop operator'"'"'s user manager. The shared
+# /run/mios-launcher/launcher.sock must have one owner. Use the numeric
+# [remote.rdp].operator_uid, shared with launcher operator resolution, so
+# account renames and vendor username defaults cannot disable the broker.
+# Root and service-account user managers do not satisfy this condition.'
+[ -n "${MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER+x}" ] || MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER="${MIOS_REMOTE_RDP_OPERATOR_UID:-}"
 [ -n "${MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DESCRIPTION+x}" ] || MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DESCRIPTION=''"'"'MiOS'"'"' launcher broker (operator-side)'
 : "${MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DOCUMENTATION:=man:mios-launcher-daemon}"
 : "${MIOS_USER_UNITS_MIOS_PLACEMENT_SERVICE_INSTALL_WANTEDBY:=mios-desktop.target}"

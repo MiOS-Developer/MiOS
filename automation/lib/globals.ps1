@@ -4923,15 +4923,12 @@ $script:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_COMMENT_1 = if ($env:MIOS_USE
 # skills for launching applications anywhere in any environment(s)
 # (cross-platform)".' }
 $script:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_COMMENT_2 = if ($env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_COMMENT_2) { $env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_COMMENT_2 } else { '#
-# Run ONLY in the OPERATOR''s user manager. The broker binds the shared
-# /run/mios-launcher/launcher.sock; if root''s (uid 0) or a second user''s
-# (uid 1000) user manager ALSO starts it they contend for that socket, and
-# whichever wins launches GUI apps in the WRONG session (root -> invisible,
-# then the window dies). ConditionUser gates the broker to the operator so
-# exactly ONE instance owns the socket. (''mios'' = MIOS_IDENTITY_USERNAME, the operator;
-# render from MIOS_IDENTITY_USERNAME if that default ever changes.) Operator-hit
-# 2026-06-06: multi-broker invisible launches recurring after WSL restarts.' }
-$script:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER = if ($env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER) { $env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER } else { "$($script:MIOS_IDENTITY_USERNAME)" }
+# Run only in the configured desktop operator''s user manager. The shared
+# /run/mios-launcher/launcher.sock must have one owner. Use the numeric
+# [remote.rdp].operator_uid, shared with launcher operator resolution, so
+# account renames and vendor username defaults cannot disable the broker.
+# Root and service-account user managers do not satisfy this condition.' }
+$script:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER = if ($env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER) { $env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_CONDITIONUSER } else { "$($script:MIOS_REMOTE_RDP_OPERATOR_UID)" }
 $script:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DESCRIPTION = if ($env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DESCRIPTION) { $env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DESCRIPTION } else { '''MiOS'' launcher broker (operator-side)' }
 $script:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DOCUMENTATION = if ($env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DOCUMENTATION) { $env:MIOS_USER_UNITS_MIOS_LAUNCHER_SERVICE_UNIT_DOCUMENTATION } else { 'man:mios-launcher-daemon' }
 $script:MIOS_USER_UNITS_MIOS_PLACEMENT_SERVICE_INSTALL_WANTEDBY = if ($env:MIOS_USER_UNITS_MIOS_PLACEMENT_SERVICE_INSTALL_WANTEDBY) { $env:MIOS_USER_UNITS_MIOS_PLACEMENT_SERVICE_INSTALL_WANTEDBY } else { 'mios-desktop.target' }
