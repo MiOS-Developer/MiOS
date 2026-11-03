@@ -109,14 +109,11 @@ run_mock_test_suite() {
     local mock_script
     mock_script=$(mktemp /tmp/mios_cdi_mock_test.XXXXXX.py)
     cat <<'PYEOF' > "$mock_script"
-import builtins
 import errno
-import glob
-import importlib.machinery
+import importlib.util
 import json
 import os
 import sys
-import tempfile
 from typing import Dict, List, Tuple
 
 verbose = os.environ.get("VERBOSE", "0") == "1"
@@ -128,92 +125,30 @@ def log(msg: str):
     if verbose:
         print(f"    [mock-py] {msg}")
 
-# 1. Dynamically load mios-cdi-gen
-if not os.path.isfile(cdi_gen_path):
-    print(f"Error: {cdi_gen_path} not found", file=sys.stderr)
-    sys.exit(1)
-
-loader = importlib.machinery.SourceFileLoader('mios_cdi_gen', cdi_gen_path)
-cdi_gen = loader.load_module()
-
-with tempfile.TemporaryDirectory() as tmp_dir:
-    mock_dev = os.path.join(tmp_dir, "dev")
-    mock_sys = os.path.join(tmp_dir, "sys")
-    mock_cdi_out = os.path.join(tmp_dir, "etc", "cdi")
-
-    os.makedirs(os.path.join(mock_dev, "dri"), exist_ok=True)
-    os.makedirs(mock_cdi_out, exist_ok=True)
-
-    # Multi-GPU mock sysfs layout for AMD DRI
-    os.makedirs(os.path.join(mock_sys, "class", "drm", "renderD128", "device", "drm"), exist_ok=True)
-    os.makedirs(os.path.join(mock_sys, "class", "drm", "renderD129", "device", "drm"), exist_ok=True)
-
-    # 1. Mock NVIDIA Multi-GPU device nodes (/dev/nvidia0, /dev/nvidia1, control nodes)
-    for dev_node in ["nvidia0", "nvidia1", "nvidiactl", "nvidia-uvm", "nvidia-uvm-tools", "nvidia-modeset"]:
-        open(os.path.join(mock_dev, dev_node), "w").close()
-
-    # 2. Mock AMD Multi-GPU DRI device nodes and sysfs vendor/card structures
-    open(os.path.join(mock_dev, "dri", "card0"), "w").close()
-    open(os.path.join(mock_dev, "dri", "card1"), "w").close()
-    open(os.path.join(mock_dev, "dri", "renderD128"), "w").close()
-    open(os.path.join(mock_dev, "dri", "renderD129"), "w").close()
-
-    with open(os.path.join(mock_sys, "class", "drm", "renderD128", "device", "vendor"), "w") as f:
-        f.write("0x1002\n")
-    with open(os.path.join(mock_sys, "class", "drm", "renderD129", "device", "vendor"), "w") as f:
-        f.write("0x1002\n")
-    open(os.path.join(mock_sys, "class", "drm", "renderD128", "device", "drm", "card0"), "w").close()
-    open(os.path.join(mock_sys, "class", "drm", "renderD129", "device", "drm", "card1"), "w").close()
-
-    # Monkeypatch filesystem calls inside cdi_gen module to use mock dev/sys roots
-    orig_glob = glob.glob
-    orig_exists = os.path.exists
-    orig_isfile = os.path.isfile
-    orig_open = builtins.open
-
-    def mock_path(p: str) -> str:
-        if p.startswith("/dev/"):
-            return os.path.join(mock_dev, p[5:])
-        if p.startswith("/sys/"):
-            return os.path.join(mock_sys, p[5:])
-        return p
-
-    def mock_glob(pattern: str, *args, **kwargs) -> List[str]:
-        if pattern.startswith("/dev/") or pattern.startswith("/sys/"):
-            m_pat = mock_path(pattern)
-            results = orig_glob(m_pat, *args, **kwargs)
-            prefix = mock_dev if pattern.startswith("/dev/") else mock_sys
-            orig_prefix = "/dev" if pattern.startswith("/dev/") else "/sys"
-            return [orig_prefix + r[len(prefix):] for r in sorted(results)]
-        return orig_glob(pattern, *args, **kwargs)
-
-    def mock_open_fn(file_path, *args, **kwargs):
-        if isinstance(file_path, str) and (file_path.startswith("/dev/") or file_path.startswith("/sys/")):
-            return orig_open(mock_path(file_path), *args, **kwargs)
-        return orig_open(file_path, *args, **kwargs)
-
-    cdi_gen.glob.glob = mock_glob
-    cdi_gen.os.path.exists = lambda p: orig_exists(mock_path(p))
-    cdi_gen.os.path.isfile = lambda p: orig_isfile(mock_path(p))
-    builtins.open = mock_open_fn
-
-    # -------------------------------------------------------------------------
-    # Subtest 2.1: CDI Spec Generation via mios-cdi-gen on Mock Device Trees
-    # -------------------------------------------------------------------------
-    log("Executing find_nvidia_devices and find_dri_devices against mock tree...")
+# Reuse the deterministic kernel/official-toolkit boundary fixture from the
+# producer suite. This models devices explicitly without weakening production
+# character-device or bound-driver checks.
+fixture_path = os.path.join(repo_root, "tests", "test-cdi-gen.py")
+fixture_spec = importlib.util.spec_from_file_location("mios_cdi_fixture", fixture_path)
+fixture_module = importlib.util.module_from_spec(fixture_spec)
+fixture_spec.loader.exec_module(fixture_module)
+with fixture_module.Hardware() as hardware:
+    hardware.nvidia(address="0000:01:00.0", minor=0)
+    hardware.nvidia(address="0000:02:00.0", minor=1)
+    hardware.dri(index=128)
+    hardware.dri(index=129)
+    cdi_gen = hardware.module
+    mock_cdi_out = str(hardware.output)
+    os.makedirs(mock_cdi_out)
+    log("Executing hardware-backed discovery against the private kernel fixture...")
     nv_devices = cdi_gen.find_nvidia_devices()
     nv_spec = cdi_gen.build_nvidia_cdi_spec(nv_devices)
-
     amd_devices = cdi_gen.find_dri_devices("0x1002")
     amd_spec = cdi_gen.build_amd_cdi_spec(amd_devices)
-
-    # Save to mock CDI directory
-    with open(os.path.join(mock_cdi_out, "nvidia.json"), "w") as f:
-        json.dump(nv_spec, f, indent=2)
-    with open(os.path.join(mock_cdi_out, "amd.json"), "w") as f:
-        json.dump(amd_spec, f, indent=2)
-
-    log(f"Wrote generated CDI JSON specifications to {mock_cdi_out}")
+    with open(os.path.join(mock_cdi_out, "nvidia.yaml"), "w") as output:
+        json.dump(nv_spec, output, indent=2)
+    with open(os.path.join(mock_cdi_out, "amd.json"), "w") as output:
+        json.dump(amd_spec, output, indent=2)
 
     # -------------------------------------------------------------------------
     # Subtest 2.2: Assert CDI JSON Explicit Device Isolation & Absence of Leakage
@@ -221,10 +156,11 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     log("Verifying CDI JSON explicit device isolation...")
 
     # NVIDIA Spec verification
-    assert nv_spec.get("cdiVersion") == "0.6.0", "Invalid cdiVersion in nvidia.json"
+    assert nv_spec == hardware.official_spec(), "Official NVIDIA edits were changed"
     assert nv_spec.get("kind") == "nvidia.com/gpu", "Invalid kind in nvidia.json"
 
-    nv_dev_map = {d["name"]: [n["path"] for n in d["containerEdits"]["deviceNodes"]] for d in nv_spec["devices"]}
+    common_nv_nodes = [n["path"] for n in nv_spec.get("containerEdits", {}).get("deviceNodes", [])]
+    nv_dev_map = {d["name"]: common_nv_nodes + [n["path"] for n in d["containerEdits"]["deviceNodes"]] for d in nv_spec["devices"]}
     assert "0" in nv_dev_map, "Missing device 0 in NVIDIA CDI spec"
     assert "1" in nv_dev_map, "Missing device 1 in NVIDIA CDI spec"
     assert "all" in nv_dev_map, "Missing device 'all' in NVIDIA CDI spec"
@@ -451,7 +387,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     def detect_spec_leak(spec_data: dict, target_gpu_id: str, unallocated_gpu_path: str) -> bool:
         for dev_entry in spec_data.get("devices", []):
             if dev_entry.get("name") == target_gpu_id:
-                paths = [n.get("path") for n in dev_entry.get("containerEdits", {}).get("deviceNodes", [])]
+                nodes = spec_data.get("containerEdits", {}).get("deviceNodes", []) + dev_entry.get("containerEdits", {}).get("deviceNodes", [])
+                paths = [n.get("path") for n in nodes]
                 if unallocated_gpu_path in paths:
                     return True  # Leak detected
         return False

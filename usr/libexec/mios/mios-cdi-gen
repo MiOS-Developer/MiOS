@@ -1,306 +1,272 @@
 #!/usr/bin/env python3
-# AI-hint: Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469).
+# AI-hint: Generate CDI only for currently host-bound character devices; NVIDIA specs come intact from its official toolkit.
 # AI-doc: usr/share/doc/mios/manual/ch14-cdi-gpu-passthrough-and-isolation.md
+# AI-related: tests/test-cdi-gen.py, tests/test-cdi-device-isolate.sh, usr/share/mios/mios.toml
 from __future__ import annotations
 
 import argparse
 import glob
 import json
 import os
+import re
+import shutil
+import stat
+import subprocess
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional
 
 
-def find_nvidia_devices() -> Dict[str, Any]:
-    """Inspects NVIDIA character devices."""
-    devices: Dict[str, Any] = {
-        "common": [],
-        "instances": {},
-    }
-    # Common control and memory management devices
-    for dev in ["/dev/nvidiactl", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools", "/dev/nvidia-modeset"]:
-        if os.path.exists(dev):
-            devices["common"].append(dev)
+def _read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as source:
+            return source.read().strip()
+    except OSError:
+        return ""
 
-    # Per-GPU device nodes
-    gpu_devs = sorted(glob.glob("/dev/nvidia[0-9]*"))
-    for idx, path in enumerate(gpu_devs):
-        name = os.path.basename(path).replace("nvidia", "")
-        devices["instances"][name] = {
-            "path": path,
-            "index": idx,
-        }
+
+def _is_character_device(path: str) -> bool:
+    try:
+        return stat.S_ISCHR(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _driver(device: str) -> str:
+    try:
+        return os.path.basename(os.readlink(os.path.join(device, "driver")))
+    except OSError:
+        return ""
+
+
+def find_nvidia_devices() -> Dict[str, Any]:
+    """Correlate a freshly bound PCI GPU, driver minor and actual device node."""
+    devices: Dict[str, Any] = {"common": [], "instances": {},
+                               "wsl": _is_character_device("/dev/dxg")}
+    for path in ("/dev/nvidiactl", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools", "/dev/nvidia-modeset"):
+        if _is_character_device(path):
+            devices["common"].append(path)
+    for pci in sorted(glob.glob("/sys/bus/pci/devices/*")):
+        if (_read_text(pci + "/vendor").lower() != "0x10de"
+                or not _read_text(pci + "/class").lower().startswith("0x03")
+                or _driver(pci) != "nvidia"):
+            continue
+        address = os.path.basename(pci)
+        info = _read_text(f"/proc/driver/nvidia/gpus/{address}/information")
+        minor = re.search(r"^Device Minor:\s*(\d+)\s*$", info, re.MULTILINE)
+        if not minor:
+            continue
+        name = minor.group(1)
+        path = "/dev/nvidia" + name
+        if _is_character_device(path) and "/dev/nvidiactl" in devices["common"]:
+            devices["instances"][name] = {"path": path, "index": int(name), "pci": address}
     return devices
 
 
 def find_dri_devices(vendor_id: Optional[str] = None) -> List[Dict[str, str]]:
-    """Inspects Direct Rendering Infrastructure (DRI) nodes for AMD (0x1002) or Intel (0x8086)."""
+    """Unknown vendors, detached drivers and regular files are never GPU evidence."""
     matches: List[Dict[str, str]] = []
-    render_nodes = sorted(glob.glob("/dev/dri/renderD[0-9]*"))
-
-    for node in render_nodes:
-        card_name = os.path.basename(node)
-        sys_pci = f"/sys/class/drm/{card_name}/device"
-        vendor_file = os.path.join(sys_pci, "vendor")
-
-        detected_vendor = ""
-        if os.path.isfile(vendor_file):
-            try:
-                with open(vendor_file, "r") as f:
-                    detected_vendor = f.read().strip().lower()
-            except OSError:
-                pass
-
-        if vendor_id and detected_vendor and detected_vendor != vendor_id.lower():
+    drivers = {"0x1002": {"amdgpu"}, "0x8086": {"i915", "xe"}}
+    for node in sorted(glob.glob("/dev/dri/renderD[0-9]*")):
+        if not _is_character_device(node):
             continue
-
-        # Look for corresponding cardX node
-        card_node = ""
-        card_candidates = glob.glob(f"/sys/class/drm/{card_name}/device/drm/card*")
-        if card_candidates:
-            card_base = os.path.basename(card_candidates[0])
-            card_path = f"/dev/dri/{card_base}"
-            if os.path.exists(card_path):
-                card_node = card_path
-
-        matches.append({
-            "render": node,
-            "card": card_node,
-            "vendor": detected_vendor,
-        })
+        pci = f"/sys/class/drm/{os.path.basename(node)}/device"
+        detected = _read_text(pci + "/vendor").lower()
+        if (vendor_id and detected != vendor_id.lower()) or _driver(pci) not in drivers.get(detected, set()):
+            continue
+        card = ""
+        for candidate in sorted(glob.glob(pci + "/drm/card*")):
+            path = "/dev/dri/" + os.path.basename(candidate)
+            if _is_character_device(path):
+                card = path
+                break
+        matches.append({"render": node, "card": card, "vendor": detected})
     return matches
 
 
+def _empty_spec(kind: str) -> Dict[str, Any]:
+    return {"cdiVersion": "0.6.0", "kind": kind, "devices": []}
+
+
 def build_nvidia_cdi_spec(nvidia_info: Dict[str, Any], scoped: bool = True) -> Dict[str, Any]:
-    """Constructs CDI specification according to Container Device Interface spec v0.6.0."""
-    spec: Dict[str, Any] = {
-        "cdiVersion": "0.6.0",
-        "kind": "nvidia.com/gpu",
-        "devices": [],
-    }
+    """Keep the official driver library mounts, hooks, aliases and common edits intact."""
+    if not nvidia_info["instances"] and not nvidia_info.get("wsl", False):
+        return _empty_spec("nvidia.com/gpu")
+    toolkit = shutil.which("nvidia-ctk")
+    if toolkit is None:
+        raise RuntimeError("NVIDIA hardware is host-bound but nvidia-ctk is unavailable")
+    # An explicit empty output overrides NVIDIA_CTK_CDI_OUTPUT_FILE_PATH even in
+    # dry-run mode. NVML/WSL discovery cannot be replaced by a fabricated CSV list.
+    mode = "wsl" if nvidia_info.get("wsl", False) and not nvidia_info["instances"] else "nvml"
+    command = [toolkit, "cdi", "generate", "--format=json", "--output=", "--mode=" + mode, "--device-id=all"]
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError("nvidia-ctk CDI generation failed: " + result.stderr.strip())
+    try:
+        spec = json.loads(result.stdout)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("nvidia-ctk returned invalid CDI JSON") from error
+    if (not isinstance(spec, dict) or spec.get("kind") != "nvidia.com/gpu"
+            or not isinstance(spec.get("cdiVersion"), str) or not spec["cdiVersion"]):
+        raise RuntimeError("nvidia-ctk returned an unexpected CDI kind")
+    devices = spec.get("devices")
+    if not isinstance(devices, list) or not devices:
+        raise RuntimeError("nvidia-ctk returned no NVIDIA CDI devices")
+    edits = [spec.get("containerEdits", {})]
+    for device in devices:
+        if not isinstance(device, dict) or not isinstance(device.get("name"), str) or not device["name"]:
+            raise RuntimeError("nvidia-ctk returned an invalid CDI device")
+        edits.append(device.get("containerEdits", {}))
+    if not all(isinstance(edit, dict) for edit in edits):
+        raise RuntimeError("nvidia-ctk returned invalid container edits")
+    for edit in edits:
+        for key in ("mounts", "hooks", "deviceNodes"):
+            if key in edit and not isinstance(edit[key], list):
+                raise RuntimeError("nvidia-ctk returned invalid " + key)
+    mounts = [mount for edit in edits for mount in edit.get("mounts", [])]
+    hooks = [hook for edit in edits for hook in edit.get("hooks", [])]
+    if not mounts or not hooks:
+        raise RuntimeError("nvidia-ctk CDI is missing driver mounts or runtime hooks")
+    for mount in mounts:
+        path = mount.get("hostPath", "") if isinstance(mount, dict) else ""
+        if not isinstance(path, str) or not os.path.isabs(path) or not os.path.exists(path):
+            raise RuntimeError("nvidia-ctk CDI refers to a missing driver mount")
+    for hook in hooks:
+        path = hook.get("path", "") if isinstance(hook, dict) else ""
+        if not isinstance(path, str) or not os.path.isabs(path) or not os.path.isfile(path) or not os.access(path, os.X_OK):
+            raise RuntimeError("nvidia-ctk CDI refers to an unavailable runtime hook")
+    known = {info["path"] for info in nvidia_info["instances"].values()}
+    if nvidia_info.get("wsl", False):
+        known.add("/dev/dxg")
+    all_nodes = []
+    for edit in edits:
+        for node in edit.get("deviceNodes", []):
+            if not isinstance(node, dict):
+                raise RuntimeError("nvidia-ctk CDI has an invalid device node")
+            path = node.get("hostPath") or node.get("path", "")
+            if not isinstance(path, str) or not os.path.isabs(path) or not _is_character_device(path):
+                raise RuntimeError("nvidia-ctk CDI refers to an unavailable character device: " + path)
+            all_nodes.append(path)
+    required_controls = set(nvidia_info["common"]).intersection({"/dev/nvidiactl", "/dev/nvidia-uvm"})
+    if not required_controls.issubset(all_nodes):
+        raise RuntimeError("nvidia-ctk CDI omits a required NVIDIA control device")
+    if not known.issubset(all_nodes):
+        raise RuntimeError("nvidia-ctk CDI does not identify every probed NVIDIA device")
+    if any(re.fullmatch(r"/dev/nvidia[0-9]+", path) and path not in known for path in all_nodes):
+        raise RuntimeError("nvidia-ctk CDI advertises an unprobed NVIDIA device")
+    # Binding may have changed while the toolkit inspected the driver.
+    fresh = find_nvidia_devices()
+    if fresh != nvidia_info:
+        raise RuntimeError("NVIDIA ownership changed during CDI generation")
+    return spec
 
-    common_nodes = [{"path": p} for p in nvidia_info["common"]]
 
-    if not nvidia_info["instances"]:
-        # Fallback if no specific GPUs found or in virtual environment
-        if os.path.exists("/dev/dxg"):
-            spec["devices"].append({
-                "name": "all",
-                "containerEdits": {
-                    "deviceNodes": [{"path": "/dev/dxg"}],
-                    "mounts": [{
-                        "hostPath": "/usr/lib/wsl",
-                        "containerPath": "/usr/lib/wsl",
-                        "options": ["ro", "nosuid", "nodev", "rbind"],
-                    }],
-                },
-            })
-            return spec
-
-        # Scoped default nodes for container / virtual build environment
-        default_devs = [
-            {"path": "/dev/nvidia0"},
-            {"path": "/dev/nvidiactl"},
-            {"path": "/dev/nvidia-uvm"},
-        ]
-        spec["devices"].append({
-            "name": "0",
-            "containerEdits": {"deviceNodes": default_devs},
-        })
-        spec["devices"].append({
-            "name": "all",
-            "containerEdits": {"deviceNodes": default_devs},
-        })
-        return spec
-
-    # Per-GPU scoped definitions
-    for name, info in nvidia_info["instances"].items():
-        dev_nodes = [{"path": info["path"]}] + common_nodes
-        spec["devices"].append({
-            "name": str(name),
-            "containerEdits": {
-                "deviceNodes": dev_nodes,
-            },
-        })
-
-    # "all" composite definition
-    all_nodes = [{"path": info["path"]} for info in nvidia_info["instances"].values()] + common_nodes
-    spec["devices"].append({
-        "name": "all",
-        "containerEdits": {
-            "deviceNodes": all_nodes,
-        },
-    })
+def _build_dri_spec(dri_nodes: List[Dict[str, str]], vendor: str) -> Dict[str, Any]:
+    spec = _empty_spec(vendor + ".com/gpu")
+    if dri_nodes != find_dri_devices("0x1002" if vendor == "amd" else "0x8086"):
+        raise RuntimeError("DRM ownership changed during CDI generation")
+    kfd = [{"path": "/dev/kfd"}] if vendor == "amd" and _is_character_device("/dev/kfd") else []
+    all_nodes = []
+    for index, node in enumerate(dri_nodes):
+        paths = [node["render"]] + ([node["card"]] if node["card"] else [])
+        if not all(_is_character_device(path) for path in paths):
+            raise RuntimeError("DRM ownership changed during CDI generation")
+        nodes = [{"path": path} for path in paths] + kfd
+        spec["devices"].append({"name": str(index), "containerEdits": {"deviceNodes": nodes}})
+        for entry in nodes:
+            if entry not in all_nodes:
+                all_nodes.append(entry)
+    if all_nodes:
+        spec["devices"].append({"name": "all", "containerEdits": {"deviceNodes": all_nodes}})
     return spec
 
 
 def build_amd_cdi_spec(dri_nodes: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Constructs CDI specification for AMD GPUs including KFD."""
-    spec: Dict[str, Any] = {
-        "cdiVersion": "0.6.0",
-        "kind": "amd.com/gpu",
-        "devices": [],
-    }
-
-    kfd_node = [{"path": "/dev/kfd"}] if os.path.exists("/dev/kfd") else []
-
-    for idx, node in enumerate(dri_nodes):
-        dev_nodes = [{"path": node["render"]}]
-        if node["card"]:
-            dev_nodes.append({"path": node["card"]})
-        dev_nodes.extend(kfd_node)
-
-        spec["devices"].append({
-            "name": str(idx),
-            "containerEdits": {
-                "deviceNodes": dev_nodes,
-            },
-        })
-
-    if dri_nodes:
-        all_nodes = []
-        for n in dri_nodes:
-            all_nodes.append({"path": n["render"]})
-            if n["card"]:
-                all_nodes.append({"path": n["card"]})
-        all_nodes.extend(kfd_node)
-        spec["devices"].append({
-            "name": "all",
-            "containerEdits": {
-                "deviceNodes": all_nodes,
-            },
-        })
-    else:
-        default_amd = [{"path": "/dev/dri/renderD128"}]
-        if os.path.exists("/dev/kfd"):
-            default_amd.append({"path": "/dev/kfd"})
-        spec["devices"].append({"name": "0", "containerEdits": {"deviceNodes": default_amd}})
-        spec["devices"].append({"name": "all", "containerEdits": {"deviceNodes": default_amd}})
-    return spec
+    return _build_dri_spec(dri_nodes, "amd")
 
 
 def build_intel_cdi_spec(dri_nodes: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Constructs CDI specification for Intel GPUs."""
-    spec: Dict[str, Any] = {
-        "cdiVersion": "0.6.0",
-        "kind": "intel.com/gpu",
-        "devices": [],
-    }
+    return _build_dri_spec(dri_nodes, "intel")
 
-    for idx, node in enumerate(dri_nodes):
-        dev_nodes = [{"path": node["render"]}]
-        if node["card"]:
-            dev_nodes.append({"path": node["card"]})
 
-        spec["devices"].append({
-            "name": str(idx),
-            "containerEdits": {
-                "deviceNodes": dev_nodes,
-            },
-        })
+def _publish(target: str, spec: Dict[str, Any]) -> None:
+    if os.path.islink(target):
+        raise RuntimeError("refusing linked CDI target: " + target)
+    descriptor, temporary = tempfile.mkstemp(prefix=".mios-cdi-", dir=os.path.dirname(target))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(spec, output, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+            os.fchmod(output.fileno(), 0o644)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
-    if dri_nodes:
-        all_nodes = []
-        for n in dri_nodes:
-            all_nodes.append({"path": n["render"]})
-            if n["card"]:
-                all_nodes.append({"path": n["card"]})
-        spec["devices"].append({
-            "name": "all",
-            "containerEdits": {
-                "deviceNodes": all_nodes,
-            },
-        })
-    else:
-        default_intel = [{"path": "/dev/dri/renderD128"}]
-        spec["devices"].append({"name": "0", "containerEdits": {"deviceNodes": default_intel}})
-        spec["devices"].append({"name": "all", "containerEdits": {"deviceNodes": default_intel}})
-    return spec
+
+def _filename(vendor: str) -> str:
+    # Match the upstream refresh service and the canonical gpu.cdi.nvidia spec.
+    return "nvidia.yaml" if vendor == "nvidia" else vendor + ".json"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469)"
-    )
-    parser.add_argument("--output-dir", default="/etc/cdi", help="Destination directory for CDI JSON specifications")
+    parser = argparse.ArgumentParser(description="Generate CDI for probed, host-bound GPU devices")
+    parser.add_argument("--output-dir", default="/etc/cdi", help="Destination directory for CDI specifications")
     parser.add_argument("--vendor", choices=["auto", "nvidia", "amd", "intel", "all"], default="auto")
-    parser.add_argument("--dry-run", action="store_true", help="Simulate generation without writing files")
+    parser.add_argument("--dry-run", action="store_true", help="Inspect hardware and preview specs without writing files")
     parser.add_argument("--json", action="store_true", help="Output summary in JSON format")
-
     args = parser.parse_args()
-
-    out_dir = args.output_dir
-    if not args.dry_run and not os.path.exists(out_dir):
-        try:
-            os.makedirs(out_dir, mode=0o755, exist_ok=True)
-        except OSError as e:
-            # Fallback to /run/cdi if /etc/cdi not writable by current user
-            out_dir = "/run/cdi"
-            os.makedirs(out_dir, mode=0o755, exist_ok=True)
-
+    selected = ("nvidia", "amd", "intel") if args.vendor in ("auto", "all") else (args.vendor,)
     generated: Dict[str, Any] = {}
-
-    # 1. NVIDIA
-    if args.vendor in ("auto", "nvidia", "all"):
-        nv_info = find_nvidia_devices()
-        if nv_info["instances"] or os.path.exists("/dev/dxg") or args.vendor in ("nvidia", "all"):
-            spec = build_nvidia_cdi_spec(nv_info)
-            target = os.path.join(out_dir, "nvidia.json")
-            generated["nvidia"] = {
-                "target": target,
-                "devices": len(spec["devices"]),
-                "spec": spec,
-            }
-            if not args.dry_run:
-                with open(target, "w") as f:
-                    json.dump(spec, f, indent=2)
-
-    # 2. AMD
-    if args.vendor in ("auto", "amd", "all"):
-        amd_nodes = find_dri_devices(vendor_id="0x1002")
-        if amd_nodes or os.path.exists("/dev/kfd") or args.vendor in ("amd", "all"):
-            spec = build_amd_cdi_spec(amd_nodes)
-            target = os.path.join(out_dir, "amd.json")
-            generated["amd"] = {
-                "target": target,
-                "devices": len(spec["devices"]),
-                "spec": spec,
-            }
-            if not args.dry_run:
-                with open(target, "w") as f:
-                    json.dump(spec, f, indent=2)
-
-    # 3. Intel
-    if args.vendor in ("auto", "intel", "all"):
-        intel_nodes = find_dri_devices(vendor_id="0x8086")
-        if intel_nodes or args.vendor in ("intel", "all"):
-            spec = build_intel_cdi_spec(intel_nodes)
-            target = os.path.join(out_dir, "intel.json")
-            generated["intel"] = {
-                "target": target,
-                "devices": len(spec["devices"]),
-                "spec": spec,
-            }
-            if not args.dry_run:
-                with open(target, "w") as f:
-                    json.dump(spec, f, indent=2)
-
-    result = {
-        "status": "success",
-        "dry_run": args.dry_run,
-        "output_dir": out_dir,
-        "generated": list(generated.keys()),
-        "specs": generated,
-    }
-
+    unavailable: Dict[str, str] = {}
+    errors: Dict[str, str] = {}
+    for vendor in selected:
+        try:
+            if vendor == "nvidia":
+                evidence = find_nvidia_devices()
+                spec = build_nvidia_cdi_spec(evidence)
+            else:
+                nodes = find_dri_devices("0x1002" if vendor == "amd" else "0x8086")
+                spec = build_amd_cdi_spec(nodes) if vendor == "amd" else build_intel_cdi_spec(nodes)
+            if not spec["devices"]:
+                unavailable[vendor] = "no matching host-bound character devices"
+                continue
+            generated[vendor] = {"target": os.path.join(args.output_dir, _filename(vendor)),
+                                 "devices": len(spec["devices"]), "spec": spec}
+        except (OSError, RuntimeError, ValueError) as error:
+            errors[vendor] = str(error)
+    if not args.dry_run:
+        try:
+            # Do not retain this producer's stale advertisement after detach or
+            # failed discovery. Other filenames and directories remain untouched.
+            for vendor in selected:
+                names = [_filename(vendor)] + (["nvidia.json"] if vendor == "nvidia" else [])
+                for name in names:
+                    target = os.path.join(args.output_dir, name)
+                    if (vendor not in generated or name != _filename(vendor)) and os.path.lexists(target):
+                        if os.path.islink(target) or not os.path.isfile(target):
+                            raise RuntimeError("refusing non-regular CDI target: " + target)
+                        os.unlink(target)
+            if generated and not errors:
+                os.makedirs(args.output_dir, mode=0o755, exist_ok=True)
+                for details in generated.values():
+                    _publish(details["target"], details["spec"])
+        except (OSError, RuntimeError) as error:
+            errors["output"] = str(error)
+    failed = bool(errors) or (args.vendor not in ("auto", "all") and args.vendor in unavailable)
+    result = {"status": "error" if errors else ("unavailable" if failed else "success"),
+              "dry_run": args.dry_run, "output_dir": args.output_dir,
+              "generated": list(generated), "specs": generated,
+              "unavailable": unavailable, "errors": errors}
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        print(f"[cdi-gen] Generated {len(generated)} CDI spec(s) in {out_dir}")
-        for vendor, details in generated.items():
-            print(f"  - {vendor}: {details['target']} ({details['devices']} device entry/entries)")
-
-    return 0
+        print(f"[cdi-gen] {result['status']}: {len(generated)} available CDI spec(s) in {args.output_dir}")
+        for vendor, reason in {**unavailable, **errors}.items():
+            print(f"  {vendor}: {reason}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
