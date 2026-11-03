@@ -10,6 +10,9 @@ FROM ${MIOS_IMAGE_REF}
 ARG MIOS_IDENTITY_USERNAME
 USER 0
 RUN set -euo pipefail; \
+    for helper in /usr/libexec/mios/mios-toml-get /usr/libexec/mios/mios-subuid-alloc; do \
+        [ -x "$helper" ] || { echo "[devcontainer] ERROR: MiOS base image lacks required account helper $helper; build and publish the current full MiOS image before rebuilding this devcontainer" >&2; exit 1; }; \
+    done; \
     image_user="$(env -u MIOS_IDENTITY_USERNAME /usr/libexec/mios/mios-toml-get identity username)"; \
     user="${MIOS_IDENTITY_USERNAME:-$image_user}"; renamed_from=""; \
     case "$user" in ''|root|[0-9-]*|*[!a-z0-9_-]*) \

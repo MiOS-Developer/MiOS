@@ -665,7 +665,7 @@ class TestDevcontainerAccountProvisioning(unittest.TestCase):
         text = _read(DEV_CF)
         return re.search(r"(?ms)^RUN (.*?)(?=^ENV )", text).group(1).replace("\\\n", " ")
 
-    def _run(self, requested="user", image_user="user", users=None, declared=True, fail=""):
+    def _run(self, requested="user", image_user="user", users=None, declared=True, fail="", missing=""):
         with tempfile.TemporaryDirectory(prefix="mios-devcontainer-account-") as tmp:
             root = Path(tmp)
             tools = root / "bin"
@@ -719,7 +719,8 @@ save()
             dispatcher.chmod(0o755)
             for name in ("mios-toml-get", "getent", "id", "systemd-sysusers", "systemd-tmpfiles",
                          "usermod", "groupmod", "chage", "install", "cp", "chown", "visudo", "setpriv", "sudo", "mios-subuid-alloc"):
-                (tools / name).symlink_to(dispatcher.name)
+                if name != missing:
+                    (tools / name).symlink_to(dispatcher.name)
             script = self._script().replace("/usr/libexec/mios/mios-toml-get", str(tools / "mios-toml-get"))
             script = script.replace("/usr/libexec/mios/mios-subuid-alloc", str(tools / "mios-subuid-alloc"))
             script = script.replace("/etc/sudoers.d", str(sudoers))
@@ -730,6 +731,16 @@ save()
                        MIOS_DECLARED="1" if declared else "0", MIOS_ACCOUNT_FAIL=fail)
             result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
             return result, json.loads(state.read_text())
+
+    def test_missing_base_account_helpers_fail_before_provisioning(self):
+        for helper in ("mios-toml-get", "mios-subuid-alloc"):
+            with self.subTest(helper=helper):
+                result, state = self._run(missing=helper)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("base image lacks required account helper", result.stderr)
+                self.assertIn("publish the current full MiOS image", result.stderr)
+                self.assertEqual([], state["calls"])
+                self.assertEqual({}, state["users"])
 
     def test_missing_account_is_materialized_before_nonroot_selection(self):
         result, state = self._run()

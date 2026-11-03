@@ -22,6 +22,16 @@ membership. Subordinate UID/GID mappings follow that account for rootless
 container builds. An unrelated account occupying UID 1000 fails the build.
 The development session runs as that account, never as root.
 
+The wrapper requires the base image to provide executable
+`/usr/libexec/mios/mios-toml-get` and
+`/usr/libexec/mios/mios-subuid-alloc` before any account changes. Missing
+helpers require a current full MiOS image from the OS pipeline. Rebuilding
+the thin wrapper cannot add the missing OS payload. During a registry
+migration, `[image].name` identifies the publication target while
+`[image].ref` remains the released consumer reference until the new image
+is published and verified; source account tests do not prove that a retained
+registry image provides these helpers.
+
 ## Recovering a missing-account startup
 
 An error such as `unable to find user user: no matching entries in passwd file`
