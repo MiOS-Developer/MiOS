@@ -760,6 +760,21 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
             await bridge.start()
         return bridge
 
+    async def admit(self, head, count=None):
+        bridge = await self.bridge(head)
+        self.assertEqual(bridge.visible_slots, {}, "opening a connection must not spawn idle workers")
+        count = CONFIG["workspace"]["worker_panes"] if count is None else count
+        self.assertLessEqual(count, CONFIG["max_slots"])
+        for slot in range(1, count + 1):
+            marker = f"ADMITTED-WORKSPACE-SLOT-{slot}"
+            result = await bridge.call("mios_tmux_execute_command", {"slot": slot, "command": f"printf {marker}"})
+            self.assertFalse(result.is_error, result)
+            self.assertEqual(payload(result)["exitCode"], 0)
+            self.assertIn(marker, payload(result)["output"])
+        self.assertEqual(len(bridge.visible_slots), count)
+        self.assertEqual(len({record["pane"] for record in bridge.visible_slots.values()}), count)
+        return bridge
+
     async def asyncTearDown(self):
         for bridge in reversed(self.bridges):
             await bridge.close()
@@ -832,7 +847,7 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
             await bridge.close()
             workspace_head = self.workspace()
             with patch.dict(os.environ, {"TMUX_PANE": workspace_head}):
-                workspace_bridge = await self.bridge(workspace_head)
+                workspace_bridge = await self.admit(workspace_head)
                 self.assertEqual(len(workspace_bridge.visible_slots), 4)
                 self.assertEqual(self.tmux("display-message", "-p", "-t", workspace_head, "#{session_name}"), self.session)
                 result = await workspace_bridge.call("mios_tmux_execute_command", {"slot": 2, "command": "printf DEFAULT-WORKSPACE-RECEIPT"})
@@ -856,14 +871,22 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
             adapter=f"{sys.executable} {RELAY}")["head"]
 
     async def test_workspace_keeps_the_explicit_directory_for_head_workers_and_observer(self):
-        project = Path(self.directory.name) / 'project with spaces'
+        project = Path(self.directory.name) / 'project with spaces #{session_name}'
         project.mkdir()
         head = relay._workspace_call("open", socket=str(self.socket), directory=str(project),
             latch="mios-workspace-test-" + secrets.token_hex(8),
             command="/bin/bash --noprofile --norc", observer_command="exec /usr/bin/sleep infinity",
             adapter=f"{sys.executable} {RELAY}")["head"]
-        paths = self.tmux('list-panes', '-a', '-F', '#{pane_current_path}').splitlines()
-        self.assertEqual(paths.count(str(project)), 7)  # head, four workers, parking anchor, observer
+        bridge = await self.admit(head)
+        window = self.tmux('display-message', '-p', '-t', head, '#{@mios-workspace-window}')
+        roles = [self.tmux('display-message', '-p', '-t', window, '#{' + option + '}')
+                 for option in ('@mios-workspace-observer', '@mios-workspace-resource', '@mios-workspace-anchor')]
+        owned = {head, *roles, *(record["pane"] for record in bridge.visible_slots.values())}
+        self.assertEqual(len(owned), 4 + CONFIG["workspace"]["worker_panes"])
+        self.assertNotIn(self.head, owned)
+        for pane in owned:
+            self.assertRegex(pane, r'^%\d+$')
+            self.assertEqual(self.tmux('display-message', '-p', '-t', pane, '#{pane_current_path}'), str(project))
         before = self.tmux('list-panes', '-a', '-F', '#{pane_id}')
         with self.assertRaisesRegex(RuntimeError, 'existing absolute path'):
             relay._workspace_call("open", socket=str(self.socket), directory=str(project / 'missing'),
@@ -888,7 +911,9 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
         again = self.workspace()
         self.assertEqual(again, head)
         self.assertEqual(self.tmux('list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}'), before)
+        bridge = await self.admit(head, count=1)
         focused = relay._workspace_call('focus', {'socket':str(self.socket), 'pane':head}, target='next')
+        self.assertEqual(focused['active'], bridge.visible_slots[1]["pane"])
         self.assertNotEqual(focused['active'], head)
         self.assertNotEqual(self.tmux('display-message', '-p', '-t', head, '#{session_name}'), self.session)
         self.assertEqual(self.workspace(), head, 'a parked head must still be reused')
@@ -931,10 +956,11 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
 
     async def test_workspace_desktop_portrait_rotation_preserves_worker_processes(self):
         head = self.workspace()
+        self.assertEqual(len(self.tmux("list-panes", "-t", head, "-F", "#{pane_id}").splitlines()), 3)
+        bridge = await self.admit(head)
         before = self.tmux("list-panes", "-t", head, "-F", "#{pane_id}").splitlines()
-        self.assertEqual(len(before), 5)
+        self.assertEqual(len(before), 3 + CONFIG["workspace"]["worker_panes"])
         self.assertNotIn(self.head, before, "the operator's original pane was adopted")
-        bridge = await self.bridge(head)
         self.assertEqual(len(bridge.visible_slots), 4)
         self.assertEqual(set(self.tmux("list-panes", "-t", head, "-F", "#{pane_id}").splitlines()), set(before))
         result = await bridge.call("mios_tmux_execute_command", {"slot": 2, "command": "printf WORKSPACE-REAL-SLOT"})
@@ -948,26 +974,31 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(receipt["layout"], expected)
             rows = [r.split("\t") for r in self.tmux("list-panes", "-t", window, "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}").splitlines()]
             cells = {r[0]: list(map(int, r[1:])) for r in rows}
-            self.assertEqual(len(rows), 2 if expected != "desktop" else 5)
+            self.assertEqual(len(rows), 2 if expected != "desktop" else 3 + CONFIG["workspace"]["worker_panes"])
+            for left, top, columns, lines in cells.values():
+                self.assertGreater(columns, 0)
+                self.assertGreater(lines, 0)
+                self.assertGreaterEqual(left, 0)
+                self.assertGreaterEqual(top, 0)
+                self.assertLessEqual(left + columns, width)
+                self.assertLessEqual(top + lines, height)
+            rectangles = list(cells.values())
+            for i, (left, top, columns, lines) in enumerate(rectangles):
+                for other_left, other_top, other_columns, other_lines in rectangles[i + 1:]:
+                    self.assertTrue(left + columns <= other_left or other_left + other_columns <= left
+                                    or top + lines <= other_top or other_top + other_lines <= top)
             if expected != "desktop":
                 active, observer = receipt['active'], receipt["observer"]
-                # One SSOT split for the Linux workspace and the Windows host
-                # profile ([mcp.tmux.workspace].head_percent; the monitor takes
-                # the rest): portrait stacks the monitor ABOVE the head; compact
-                # landscape puts the head on the LEFT and the monitor on the right.
-                if expected == 'portrait':
-                    self.assertEqual(cells[observer][0:2], [0, 0])
-                    self.assertEqual(cells[active][0], 0)
-                    self.assertGreater(cells[active][1], cells[observer][3])
-                    self.assertEqual(cells[observer][3] > cells[active][3],
-                                     100 - CONFIG["workspace"]["head_percent"] > 50)
-                    self.assertGreaterEqual(cells[active][3], min(CONFIG["workspace"]["minimum_head_rows"], height - 4))
-                else:
-                    self.assertEqual(cells[active][0:2], [0, 0])
-                    self.assertEqual(cells[observer][1], 0)
-                    self.assertGreater(cells[observer][0], cells[active][2])
-                    self.assertEqual(cells[active][3], height)
-                    self.assertEqual(cells[observer][3], height)
+                # The current SSOT slim monitor stacks above the active agent in
+                # both compact and portrait views; hidden workers keep their PIDs.
+                self.assertEqual(cells[observer][0:2], [0, 0])
+                self.assertEqual(cells[active][0], 0)
+                self.assertGreater(cells[active][1], cells[observer][3])
+                self.assertEqual(cells[active][2], width)
+                self.assertEqual(cells[observer][2], width)
+                self.assertEqual(cells[active][3] + cells[observer][3] + 1, height)
+                self.assertLess(cells[observer][3], cells[active][3])
+                self.assertGreaterEqual(cells[active][3], min(CONFIG["workspace"]["minimum_head_rows"], height - 4))
                 hidden = await bridge.call('mios_tmux_execute_command', {'slot': 2, 'command': 'printf COMPACT-SLOT-RECEIPT'})
                 self.assertFalse(hidden.is_error, hidden)
                 self.assertEqual(payload(hidden)['exitCode'], 0)
@@ -983,24 +1014,78 @@ class TestDesktopMcp(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(RuntimeError, 'not a member'):
                     relay._workspace_call('focus', {'socket':str(self.socket), 'pane':head}, target=self.head)
             else:
-                self.assertEqual(cells[head][0:2], [0, 0])
-                self.assertEqual(len({cells[p][0] for p in before if p != head}), 2)
-                self.assertEqual(len({cells[p][1] for p in before if p != head}), 2)
+                top = int(CONFIG["workspace"]["desktop_border_status"] == "top")
+                self.assertEqual(cells[head][0:2], [0, top])
+                self.assertEqual(cells[receipt["resource"]][0], cells[head][0])
+                left_roles = CONFIG["workspace"]["layout"]["left_roles"]
+                above, below = (head, receipt["resource"]) if left_roles[0] == "chat" else (receipt["resource"], head)
+                self.assertGreater(cells[below][1], cells[above][1] + cells[above][3])
+                self.assertGreater(cells[receipt["observer"]][0], cells[head][0] + cells[head][2])
+                for worker in pids:
+                    self.assertGreater(cells[worker][0], cells[head][0] + cells[head][2])
+                    self.assertGreater(cells[worker][1], cells[receipt["observer"]][1] + cells[receipt["observer"]][3])
                 self.assertEqual(len(self.tmux('list-windows', '-t', self.session, '-F', '#{window_id}').splitlines()), 2)
             for pane, pid in pids.items():
                 self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}"), pid)
         await bridge.close()
-        self.assertEqual(len(self.tmux("list-panes", "-t", head, "-F", "#{pane_id}").splitlines()), 5)
+        remaining = self.tmux("list-panes", "-a", "-F", "#{pane_id}").splitlines()
+        self.assertTrue(set(pids).isdisjoint(remaining), "closed dynamic workers must not become idle reservations")
+        self.assertEqual(len(self.tmux("list-panes", "-t", head, "-F", "#{pane_id}").splitlines()), 3)
         self.assertEqual(self.tmux("display-message", "-p", "-t", self.head, "#{pane_id}"), self.head)
+
+    async def legacy_reservation(self, head):
+        bridge = await self.admit(head, count=1)
+        pane = bridge.visible_slots[1]["pane"]
+        released = relay._workspace_call("release", bridge.visible, slot=1, owner=bridge.owner_id, pane=pane)
+        self.assertTrue(released["managed"])
+        self.assertEqual(released["pane"], pane)
+        for _ in range(60):
+            if self.tmux("display-message", "-p", "-t", pane, "#{pane_current_command}") == "sleep":
+                return pane
+            await asyncio.sleep(.05)
+        self.fail("native release did not establish a sleeping reservation")
+
+    async def test_workspace_claims_a_valid_legacy_reservation(self):
+        head = self.workspace()
+        blank = await self.legacy_reservation(head)
+        bridge = await self.bridge(head)
+        result = await bridge.call("mios_tmux_execute_command", {"slot": 1, "command": "printf VALID-RESERVATION-RECEIPT"})
+        self.assertFalse(result.is_error, result)
+        self.assertEqual(payload(result)["exitCode"], 0)
+        self.assertIn("VALID-RESERVATION-RECEIPT", payload(result)["output"])
+        self.assertEqual(bridge.visible_slots[1]["pane"], blank)
 
     async def test_workspace_refuses_changed_blank_reservation(self):
         head = self.workspace()
-        blank = self.tmux("list-panes", "-t", head, "-F", "#{pane_id}\t#{@mios-workspace-slot}").splitlines()[1].split("\t")[0]
+        blank = await self.legacy_reservation(head)
         self.tmux("respawn-pane", "-k", "-t", blank, "/bin/bash --noprofile --norc")
-        with self.assertRaisesRegex(RuntimeError, "reservation witness changed"):
-            await self.bridge(head)
+        pid = self.tmux("display-message", "-p", "-t", blank, "#{pane_pid}")
+        bridge = await self.bridge(head)
+        result = await bridge.call("mios_tmux_execute_command", {"slot": 1, "command": "printf FORGED-RESERVATION-COMMAND"})
+        self.assertTrue(result.is_error, result)
+        self.assertIn("reservation witness changed", "\n".join(block.text for block in result.content if block.type == "text"))
+        self.assertEqual(self.tmux("display-message", "-p", "-t", blank, "#{pane_pid}"), pid)
         self.assertEqual(self.tmux("display-message", "-p", "-t", blank, "#{pane_current_command}"), "bash")
-        self.assertEqual(len(self.tmux("list-panes", "-t", head, "-F", "#{pane_id}").splitlines()), 5)
+        self.assertNotIn("FORGED-RESERVATION-COMMAND", self.tmux("capture-pane", "-p", "-t", blank))
+        await bridge.close()
+        self.assertEqual(self.tmux("display-message", "-p", "-t", blank, "#{pane_pid}"), pid)
+
+    async def test_workspace_rejects_a_replaced_helper_process_without_reclaiming_it(self):
+        head = self.workspace()
+        bridge = await self.admit(head, count=1)
+        pane = bridge.visible_slots[1]["pane"]
+        original = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}")
+        self.tmux("respawn-pane", "-k", "-t", pane, "/bin/bash --noprofile --norc")
+        replacement = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}")
+        self.assertNotEqual(original, replacement)
+        result = await bridge.call("mios_tmux_execute_command", {"slot": 1, "command": "printf REPLACED-PROCESS-COMMAND"})
+        self.assertTrue(result.is_error, result)
+        self.assertIn("process witness changed", "\n".join(block.text for block in result.content if block.type == "text"))
+        self.assertEqual(payload(await bridge.call("mios_tmux_list_slots", {})), [])
+        self.assertNotIn("REPLACED-PROCESS-COMMAND", self.tmux("capture-pane", "-p", "-t", pane))
+        await bridge.close()
+        self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}"), replacement)
+        self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{pane_current_command}"), "bash")
 
     async def test_chooser_reads_terminal_input_and_redraws_without_launching_unavailable_client(self):
         data = relay.mios_toml.load_merged()

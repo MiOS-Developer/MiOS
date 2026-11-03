@@ -860,9 +860,11 @@ class _TmuxBridge:
                 return subprocess.check_output(["tmux", "-u", "-S", ui["socket"], *args], text=True, timeout=3).rstrip("\n")
             record = self.visible_slots.get(slot)
             if record:
-                witness = tmux("display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}")
-                if witness != self.owner_id:
+                witness = tmux("display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}|#{pane_pid}").split("|")
+                if len(witness) != 2 or witness[0] != self.owner_id:
                     raise RuntimeError("desktop helper pane ownership changed")
+                if witness[1] != record["pid"]:
+                    raise RuntimeError("desktop helper pane process witness changed")
             rows = tmux("list-panes", "-a", "-F", "#{pane_id}|#{@mcp_slot}").splitlines()
             occupied = {row.split("|")[1] for row in rows if "|" in row
                         and (not record or row.split("|")[0] != record["pane"])}
@@ -880,7 +882,13 @@ class _TmuxBridge:
                                  if k != "TMUX_TMPDIR")
             command = 'exec env -i ' + shell_env + ' MIOS_TMUX_HELPER=1 TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
             reserved = _workspace_call("claim", ui, slot=slot, owner=self.owner_id, command=command)
-            created = reserved.get("pane") or tmux("split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", ui["pane"], command)
+            created = reserved.get("pane")
+            if not created:
+                directory = tmux("display-message", "-p", "-t", ui["pane"], "#{pane_current_path}")
+                if not os.path.isabs(directory) or not os.path.isdir(directory):
+                    raise RuntimeError("desktop head working directory is unavailable")
+                created = tmux("split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", ui["pane"],
+                               "-c", directory.replace("#", "##"), command)
             try:
                 for key, value in (("@mcp_pane", created), ("@mcp_owner", "agent"),
                                    ("@mcp_slot", str(physical)), ("@mios-mcp-owner", self.owner_id)):
@@ -898,10 +906,11 @@ class _TmuxBridge:
                 elif "1" not in tmux("list-panes", "-t", ui["window"], "-F", "#{pane_floating_flag}").split():
                     # tmux 3.7 floating panes are not part of a tiled layout; a preset would merge them.
                     tmux("select-layout", "-t", ui["window"], "tiled")
+                pid = tmux("display-message", "-p", "-t", created, "#{pane_pid}")
             except BaseException:
                 tmux("kill-pane", "-t", created)
                 raise
-            self.visible_slots[slot] = {"pane": created, "upstream": physical, "dynamic": not bool(reserved.get("pane"))}
+            self.visible_slots[slot] = {"pane": created, "pid": pid, "upstream": physical, "dynamic": not bool(reserved.get("pane"))}
             return physical
         finally:
             os.close(fd)
@@ -914,14 +923,15 @@ class _TmuxBridge:
                 continue
             # Retire by witnessed pane ID, not a global upstream slot shared by peers.
             result = await asyncio.to_thread(subprocess.run, ["tmux", "-u", "-S", self.visible["socket"],
-                "display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}|#{@mios-workspace-worker}|#{@mios-workspace-dynamic}"],
+                "display-message", "-p", "-t", record["pane"], "#{@mios-mcp-owner}|#{@mios-workspace-worker}|#{@mios-workspace-dynamic}|#{pane_pid}"],
                 capture_output=True, text=True, timeout=3)
             if result.returncode == 0:
                 parts = result.stdout.rstrip("\n").split("|")
                 owner = parts[0] if parts else ""
                 w_head = parts[1] if len(parts) > 1 else ""
                 is_dyn = record.get("dynamic") or (len(parts) > 2 and parts[2] == "1")
-                if owner == self.owner_id:
+                pid = parts[3] if len(parts) > 3 else ""
+                if owner == self.owner_id and pid == record.get("pid"):
                     released = {} if is_dyn else await asyncio.to_thread(
                         _workspace_call, "release", self.visible,
                         slot=local, owner=self.owner_id, pane=record["pane"])
@@ -948,13 +958,14 @@ class _TmuxBridge:
             return types.CallToolResult(content=[types.TextContent(type="text", text='{"closed":true}')])
         if self.visible and upstream == "list-slots":
             result = await asyncio.to_thread(subprocess.run, ["tmux", "-u", "-S", self.visible["socket"],
-                "list-panes", "-a", "-F", "#{pane_id}|#{@mios-mcp-owner}|#{pane_dead}"],
+                "list-panes", "-a", "-F", "#{pane_id}|#{@mios-mcp-owner}|#{pane_dead}|#{pane_pid}"],
                 capture_output=True, text=True, timeout=3, check=True)
             rows = [line.split("|") for line in result.stdout.splitlines()]
-            live = {r[0]: r[2] for r in rows if len(r) == 3 and r[1] == self.owner_id}
+            live = {r[0]: (r[2], r[3]) for r in rows if len(r) == 4 and r[1] == self.owner_id}
             data = [{"slot": n, "paneId": r["pane"], "isolated": False,
-                     "origin": "created", "isAlive": live[r["pane"]] == "0"}
-                    for n, r in self.visible_slots.items() if r["pane"] in live]
+                     "origin": "created", "isAlive": live[r["pane"]][0] == "0"}
+                    for n, r in self.visible_slots.items()
+                    if r["pane"] in live and r.get("pid") == live[r["pane"]][1]]
             return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(data))])
         local = args.get("slot", 1)
         if self.visible and upstream not in {"list-slots", "notify"}:
