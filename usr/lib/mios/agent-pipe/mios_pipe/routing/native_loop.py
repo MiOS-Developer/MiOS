@@ -252,9 +252,16 @@ NATIVE_LOOP_STREAM_CHUNK = 0
 NATIVE_LOOP_STREAM_DELAY_MS = 0
 _ROUTING_DOMAINS = {}
 _DEBUG_ENABLE = False
+_get_agent_registry = None
+_live_agent_names = None
+_agent_lane = None
+_call_agent_complete = None
+_get_client = None
+_endpoint_key = None
 
 _INJECTED = frozenset((
-    "_DEBUG_ENABLE",
+    "_DEBUG_ENABLE", "_get_agent_registry", "_live_agent_names", "_agent_lane",
+    "_call_agent_complete", "_get_client", "_endpoint_key",
     "dispatch_mios_verb", "_usage_estimate", "_identity_answer", "_agent_contract",
     "_capability_grounding", "_env_grounding", "_recall_agent_memory", "_recall_knowledge",
     "_rag_enrich", "_tool_pref_block", "_current_date_str", "_worker_tools_surface_async",
@@ -282,6 +289,42 @@ def configure(**deps) -> None:
     for _k, _v in deps.items():
         if _k in _INJECTED:
             g[_k] = _v
+
+async def _registered_cpu_completion(messages: list, attempted: set) -> str:
+    """Use ready configured CPU capacity after the primary produced no answer."""
+    if not all((_get_agent_registry, _live_agent_names, _agent_lane,
+                _call_agent_complete, _get_client, _endpoint_key)):
+        return ""
+    try:
+        async with asyncio.timeout(NATIVE_LOOP_TIMEOUT_S):
+            live = await _live_agent_names()
+            # Resolve at use time: membership reload replaces the registry.
+            registry = _get_agent_registry() or {}
+            for name, cfg in registry.items():
+                if (name not in live or not isinstance(cfg, dict)
+                        or cfg.get("enabled") is False or cfg.get("research_only")
+                        or _agent_lane(cfg) != "cpu"):
+                    continue
+                endpoint = str(cfg.get("endpoint") or "").strip()
+                model = str(cfg.get("model") or "").strip()
+                key = _endpoint_key(endpoint)
+                if not endpoint or not model or not key or key in attempted:
+                    continue
+                attempted.add(key)
+                body = {"model": model, "messages": list(messages), "stream": False,
+                        "chat_template_kwargs": {"enable_thinking": False}}
+                try:
+                    _, answer = await _call_agent_complete(
+                        name, cfg, body, {"Content-Type": "application/json"},
+                        await _get_client(), prefer_cpu=False)
+                    if answer and answer.strip():
+                        log.info("native-loop: registered CPU fallback %s answered", name)
+                        return answer
+                except Exception as exc:  # cancellation propagates to canonical dispatch
+                    log.warning("native-loop CPU fallback %s failed: %s", name, type(exc).__name__)
+    except Exception as exc:
+        log.warning("native-loop registered CPU fallback unavailable: %s", type(exc).__name__)
+    return ""
 
 async def _respond_native_loop_direct(
     refined: Optional[dict], *, streaming: bool, chat_id: str, model: str,
@@ -790,7 +833,12 @@ async def _respond_native_loop_direct(
             except Exception as _e:  # noqa: BLE001
                 log.warning("native-loop final completion failed: %s", _e)
                 _raw = ""
-        if not _raw.strip() and REFINE_ENDPOINT and REFINE_ENDPOINT != BACKEND:
+        _attempted = {_endpoint_key(BACKEND)} if _endpoint_key else {BACKEND.rstrip("/").removesuffix("/v1")}
+        _refine_key = (_endpoint_key(REFINE_ENDPOINT) if _endpoint_key
+                       else REFINE_ENDPOINT.rstrip("/").removesuffix("/v1"))
+        if (not _raw.strip() and not force_delegate and not target_agents
+                and REFINE_ENDPOINT and _refine_key not in _attempted):
+            _attempted.add(_refine_key)
             try:
                 _fb = {"model": REFINE_MODEL, "messages": _m2, "stream": False,
                        "chat_template_kwargs": {"enable_thinking": False}}
@@ -804,6 +852,8 @@ async def _respond_native_loop_direct(
                     log.info("native-loop: heavy lane empty -> light-lane fallback answered")
             except Exception as _e2:  # noqa: BLE001
                 log.warning("native-loop light-lane fallback failed: %s", _e2)
+        if not _raw.strip() and not force_delegate and not target_agents:
+            _raw = await _registered_cpu_completion(_m2, _attempted)
         for _mm in _m2:
             for _tc in (_mm.get("tool_calls") or []):
                 _fn = (_tc.get("function") or {}).get("name")

@@ -64,6 +64,8 @@ def _base_configure(verb_catalog, dispatch_calls, loop_calls):
         ]
 
     M.configure(
+        _get_agent_registry=None, _live_agent_names=None, _agent_lane=None,
+        _call_agent_complete=None, _get_client=None, _endpoint_key=None,
         BACKEND="http://x/v1", BACKEND_MODEL="m", _BACKEND_KEY=None,
         _BACKEND_HOSTPORT="x", REFINE_ENDPOINT="http://x/v1", REFINE_MODEL="m",
         STABLE_PREFIX=False, STABLE_PREFIX_HINT=False, STABLE_PREFIX_TAIL=0,
@@ -523,9 +525,133 @@ def _run_terminal_completion_reuse():
     print("actual secondary/native terminal completion reused in all output modes: OK")
 
 
+def _run_registered_cpu_fallback():
+    import time
+    import httpx
+    import mios_turn as turn
+    import mios_agentreg as registry_module
+    import test_mios_agent_call as calls
+    import mios_pipe.routing.agent_call as actual_calls
+    from mios_pipe.vram_scheduler import _endpoint_key
+    import logging
+    nodes = {"opaque-capacity": {"endpoint": "https://capacity.invalid:9764/v1",
+        "model": "configured-cpu-alias", "lane": "cpu", "health_gate": True}}
+    registry = {}
+    old_section = registry_module._toml_section
+    try:
+        registry_module._toml_section = lambda name: nodes if name == "nodes" else {}
+        registry_module.configure(logger=logging.getLogger("offline"), opt_int_mb=lambda v: 0)
+        registry_module._load_node_pool(registry)
+    finally: registry_module._toml_section = old_section
+    cpu_name = next(iter(registry))
+    registry.update({
+        "disabled": {**registry[cpu_name], "enabled": False},
+        "research-only": {**registry[cpu_name], "research_only": True},
+        "blank": {"lane": "cpu", "endpoint": "", "model": "unused"},
+        "gpu-labelled": {**registry[cpu_name], "lane": "gpu"},
+        "same-primary": {**registry[cpu_name], "endpoint": "http://x/"},
+        "no-model": {**registry[cpu_name], "model": ""}})
+    # Invalid candidates come first, so selection must apply each policy gate.
+    registry = {**{k:v for k,v in registry.items() if k != cpu_name}, cpu_name: registry[cpu_name]}
+    async def run(case):
+        _base_configure({}, [], [])
+        calls._configure()
+        active, admitted, requests, readiness = [], [], [], []
+        async def admit(*args, **kwargs): admitted.append(args)
+        async def model_active(ep, model, delta, est): active.append(delta)
+        actual_calls._admit = admit
+        actual_calls._model_active = model_active
+        actual_calls._apply_outbound_auth = lambda headers, ep: headers.update(Authorization="Bearer offline-cpu-key")
+        live = case != "unready"
+        current = {**registry, "duplicate-capacity": registry[cpu_name]} if case != "empty-registry" else {}
+        turn.configure(_AGENT_REGISTRY=current,
+            _NODE_LIVE={name: (time.time(), live) for name in current},
+            _should_health_probe=lambda cfg: True, _probe_auth_headers=lambda ep: {})
+        async def ready(): readiness.append(True); return await turn._live_agent_names()
+        entered, closed = asyncio.Event(), asyncio.Event()
+        class Pending(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                entered.set()
+                await asyncio.Event().wait()
+                yield b"unreachable"
+            async def aclose(self): closed.set()
+        def transport(request):
+            requests.append(request)
+            payload = json.loads(request.content)
+            assert actual_calls._dispatch_agent_var.get() == cpu_name
+            assert str(request.url) == nodes["opaque-capacity"]["endpoint"] + "/chat/completions"
+            assert payload["model"] == "configured-cpu-alias"
+            assert request.headers["Authorization"] == "Bearer offline-cpu-key"
+            assert payload["max_tokens"] > 0
+            if case in ("cancel", "timeout"): return httpx.Response(200, stream=Pending())
+            answer = "" if case == "empty-cpu" else "Configured CPU answer."
+            return httpx.Response(200, json={"choices": [{"message": {"content": answer}}]})
+        class Primary(_FakeClient):
+            calls = 0
+            async def post(self, url, **kwargs):
+                Primary.calls += 1
+                assert url == "http://x/v1/chat/completions"
+                return _FakeResp("Primary answer." if case == "primary-success" else "")
+            def stream(self, method, url, **kwargs):
+                Primary.calls += 1
+                assert url == "http://x/v1/chat/completions"
+                class Unavailable:
+                    status_code = 503
+                    async def __aenter__(self): return self
+                    async def __aexit__(self, *args): return False
+                    async def aread(self): return b"offline primary unavailable"
+                return Unavailable()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            M.httpx = types.SimpleNamespace(AsyncClient=Primary, Timeout=lambda *a, **k: None)
+            M.configure(_get_agent_registry=lambda: current, _live_agent_names=ready,
+                _agent_lane=registry_module._agent_lane,
+                _call_agent_complete=actual_calls._call_agent_complete,
+                _get_client=_async_const(client), _endpoint_key=_endpoint_key,
+                REFINE_ENDPOINT="http://x", NATIVE_LOOP_TIMEOUT_S=0.03 if case == "timeout" else 1.0)
+            M._v1_secondary_tool_loop = _async_const([])
+            async def invoke():
+                return await M._respond_native_loop_direct(None, streaming=case == "stream",
+                    chat_id="fallback", model="public-alias", session_id=None,
+                    last_user_text="An opaque request.", persona_system="",
+                    messages=[{"role": "user", "content": "An opaque request."}], request=None,
+                    force_delegate="explicit-agent" if case == "explicit" else None,
+                    target_agents=["selected-agent"] if case == "selected" else None)
+            if case == "cancel":
+                task = asyncio.create_task(invoke())
+                await asyncio.wait_for(entered.wait(), 0.5)
+                task.cancel()
+                try: await task
+                except asyncio.CancelledError: pass
+                else: raise AssertionError("CPU cancellation was swallowed")
+                assert closed.is_set() and not actual_calls._IN_FLIGHT_PROMPTS
+            else:
+                response = await invoke()
+                if case == "stream":
+                    content = b"".join([chunk async for chunk in response.body_iterator]).decode()
+                    assert "Configured CPU answer." in content and '"model": "public-alias"' in content
+                    assert content.count("data: [DONE]") == 1
+                elif case == "cpu":
+                    assert _body_text(response) == "Configured CPU answer."
+                    assert json.loads(bytes(response.body))["model"] == "public-alias"
+                elif case == "primary-success": assert _body_text(response) == "Primary answer."
+                else: assert response.status_code == 503
+            assert Primary.calls == 1, "same primary retried because /v1 spelling differed"
+            if case == "timeout":
+                assert closed.is_set() and not actual_calls._IN_FLIGHT_PROMPTS
+            if case in ("cpu", "stream", "cancel", "timeout", "empty-cpu"):
+                assert len(requests) == 1 and len(admitted) == 1 and active == [1, -1]
+            else:
+                assert not requests and not admitted and not active
+            if case in ("primary-success", "explicit", "selected"): assert not readiness
+    for case in ("cpu", "stream", "unready", "empty-registry", "primary-success", "explicit", "selected", "cancel", "timeout", "empty-cpu"):
+        asyncio.run(run(case))
+    print("registered CPU fallback: real registry/readiness/auth/admission/model/cancellation and policy controls: OK")
+
+
 if __name__ == "__main__":
     _run_all_folded_native_loop_suites()
     _run()
     _run_moved()
     _run_stream_cleanup_and_local_grounding()
     _run_terminal_completion_reuse()
+    _run_registered_cpu_fallback()

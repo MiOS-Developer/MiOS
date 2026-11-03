@@ -4213,6 +4213,12 @@ sys.modules["mios_hitlflow"].configure(
 app.include_router(hitlflow_router)
 
 sys.modules["mios_native_loop"].configure(
+    _get_agent_registry=lambda: _AGENT_REGISTRY,
+    _live_agent_names=_live_agent_names,
+    _agent_lane=_agent_lane,
+    _call_agent_complete=_call_agent_complete,
+    _get_client=_get_client,
+    _endpoint_key=_endpoint_key,
     _LOCAL_STATE_SYSTEM=_LOCAL_STATE_SYSTEM,
     _polish_post=_polish_post,
     BACKEND=BACKEND,
