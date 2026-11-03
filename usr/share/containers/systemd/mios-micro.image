@@ -4,6 +4,7 @@
 
 [Image]
 Image=ghcr.io/mios-dev/mios-micro:latest
+Policy=missing
 
 [Service]
 TimeoutStartSec=3600

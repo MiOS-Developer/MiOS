@@ -14152,6 +14152,7 @@ Image = "${MIOS_SGLANG_IMAGE:-docker.io/lmsysorg/sglang:latest}"
 
 [images.mios-micro.Image]
 Image = "ghcr.io/mios-dev/mios-micro:latest"
+Policy = "missing"
 
 [images.mios-micro.Service]
 TimeoutStartSec = 3600
