@@ -31,6 +31,8 @@ class Client:
             'choices': [{'message': {'content': 'public response'}}], 'usage': {'total_tokens': 1}})
 
 class Request:
+    headers = {}
+
     async def body(self):
         return b'{"model":"mios-orchestrator","input":"hello"}'
 
