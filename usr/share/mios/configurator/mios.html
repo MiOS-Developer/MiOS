@@ -2075,6 +2075,10 @@
           </select>
           <label for="f-llamacpp-light-gpu-profile">GPU hardware profile (auto uses the running desktop profile)</label>
           <input type="text" id="f-llamacpp-light-gpu-profile" data-key="llamacpp.light_gpu_profile" value="auto">
+          <label for="f-llamacpp-light-resource">Compute GPU resource ID (empty keeps the existing GPU profile selection)</label>
+          <input type="text" id="f-llamacpp-light-resource" data-key="llamacpp.light_gpu_resource" pattern="[a-z0-9-]{1,64}" value="">
+          <label for="f-gpu-resources">Compute GPU resources (JSON object: each resource ID has either pci or pci_file)</label>
+          <textarea id="f-gpu-resources" rows="4" spellcheck="false">{}</textarea>
           <label for="f-llamacpp-light-threads">Light inference CPU threads (set within the service CPU allowance)</label>
           <input type="number" id="f-llamacpp-light-threads" data-key="llamacpp.light_threads" data-type="int" min="1" max="2147483647" step="1" value="1">
           <label for="f-llamacpp-light-batch">Light inference logical batch size (tokens)</label>
@@ -5324,7 +5328,33 @@ function renderGlobalBindings() {
   };
 }
 
+function gpuResourceTables(tables) {
+  const resources = {};
+  for (const [section, value] of Object.entries(tables)) {
+    if (/^gpu\.resources\.[a-z0-9-]{1,64}$/.test(section)) resources[section.slice("gpu.resources.".length)] = value;
+  }
+  return resources;
+}
+
+function storeGpuResourceTables(tables, text) {
+  const resources = JSON.parse(text);
+  if (!resources || typeof resources !== "object" || Array.isArray(resources)) throw new Error("GPU resources require an object of resource IDs to PCI selectors");
+  const entries = Object.entries(resources);
+  for (const [id, resource] of entries) {
+    if (!/^[a-z0-9-]{1,64}$/.test(id) || !resource || typeof resource !== "object" || Array.isArray(resource)) throw new Error("GPU resource IDs use lowercase letters, digits or hyphens");
+    if (Object.keys(resource).some(key => !["pci", "pci_file"].includes(key))) throw new Error("GPU resources accept pci or pci_file selectors");
+    const pci = resource.pci ?? "", file = resource.pci_file ?? "";
+    if (typeof pci !== "string" || typeof file !== "string" || !!pci === !!file) throw new Error("Each GPU resource needs exactly one PCI address or PCI selector file");
+  }
+  // Validate the complete editor before changing the loaded configuration.
+  for (const section of Object.keys(tables)) {
+    if (/^gpu\.resources\.[a-z0-9-]{1,64}$/.test(section)) delete tables[section];
+  }
+  for (const [id, resource] of entries) tables["gpu.resources." + id] = resource;
+}
+
 function refreshFromData() {
+  document.getElementById("f-gpu-resources").value = JSON.stringify(gpuResourceTables(DATA), null, 2);
   renderGlobalBindings();
   populateEngineSelects();
   document.querySelectorAll("[data-key]").forEach(el => {
@@ -5881,6 +5911,7 @@ function updateFlatpakCount() {
 }
 
 function gatherFromForm() {
+  storeGpuResourceTables(DATA, document.getElementById("f-gpu-resources").value);
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el.dataset.customOf) return;
     const [sec, key] = splitDataKey(el.dataset.key);
@@ -6518,6 +6549,8 @@ document.querySelectorAll("[data-key]").forEach(el => {
   el.addEventListener("input", () => { gatherFromForm(); renderRaw(); });
   el.addEventListener("change", () => { gatherFromForm(); renderRaw(); });
 });
+
+document.getElementById("f-gpu-resources").addEventListener("input", () => { gatherFromForm(); renderRaw(); });
 
 // First paint with defaults + per-platform path banner
 DATA = parseToml(DEFAULTS_TOML);

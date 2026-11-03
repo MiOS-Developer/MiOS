@@ -105,6 +105,160 @@ pub fn inventory(h: &Host) -> Vec<Gpu> {
         .collect()
 }
 
+/// A physical display-class PCI device, including one currently owned by VFIO.
+/// This is discovery evidence only; a host driver, CDI or free ownership is not implied.
+#[derive(Debug, Clone)]
+pub struct PciGpu {
+    pub pci: String,
+    pub driver: String,
+    pub boot_vga: bool,
+}
+
+fn resource_id_ok(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+fn resource_config<'a>(data: &'a Value, id: &str) -> Result<&'a Value, String> {
+    if !resource_id_ok(id) {
+        return Err("GPU resource ID must use 1..64 lowercase letters, digits or hyphens".into());
+    }
+    data.get("gpu")
+        .and_then(|g| g.get("resources"))
+        .and_then(|r| r.get(id))
+        .filter(|r| r.is_table())
+        .ok_or_else(|| format!("unknown GPU resource {id}"))
+}
+
+fn resource_pci_value(value: &str) -> Result<String, String> {
+    let pci = value.trim().to_ascii_lowercase();
+    if !valid_pci(&pci)
+        || u8::from_str_radix(&pci[8..10], 16).unwrap_or(u8::MAX) > 31
+        || !matches!(pci.as_bytes()[11], b'0'..=b'7')
+    {
+        return Err(
+            "GPU resource selector must identify one canonical PCI domain:bus:slot.function".into(),
+        );
+    }
+    Ok(pci)
+}
+
+/// Resolve exactly one explicit PCI identity, independently of desktop profiles.
+pub fn resource_pci(root: &Path, data: &Value, id: &str) -> Result<String, String> {
+    let cfg = resource_config(data, id)?;
+    let field = |key| -> Result<&str, String> {
+        match cfg.get(key) {
+            None => Ok(""),
+            Some(v) => v
+                .as_str()
+                .filter(|s| !s.chars().any(char::is_control))
+                .ok_or_else(|| {
+                    format!("gpu.resources.{id}.{key} must be a string without control characters")
+                }),
+        }
+    };
+    let pci = field("pci")?;
+    let file = field("pci_file")?;
+    match (pci.is_empty(), file.is_empty()) {
+        (false, true) => resource_pci_value(pci),
+        (true, false) => {
+            let path = Path::new(file);
+            if !path.is_absolute()
+                || path == Path::new("/")
+                || path
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(format!(
+                    "gpu.resources.{id}.pci_file must be an absolute rooted file"
+                ));
+            }
+            let root = root
+                .canonicalize()
+                .map_err(|e| format!("cannot resolve GPU resource root: {e}"))?;
+            let resolved = root
+                .join(path.strip_prefix("/").map_err(|e| e.to_string())?)
+                .canonicalize()
+                .map_err(|e| format!("cannot resolve gpu.resources.{id}.pci_file: {e}"))?;
+            if !resolved.starts_with(&root) {
+                return Err("GPU resource PCI selector file escapes its root".into());
+            }
+            let metadata = fs::metadata(&resolved).map_err(|e| e.to_string())?;
+            if !metadata.is_file() || metadata.len() > 64 {
+                return Err(
+                    "GPU resource PCI selector must be a regular file of at most 64 bytes".into(),
+                );
+            }
+            let mut value = String::new();
+            fs::File::open(&resolved)
+                .map_err(|e| format!("cannot open GPU resource selector: {e}"))?
+                .take(65)
+                .read_to_string(&mut value)
+                .map_err(|e| format!("cannot read GPU resource selector: {e}"))?;
+            resource_pci_value(&value)
+        }
+        _ => Err(format!(
+            "gpu.resources.{id} requires exactly one nonempty pci or pci_file selector"
+        )),
+    }
+}
+
+/// Discover physical GPUs even when no DRM node exists (for example under vfio-pci).
+pub fn pci_inventory(root: &Path) -> Result<Vec<PciGpu>, String> {
+    let mut result = Vec::new();
+    let entries = fs::read_dir(root.join("sys/bus/pci/devices"))
+        .map_err(|e| format!("cannot inventory PCI devices: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let pci = entry.file_name().to_string_lossy().into_owned();
+        if resource_pci_value(&pci).is_err() {
+            continue;
+        }
+        let class = fs::read_to_string(entry.path().join("class"))
+            .map_err(|e| format!("cannot read PCI class for {pci}: {e}"))?;
+        if !class.trim().starts_with("0x03") {
+            continue;
+        }
+        result.push(PciGpu {
+            pci,
+            driver: link_name(&entry.path().join("driver")),
+            boot_vga: fs::read_to_string(entry.path().join("boot_vga"))
+                .is_ok_and(|s| s.trim() == "1"),
+        });
+    }
+    result.sort_by(|a, b| a.pci.cmp(&b.pci));
+    Ok(result)
+}
+
+/// Read-only resource discovery. No ownership, CDI or activation readiness is asserted.
+pub fn gpu_resource_plan(root: &Path, data: &Value, id: &str) -> Result<Json, String> {
+    let pci = resource_pci(root, data, id)?;
+    let physical = pci_inventory(root)?
+        .into_iter()
+        .find(|gpu| gpu.pci == pci)
+        .ok_or_else(|| format!("GPU resource {id} is not a discovered display-class PCI device"))?;
+    let dri = root.join("dev/dri");
+    let sys = root.join("sys/class/drm");
+    let drm = inventory(&Host {
+        dri: &dri,
+        sys: &sys,
+    })
+    .into_iter()
+    .find(|gpu| gpu.pci == pci);
+    Ok(json!({"resource":id,"pci":pci,"driver":physical.driver,
+        "boot_vga":physical.boot_vga,"drm":drm.map(|gpu| gpu.to_json()),
+        "requires_host_rebind":physical.driver.is_empty() || physical.driver == "vfio-pci",
+        "activation_validated":false}))
+}
+
+pub fn report_gpu_resource(root: &Path, id: &str) -> Result<Json, String> {
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    gpu_resource_plan(root, &data, id)
+}
+
 fn profiles(data: &Value) -> Option<&toml::Table> {
     data.get("desktop")?
         .get("hyprland")?
@@ -575,6 +729,7 @@ struct LightSettings {
     threads: i32,
     batch_size: i32,
     ubatch_size: i32,
+    resource: Option<String>,
     profile: String,
     drivers: Vec<String>,
     dropin: PathBuf,
@@ -747,10 +902,24 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
     {
         return Err("light backend lock must be /run/mios/light-backend/lock".into());
     }
-    let profile = light_string(llama, "light_gpu_profile")?;
-    if profile != "auto" && !profiles(data).is_some_and(|p| p.contains_key(profile)) {
-        return Err(format!("unknown light GPU hardware profile {profile:?}"));
-    }
+    let resource = match llama.get("light_gpu_resource") {
+        None => None, // Existing layered profiles remain compatible.
+        Some(Value::String(id)) if id.is_empty() => None,
+        Some(Value::String(id)) => {
+            resource_config(data, id)?;
+            Some(id.clone())
+        }
+        _ => return Err("llamacpp.light_gpu_resource must be a resource ID string".into()),
+    };
+    let profile = if resource.is_some() {
+        "" // Compute resource selection never consults the desktop profile.
+    } else {
+        let profile = light_string(llama, "light_gpu_profile")?;
+        if profile != "auto" && !profiles(data).is_some_and(|p| p.contains_key(profile)) {
+            return Err(format!("unknown light GPU hardware profile {profile:?}"));
+        }
+        profile
+    };
     Ok(LightSettings {
         backend: backend.into(),
         image: image.into(),
@@ -759,6 +928,7 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
         threads,
         batch_size,
         ubatch_size,
+        resource,
         profile: profile.into(),
         drivers,
         dropin,
@@ -766,6 +936,30 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
         lock,
         cache,
     })
+}
+
+/// Activation selection requires a fresh DRM discovery for the exact resource PCI.
+/// A VFIO-only planning result never substitutes a different available GPU.
+fn resource_gpu(root: &Path, data: &Value, id: &str, gpus: &[Gpu]) -> Result<Gpu, String> {
+    let pci = resource_pci(root, data, id)?;
+    gpus.iter().find(|gpu| gpu.pci == pci).cloned().ok_or_else(|| {
+        format!("GPU resource {id} ({pci}) has no discovered DRM device; verify host rebind before activation")
+    })
+}
+
+fn selected_light_gpu(
+    root: &Path,
+    data: &Value,
+    cfg: &LightSettings,
+    cmdline: &str,
+    gpus: &[Gpu],
+) -> Result<(Option<String>, Gpu), String> {
+    if let Some(id) = cfg.resource.as_deref() {
+        resource_gpu(root, data, id, gpus).map(|gpu| (None, gpu))
+    } else {
+        light_gpu(data, root, &cfg.profile, cmdline, gpus)
+            .map(|(profile, gpu)| (Some(profile), gpu))
+    }
 }
 
 fn light_gpu(
@@ -1003,6 +1197,7 @@ pub struct LightBackendPlan {
     pub backend: String,
     pub image: String,
     pub profile: Option<String>,
+    pub resource: Option<String>,
     pub pci: Option<String>,
     pub output: PathBuf,
     pub contents: String,
@@ -1010,7 +1205,7 @@ pub struct LightBackendPlan {
 
 impl LightBackendPlan {
     pub fn to_json(&self, changed: bool) -> Json {
-        json!({"backend":self.backend,"image":self.image,"profile":self.profile,"pci":self.pci,
+        json!({"backend":self.backend,"image":self.image,"profile":self.profile,"resource":self.resource,"pci":self.pci,
             "output":self.output,"contents":self.contents,"changed":changed})
     }
 }
@@ -1028,7 +1223,8 @@ pub fn light_backend_plan(
     let mut pci = None;
     if cfg.backend != "cpu" {
         let gpus = inventory(host);
-        let (selected, gpu) = light_gpu(data, root, &cfg.profile, cmdline, &gpus)?;
+        let (selected, gpu) = selected_light_gpu(root, data, &cfg, cmdline, &gpus)?;
+        profile = selected;
         let render = light_render_device(&gpu, host, &cfg.drivers)?;
         if cfg.backend == "vulkan" {
             let path = render
@@ -1042,7 +1238,6 @@ pub fn light_backend_plan(
             devices.push(device);
             groups.extend([render.gid, gid]);
         }
-        profile = Some(selected);
         pci = Some(gpu.pci);
     }
     groups.sort();
@@ -1066,6 +1261,7 @@ pub fn light_backend_plan(
         backend: cfg.backend,
         image: cfg.image,
         profile,
+        resource: cfg.resource,
         pci,
         output: root.join(cfg.dropin.strip_prefix("/").map_err(|e| e.to_string())?),
         contents,
@@ -1629,6 +1825,182 @@ mod tests {
             error.contains("canonical image.sidecars.llm_light_cpu"),
             "{error}"
         );
+    }
+
+    fn with_resource(mut data: Value, id: &str, selector: &str) -> Value {
+        data["llamacpp"]["light_gpu_resource"] = Value::String(id.into());
+        let resources = data["gpu"]
+            .as_table_mut()
+            .unwrap()
+            .entry("resources")
+            .or_insert_with(|| Value::Table(Default::default()));
+        resources
+            .as_table_mut()
+            .unwrap()
+            .insert(id.into(), toml::from_str(selector).unwrap());
+        data
+    }
+
+    #[test]
+    fn compute_resource_is_independent_of_the_desktop_and_never_substitutes_another_gpu() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = with_resource(ssot(), "accelerator", "pci='0012:05:03.0'");
+        data.as_table_mut().unwrap().remove("desktop");
+        data["llamacpp"]
+            .as_table_mut()
+            .unwrap()
+            .remove("light_gpu_profile");
+        let cfg = light_settings(&data).unwrap();
+        let selected = Gpu {
+            card: "/unused/card7".into(),
+            render: None,
+            pci: "0012:05:03.0".into(),
+            driver: "amdgpu".into(),
+            boot_vga: false,
+        };
+        let other = Gpu {
+            pci: "0000:7a:00.0".into(),
+            boot_vga: true,
+            ..selected.clone()
+        };
+        let (profile, gpu) = selected_light_gpu(
+            root.path(),
+            &data,
+            &cfg,
+            "mios.desktop.gpu=missing",
+            &[other.clone(), selected.clone()],
+        )
+        .unwrap();
+        assert_eq!(profile, None);
+        assert_eq!(gpu, selected);
+        assert!(selected_light_gpu(root.path(), &data, &cfg, "", &[other]).is_err());
+        // A selected GPU still cannot activate without fresh validated render metadata.
+        assert!(validate_light_render(
+            &gpu,
+            &["amdgpu".into()],
+            LightRenderIdentity {
+                path: "/dev/dri/renderD211".into(),
+                dri: "/dev/dri".into(),
+                character: false,
+                device_number: "226:211".into(),
+                kernel_number: "226:211".into(),
+                pci: gpu.pci.clone(),
+                driver: gpu.driver.clone(),
+                gid: 0,
+            }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn compute_pci_selectors_are_explicit_bounded_and_rooted() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = with_resource(ssot(), "compute", "pci='0012:0A:03.2'");
+        assert_eq!(
+            resource_pci(root.path(), &data, "compute").unwrap(),
+            "0012:0a:03.2"
+        );
+        for selector in [
+            "",
+            "pci=''",
+            "pci=true",
+            "pci=[]",
+            "pci='01:00.0'",
+            "pci='0000:01:ff.0'",
+            "pci='0000:01:00.8'",
+            "pci='not-a-pci'",
+            "pci='0000:01:00.0'\npci_file='/etc/selector'",
+            "pci_file='../selector'",
+            "pci_file='/etc/../selector'",
+        ] {
+            data = with_resource(ssot(), "compute", selector);
+            assert!(
+                resource_pci(root.path(), &data, "compute").is_err(),
+                "{selector}"
+            );
+        }
+        for id in ["", "../compute", "COMPUTE", "compute/other"] {
+            assert!(resource_pci(root.path(), &data, id).is_err());
+        }
+        let file = root.path().join("etc/selector");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "0012:05:03.0\n").unwrap();
+        data = with_resource(ssot(), "compute", "pci_file='/etc/selector'");
+        assert_eq!(
+            resource_pci(root.path(), &data, "compute").unwrap(),
+            "0012:05:03.0"
+        );
+        fs::write(&file, "not-a-pci").unwrap();
+        assert!(resource_pci(root.path(), &data, "compute").is_err());
+        fs::write(&file, "x".repeat(65)).unwrap();
+        assert!(resource_pci(root.path(), &data, "compute").is_err());
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("selector"), "0012:05:03.0").unwrap();
+        symlink(
+            outside.path().join("selector"),
+            root.path().join("etc/escaped"),
+        )
+        .unwrap();
+        data = with_resource(ssot(), "compute", "pci_file='/etc/escaped'");
+        assert!(resource_pci(root.path(), &data, "compute")
+            .unwrap_err()
+            .contains("escapes"));
+    }
+
+    #[test]
+    fn resource_plan_discovers_vfio_without_claiming_activation_and_refreshes_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let pci = "0012:05:03.0";
+        let device = root.path().join("sys/bus/pci/devices").join(pci);
+        fs::create_dir_all(&device).unwrap();
+        fs::write(device.join("class"), "0x030200\n").unwrap();
+        fs::write(device.join("boot_vga"), "0\n").unwrap();
+        let vfio = root.path().join("sys/bus/pci/drivers/vfio-pci");
+        let host = root.path().join("sys/bus/pci/drivers/amdgpu");
+        fs::create_dir_all(&vfio).unwrap();
+        fs::create_dir_all(&host).unwrap();
+        symlink(&vfio, device.join("driver")).unwrap();
+        let data = with_resource(ssot(), "accelerator", &format!("pci='{pci}'"));
+        let first = gpu_resource_plan(root.path(), &data, "accelerator").unwrap();
+        assert_eq!(first["pci"], pci);
+        assert_eq!(first["driver"], "vfio-pci");
+        assert_eq!(first["requires_host_rebind"], true);
+        assert_eq!(first["activation_validated"], false);
+        assert_eq!(first["drm"], Json::Null);
+        assert!(resource_gpu(root.path(), &data, "accelerator", &[]).is_err());
+        fs::remove_file(device.join("driver")).unwrap();
+        symlink(&host, device.join("driver")).unwrap();
+        let changed = gpu_resource_plan(root.path(), &data, "accelerator").unwrap();
+        assert_eq!(changed["driver"], "amdgpu");
+        assert_eq!(changed["requires_host_rebind"], false);
+        assert_eq!(changed["activation_validated"], false);
+        assert!(resource_gpu(root.path(), &data, "accelerator", &[]).is_err());
+        fs::write(device.join("class"), "0x040300\n").unwrap();
+        assert!(gpu_resource_plan(root.path(), &data, "accelerator").is_err());
+        assert!(gpu_resource_plan(root.path(), &data, "unknown").is_err());
+    }
+
+    #[test]
+    fn invalid_compute_selection_preserves_the_previous_managed_projection() {
+        let root = tempfile::tempdir().unwrap();
+        let data = ssot();
+        let absent = root.path().join("absent");
+        let host = Host {
+            dri: &absent,
+            sys: &absent,
+        };
+        let prior = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        apply_light_backend(root.path(), &prior).unwrap();
+        let before = fs::read(&prior.output).unwrap();
+        let mut invalid = with_resource(data, "compute", "pci='0012:05:03.0'");
+        invalid["llamacpp"]["light_backend"] = Value::String("vulkan".into());
+        assert!(light_backend_plan(root.path(), &invalid, &host, "").is_err());
+        assert_eq!(fs::read(&prior.output).unwrap(), before);
+        invalid["llamacpp"]["light_gpu_resource"] = Value::Boolean(true);
+        assert!(light_settings(&invalid).is_err());
+        invalid["llamacpp"]["light_gpu_resource"] = Value::String("unknown".into());
+        assert!(light_settings(&invalid).is_err());
+        assert_eq!(fs::read(&prior.output).unwrap(), before);
     }
 
     #[test]

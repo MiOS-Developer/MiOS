@@ -66,6 +66,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Discover an SSOT compute GPU resource without acquiring or activating it.
+    GpuResource {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        id: String,
+    },
     /// Plan or apply the light inference backend from validated GPU metadata.
     LightBackend {
         #[arg(long)]
@@ -2517,6 +2524,16 @@ fn main() -> ExitCode {
                     }
                     Err(msg) => Err((msg, 1)),
                 },
+            )
+        }
+        Commands::GpuResource { root, id } => {
+            let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            (
+                "gpu-resource",
+                "read-only PCI/DRM resource discovery",
+                gpu_topology::report_gpu_resource(&root, &id)
+                    .map(|report| println!("{report}"))
+                    .map_err(|message| (message, 1)),
             )
         }
         Commands::LightBackend {

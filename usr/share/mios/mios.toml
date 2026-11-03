@@ -2569,6 +2569,11 @@ enable   = true
 # `device` is the AddDevice= value (the GPU Quadlets bake nvidia's directly);
 # `specs` are the spec filenames whose presence in MIOS_CDI_DIR proves a vendor
 # live.
+# Explicit compute identities. Add [gpu.resources.<id>] with exactly one pci or
+# pci_file selector, then select its ID in llamacpp.light_gpu_resource. Discovery
+# does not grant ownership or make a VFIO-bound GPU available to a container.
+[gpu.resources]
+
 [gpu.cdi.nvidia]
 device = "nvidia.com/gpu=all"
 specs  = ["nvidia.yaml", "nvidia-wsl.yaml", "wsl2-nvidia.yaml"]
@@ -7328,6 +7333,8 @@ light_ubatch_size = 512
 light_backend = "cpu"
 # auto uses the running desktop hardware profile; an explicit profile must exist.
 light_gpu_profile = "auto"
+# Select gpu.resources.<id> independently of the desktop profile; empty preserves legacy selection.
+light_gpu_resource = ""
 bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
 
 
