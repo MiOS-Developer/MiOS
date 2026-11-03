@@ -31,10 +31,12 @@ for svc in "${SERVICES[@]}"; do
 [Service]
 ExecCondition=/bin/bash -c 'grep -Eq "(^|/)nvidia\\.ko(\\.[xz]z|\\.zst)?:" /lib/modules/$(uname -r)/modules.dep'
 EOF
-    # Installed modules can coexist with a GPU assigned to vfio-pci. The
-    # persistence daemon needs an actual NVIDIA device owned by this host.
+    # Modules and /dev/nvidiactl can remain while the GPU belongs to vfio-pci.
+    # The persistence daemon requires a PCI device actually bound to nvidia.
     if [[ "$svc" == nvidia-persistenced ]]; then
-        printf '%s\n' 'ExecCondition=/usr/bin/test -c /dev/nvidiactl' >> "$path"
+        cat >> "$path" <<'EOF'
+ExecCondition=/bin/bash -c 'compgen -G "/sys/bus/pci/drivers/nvidia/????:??:??.?" >/dev/null'
+EOF
     fi
     chmod 0644 "${path}"
     count=$((count + 1))

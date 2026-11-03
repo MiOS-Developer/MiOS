@@ -29,6 +29,9 @@ import hashlib
 import os
 import re
 import shutil
+import shlex
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -366,6 +369,50 @@ class TestUnitHardening(unittest.TestCase):
                 self._edit(os.path.join(scratch, UNIT_DIR, unit), r"^ProtectSystem=.*$", "")
                 errors, _ = verify_units(scratch)
                 self.assertIn(f"{unit}: ProtectSystem=strict is not set", errors)
+
+
+class TestPersistenceOwnership(unittest.TestCase):
+    def test_persistence_requires_actual_bound_device(self) -> None:
+        root = os.path.abspath(os.environ.get("MIOS_ROOT", _REPO_ROOT))
+        dropin = os.path.join(root, UNIT_DIR,
+            "nvidia-persistenced.service.d", "10-mios-akmod-guard.conf")
+        conditions = parse_unit(dropin)["Service"]["ExecCondition"]
+        self.assertEqual(len(conditions), 2)
+        self.assertIn("modules.dep", conditions[0])
+        self.assertIn("nvidia", conditions[0])
+        argv = shlex.split(conditions[1])
+        self.assertEqual(argv[:2], ["/bin/bash", "-c"])
+        self.assertEqual(len(argv), 3)
+        # No shell variable expansion is required from systemd's command parser.
+        self.assertNotIn("$", argv[2])
+        with tempfile.TemporaryDirectory(prefix="mios-persistence-guard-") as tmp:
+            sys = os.path.join(tmp, "sys")
+            device = os.path.join(sys, "bus/pci/devices/0000:01:00.0")
+            nvidia = os.path.join(sys, "bus/pci/drivers/nvidia")
+            vfio = os.path.join(sys, "bus/pci/drivers/vfio-pci")
+            for directory in (device, nvidia, vfio): os.makedirs(directory)
+            # Driver control files and a persistent character node prove no GPU ownership.
+            for entry in ("bind", "unbind", "uevent", "new_id", "remove_id"):
+                open(os.path.join(nvidia, entry), "w").close()
+            ctl = os.path.join(tmp, "nvidiactl")
+            os.symlink("/dev/null", ctl)
+            self.assertTrue(stat.S_ISCHR(os.stat(ctl).st_mode))
+            command = argv[2].replace("/sys/", sys + "/")
+            self.assertNotEqual(command, argv[2])
+            def check(expected):
+                result = subprocess.run([*argv[:2], command], capture_output=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
+            check(1)  # loaded driver/control node alone
+            os.symlink(device, os.path.join(vfio, "0000:01:00.0"))
+            os.symlink(vfio, os.path.join(device, "driver"))
+            check(1)  # VFIO owns the GPU
+            os.unlink(os.path.join(device, "driver"))
+            os.unlink(os.path.join(vfio, "0000:01:00.0"))
+            os.symlink(nvidia, os.path.join(device, "driver"))
+            os.symlink(device, os.path.join(nvidia, "0000:01:00.0"))
+            check(0)  # native NVIDIA driver actually owns a PCI device
+            os.unlink(os.path.join(nvidia, "0000:01:00.0"))
+            check(1)  # releasing the last bound device closes the guard again
 
 
 if __name__ == "__main__":
