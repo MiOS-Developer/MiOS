@@ -122,13 +122,14 @@ Describe "Milestone 2 Adversarial Stress & Verification Tests" {
 
     Context "Suite 2: Intermediate NTFS Unpacking Prevention & POSIX Preservation" {
         It "Merge-LayersToTar is removed and intermediate NTFS extraction is forbidden" {
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../mios-windows-export.ps1'), [ref]$null, [ref]$null)
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../build-mios.ps1'), [ref]$null, [ref]$null)
             $funcAst = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Merge-LayersToTar' }, $true)
+            $ast | Should -Not -BeNullOrEmpty
             $funcAst | Should -BeNullOrEmpty
         }
 
         It "Export-WslTar in all scripts streams directly from container storage without NTFS extraction" {
-            $scripts = @((Join-Path $PSScriptRoot '../../build-mios.ps1'), (Join-Path $env:MIOS_BOOTSTRAP_ROOT 'build-mios.ps1'), (Join-Path $PSScriptRoot '../../mios-windows-export.ps1'))
+            $scripts = @((Join-Path $PSScriptRoot '../../build-mios.ps1'), (Join-Path $env:MIOS_BOOTSTRAP_ROOT 'build-mios.ps1'))
             foreach ($s in $scripts) {
                 $ast = [System.Management.Automation.Language.Parser]::ParseFile($s, [ref]$null, [ref]$null)
                 $exportFunc = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Export-WslTar' }, $true)
@@ -143,20 +144,23 @@ Describe "Milestone 2 Adversarial Stress & Verification Tests" {
         }
     }
 
-    Context "Suite 3: Deprecation of .tar.zst for WSL2 Targets" {
-        It "Compress-WithZstd documents WSL2 error 0x80070057 and deprecation" {
-            $content = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../mios-windows-export.ps1') -Raw
-            $content | Should -Match '0x80070057'
-            $content | Should -Match 'DEPRECATED: \.tar\.zst compression is incompatible'
+    Context "Suite 3: Active WSL tar handoff" {
+        It "The full installer passes its uncompressed tar directly to the active exporter" {
+            $content = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../build-mios.ps1') -Raw
+            $content | Should -Match '\$wslTar\s*=\s*Join-Path\s+\$artifactDir\s+"mios-wsl2\.tar"'
+            $content | Should -Match 'Export-WslTar\s+-OutFile\s+\$wslTar'
+            $content | Should -Not -Match 'mios-windows-export\.ps1'
         }
 
-        It "Export-WslTar emits uncompressed .tar without zstd compression" {
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../mios-windows-export.ps1'), [ref]$null, [ref]$null)
+        It "The current exporter streams to the caller path without a compression or extraction step" {
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../build-mios.ps1'), [ref]$null, [ref]$errors)
+            $errors.Count | Should -Be 0
             $func = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Export-WslTar' }, $true)
+            $func | Should -Not -BeNullOrEmpty
             $text = $func.Extent.Text
-
-            $text | Should -Match "mios\.wsl\.tar"
-            $text | Should -Not -Match "Compress-WithZstd"
+            $text | Should -Match '\[System.IO.File\]::Create\(\$OutFile\)'
+            $text | Should -Not -Match 'Compress-WithZstd|zstd|tar\.exe'
         }
     }
 

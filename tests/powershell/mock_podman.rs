@@ -28,7 +28,13 @@ fn main() {
     }
 
     if subcmd == "export" {
-        if mode == "deadlock" {
+        if mode == "success" {
+            let bytes: Vec<u8> = (0..32768).map(|value| value as u8).collect();
+            io::stdout().write_all(&bytes).expect("write export stream");
+            std::process::exit(0);
+        } else if mode == "empty" {
+            std::process::exit(0);
+        } else if mode == "deadlock" {
             let err_data = vec![b'E'; 131072];
             let _ = io::stderr().write_all(&err_data);
             std::process::exit(1);

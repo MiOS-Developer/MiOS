@@ -6,7 +6,7 @@
 # 3. podman rm -f transient container cleanup
 # 4. Phase 10 / Phase 11 error propagation and $script:ExitCode = 1
 # 5. Stderr buffer drain without deadlock
-# 6. mios-windows-export.ps1 deprecations and cleanup
+# 6. Active WSL exporter byte preservation and empty-output cleanup
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -119,43 +119,35 @@ Describe "Adversarial Challenge: Container Export Failure & Cleanup" {
             $res.FileExists | Should -Be $false
         }
 
-        It "Windows export - Export-WslTar cleans partial archive and runs podman rm -f" {
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../../mios-windows-export.ps1'), [ref]$null, [ref]$null)
-            $funcAst = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq "Export-WslTar" }, $true)
-            
-            $helperStub = @'
-                function Write-Step($msg) {}
-                function Write-Ok($msg) {}
-                function Write-Warn($msg) {}
-                function Write-Bad($msg) {}
-                function Test-CommandExists($Name) { return $true }
-'@
-            $testScript = $helperStub + "`n" + $funcAst.Extent.Text + @"
-
-                `$outDir = '$($script:tempDir.Replace("'", "''"))'
-                `$expectedTar = Join-Path `$outDir 'mios.wsl.tar'
-                `$thrown = `$false
-                `$exMsg = ''
-                try {
-                    Export-WslTar -ImageRef 'localhost/mios:latest' -OutDir `$outDir
-                } catch {
-                    `$thrown = `$true
-                    `$exMsg = `$_.Exception.Message
-                }
-
-                [PSCustomObject]@{
-                    Thrown = `$thrown
-                    ExceptionMessage = `$exMsg
-                    FileExists = (Test-Path -LiteralPath `$expectedTar)
-                } | ConvertTo-Json -Compress
-"@
-            $raw = & (Get-Process -Id $PID).Path -NoProfile -Command $testScript
-            $res = $raw | ConvertFrom-Json
-            
-            $res.Thrown | Should -Be $true
-            $res.ExceptionMessage | Should -Match 'podman export failed with exit code 125'
-            $res.ExceptionMessage | Should -Match 'simulated storage corruption'
-            $res.FileExists | Should -Be $false
+        It "The active exporter preserves an uncompressed binary stream and cleans its snapshot" {
+            $source = Join-Path $PSScriptRoot '../../build-mios.ps1'
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$null, [ref]$errors)
+            $errors.Count | Should -Be 0
+            $fn = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Export-WslTar' }, $true)
+            $fn | Should -Not -BeNullOrEmpty
+            . ([scriptblock]::Create($fn.Extent.Text))
+            function Set-Step($msg) {}
+            function Write-Log($msg, $lvl='INFO') {}
+            $outFile = Join-Path $script:tempDir 'mios-wsl2.tar'
+            Remove-Item -LiteralPath $script:mockLog -Force -ErrorAction SilentlyContinue
+            $oldMode = $env:MOCK_PODMAN_MODE
+            $hasher = [Security.Cryptography.SHA256]::Create()
+            try {
+                $env:MOCK_PODMAN_MODE = 'success'
+                Export-WslTar -OutFile $outFile -Image 'localhost/mios:latest' | Should -BeTrue
+                $actual = [System.IO.File]::ReadAllBytes($outFile)
+                $expected = [byte[]](0..32767 | ForEach-Object { [byte]($_ % 256) })
+                $actual.Length | Should -Be $expected.Length
+                [Convert]::ToBase64String($hasher.ComputeHash($actual)) |
+                    Should -Be ([Convert]::ToBase64String($hasher.ComputeHash($expected)))
+                $calls = Get-Content -LiteralPath $script:mockLog -Raw
+                $calls | Should -Match 'export e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+                $calls | Should -Match 'rm -f e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+            } finally {
+                $hasher.Dispose()
+                $env:MOCK_PODMAN_MODE = $oldMode
+            }
         }
     }
 
@@ -283,9 +275,9 @@ Describe "Adversarial Challenge: Container Export Failure & Cleanup" {
         }
     }
 
-    Context "Scenario 4: POSIX preservation & deprecations in mios-windows-export.ps1" {
+    Context "Scenario 4: Active WSL producer POSIX preservation and empty-output safety" {
         BeforeAll {
-            $script:exportScript = (Join-Path $PSScriptRoot '../../mios-windows-export.ps1')
+            $script:exportScript = (Join-Path $PSScriptRoot '../../build-mios.ps1')
         }
 
         It "Merge-LayersToTar is removed to protect POSIX permissions" {
@@ -294,9 +286,26 @@ Describe "Adversarial Challenge: Container Export Failure & Cleanup" {
             $funcAst | Should -BeNullOrEmpty
         }
 
-        It "Warns on Compress-WithZstd to prevent WSL error 0x80070057" {
-            $raw = Get-Content -LiteralPath $script:exportScript -Raw
-            $raw | Should -Match 'DEPRECATED: \.tar\.zst compression is incompatible with .wsl --import.'
+        It "Rejects a successful process with no archive and removes the partial output" {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:exportScript, [ref]$null, [ref]$null)
+            $fn = $ast.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Export-WslTar' }, $true)
+            $fn | Should -Not -BeNullOrEmpty
+            . ([scriptblock]::Create($fn.Extent.Text))
+            function Set-Step($msg) {}
+            function Write-Log($msg, $lvl='INFO') {}
+            $outFile = Join-Path $script:tempDir 'empty-export.tar'
+            Remove-Item -LiteralPath $script:mockLog -Force -ErrorAction SilentlyContinue
+            $oldMode = $env:MOCK_PODMAN_MODE
+            try {
+                $env:MOCK_PODMAN_MODE = 'empty'
+                { Export-WslTar -OutFile $outFile -Image 'localhost/mios:latest' } |
+                    Should -Throw '*empty or missing output file*'
+                Test-Path -LiteralPath $outFile | Should -BeFalse
+                Get-Content -LiteralPath $script:mockLog -Raw |
+                    Should -Match 'rm -f e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+            } finally {
+                $env:MOCK_PODMAN_MODE = $oldMode
+            }
         }
     }
 }

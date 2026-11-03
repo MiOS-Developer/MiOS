@@ -11,7 +11,7 @@ Describe "Adversarial Challenge: AST Syntax Validation" {
     $targetFiles = @(
         @{ File = (Join-Path $env:MIOS_BOOTSTRAP_ROOT 'build-mios.ps1'); Name = (Join-Path $env:MIOS_BOOTSTRAP_ROOT 'build-mios.ps1') },
         @{ File = (Join-Path $PSScriptRoot '../../build-mios.ps1'); Name = (Join-Path $PSScriptRoot '../../build-mios.ps1') },
-        @{ File = (Join-Path $PSScriptRoot '../../mios-windows-export.ps1'); Name = (Join-Path $PSScriptRoot '../../mios-windows-export.ps1') }
+        @{ File = (Join-Path $PSScriptRoot '../../usr/libexec/mios/MiOS.Export.psm1'); Name = (Join-Path $PSScriptRoot '../../usr/libexec/mios/MiOS.Export.psm1') }
     )
 
     Context "ParseFile on <Name>" -ForEach $targetFiles {
