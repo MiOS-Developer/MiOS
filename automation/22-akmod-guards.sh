@@ -31,6 +31,11 @@ for svc in "${SERVICES[@]}"; do
 [Service]
 ExecCondition=/bin/bash -c 'grep -Eq "(^|/)nvidia\\.ko(\\.[xz]z|\\.zst)?:" /lib/modules/$(uname -r)/modules.dep'
 EOF
+    # Installed modules can coexist with a GPU assigned to vfio-pci. The
+    # persistence daemon needs an actual NVIDIA device owned by this host.
+    if [[ "$svc" == nvidia-persistenced ]]; then
+        printf '%s\n' 'ExecCondition=/usr/bin/test -c /dev/nvidiactl' >> "$path"
+    fi
     chmod 0644 "${path}"
     count=$((count + 1))
     mios_log "Installed ${path}"
