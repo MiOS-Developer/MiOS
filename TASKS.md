@@ -17,8 +17,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1743 |
-| in_progress | 69 |
-| completed | 1849 |
+| in_progress | 68 |
+| completed | 1850 |
 | incomplete | 19 |
 | cancelled | 21 |
 | total | 3701 |
@@ -4426,7 +4426,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### No epic
 
-- `task_3699` Refresh the installed AI readiness helper used by terminal agent launchers -- in_progress · owner mios-controller-repair · P0 · size S
+- `task_3699` Refresh the installed AI readiness helper used by terminal agent launchers -- completed · owner mios-controller-repair · P0 · size S
 
 ## test-coverage
 
