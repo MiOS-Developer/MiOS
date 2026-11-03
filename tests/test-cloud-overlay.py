@@ -9,6 +9,8 @@ the checkout's vendor mios.toml plus a host drop-in dir, so the chain under test
 is the one a cloud deployment runs: render -> drop-in -> merge -> gate."""
 
 import os
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -23,6 +25,25 @@ TOML_GET = os.path.join(ROOT, "usr/libexec/mios/mios-toml-get")
 SSOT = os.path.join(ROOT, "usr/share/mios/mios.toml")
 
 STUB = '#!/bin/sh\nprintf "%s %s\\n" "$(basename "$0")" "$*" >> "$STUB_LOG"\n'
+
+MODEL_REPO = "example/repo"
+MODEL_FILE = "t.gguf"
+MODEL_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+FAKE_CURL = r"""#!/usr/bin/env python3
+import os, shutil, shlex, sys
+args = sys.argv[1:]
+with open(os.environ["STUB_LOG"], "a") as log:
+    log.write("curl " + shlex.join(args) + "\n")
+url = next(arg for arg in args if arg.startswith(("https://", "http://")))
+source = os.path.join(os.environ["FIXTURE_HTTP"], url.split("://", 1)[1].replace("?", "__Q__"))
+if not os.path.isfile(source):
+    sys.exit(22)
+if "-o" in args:
+    shutil.copyfile(source, args[args.index("-o") + 1])
+else:
+    sys.stdout.write(open(source).read())
+"""
+
 
 
 def _write(path, text, mode=0o644):
@@ -47,12 +68,24 @@ class Harness(unittest.TestCase):
         self.bin = os.path.join(self.tmp, "bin")
         self.log = os.path.join(self.tmp, "calls.log")
         self.dropins = os.path.join(self.tmp, "etc/mios/mios.d")
+        self.fixture_root = os.path.join(self.tmp, "root")
+        self.state = os.path.join(self.tmp, "var")
+        self.models = os.path.join(self.tmp, "models")
+        os.makedirs(self.state)
+        resolver = os.path.join(self.fixture_root, "usr/lib/mios/mios_toml.py")
+        os.makedirs(os.path.dirname(resolver), exist_ok=True)
+        shutil.copy2(os.path.join(ROOT, "usr/lib/mios/mios_toml.py"), resolver)
+        self.http = os.path.join(self.tmp, "http")
+        self.payload = b"GGUF" + bytes(range(64))
+        self.digest = hashlib.sha256(self.payload).hexdigest()
+        self.serve_model()
+
         os.makedirs(self.dropins)
         open(self.log, "w").close()
         for name in ("flatpak", "systemctl", "loginctl", "logger", "sudo", "dnf", "git"):
             self.stub(name)
-        # A download lands its -o file; nothing is in a container store yet.
-        self.stub("curl", 'while [ $# -gt 1 ]; do [ "$1" = -o ] && echo x > "$2"; shift; done\n')
+        # Replace only the transport. The real provisioner hashes these bytes.
+        _write(os.path.join(self.bin, "curl"), FAKE_CURL, 0o755)
         self.stub("podman", 'case "$*" in *"image exists"*) exit 1 ;; esac\n')
         self.stub("systemd-detect-virt", 'echo none\n')
         self.stub("id", 'exit 1\n')
@@ -60,17 +93,49 @@ class Harness(unittest.TestCase):
         self.toml_get = os.path.join(self.tmp, "mios-toml-get")
         _write(self.toml_get, f'#!/bin/sh\nexec python3 {TOML_GET} "$@"\n', 0o755)
 
+    def serve_model(self, payload=None, published_digest=None):
+        payload = self.payload if payload is None else payload
+        digest = self.digest if published_digest is None else published_digest
+        api = os.path.join(self.http, f"huggingface.co/api/models/{MODEL_REPO}/revision/main__Q__blobs=true")
+        _write(api, json.dumps({"sha": MODEL_COMMIT, "siblings": [
+            {"rfilename": MODEL_FILE, "lfs": {"sha256": digest, "size": len(payload)}}]}))
+        blob = os.path.join(self.http, f"huggingface.co/{MODEL_REPO}/resolve/{MODEL_COMMIT}/{MODEL_FILE}")
+        os.makedirs(os.path.dirname(blob), exist_ok=True)
+        with open(blob, "wb") as f:
+            f.write(payload)
+
+    def configure_models(self):
+        _write(os.path.join(self.dropins, "10-fixture-models.toml"),
+               "[llamacpp]\nmodels_dir = " + json.dumps(self.models) + "\n"
+               + f'bake_models = "{MODEL_FILE}={MODEL_REPO}:{MODEL_FILE}"\n'
+               + '[ai]\nfirstboot_models = [\n'
+               + f'  {{name = "{MODEL_FILE}", source = "https://huggingface.co/{MODEL_REPO}/resolve/main/{MODEL_FILE}"}}\n'
+               + ']\n')
+
+    def assert_verified_model(self):
+        path = os.path.join(self.models, MODEL_FILE)
+        with open(path, "rb") as f:
+            self.assertEqual(hashlib.sha256(f.read()).hexdigest(), self.digest)
+        with open(os.path.join(self.models, "models.tsv")) as f:
+            row = f.read().splitlines()[1].split("\t")
+        self.assertEqual(row[:4], [MODEL_FILE,
+            f"https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_COMMIT}/{MODEL_FILE}",
+            MODEL_COMMIT, self.digest])
+        self.assertTrue(os.path.isfile(os.path.join(self.models, ".ready")))
+        self.assertTrue(os.path.isfile(os.path.join(self.state, ".models-firstboot-done")))
+
     def stub(self, name, body=""):
         _write(os.path.join(self.bin, name), STUB + body, 0o755)
 
     def env(self, **extra):
-        e = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_LOG=self.log,
+        e = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+        e.update(PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_LOG=self.log,
+                 FIXTURE_HTTP=self.http, MIOS_HF_ENDPOINT="https://huggingface.co",
                  MIOS_TOML_GET=self.toml_get, MIOS_VENDOR_TOML=extra.pop("vendor", SSOT),
-                 MIOS_VENDOR_TOML_D=os.path.join(self.tmp, "none.d"),
+                 MIOS_TOML_ROOT=self.fixture_root, MIOS_VENDOR_TOML_D=os.path.join(self.tmp, "none.d"),
                  MIOS_HOST_TOML=os.path.join(self.tmp, "etc/mios/mios.toml"), MIOS_HOST_TOML_D=self.dropins,
                  MIOS_USER_TOML=os.path.join(self.tmp, "user/mios.toml"),
                  MIOS_USER_TOML_D=os.path.join(self.tmp, "user/mios.d"))
-        e.pop("MIOS_TOML_ROOT", None)
         e.update(extra)
         return e
 
@@ -87,12 +152,13 @@ class Harness(unittest.TestCase):
         for old, new in rewrites:
             self.assertIn(old, text, f"{rel} no longer holds {old}; update this fixture")
             text = text.replace(old, new)
-        dst = os.path.join(self.tmp, "x", os.path.basename(rel))
+        dst = os.path.join(self.fixture_root, rel)
         _write(dst, text, 0o755)
         return dst
 
     def get(self, *key):
         r = subprocess.run([self.toml_get, *key], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout.strip()
 
 
@@ -116,13 +182,17 @@ class TestOverlayRender(Harness):
 
 class TestFirstbootPulls(Harness):
     def ai_firstboot(self):
+        self.configure_models()
+        fetcher = self.copy("usr/libexec/mios/mios-models-firstboot",
+                            [("/var/lib/mios", self.state)])
         venv = os.path.join(self.tmp, "venv")
         _write(os.path.join(venv, "bin/hermes"), "#!/bin/sh\n", 0o755)
         _write(os.path.join(venv, "bin/python3"), STUB.replace("$(basename \"$0\")", "venv-python3"), 0o755)
         fb = os.path.join(self.tmp, "firstboot.list")
-        _write(fb, "docker.io/example/inference:latest\n")
+        _write(fb, "docker.io/example/inference:latest\nlocalhost/mios-fixture:latest\n")
         script = self.copy("usr/libexec/mios/mios-ai-firstboot", [
             ("/etc/mios/install.env", os.path.join(self.tmp, "none.env")),
+            ("/usr/libexec/mios/mios-models-firstboot", fetcher),
             ("/usr/lib/mios/agents/.venv", venv),
             ("/usr/share/mios/llamacpp/models", os.path.join(self.tmp, "models")),
             ("/usr/share/mios/vllm/model", os.path.join(self.tmp, "vllm")),
@@ -130,54 +200,102 @@ class TestFirstbootPulls(Harness):
             ("/usr/libexec/mios/seed-db-config.py", os.path.join(self.tmp, "none.py")),
             ("/var/lib/mios", os.path.join(self.tmp, "var")),
         ])
-        env = self.env(MIOS_LLAMACPP_BAKE_MODELS="t.gguf=example/repo:t.gguf",
-                       MIOS_VLLM_BAKE_MODEL="example/model", MIOS_PG_WAIT_RETRIES="0")
+        env = self.env(MIOS_VLLM_BAKE_MODEL="example/model", MIOS_PG_WAIT_RETRIES="0")
         return subprocess.run(["bash", script], capture_output=True, text=True, env=env, timeout=120)
 
     def test_without_overlay_ai_firstboot_pulls(self):
         r = self.ai_firstboot()
         calls = self.calls()
-        self.assertIn("huggingface.co/example/repo", calls, r.stdout + r.stderr)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn(f"/api/models/{MODEL_REPO}/revision/main", calls, r.stdout + r.stderr)
+        self.assertIn(f"/resolve/{MODEL_COMMIT}/{MODEL_FILE}", calls)
+        self.assert_verified_model()
         self.assertIn("venv-python3 - example/model", calls)
         self.assertIn("pull docker.io/example/inference:latest", calls)
+        self.assertNotIn("pull localhost/", calls)
+        self.assertNotIn("No module named", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, ".ai-firstboot-done")),
+                         "the stubbed unavailable database must not retire firstboot")
 
     def test_with_overlay_ai_firstboot_pulls_nothing(self):
         self.apply_overlay()
         r = self.ai_firstboot()
         calls = self.calls()
         self.assertIn("[ai].firstboot_pulls is false", r.stdout)
-        for pulled in ("huggingface.co", "venv-python3", "pull docker.io"):
+        self.assertEqual(0, r.returncode, r.stderr)
+        for pulled in ("curl ", "venv-python3", "pull docker.io"):
             self.assertNotIn(pulled, calls)
-        self.assertFalse(os.path.exists(os.path.join(self.tmp, "var/.ai-firstboot-done")),
-                         "a skipped run must not retire the unit")
+        for name in (".ai-firstboot-done", ".models-firstboot-done"):
+            self.assertFalse(os.path.exists(os.path.join(self.state, name)),
+                             "a skipped run must not retire the unit")
+        self.assertFalse(os.path.exists(os.path.join(self.models, ".ready")))
 
     def python_firstboot(self, rel):
+        self.configure_models()
         vendor = os.path.join(self.tmp, "vendor.toml")
         with open(SSOT, encoding="utf-8") as fh:
             text = fh.read()
-        _write(vendor, text + '\n[[ai.firstboot_models]]\nname = "m.gguf"\nsource = "https://example.invalid/m.gguf"\n'
-               '\n[[ai.firstboot_bound_images]]\nimage = "docker.io/example/bound:latest"\n')
-        script = self.copy(rel, [("/var/lib/mios", os.path.join(self.tmp, "var"))])
+        _write(vendor, text + f'\n[[ai.firstboot_models]]\nname = "{MODEL_FILE}"\n'
+               + f'source = "https://huggingface.co/{MODEL_REPO}/resolve/main/{MODEL_FILE}"\n'
+               + '\n[[ai.firstboot_bound_images]]\nimage = "docker.io/example/bound:latest"\n')
+        script = self.copy(rel, [("/var/lib/mios", self.state)])
         return subprocess.run([sys.executable, script], capture_output=True, text=True,
                               env=self.env(vendor=vendor, MIOS_TOML=vendor), timeout=60)
 
     def test_models_and_bound_images_both_ways(self):
-        for rel, pulled in (("usr/libexec/mios/mios-models-firstboot", "curl -fL"),
-                            ("usr/libexec/mios/mios-bound-images-firstboot", "podman pull docker.io/example/bound")):
-            with self.subTest(rel):
+        for rel, pulled, marker in (
+            ("usr/libexec/mios/mios-models-firstboot", f"/resolve/{MODEL_COMMIT}/{MODEL_FILE}", ".models-firstboot-done"),
+            ("usr/libexec/mios/mios-bound-images-firstboot", "podman pull docker.io/example/bound", ".bound-images-firstboot-done"),
+        ):
+            with self.subTest(rel=rel):
                 open(self.log, "w").close()
                 for f in os.listdir(self.dropins):
                     os.unlink(os.path.join(self.dropins, f))
-                shutil.rmtree(os.path.join(self.tmp, "var"), True)
+                shutil.rmtree(self.state, True)
                 r = self.python_firstboot(rel)
+                self.assertEqual(0, r.returncode, r.stdout + r.stderr)
                 self.assertIn(pulled, self.calls(), r.stdout + r.stderr)
+                self.assertTrue(os.path.isfile(os.path.join(self.state, marker)), r.stdout)
+                if rel.endswith("mios-models-firstboot"):
+                    self.assert_verified_model()
                 open(self.log, "w").close()
-                shutil.rmtree(os.path.join(self.tmp, "var"), True)
+                shutil.rmtree(self.state, True)
                 self.apply_overlay()
                 r = self.python_firstboot(rel)
                 self.assertEqual(0, r.returncode, r.stderr)
                 self.assertIn("[ai].firstboot_pulls is false", r.stdout)
                 self.assertNotIn(pulled, self.calls())
+                self.assertNotIn("curl ", self.calls())
+                self.assertNotIn("podman pull", self.calls())
+                self.assertFalse(os.path.exists(os.path.join(self.state, marker)))
+
+    def test_corrupted_model_is_not_published_or_retired(self):
+        self.serve_model(payload=b"corrupted transport payload")
+        r = self.python_firstboot("usr/libexec/mios/mios-models-firstboot")
+        self.assertEqual(0, r.returncode, r.stderr)  # boot degrades open; readiness does not
+        self.assertIn("sha256 MISMATCH", r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.models, MODEL_FILE)))
+        self.assertFalse(os.path.exists(os.path.join(self.models, MODEL_FILE + ".part")))
+        self.assertFalse(os.path.exists(os.path.join(self.models, ".ready")))
+        self.assertFalse(os.path.exists(os.path.join(self.state, ".models-firstboot-done")))
+
+    def test_unpublished_model_digest_refuses_blob_download(self):
+        self.serve_model(published_digest="")
+        r = self.python_firstboot("usr/libexec/mios/mios-models-firstboot")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("upstream digest unavailable", r.stdout)
+        self.assertNotIn(f"/resolve/{MODEL_COMMIT}/", self.calls())
+        self.assertFalse(os.path.exists(os.path.join(self.models, ".ready")))
+        self.assertFalse(os.path.exists(os.path.join(self.state, ".models-firstboot-done")))
+
+    def test_ai_orchestrator_preserves_failed_model_readiness(self):
+        self.serve_model(payload=b"corrupted transport payload")
+        r = self.ai_firstboot()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("sha256 MISMATCH", r.stdout)
+        self.assertIn("ggufs=missing", r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.models, ".ready")))
+        self.assertFalse(os.path.exists(os.path.join(self.state, ".ai-firstboot-done")))
 
 
 class TestFlatpakInstall(Harness):
