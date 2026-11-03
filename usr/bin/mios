@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: The primary CLI entry point for the MiOS system, providing an OpenAI-compatible agent shell that handles tool-calling, system prompt resolution, and streaming responses from the Hermes-Agent gateway.
-# AI-related: /usr/lib/mios/tools/chat-completions-api/, /usr/libexec/mios/tools, /etc/mios/install.env, /etc/mios/hermes/api.env, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/tools/, /usr/libexec/mios/mios-build-driver, /usr/libexec/mios/mios-dashboard, /usr/libexec/mios/mios-configurator-launch
+# AI-related: /usr/lib/mios/mios_toml.py, /usr/lib/mios/tools/chat-completions-api/, /usr/libexec/mios/tools, /etc/mios/install.env, /etc/mios/hermes/api.env, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/tools/, /usr/libexec/mios/mios-build-driver, /usr/libexec/mios/mios-dashboard, /usr/libexec/mios/mios-configurator-launch
 
 from __future__ import annotations
 
@@ -14,62 +14,103 @@ from typing import Any, Iterable
 
 OpenAI = None  # Loaded lazily if needed for chat/LLM calls
 
-def _resolve_ai_config() -> tuple[str, str]:
-    env_ep = os.environ.get("MIOS_AI_ENDPOINT")
-    env_model = os.environ.get("MIOS_AI_GATEWAY_MODEL")
-    if env_ep and env_ep != "http://localhost:8642/v1":
-        return env_ep, env_model or "MiOS AI"
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore
-        except ImportError:
-            tomllib = None
-    ep = None
-    model = None
-    if tomllib:
-        for p in (os.environ.get("MIOS_TOML", ""), "/etc/mios/mios.toml", "/usr/share/mios/mios.toml"):
-            if not p or not pathlib.Path(p).is_file():
-                continue
-            try:
-                with open(p, "rb") as f:
-                    cfg = tomllib.load(f)
-                    ai = cfg.get("ai") or {}
-                    if not ep and ai.get("endpoint"):
-                        ep = ai.get("endpoint")
-                    if not model and ai.get("agent_model"):
-                        model = ai.get("agent_model")
-                    if ep and model:
-                        break
-            except Exception:
-                continue
-    return (ep or env_ep or "http://localhost:8640/v1", model or env_model or "MiOS AI")
+_AI_CONFIG = None
 
-ENDPOINT, MODEL = _resolve_ai_config()
+
+def _ai_configuration():
+    """Use the shared layered resolver, including ports and cross references."""
+    global _AI_CONFIG
+    if _AI_CONFIG is None:
+        try:
+            import copy
+            lib = pathlib.Path(__file__).resolve().parents[1] / "lib" / "mios"
+            if str(lib) not in sys.path:
+                sys.path.insert(0, str(lib))
+            import mios_toml
+            data = copy.deepcopy(mios_toml.load_merged())
+            mios_toml.overlay_inputs(data)
+            exports = mios_toml.emit_exports(data)
+            _AI_CONFIG = (mios_toml, mios_toml.section(data, "ai"), exports)
+        except Exception:
+            raise ValueError("canonical AI configuration could not be resolved") from None
+    return _AI_CONFIG
+
+
+def _connection_value(name: str, value: object) -> str:
+    resolver, _, exports = _ai_configuration()
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a nonempty string")
+    expanded = dict(exports)
+    expanded[name] = value
+    resolver.resolve_cross_references(expanded)
+    value = expanded[name]
+    if "${" in value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError(f"{name} contains unresolved references or control characters")
+    return value
+
+
+def _resolve_ai_config() -> tuple[str, str]:
+    from urllib.parse import urlsplit
+    _, ai, exports = _ai_configuration()
+    explicit_endpoint = os.environ.get("MIOS_AI_ENDPOINT")
+    if not explicit_endpoint and not isinstance(ai.get("endpoint"), str):
+        raise ValueError("ai.endpoint must be a string")
+    endpoint = _connection_value("MIOS_AI_ENDPOINT", explicit_endpoint or exports.get("MIOS_AI_ENDPOINT"))
+    try:
+        parsed = urlsplit(endpoint)
+        valid = (parsed.scheme in ("http", "https") and bool(parsed.hostname)
+                 and parsed.username is None and parsed.password is None
+                 and not parsed.query and not parsed.fragment
+                 and not any(char.isspace() for char in endpoint)
+                 and (parsed.port is None or 0 < parsed.port < 65536))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("MIOS_AI_ENDPOINT must be an absolute HTTP(S) base URL without credentials or query parameters")
+    explicit_model = os.environ.get("MIOS_AI_GATEWAY_MODEL") or os.environ.get("MIOS_AI_MODEL")
+    model_key = "agent_model" if ai.get("agent_model") not in (None, "") else "model"
+    if not explicit_model and not isinstance(ai.get(model_key), str):
+        raise ValueError(f"ai.{model_key} must be a string")
+    model = _connection_value("MIOS_AI_GATEWAY_MODEL", explicit_model or exports.get("MIOS_AI_" + model_key.upper()))
+    if model != model.strip():
+        raise ValueError("MIOS_AI_GATEWAY_MODEL must not have surrounding whitespace")
+    return endpoint, model
+
+
+ENDPOINT = MODEL = ""  # Chat resolves lazily; local verbs do not require AI configuration.
 SHARE    = pathlib.Path(os.environ.get("MIOS_SHARE_DIR", "/usr/share/mios"))
 LIB      = pathlib.Path("/usr/lib/mios")
 LIBEXEC  = pathlib.Path("/usr/libexec/mios/tools")
 
 
 def _resolve_api_key() -> str:
-    v = os.environ.get("MIOS_AI_KEY")
-    if v:
-        return v
-    import re
-    for env_file in ("/etc/mios/install.env", "/etc/mios/hermes/api.env"):
-        try:
-            with open(env_file, encoding="utf-8") as f:
-                for line in f:
-                    m = re.match(r'^(?:API_SERVER_KEY|MIOS_AI_KEY|OPENAI_API_KEY)\s*=\s*"?([^"\r\n]+)"?', line)
-                    if m:
-                        return m.group(1).strip()
-        except OSError:
-            continue
-    return "sk-noop"
+    _, ai, exports = _ai_configuration()
+    key = os.environ.get("MIOS_AI_KEY")
+    if not key:
+        if ai.get("api_key") not in (None, "") and not isinstance(ai["api_key"], str):
+            raise ValueError("ai.api_key must be a string")
+        key = exports.get("MIOS_AI_API_KEY") or exports.get("MIOS_AI_KEY")
+    if not key:
+        import re
+        for env_file in ("/etc/mios/install.env", "/etc/mios/hermes/api.env"):
+            try:
+                with open(env_file, encoding="utf-8") as stream:
+                    for line in stream:
+                        match = re.match(r'^(?:API_SERVER_KEY|MIOS_AI_KEY|OPENAI_API_KEY)\s*=\s*"?([^"\r\n]+)"?', line)
+                        if match:
+                            key = match.group(1).strip()
+                            break
+            except OSError:
+                continue
+            if key:
+                break
+    key = _connection_value("MIOS_AI_KEY", key or "sk-noop")
+    if any(char.isspace() for char in key):
+        raise ValueError("MIOS_AI_KEY must not contain whitespace")
+    return key
 
 
-API_KEY = _resolve_api_key()
+API_KEY = ""
 
 
 SESSION_TTL_S = int(os.environ.get("MIOS_CLI_SESSION_TTL", "1800") or 1800)
@@ -546,6 +587,7 @@ def _daemon_main(args: list[str]) -> int:
 
 
 def main(argv: list[str]) -> int:
+    global ENDPOINT, MODEL, API_KEY
     if len(argv) < 2 and sys.stdin.isatty() and sys.stdout.isatty() and sys.platform != "win32":
         os.execv("/usr/libexec/mios/mios-terminal", ["mios-terminal"])
     if len(argv) >= 2 and argv[1] in ("agents", "agent"):
@@ -841,6 +883,13 @@ def main(argv: list[str]) -> int:
                 session["last_app"] = str(_last)
                 save_session(session)
                 return 0 if _ok else 1
+
+    try:
+        ENDPOINT, MODEL = _resolve_ai_config()
+        API_KEY = _resolve_api_key()
+    except ValueError as error:
+        sys.stderr.write(f"mios: invalid AI configuration: {error}\n")
+        return 2
 
     try:
         from openai import OpenAI
