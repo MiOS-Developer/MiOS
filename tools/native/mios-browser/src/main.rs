@@ -46,6 +46,14 @@ pub struct Cli {
     /// Explain resolution details (browser, family, flags, URL)
     #[arg(long = "explain", default_value_t = false)]
     pub explain: bool,
+
+    /// Expand and dispatch a main desktop entry, preserving its complete Exec argv.
+    #[arg(long, value_name = "FILE")]
+    pub desktop_file: Option<String>,
+
+    /// Arguments supplied to the desktop entry, after --.
+    #[arg(last = true)]
+    pub desktop_args: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -221,8 +229,196 @@ fn path_candidate_exists(name: &str) -> bool {
     false
 }
 
+fn desktop_tokens(exec: &str) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quoted = false;
+    let mut started = false;
+    let mut escaped = false;
+    for ch in exec.chars() {
+        if ch.is_control() {
+            return Err("Desktop Exec contains control characters".into());
+        }
+        if escaped {
+            token.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+            started = true;
+        } else if ch == '"' {
+            quoted = !quoted;
+            started = true;
+        } else if ch.is_whitespace() && !quoted {
+            if started {
+                tokens.push(std::mem::take(&mut token));
+                started = false;
+            }
+        } else {
+            token.push(ch);
+            started = true;
+        }
+    }
+    if quoted || escaped {
+        return Err("Desktop Exec has incomplete quoting".into());
+    }
+    if started {
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
+
+/// Expand the main desktop entry without invoking a shell or losing wrapper operands.
+fn desktop_command(source: &str, file: &str, args: &[String]) -> Result<Vec<String>, String> {
+    let mut main = false;
+    let mut fields = std::collections::BTreeMap::new();
+    for line in source.lines() {
+        if line.starts_with('[') {
+            main = line == "[Desktop Entry]";
+        } else if main {
+            if let Some((key, value)) = line.split_once('=') {
+                fields.entry(key).or_insert(value);
+            }
+        }
+    }
+    if fields.get("Hidden") == Some(&"true") {
+        return Err("Desktop entry is hidden".into());
+    }
+    let tokens = desktop_tokens(fields.get("Exec").ok_or("Desktop entry has no Exec")?)?;
+    let mut out = Vec::new();
+    let mut used = false;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        // Flatpak forwarding markers surround only the URI; browser flags belong
+        // after the app ID and before the marker rather than in Flatpak options.
+        if matches!(token.as_str(), "@@u" | "@@")
+            && tokens.get(index + 2).is_some_and(|t| t == "@@")
+            && tokens
+                .get(index + 1)
+                .is_some_and(|t| matches!(t.as_str(), "%u" | "%U" | "%f" | "%F"))
+        {
+            if used {
+                return Err("Desktop Exec repeats its argument field".into());
+            }
+            used = true;
+            if let Some((last, prefix)) = args.split_last() {
+                out.extend(prefix.iter().cloned());
+                out.push(token.clone());
+                out.push(last.clone());
+                out.push("@@".into());
+            }
+            index += 3;
+            continue;
+        }
+        match token.as_str() {
+            "%u" | "%U" | "%f" | "%F" => {
+                if used {
+                    return Err("Desktop Exec repeats its argument field".into());
+                }
+                used = true;
+                out.extend(args.iter().cloned());
+            }
+            "%i" => {
+                if let Some(icon) = fields.get("Icon") {
+                    out.extend(["--icon".into(), (*icon).into()]);
+                }
+            }
+            "%c" => out.push(fields.get("Name").copied().unwrap_or("").into()),
+            "%k" => out.push(file.into()),
+            "%d" | "%D" | "%n" | "%N" | "%v" | "%m" => {}
+            _ => {
+                let mut literal = String::new();
+                let mut chars = token.chars();
+                while let Some(ch) = chars.next() {
+                    if ch == '%' && chars.next() != Some('%') {
+                        return Err("Desktop Exec has an unsupported embedded field".into());
+                    }
+                    literal.push(ch);
+                }
+                out.push(literal);
+            }
+        }
+        index += 1;
+    }
+    if !used {
+        out.extend(args.iter().cloned());
+    }
+    if out.first().is_none_or(String::is_empty) {
+        return Err("Desktop Exec is empty".into());
+    }
+    Ok(out)
+}
+
+fn run_command(command: &[String], timeout: std::time::Duration) -> ExitCode {
+    use std::process::Stdio;
+    use std::time::Instant;
+    let mut launch = Command::new(&command[0]);
+    launch
+        .args(&command[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        launch.process_group(0);
+    }
+    let mut child = match launch.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("mios-browser: desktop dispatch failed: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return ExitCode::from(status.code().unwrap_or(1) as u8),
+            Err(_) => return ExitCode::from(1),
+            Ok(None) if Instant::now() >= deadline => {
+                eprintln!("mios-browser: dispatched; application remains running, presentation unverified");
+                return ExitCode::from(3);
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Some(file) = &cli.desktop_file {
+        let command = std::fs::read_to_string(file)
+            .map_err(|_| "Desktop entry cannot be read".to_string())
+            .and_then(|source| desktop_command(&source, file, &cli.desktop_args));
+        return match command {
+            Ok(command) if cli.dry_run => {
+                println!("{}", serde_json::to_string(&command).unwrap());
+                ExitCode::SUCCESS
+            }
+            Ok(command) => {
+                let timeout = mios_resolver::resolve_merged(None, false)
+                    .ok()
+                    .and_then(|ssot| {
+                        ssot.get("desktop")?
+                            .get("launch")?
+                            .get("probe_timeout_ms")?
+                            .as_integer()
+                    })
+                    .filter(|ms| (100..=30000).contains(ms));
+                match timeout {
+                    Some(ms) => run_command(&command, std::time::Duration::from_millis(ms as u64)),
+                    None => {
+                        eprintln!("mios-browser: desktop.launch.probe_timeout_ms is invalid");
+                        ExitCode::from(2)
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("mios-browser: {error}");
+                ExitCode::from(2)
+            }
+        };
+    }
 
     let ssot = match mios_resolver::resolve_merged(None, false) {
         Ok(val) => val,
@@ -284,6 +480,105 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_wrapper_preserves_app_operands_and_places_browser_args() {
+        let source = "[Desktop Entry]\nName=Example Browser\nExec=/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding org.example.Browser @@u %u @@\n[Desktop Action Private]\nExec=wrong-program\n";
+        let args = vec![
+            "--new-tab".into(),
+            "https://example.invalid/a?x=1&y=two words".into(),
+        ];
+        assert_eq!(
+            desktop_command(source, "/example.desktop", &args).unwrap(),
+            vec![
+                "/usr/libexec/mios/mios-flatpak-run",
+                "--branch=stable",
+                "--arch=x86_64",
+                "--command=launch-script.sh",
+                "--file-forwarding",
+                "org.example.Browser",
+                "--new-tab",
+                "@@u",
+                "https://example.invalid/a?x=1&y=two words",
+                "@@"
+            ]
+        );
+        assert_eq!(
+            desktop_command(source, "/example.desktop", &[])
+                .unwrap()
+                .last()
+                .unwrap(),
+            "org.example.Browser"
+        );
+    }
+
+    #[test]
+    fn desktop_quotes_and_metacharacters_are_argv_never_shell() {
+        let source = "[Desktop Entry]\nName=Example Browser\nExec=\"/path with spaces/browser\" --label \"declared value\" %% %U\n";
+        let args = vec![
+            "--new-window".into(),
+            "https://example.invalid/$(false);quoted".into(),
+        ];
+        assert_eq!(
+            desktop_command(source, "/example.desktop", &args).unwrap(),
+            vec![
+                "/path with spaces/browser",
+                "--label",
+                "declared value",
+                "%",
+                "--new-window",
+                "https://example.invalid/$(false);quoted"
+            ]
+        );
+        assert!(
+            desktop_command("[Desktop Entry]\nHidden=true\nExec=anything %u", "x", &args).is_err()
+        );
+        for invalid in ["bad \"%u", "bad %u %U", "bad --arg=%u", "bad %Q"] {
+            let source = format!("[Desktop Entry]\nExec={invalid}\n");
+            assert!(desktop_command(&source, "x", &args).is_err(), "{invalid}");
+        }
+        assert!(desktop_tokens("bad\tcommand").is_err());
+    }
+
+    #[test]
+    fn desktop_native_cli_keeps_post_separator_arguments() {
+        let cli = Cli::try_parse_from([
+            "mios-browser",
+            "--desktop-file",
+            "/example.desktop",
+            "--",
+            "--new-tab",
+            "https://example.invalid/",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.desktop_args,
+            vec!["--new-tab", "https://example.invalid/"]
+        );
+        assert!(cli.url.is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn desktop_dispatch_is_bounded_and_preserves_child_failure() {
+        use std::time::{Duration, Instant};
+        assert_eq!(
+            run_command(
+                &["/bin/sh".into(), "-c".into(), "exit 17".into()],
+                Duration::from_secs(1)
+            ),
+            ExitCode::from(17)
+        );
+        let start = Instant::now();
+        assert_eq!(
+            run_command(
+                &["/bin/sleep".into(), "0.2".into()],
+                Duration::from_millis(20)
+            ),
+            ExitCode::from(3)
+        );
+        assert!(start.elapsed() < Duration::from_millis(150));
+    }
 
     fn sample_ssot() -> Value {
         let toml_str = r#"
@@ -399,6 +694,8 @@ private      = "--incognito-mode"
         let cli = Cli {
             url: "https://example.org".into(),
             browser: Some("zen".into()),
+            desktop_file: None,
+            desktop_args: Vec::new(),
             mode: "tab".into(),
             private: false,
             reuse: true,
@@ -420,6 +717,8 @@ private      = "--incognito-mode"
         let cli = Cli {
             url: "https://example.org".into(),
             browser: Some("chrome".into()),
+            desktop_file: None,
+            desktop_args: Vec::new(),
             mode: "tab".into(),
             private: true, // overrides mode
             reuse: true,

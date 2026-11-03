@@ -471,5 +471,122 @@ class TestGuiShellUnify(unittest.TestCase):
         self.assertTrue(len(problems) > 0, "GNOME/Phosh negative control failed: base revision should have defects")
 
 
+
+class TestBrowserDispatchIntegrity(unittest.TestCase):
+    """Real launcher scripts against local argv recorders, never a browser/session."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bin = os.path.join(self.tmp.name, "bin")
+        os.makedirs(self.bin)
+        self.log = os.path.join(self.tmp.name, "argv.json")
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+        self.env.update(PATH=self.bin + ":" + os.environ["PATH"],
+                        XDG_DATA_HOME=os.path.join(self.tmp.name, "user"),
+                        XDG_DATA_DIRS=os.path.join(self.tmp.name, "vendor"),
+                        MIOS_OSCONTROL_EXECUTOR="http://offline.invalid",
+                        MIOS_LAUNCH_CONFIRM_SECS="0",
+                        FIXTURE_ARGV_LOG=self.log)
+        self.make("flatpak", "#!/bin/sh\n[ \"$1\" = list ] && exit 0\nexit 1\n")
+        self.make("curl", "#!/bin/sh\nexit 1\n")
+        self.make("pgrep", "#!/bin/sh\nexit 0\n")
+        self.make("sleep", "#!/bin/sh\nexit 0\n")
+
+    def make(self, name, content):
+        path = os.path.join(self.bin, name)
+        with open(path, "w") as stream:
+            stream.write(content)
+        os.chmod(path, 0o755)
+        return path
+
+    def test_desktop_exec_full_argv_and_child_failure_propagate(self):
+        native = os.environ["MIOS_BROWSER_TEST_BIN"]
+        os.symlink(native, os.path.join(self.bin, "mios-browser"))
+        recorder = self.make("record-argv", "#!" + sys.executable + "\n"
+            "import os,sys,json\n"
+            "with open(os.environ['FIXTURE_ARGV_LOG'],'w') as f: json.dump(sys.argv[1:],f)\n"
+            "raise SystemExit(17)\n")
+        appdir = os.path.join(self.env["XDG_DATA_DIRS"], "applications")
+        os.makedirs(appdir)
+        desktop = os.path.join(appdir, "fixture-browser.desktop")
+        with open(desktop, "w") as stream:
+            stream.write('[Desktop Entry]\nName=Fixture Browser\nExec="' + recorder
+                + '" --branch=stable --command=launch-script.sh --file-forwarding org.example.Browser @@u %u @@\n')
+        url = 'https://example.invalid/$(false)?a=one&b=two words'
+        result = subprocess.run(["bash", os.path.join(ROOT, "usr/libexec/mios/mios-gui"),
+            "fixture-browser", "--new-tab", url], env=self.env, text=True,
+            capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 17, result.stderr)
+        with open(self.log) as stream:
+            self.assertEqual(json.load(stream), ["--branch=stable", "--command=launch-script.sh",
+                "--file-forwarding", "org.example.Browser", "--new-tab", "@@u", url, "@@"])
+        userdir = os.path.join(self.env["XDG_DATA_HOME"], "applications")
+        os.makedirs(userdir)
+        with open(os.path.join(userdir, "fixture-browser.desktop"), "w") as stream:
+            stream.write("[Desktop Entry]\nHidden=true\nExec=true\n")
+        os.unlink(self.log)
+        result = subprocess.run(["bash", os.path.join(ROOT, "usr/libexec/mios/mios-gui"),
+            "fixture-browser", "--new-tab", url], env=self.env, text=True,
+            capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_running_browser_or_successful_dispatch_is_not_url_confirmation(self):
+        self.make("mios-browser", "#!/bin/sh\nprintf 'Flags: --new-tab\\n'\n")
+        self.make("mios-gui", "#!/bin/sh\nexit \"$FIXTURE_LAUNCH_RC\"\n")
+        self.make("mios-window-active", "#!/bin/sh\nprintf '{\"summary\":\"presented\"}\\n'\n")
+        script = os.path.join(ROOT, "usr/libexec/mios/mios-open-url")
+        for code in (0, 3, 7):
+            with self.subTest(code=code):
+                self.env["FIXTURE_LAUNCH_RC"] = str(code)
+                url = 'https://example.invalid/a?quoted="yes"&x=two words'
+                result = subprocess.run(["bash", script, url, "fixture-browser"],
+                    env=self.env, text=True, capture_output=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                if code in (0, 3):
+                    data = json.loads(result.stdout)
+                    self.assertFalse(data["success"])
+                    self.assertFalse(data["navigation_verified"])
+                    self.assertEqual(data["url"], url)
+                    self.assertEqual(data["error"]["code"], "navigation_unverified")
+                self.assertNotIn('"success": true', result.stdout)
+                self.assertNotIn("already-running", result.stdout)
+
+    def test_cdp_receipt_requires_created_target_url(self):
+        import asyncio
+        from unittest.mock import patch
+        text = read("usr/libexec/mios/mios-open-url")
+        marker = 'if /usr/lib/mios/agents/.venv/bin/python3 - "$_cdp_port" "$URL"'
+        start = text.index("import sys\n", text.index(marker))
+        end = text.index("\nPYEOF", start)
+        namespace = {"__name__": "offline_cdp_fixture"}
+        exec(compile(text[start:end], "<offline-cdp>", "exec"), namespace)
+        url = "https://example.invalid/observed"
+        class Response:
+            def __init__(self, data): self.data = data
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return json.dumps(self.data).encode()
+        for data, expected in (({"id": "target", "url": url}, True),
+                ({"id": "target", "url": "about:blank"}, False),
+                ({"url": url}, False), ({}, False)):
+            with self.subTest(data=data):
+                with patch("urllib.request.urlopen", return_value=Response(data)):
+                    self.assertEqual(asyncio.run(namespace["cdp_create_tab"](1, url)), expected)
+
+    def test_recursive_default_handler_is_rejected_before_launch(self):
+        self.make("mios-gui", "#!/bin/sh\ntouch \"$FIXTURE_ARGV_LOG\"\nexit 0\n")
+        script = os.path.join(ROOT, "usr/libexec/mios/mios-open-url")
+        alias = os.path.join(self.bin, "browser-handler")
+        os.symlink(script, alias)
+        result = subprocess.run(["bash", script, "https://example.invalid/", alias],
+            env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("recursive browser handler", result.stderr)
+        self.assertFalse(os.path.exists(self.log))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -116,19 +116,22 @@ else
     fi
 
     HOST_BIN=""
+    DESKTOP_FILE=""
     if [ -z "$APP_ID" ]; then
-        if [ -f "/usr/share/applications/${APP}.desktop" ]; then
-            exec_line="$(grep -E '^Exec=' "/usr/share/applications/${APP}.desktop" | head -1 | sed 's/^Exec=//')"
-            exec_bin="$(echo "$exec_line" | awk '{print $1}')"
-            exec_bin_base="$(basename "$exec_bin")"
-            if cand="$(command -v "$exec_bin_base" 2>/dev/null)" && [ -x "$cand" ]; then
-                HOST_BIN="$cand"
-            elif [ -x "$exec_bin" ]; then
-                HOST_BIN="$exec_bin"
+        # XDG precedence also applies to a Hidden=true user override.
+        IFS=: read -r -a _data_dirs <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+        _desktop_dirs=("${XDG_DATA_HOME:-$HOME/.local/share}/applications")
+        for _dir in "${_data_dirs[@]}"; do
+            [ -z "$_dir" ] || _desktop_dirs+=("$_dir/applications")
+        done
+        for _dir in "${_desktop_dirs[@]}"; do
+            if [ -f "$_dir/${APP%.desktop}.desktop" ]; then
+                DESKTOP_FILE="$_dir/${APP%.desktop}.desktop"
+                break
             fi
-        fi
+        done
 
-        if [ -z "$HOST_BIN" ] && cand="$(command -v "$APP" 2>/dev/null)" && [ -x "$cand" ]; then
+        if [ -z "$DESKTOP_FILE" ] && [ -z "$HOST_BIN" ] && cand="$(command -v "$APP" 2>/dev/null)" && [ -x "$cand" ]; then
             if [ -f "/usr/share/applications/${APP}.desktop" ] \
                || grep -lqE "^Exec=${APP}( |$)" /usr/share/applications/*.desktop 2>/dev/null; then
                 HOST_BIN="$cand"
@@ -136,17 +139,24 @@ else
         fi
     fi
 
-    if [ -z "$APP_ID" ] && [ -z "$HOST_BIN" ]; then
+    if [ -z "$APP_ID" ] && [ -z "$HOST_BIN" ] && [ -z "$DESKTOP_FILE" ]; then
         echo "Mios-gui: no shim, flatpak, or host GUI matching '$APP'" >&2
         echo "" >&2
         echo "Try one of:" >&2
         flatpak list --system --columns=application 2>/dev/null | sed 's/^/  flatpak: /' >&2
-        ls /usr/share/applications/*.desktop 2>/dev/null | \
+        printf '%s\n' /usr/share/applications/*.desktop | \
             sed 's|.*/||;s|\.desktop$||;s|^|  host-gui: |' | head -20 >&2
         exit 1
     fi
 
-    if [ -n "$HOST_BIN" ]; then
+    if [ -n "$DESKTOP_FILE" ]; then
+        if ! command -v mios-browser >/dev/null 2>&1; then
+            echo "Mios-gui: native desktop command expander is unavailable" >&2
+            exit 127
+        fi
+        LAUNCH=(mios-browser --desktop-file "$DESKTOP_FILE" --)
+        APP_ID="$APP (desktop)"
+    elif [ -n "$HOST_BIN" ]; then
         LAUNCH=(/usr/libexec/mios/mios-host-launch "$HOST_BIN")
         APP_ID="$(basename "$HOST_BIN") (host-rpm)"
     else
@@ -159,8 +169,8 @@ echo "Mios-gui: launching $APP_ID" >&2
 OSC_EP="$(_mios_osc_endpoint)"
 WIN_BEFORE="$(_mios_window_hwnds "$OSC_EP")"
 
-"${LAUNCH[@]}" "$@"
-launch_rc=$?
+launch_rc=0
+"${LAUNCH[@]}" "$@" || launch_rc=$?
 if [ "$launch_rc" -ne 0 ]; then
     echo "Mios-gui: launch call failed" >&2
     exit "$launch_rc"

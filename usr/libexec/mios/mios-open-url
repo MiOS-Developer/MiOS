@@ -190,47 +190,17 @@ fi
 
 set +e   # the verification path catches its own rcs; set -e here
 
-_parse_summary() {
-    printf '%s' "$1" | python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-    print(d.get('summary', ''))
-except Exception:
-    print('')
-" 2>/dev/null || true
-}
-
-_derive_verify_pattern() {
-    local target="$1"
-    local _pattern_last
-    _pattern_last="$(printf '%s' "$target" | awk -F. "{print tolower(\$NF)}")"
-    local _pattern_desktop_name=""
-    for _df in "/var/lib/flatpak/exports/share/applications/$target.desktop" \
-               "/var/lib/flatpak/app/$target/current/active/files/share/applications/$target.desktop" \
-               "/usr/share/applications/$target.desktop"; do
-        if [ -r "$_df" ]; then
-            _pattern_desktop_name=$(awk -F= '/^Name=/{print tolower($2); exit}' "$_df" 2>/dev/null)
-            [ -n "$_pattern_desktop_name" ] && break
-        fi
-    done
-    if [ -n "$_pattern_desktop_name" ] && [ "$_pattern_desktop_name" != "$_pattern_last" ]; then
-        printf '%s,%s' "$_pattern_last" "$_pattern_desktop_name"
-    else
-        printf '%s' "$_pattern_last"
-    fi
-}
-
-_HEAL_ATTEMPTED=0
-_LAST_VERIFY=""
-_LAST_SUMMARY=""
 _LAST_TARGET=""
 _LAST_RC=0
 while IFS= read -r TARGET; do
     [ -z "$TARGET" ] && continue
+    _target_path="$(command -v "$TARGET" 2>/dev/null || true)"
+    if [ -n "$_target_path" ] && [ "$(readlink -f "$_target_path")" = "$(readlink -f "$0")" ]; then
+        echo "[mios-open-url] refusing recursive browser handler" >&2
+        continue
+    fi
     echo "[mios-open-url] trying browser: $TARGET" >&2
-    _verify_pattern="$(_derive_verify_pattern "$TARGET")"
-    _FLAG="$(_browser_flag "$TARGET" "$EFF_MODE")"
+    read -r -a _FLAGS <<< "$(_browser_flag "$TARGET" "$EFF_MODE")"
 
     _already_running=0
     _seg="$(printf '%s' "$TARGET" | sed 's/.*\.//')"
@@ -261,7 +231,8 @@ async def cdp_create_tab(port, url):
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{port}/json/new?{urllib.parse.quote(url)}", method="PUT")
         with urllib.request.urlopen(req, timeout=5) as r:
-            return True
+            created = json.loads(r.read().decode())
+            return bool(created.get("id")) and created.get("url") == url
     except Exception:
         pass
     try:
@@ -280,8 +251,14 @@ async def cdp_create_tab(port, url):
             }))
             raw = await asyncio.wait_for(ws.recv(), timeout=5)
             resp = json.loads(raw)
-            if resp.get("id") == mid and "result" in resp:
-                return True
+            target_id = (resp.get("result") or {}).get("targetId")
+            if resp.get("id") == mid and target_id:
+                await ws.send(json.dumps({"id": 2, "method": "Target.getTargetInfo",
+                                          "params": {"targetId": target_id}}))
+                observed = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                info = (observed.get("result") or {}).get("targetInfo") or {}
+                return (observed.get("id") == 2 and info.get("targetId") == target_id
+                        and info.get("url") == url)
     except Exception:
         pass
     return False
@@ -292,7 +269,10 @@ if __name__ == "__main__":
     success = asyncio.run(cdp_create_tab(port, url))
     sys.exit(0 if success else 1)
 PYEOF
-                printf '%s\n' "{\"success\": true, \"target\": \"$TARGET\", \"url\": \"$URL\", \"summary\": \"tab-opened-cdp\", \"engine\": \"cdp\", \"launch_rc\": 0}"
+                python3 -c 'import json,sys; print(json.dumps({
+                    "success": True, "target": sys.argv[1], "url": sys.argv[2],
+                    "summary": "tab-opened-cdp", "engine": "cdp",
+                    "navigation_verified": True, "verified_by": "cdp-target-url", "launch_rc": 0}))' "$TARGET" "$URL"
                 exit 0
             fi
         fi
@@ -311,7 +291,7 @@ PYEOF
                 _launch_rc=127
             fi
         else
-            mios-gui "$TARGET" $_FLAG "$URL"
+            mios-gui "$TARGET" "${_FLAGS[@]}" "$URL"
             _launch_rc=$?
             _used_windows_fallback=0
             if [ "$_launch_rc" -ne 0 ]; then
@@ -330,91 +310,23 @@ PYEOF
             fi
         fi
 
-    _summary=""
-    _verify=""
-    if [ "$_already_running" = "0" ] && [ "${_used_windows_fallback:-0}" != "1" ]; then
-        for _delay in 1 2 3 4 5; do
-            _verify=$(mios-window-active --present "$_verify_pattern" 2>/dev/null)
-            _summary=$(_parse_summary "$_verify")
-            if [ "$_summary" = "presented" ]; then
-                break
-            fi
-            sleep "$_delay"
-        done
-        _LAST_VERIFY="$_verify"
-        _LAST_SUMMARY="$_summary"
-    fi
     _LAST_TARGET="$TARGET"
     _LAST_RC="$_launch_rc"
-
-    if [ "$_summary" = "presented" ] || { [ "${_used_windows_fallback:-0}" = "1" ] && [ "$_launch_rc" = "0" ]; }; then
-        printf '{"success": true, "target": "%s", "url": "%s", "summary": "presented", "engine": "windows-host", "launch_rc": 0}\n' "$TARGET" "$URL"
-        echo "[mios-open-url] OK target=$TARGET opened via Windows host" >&2
-        exit 0
-    fi
-
-    echo "[mios-open-url] $TARGET summary=${_summary:-<empty>} launch_rc=$_launch_rc" >&2
-
-    _proc_ok=0
-    if [ "$TARGET" = "cmd.exe" ] || [ "$TARGET" = "explorer.exe" ] || [ "${_used_windows_fallback:-0}" = "1" ]; then
-        _proc_ok=1
-    else
-        for _pp in 1 2 3 4; do
-            if pgrep -fi "$TARGET" >/dev/null 2>&1 \
-               || { [ -n "$_seg" ] && pgrep -fi "$_seg" >/dev/null 2>&1; }; then
-                _proc_ok=1; break
-            fi
-            sleep "$_pp"
-        done
-    fi
-
-    if [ "$_already_running" = "1" ] && { [ "$_launch_rc" = "0" ] || [ "$_launch_rc" = "3" ]; } && [ "$_proc_ok" = "1" ]; then
-        if [ "${_used_windows_fallback:-0}" = "1" ]; then
-            printf '%s\n' "{\"success\": true, \"target\": \"$TARGET\", \"url\": \"$URL\", \"summary\": \"tab-opened-existing\", \"engine\": \"windows-host\", \"verified_by\": \"already-running\", \"launch_rc\": $_launch_rc}"
-            echo "[mios-open-url] $TARGET was already running on Windows -> tab opened in existing instance" >&2
-        else
-            printf '%s\n' "{\"success\": true, \"target\": \"$TARGET\", \"url\": \"$URL\", \"summary\": \"tab-opened-existing\", \"engine\": \"linux-flatpak\", \"verified_by\": \"already-running\", \"launch_rc\": $_launch_rc}"
-            echo "[mios-open-url] $TARGET was already running -> tab opened in existing instance" >&2
-        fi
-        exit 0
-    fi
-
-    if [ "$_launch_rc" = "0" ] && [ "$_proc_ok" = "1" ]; then
-        if [ "${_used_windows_fallback:-0}" = "1" ]; then
-            printf '%s\n' "{\"success\": true, \"target\": \"$TARGET\", \"url\": \"$URL\", \"summary\": \"running\", \"engine\": \"windows-host\", \"verified_by\": \"windows-launch\", \"launch_rc\": 0}"
-            echo "[mios-open-url] $TARGET launched on Windows host via mios-windows" >&2
-        else
-            printf '%s\n' "{\"success\": true, \"target\": \"$TARGET\", \"url\": \"$URL\", \"summary\": \"running\", \"engine\": \"linux-flatpak\", \"verified_by\": \"pid-probe\", \"launch_rc\": 0}"
-            echo "[mios-open-url] $TARGET launched -> process verified running via PID probe; window surfacing is confirmed separately by the agent-pipe window-diff" >&2
-        fi
-        exit 0
-    fi
-
-    if [ "$_HEAL_ATTEMPTED" = "0" ] \
-       && [ "$_launch_rc" -ne 0 ] \
-       && command -v mios-wsl-flatpak-heal >/dev/null 2>&1; then
-        echo "[mios-open-url] launch_rc=$_launch_rc; running wsl-flatpak-heal" >&2
-        if [ -n "${SUDO_USER:-}" ] && [ "$(id -un)" != "$SUDO_USER" ]; then
-            su - "$SUDO_USER" -c "mios-wsl-flatpak-heal" >/dev/null 2>&1 || true
-        else
-            mios-wsl-flatpak-heal >/dev/null 2>&1 || true
-        fi
-        _HEAL_ATTEMPTED=1
-        mios-gui "$TARGET" $_FLAG "$URL" >/dev/null 2>&1
-        _verify=$(mios-window-active --present "$_verify_pattern" 2>/dev/null)
-        _summary=$(_parse_summary "$_verify")
-        if [ "$_summary" = "presented" ]; then
-            echo "$_verify"
-            echo "[mios-open-url] OK after heal target=$TARGET" >&2
-            exit 0
-        fi
-        _LAST_VERIFY="$_verify"
-        _LAST_SUMMARY="$_summary"
+    if [ "$_launch_rc" = "0" ] || [ "$_launch_rc" = "3" ]; then
+        # A dispatched command, a live PID, or a presented browser window does
+        # not establish which URL its tab contains. Keep this outcome explicit
+        # until a browser protocol or accessibility observer verifies navigation.
+        python3 -c 'import json,sys; print(json.dumps({
+            "success": False, "target": sys.argv[1], "url": sys.argv[2],
+            "summary": "navigation-unverified", "launch_rc": int(sys.argv[3]),
+            "navigation_verified": False,
+            "error": {"code": "navigation_unverified",
+                      "message": "Browser dispatch has no observed URL confirmation"}}))' "$TARGET" "$URL" "$_launch_rc"
+        exit 3
     fi
 done <<EOF
 $CHAIN
 EOF
 
-echo "$_LAST_VERIFY"
-echo "[mios-open-url] EXHAUSTED chain; last=$_LAST_TARGET summary=${_LAST_SUMMARY:-<empty>} launch_rc=$_LAST_RC" >&2
+echo "[mios-open-url] EXHAUSTED chain; last=$_LAST_TARGET launch_rc=$_LAST_RC" >&2
 exit 2
