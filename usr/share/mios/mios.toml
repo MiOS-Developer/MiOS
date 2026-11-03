@@ -87,10 +87,9 @@ open_ports = [
 # ----------------------------------------------------------------------------
 [ssot_consumers]
 doc = "Shipped Python reads config as _toml_section(\"<table>\").get(\"<key>\"). When <table>.<key> does not exist the consumer silently takes its compiled default -- the SSOT and the code disagree with nobody told, and every test that stubs the value still passes. Nine security controls sat unreachable this way (and one of the nine entries, the memory guard, was itself such a control) under an unclosed [security.nohc_allowlist] header (task_269). MISPLACED means the key name is declared elsewhere in the SSOT, so one side has the wrong path; UNDECLARED means it exists nowhere, so it is an optional escape hatch or a dead read. Draining an entry: decide which side is right, move the key or fix the consumer, then lower max_unresolved. Gate: check_ssot_consumer_keys."
-max_unresolved = 2
+max_unresolved = 1
 unresolved = [
   "a2a.security",                      # MISPLACED -> packages.security/security
-  "ai.micro_model",                    # MISPLACED -> ai.host_thresholds.micro_model
 ]
 
 # ----------------------------------------------------------------------------
@@ -7724,6 +7723,8 @@ bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-
 # beyond this on hosts with more headroom.
 ram_floor_gb        = 8
 
+micro_model              = "lfm2:700m"   # Liquid AI LFM2-700M (dense 'lfm2' arch merged mainline llama.cpp; ~0.7-1.0GB resident, ~2x faster CPU decode than Qwen; beats Qwen3-0.6B on MMLU/GSM8K/IFEval). Family-diversity off Qwen. Background classify/expand/gate only (Pythonic tool-call format, not JSON-tool agent). Served by mios-llm-light :11450; the qwen3:1.7b alias still resolves.
+
 [ai.kv]
 slot_save_path = "/var/lib/mios/llamacpp/slots"   # --slot-save-path for chat lanes (matches tmpfiles + mios-llm-light.yaml)
 swa_full       = false                            # append --swa-full to SWA lanes ONLY; OFF for the current hybrid/recurrent brains
@@ -7767,7 +7768,6 @@ chat_vision_model         = "qwen3-vl:4b"
 grounding_endpoint = "http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1"
 grounding_model    = "mios-grounding"
 
-micro_model              = "lfm2:700m"   # Liquid AI LFM2-700M (dense 'lfm2' arch merged mainline llama.cpp; ~0.7-1.0GB resident, ~2x faster CPU decode than Qwen; beats Qwen3-0.6B on MMLU/GSM8K/IFEval). Family-diversity off Qwen. Background classify/expand/gate only (Pythonic tool-call format, not JSON-tool agent). Served by mios-llm-light :11450; the qwen3:1.7b alias still resolves.
 sys_agent_model          = "mios-sys-agent"
 
 micro_keep_alive_seconds = -1

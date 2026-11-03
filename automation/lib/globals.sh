@@ -2979,6 +2979,7 @@ _mios_input MIOS_PORTS_IGPU MIOS_PORT_IGPU MIOS_IGPU_PORT || { return 1 2>/dev/n
 [ -n "${MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_VLLM_IMAGE_IMAGE+x}" ] || MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_VLLM_IMAGE_IMAGE='${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}'
 : "${MIOS_IMAGES_MIOS_LLM_HEAVY_SERVICE_TIMEOUTSTARTSEC:=3600}"
 : "${MIOS_IMAGES_MIOS_MICRO_IMAGE_IMAGE:=ghcr.io/mios-dev/mios-micro:latest}"
+: "${MIOS_IMAGES_MIOS_MICRO_IMAGE_POLICY:=missing}"
 : "${MIOS_IMAGES_MIOS_MICRO_SERVICE_TIMEOUTSTARTSEC:=3600}"
 : "${MIOS_IMAGE_NAME:=ghcr.io/mios-developer/mios}"
 : "${MIOS_IMAGE_REF:=ghcr.io/mios-dev/mios:latest}"
@@ -3682,6 +3683,7 @@ _mios_input MIOS_META_MIOS_VERSION MIOS_VERSION || { return 1 2>/dev/null || exi
 : "${MIOS_META_SCHEMA_VERSION:=1.1.0}"
 : "${MIOS_META_SPEC_URL:=https://toml.io/en/v1.0.0}"
 [ -n "${MIOS_MICRO_ENDPOINT+x}" ] || MIOS_MICRO_ENDPOINT='http://localhost:'"${MIOS_PORTS_LLM_LIGHT:-}"'/v1'
+: "${MIOS_MICRO_MODEL:=lfm2:700m}"
 : "${MIOS_MIGRATION_USE_COMPILED_AINODE:=true}"
 : "${MIOS_MIGRATION_USE_COMPILED_OSCONTROL:=false}"
 : "${MIOS_MIGRATION_USE_RUST_RESOLVER_INSTALL_ENV:=true}"
@@ -4744,8 +4746,8 @@ _mios_input MIOS_SERVICES_WHISPER_USER MIOS_WHISPER_USER || { return 1 2>/dev/nu
 : "${MIOS_SSH_WINDOWS_REMOTE_ADDRESSES:=LocalSubnet,100.64.0.0/10}"
 [ -n "${MIOS_SSH_WINDOWS_ROOT+x}" ] || MIOS_SSH_WINDOWS_ROOT='C:\'
 [ -n "${MIOS_SSOT_CONSUMERS_DOC+x}" ] || MIOS_SSOT_CONSUMERS_DOC='Shipped Python reads config as _toml_section("<table>").get("<key>"). When <table>.<key> does not exist the consumer silently takes its compiled default -- the SSOT and the code disagree with nobody told, and every test that stubs the value still passes. Nine security controls sat unreachable this way (and one of the nine entries, the memory guard, was itself such a control) under an unclosed [security.nohc_allowlist] header (task_269). MISPLACED means the key name is declared elsewhere in the SSOT, so one side has the wrong path; UNDECLARED means it exists nowhere, so it is an optional escape hatch or a dead read. Draining an entry: decide which side is right, move the key or fix the consumer, then lower max_unresolved. Gate: check_ssot_consumer_keys.'
-: "${MIOS_SSOT_CONSUMERS_MAX_UNRESOLVED:=2}"
-: "${MIOS_SSOT_CONSUMERS_UNRESOLVED:=a2a.security,ai.micro_model}"
+: "${MIOS_SSOT_CONSUMERS_MAX_UNRESOLVED:=1}"
+: "${MIOS_SSOT_CONSUMERS_UNRESOLVED:=a2a.security}"
 [ -n "${MIOS_SSOT_TABLES_DOC+x}" ] || MIOS_SSOT_TABLES_DOC='A top-level table nothing reads is dead SSOT: it looks operator-tunable and is not, and every edit to it is silently ignored. The gate demands ACCESS-SHAPED evidence of consumption -- a direct index of the parsed SSOT, a toml-get lookup, a quoted dotted path naming a real key, the [dotfiles.registry] manifest, or a resolver-projected MIOS_<TABLE>_* variable derived from the table'"'"'s own keys appearing in a hand-written consumer -- because name-appearance was measured and rejected: any doc sentence or word collision kept a dead table alive (task_940, and the task_941 measurement that closed the text-search direction). Projection surfaces are NOT consumption: the generated globals twins render every table and seed-db-config mirrors nearly every table into config_kv wholesale, so crediting either would make the gate vacuous again. Each entry here is a table whose consumption is currently broken, accepted deliberately while its wiring lands: browser (family/flags reach no browser launcher; MIOS_BROWSER_AI_* belongs to [browser_ai]), hwcaps (ld_so_hwcaps_autoselect and native_rebuild reach no consumer; the rebuild script they describe is absent), preflight (the Windows preflight reads none of its thresholds), repos (its repo definitions feed no dnf/bootc surface). Draining an entry: wire a real consumer or delete the table, then lower max_unconsumed. Gate: check_no_inert_ssot_tables.'
 : "${MIOS_SSOT_TABLES_MAX_UNCONSUMED:=1}"
 : "${MIOS_SSOT_TABLES_UNCONSUMED:=hwcaps}"
