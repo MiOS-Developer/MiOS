@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-# AI-hint: Standalone assert-script unit test for mios_refine (refactor R5 REFINE-classifier extraction). Pure stdlib, no server.py/DB/network/pytest.
+# AI-hint: Offline refine regressions using canned completions and real HTTPX streaming transports; no server process, database, network or pytest.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
-"""Unit tests for mios_refine (refactor R5). Offline, stubbed model call."""
+"""Offline refine unit tests, including real HTTPX deadline and cleanup controls."""
 
 import asyncio
 import contextvars
 import json
+
+import httpx
 
 import mios_refine as mr
 
@@ -314,6 +316,76 @@ def t_deterministic_before_inference():
     check("unregistered/destructive parser output cannot bypass inference", bool(calls))
 
 
+def t_stream_deadline_and_cancellation():
+    """A real HTTPX transport stays readable forever; total time must still expire."""
+    import httpx
+    import types
+    real_client = httpx.AsyncClient
+    saved_httpx = mr.httpx
+    saved_timeout, saved_attempts = mr.REFINE_TIMEOUT_S, mr.REFINE_ATTEMPTS
+
+    async def exercise(mode):
+        class Stream(httpx.AsyncByteStream):
+            def __init__(self):
+                self.closed = False
+                self.chunks = 0
+                self.started = asyncio.Event()
+            async def __aiter__(self):
+                if mode == "finite":
+                    content = json.dumps({"intent": "chat", "reply": "ready"})
+                    yield ("data: " + json.dumps({"choices": [{"delta": {"content": content}}]}) + "\n\n").encode()
+                    yield b"data: [DONE]\n\n"
+                    return
+                while True:
+                    self.chunks += 1
+                    self.started.set()
+                    yield b'data: {"choices":[{"delta":{"content":" "}}]}\n\n'
+                    await asyncio.sleep(0.002)
+            async def aclose(self):
+                self.closed = True
+        stream = Stream()
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=stream))
+        clients = []
+        def client(**kwargs):
+            obj = real_client(transport=transport, **kwargs)
+            clients.append(obj)
+            return obj
+        mr.httpx = types.SimpleNamespace(AsyncClient=client, HTTPError=httpx.HTTPError)
+        mr.REFINE_TIMEOUT_S = 0.04 if mode == "deadline" else 1
+        mr.REFINE_ATTEMPTS = 2
+        async def token(*args): pass
+        before = set(asyncio.all_tasks())
+        started = asyncio.get_running_loop().time()
+        task = asyncio.create_task(mr.refine_intent("hello", on_token=token))
+        if mode == "cancel":
+            await asyncio.wait_for(stream.started.wait(), 0.5)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            check("refine caller cancellation propagates", task.cancelled())
+        else:
+            result = await asyncio.wait_for(task, 0.5)
+            if mode == "deadline":
+                elapsed = asyncio.get_running_loop().time() - started
+                check("live SSE obeys total deadline across retries", result is None
+                      and 0.02 <= elapsed < 0.3 and stream.chunks > 2 and len(clients) == 1,
+                      f"elapsed={elapsed:.3f}s chunks={stream.chunks} clients={len(clients)}")
+            else:
+                check("finite SSE still parses before deadline", result.get("reply") == "ready")
+        await asyncio.sleep(0)
+        check(f"refine {mode} closes response and client", stream.closed
+              and clients and all(client.is_closed for client in clients))
+        check(f"refine {mode} leaves no task", set(asyncio.all_tasks()) == before)
+    try:
+        for mode in ("finite", "deadline", "cancel"):
+            asyncio.run(exercise(mode))
+    finally:
+        mr.httpx = saved_httpx
+        mr.REFINE_TIMEOUT_S, mr.REFINE_ATTEMPTS = saved_timeout, saved_attempts
+
+
 def main():
     _configure()
     t_salvage_corpus()
@@ -321,6 +393,7 @@ def main():
     t_cutoffs_ssot()
     t_critic_refine()
     t_deterministic_before_inference()
+    t_stream_deadline_and_cancellation()
     print(f"\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

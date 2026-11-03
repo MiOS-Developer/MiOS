@@ -423,7 +423,8 @@ async def _call_agent_complete(name, cfg, body, headers, client,
                 is_first = True
 
         if not is_first:
-            return await fut
+            # One disconnected follower must not cancel the shared producer.
+            return await asyncio.shield(fut)
 
         async def _execute_query():
             _est = _opt_int_mb(cfg.get("vram_mb"))   # Phase-1 per-worker VRAM (0 = unknown)
@@ -480,6 +481,12 @@ async def _call_agent_complete(name, cfg, body, headers, client,
                 if not fut.done():
                     fut.set_result(res)
             return res
+        except asyncio.CancelledError:
+            async with _IN_FLIGHT_LOCK:
+                _IN_FLIGHT_PROMPTS.pop(req_hash, None)
+                if not fut.done():
+                    fut.cancel()
+            raise
         except Exception as e:
             async with _IN_FLIGHT_LOCK:
                 _IN_FLIGHT_PROMPTS.pop(req_hash, None)

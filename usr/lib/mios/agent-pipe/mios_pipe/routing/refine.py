@@ -591,6 +591,20 @@ def _salvage_refine_dispatch(content: str) -> dict | None:
 async def refine_intent(user_text: str,
                         history: list = None,
                         on_token: Optional[Callable[[str, bool], Any]] = None) -> Optional[dict]:
+    """Bound the whole refine pass, including an otherwise continuously live SSE stream."""
+    deadline = asyncio.timeout(REFINE_TIMEOUT_S)
+    try:
+        async with deadline:
+            return await _refine_intent(user_text, history, on_token)
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        log.warning("refine: total deadline exceeded after %ss", REFINE_TIMEOUT_S)
+        return None
+
+async def _refine_intent(user_text: str,
+                        history: list = None,
+                        on_token: Optional[Callable[[str, bool], Any]] = None) -> Optional[dict]:
     if not REFINE_ENABLED or not user_text or not user_text.strip():
         return None
     deterministic = _deterministic_action_route(user_text)

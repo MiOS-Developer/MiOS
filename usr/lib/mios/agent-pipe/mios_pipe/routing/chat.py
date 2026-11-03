@@ -1126,17 +1126,22 @@ async def chat_completions_logic(request: Request) -> Any:
                     refine_intent(last_user_text, messages, on_token=_on_refine_token)
                 )
 
-                while not refine_task.done() or not queue.empty():
-                    try:
-                        token_val, is_re = await asyncio.wait_for(queue.get(), timeout=0.05)
-                        if token_val and is_re:
-                            yield _sse_reasoning(token_val, chat_id=chat_id, model=model,
-                                                 reasoning_ok=_reasoning_ok)
-                        queue.task_done()
-                    except asyncio.TimeoutError:
-                        continue
+                try:
+                    while not refine_task.done() or not queue.empty():
+                        try:
+                            token_val, is_re = await asyncio.wait_for(queue.get(), timeout=0.05)
+                            if token_val and is_re:
+                                yield _sse_reasoning(token_val, chat_id=chat_id, model=model,
+                                                     reasoning_ok=_reasoning_ok)
+                            queue.task_done()
+                        except asyncio.TimeoutError:
+                            continue
 
-                refined = await refine_task
+                    refined = await refine_task
+                finally:
+                    if not refine_task.done():
+                        refine_task.cancel()
+                    await asyncio.gather(refine_task, return_exceptions=True)
                 if refined and refined.get("refined_text"):
                     _refined_q = str(refined["refined_text"]).strip()
                     if _refined_q:

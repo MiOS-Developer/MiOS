@@ -250,6 +250,45 @@ def _test_exact_action_fastpath():
               CALLS == ["plain"], repr(CALLS))
 
 
+def _test_refine_disconnect_cleanup():
+    async def exercise(mode):
+        started, closed = asyncio.Event(), asyncio.Event()
+        async def refine(*args, **kwargs):
+            await kwargs["on_token"]("reasoning", True)
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+        _wire_common(refine_intent=refine,
+                     _sse_status_phase=lambda **kwargs: b"",
+                     _sse_status=lambda **kwargs: b"",
+                     _sse_reasoning=lambda *args, **kwargs: b"")
+        response = await mios_chat.chat_completions_logic(FakeRequest({
+            "messages": [{"role": "user", "content": "hello"}], "stream": True}))
+        async def consume():
+            async for _ in response.body_iterator:
+                pass
+        if mode == "cancel":
+            reader = asyncio.create_task(consume())
+            await asyncio.wait_for(started.wait(), 0.5)
+            reader.cancel()
+            try:
+                await reader
+            except asyncio.CancelledError:
+                pass
+            check("disconnect cancellation propagates", reader.cancelled())
+        else:
+            # Close the response while it is yielding a reasoning event.
+            for _ in range(3):
+                await asyncio.wait_for(anext(response.body_iterator), 0.5)
+            await response.body_iterator.aclose()
+        check(f"disconnect {mode} awaits in-flight refine", closed.is_set())
+        check(f"disconnect {mode} leaves no refine child", len(asyncio.all_tasks()) == 1)
+    for mode in ("cancel", "close"):
+        asyncio.run(exercise(mode))
+
+
 def main():
     _wire_common()
     r = _run({"model": "m"})
@@ -298,6 +337,8 @@ def main():
     _test_microreply()
 
     _test_refine_orchestration()
+
+    _test_refine_disconnect_cleanup()
 
     _test_developer_role()
 

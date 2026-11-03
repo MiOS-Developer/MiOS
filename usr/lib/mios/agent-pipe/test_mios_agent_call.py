@@ -556,6 +556,82 @@ async def test_swa_slot_action():
 
 asyncio.run(test_swa_slot_action())
 
+async def _dedup_cancellation_controls():
+    from unittest.mock import patch
+    import mios_pipe.routing.agent_call as actual
+    _configure()
+    actual._IN_FLIGHT_PROMPTS.clear()
+    active = []
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def model_active(ep, model, delta, est): active.append(delta)
+    async def pending(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return "secondary", "ready"
+    with patch.object(actual, "_call_agent_complete_inner", pending), \
+         patch.object(actual, "_model_active", model_active):
+        leader = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
+        await asyncio.wait_for(entered.wait(), 0.5)
+        follower = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
+        await asyncio.sleep(0)
+        shared, = actual._IN_FLIGHT_PROMPTS.values()
+        follower.cancel()
+        try: await follower
+        except asyncio.CancelledError: pass
+        ok(not shared.cancelled() and not leader.done(), "cancelled follower preserves shared producer")
+        release.set()
+        ok(await leader == ("secondary", "ready"), "producer succeeds after follower disconnect")
+        ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "success releases dedup and model admission")
+        active.clear(); entered.clear(); release.clear()
+        leader = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
+        await asyncio.wait_for(entered.wait(), 0.5)
+        follower = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
+        await asyncio.sleep(0)
+        leader.cancel()
+        results = await asyncio.gather(leader, follower, return_exceptions=True)
+        ok(all(isinstance(result, asyncio.CancelledError) for result in results), "producer cancellation propagates to all waiters")
+        ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "cancelled producer releases dedup and admission")
+        ok(actual._dispatch_depth_var.get() == 0, "cancelled request resets dispatch depth")
+        release.set()
+        ok(await T._call_agent_complete("secondary", CFG, dict(BODY), {}, None) == ("secondary", "ready"),
+           "same prompt can run again after cancellation")
+
+asyncio.run(_dedup_cancellation_controls())
+
+async def _real_completion_cancellation():
+    from unittest.mock import patch
+    import httpx
+    import mios_pipe.routing.agent_call as actual
+    _configure()
+    class Stream(httpx.AsyncByteStream):
+        closed = False
+        def __init__(self): self.started = asyncio.Event()
+        async def __aiter__(self):
+            self.started.set()
+            while True:
+                yield b" "
+                await asyncio.sleep(0.002)
+        async def aclose(self): self.closed = True
+    stream = Stream()
+    active = []
+    async def model_active(ep, model, delta, est): active.append(delta)
+    with patch.object(actual, "_model_active", model_active), \
+         patch.object(actual, "KV_PAGING_ENABLE", False), \
+         patch.object(actual, "RR_ENABLE", False):
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=stream))
+        async with httpx.AsyncClient(transport=transport) as client:
+            task = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, client))
+            await asyncio.wait_for(stream.started.wait(), 0.5)
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+            ok(task.cancelled() and stream.closed, "cancelled internal completion closes actual HTTPX response")
+            ok(not client.is_closed, "request cancellation preserves caller-owned HTTPX client")
+            ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "cancelled HTTPX request releases dedup and admission")
+            ok(len(asyncio.all_tasks()) == 1, "cancelled internal HTTPX request leaves no task")
+
+asyncio.run(_real_completion_cancellation())
+
 print("\nALL %d ASSERTIONS PASSED" % PASS)
 
 
