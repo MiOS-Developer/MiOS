@@ -385,20 +385,9 @@ def get_git_tree_status():
     return _GIT_STATUS_CACHE
 
 def get_credentials_text():
-    u = "mios"
-    lp = "mios"
-    fp = "mios"
-    lp_file = "/etc/mios/login-password"
-    fp_file = "/var/lib/mios/forge/admin-password"
-    if os.path.isfile(lp_file):
-        try:
-            with open(lp_file, "r") as f: lp = f.read().strip() or lp
-        except Exception: pass
-    if os.path.isfile(fp_file):
-        try:
-            with open(fp_file, "r") as f: fp = f.read().strip() or lp
-        except Exception: pass
-    return f"[dim]login[/] [cyan]{u}[/]/[yellow]{lp}[/]    [dim]forge[/] [cyan]{u}[/]/[yellow]{fp}[/]"
+    """Show the configured login identity without reading credential files."""
+    username = monitor_config().get("identity", {}).get("username") or "unavailable"
+    return f"[dim]login[/] [cyan]{escape(str(username))}[/]"
 
 def get_ascii_logo():
     p = "C:\\MiOS\\usr\\share\\mios\\branding\\mios.txt" if IS_WINDOWS else "/usr/share/mios/branding/mios.txt"
@@ -1018,7 +1007,7 @@ if TEXTUAL_AVAILABLE:
             self.query_one("#forge-box").border_title = "Forge / Git"
             self.query_one("#spark-container").border_title = f"CPU History ({ms}ms)"
             self.query_one("#log-box").border_title = "Live System Stream"
-            self.query_one("#svc-table", DataTable).border_title = "Core Services"
+            self.query_one("#svc-table", DataTable).border_title = "TCP listeners / engines"
             try:
                 self.query_one("#build-log-box").border_title = "MiOS Build (Live)"
                 self.query_one("#flash-log-box").border_title = "USB Flash (Live)"
@@ -1481,7 +1470,9 @@ if TEXTUAL_AVAILABLE:
                 def apply_updates():
                     table.clear()
                     for s in svcs:
-                        status = f"[{SSOT['success']} bold]ONLINE[/]" if s[2] else f"[{SSOT['error']} bold]OFFLINE[/]"
+                        label = ("LISTEN" if s[2] else "CLOSED") if s[1] else ("ONLINE" if s[2] else "OFFLINE")
+                        color = SSOT["success"] if s[2] else SSOT["error"]
+                        status = f"[{color} bold]{label}[/]"
                         name_str = s[0].ljust(35)
                         port_str = str(s[1]).ljust(15)
                         table.add_row(Text.from_markup(name_str), Text.from_markup(port_str), Text.from_markup(status))

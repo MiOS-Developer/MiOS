@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -102,11 +103,10 @@ max_retired_code_exemptions = {ceiling}
         self.write("usr/libexec/mios/serve", '#!/bin/sh\nexec service "$MIOS_PORT_LLM_LIGHT"\n')
         self.assertEqual((0, ""), self.check())
 
-    def test_real_elf_font_png_and_zipapp_are_not_source(self):
+    def test_real_elf_font_png_and_valid_zipapp_are_not_source(self):
         for rel in ("usr/libexec/mios/wayvnc/wayvnc",
                     "usr/lib/mios/portal/fonts/TwemojiMozilla.ttf",
-                    "usr/lib/mios/portal/browser/chrome/icons/default/default16.png",
-                    "usr/libexec/mios/mios-dashboard"):
+                    "usr/lib/mios/portal/browser/chrome/icons/default/default16.png"):
             source = Path(_ROOT) / rel
             # These are shipped artifacts, rather than fake UTF-8 bytes with
             # a binary extension. Embed retired digits to make the control fail
@@ -118,6 +118,13 @@ max_retired_code_exemptions = {ceiling}
                     self.fail(f"required artifact fixture absent: {source}")
             self.write("usr/lib/mios/artifacts/" + source.name,
                        source.read_bytes() + b"\n11450\n8888\n")
+        # The dashboard entry is now source. Keep the archive decoder control
+        # using a real executable ZIP instead of disguising its new shell adapter.
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("__main__.py", "print('private archive fixture')\n")
+        self.write("usr/lib/mios/artifacts/mios-archive",
+                   b"#!/usr/bin/env python3\n" + payload.getvalue() + b"\n11450\n8888\n")
         self.assertEqual((0, ""), self.check())
 
     def test_binary_extension_cannot_hide_text_port(self):
@@ -738,14 +745,16 @@ class TestMonitorRegistry(unittest.TestCase):
         path = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-mon.py")
         with open(path, encoding="utf-8") as source:
             tree = ast.parse(source.read())
-        names = {"monitor_config", "monitor_sources_config", "check_port", "engine_online", "get_services", "load_ssot_colors", "running_wsl_distros"}
+        names = {"monitor_config", "_load_monitor_config", "_monitor_layer_paths",
+                 "monitor_sources_config", "listening_tcp_ports", "check_port",
+                 "engine_online", "get_services", "load_ssot_colors", "running_wsl_distros"}
         nodes = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
         self.assertEqual(names, {node.name for node in nodes})
         self.ns = {"os": os, "glob": __import__("glob"), "subprocess": subprocess, "json": json,
                    "socket": socket, "platform": platform, "IS_WINDOWS": False, "__file__": path,
                    "layer_paths": mios_toml.layer_paths, "load_merged": mios_toml.load_merged,
                    "process_val": mios_toml.process_val, "mios_colors": mios_toml.colors,
-                   "running_wsl_distros": lambda: set()}
+                   "running_wsl_distros": lambda: set(), "_MONITOR_CONFIG_CACHE": None}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), path, "exec"), self.ns)
 
     def test_registry_uses_layered_categories_and_shared_offset_rules(self):
@@ -757,7 +766,7 @@ class TestMonitorRegistry(unittest.TestCase):
                     output.write(text)
             data = mios_toml.load_merged(layers=paths)
         seen = []
-        self.ns.update(monitor_config=lambda: data, check_port=lambda host, port: seen.append(port) or port == 44000,
+        self.ns.update(monitor_config=lambda: data, check_port=lambda host, port, listening=None: seen.append(port) or port == 44000,
                        engine_online=lambda: False)
         services = {name: (port, state) for name, port, state in self.ns["get_services"]()}
         self.assertEqual((44000, True), services["llm_light"])
@@ -837,7 +846,6 @@ T996_ROW = ("MIOS_SCHED_URGENCY_HIGH", "MIOS_SSOT_TABLES_MAX_UNCONSUMED", "keep-
 def _value_fixture(tmp, emitted, sources):
     """A snapshot tool printing `emitted` and a resolver whose names registry
     carries `sources` -- the two inputs both value gates read."""
-    import json
     snap = os.path.join(tmp, "snapshot.sh")
     with open(snap, "w", encoding="utf-8") as fh:
         fh.write("#!/usr/bin/env bash\n")

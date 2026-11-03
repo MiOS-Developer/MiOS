@@ -49,6 +49,24 @@ class TestListeningPorts(unittest.TestCase):
             paths.append(path)
         return tuple(paths)
 
+    def test_service_roster_uses_current_ports_and_listener_state(self):
+        env = {
+            "monitor_config": lambda: {"ports": {"stack_id": 0, "adguard_ui": 18050,
+                                                "llm_light": 18500, "cpu_node": 18510}},
+            "listening_tcp_ports": lambda: {18500, 18510},
+            "process_val": lambda key, value, offset: value + offset,
+            "check_port": self.check, "IS_WINDOWS": False,
+            "platform": type("Host", (), {"release": staticmethod(lambda: "Linux")}),
+            "engine_online": lambda: False,
+        }
+        get_services, = load(env, "get_services")
+        services = {name: (port, state) for name, port, state in get_services()}
+        self.assertEqual(services["adguard_ui"], (18050, False))
+        self.assertEqual(services["llm_light"], (18500, True))
+        self.assertEqual(services["cpu_node"], (18510, True))
+        self.assertNotIn("adguard", services)
+        self.assertEqual(self.fake.calls, [])
+
     def test_parses_listen_rows_only(self):
         v4 = ['   0: 00000000:206C 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1\n',
               '   1: 0100007F:1F90 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1000        0 2 1\n']
