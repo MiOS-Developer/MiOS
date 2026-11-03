@@ -473,6 +473,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      # The Portal verifier uses the private canonical development image.
+      packages: read
     env:
       MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
     steps:
