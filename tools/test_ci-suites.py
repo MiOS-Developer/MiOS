@@ -797,6 +797,101 @@ sys.exit(int(status))
 
 
 @unittest.skipIf(os.name == "nt", "the Portal producer runs in POSIX MiOSDEV")
+
+class TestPortalConsumerContext(unittest.TestCase):
+    """The consumer uses the producer renderer and propagates strict failures."""
+
+    def _verify(self, *, status=0, minimum=4, capacity=4, pillow=True):
+        with tempfile.TemporaryDirectory(prefix="mios-portal-consumer-") as tmp:
+            base = Path(tmp)
+            root, artifact = base / "source tree", base / "downloaded artifact"
+            (root / "tools").mkdir(parents=True)
+            (root / "usr/share/mios").mkdir(parents=True)
+            artifact.mkdir()
+            (root / "usr/share/mios/mios.toml").write_text(
+                f'[bootstrap.dev_vm]\nminimum_cpus={minimum}\n'
+                '[desktop.portal.builder]\nscope_memory_max="2G"\n'
+                + ('packages=["python3", "python3-pillow"]\n' if pillow
+                   else 'packages=["python3"]\n'))
+            (root / "tools/ci-suites.py").write_text(f"""import importlib.util, sys
+from fractions import Fraction
+if sys.argv[1:] == ["--fedora-image"]:
+    print("localhost/mios-fixture:latest")
+else:
+    spec = importlib.util.spec_from_file_location("consumer_fixture", {str(Path(_HERE, "ci-suites.py"))!r})
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module._effective_cpu_capacity = lambda: Fraction({capacity})
+    sys.exit(module.main(sys.argv[1:]))
+""")
+            calls = base / "runtime.json"
+            shim = base / "bin"
+            shim.mkdir()
+            sudo = shim / "sudo"
+            sudo.write_text(f"""#!{sys.executable}
+import json, pathlib, sys
+pathlib.Path({str(calls)!r}).write_text(json.dumps(sys.argv[1:]))
+sys.exit({status})
+""")
+            sudo.chmod(0o755)
+            helper = str(Path(_ROOT, "tools/lib/ci-runtime.sh"))
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; mios_ci_verify_portal "$2" "$3"',
+                 "mios-portal-consumer", helper, str(root), str(artifact)],
+                env={**os.environ, "PATH": str(shim) + os.pathsep + os.environ["PATH"]},
+                text=True, capture_output=True)
+            return result, json.loads(calls.read_text()) if calls.exists() else None
+
+    def test_verifier_runs_in_bounded_vendor_context(self):
+        result, args = self._verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(args[:3], ["podman", "run", "--rm"])
+        self.assertEqual(args[args.index("--name") + 1], "podman-MiOS-DEV")
+        self.assertEqual(args[args.index("--cpus") + 1], "4")
+        self.assertEqual(args[args.index("--memory") + 1], "2G")
+        mounts = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-v"]
+        self.assertEqual(len(mounts), 2)
+        self.assertTrue(all(mount.endswith(":ro") for mount in mounts))
+        self.assertTrue(any(mount.endswith(":/ctx:ro") for mount in mounts))
+        self.assertTrue(any(mount.endswith(":/run/mios-portal:ro") for mount in mounts))
+        self.assertIn("localhost/mios-fixture:latest", args)
+        self.assertIn("MIOS_PORTAL_VERIFY_PACKAGES=python3 python3-pillow", args)
+        self.assertIn("MIOS_HOST_TOML=/nonexistent", args)
+        self.assertIn("MIOS_USER_TOML=/nonexistent", args)
+        script = args[-1]
+        self.assertLess(script.index("dnf install"), script.index("verify-run"))
+        self.assertIn("exec python3 ./usr/libexec/mios/mios-portal-tree verify-run --run /run/mios-portal", script)
+
+    def test_verifier_failure_is_fatal(self):
+        result, args = self._verify(status=42)
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertIsNotNone(args)
+
+    def test_missing_declared_pillow_never_starts_runtime(self):
+        result, args = self._verify(pillow=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must declare", result.stderr)
+        self.assertIsNone(args)
+
+    def test_insufficient_cpu_never_starts_runtime(self):
+        for kwargs in ({"minimum": 3}, {"capacity": 2}):
+            with self.subTest(**kwargs):
+                result, args = self._verify(**kwargs)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(args)
+
+    def test_all_download_consumers_use_the_shared_verifier(self):
+        workflow = Path(_ROOT, ".github/workflows/mios-ci.yml").read_text()
+        blocks = workflow.split("      - name: Verify the downloaded Portal artifact against this source\n")[1:]
+        self.assertEqual(len(blocks), 3)
+        for block in blocks:
+            script = block.split("      - ", 1)[0]
+            self.assertIn("source tools/lib/ci-runtime.sh", script)
+            self.assertIn("mios_ci_verify_portal . .staged-portal", script)
+            self.assertNotIn("/usr/bin/python3", script)
+        self.assertNotIn("python3-pil\n", workflow)
+
+
 class TestPortalRuntimeContext(unittest.TestCase):
     """Execute the CI producer with a private runtime that rejects overlay-backed temp."""
 

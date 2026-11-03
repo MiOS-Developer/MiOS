@@ -292,7 +292,7 @@ jobs:
         # the lint and reports green.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman skopeo shellcheck python3-pil
+          sudo apt-get install -y podman skopeo shellcheck
           source ./tools/lib/ci-runtime.sh
           mios_ci_prepare_storage
 
@@ -319,8 +319,8 @@ jobs:
 
       - name: Verify the downloaded Portal artifact against this source
         run: |
-          MIOS_THEME_ROOT="$PWD" MIOS_HOST_TOML=/nonexistent MIOS_USER_TOML=/nonexistent \
-            /usr/bin/python3 ./usr/libexec/mios/mios-portal-tree verify-run --run .staged-portal
+          source tools/lib/ci-runtime.sh
+          mios_ci_verify_portal . .staged-portal
 
       - name: Build the OCI image
         run: |
@@ -495,7 +495,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman python3-pil
+          sudo apt-get install -y podman
           source ./tools/lib/ci-runtime.sh
           mios_ci_prepare_storage
           echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -508,8 +508,8 @@ jobs:
 
       - name: Verify the downloaded Portal artifact against this source
         run: |
-          MIOS_THEME_ROOT="$PWD" MIOS_HOST_TOML=/nonexistent MIOS_USER_TOML=/nonexistent \
-            /usr/bin/python3 ./usr/libexec/mios/mios-portal-tree verify-run --run .staged-portal
+          source tools/lib/ci-runtime.sh
+          mios_ci_verify_portal . .staged-portal
 
       - name: Smoke build
         # The Containerfile's final layer runs bootc container lint.
@@ -583,7 +583,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y podman qemu-system-x86 ovmf openssh-client python3-pil
+          sudo apt-get install -y podman qemu-system-x86 ovmf openssh-client
           source ./tools/lib/ci-runtime.sh
           mios_ci_prepare_storage
           echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -601,8 +601,8 @@ jobs:
 
       - name: Verify the downloaded Portal artifact against this source
         run: |
-          MIOS_THEME_ROOT="$PWD" MIOS_HOST_TOML=/nonexistent MIOS_USER_TOML=/nonexistent \
-            /usr/bin/python3 ./usr/libexec/mios/mios-portal-tree verify-run --run .staged-portal
+          source tools/lib/ci-runtime.sh
+          mios_ci_verify_portal . .staged-portal
 
       - name: Bake the image the disk is made from
         run: |

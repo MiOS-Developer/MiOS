@@ -87,6 +87,52 @@ mios_ci_require_cpus() {
     MIOS_DRIFT_ROOT="$root" MIOS_ROOT="$root" python3 "$root/tools/ci-suites.py" --require-cpus "$requested"
 }
 
+# Verify downloaded bytes in the producer's development userspace. Ubuntu's
+# Pillow/zlib emits different PNG/ICO bytes; source binding must stay byte exact.
+mios_ci_verify_portal() (
+    set -euo pipefail
+    local root run image config
+    root="$(cd "${1:-.}" && pwd)"
+    run="$(cd "${2:?usage: mios_ci_verify_portal ROOT RUN_DIR}" && pwd)"
+    image="$(python3 "$root/tools/ci-suites.py" --fedora-image)"
+    config="$(python3 - "$root/usr/share/mios/mios.toml" <<'PY'
+import shlex, sys, tomllib
+with open(sys.argv[1], "rb") as source:
+    data = tomllib.load(source)
+builder = data["desktop"]["portal"]["builder"]
+# These are the verifier's imports, selected from the declared producer set.
+packages = ["python3", "python3-pillow"]
+if not all(package in builder["packages"] for package in packages):
+    raise SystemExit("Portal builder must declare the Python/Pillow verifier dependencies")
+for key, value in (
+    ("PV_CPUS", data["bootstrap"]["dev_vm"]["minimum_cpus"]),
+    ("PV_MEMORY", builder["scope_memory_max"]),
+    ("PV_PACKAGES", " ".join(packages)),
+):
+    print(f"{key}={shlex.quote(str(value))}")
+PY
+)"
+    eval "$config"
+    mios_ci_require_cpus "$root" "$PV_CPUS"
+    # Both mounts are read-only; the complete original verify-run still checks
+    # the package digest, source-derived branding, overlay, and smoke receipts.
+    sudo podman run --rm --name podman-MiOS-DEV --user 0:0 \
+        --cpus "$PV_CPUS" --memory "$PV_MEMORY" --memory-swap "$PV_MEMORY" \
+        -v "$root:/ctx:ro" -v "$run:/run/mios-portal:ro" --workdir /ctx \
+        -e MIOS_PORTAL_VERIFY_PACKAGES="$PV_PACKAGES" \
+        -e MIOS_THEME_ROOT=/ctx -e MIOS_TOML_ROOT=/ctx \
+        -e MIOS_VENDOR_TOML=/ctx/usr/share/mios/mios.toml \
+        -e MIOS_HOST_TOML=/nonexistent -e MIOS_USER_TOML=/nonexistent \
+        --entrypoint /bin/bash "$image" --noprofile --norc -c '
+            set -euo pipefail
+            set -f
+            # shellcheck disable=SC2086
+            dnf install -y --setopt=install_weak_deps=False $MIOS_PORTAL_VERIFY_PACKAGES
+            python3 -c "import PIL, zlib; print(\"Portal verifier:\", PIL.__version__, zlib.ZLIB_RUNTIME_VERSION)"
+            exec python3 ./usr/libexec/mios/mios-portal-tree verify-run --run /run/mios-portal
+        '
+)
+
 # Build Portal once in the bounded development environment. The image bake consumes
 # only stage-run's verified deliverable; no Gecko source/compiler enters that bake.
 mios_ci_build_portal() (
