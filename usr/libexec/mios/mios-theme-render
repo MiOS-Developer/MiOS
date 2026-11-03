@@ -378,6 +378,63 @@ def _zen_global_menu(flatpak: str, enable: bool, dry_run: bool) -> List[str]:
     return [libdir]
 
 
+def _smart_window_prefs(merged: dict) -> List[str]:
+    """Resolve browser-native OpenAI settings independently of the web sidebar."""
+    import copy
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    data = copy.deepcopy(merged)
+    mios_toml.overlay_inputs(data)
+    values = mios_toml.emit_exports(data)
+    mios_toml.resolve_cross_references(values)
+
+    def value(name: str, *, empty: bool = False) -> str:
+        raw = values.get(name, "")
+        if not isinstance(raw, str) or (not empty and not raw.strip()):
+            raise ValueError(f"{name} must be a nonempty string")
+        if "${" in raw or any(ord(char) < 32 or ord(char) == 127 for char in raw):
+            raise ValueError(f"{name} contains unresolved references or control characters")
+        return raw
+
+    endpoint = value("MIOS_AI_ENDPOINT")
+    try:
+        parsed = urlsplit(endpoint)
+        host = parsed.hostname or ""
+        local = host == "localhost" or ipaddress.ip_address(host).is_loopback
+        valid = (local and parsed.scheme in ("http", "https")
+                 and parsed.username is None and parsed.password is None
+                 and not parsed.query and not parsed.fragment
+                 and parsed.path.rstrip("/") == "/v1"
+                 and not any(char.isspace() for char in endpoint)
+                 and (parsed.port is None or 0 < parsed.port < 65536))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("Smart Window requires a loopback OpenAI /v1 endpoint")
+    explicit_model = os.environ.get("MIOS_AI_GATEWAY_MODEL") or os.environ.get("MIOS_AI_MODEL")
+    if explicit_model:
+        values["MIOS_AI_GATEWAY_MODEL"] = explicit_model
+        mios_toml.resolve_cross_references(values)
+    model = value("MIOS_AI_GATEWAY_MODEL" if values.get("MIOS_AI_GATEWAY_MODEL")
+                  else "MIOS_AI_AGENT_MODEL")
+    values["MIOS_AI_KEY"] = (os.environ.get("MIOS_AI_KEY")
+                             or values.get("MIOS_AI_API_KEY") or values.get("MIOS_AI_KEY", ""))
+    mios_toml.resolve_cross_references(values)
+    key = value("MIOS_AI_KEY", empty=True)
+    if model != model.strip() or any(char.isspace() for char in key):
+        raise ValueError("Smart Window model or API key has invalid whitespace")
+    return [
+        f"browser.smartwindow.customEndpoint|string|{endpoint.rstrip('/')}",
+        f"browser.smartwindow.model|string|{model}",
+        f"browser.smartwindow.apiKey|string|{key}",
+        "browser.smartwindow.firstrun.modelChoice|string|0",
+        # Preset-only auxiliary features must fail locally rather than fall back
+        # to their upstream service. The custom engine remains a distinct URL.
+        "browser.smartwindow.endpoint|string|",
+    ]
+
+
 def apply_web(dry_run: bool = False) -> List[str]:
     """Project the rendered SSOT web/chrome CSS and [browser.zen].prefs into every Gecko profile."""
     merged = mios_toml.load_merged()
@@ -391,10 +448,13 @@ def apply_web(dry_run: bool = False) -> List[str]:
     prefs = list(zen["prefs"])
     ai = merged.get("browser_ai", {})
     if ai.get("enable"):
-        # Smart Window / AI chat sidebar wired to the local MiOS provider ([browser_ai], shared with Windows).
+        # The sidebar embeds a web application; Smart Window uses OpenAI /v1.
         provider = re.sub(r"\$\{MIOS_PORTS_([A-Z0-9_]+)\}",
                           lambda m: str(merged["ports"][m.group(1).lower()]), ai["provider_url"])
         prefs += list(ai.get("prefs", [])) + [f"browser.ml.chat.provider|string|{provider}"]
+    smart_window = bool(ai.get("enable") and ai.get("smart_window"))
+    if smart_window:
+        prefs += _smart_window_prefs(merged)
     # Global menu: Zen exports its menubar (File, Edit, View ...) for the top-bar app-menu pills.
     global_menu = bool(zen.get("global_menu", False))
     prefs += [f"widget.gtk.global-menu.enabled|bool|{str(global_menu).lower()}",
@@ -418,7 +478,8 @@ def apply_web(dry_run: bool = False) -> List[str]:
             with open(user_js, encoding="utf-8") as fh:
                 current = fh.read()
         kept = re.sub(re.escape(_USERJS_BEGIN) + r".*?" + re.escape(_USERJS_END) + r"\n?", "", current, flags=re.S)
-        mios_toml.write_atomic(user_js, (kept.rstrip("\n") + "\n" if kept.strip() else "") + block)
+        mios_toml.write_atomic(user_js, (kept.rstrip("\n") + "\n" if kept.strip() else "") + block,
+                               mode=0o600 if smart_window else None)
     return written
 
 

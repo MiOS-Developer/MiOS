@@ -327,13 +327,14 @@ def vendor_tree(root):
     frag_dir = os.environ.get("MIOS_VENDOR_TOML_D") or os.path.join(root, "usr", "lib", "mios", "mios.d")
     return load_merged([vendor] + _frags(frag_dir))
 
-def write_atomic(path, text):
-    """Temp file + rename beside path, keeping an existing file's mode (0644 when new)."""
+def write_atomic(path, text, *, mode=None):
+    """Atomically replace text; preserve the existing mode unless explicitly supplied."""
     import stat
     import tempfile
     parent = os.path.dirname(path) or "."
     os.makedirs(parent, exist_ok=True)
-    mode = stat.S_IMODE(os.stat(path).st_mode) if os.path.exists(path) else 0o644
+    if mode is None:
+        mode = stat.S_IMODE(os.stat(path).st_mode) if os.path.exists(path) else 0o644
     fd, tmp = tempfile.mkstemp(dir=parent, prefix=".mios-write.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:

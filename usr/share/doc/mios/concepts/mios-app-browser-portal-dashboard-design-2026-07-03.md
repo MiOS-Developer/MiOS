@@ -214,6 +214,36 @@ inside the Linux desktop session for everyday browsing + agent CDP control.
 The one concrete defect worth fixing is (1)'s color literals — done in §13
 so `mios-webshell`'s sidebar finally matches the rest of the OS.
 
+### Local browser integration contract
+
+The Linux Zen projection now treats the web chatbot sidebar and Smart Window as
+separate clients. The sidebar embeds `browser_ai.provider_url`; native Smart
+Window uses the layered `MIOS_AI_ENDPOINT`, `MIOS_AI_GATEWAY_MODEL` (or
+`ai.agent_model`) and `MIOS_AI_KEY` contract. The
+`browser_ai.smart_window` switch projects custom model choice `0`, the local
+OpenAI `/v1` endpoint and API key into a private, atomically written `user.js`.
+The preset service endpoint is cleared so an auxiliary preset cannot silently
+fall back to an external service. Profile lines outside the MiOS block survive.
+
+This configures the transport; it does not establish that Smart Window is
+usable. The installed Zen 1.24b / Gecko 159 code still requires its upstream
+account and consent before entering Smart Window, and its chat loop requests an
+account token even for a custom endpoint. MiOS does not fabricate consent,
+account state or tokens in the Zen projection. A separate owned browser adapter
+must remove that dependency while preserving browser tools, inference options,
+streaming and error handling. The existing Portal autoconfig is specific to its
+own browser artifact and is not installed into the Zen Flatpak. See
+[Mozilla's custom-model contract](https://support.mozilla.org/en-US/kb/smart-window-byom)
+and the shipped `AIWindowAccountAuth.sys.mjs`, `Chat.sys.mjs` and
+`openAIEngine.sys.mjs` modules for the runtime gates.
+
+URL launch receipts distinguish dispatch from navigation. Desktop entry
+commands retain their complete fixed arguments and expand URL fields as argv,
+including Flatpak forwarding markers. A running PID, a presented window or a
+successful dispatch returns `navigation_unverified` until a browser observer
+confirms the URL. The CDP path requires a matching target ID and URL. No receipt
+claims an existing process proves a new tab opened.
+
 ## 9. Surface: Cockpit integration
 
 Real, not aspirational. `cockpit.socket` is enabled directly; a rootless

@@ -8153,6 +8153,9 @@ btop_config_dir = "C:\\MiOS\\btop"
 
 [browser_ai]
 enable       = true
+# Native Smart Window uses the canonical local OpenAI endpoint/model/key.
+# Stock upstream still requires its own account/consent; this does not fabricate them.
+smart_window = true
 package      = "Zen-Team.Zen-Browser.Twilight"   # Zen Browser - Twilight (winget id)
 provider_url = "http://localhost:${MIOS_PORTS_OPEN_WEBUI}"            # OWUI front door = the MiOS AI pipeline
 # Firefox/Zen prefs as "name|type|value" (type = bool|string|int) so the bootstrap

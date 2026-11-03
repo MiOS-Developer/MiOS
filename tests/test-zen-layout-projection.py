@@ -10,6 +10,7 @@
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -130,6 +131,10 @@ class TestZenProjection(unittest.TestCase):
     USER_JS = 'user_pref("browser.startup.page", 3);\n'
 
     def setUp(self):
+        environment = mock.patch.dict(os.environ, {k: v for k, v in os.environ.items()
+            if not k.startswith("MIOS_")}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.R = load_render()
         self.tmp = tempfile.TemporaryDirectory()
         root = os.path.join(self.tmp.name, "zen")
@@ -210,6 +215,76 @@ class TestZenProjection(unittest.TestCase):
         self.assertEqual(self.read("chrome", "userChrome.css"), css)
         self.assertEqual(self.read("user.js"), js)
 
+
+
+    def enable_smart_window(self):
+        self.merged["browser_ai"].update(enable=True, smart_window=True)
+        self.merged["ai"].update(endpoint="http://localhost:${MIOS_PORTS_AGENT_PIPE}/v1",
+                                 agent_model="MiOS AI", api_key="offline-fixture-private")
+        self.merged["ports"]["agent_pipe"] = 18640
+
+    def test_native_smart_window_uses_local_openai_contract(self):
+        self.enable_smart_window()
+        self.R.apply_web()
+        text = self.read("user.js")
+        prefs = user_js_prefs(text)
+        self.assertEqual(json.loads(prefs["browser.smartwindow.customEndpoint"]),
+                         "http://localhost:18640/v1")
+        self.assertEqual(json.loads(prefs["browser.smartwindow.model"]), "MiOS AI")
+        self.assertEqual(json.loads(prefs["browser.smartwindow.apiKey"]), "offline-fixture-private")
+        self.assertEqual(json.loads(prefs["browser.smartwindow.firstrun.modelChoice"]), "0")
+        self.assertEqual(json.loads(prefs["browser.smartwindow.endpoint"]), "")
+        self.assertEqual(json.loads(prefs["browser.ml.chat.provider"]),
+                         "http://localhost:" + str(self.merged["ports"]["open_webui"]))
+        self.assertNotIn("browser.smartwindow.tos.consentTime", prefs)
+        self.assertNotIn("browser.smartwindow.firstrun.hasCompleted", prefs)
+        self.assertTrue(text.startswith(self.USER_JS))
+        path = os.path.join(self.profile, "user.js")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.R.apply_web()
+        self.assertEqual(self.read("user.js"), text)
+
+    def test_native_smart_window_process_inputs_and_private_first_write(self):
+        self.enable_smart_window()
+        os.unlink(os.path.join(self.profile, "user.js"))
+        with mock.patch.dict(os.environ, {"MIOS_AI_ENDPOINT": "http://[::1]:19001/v1/",
+                "MIOS_AI_GATEWAY_MODEL": "custom-local-agent", "MIOS_AI_KEY": 'fixture-"quoted"|key'}):
+            self.R.apply_web()
+        prefs = user_js_prefs(self.read("user.js"))
+        self.assertEqual(json.loads(prefs["browser.smartwindow.customEndpoint"]), "http://[::1]:19001/v1")
+        self.assertEqual(json.loads(prefs["browser.smartwindow.model"]), "custom-local-agent")
+        self.assertEqual(json.loads(prefs["browser.smartwindow.apiKey"]), 'fixture-"quoted"|key')
+        self.assertEqual(os.stat(os.path.join(self.profile, "user.js")).st_mode & 0o777, 0o600)
+
+    def test_smart_window_invalid_or_cloud_endpoint_leaves_profile_untouched(self):
+        self.enable_smart_window()
+        for endpoint in ("https://example.invalid/v1", "http://127.0.0.1:0/v1",
+                "http://user@localhost/v1", "http://localhost/v1?key=fixture",
+                "http://localhost/chat/completions", "http://localhost:${MIOS_UNKNOWN}/v1",
+                "http://localhost/v1\n"):
+            with self.subTest(endpoint=endpoint):
+                self.merged["ai"]["endpoint"] = endpoint
+                with self.assertRaises(ValueError):
+                    self.R.apply_web()
+                self.assertEqual(self.read("user.js"), self.USER_JS)
+                self.assertEqual(self.read("chrome", "userChrome.css"), self.USER_CSS)
+
+    def test_smart_window_dry_run_does_not_write_credentials(self):
+        self.enable_smart_window()
+        paths = self.R.apply_web(dry_run=True)
+        self.assertNotIn("offline-fixture-private", repr(paths))
+        self.assertEqual(self.read("user.js"), self.USER_JS)
+        self.assertEqual(self.read("chrome", "userChrome.css"), self.USER_CSS)
+
+    def test_smart_window_disabled_leaves_sidebar_available(self):
+        self.enable_smart_window()
+        self.merged["browser_ai"]["smart_window"] = False
+        self.merged["ai"]["endpoint"] = "https://example.invalid/v1"
+        self.R.apply_web()
+        prefs = user_js_prefs(self.read("user.js"))
+        self.assertNotIn("browser.smartwindow.customEndpoint", prefs)
+        self.assertNotIn("browser.smartwindow.apiKey", prefs)
+        self.assertIn("browser.ml.chat.provider", prefs)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
