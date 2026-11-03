@@ -1525,8 +1525,9 @@ mod tests {
     fn ports_reach_exec_environment_health_and_publish_from_layered_ssot() {
         let source = include_str!("../../../../usr/share/mios/mios.toml");
         let mut doc: toml::Value = source.parse().unwrap();
-        doc["ports"]["cpu_node"] = toml::Value::Integer(18510);
-        doc["ports"]["node"] = toml::Value::Integer(18650);
+        doc["ports"]["categories"]["inference"]["base"] = toml::Value::Integer(18500);
+        doc["ports"]["categories"]["node"]["base"] = toml::Value::Integer(18640);
+        mios_resolver::ports::derive_ports(&mut doc);
         let exports = mios_resolver::emit::build_exports_map(&doc, 0);
         for name in ["mios-cpu-node", "mios-node"] {
             let rendered = render_nested_quadlet(
