@@ -573,6 +573,8 @@ struct LightSettings {
     device: String,
     layers: String,
     threads: i32,
+    batch_size: i32,
+    ubatch_size: i32,
     profile: String,
     drivers: Vec<String>,
     dropin: PathBuf,
@@ -591,6 +593,17 @@ fn light_string<'a>(table: &'a Value, key: &str) -> Result<&'a str, String> {
         })
 }
 
+// The server parses both positive uint32 batch counts through its native int
+// argument handler, so reject values above i32::MAX instead of wrapping them.
+fn light_batch_size(llama: &Value, key: &str) -> Result<i32, String> {
+    llama
+        .get(key)
+        .and_then(Value::as_integer)
+        .and_then(|n| i32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or_else(|| format!("llamacpp.{key} must be a positive 32-bit integer"))
+}
+
 fn light_settings(data: &Value) -> Result<LightSettings, String> {
     let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
     let threads = llama
@@ -599,6 +612,11 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
         .and_then(|n| i32::try_from(n).ok())
         .filter(|n| *n > 0)
         .ok_or("llamacpp.light_threads must be a positive 32-bit integer")?;
+    let batch_size = light_batch_size(llama, "light_batch_size")?;
+    let ubatch_size = light_batch_size(llama, "light_ubatch_size")?;
+    if ubatch_size > batch_size {
+        return Err("llamacpp.light_ubatch_size must not exceed light_batch_size".into());
+    }
     let slot = light_string(llama, "slot_dir")?;
     let slot = Path::new(slot);
     if !slot.is_absolute()
@@ -739,6 +757,8 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
         device: device.into(),
         layers: layers.into(),
         threads,
+        batch_size,
+        ubatch_size,
         profile: profile.into(),
         drivers,
         dropin,
@@ -1035,8 +1055,8 @@ pub fn light_backend_plan(
         contents.push_str(&format!("GroupAdd={group}\n"));
     }
     contents.push_str(&format!(
-        "Environment=LLAMA_ARG_DEVICE={}\nEnvironment=LLAMA_ARG_N_GPU_LAYERS={}\nEnvironment=LLAMA_ARG_THREADS={}\n",
-        cfg.device, cfg.layers, cfg.threads
+        "Environment=LLAMA_ARG_DEVICE={}\nEnvironment=LLAMA_ARG_N_GPU_LAYERS={}\nEnvironment=LLAMA_ARG_THREADS={}\nEnvironment=LLAMA_ARG_BATCH={}\nEnvironment=LLAMA_ARG_UBATCH={}\n",
+        cfg.device, cfg.layers, cfg.threads, cfg.batch_size, cfg.ubatch_size
     ));
     contents.push_str(&format!(
         "Environment=XDG_CACHE_HOME={}\n",
@@ -1404,6 +1424,118 @@ mod tests {
             .unwrap_err()
             .contains("llamacpp.light_threads"));
         assert_eq!(fs::read_to_string(&first.output).unwrap(), before);
+    }
+
+    #[test]
+    fn light_batch_budget_changes_only_its_environment_and_reloads_once() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = ssot();
+        data["llamacpp"]["light_backend"] = Value::String("cpu".into());
+        let absent = root.path().join("absent");
+        let host = Host {
+            dri: &absent,
+            sys: &absent,
+        };
+        let first = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        assert!(first
+            .contents
+            .contains("Environment=LLAMA_ARG_BATCH=2048\n"));
+        assert!(first
+            .contents
+            .contains("Environment=LLAMA_ARG_UBATCH=512\n"));
+        apply_light_backend(root.path(), &first).unwrap();
+
+        data["llamacpp"]["light_batch_size"] = Value::Integer(128);
+        data["llamacpp"]["light_ubatch_size"] = Value::Integer(64);
+        let changed = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        assert_eq!(changed.output, first.output);
+        assert_eq!(
+            changed.contents,
+            first
+                .contents
+                .replace("LLAMA_ARG_BATCH=2048\n", "LLAMA_ARG_BATCH=128\n")
+                .replace("LLAMA_ARG_UBATCH=512\n", "LLAMA_ARG_UBATCH=64\n")
+        );
+        let mut reloads = 0;
+        assert!(apply_light_with_reload(root.path(), &changed, &mut || {
+            reloads += 1;
+            Ok(())
+        })
+        .unwrap());
+        let modified = fs::metadata(&changed.output).unwrap().modified().unwrap();
+        assert!(!apply_light_with_reload(root.path(), &changed, &mut || {
+            reloads += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert_eq!(reloads, 1);
+        assert_eq!(
+            fs::metadata(&changed.output).unwrap().modified().unwrap(),
+            modified
+        );
+        assert_eq!(
+            fs::read_to_string(&changed.output).unwrap(),
+            changed.contents
+        );
+
+        // Equal physical/logical budgets and the server parser's bounds are valid.
+        for bound in [1, i64::from(i32::MAX)] {
+            data["llamacpp"]["light_batch_size"] = Value::Integer(bound);
+            data["llamacpp"]["light_ubatch_size"] = Value::Integer(bound);
+            assert!(light_backend_plan(root.path(), &data, &host, "").is_ok());
+        }
+    }
+
+    #[test]
+    fn invalid_light_batch_budgets_preserve_existing_managed_output() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = ssot();
+        data["llamacpp"]["light_backend"] = Value::String("cpu".into());
+        let absent = root.path().join("absent");
+        let host = Host {
+            dri: &absent,
+            sys: &absent,
+        };
+        let first = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        apply_light_backend(root.path(), &first).unwrap();
+        let before = fs::read(&first.output).unwrap();
+        let modified = fs::metadata(&first.output).unwrap().modified().unwrap();
+        for key in ["light_batch_size", "light_ubatch_size"] {
+            for value in [
+                Value::Integer(0),
+                Value::Integer(-1),
+                Value::Integer(i64::from(i32::MAX) + 1),
+                Value::Integer(i64::from(u32::MAX) + 1),
+                Value::Float(64.5),
+                Value::String("64".into()),
+                Value::Boolean(true),
+            ] {
+                let mut invalid = data.clone();
+                invalid["llamacpp"][key] = value;
+                assert!(light_backend_plan(root.path(), &invalid, &host, "")
+                    .unwrap_err()
+                    .contains(key));
+                assert_eq!(fs::read(&first.output).unwrap(), before);
+                assert_eq!(
+                    fs::metadata(&first.output).unwrap().modified().unwrap(),
+                    modified
+                );
+            }
+            let mut missing = data.clone();
+            missing["llamacpp"].as_table_mut().unwrap().remove(key);
+            assert!(light_backend_plan(root.path(), &missing, &host, "")
+                .unwrap_err()
+                .contains(key));
+        }
+        data["llamacpp"]["light_ubatch_size"] = Value::Integer(2049);
+        assert!(light_backend_plan(root.path(), &data, &host, "")
+            .unwrap_err()
+            .contains("must not exceed"));
+        assert_eq!(fs::read(&first.output).unwrap(), before);
+        assert_eq!(
+            fs::metadata(&first.output).unwrap().modified().unwrap(),
+            modified
+        );
     }
 
     #[test]

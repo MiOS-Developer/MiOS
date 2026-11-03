@@ -16,6 +16,8 @@ ContainerName=mios-llm-light
 Entrypoint=/app/llama-swap
 Environment=HOME=/var/lib/mios/llamacpp
 Environment=LLAMA_ARG_THREADS=1
+Environment=LLAMA_ARG_BATCH=2048
+Environment=LLAMA_ARG_UBATCH=512
 Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64
 Environment=LLAMA_ARG_DEVICE=none
 Environment=LLAMA_ARG_N_GPU_LAYERS=0

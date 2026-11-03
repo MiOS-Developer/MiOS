@@ -2077,6 +2077,10 @@
           <input type="text" id="f-llamacpp-light-gpu-profile" data-key="llamacpp.light_gpu_profile" value="auto">
           <label for="f-llamacpp-light-threads">Light inference CPU threads (set within the service CPU allowance)</label>
           <input type="number" id="f-llamacpp-light-threads" data-key="llamacpp.light_threads" data-type="int" min="1" max="2147483647" step="1" value="1">
+          <label for="f-llamacpp-light-batch">Light inference logical batch size (tokens)</label>
+          <input type="number" id="f-llamacpp-light-batch" data-key="llamacpp.light_batch_size" data-type="int" min="1" max="2147483647" step="1" value="2048">
+          <label for="f-llamacpp-light-ubatch">Light inference physical batch size (tokens; at most the logical batch)</label>
+          <input type="number" id="f-llamacpp-light-ubatch" data-key="llamacpp.light_ubatch_size" data-type="int" min="1" max="2147483647" step="1" value="512">
           <label for="f-ai-embed">embed_model</label>
           <input type="text" id="f-ai-embed" data-key="ai.embed_model" placeholder="nomic-embed-text">
           <label for="f-ai-bake">bake_models (CSV; consumed by model prep scripts)</label>

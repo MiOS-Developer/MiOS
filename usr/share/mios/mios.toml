@@ -7320,6 +7320,10 @@ cpu_node_threads = 14
 # leaves headroom within the minimum four-CPU system allocation.
 # This is an explicit budget, not an automatic affinity clamp.
 light_threads = 1
+# Logical and physical token batch limits inherited by every light server child.
+# Keep the physical batch no larger than the logical batch. Server integer bounds apply.
+light_batch_size = 2048
+light_ubatch_size = 512
 # Explicit serving backend; CPU remains valid without any GPU or CDI devices.
 light_backend = "cpu"
 # auto uses the running desktop hardware profile; an explicit profile must exist.
@@ -14744,6 +14748,8 @@ Entrypoint = "/app/llama-swap"
 Environment = [
   "HOME=/var/lib/mios/llamacpp",
   "LLAMA_ARG_THREADS=${MIOS_LLAMACPP_LIGHT_THREADS:-1}",
+  "LLAMA_ARG_BATCH=${MIOS_LLAMACPP_LIGHT_BATCH_SIZE:-2048}",
+  "LLAMA_ARG_UBATCH=${MIOS_LLAMACPP_LIGHT_UBATCH_SIZE:-512}",
   "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64"
 ]
 EnvironmentFile = "/etc/mios/install.env"
