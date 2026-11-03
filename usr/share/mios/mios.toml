@@ -7723,7 +7723,7 @@ bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-
 # beyond this on hosts with more headroom.
 ram_floor_gb        = 8
 
-micro_model              = "lfm2:700m"   # Liquid AI LFM2-700M (dense 'lfm2' arch merged mainline llama.cpp; ~0.7-1.0GB resident, ~2x faster CPU decode than Qwen; beats Qwen3-0.6B on MMLU/GSM8K/IFEval). Family-diversity off Qwen. Background classify/expand/gate only (Pythonic tool-call format, not JSON-tool agent). Served by mios-llm-light :11450; the qwen3:1.7b alias still resolves.
+micro_model              = "lfm2:700m"   # Background classify/expand/gate model served by the configured local light lane.
 
 [ai.kv]
 slot_save_path = "/var/lib/mios/llamacpp/slots"   # --slot-save-path for chat lanes (matches tmpfiles + mios-llm-light.yaml)
