@@ -309,6 +309,9 @@ mios_ci_verify_devcontainer_account() (
     state="$3"
     [[ -n "$image" && ! -e "$state" ]] || { echo "Image is empty or devcontainer smoke state already exists: $state" >&2; exit 1; }
     expected="$(git -C "$root" rev-parse --verify 'HEAD^{commit}')"
+    git -C "$root" diff --quiet --no-ext-diff HEAD -- || {
+        echo "Tracked checkout changes prevent verified image publication" >&2; exit 1;
+    }
     config="$(python3 - "$root" <<'PY'
 import json, re, sys, tomllib
 from pathlib import Path
@@ -338,15 +341,20 @@ Path(sys.argv[2]).write_text(runs[0].replace("\\\n", " "))
 PY
     # Set the cleanup trap only after successful creation. A name collision
     # belongs to its owner and must never remove that participant's container.
-    container="$(sudo podman run --detach --pull=never \
+    container="$(sudo podman create --pull=never \
         --name podman-MiOS-DEV-mios-devcontainer-account --user 0:0 \
         --cpus "$cpus" --network none --ulimit core=0:0 \
         -v "$state:/run/mios-devcontainer-smoke:ro" \
         --entrypoint /usr/bin/sleep "$image" "$limit")"
     trap 'sudo podman rm --force "$container" >/dev/null' EXIT
+    timeout "$limit" sudo podman start "$container" >/dev/null
     observed="$(sudo podman exec "$container" /usr/bin/cat /usr/share/mios/source-revision)"
     [[ "$observed" = "$expected" ]] || {
         echo "MiOS image source revision does not match the checkout; refusing publication" >&2; exit 1;
+    }
+    observed="$(sudo podman exec "$container" /usr/bin/cat /usr/share/mios/source-state)"
+    [[ "$observed" = clean ]] || {
+        echo "MiOS image was built from tracked source changes; refusing publication" >&2; exit 1;
     }
     timeout "$limit" sudo podman exec -e "MIOS_IDENTITY_USERNAME=$user" \
         "$container" /bin/bash /run/mios-devcontainer-smoke/account-wiring.sh

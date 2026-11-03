@@ -662,7 +662,7 @@ class TestBuilders(unittest.TestCase):
 class TestDevcontainerPublicationSmoke(unittest.TestCase):
     """Exercise the actual publication gate across a private container boundary."""
 
-    def _run(self, fault="", revision="", collision=False, minimum=4):
+    def _run(self, fault="", revision="", collision=False, minimum=4, dirty=""):
         with tempfile.TemporaryDirectory(prefix="mios-devcontainer-publication-") as tmp:
             root = Path(tmp)
             (root / "usr/share/mios").mkdir(parents=True)
@@ -678,6 +678,11 @@ class TestDevcontainerPublicationSmoke(unittest.TestCase):
             subprocess.run(["git", "-C", str(root), "-c", "user.name=MiOS",
                             "-c", "user.email=mios@example.invalid", "commit", "-qm", "fixture"], check=True)
             expected = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            if dirty:
+                tracked = root / "usr/share/mios/mios.toml"
+                tracked.write_text(tracked.read_text() + "# tracked fixture change\n")
+                if dirty == "staged":
+                    subprocess.run(["git", "-C", str(root), "add", str(tracked)], check=True)
             tools = root / "bin"
             tools.mkdir()
             calls = root / "calls.json"
@@ -692,13 +697,19 @@ args=args[1:]
 log=Path(os.environ["MIOS_SMOKE_CALLS"])
 calls=json.loads(log.read_text());calls.append(args);log.write_text(json.dumps(calls))
 fault=os.environ["MIOS_SMOKE_FAULT"]
-if args[0]=="run":
+if args[0]=="create":
     if os.environ["MIOS_SMOKE_COLLISION"]=="1": raise SystemExit(125)
     print("mios-fixture-container")
+elif args[0]=="start":
+    assert args==["start","mios-fixture-container"]
+    if fault=="start": raise SystemExit(125)
 elif args[0]=="exec":
     if "/usr/share/mios/source-revision" in args:
         if fault=="missing-revision": raise SystemExit(1)
         print(os.environ["MIOS_SMOKE_REVISION"])
+    elif "/usr/share/mios/source-state" in args:
+        if fault=="missing-state": raise SystemExit(1)
+        print("dirty" if fault=="dirty-state" else "clean")
     elif "/run/mios-devcontainer-smoke/account-wiring.sh" in args:
         if fault=="account": raise SystemExit(7)
     elif "--user" in args:
@@ -727,7 +738,7 @@ else: raise AssertionError(args)
         result, calls, wired, receipt, expected = self._run()
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         first = calls[0]
-        self.assertEqual("run", first[0])
+        self.assertEqual("create", first[0])
         self.assertIn("--pull=never", first)
         self.assertEqual("none", first[first.index("--network") + 1])
         self.assertEqual("4", first[first.index("--cpus") + 1])
@@ -740,7 +751,8 @@ else: raise AssertionError(args)
         self.assertIn("remote_user=developer\nuid=1000\n", receipt)
 
     def test_missing_or_stale_source_proof_stops_before_account_mutation(self):
-        for kwargs in ({"fault": "missing-revision"}, {"revision": "0" * 40}):
+        for kwargs in ({"fault": "missing-revision"}, {"revision": "0" * 40},
+                       {"fault": "missing-state"}, {"fault": "dirty-state"}):
             with self.subTest(kwargs=kwargs):
                 result, calls, _, receipt, _ = self._run(**kwargs)
                 self.assertNotEqual(0, result.returncode)
@@ -761,11 +773,27 @@ else: raise AssertionError(args)
     def test_collision_is_preserved_and_invalid_cpu_floor_never_starts(self):
         result, calls, _, receipt, _ = self._run(collision=True)
         self.assertNotEqual(0, result.returncode)
-        self.assertEqual(["run"], [call[0] for call in calls])
+        self.assertEqual(["create"], [call[0] for call in calls])
         self.assertIsNone(receipt)
         result, calls, _, _, _ = self._run(minimum=2)
         self.assertNotEqual(0, result.returncode)
         self.assertEqual([], calls)
+
+    def test_failed_start_cleans_only_the_successfully_created_id(self):
+        result, calls, _, receipt, _ = self._run(fault="start")
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(["create", "start", "rm"], [call[0] for call in calls])
+        self.assertEqual(["rm", "--force", "mios-fixture-container"], calls[-1])
+        self.assertIsNone(receipt)
+
+    def test_tracked_checkout_changes_never_start_a_publication_probe(self):
+        for dirty in ("unstaged", "staged"):
+            with self.subTest(dirty=dirty):
+                result, calls, _, receipt, _ = self._run(dirty=dirty)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Tracked checkout changes", result.stderr)
+                self.assertEqual([], calls)
+                self.assertIsNone(receipt)
 
     def test_source_proof_uses_context_git_and_refuses_an_unresolvable_worktree(self):
         producer = next(line.strip().removesuffix("\\").strip().removesuffix(";")
@@ -793,6 +821,59 @@ else: raise AssertionError(args)
             result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
             self.assertNotEqual(0, result.returncode)
             self.assertNotEqual(expected, proof.read_text().strip())
+
+    def test_partial_context_records_dirty_copied_inputs_without_rejecting_local_builds(self):
+        source = _read(OS_CF)
+        start = source.index("    git -c safe.directory=/ctx -C /ctx rev-parse --verify")
+        producer = source[start:source.index("    dnf clean all;", start)].replace("\\\n", " ")
+        with tempfile.TemporaryDirectory(prefix="mios-context-source-state-") as tmp:
+            root = Path(tmp) / "context"
+            (root / "usr").mkdir(parents=True)
+            tracked = root / "usr/probe"
+            tracked.write_text("clean\n")
+            omitted = root / "README.md"
+            omitted.write_text("intentionally absent from the ctx COPY stage\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=MiOS",
+                            "-c", "user.email=mios@example.invalid", "commit", "-qm", "fixture"], check=True)
+            # Omitted tracked paths must not make the partial readonly context dirty.
+            omitted.unlink()
+            proof, state = Path(tmp) / "revision", Path(tmp) / "state"
+            command = producer.replace("/ctx", shlex.quote(str(root))).replace(
+                "/usr/share/mios/source-revision", shlex.quote(str(proof))).replace(
+                "/usr/share/mios/source-state", shlex.quote(str(state)))
+            result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("clean", state.read_text().strip())
+            for staged in (False, True):
+                tracked.write_text("dirty\n")
+                if staged:
+                    subprocess.run(["git", "-C", str(root), "add", str(tracked)], check=True)
+                result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual("dirty", state.read_text().strip())
+            tracked.unlink()
+            result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("dirty", state.read_text().strip())
+
+    def test_context_provenance_covers_every_copied_tracked_input(self):
+        source = _read(OS_CF)
+        ctx = source.split("FROM scratch AS ctx", 1)[1].split("\nFROM ", 1)[0]
+        copied = {}
+        for line in ctx.splitlines():
+            if line.startswith("COPY "):
+                _, path, destination = line.split()
+                if path not in (".git", ".staged-portal/"):
+                    copied[path] = destination
+        for path, destination in copied.items():
+            self.assertEqual("/ctx/" + path, destination)
+        check = re.search(r"if git -c safe.directory=/ctx -C /ctx diff --quiet --no-ext-diff HEAD -- (.*?); then",
+                          source.replace("\\\n", " "), re.S)
+        self.assertIsNotNone(check)
+        self.assertEqual(set(copied), set(check.group(1).split()))
+        self.assertIn("Containerfile", copied)
 
     def test_both_publishers_gate_the_actual_image_before_external_actions(self):
         for relative, external in (

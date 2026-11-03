@@ -16,14 +16,16 @@ COPY src/                  /ctx/src/
 # Produced by mios-portal-tree stage-run after the off-image builder succeeds.
 # Required by universal phase 67; never copy the whole /artifacts symlink store.
 COPY .staged-portal/       /ctx/artifacts/portal/
-COPY MiOS.md               /ctx/rootmd/MiOS.md
-COPY AGENTS.md             /ctx/rootmd/AGENTS.md
-COPY CLAUDE.md             /ctx/rootmd/CLAUDE.md
-COPY GEMINI.md             /ctx/rootmd/GEMINI.md
+COPY MiOS.md               /ctx/MiOS.md
+COPY AGENTS.md             /ctx/AGENTS.md
+COPY CLAUDE.md             /ctx/CLAUDE.md
+COPY GEMINI.md             /ctx/GEMINI.md
 
 COPY .dotfiles/             /ctx/.dotfiles/
 COPY .git                  /ctx/.git/
 COPY Justfile              /ctx/Justfile
+COPY Containerfile         /ctx/Containerfile
+COPY .dockerignore         /ctx/.dockerignore
 
 FROM docker.io/library/rust:slim AS rust-builder
 WORKDIR /build
@@ -106,10 +108,8 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     else \
         echo "[ctx] WARN: /ctx/.git absent"; \
     fi; \
-    if [ -d /ctx/rootmd ]; then \
-        cp -f /ctx/rootmd/*.md / 2>/dev/null || true; \
-        chmod 0644 /MiOS.md /AGENTS.md /CLAUDE.md /GEMINI.md 2>/dev/null || true; \
-    fi; \
+    cp -f /ctx/MiOS.md /ctx/AGENTS.md /ctx/CLAUDE.md /ctx/GEMINI.md /; \
+    chmod 0644 /MiOS.md /AGENTS.md /CLAUDE.md /GEMINI.md; \
     find /tmp/build -type f \
         \( -name "*.sh" -o -name "*.toml" -o -name "*.conf" \
            -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" \
@@ -149,7 +149,15 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     chmod +x /usr/libexec/mios/copy-build-log.sh 2>/dev/null || true; \
     CTX=/tmp/build /tmp/build/automation/build.sh; \
     git -c safe.directory=/ctx -C /ctx rev-parse --verify 'HEAD^{commit}' > /usr/share/mios/source-revision; \
-    chmod 0644 /usr/share/mios/source-revision; \
+    if git -c safe.directory=/ctx -C /ctx diff --quiet --no-ext-diff HEAD -- \
+        automation/ usr/ etc/ config/artifacts/ tools/ src/ VERSION .dotfiles/ \
+        Justfile Containerfile .dockerignore MiOS.md AGENTS.md CLAUDE.md GEMINI.md; then \
+        printf '%s\n' clean > /usr/share/mios/source-state; \
+    else \
+        _source_status=$?; [ "$_source_status" -eq 1 ] || exit "$_source_status"; \
+        printf '%s\n' dirty > /usr/share/mios/source-state; \
+    fi; \
+    chmod 0644 /usr/share/mios/source-revision /usr/share/mios/source-state; \
     dnf clean all; \
     rm -rf /tmp/build; \
     find /var -mindepth 1 -maxdepth 1 ! -name tmp ! -name cache -exec rm -rf {} +; \

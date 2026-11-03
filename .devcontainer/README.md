@@ -37,8 +37,13 @@ newly built MiOS image, then attach as the configured user and check UID 1000,
 the home, workspace access and noninteractive sudo. The gate also compares
 `/usr/share/mios/source-revision`, written from the build context's Git
 commit, with the publishing checkout. An inherited OCI revision label is not
-the source proof. A failed smoke blocks publication; it does not start
-sidecars or update a running Codespace.
+the source proof. Publication requires a clean tracked checkout and an image
+`source-state` of `clean` from the copied tracked build inputs. A local build
+with tracked changes remains possible and records `dirty`; that image cannot
+pass publication. The smoke creates its private container before installing
+cleanup and starting it, so a failed start removes only that created ID.
+A failed smoke blocks publication; it does not start sidecars or update a
+running Codespace.
 
 ## Recovering a missing-account startup
 
