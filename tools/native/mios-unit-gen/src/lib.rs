@@ -784,8 +784,20 @@ fn resolve_port_placeholders(key: &str, value: &str, ssot: Option<&toml::Value>)
             .strip_prefix("MIOS_PORTS_")
             .or_else(|| name.strip_prefix("MIOS_PORT_"))
         {
-            let port = ports?.get(k.to_ascii_lowercase())?.as_integer()?;
-            return Some((port + offset).to_string());
+            let key = k.to_ascii_lowercase();
+            let port = ports?.get(&key)?.as_integer()?;
+            let pinned = ports
+                .and_then(|p| p.get("categories"))
+                .and_then(toml::Value::as_table)
+                .is_some_and(|categories| {
+                    categories.values().any(|category| {
+                        category
+                            .get("pinned")
+                            .and_then(toml::Value::as_table)
+                            .is_some_and(|pins| pins.contains_key(&key))
+                    })
+                });
+            return Some((port + if pinned { 0 } else { offset }).to_string());
         }
         let k = name.strip_prefix("MIOS_NETWORK_")?.to_ascii_lowercase();
         match ssot.get("network")?.get(k)? {

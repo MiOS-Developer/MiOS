@@ -2813,9 +2813,9 @@
         <label for="f-port-open-webui">open_webui (Open WebUI chat front-end)</label>
         <input type="text" id="f-port-open-webui" data-key="ports.open_webui" data-type="int" placeholder="3030">
         <label for="f-port-cockpit">cockpit (host web console)</label>
-        <input type="text" id="f-port-cockpit" data-key="ports.cockpit" data-type="int" placeholder="9090">
-        <label for="f-port-cockpit-link">cockpit_link (Podman Desktop discovery shim)</label>
-        <input type="text" id="f-port-cockpit-link" data-key="ports.cockpit_link" data-type="int" placeholder="19090">
+        <input type="text" id="f-port-cockpit" data-key="ports.cockpit" data-type="int" placeholder="8110">
+        <label for="f-port-cockpit-link">cockpit_link (native web-console discovery listener)</label>
+        <input type="text" id="f-port-cockpit-link" data-key="ports.cockpit_link" data-type="int" placeholder="8120">
         <label for="f-port-llm-light">llm_light (primary local inference lane; llama.cpp)</label>
         <input type="text" id="f-port-llm-light" data-key="ports.llm_light" data-type="int" placeholder="11450">
         <label for="f-port-cpu-node">cpu_node (always-on / gaming-immune CPU llama-server lane)</label>
@@ -2909,7 +2909,7 @@
         <label for="f-img-searxng">searxng</label>
         <input type="text" id="f-img-searxng" data-key="image.sidecars.searxng" placeholder="docker.io/searxng/searxng:latest">
         <label for="f-img-forge">forge (Forgejo)</label>
-        <input type="text" id="f-img-forge" data-key="image.sidecars.forge" placeholder="codeberg.org/forgejo/forgejo:12">
+        <input type="text" id="f-img-forge" data-key="image.sidecars.forge" placeholder="codeberg.org/forgejo/forgejo:17.0.1">
         <label for="f-img-forge-runner">forge_runner (CI)</label>
         <input type="text" id="f-img-forge-runner" data-key="image.sidecars.forge_runner" placeholder="code.forgejo.org/forgejo/runner:7">
         <label for="f-img-k3s">k3s</label>
@@ -4662,7 +4662,6 @@ const QUADLETS = [
   { name: "mios-ceph",                default: true  },
   { name: "mios-k3s",                 default: true  },
   { name: "mios-forge",               default: true  },
-  { name: "mios-cockpit-link",        default: true  },
   { name: "mios-open-webui",          default: true  },
   { name: "mios-code-server",         default: true  },
   { name: "mios-crowdsec-dashboard",  default: false },

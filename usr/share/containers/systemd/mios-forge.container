@@ -35,7 +35,7 @@ EnvironmentFile=/etc/mios/install.env
 Exec=forgejo web
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=1000
-Image=codeberg.org/forgejo/forgejo:latest
+Image=codeberg.org/forgejo/forgejo:17.0.1
 Label=org.opencontainers.image.title=mios-forge
 Label=org.opencontainers.image.url=http://localhost:8400/
 Label=org.opencontainers.image.documentation=https://forgejo.org/docs/latest/
