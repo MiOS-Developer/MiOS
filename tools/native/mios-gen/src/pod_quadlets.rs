@@ -293,12 +293,12 @@ pub fn resolve_one(
             .get(&canonical)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| format!("Quadlet port {name} is absent from the resolved [ports] SSOT"))?;
-        value
+        let port = value
             .parse::<u16>()
             .ok()
             .filter(|port| *port > 0)
             .ok_or_else(|| format!("Quadlet port {name} is not an integer in 1..=65535"))?;
-        return Ok(value.clone());
+        return Ok(port.to_string());
     }
     if placeholders.contains(name) {
         let def_expanded = if sep {
@@ -1568,6 +1568,10 @@ mod tests {
             assert!(expand_str("${MIOS_PORTS_TEST:-8510}", &placeholders, &exports, &sidecars)
                 .is_err(), "accepted {invalid:?}");
         }
+        exports.insert("MIOS_PORTS_TEST".into(), "65535".into());
+        assert_eq!(expand_str("${MIOS_PORTS_TEST}", &placeholders, &exports, &sidecars).unwrap(), "65535");
+        exports.insert("MIOS_PORTS_TEST".into(), "+19001".into());
+        assert_eq!(expand_str("${MIOS_PORTS_TEST}", &placeholders, &exports, &sidecars).unwrap(), "19001");
         exports.clear();
         assert!(expand_str("${MIOS_PORTS_MISSING:-8510}", &placeholders, &exports, &sidecars).is_err());
         let placeholders = BTreeSet::from(["FEDORA_VERSION".into()]);
