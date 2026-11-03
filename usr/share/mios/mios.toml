@@ -18025,7 +18025,7 @@ vhdx = false
 # and each missing name cost a CI round trip to discover. The agent-pipe already
 # declares what it needs, so the runner installs THAT and the list cannot drift
 # from the code again.
-requirements = ["requirements-dev.txt"]
+requirements = ["requirements-dev.txt", "usr/lib/mios/agent-pipe/requirements.txt"]
 # Pinned dev dependencies now include pyflakes, mypy, ruff, pytest, etc.
 packages = []
 
