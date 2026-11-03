@@ -1115,15 +1115,129 @@ fn light_render_device(
 }
 
 #[cfg(unix)]
-fn light_cuda_device(
+#[derive(Debug, PartialEq, Eq)]
+struct CudaKernelIdentity {
+    pci_path: PathBuf,
+    vendor: String,
+    product: String,
+    class: String,
+    uuid: String,
+    minor: u32,
+    major: u32,
+    gid: u32,
+    node_device: u64,
+    node_inode: u64,
+    node_rdev: u64,
+}
+
+#[cfg(unix)]
+fn nvidia_core_major(devices: &str) -> Result<u32, String> {
+    let mut character = false;
+    let mut major = None;
+    for line in devices.lines().map(str::trim) {
+        match line {
+            "Character devices:" => {
+                character = true;
+                continue;
+            }
+            "Block devices:" => {
+                character = false;
+                continue;
+            }
+            _ => {}
+        }
+        if !character {
+            continue;
+        }
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields
+            .get(1)
+            .is_some_and(|name| matches!(*name, "nvidia" | "nvidia-frontend"))
+        {
+            let number = fields[0]
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .filter(|_| fields.len() == 2)
+                .ok_or("invalid NVIDIA core character major registration")?;
+            if major.is_some_and(|known| known != number) {
+                return Err("NVIDIA core character major registrations disagree".into());
+            }
+            major = Some(number);
+        }
+    }
+    major.ok_or_else(|| "NVIDIA core character major is not registered".into())
+}
+
+#[cfg(unix)]
+fn cuda_information_field<'a>(information: &'a str, key: &str) -> Result<&'a str, String> {
+    let mut values = information.lines().filter_map(|line| {
+        line.split_once(':')
+            .filter(|(name, _)| name.trim() == key)
+            .map(|(_, value)| value.trim())
+    });
+    let value = values
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("selected NVIDIA {key} is missing"))?;
+    if values.next().is_some() {
+        return Err(format!("selected NVIDIA {key} is ambiguous"));
+    }
+    Ok(value)
+}
+
+#[cfg(unix)]
+fn valid_gpu_uuid(uuid: &str) -> bool {
+    uuid.strip_prefix("GPU-").is_some_and(|value| {
+        value.len() == 36
+            && value.bytes().enumerate().all(|(i, c)| {
+                if matches!(i, 8 | 13 | 18 | 23) {
+                    c == b'-'
+                } else {
+                    c.is_ascii_hexdigit()
+                }
+            })
+    })
+}
+
+#[cfg(unix)]
+fn read_cuda_identity(
     root: &Path,
-    data: &Value,
     cfg: &LightSettings,
-    gpu: &Gpu,
-) -> Result<(String, u32), String> {
+    gpu: &PciGpu,
+) -> Result<CudaKernelIdentity, String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
-    if gpu.driver != "nvidia" {
-        return Err("CUDA requires the selected GPU to be bound to the NVIDIA driver".into());
+    if resource_pci_value(&gpu.pci)? != gpu.pci
+        || gpu.driver != "nvidia"
+        || !cfg.drivers.iter().any(|driver| driver == "nvidia")
+    {
+        return Err("CUDA requires the selected PCI GPU to use an eligible NVIDIA driver".into());
+    }
+    let pci = root.join("sys/bus/pci/devices").join(&gpu.pci);
+    let pci_path = fs::canonicalize(&pci)
+        .map_err(|e| format!("selected CUDA PCI device is unavailable: {e}"))?;
+    if pci_path.file_name().and_then(|name| name.to_str()) != Some(gpu.pci.as_str())
+        || link_name(&pci.join("driver")) != "nvidia"
+    {
+        return Err("selected CUDA PCI identity or current driver changed".into());
+    }
+    let read = |name: &str| {
+        fs::read_to_string(pci.join(name))
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map_err(|e| format!("CUDA PCI {name} is unavailable: {e}"))
+    };
+    let vendor = read("vendor")?;
+    let product = read("device")?;
+    let class = read("class")?;
+    if vendor != "0x10de"
+        || product.len() != 6
+        || !product.starts_with("0x")
+        || !product[2..].bytes().all(|c| c.is_ascii_hexdigit())
+        || class.len() != 8
+        || !class.starts_with("0x03")
+        || !class[2..].bytes().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err("selected CUDA PCI vendor/device/class is invalid".into());
     }
     let info = root
         .join(
@@ -1133,31 +1247,68 @@ fn light_cuda_device(
         )
         .join(&gpu.pci)
         .join("information");
-    let info = fs::read_to_string(info)
+    let information = fs::read_to_string(info)
         .map_err(|e| format!("selected NVIDIA information is unavailable: {e}"))?;
-    let field = |key: &str| {
-        info.lines().find_map(|line| {
-            line.split_once(':')
-                .filter(|(name, _)| name.trim() == key)
-                .map(|(_, value)| value.trim())
-        })
-    };
-    let minor = field("Device Minor")
-        .and_then(|s| s.parse::<u32>().ok())
-        .ok_or("selected NVIDIA Device Minor is missing or invalid")?;
+    if resource_pci_value(cuda_information_field(&information, "Bus Location")?)? != gpu.pci {
+        return Err("NVIDIA driver information does not match the selected PCI device".into());
+    }
+    let uuid = cuda_information_field(&information, "GPU UUID")?;
+    if !valid_gpu_uuid(uuid) {
+        return Err("selected NVIDIA GPU UUID is invalid".into());
+    }
+    let minor = cuda_information_field(&information, "Device Minor")?
+        .parse::<u32>()
+        .map_err(|_| "selected NVIDIA Device Minor is invalid")?;
+    let devices = fs::read_to_string(root.join("proc/devices"))
+        .map_err(|e| format!("kernel character registrations are unavailable: {e}"))?;
+    let major = nvidia_core_major(&devices)?;
     let metadata = fs::metadata(root.join(format!("dev/nvidia{minor}")))
         .map_err(|e| format!("selected NVIDIA device node is unavailable: {e}"))?;
-    if !metadata.file_type().is_char_device() {
-        return Err("selected NVIDIA device is not a character device".into());
+    if !metadata.file_type().is_char_device()
+        || rustix::fs::major(metadata.rdev()) != major
+        || rustix::fs::minor(metadata.rdev()) != minor
+    {
+        return Err(
+            "NVIDIA core node does not match the registered kernel major and PCI Device Minor"
+                .into(),
+        );
     }
-    let device = root.join(format!(
-        "sys/dev/char/{}:{}/device",
-        rustix::fs::major(metadata.rdev()),
-        rustix::fs::minor(metadata.rdev())
-    ));
-    if link_name(&device) != gpu.pci {
-        return Err("NVIDIA device node does not match the selected GPU PCI identity".into());
+    Ok(CudaKernelIdentity {
+        pci_path,
+        vendor,
+        product,
+        class,
+        uuid: uuid.into(),
+        minor,
+        major,
+        gid: metadata.gid(),
+        node_device: metadata.dev(),
+        node_inode: metadata.ino(),
+        node_rdev: metadata.rdev(),
+    })
+}
+
+#[cfg(unix)]
+fn validate_cuda_readback(
+    root: &Path,
+    cfg: &LightSettings,
+    gpu: &PciGpu,
+    expected: &CudaKernelIdentity,
+) -> Result<(), String> {
+    if read_cuda_identity(root, cfg, gpu)? != *expected {
+        return Err("selected CUDA kernel identity changed during validation".into());
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn light_cuda_device(
+    root: &Path,
+    data: &Value,
+    cfg: &LightSettings,
+    gpu: &PciGpu,
+) -> Result<(String, u32), String> {
+    let identity = read_cuda_identity(root, cfg, gpu)?;
     let selection = data
         .get("gpu")
         .and_then(|g| g.get("cdi"))
@@ -1173,13 +1324,20 @@ fn light_cuda_device(
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(&c))
         || !(requested == "all"
-            || requested == minor.to_string()
-            || field("GPU UUID") == Some(requested))
+            || requested == identity.minor.to_string()
+            || requested == identity.uuid)
     {
         return Err("configured NVIDIA CDI device does not match the selected GPU".into());
     }
-    // Source-wide '=all' narrows to the selected card; VFIO cards never pass validation.
-    Ok((format!("{kind}={minor}"), metadata.gid()))
+    validate_cuda_readback(root, cfg, gpu, &identity)?;
+    if let Some(id) = cfg.resource.as_deref() {
+        if resource_pci(root, data, id)? != gpu.pci {
+            return Err("selected CUDA resource changed during validation".into());
+        }
+    }
+    // Device Minor is a kernel node number, not necessarily the NVML/CDI index.
+    // Select the verified physical UUID; Podman resolves official CDI availability.
+    Ok((format!("{kind}={}", identity.uuid), identity.gid))
 }
 
 #[cfg(not(unix))]
@@ -1187,7 +1345,7 @@ fn light_cuda_device(
     _root: &Path,
     _data: &Value,
     _cfg: &LightSettings,
-    _gpu: &Gpu,
+    _gpu: &PciGpu,
 ) -> Result<(String, u32), String> {
     Err("CUDA projection requires Linux device metadata".into())
 }
@@ -1221,23 +1379,42 @@ pub fn light_backend_plan(
     let mut groups = Vec::new();
     let mut profile = None;
     let mut pci = None;
-    if cfg.backend != "cpu" {
-        let gpus = inventory(host);
-        let (selected, gpu) = selected_light_gpu(root, data, &cfg, cmdline, &gpus)?;
-        profile = selected;
-        let render = light_render_device(&gpu, host, &cfg.drivers)?;
-        if cfg.backend == "vulkan" {
-            let path = render
-                .path
-                .strip_prefix(root)
-                .map_err(|_| "render node escapes the selected root")?;
-            devices.push(format!("/{}", path.display()));
-            groups.push(render.gid);
+    if cfg.backend == "cuda" {
+        let (selected, gpu) = if let Some(id) = cfg.resource.as_deref() {
+            let selected_pci = resource_pci(root, data, id)?;
+            let gpu = pci_inventory(root)?
+                .into_iter()
+                .find(|gpu| gpu.pci == selected_pci)
+                .ok_or_else(|| {
+                    format!("CUDA resource {id} is not a discovered display-class PCI device")
+                })?;
+            (None, gpu)
         } else {
-            let (device, gid) = light_cuda_device(root, data, &cfg, &gpu)?;
-            devices.push(device);
-            groups.extend([render.gid, gid]);
-        }
+            let (profile, gpu) = selected_light_gpu(root, data, &cfg, cmdline, &inventory(host))?;
+            (
+                profile,
+                PciGpu {
+                    pci: gpu.pci,
+                    driver: gpu.driver,
+                    boot_vga: gpu.boot_vga,
+                },
+            )
+        };
+        let (device, gid) = light_cuda_device(root, data, &cfg, &gpu)?;
+        devices.push(device);
+        groups.push(gid);
+        profile = selected;
+        pci = Some(gpu.pci);
+    } else if cfg.backend == "vulkan" {
+        let (selected, gpu) = selected_light_gpu(root, data, &cfg, cmdline, &inventory(host))?;
+        let render = light_render_device(&gpu, host, &cfg.drivers)?;
+        let path = render
+            .path
+            .strip_prefix(root)
+            .map_err(|_| "render node escapes the selected root")?;
+        devices.push(format!("/{}", path.display()));
+        groups.push(render.gid);
+        profile = selected;
         pci = Some(gpu.pci);
     }
     groups.sort();
@@ -1839,6 +2016,217 @@ mod tests {
             .unwrap()
             .insert(id.into(), toml::from_str(selector).unwrap());
         data
+    }
+
+    fn cuda_headless_fixture() -> (tempfile::TempDir, Value) {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let pci = root.path().join("sys/bus/pci/devices/0000:09:00.0");
+        let driver = root.path().join("sys/bus/pci/drivers/nvidia");
+        fs::create_dir_all(&pci).unwrap();
+        fs::create_dir_all(&driver).unwrap();
+        symlink(&driver, pci.join("driver")).unwrap();
+        for (key, value) in [
+            ("vendor", "0x10de"),
+            ("device", "0x2684"),
+            ("class", "0x030000"),
+            ("boot_vga", "0"),
+        ] {
+            fs::write(pci.join(key), value).unwrap();
+        }
+        let mut data = with_resource(ssot(), "accelerator", "pci='0000:09:00.0'");
+        data["llamacpp"]["light_backend"] = Value::String("cuda".into());
+        data.as_table_mut().unwrap().remove("desktop");
+        let cfg = light_settings(&data).unwrap();
+        let information = root
+            .path()
+            .join(cfg.cuda_information.strip_prefix("/").unwrap())
+            .join("0000:09:00.0/information");
+        fs::create_dir_all(information.parent().unwrap()).unwrap();
+        // A real harmless character inode supplies stat metadata without any GPU access.
+        let node = fs::metadata("/dev/null").unwrap();
+        let major = rustix::fs::major(node.rdev());
+        let minor = rustix::fs::minor(node.rdev());
+        fs::write(&information, format!("Model: Fixture CUDA device\nGPU UUID: GPU-11111111-2222-3333-4444-555555555555\nBus Location: 0000:09:00.0\nDevice Minor: {minor}\n")).unwrap();
+        fs::create_dir_all(root.path().join("dev")).unwrap();
+        symlink("/dev/null", root.path().join(format!("dev/nvidia{minor}"))).unwrap();
+        fs::write(root.path().join("proc/devices"), format!("Character devices:\n{major} nvidia\n{major} nvidiactl\n{major} nvidia-modeset\n\nBlock devices:\n")).unwrap();
+        (root, data)
+    }
+
+    fn cuda_fixture_plan(root: &Path, data: &Value) -> Result<LightBackendPlan, String> {
+        light_backend_plan(
+            root,
+            data,
+            &Host {
+                dri: &root.join("dev/dri"),
+                sys: &root.join("sys/class/drm"),
+            },
+            "",
+        )
+    }
+
+    #[test]
+    fn cuda_headless_resource_uses_fresh_kernel_identity_without_drm_or_sys_dev_char() {
+        use std::os::unix::fs::MetadataExt;
+        let (root, data) = cuda_headless_fixture();
+        assert!(!root.path().join("sys/class/drm").exists());
+        assert!(!root.path().join("sys/dev/char").exists());
+        let plan = cuda_fixture_plan(root.path(), &data).unwrap();
+        assert_eq!(plan.resource.as_deref(), Some("accelerator"));
+        assert_eq!(plan.profile, None);
+        assert_eq!(plan.pci.as_deref(), Some("0000:09:00.0"));
+        assert!(plan
+            .contents
+            .contains("AddDevice=nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555\n"));
+        assert!(!plan.contents.contains("/dev/dri"));
+        assert!(plan.contents.contains(&format!(
+            "GroupAdd={}\n",
+            fs::metadata("/dev/null").unwrap().gid()
+        )));
+        let mut vulkan = data.clone();
+        vulkan["llamacpp"]["light_backend"] = Value::String("vulkan".into());
+        assert!(cuda_fixture_plan(root.path(), &vulkan)
+            .unwrap_err()
+            .contains("DRM"));
+        let mut unknown = data.clone();
+        unknown["gpu"]["resources"]["accelerator"]["pci"] = Value::String("0000:0a:00.0".into());
+        assert!(
+            cuda_fixture_plan(root.path(), &unknown).is_err(),
+            "must not use the other available GPU"
+        );
+    }
+
+    #[test]
+    fn cuda_major_registration_accepts_kernel_core_names_and_rejects_ambiguity() {
+        for names in ["nvidia", "nvidia-frontend", "nvidia\n195 nvidia-frontend"] {
+            assert_eq!(
+                nvidia_core_major(&format!(
+                    "Character devices:\n195 {names}\nBlock devices:\n8 sd\n"
+                ))
+                .unwrap(),
+                195
+            );
+        }
+        for input in [
+            "",
+            "Block devices:\n195 nvidia\n",
+            "Character devices:\n195 nvidiactl\n",
+            "Character devices:\n0 nvidia\n",
+            "Character devices:\ninvalid nvidia\n",
+            "Character devices:\n195 nvidia\n196 nvidia-frontend\n",
+        ] {
+            assert!(nvidia_core_major(input).is_err(), "accepted {input:?}");
+        }
+    }
+
+    #[test]
+    fn cuda_headless_rejects_missing_or_wrong_kernel_device_proofs() {
+        use std::os::unix::fs::MetadataExt;
+        for fault in 0..13 {
+            let (root, data) = cuda_headless_fixture();
+            let cfg = light_settings(&data).unwrap();
+            let info = root
+                .path()
+                .join(cfg.cuda_information.strip_prefix("/").unwrap())
+                .join("0000:09:00.0/information");
+            let before = fs::read_to_string(&info).unwrap();
+            let pci = root.path().join("sys/bus/pci/devices/0000:09:00.0");
+            let minor = rustix::fs::minor(fs::metadata("/dev/null").unwrap().rdev());
+            match fault {
+                0 => fs::remove_file(&info).unwrap(),
+                1 => fs::write(
+                    root.path().join("proc/devices"),
+                    "Character devices:\n999 nvidia\n",
+                )
+                .unwrap(),
+                2 => fs::write(
+                    root.path().join("proc/devices"),
+                    "Character devices:\n195 nvidiactl\n",
+                )
+                .unwrap(),
+                3 => {
+                    fs::remove_file(root.path().join(format!("dev/nvidia{minor}"))).unwrap();
+                }
+                4 => {
+                    let node = root.path().join(format!("dev/nvidia{minor}"));
+                    fs::remove_file(&node).unwrap();
+                    fs::write(&node, "not a character node").unwrap();
+                }
+                5 => {
+                    fs::write(
+                        &info,
+                        before.replace(
+                            &format!("Device Minor: {minor}"),
+                            &format!("Device Minor: {}", minor + 1),
+                        ),
+                    )
+                    .unwrap();
+                    symlink(
+                        "/dev/null",
+                        root.path().join(format!("dev/nvidia{}", minor + 1)),
+                    )
+                    .unwrap();
+                }
+                6 => fs::write(&info, before.replace("0000:09:00.0", "0000:0a:00.0")).unwrap(),
+                7 => fs::write(
+                    &info,
+                    before.replace("GPU-11111111-2222-3333-4444-555555555555", "invalid-uuid"),
+                )
+                .unwrap(),
+                8 => fs::write(&info, before.replace("GPU UUID:", "Other UUID:")).unwrap(),
+                9 => {
+                    fs::remove_file(pci.join("driver")).unwrap();
+                    fs::create_dir_all(root.path().join("sys/bus/pci/drivers/vfio-pci")).unwrap();
+                    symlink(
+                        root.path().join("sys/bus/pci/drivers/vfio-pci"),
+                        pci.join("driver"),
+                    )
+                    .unwrap();
+                }
+                10 => fs::write(pci.join("vendor"), "0x1002").unwrap(),
+                11 => fs::write(pci.join("class"), "0x040300").unwrap(),
+                _ => fs::write(
+                    &info,
+                    format!("{before}GPU UUID: GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n"),
+                )
+                .unwrap(),
+            }
+            assert!(
+                cuda_fixture_plan(root.path(), &data).is_err(),
+                "accepted CUDA proof fault {fault}"
+            );
+        }
+    }
+
+    #[test]
+    fn cuda_uuid_selection_and_readback_reject_stale_identity() {
+        let (root, mut data) = cuda_headless_fixture();
+        let cfg = light_settings(&data).unwrap();
+        let gpu = pci_inventory(root.path()).unwrap().pop().unwrap();
+        let identity = read_cuda_identity(root.path(), &cfg, &gpu).unwrap();
+        data["gpu"]["cdi"]["nvidia"]["device"] =
+            Value::String("nvidia.com/gpu=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into());
+        assert!(cuda_fixture_plan(root.path(), &data)
+            .unwrap_err()
+            .contains("does not match"));
+        let info = root
+            .path()
+            .join(cfg.cuda_information.strip_prefix("/").unwrap())
+            .join("0000:09:00.0/information");
+        fs::write(
+            &info,
+            fs::read_to_string(&info).unwrap().replace(
+                "GPU-11111111-2222-3333-4444-555555555555",
+                "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            ),
+        )
+        .unwrap();
+        assert!(validate_cuda_readback(root.path(), &cfg, &gpu, &identity).is_err());
+        assert_ne!(
+            read_cuda_identity(root.path(), &cfg, &gpu).unwrap(),
+            identity
+        );
     }
 
     #[test]
