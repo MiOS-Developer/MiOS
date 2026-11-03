@@ -4,8 +4,14 @@
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
 
-for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
+for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do
+    if [[ -r "$_mlog" ]]; then
+        # shellcheck source=usr/lib/mios/log.sh
+        . "$_mlog" && break
+    fi
+done
 
+# shellcheck source=automation/lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 
 mios_log "Installing ExecCondition drop-ins"
@@ -31,6 +37,16 @@ for svc in "${SERVICES[@]}"; do
 [Service]
 ExecCondition=/bin/bash -c 'grep -Eq "(^|/)nvidia\\.ko(\\.[xz]z|\\.zst)?:" /lib/modules/$(uname -r)/modules.dep'
 EOF
+    # Replace the module-only condition for CDI refresh: a driver installed on
+    # disk does not mean that a GPU belongs to this host. Clearing inherited
+    # conditions also keeps real WSL dxg devices independent of Linux modules.
+    if [[ "$svc" == nvidia-cdi-refresh ]]; then
+        cat > "$path" <<'EOF'
+[Service]
+ExecCondition=
+ExecCondition=/usr/libexec/mios/mios-cdi-gen --check-nvidia-owner
+EOF
+    fi
     # Modules and /dev/nvidiactl can remain while the GPU belongs to vfio-pci.
     # The persistence daemon requires a PCI device actually bound to nvidia.
     if [[ "$svc" == nvidia-persistenced ]]; then

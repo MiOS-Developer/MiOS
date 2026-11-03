@@ -41,6 +41,19 @@ def _driver(device: str) -> str:
         return ""
 
 
+def _nvidia_host_pci() -> List[str]:
+    return [pci for pci in sorted(glob.glob("/sys/bus/pci/devices/*"))
+            if _read_text(pci + "/vendor").lower() == "0x10de"
+            and _read_text(pci + "/class").lower().startswith("0x03")
+            and _driver(pci) == "nvidia"]
+
+
+def nvidia_host_owned() -> bool:
+    # Refresh may create missing nodes after a verified host driver bind. WSL
+    # has no Linux NVIDIA PCI binding and uses the real dxg character device.
+    return bool(_nvidia_host_pci()) or _is_character_device("/dev/dxg")
+
+
 def find_nvidia_devices() -> Dict[str, Any]:
     """Correlate a freshly bound PCI GPU, driver minor and actual device node."""
     devices: Dict[str, Any] = {"common": [], "instances": {},
@@ -48,11 +61,7 @@ def find_nvidia_devices() -> Dict[str, Any]:
     for path in ("/dev/nvidiactl", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools", "/dev/nvidia-modeset"):
         if _is_character_device(path):
             devices["common"].append(path)
-    for pci in sorted(glob.glob("/sys/bus/pci/devices/*")):
-        if (_read_text(pci + "/vendor").lower() != "0x10de"
-                or not _read_text(pci + "/class").lower().startswith("0x03")
-                or _driver(pci) != "nvidia"):
-            continue
+    for pci in _nvidia_host_pci():
         address = os.path.basename(pci)
         info = _read_text(f"/proc/driver/nvidia/gpus/{address}/information")
         minor = re.search(r"^Device Minor:\s*(\d+)\s*$", info, re.MULTILINE)
@@ -291,7 +300,14 @@ def main() -> int:
     parser.add_argument("--vendor", choices=["auto", "nvidia", "amd", "intel", "all"], default="auto")
     parser.add_argument("--dry-run", action="store_true", help="Inspect hardware and preview specs without writing files")
     parser.add_argument("--json", action="store_true", help="Output summary in JSON format")
+    parser.add_argument("--check-nvidia-owner", action="store_true",
+                        help="Check current host NVIDIA ownership without generating or writing CDI")
     args = parser.parse_args()
+    if args.check_nvidia_owner:
+        owned = nvidia_host_owned()
+        if args.json:
+            print(json.dumps({"host_owned": owned, "status": "available" if owned else "unavailable"}))
+        return 0 if owned else 1
     selected = ("nvidia", "amd", "intel") if args.vendor in ("auto", "all") else (args.vendor,)
     generated: Dict[str, Any] = {}
     unavailable: Dict[str, str] = {}

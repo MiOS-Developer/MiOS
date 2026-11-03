@@ -451,8 +451,9 @@ class TestCdiGen(unittest.TestCase):
             target.write_text("administrator spec")
             status, result = f.cli("--vendor", "nvidia")
             self.assertEqual(status, 1)
-            self.assertIn("unmanaged CDI", result["errors"]["output"])
+            self.assertTrue(target.exists(), "unmanaged administrator spec was removed")
             self.assertEqual(target.read_text(), "administrator spec")
+            self.assertIn("unmanaged CDI", result["errors"]["output"])
 
     def test_administrator_changes_to_recorded_output_are_preserved(self):
         with Hardware() as f:
@@ -463,8 +464,9 @@ class TestCdiGen(unittest.TestCase):
             f.driver("/sys/bus/pci/devices/0000:01:00.0", "vfio-pci")
             status, result = f.cli("--vendor", "nvidia")
             self.assertEqual(status, 1)
-            self.assertIn("modified CDI", result["errors"]["output"])
+            self.assertTrue(target.exists(), "administrator edit was removed")
             self.assertEqual(target.read_text(), "administrator edit")
+            self.assertIn("modified CDI", result["errors"]["output"])
 
     def test_ownership_ledger_must_be_ours_and_cannot_follow_links(self):
         for mode in ("wrong-owner", "linked"):
@@ -484,6 +486,61 @@ class TestCdiGen(unittest.TestCase):
                 self.assertFalse((f.output / "amd.json").exists())
                 if mode == "linked":
                     self.assertEqual(referent.read_text(), "preserve")
+
+    def test_refresh_owner_probe_is_read_only_and_checks_current_binding(self):
+        cases = ("absent", "vfio-stale-nodes", "bound-before-udev", "wsl",
+                 "regular-dxg", "audio-function", "wrong-vendor")
+        for case in cases:
+            with self.subTest(case=case), Hardware() as f:
+                if case in ("vfio-stale-nodes", "bound-before-udev", "audio-function", "wrong-vendor"):
+                    f.nvidia(driver="vfio-pci" if case == "vfio-stale-nodes" else "nvidia")
+                if case == "bound-before-udev":
+                    f.characters.clear()
+                elif case == "wsl":
+                    f.character("/dev/dxg")
+                elif case == "regular-dxg":
+                    f.write("/dev/dxg")
+                elif case == "audio-function":
+                    f.write("/sys/bus/pci/devices/0000:01:00.0/class", "0x040300")
+                elif case == "wrong-vendor":
+                    f.write("/sys/bus/pci/devices/0000:01:00.0/vendor", "0x1002")
+                expected = case in ("bound-before-udev", "wsl")
+                status, result = f.cli("--check-nvidia-owner")
+                self.assertEqual(status, 0 if expected else 1)
+                self.assertEqual(result["host_owned"], expected)
+                self.assertFalse(f.output.exists())
+                f.runner.assert_not_called()
+
+    def test_refresh_guard_generator_matches_projections_and_preserves_other_guards(self):
+        with tempfile.TemporaryDirectory(prefix="mios-cdi-guards-") as tmp:
+            root = Path(tmp)
+            automation = root / "automation"
+            (automation / "lib").mkdir(parents=True)
+            (automation / "lib/common.sh").write_text("mios_log() { :; }\nmios_ok() { :; }\n")
+            logs = root / "usr/lib/mios/log.sh"
+            logs.parent.mkdir(parents=True)
+            shutil.copy2(_ROOT / "usr/lib/mios/log.sh", logs)
+            source_path = os.environ.get("MIOS_CDI_GUARD_UNDER_TEST",
+                                         str(_ROOT / "automation/22-akmod-guards.sh"))
+            source = Path(source_path).read_text()
+            destination = root / "units"
+            original = '"/usr/lib/systemd/system/${svc}.service.d"'
+            self.assertEqual(source.count(original), 1)
+            script = automation / "22-akmod-guards.sh"
+            script.write_text(source.replace(original, '"' + str(destination) + '/${svc}.service.d"'))
+            result = subprocess.run(["/bin/bash", str(script)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs = sorted(destination.rglob("*.conf"))
+            self.assertEqual(len(outputs), 7)
+            for output in outputs:
+                shipped = _ROOT / "usr/lib/systemd/system" / output.relative_to(destination)
+                self.assertEqual(output.read_bytes(), shipped.read_bytes(), str(shipped))
+            refresh = (destination / "nvidia-cdi-refresh.service.d/10-mios-akmod-guard.conf").read_text()
+            self.assertEqual(refresh, "[Service]\nExecCondition=\n"
+                             "ExecCondition=/usr/libexec/mios/mios-cdi-gen --check-nvidia-owner\n")
+            persistence = (destination / "nvidia-persistenced.service.d/10-mios-akmod-guard.conf").read_text()
+            self.assertIn("modules.dep", persistence)
+            self.assertIn("/sys/bus/pci/drivers/nvidia/", persistence)
 
     def test_linked_output_is_refused_without_modifying_referent(self):
         with Hardware() as f:
