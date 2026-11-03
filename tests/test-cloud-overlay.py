@@ -45,6 +45,30 @@ else:
 """
 
 
+FAKE_PODMAN = r"""#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ["STUB_LOG"], "a") as log:
+    log.write("podman " + " ".join(args) + "\n")
+while args and args[0] in ("--root", "--runroot"):
+    args = args[2:]
+state = pathlib.Path(os.environ["FIXTURE_OCI"])
+policy = json.loads((state / "policy.json").read_text()) if (state / "policy.json").exists() else {}
+cache = set(json.loads((state / "cache.json").read_text())) if (state / "cache.json").exists() else set()
+if args[:2] == ["image", "exists"]:
+    sys.exit(0 if args[2] in cache else 1)
+if args and args[0] == "pull":
+    name = args[1]
+    if name in policy.get("fail", []):
+        print("private OCI transport unavailable for " + name, file=sys.stderr)
+        sys.exit(125)
+    if name not in policy.get("missing_after_pull", []):
+        cache.add(name)
+        (state / "cache.json").write_text(json.dumps(sorted(cache)))
+sys.exit(0)
+"""
+
+
 
 def _write(path, text, mode=0o644):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -86,7 +110,9 @@ class Harness(unittest.TestCase):
             self.stub(name)
         # Replace only the transport. The real provisioner hashes these bytes.
         _write(os.path.join(self.bin, "curl"), FAKE_CURL, 0o755)
-        self.stub("podman", 'case "$*" in *"image exists"*) exit 1 ;; esac\n')
+        self.oci = os.path.join(self.tmp, "oci")
+        os.makedirs(self.oci)
+        _write(os.path.join(self.bin, "podman"), FAKE_PODMAN, 0o755)
         self.stub("systemd-detect-virt", 'echo none\n')
         self.stub("id", 'exit 1\n')
         # The real resolver, confined to the checkout's vendor SSOT and this test's host drop-ins.
@@ -130,7 +156,7 @@ class Harness(unittest.TestCase):
     def env(self, **extra):
         e = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
         e.update(PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_LOG=self.log,
-                 FIXTURE_HTTP=self.http, MIOS_HF_ENDPOINT="https://huggingface.co",
+                 FIXTURE_HTTP=self.http, FIXTURE_OCI=self.oci, MIOS_HF_ENDPOINT="https://huggingface.co",
                  MIOS_TOML_GET=self.toml_get, MIOS_VENDOR_TOML=extra.pop("vendor", SSOT),
                  MIOS_TOML_ROOT=self.fixture_root, MIOS_VENDOR_TOML_D=os.path.join(self.tmp, "none.d"),
                  MIOS_HOST_TOML=os.path.join(self.tmp, "etc/mios/mios.toml"), MIOS_HOST_TOML_D=self.dropins,
@@ -296,6 +322,119 @@ class TestFirstbootPulls(Harness):
         self.assertIn("ggufs=missing", r.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.models, ".ready")))
         self.assertFalse(os.path.exists(os.path.join(self.state, ".ai-firstboot-done")))
+
+
+class TestBoundImageCompletion(Harness):
+    images = ["registry.invalid/first:current", "registry.invalid/second:current",
+              "registry.invalid/last:current"]
+
+    def configure_bound(self, images=None, **policy):
+        entries = [{"image": name} for name in self.images] if images is None else images
+        self.vendor = os.path.join(self.tmp, "bound.toml")
+        text = "[ai]\nfirstboot_pulls = true\nfirstboot_bound_images = "
+        text += json.dumps(entries).replace('{"image": ', '{image = ') + "\n"
+        _write(self.vendor, text)
+        _write(os.path.join(self.oci, "policy.json"), json.dumps(policy))
+        self.bound_script = self.copy("usr/libexec/mios/mios-bound-images-firstboot",
+                                      [("/var/lib/mios", self.state)])
+        self.marker = os.path.join(self.state, ".bound-images-firstboot-done")
+
+    def run_bound(self, **extra):
+        return subprocess.run([sys.executable, self.bound_script], capture_output=True,
+                              text=True, env=self.env(vendor=self.vendor, MIOS_TOML=self.vendor, **extra),
+                              timeout=20)
+
+    def cache(self):
+        path = os.path.join(self.oci, "cache.json")
+        with open(path) as source:
+            return set(json.load(source))
+
+    def test_one_failed_pull_retains_successes_without_retiring_retry(self):
+        self.configure_bound(fail=[self.images[1]])
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Failed to pull " + self.images[1], result.stdout)
+        self.assertFalse(os.path.exists(self.marker), result.stdout)
+        self.assertEqual(self.cache(), {self.images[0], self.images[2]})
+        for name in self.images:
+            self.assertIn("podman pull " + name, self.calls())
+
+    def test_later_retry_uses_cached_successes_then_retires_only_when_complete(self):
+        self.configure_bound(fail=[self.images[1]])
+        self.assertEqual(self.run_bound().returncode, 0)
+        self.assertFalse(os.path.exists(self.marker))
+        _write(os.path.join(self.oci, "policy.json"), "{}")
+        _write(self.log, "")
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isfile(self.marker), result.stdout)
+        self.assertEqual(self.cache(), set(self.images))
+        self.assertIn("podman pull " + self.images[1], self.calls())
+        for name in (self.images[0], self.images[2]):
+            self.assertNotIn("podman pull " + name, self.calls())
+        _write(self.log, "")
+        self.assertEqual(self.run_bound().returncode, 0)
+        self.assertNotIn("podman ", self.calls())
+
+    def test_offline_cached_images_complete_without_pulls(self):
+        self.configure_bound(fail=self.images)
+        _write(os.path.join(self.oci, "cache.json"), json.dumps(self.images))
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isfile(self.marker), result.stdout)
+        self.assertNotIn("podman pull", self.calls())
+
+    def test_offline_missing_images_leave_retry_eligible(self):
+        self.configure_bound(fail=self.images)
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(self.marker), result.stdout)
+
+    def test_disabled_layer_never_pulls_or_marks_completion(self):
+        self.configure_bound()
+        self.apply_overlay()
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("[ai].firstboot_pulls is false", result.stdout)
+        self.assertNotIn("podman ", self.calls())
+        self.assertFalse(os.path.exists(self.marker))
+
+    def test_layered_fleet_replaces_vendor_selection(self):
+        self.configure_bound()
+        replacement = "registry.invalid/operator:current"
+        _write(os.path.join(self.dropins, "20-bound.toml"),
+               '[ai]\nfirstboot_bound_images = [{image = "' + replacement + '"}]\n')
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isfile(self.marker), result.stdout)
+        self.assertEqual(self.cache(), {replacement})
+
+    def test_zero_pull_exit_without_cached_image_is_not_complete(self):
+        self.configure_bound(missing_after_pull=[self.images[1]])
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(self.marker), result.stdout)
+
+    def test_invalid_entry_is_not_silently_retired(self):
+        self.configure_bound(images=[{"image": self.images[0]}, {}])
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(self.marker), result.stdout)
+
+    def test_unavailable_runtime_never_marks_completion(self):
+        self.configure_bound()
+        empty_path = os.path.join(self.tmp, "empty-path")
+        os.makedirs(empty_path)
+        result = self.run_bound(PATH=empty_path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(self.marker), result.stdout)
+
+    def test_empty_fleet_can_complete_without_runtime_calls(self):
+        self.configure_bound(images=[])
+        result = self.run_bound()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.isfile(self.marker), result.stdout)
+        self.assertNotIn("podman ", self.calls())
 
 
 class TestFlatpakInstall(Harness):

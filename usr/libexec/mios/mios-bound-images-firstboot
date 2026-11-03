@@ -1,72 +1,82 @@
 #!/usr/bin/env python3
-# AI-hint: FBM first-boot bound-image provisioner. Reads [ai].firstboot_bound_images from mios.toml
-# AI-related: mios-bound-images-firstboot.service, /usr/share/mios/mios.toml
-import sys
+# AI-hint: First-boot bound-image provisioner. Resolve the layered fleet and pull only missing images; publish completion only when every configured image is available. Incomplete runs leave the next boot or explicit run eligible and never block boot.
+# AI-related: mios-bound-images-firstboot.service, /usr/share/mios/mios.toml, /usr/lib/mios/mios_toml.py
 import os
-import subprocess
 import pathlib
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib
-    except ImportError:
-        print("ERROR: tomllib or tomli not found")
-        sys.exit(1)
+import subprocess
+import sys
 
-SENTINEL = pathlib.Path("/var/lib/mios/.bound-images-firstboot-done")
-
-if SENTINEL.exists():
-    print(f"Sentinel {SENTINEL} exists. Bound images provisioner already completed.")
-    sys.exit(0)
-
-if os.name == 'nt':
-    SENTINEL = pathlib.Path("C:/var/lib/mios/.bound-images-firstboot-done")
+SENTINEL = pathlib.Path("C:/var/lib/mios/.bound-images-firstboot-done" if os.name == "nt"
+                        else "/var/lib/mios/.bound-images-firstboot-done")
 
 
-# [ai].firstboot_pulls from the LAYERED SSOT (default true): a cloud or container
-# deployment's [deployment.cloud] host drop-in sets it false. No sentinel is written,
-# so removing the drop-in resumes the pulls on the next boot.
-_TOML_GET = os.environ.get("MIOS_TOML_GET", "/usr/libexec/mios/mios-toml-get")
-if os.access(_TOML_GET, os.X_OK) and subprocess.run(
-        [_TOML_GET, "ai", "firstboot_pulls", "true"], capture_output=True, text=True).stdout.strip() == "false":
-    print("[ai].firstboot_pulls is false (cloud/container deployment): no bound image is pulled")
-    sys.exit(0)
+def image_exists(name):
+    return subprocess.run(["podman", "image", "exists", name],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
-TOML_PATH = os.environ.get("MIOS_TOML", "C:/MiOS/usr/share/mios/mios.toml" if os.name == 'nt' else "/usr/share/mios/mios.toml")
 
-try:
-    with open(TOML_PATH, "rb") as f:
-        cfg = tomllib.load(f)
-except Exception as e:
-    print(f"Failed to load {TOML_PATH}: {e}")
-    sys.exit(0)
+def provision():
+    if SENTINEL.exists():
+        print(f"Sentinel {SENTINEL} exists. Bound images provisioner already completed.")
+        return
 
-ai_cfg = cfg.get("ai", {})
-images = ai_cfg.get("firstboot_bound_images", [])
+    # Both the pull policy and the selected fleet belong to the same layered SSOT.
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "lib/mios"))
+    import mios_toml
+    cfg = mios_toml.load_merged()
+    ai_cfg = cfg.get("ai")
+    if not isinstance(ai_cfg, dict):
+        raise ValueError("[ai] must be a table")
+    pulls = ai_cfg.get("firstboot_pulls", True)
+    if not isinstance(pulls, bool):
+        raise ValueError("[ai].firstboot_pulls must be a boolean")
+    if not pulls:
+        print("[ai].firstboot_pulls is false: no bound image is pulled")
+        return
 
-if not images:
-    print("No firstboot_bound_images found in config.")
-else:
+    images = ai_cfg.get("firstboot_bound_images", [])
+    if not isinstance(images, list):
+        raise ValueError("[ai].firstboot_bound_images must be an array")
     print(f"Found {len(images)} bound images.")
-    for img in images:
-        name = img.get("image")
-        if not name:
+    failures = []
+    for entry in images:
+        name = entry.get("image") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not name or name != name.strip() or name.startswith("-"):
+            print("WARN: invalid firstboot_bound_images entry")
+            failures.append("invalid entry")
             continue
-            
-        print(f"Pulling {name}...")
-        cmd = ["podman", "pull", name]
-        
         try:
-            res = subprocess.run(cmd)
-            if res.returncode == 0:
-                print(f"Successfully pulled {name}")
-            else:
-                print(f"WARN: Failed to pull {name} (exit {res.returncode})")
-        except FileNotFoundError:
-            print(f"WARN: podman not found, skipping pull of {name}")
-            
-SENTINEL.parent.mkdir(parents=True, exist_ok=True)
-SENTINEL.touch()
-print("First-boot bound images provisioning complete (sentinel written).")
-sys.exit(0)
+            # An available local image remains useful when its registry is offline.
+            if image_exists(name):
+                print(f"Already available: {name}")
+                continue
+            print(f"Pulling {name}...")
+            result = subprocess.run(["podman", "pull", name])
+            if result.returncode != 0:
+                print(f"WARN: Failed to pull {name} (exit {result.returncode})")
+                failures.append(name)
+                continue
+            if not image_exists(name):
+                print(f"WARN: Pulled image is unavailable: {name}")
+                failures.append(name)
+                continue
+            print(f"Successfully pulled {name}")
+        except OSError as error:
+            print(f"WARN: Failed to provision {name}: {error}")
+            failures.append(name)
+
+    if failures:
+        print(f"Bound image provisioning incomplete ({len(failures)} failure(s)); sentinel NOT written.")
+        return
+    SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+    SENTINEL.touch()
+    print("First-boot bound images provisioning complete (sentinel written).")
+
+
+if __name__ == "__main__":
+    try:
+        provision()
+    except (OSError, ValueError, TypeError, ImportError) as error:
+        print(f"WARN: bound image provisioning incomplete: {error}; sentinel NOT written.")
+    # A missing registry, runtime or invalid configuration must never block boot.
+    sys.exit(0)
