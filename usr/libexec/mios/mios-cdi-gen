@@ -225,6 +225,8 @@ def _filename(vendor: str) -> str:
 def _digest(path: str) -> str:
     if os.path.islink(path) or not os.path.isfile(path):
         raise RuntimeError("refusing non-regular CDI target: " + path)
+    if os.stat(path).st_uid != os.geteuid():
+        raise RuntimeError("refusing foreign-owned CDI target: " + path)
     with open(path, "rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
@@ -234,6 +236,8 @@ def _load_state(path: str) -> Dict[str, Any]:
         return {"owner": "mios-cdi-gen", "version": 1, "files": {}}
     if os.path.islink(path) or not os.path.isfile(path):
         raise RuntimeError("refusing non-regular CDI ownership state: " + path)
+    if os.stat(path).st_uid != os.geteuid():
+        raise RuntimeError("refusing foreign-owned CDI ownership state: " + path)
     with open(path, encoding="utf-8") as source:
         state = json.load(source)
     names = {"nvidia.yaml", "nvidia.json", "amd.json", "intel.json"}
@@ -254,8 +258,9 @@ def _reconcile(output_dir: str, selected: tuple, generated: Dict[str, Any]) -> L
     descriptor = os.open(os.path.join(output_dir, ".mios-cdi-lock"),
                          os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise RuntimeError("CDI lock must be a regular file")
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise RuntimeError("CDI lock must be a regular file owned by the current user")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         state_path = os.path.join(output_dir, ".mios-cdi-state")
         state = _load_state(state_path)

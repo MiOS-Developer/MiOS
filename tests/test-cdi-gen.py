@@ -542,6 +542,41 @@ class TestCdiGen(unittest.TestCase):
             self.assertIn("modules.dep", persistence)
             self.assertIn("/sys/bus/pci/drivers/nvidia/", persistence)
 
+    def test_foreign_owned_lock_is_rejected_before_publishing(self):
+        with Hardware() as f:
+            f.dri()
+            original = os.fstat
+            def foreign(descriptor):
+                metadata = list(original(descriptor))
+                metadata[4] = os.geteuid() + 1
+                return os.stat_result(metadata)
+            with mock.patch.object(os, "fstat", side_effect=foreign):
+                status, result = f.cli("--vendor", "amd")
+            self.assertEqual(status, 1)
+            self.assertIn("owned by the current user", result["errors"]["output"])
+            self.assertFalse((f.output / "amd.json").exists())
+
+    def test_foreign_owned_ledger_is_preserved(self):
+        with Hardware() as f:
+            f.dri()
+            f.output.mkdir()
+            state = f.output / ".mios-cdi-state"
+            state.write_text('{"owner":"mios-cdi-gen","version":1,"files":{}}')
+            original = os.stat
+            def foreign(path, *args, **kwargs):
+                metadata = original(path, *args, **kwargs)
+                if path == str(state) or path == state:
+                    values = list(metadata)
+                    values[4] = os.geteuid() + 1
+                    return os.stat_result(values)
+                return metadata
+            with mock.patch.object(os, "stat", side_effect=foreign):
+                status, result = f.cli("--vendor", "amd")
+            self.assertEqual(status, 1)
+            self.assertIn("foreign-owned", result["errors"]["output"])
+            self.assertFalse((f.output / "amd.json").exists())
+            self.assertEqual(json.loads(state.read_text())["files"], {})
+
     def test_linked_output_is_refused_without_modifying_referent(self):
         with Hardware() as f:
             f.dri()
