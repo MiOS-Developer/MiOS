@@ -11000,7 +11000,7 @@
     },
     {
       "path": "tests/test-zen-layout-projection.py",
-      "hint": "Hermetic tests for the operator's Zen layout (design-2026-10-16 sketch 4): MiOS top bar above,",
+      "hint": "Hermetic tests for the current SSOT Zen layout: MiOS top bar above,",
       "related": [
         "usr/share/mios/mios.toml [browser.zen]",
         "usr/libexec/mios/mios-theme-render (apply_web)"
