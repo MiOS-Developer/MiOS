@@ -7,8 +7,7 @@ log() { logger -t mios-webtools-firstboot "$*" 2>/dev/null || true; echo "[mios-
 
 _FIRSTBOOT_SENTINEL="/var/lib/mios/.webtools-firstboot.done"
 if command -v miosd >/dev/null 2>&1; then
-    miosd build-if-missing webtools
-    exit 0
+    exec miosd build-if-missing webtools
 fi
 
 if [ -f "$_FIRSTBOOT_SENTINEL" ]; then
@@ -47,8 +46,8 @@ build_image_retry() {
 maybe_build() {
     local img="$1" cf="$2" ctx="$3" label="$4"
     if [ ! -f "$cf" ]; then
-        log "WARN: $cf missing"
-        return 0
+        log "ERROR: required recipe $cf missing"
+        return 1
     fi
     if [ "$(need_build "$img" "$cf")" = 1 ]; then
         build_image_retry "$img" "$cf" "$ctx"

@@ -2771,8 +2771,8 @@ fn build_sources(spec: &str) -> &'static [&'static str] {
     }
 }
 
-fn image_created_epoch(img: &str) -> u64 {
-    std::process::Command::new("/usr/bin/podman")
+fn image_created_epoch(podman: &std::path::Path, img: &str) -> u64 {
+    std::process::Command::new(podman)
         .args(["image", "inspect", "-f", "{{.Created.Unix}}", img])
         .output()
         .ok()
@@ -2788,83 +2788,418 @@ fn mtime_epoch(path: &str) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn run_build_if_missing(spec: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let (img, ctx, cf) = match spec {
-        "agents" => (
-            "localhost/mios-agents:latest",
-            "/usr/share/mios/agents",
-            "/usr/share/mios/agents/Containerfile",
+#[derive(Debug)]
+struct LocalImageBuild {
+    image: String,
+    context: String,
+    recipe: String,
+}
+
+/// Match the two consumers' layered SSOT image identities, including runtime overrides.
+fn webtools_builds_from(
+    config: &toml::Value,
+    exports: &std::collections::BTreeMap<String, String>,
+) -> Result<Vec<LocalImageBuild>, Box<dyn std::error::Error>> {
+    [
+        (
+            "mios-webtools-crawl4ai",
+            "/usr/share/mios/crawl4ai",
+            "Containerfile",
         ),
-        "forgejo-runner" => (
-            "localhost/mios-forgejo-runner:latest",
-            "/usr/share/mios/forgejo-runner",
-            "/usr/share/mios/forgejo-runner/Containerfile",
-        ),
-        "webtools" => (
-            "localhost/mios-webtools:latest",
+        (
+            "mios-webtools-firecrawl-api",
             "/usr/share/mios/webtools",
-            "/usr/share/mios/webtools/Containerfile",
+            "firecrawl.Containerfile",
         ),
-        _ => return Err(format!("unknown build spec '{}'", spec).into()),
+    ]
+    .into_iter()
+    .map(|(container, context, recipe)| {
+        let reference = config
+            .get("containers")
+            .and_then(|v| v.get(container))
+            .and_then(|v| v.get("Container"))
+            .and_then(|v| v.get("Image"))
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| format!("[containers.{container}.Container].Image unresolved"))?;
+        let expanded = mios_resolver::expand::expand(reference, exports);
+        if !expanded.unresolved.is_empty()
+            || expanded.text.is_empty()
+            || expanded.text.contains('$')
+            || expanded.text.split_whitespace().count() != 1
+        {
+            return Err(format!("invalid or unresolved image for {container}: {reference}").into());
+        }
+        Ok(LocalImageBuild {
+            image: expanded.text,
+            context: context.into(),
+            recipe: format!("{context}/{recipe}"),
+        })
+    })
+    .collect()
+}
+
+fn run_build_if_missing(spec: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let builds = match spec {
+        "agents" => vec![LocalImageBuild {
+            image: "localhost/mios-agents:latest".into(),
+            context: "/usr/share/mios/agents".into(),
+            recipe: "/usr/share/mios/agents/Containerfile".into(),
+        }],
+        "forgejo-runner" => vec![LocalImageBuild {
+            image: "localhost/mios-forgejo-runner:latest".into(),
+            context: "/usr/share/mios/forgejo-runner".into(),
+            recipe: "/usr/share/mios/forgejo-runner/Containerfile".into(),
+        }],
+        "webtools" => {
+            let config = mios_resolver::resolve_merged(None, false)?;
+            let mut exports = mios_resolver::emit::build_exports_map(
+                &config,
+                mios_resolver::stack_offset_of(&config),
+            );
+            mios_resolver::emit::resolve_cross_references(&mut exports);
+            exports.extend(std::env::vars().filter(|(_, value)| !value.is_empty()));
+            webtools_builds_from(&config, &exports)?
+        }
+        _ => return Err(format!("unknown build spec '{spec}'").into()),
     };
-
-    println!(
-        "[miosd] build-if-missing: checking spec '{}' ({})",
-        spec, img
-    );
-
-    let cf_path = std::path::Path::new(cf);
-    if !cf_path.exists() {
-        println!(
-            "[miosd] Containerfile {} not found, dry-run skip for {}",
-            cf, spec
-        );
-        return Ok(());
+    let podman = std::path::Path::new("/usr/bin/podman");
+    for build in builds {
+        build_local_image(spec, &build, podman)?;
     }
-
-    if std::path::Path::new("/usr/bin/podman").exists() {
-        let exists_status = std::process::Command::new("/usr/bin/podman")
-            .arg("image")
-            .arg("exists")
-            .arg(img)
-            .status()?;
-        let stale = if exists_status.success() {
-            let img_epoch = image_created_epoch(img);
-            std::iter::once(cf)
-                .chain(build_sources(spec).iter().copied())
-                .find(|p| img_epoch > 0 && mtime_epoch(p) > img_epoch)
-        } else {
-            None
-        };
-        if let Some(p) = stale {
-            println!("[miosd] {} newer than {} -> rebuild", p, img);
-        }
-        if !exists_status.success() || stale.is_some() {
-            let extra = if spec == "agents" {
-                agents_build_args()?
-            } else {
-                Vec::new()
-            };
-            println!("[miosd] building {} from {}...", img, cf);
-            let build_status = std::process::Command::new("/usr/bin/podman")
-                .arg("build")
-                .arg("--network=host")
-                .args(&extra)
-                .arg("-t")
-                .arg(img)
-                .arg("-f")
-                .arg(cf)
-                .arg(ctx)
-                .status()?;
-            if !build_status.success() {
-                return Err(format!("failed to build {}", img).into());
-            }
-        } else {
-            println!("[miosd] image {} current; nothing to build", img);
-        }
-    }
-
     Ok(())
+}
+
+fn build_local_image(
+    spec: &str,
+    build: &LocalImageBuild,
+    podman: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let img = build.image.as_str();
+    let cf = build.recipe.as_str();
+    println!("[miosd] build-if-missing: checking spec '{spec}' ({img})");
+    if !std::path::Path::new(cf).is_file() {
+        return Err(format!("required Containerfile {cf} missing for {spec}").into());
+    }
+    if !podman.is_file() {
+        return Err(format!("required container runtime {} missing", podman.display()).into());
+    }
+    let exists = std::process::Command::new(podman)
+        .args(["image", "exists", img])
+        .status()?;
+    let present = match exists.code() {
+        Some(0) => true,
+        Some(1) => false,
+        _ => return Err(format!("cannot inspect image {img}: {exists}").into()),
+    };
+    let stale = if present {
+        let img_epoch = image_created_epoch(podman, img);
+        std::iter::once(cf)
+            .chain(build_sources(spec).iter().copied())
+            .find(|p| img_epoch > 0 && mtime_epoch(p) > img_epoch)
+    } else {
+        None
+    };
+    if let Some(path) = stale {
+        println!("[miosd] {path} newer than {img} -> rebuild");
+    }
+    if !present || stale.is_some() {
+        let extra = if spec == "agents" {
+            agents_build_args()?
+        } else {
+            Vec::new()
+        };
+        println!("[miosd] building {img} from {cf}...");
+        let status = std::process::Command::new(podman)
+            .arg("build")
+            .arg("--network=host")
+            .args(&extra)
+            .arg("-t")
+            .arg(img)
+            .arg("-f")
+            .arg(cf)
+            .arg(&build.context)
+            .status()?;
+        if !status.success() {
+            return Err(format!("failed to build {img}: {status}").into());
+        }
+        let verified = std::process::Command::new(podman)
+            .args(["image", "exists", img])
+            .status()?;
+        if !verified.success() {
+            return Err(format!("built image {img} is not available: {verified}").into());
+        }
+    } else {
+        println!("[miosd] image {img} current; nothing to build");
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod local_image_build_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Fixture {
+        root: tempfile::TempDir,
+        runtime: std::path::PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = tempfile::Builder::new()
+                .prefix("mios-local-image-")
+                .tempdir()
+                .unwrap();
+            std::fs::write(root.path().join("cache"), "").unwrap();
+            std::fs::write(root.path().join("Containerfile"), "FROM scratch\n").unwrap();
+            let runtime = root.path().join("podman");
+            std::fs::write(
+                &runtime,
+                format!(
+                    r#"#!/bin/sh
+root="{}"
+printf '%s\n' "$*" >> "$root/calls"
+if [ "$1" = image ] && [ "$2" = exists ]; then
+    [ ! -f "$root/inspect-error" ] || exit 125
+    grep -Fxq -- "$3" "$root/cache"
+elif [ "$1" = image ] && [ "$2" = inspect ]; then
+    if [ -f "$root/stale" ]; then echo 1; else echo 4102444800; fi
+elif [ "$1" = build ]; then
+    [ ! -f "$root/build-error" ] || exit 42
+    [ ! -f "$root/unavailable" ] || exit 0
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = -t ]; then shift; printf '%s\n' "$1" >> "$root/cache"; exit 0; fi
+        shift
+    done
+    exit 64
+else
+    exit 64
+fi
+"#,
+                    root.path().display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+            Self { root, runtime }
+        }
+
+        fn build(&self, image: &str) -> LocalImageBuild {
+            LocalImageBuild {
+                image: image.into(),
+                context: self.root.path().to_string_lossy().into(),
+                recipe: self
+                    .root
+                    .path()
+                    .join("Containerfile")
+                    .to_string_lossy()
+                    .into(),
+            }
+        }
+
+        fn mark(&self, flag: &str) {
+            std::fs::write(self.root.path().join(flag), "").unwrap();
+        }
+
+        fn calls(&self) -> String {
+            std::fs::read_to_string(self.root.path().join("calls")).unwrap_or_default()
+        }
+    }
+
+    fn vendor_builds() -> Vec<LocalImageBuild> {
+        let doc: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        webtools_builds_from(&doc, &Default::default()).unwrap()
+    }
+
+    #[test]
+    fn webtools_builds_both_shipped_consumers_from_real_recipes() {
+        let builds = vendor_builds();
+        assert_eq!(builds.len(), 2);
+        assert_eq!(builds[0].image, "localhost/mios-crawl4ai-slim:latest");
+        assert_eq!(builds[0].recipe, "/usr/share/mios/crawl4ai/Containerfile");
+        assert_eq!(builds[1].image, "localhost/mios-firecrawl:v1.0.0");
+        assert_eq!(
+            builds[1].recipe,
+            "/usr/share/mios/webtools/firecrawl.Containerfile"
+        );
+    }
+
+    #[test]
+    fn webtools_uses_overridden_consumer_identity() {
+        let doc: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let exports = [(
+            "MIOS_CRAWL4AI_IMAGE".into(),
+            "localhost/mios-crawl-test:latest".into(),
+        )]
+        .into_iter()
+        .collect();
+        let builds = webtools_builds_from(&doc, &exports).unwrap();
+        assert_eq!(builds[0].image, "localhost/mios-crawl-test:latest");
+    }
+
+    #[test]
+    fn webtools_rejects_missing_or_unresolved_consumer() {
+        let mut doc: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        doc["containers"]["mios-webtools-crawl4ai"]["Container"]["Image"] =
+            toml::Value::String("${MIOS_MISSING_REQUIRED_IMAGE}".into());
+        assert!(webtools_builds_from(&doc, &Default::default()).is_err());
+        doc["containers"]["mios-webtools-crawl4ai"]["Container"]["Image"] =
+            toml::Value::String("localhost/mios-crawl-test:latest".into());
+        doc["containers"]
+            .as_table_mut()
+            .unwrap()
+            .remove("mios-webtools-firecrawl-api");
+        assert!(webtools_builds_from(&doc, &Default::default()).is_err());
+    }
+
+    #[test]
+    fn missing_recipe_fails_without_runtime_calls() {
+        let f = Fixture::new();
+        let mut build = f.build("localhost/mios-test:latest");
+        build.recipe.push_str(".missing");
+        let error = build_local_image("webtools", &build, &f.runtime)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("required Containerfile"), "{error}");
+        assert!(f.calls().is_empty());
+    }
+
+    #[test]
+    fn missing_runtime_is_fatal() {
+        let f = Fixture::new();
+        assert!(build_local_image(
+            "webtools",
+            &f.build("localhost/mios-test:latest"),
+            &f.root.path().join("missing")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn both_missing_outputs_are_built_and_verified() {
+        let f = Fixture::new();
+        for build in vendor_builds() {
+            build_local_image("webtools", &f.build(&build.image), &f.runtime).unwrap();
+        }
+        let calls = f.calls();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("build "))
+                .count(),
+            2
+        );
+        assert!(calls.contains("image exists localhost/mios-crawl4ai-slim:latest"));
+        assert!(calls.contains("image exists localhost/mios-firecrawl:v1.0.0"));
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with("image exists "))
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn cached_current_image_does_not_build() {
+        let f = Fixture::new();
+        std::fs::write(f.root.path().join("cache"), "localhost/mios-test:latest\n").unwrap();
+        build_local_image(
+            "webtools",
+            &f.build("localhost/mios-test:latest"),
+            &f.runtime,
+        )
+        .unwrap();
+        assert!(!f.calls().lines().any(|line| line.starts_with("build ")));
+    }
+
+    #[test]
+    fn newer_recipe_rebuilds_cached_image() {
+        let f = Fixture::new();
+        std::fs::write(f.root.path().join("cache"), "localhost/mios-test:latest\n").unwrap();
+        f.mark("stale");
+        build_local_image(
+            "webtools",
+            &f.build("localhost/mios-test:latest"),
+            &f.runtime,
+        )
+        .unwrap();
+        assert!(f.calls().lines().any(|line| line.starts_with("build ")));
+    }
+
+    #[test]
+    fn failed_build_is_fatal() {
+        let f = Fixture::new();
+        f.mark("build-error");
+        let error = build_local_image(
+            "webtools",
+            &f.build("localhost/mios-test:latest"),
+            &f.runtime,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("failed to build"), "{error}");
+    }
+
+    #[test]
+    fn success_without_available_image_is_fatal() {
+        let f = Fixture::new();
+        f.mark("unavailable");
+        let error = build_local_image(
+            "webtools",
+            &f.build("localhost/mios-test:latest"),
+            &f.runtime,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("not available"), "{error}");
+    }
+
+    #[test]
+    fn runtime_inspection_error_is_not_a_missing_image() {
+        let f = Fixture::new();
+        f.mark("inspect-error");
+        let error = build_local_image(
+            "webtools",
+            &f.build("localhost/mios-test:latest"),
+            &f.runtime,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("cannot inspect"), "{error}");
+        assert!(!f.calls().lines().any(|line| line.starts_with("build ")));
+    }
+
+    #[test]
+    fn firstboot_wrapper_propagates_native_status() {
+        let f = Fixture::new();
+        let native = f.root.path().join("miosd");
+        let wrapper = f.root.path().join("firstboot.sh");
+        std::fs::write(
+            &wrapper,
+            include_str!("../../../../usr/libexec/mios/mios-webtools-firstboot.sh"),
+        )
+        .unwrap();
+        for expected in [0, 42] {
+            std::fs::write(
+                &native,
+                format!(
+                "#!/bin/sh\n[ \"$*\" = 'build-if-missing webtools' ] || exit 64\nexit {expected}\n"
+            ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let status = std::process::Command::new("/bin/bash")
+                .arg(&wrapper)
+                .env("PATH", f.root.path())
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(expected));
+        }
+    }
 }
 
 fn run_bootc_apply(sentinel_path: &str) -> Result<(), Box<dyn std::error::Error>> {
