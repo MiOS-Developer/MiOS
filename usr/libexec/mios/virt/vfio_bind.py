@@ -78,6 +78,7 @@ class VFIOBinder:
         self.mock = mock
         self._locked = False
         self._transaction_states = []
+        self._native_modules = {}
         if mock and self.sysfs_root == os.path.realpath("/sys"):
             raise BindingError("Mock mode requires a private synthetic sysfs root")
         self.proc_root = os.path.join(self.sysfs_root, "proc") if mock else "/proc"
@@ -350,45 +351,69 @@ class VFIOBinder:
                 raise BindingError("Unsafe transaction lock ownership or permissions")
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._locked = True
+            self._native_modules = {}
             yield
         finally:
             self._locked = False
             self._transaction_states = []
             os.close(fd)
 
+    def _automatic_module_allowed(self, module: str) -> None:
+        # --show-depends ignores loaded state and exposes an empty plan for a
+        # blacklisted module. A plain -b call can return success when skipped.
+        plan = self._run(["modprobe", "--use-blacklist", "--show-depends", "--", module])
+        if not any(line.startswith(("insmod ", "builtin ", "install ")) for line in plan.splitlines()):
+            raise BindingError(f"Automatic native module {module} is blacklisted or unavailable")
+
     def _native_driver(self, state: DeviceState, requested: Optional[str]) -> str:
+        def retain(driver, module):
+            if not re.fullmatch(r"[A-Za-z0-9_]+", module):
+                raise BindingError("Invalid resolved kernel module name")
+            self._native_modules[state.bdf] = module
+            return driver
         if self.mock:
             native = self._read_sysfs(os.path.join(self._get_device_path(state.bdf), "native_driver"))
             if requested and requested != native:
                 raise BindingError(f"Requested driver does not match {state.bdf} modalias")
-            return requested or native
+            module = os.path.basename(os.path.realpath(os.path.join(self._get_driver_path(native), "module")))
+            return retain(requested or native, module.replace("-", "_"))
         if not state.modalias or not re.fullmatch(r"pci:[A-Za-z0-9]+", state.modalias):
             raise BindingError(f"No valid PCI modalias for {state.bdf}")
         modules = {name.replace("-", "_") for name in self._run(
             ["modprobe", "--resolve-alias", state.modalias]).splitlines()}
         def loaded_candidates():
-            candidates = []
+            candidates = {}
             directory = os.path.join(self.sysfs_root, "bus/pci/drivers")
             for driver in os.listdir(directory):
-                module = os.path.join(directory, driver, "module")
-                if driver not in ("vfio-pci", "pci-stub") and os.path.islink(module):
-                    if os.path.basename(os.path.realpath(module)).replace("-", "_") in modules:
-                        candidates.append(driver)
+                link = os.path.join(directory, driver, "module")
+                if driver not in ("vfio-pci", "pci-stub") and os.path.islink(link):
+                    module = os.path.basename(os.path.realpath(link)).replace("-", "_")
+                    if module in modules:
+                        candidates[driver] = module
             return candidates
         candidates = loaded_candidates()
         if requested:
-            self._get_driver_path(requested)  # validate the explicit kernel name
-            if requested not in candidates and requested.replace("-", "_") not in modules:
-                raise BindingError(f"Requested driver is not a modalias match for {state.bdf}")
-            # A display module may need the device released before it can initialize.
-            # Load it after unbind, while driver_override permits only this driver.
-            return requested
+            self._get_driver_path(requested)
+            module = candidates.get(requested)
+            if module is None:
+                module = requested.replace("-", "_")
+                if os.path.exists(self._get_driver_path(requested)) or module not in modules:
+                    raise BindingError(f"Requested driver is not a modalias match for {state.bdf}")
+            # The explicit, verified runtime opt-in overrides an autoload blacklist.
+            # Normal install/deny rules remain active; load only after release.
+            return retain(requested, module)
         if not candidates:
-            self._run(["modprobe", "--use-blacklist", "--", state.modalias])
+            if len(modules) != 1:
+                raise BindingError(f"Native module for {state.bdf} is ambiguous or unavailable")
+            module = next(iter(modules))
+            self._automatic_module_allowed(module)
+            self._run(["modprobe", "--use-blacklist", "--", module])
             candidates = loaded_candidates()
         if len(candidates) != 1:
             raise BindingError(f"Native driver for {state.bdf} is ambiguous or unavailable")
-        return candidates[0]
+        driver, module = next(iter(candidates.items()))
+        self._automatic_module_allowed(module)
+        return retain(driver, module)
 
     def unbind_device(self, bdf: str) -> bool:
         """Checked internal step under the transaction lock and ownership checks."""
@@ -517,7 +542,12 @@ class VFIOBinder:
                         if self.get_device_state(state.bdf).current_driver != target:
                             self.unbind_device(state.bdf)
                             if to_host and not self.mock:
-                                self._run(["modprobe", "--use-blacklist", "--", state.modalias])
+                                module = self._native_modules[state.bdf]
+                                if state.bdf == norm and host_driver:
+                                    self._run(["modprobe", "--", module])
+                                else:
+                                    self._automatic_module_allowed(module)
+                                    self._run(["modprobe", "--use-blacklist", "--", module])
                             self._probe(state.bdf, target)
                         expected[index] = self.get_device_state(state.bdf)
                     if to_host:

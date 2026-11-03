@@ -2312,13 +2312,14 @@ raise SystemExit(m.main())
             calls.append(command)
             if command[1] == "--resolve-alias":
                 return "nvidia\n" if command[-1] == gpu.modalias else "snd_hda_intel\n"
-            self.assertEqual(command[:3], ["modprobe", "--use-blacklist", "--"])
-            return ""
+            self.assertEqual(command[:4], ["modprobe", "--use-blacklist", "--show-depends", "--"])
+            return "insmod /modules/" + command[-1] + ".ko\n"
         with mock.patch.object(real, "_run", run):
             self.assertEqual(real._native_driver(gpu, "nvidia"), "nvidia")
             self.assertEqual(real._native_driver(audio, None), "snd_hda_intel")
         self.assertNotEqual(gpu.modalias, audio.modalias)
-        self.assertEqual(len(calls), 2)  # resolution of loaded drivers performs no module loads
+        self.assertEqual(len(calls), 3)  # automatic policy is verified even for a loaded module
+        self.assertEqual(real._native_modules, {self.gpu: "nvidia", self.audio: "snd_hda_intel"})
         directory = self.root / "bus/pci/drivers/nouveau"
         directory.mkdir()
         module = self.root / "module/nouveau"
@@ -2347,9 +2348,10 @@ raise SystemExit(m.main())
         self.assertEqual(len(calls), 1)
         self.assertEqual(state.current_driver, "nvidia")
 
-    def test_real_transition_loads_requested_driver_after_unbind(self):
+    def _real_transition_case(self, *, deny_explicit=False, blacklist_audio=False):
         from unittest import mock
         self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "success")
+        prior = self.binder._snapshot(self.gpu)
         shutil.rmtree(self.root / "bus/pci/drivers/nvidia")
         real = vfio_bind.VFIOBinder(str(self.root), mock=False)
         real.proc_root = str(self.root / "proc")
@@ -2365,14 +2367,20 @@ raise SystemExit(m.main())
         def command(argv):
             if argv[0] == "virsh": return ""
             if argv[1] == "--resolve-alias":
-                return "nvidia\n" if argv[-1] == gpu.modalias else "snd_hda_intel\n"
-            self.assertEqual(argv[:3], ["modprobe", "--use-blacklist", "--"])
-            function = self.gpu if argv[-1] == gpu.modalias else self.audio
+                return "nouveau\nnvidia_drm\nnvidia\n" if argv[-1] == gpu.modalias else "snd_hda_intel\n"
+            if "--show-depends" in argv:
+                self.assertEqual(argv, ["modprobe", "--use-blacklist", "--show-depends", "--", "snd_hda_intel"])
+                return "" if blacklist_audio else "insmod /modules/snd_hda_intel.ko\n"
+            function = self.gpu if argv[-1] == "nvidia" else self.audio
+            expected = ["modprobe", "--", "nvidia"] if function == self.gpu else ["modprobe", "--use-blacklist", "--", "snd_hda_intel"]
+            self.assertEqual(argv, expected)
             state = real.get_device_state(function)
             self.assertIsNone(state.current_driver, "module load attempted before VFIO released the function")
             self.assertEqual(state.driver_override, "nvidia" if function == self.gpu else "snd_hda_intel")
             loads.append(function)
             if function == self.gpu:
+                if deny_explicit:
+                    raise vfio_bind.BindingError("normal module install rule denied loading")
                 driver = self.root / "bus/pci/drivers/nvidia"
                 driver.mkdir()
                 (driver / "unbind").write_text("")
@@ -2383,12 +2391,70 @@ raise SystemExit(m.main())
         with mock.patch.object(real, "_require_runtime", return_value=None), \
              mock.patch.object(real, "_write_sysfs", write), mock.patch.object(real, "_run", command):
             result = real.rebind_to_host(self.gpu, host_driver="nvidia")
+        return result, writes, loads, prior
+
+    def test_real_transition_loads_requested_driver_after_unbind(self):
+        result, writes, loads, _ = self._real_transition_case()
         self.assertEqual(result["status"], "success", result)
-        self.assertFalse(result["simulated"])  # actual production branch, private kernel adapter
+        self.assertFalse(result["simulated"])
         self.assertEqual(loads, [self.gpu, self.audio])
         probes = [data.strip() for path, data in writes if path.endswith("/drivers_probe")]
-        self.assertEqual(probes, [self.audio])  # GPU already bound during module registration
+        self.assertEqual(probes, [self.audio])
         self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+
+    def test_explicit_module_keeps_normal_install_deny_rules(self):
+        result, writes, loads, prior = self._real_transition_case(deny_explicit=True)
+        self.assertEqual(result["status"], "failed", result)
+        self.assertIn("install rule denied", result["error"])
+        self.assertTrue(result["rollback"]["success"], result)
+        self.assertEqual(loads, [self.gpu])
+        self.assertEqual(self.binder._snapshot(self.gpu), prior)
+
+    def test_automatic_companion_blacklist_blocks_before_any_release(self):
+        result, writes, loads, prior = self._real_transition_case(blacklist_audio=True)
+        self.assertEqual(result["status"], "failed", result)
+        self.assertIn("blacklisted", result["error"])
+        self.assertTrue(result["rollback"]["success"])
+        self.assertFalse(writes)
+        self.assertFalse(loads)
+        self.assertEqual(self.binder._snapshot(self.gpu), prior)
+
+    def test_driver_module_mapping_is_retained_without_guessing(self):
+        from unittest import mock
+        driver = self.root / "bus/pci/drivers/nvidia"
+        (driver / "module").unlink()
+        module = self.root / "module/video_core"
+        module.mkdir()
+        (driver / "module").symlink_to(module)
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        state = real.get_device_state(self.gpu)
+        calls = []
+        def run(command):
+            calls.append(command)
+            self.assertEqual(command[:2], ["modprobe", "--resolve-alias"])
+            return "video_core\n"
+        with mock.patch.object(real, "_run", run):
+            self.assertEqual(real._native_driver(state, "nvidia"), "nvidia")
+            self.assertEqual(real._native_modules[self.gpu], "video_core")
+            with self.assertRaises(vfio_bind.BindingError): real._native_driver(state, "unmatched_driver")
+            with self.assertRaises(vfio_bind.BindingError): real._native_driver(state, "../../unsafe")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(self.binder.get_device_state(self.gpu), self.before[0])
+
+    def test_automatic_blacklisted_loaded_module_does_not_rebind(self):
+        from unittest import mock
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        state = real.get_device_state(self.gpu)
+        calls = []
+        def run(command):
+            calls.append(command)
+            if command[1] == "--resolve-alias": return "nvidia\n"
+            self.assertEqual(command, ["modprobe", "--use-blacklist", "--show-depends", "--", "nvidia"])
+            return ""  # kmod's blacklist-filtered plan is empty, even when already loaded
+        with mock.patch.object(real, "_run", run):
+            with self.assertRaises(vfio_bind.BindingError): real._native_driver(state, None)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.binder.get_device_state(self.gpu), self.before[0])
 
     def test_driver_prepare_failure_has_verified_unchanged_rollback(self):
         from unittest import mock
