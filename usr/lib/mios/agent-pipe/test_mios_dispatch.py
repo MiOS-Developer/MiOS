@@ -838,14 +838,37 @@ def test_prompt_injection_ssot_defaults():
     assert sec.get("provenance_taint") is True, f"expected true, got {sec.get('provenance_taint')}"
     print("[PASS] prompt-injection defenses ship in audit mode with provenance_taint = true (task_3563 / Q17)")
 
+def test_canonical_session_templates_preserve_literal_targets_and_arguments():
+    import os,shlex,tomllib
+    from pathlib import Path
+    import mios_template
+    root=Path(__file__).resolve().parents[4]
+    catalog=tomllib.loads((root/"usr/share/mios/mios.toml").read_text())["verbs"]
+    mios_dispatch.configure(verb_catalog=catalog)
+    target="registered session; touch /must-not-run"
+    command=mios_dispatch._build_dispatch_cmd("open_app",{"name":"Recorder","session":target,
+        "args":["a file","$(touch /must-not-run)"]})
+    argv=shlex.split(command)
+    assert argv[0]=="MIOS_EXECUTION_SESSION="+target,argv
+    assert argv[-4:]==["mios-launch","Recorder","a file","$(touch /must-not-run)"],argv
+    default=shlex.split(mios_dispatch._build_dispatch_cmd("open_app",{"name":"Recorder"}))
+    assert default[0]=="MIOS_EXECUTION_SESSION=",default
+    query=shlex.split(mios_dispatch._build_dispatch_cmd("cu_window_list",{"session":target}))
+    assert query[0]=="MIOS_EXECUTION_SESSION="+target and query[-3:]==["mios-computer-use","window-list","--json"],query
+    _base_configure()
+    print("[PASS] canonical launch/window tools preserve explicit session identity and literal arguments")
+
+test_canonical_session_templates_preserve_literal_targets_and_arguments()
+
 def test_launcher_receipt_preserved_without_fabricated_verification():
     import json
     from unittest.mock import AsyncMock, patch
     _base_configure()
-    mios_dispatch.configure(verb_catalog={"launch_app": {"cmd": "mios-launch {name!}"}})
+    mios_dispatch.configure(verb_catalog={"launch_app": {"cmd": "mios-launch {name!}"},
+        "cu_window_list":{"cmd":"mios-computer-use window-list --json"}})
 
-    async def run_case(code):
-        payload = {"exit_code": code, "stdout": "", "stderr": "fixture launcher diagnostic",
+    async def run_case(code, tool="launch_app", output=""):
+        payload = {"exit_code": code, "stdout": output, "stderr": "fixture launcher diagnostic",
                    "operator_context": {"id": "fixture", "platform": "linux",
                                         "session_id": "fixture", "backend": "hyprland"}}
         class BrokerSocket:
@@ -876,14 +899,22 @@ def test_launcher_receipt_preserved_without_fabricated_verification():
              patch.object(mios_dispatch, "_session_is_tainted", new=AsyncMock(return_value=(False, ""))), \
              patch.object(mios_dispatch, "_sandbox_wrap_cmd", side_effect=lambda t,c,p,**k: (c,None)):
             result = await mios_dispatch._dispatch_mios_verb_inner(
-                "launch_app", {"name": "OBS"}, session_id=None)
-        assert result["output"] == "", result
+                tool, {"name": "OBS"} if tool=="launch_app" else {}, session_id=None)
+        if tool=="cu_window_list" and len(output)>1048576:
+            assert result["output"]=="" and result["exit_code"]==1 and not result["success"],result
+            assert "safety bound" in result["stderr"],result
+            return
+        assert result["output"] == output, result
         assert result["operator_context"] == payload["operator_context"], result
         assert result["stderr"] == payload["stderr"], result
         assert result["exit_code"] == code and result["success"] == (code == 0), result
         assert broker.closed
     for code in (0, 1, 126):
         asyncio.run(run_case(code))
+    structured=json.dumps({"windows":[{"title":"x"*7000}],"execution_target":{"id":"fixture","platform":"linux","session_id":"fixture","backend":"hyprland"}})
+    asyncio.run(run_case(0,"cu_window_list",structured))
+    asyncio.run(run_case(0,"cu_window_list","x"*1048577))
+    print("[PASS] structured window/session JSON stays complete and oversize receipts fail closed")
     print("[PASS] launcher stdout/stderr/exit preserved; no invented window verification")
 
 

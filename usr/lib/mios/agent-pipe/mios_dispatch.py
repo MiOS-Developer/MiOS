@@ -766,8 +766,18 @@ async def _dispatch_mios_verb_inner_raw(
             }
         exit_code = int(j.get("exit_code", -1))
         v_tainted, v_reason = _classify_verb_taint(tool, args)
-        _out = (j.get("stdout") or "")[:6000]
+        _raw_output = j.get("stdout") or ""
         _err = (j.get("stderr") or "")[:2000]
+        if tool in ("cu_window_list", "list_windows"):
+            # These are structured window/session receipts: truncating JSON can
+            # erase the execution identity or turn a live session into failure.
+            if len(_raw_output) > 1048576:
+                exit_code, _out = 1, ""
+                _err = "Window/session receipt exceeds its safety bound"
+            else:
+                _out = _raw_output
+        else:
+            _out = _raw_output[:6000]
         return {
             "success": exit_code == 0,
             "tool": tool, "args": args,

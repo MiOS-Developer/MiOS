@@ -614,6 +614,62 @@ class OSActionResponseContracts(unittest.IsolatedAsyncioTestCase):
         text = await self.respond()
         self.assertFalse(self.envelope(text)["window_change"]["verified"])
 
+
+    async def test_requested_unavailable_session_is_rejected_before_dispatch(self):
+        response = await self.m._respond_os_control("open_app", {"name":"OBS","session":"offline-guest"}, None,
+            streaming=False,chat_id="fixture",model="fixture",session_id=None,last_user_text="open OBS")
+        text=json.loads(response.body)["choices"][0]["message"]["content"]
+        self.dispatch.assert_not_awaited()
+        self.assertFalse(self.envelope(text)["tool_result"]["success"])
+        self.assertIn("unavailable",self.envelope(text)["tool_result"]["stderr"])
+
+    async def test_requested_ready_session_is_bound_to_dispatch_and_proof(self):
+        response = await self.m._respond_os_control("open_app", {"name":"OBS","session":"fixture"}, None,
+            streaming=False,chat_id="fixture",model="fixture",session_id=None,last_user_text="open OBS")
+        text=json.loads(response.body)["choices"][0]["message"]["content"]
+        self.assertEqual(self.dispatch.await_args.args[1]["session"],self.destination["id"])
+        self.assertTrue(self.envelope(text)["window_change"]["verified"])
+
+    async def test_requested_session_changed_receipt_fails_without_retry(self):
+        self.result["output"]=json.dumps({"dispatched":True,"execution_target":dict(self.destination,session_id="changed")})
+        response = await self.m._respond_os_control("open_app", {"name":"OBS","session":"fixture"}, None,
+            streaming=False,chat_id="fixture",model="fixture",session_id=None,last_user_text="open OBS")
+        text=json.loads(response.body)["choices"][0]["message"]["content"]
+        self.assertFalse(self.envelope(text)["tool_result"]["success"])
+        self.assertEqual(self.dispatch.await_count,1)
+
+    async def test_native_inventory_contributes_nested_targets_without_losing_identity(self):
+        nested=dict(self.destination,id="nested",session_id="nested")
+        probe=self.m._probe_windows({"execution_target":self.destination,"windows":[],
+            "session_inventory":{"ok":True,"sessions":[{"execution_target":nested,"available":True,
+                "windows":[{"id":"obs","title":"OBS"}]}]}},"native")
+        self.assertEqual(probe["targets"],{self.destination["id"]:self.destination,"nested":nested})
+        self.assertEqual(probe["windows"][0]["_execution_target_id"],"nested")
+
+    async def test_registered_nodes_are_loaded_from_both_sections_on_each_invocation(self):
+        self.stack.close()  # Exercise discovery, not this class's empty-registry stub.
+        import sys
+        config={"os_control":{"nodes":{"console":{"endpoint":"http://console.invalid"}}},
+                "computer_use":{"nodes":{"mobile":{"endpoint":"http://mobile.invalid"}}}}
+        module=types.SimpleNamespace(section=lambda _,name:config[name])
+        with patch.dict(sys.modules,{"mios_db_config":module}):
+            first=self.m._load_oscontrol_endpoints()
+            config["computer_use"]["nodes"]["mobile"]["endpoint"]="http://replacement.invalid"
+            second=self.m._load_oscontrol_endpoints()
+        self.assertEqual(len(first),2)
+        self.assertTrue(any(row["registration_id"]=="computer_use.nodes.mobile" and row["url"]=="http://replacement.invalid" for row in second))
+
+
+    async def test_explicit_platform_location_is_not_swallowed_as_an_application_name(self):
+        from mios_pipe.routing import routing
+        with patch.multiple(routing,_FASTPATH_VERBS=frozenset({"open_app"}),
+                _LAUNCH_TRIGGERS=frozenset({"open"}),_LAUNCH_FILLERS=["on my desktop"],
+                _LAUNCH_LEAD_WORDS=frozenset(),_LAUNCH_TRAIL_WORDS=frozenset(),
+                _COMPOUND_ACTION_ALT="",_COMPOUND_CONNECTIVE_ALT=""):
+            self.assertIsNone(routing._deterministic_action_route("open OBS on xbox"))
+            self.assertEqual(routing._deterministic_action_route("open OBS")["args"],{"name":"OBS"})
+            self.assertEqual(routing._deterministic_action_route("open OBS on my desktop")["args"],{"name":"OBS"})
+
     async def snapshot(self, result):
         self.stack.close()
         from unittest.mock import AsyncMock

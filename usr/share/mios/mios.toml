@@ -5222,7 +5222,7 @@ cmd        = "mios-sync-to-root {mode=apply}"
 [verbs.open_app]
 hidden = true
 section    = "Window / app launch"
-sig        = 'name, position="default"?, args?, monitor=0?'
+sig        = 'name, position="default"?, args?, monitor=0?, session=""?'
 desc       = "LAUNCH any app/program by name (resolves Windows AND Linux/flatpak apps) and optionally place its window (position center/left/right/top-left..., monitor index) or pass CLI args. THE one launch verb -- use for any 'open / launch / start / run X'. After launching, confirm with verify_launch."
 model_name = "launch_windows_app"
 hidden_aliases = ["launch_app", "launch_verified", "launch_and_verify_app"]  # consolidated INTO open_app; resolve here, never re-shown on the model surface
@@ -5230,8 +5230,8 @@ examples   = ["open Firefox on my second monitor", "launch Spotify on the left h
 tier = "rare"
 permission = "write"
 conflict_group = "desktop_ui"  # WS-A7: one foreground window + keyboard -- serialize vs focus_window/pc_type so a fan-out can't race them
-cmd        = "MIOS_LAUNCH_POSITION={position=default} mios-launch {name!}"
-cmd_args   = "MIOS_LAUNCH_POSITION={position=default} mios-windows launch {name!}{args*}"
+cmd        = "MIOS_EXECUTION_SESSION={session=} MIOS_LAUNCH_POSITION={position=default} mios-launch {name!}"
+cmd_args   = "MIOS_EXECUTION_SESSION={session=} MIOS_LAUNCH_POSITION={position=default} mios-launch {name!}{args*}"
   [verbs.open_app.params.name]
   type    = "string"
   desc    = "App display name OR full path. Paths get basename-extracted before launch."
@@ -5248,6 +5248,12 @@ cmd_args   = "MIOS_LAUNCH_POSITION={position=default} mios-windows launch {name!
   type    = "integer"
   desc    = "Monitor index (0=primary)."
   default = 0
+
+  [verbs.open_app.params.session]
+  type    = "string"
+  desc    = "Requested ready desktop execution target ID, live session ID, or exact registered endpoint ID from the current window/session inventory. Empty selects the operator desktop; stopped guests are never started."
+  aliases = ["target_session", "execution_target_id"]
+  default = ""
 
 [verbs.verify_launch]
 hidden = true
@@ -5990,12 +5996,18 @@ cmd        = "mios-computer-use atspi-query {query} --json"
 [verbs.cu_window_list]
 hidden = true
 section    = "Computer-use"
-sig        = ""
+sig        = 'session=""?'
 desc       = "List the open top-level windows on the LINUX (Wayland/Hyprland) desktop inside the MiOS VM (via wmctrl / hyprctl / AT-SPI). This is the in-VM Linux desktop, NOT the host Windows windows (use list_windows for those). Read-class. Returns window titles/handles for the Linux session."
 model_name = "linux_desktop_window_list"
 examples   = ["list the open windows on the linux desktop", "what windows are open in the vm", "show me the wayland windows", "enumerate hyprland top-level windows"]
 tier = "rare"
-cmd        = "mios-computer-use window-list --json"
+cmd        = "MIOS_EXECUTION_SESSION={session=} mios-computer-use window-list --json"
+
+  [verbs.cu_window_list.params.session]
+  type    = "string"
+  desc    = "Exact ready execution target/session or registered endpoint ID. Empty returns the operator windows and fresh native session inventory."
+  aliases = ["target_session", "execution_target_id"]
+  default = ""
 
 [verbs.cu_click]
 hidden = true

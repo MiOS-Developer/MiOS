@@ -99,37 +99,35 @@ def configure(*, os_control_launch_verify_s=None, os_control_launch_poll_s=None,
 _OSCONTROL_ENDPOINTS_CACHE: Optional[list] = None
 
 def _load_oscontrol_endpoints() -> list:
-    global _OSCONTROL_ENDPOINTS_CACHE
+    """Refresh existing registrations for every invocation; presence is not cached."""
     try:
         import mios_db_config
-        sec = mios_db_config.section(None, "os_control")
-        if not isinstance(sec, dict):
-            sec = {}
-        cfg: dict = {}
-        if "executor_endpoint" in sec:
-            cfg.setdefault("__exec__", {}).update(
-                {"endpoint": str(sec.get("executor_endpoint") or "")})
-        nodes = sec.get("nodes") or {}
-        if isinstance(nodes, dict):
-            for nname, ncfg in nodes.items():
-                if isinstance(ncfg, dict):
-                    cfg.setdefault(nname, {}).update(ncfg)
-        out: list = []
-        if "__exec__" in cfg:
-            url = (cfg["__exec__"].get("endpoint") or "").rstrip("/")
-            if url:
-                out.append({"label": "local-executor", "url": url})
-        for nname, ncfg in cfg.items():
-            if nname == "__exec__":
+        import urllib.parse
+        out = []
+        for section in ("os_control", "computer_use"):
+            table = mios_db_config.section(None, section)
+            if not isinstance(table, dict):
                 continue
-            url = str(ncfg.get("endpoint") or "").rstrip("/")
-            if url:
-                out.append({"label": nname, "url": url})
-        _OSCONTROL_ENDPOINTS_CACHE = out
+            rows = [(f"{section}.executor_endpoint", "local-executor" if section == "os_control" else "computer-use-executor",
+                     table.get("executor_endpoint"))]
+            nodes = table.get("nodes") or {}
+            if isinstance(nodes, dict):
+                rows.extend((f"{section}.nodes.{name}", str(name), node.get("endpoint"))
+                            for name, node in nodes.items() if isinstance(node, dict))
+            for registration, label, value in rows:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                url = value.strip().rstrip("/")
+                parsed = urllib.parse.urlsplit(url)
+                if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                        or parsed.username is not None or parsed.password is not None
+                        or parsed.query or parsed.fragment or parsed.port == 0
+                        or any(char.isspace() or ord(char) < 32 for char in url)):
+                    continue
+                out.append({"label": label, "url": url, "registration_id": registration})
         return out
-    except Exception as e:  # noqa: BLE001
-        log.warning("oscontrol endpoint discovery failed: %s", e)
-        _OSCONTROL_ENDPOINTS_CACHE = []
+    except Exception:
+        log.warning("registered desktop discovery failed")
         return []
 
 def _execution_target(data: dict) -> Optional[dict]:
@@ -163,10 +161,29 @@ def _probe_windows(data: dict, source: str) -> dict:
             or data.get("ok") is False or data.get("success") is False):
         raise ValueError("window probe returned no successful windows array")
     target = _execution_target(data)
-    return {"ok": True, "execution_target": target,
-            "windows": [dict(window, _source=source,
-                             _execution_target_id=(target or {}).get("id"))
-                        for window in data["windows"] if isinstance(window, dict)]}
+    targets = {target["id"]: target} if target else {}
+    windows = [dict(window, _source=source,
+                    _execution_target_id=(target or {}).get("id"))
+               for window in data["windows"] if isinstance(window, dict)]
+    inventory = data.get("session_inventory")
+    if isinstance(inventory, dict) and inventory.get("ok") is True:
+        for session in inventory.get("sessions") or []:
+            destination = _execution_target(session)
+            if (not destination or session.get("available") is not True
+                    or not isinstance(session.get("windows"), list)):
+                continue
+            previous = targets.get(destination["id"])
+            if previous and previous != destination:
+                raise ValueError("session inventory contains conflicting execution identities")
+            targets[destination["id"]] = destination
+            windows.extend(dict(window, _source=source,
+                                _execution_target_id=destination["id"])
+                           for window in session["windows"] if isinstance(window, dict))
+    unique = {(window.get("_execution_target_id"), window.get("id", window.get("hwnd")),
+               window.get("pid"), window.get("title")): window for window in windows}
+    return {"ok": True, "execution_target": target, "targets": targets,
+            "session_inventory": inventory if isinstance(inventory, dict) else None,
+            "windows": list(unique.values())}
 
 async def _remote_enumerate_windows_one(ep: dict, timeout_s: float = 3.5) -> dict:
     """Keep endpoint failures distinct from a valid empty desktop snapshot."""
@@ -176,7 +193,10 @@ async def _remote_enumerate_windows_one(ep: dict, timeout_s: float = 3.5) -> dic
         response = await client.get((ep.get("url") or "") + "/windows", timeout=timeout_s)
         if response.status_code != 200:
             raise ValueError(f"HTTP {response.status_code}")
-        return _probe_windows(response.json(), label)
+        result = _probe_windows(response.json(), label)
+        result["registration_id"] = ep.get("registration_id") or label
+        result["target_aliases"] = [ep.get("registration_id") or label, label]
+        return result
     except Exception as error:
         log.debug("remote window probe %s failed: %s", label, error)
         return {"ok": False, "windows": [], "error": f"{label}: {error}"}
@@ -213,22 +233,46 @@ async def _enumerate_windows() -> dict:
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        windows, errors, sources, targets = [], [], {}, {}
+        windows, errors, sources, targets, aliases, sessions = [], [], {}, {}, {}, []
         for task, label in tasks.items():
             if task not in done:
                 sources[label] = False
                 errors.append(f"{label}: window probe timed out")
                 continue
             result = task.result()
+            incoming = dict(result.get("targets") or {})
+            if result.get("execution_target"):
+                incoming[result["execution_target"]["id"]] = result["execution_target"]
+            if any(key in targets and targets[key] != value for key, value in incoming.items()):
+                result = {"ok":False,"windows":[],"error":"Conflicting execution session identities"}
             sources[label] = bool(result.get("ok"))
             windows.extend(result.get("windows") or [])
             target = result.get("execution_target")
-            if result.get("ok") and target:
-                targets[target["id"]] = target
+            if result.get("ok"):
+                targets.update(result.get("targets") or {})
+                if target:
+                    targets[target["id"]] = target
+                    registration = result.get("registration_id")
+                    if registration:
+                        for alias in result.get("target_aliases") or [registration]:
+                            if alias not in aliases:
+                                aliases[alias] = target["id"]
+                            elif aliases[alias] != target["id"]:
+                                aliases[alias] = None
+                    sessions.append({"execution_target": target, "available": True,
+                                     "registration_id": registration})
+                inventory = result.get("session_inventory")
+                if isinstance(inventory, dict):
+                    sessions.extend(row for row in inventory.get("sessions") or []
+                                    if isinstance(row, dict) and _execution_target(row))
             if result.get("error"):
                 errors.append(str(result["error"]))
+        unique_sessions = {row["execution_target"]["id"]: row for row in sessions
+                           if _execution_target(row)}
         return {"ok": any(sources.values()), "count": len(windows), "windows": windows,
-                "sources": sources, "errors": errors, "targets": targets}
+                "sources": sources, "errors": errors, "targets": targets,
+                "session_aliases": aliases,
+                "session_inventory": {"sessions": list(unique_sessions.values()), "errors": errors}}
 
     snapshot = {}
     for attempt in range(max(1, OS_CONTROL_ENUM_RETRY + 1)):
@@ -540,25 +584,33 @@ async def _respond_os_control(
             except Exception:  # noqa: BLE001
                 pass
 
-    if tool == "pc_type":
-        _ckey = _conv_key_var.get()
-        _lw = _LAST_OPENED_WINDOW.get(_ckey) if _ckey else None
-        if _lw:
-            try:
-                eps = {e.get("label"): e.get("url") for e in _load_oscontrol_endpoints() if e.get("url")}
-                _osc_url = next(iter(eps.values())) if eps else None
-                if _osc_url:
-                    _client = await _get_client()
-                    _resp = await _client.post(_osc_url + "/window/focus", json={"title": _lw}, timeout=5)
-                    if _resp.status_code == 200:
-                        _data = _resp.json()
-                        if _data.get("ok") and _data.get("matched"):
-                            _hw = _data["matched"][0].get("hwnd")
-                            if _hw:
-                                _args["hwnd"] = _hw
-                                log.info("standalone pc_type: context-focused and resolved hwnd %s for last-opened window %r before typing", _hw, _lw)
-            except Exception as _ex:  # noqa: BLE001
-                log.warning("failed to resolve target hwnd for standalone pc_type: %s", _ex)
+    # A remembered title cannot select an executor or authorize focus on a
+    # different desktop. Dispatch uses the explicit session contract instead.
+    async def _dispatch_selected(snapshot=None):
+        requested = str(_args.get("session") or _args.get("target_session")
+                        or _args.get("execution_target_id") or "").strip()
+        if requested:
+            if tool not in _LAUNCH_VERBS and tool != "cu_window_list":
+                return {"success": False, "exit_code": 1, "output": "",
+                        "stderr": "This action does not support explicit desktop session routing"}
+            if snapshot is not None:
+                targets = snapshot.get("targets") or {}
+                aliases = snapshot.get("session_aliases") or {}
+                matches = [target for target in targets.values()
+                           if requested in (target["id"], target["session_id"], target["platform"])
+                           or aliases.get(requested) == target["id"]]
+                if len(matches) != 1:
+                    return {"success": False, "exit_code": 1, "output": "",
+                            "stderr": "Requested desktop execution session is unavailable or ambiguous"}
+                _args["session"] = matches[0]["id"]
+        result = await dispatch_mios_verb(tool, _args, session_id=session_id)
+        if requested and snapshot is not None and _command_succeeded(result):
+            destination = _receipt_target(result)
+            if destination != matches[0]:
+                return dict(result, success=False, exit_code=1,
+                            stderr="Dispatch receipt does not match the requested execution session")
+        return result
+
     _is_launch = tool in _LAUNCH_VERBS
     _action = tool in _OS_CONTROL_ACTION_VERBS or _is_launch
     _before = _after = None
@@ -569,7 +621,7 @@ async def _respond_os_control(
     if _action and _is_launch:
         _emit("🚀", f"opening {_os_target(_args) or tool}")
         _before = await _enumerate_windows()
-        result = await dispatch_mios_verb(tool, _args, session_id=session_id)
+        result = await _dispatch_selected(_before)
         _deadline = time.monotonic() + OS_CONTROL_LAUNCH_VERIFY_S
         while _command_succeeded(result):
             _tries += 1
@@ -604,7 +656,7 @@ async def _respond_os_control(
         for _i in range(_attempts):
             _tries = _i + 1
             _before = await _enumerate_windows() if _action else None
-            result = await dispatch_mios_verb(tool, _args, session_id=session_id)
+            result = await _dispatch_selected(_before)
             _after = await _enumerate_windows() if _action else None
             _wdiff = _window_diff(_before, _after) if _action else {}
             _verified = (_verify_os_action(tool, _args, result, _before, _after, _wdiff)
@@ -645,6 +697,7 @@ async def _respond_os_control(
             "type": "function",
             "function": {"name": tool, "arguments": _args},
         },
+        "session_inventory": (_before or {}).get("session_inventory") or {},
         "tool_result": {
             "success": bool(result.get("success")),
             "output": (result.get("output") or "")[:2000],

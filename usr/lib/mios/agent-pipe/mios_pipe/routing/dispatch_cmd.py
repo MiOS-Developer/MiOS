@@ -115,13 +115,13 @@ def _build_dispatch_cmd(tool: str, args: dict) -> Optional[str]:
         for key in ("script", "code"):
             if key in args and isinstance(args[key], str):
                 args[key] = normalize_container_exec(args[key])
-    _GUARDED_VERBS = {"launch_app", "window_op"}
+    _GUARDED_VERBS = {"launch_app", "open_app", "window_op"}
     _tmpl = (_VERB_CATALOG.get(tool) or {}).get("cmd")
     if _tmpl and tool not in _GUARDED_VERBS:
         _rendered = _template_to_cmd(tool, _tmpl, args)
         if _rendered:
             return _rendered
-    if tool == "launch_app":
+    if tool in ("launch_app", "open_app"):
         name = _arg_with_synonyms(tool, "name", args).strip()
         if name and ("/" in name or "\\" in name):
             base = os.path.basename(name.rstrip("/\\")) or name
@@ -139,13 +139,13 @@ def _build_dispatch_cmd(tool: str, args: dict) -> Optional[str]:
             return None
         _clean = dict(args, name=name)
         extra_args = args.get("args") or []
-        _cat = _VERB_CATALOG.get("launch_app") or {}
+        _cat = _VERB_CATALOG.get(tool) or {}
         if extra_args:
             _tmpl = _cat.get("cmd_args") or _cat.get("cmd")
         else:
             _tmpl = _cat.get("cmd")
         if _tmpl:
-            return _template_to_cmd("launch_app", _tmpl, _clean)
+            return _template_to_cmd(tool, _tmpl, _clean)
         return None
     if tool == "window_op":
         op = str(args.get("op", "focus")).lower()

@@ -221,15 +221,31 @@ print('LD_PRELOAD=/must-not-import')
 """)
         self.program("mios-gen","""import json,os,sys
 from pathlib import Path
-Path(os.environ['MIOS_APP_TEST_PREFLIGHT']).write_text(json.dumps(sys.argv[1:]))
-if os.environ.get('MIOS_APP_TEST_PREFLIGHT_FAIL'): raise SystemExit(7)
-print(json.dumps({'ok':True}))
+if '--sessions' in sys.argv:
+    if os.environ.get('MIOS_APP_TEST_INVENTORY_FAIL'): raise SystemExit(8)
+    print(json.dumps({'ok':True,'sessions':[{'execution_target':json.loads(os.environ['MIOS_APP_TEST_TARGET']),'runtime':os.environ['MIOS_APP_TEST_RUNTIME'],'available':True,'scope':'operator'}],'registered_endpoints':[]}))
+else:
+    Path(os.environ['MIOS_APP_TEST_PREFLIGHT']).write_text(json.dumps(sys.argv[1:]))
+    if os.environ.get('MIOS_APP_TEST_PREFLIGHT_FAIL'): raise SystemExit(7)
+    print(json.dumps({'ok':True}))
 """)
         self.launcher=self.program("desktop-launch","""import json,os,sys
 from pathlib import Path
 with Path(os.environ['MIOS_APP_TEST_CALLS']+".count").open("a") as receipt:receipt.write("1\\n")
 Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1:],'home':os.environ['HOME'],'xdg_config':os.environ['XDG_CONFIG_HOME'],'wayland':os.environ.get('WAYLAND_DISPLAY'),'signature':os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'),'preload':os.environ.get('LD_PRELOAD')}))
 """)
+        import socket
+        self.runtime=self.base/"runtime";self.runtime.mkdir(mode=0o700)
+        control=self.runtime/"hypr/current-fixture/.socket.sock";control.parent.mkdir(parents=True)
+        self.sockets=[socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) for _ in range(2)]
+        self.sockets[0].bind(str(control));self.sockets[1].bind(str(self.runtime/"wayland-test"))
+        self.destination={"id":str(control),"platform":"linux","session_id":"current-fixture","backend":"hyprland"}
+        self.env["MIOS_EXECUTION_SESSION"]=str(control)
+        self.env["MIOS_APP_TEST_RUNTIME"]=str(self.runtime)
+        self.env["MIOS_APP_TEST_TARGET"]=json.dumps(self.destination)
+        helper=self.bin/"mios-computer-use"
+        helper.write_text(chr(10).join(["import runpy","globals().update(runpy.run_path("+repr(str(ROOT/"usr/libexec/mios/mios-computer-use"))+"))",""]))
+        self.program("hyprctl","import json; print(json.dumps([{'instance':'current-fixture','wl_socket':'wayland-test'}]))")
         self.record={"ok":True,"desktop_id":"org.example.Recorder","desktop_file":str(self.base/"record.desktop"),"operator_user":self.user,"overall_timeout_ms":3000}
 
     def program(self,name,code):
@@ -263,13 +279,14 @@ Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1
 
     def tearDown(self):
         if hasattr(self,"thread"):self.thread.join(timeout=6)
+        for connection in getattr(self,"sockets",[]):connection.close()
         self.temp.cleanup()
 
     def test_operator_broker_restores_home_and_current_manager_environment(self):
         self.broker();result=self.invoke("a file")
         self.assertEqual(result.returncode,0,result.stderr)
         receipt=json.loads(result.stdout);self.assertTrue(receipt["dispatched"]);self.assertFalse(receipt["confirmed"])
-        self.assertIsNone(receipt["execution_target"],"fake GUI fixture must not claim an actual compositor destination")
+        self.assertEqual(receipt["execution_target"],self.destination)
         call=json.loads(self.calls.read_text())
         self.assertEqual(call["home"],self.home)
         self.assertEqual(call["xdg_config"],self.home+"/.config")
@@ -299,6 +316,11 @@ Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1
         self.env["MIOS_APP_TEST_PREFLIGHT_FAIL"]="1";self.broker()
         result=self.invoke();self.assertNotEqual(result.returncode,0)
         self.assertTrue(self.preflight.exists());self.assertFalse(self.calls.exists())
+
+    def test_fresh_inventory_failure_does_not_dispatch_or_fall_back(self):
+        self.env["MIOS_APP_TEST_INVENTORY_FAIL"]="1";self.broker()
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertFalse(self.preflight.exists());self.assertFalse(self.calls.exists())
 
     def test_unavailable_manager_does_not_dispatch(self):
         self.env["MIOS_APP_TEST_MANAGER_FAIL"]="1";self.broker()

@@ -47,6 +47,131 @@ CU = load_module("usr/libexec/mios/mios-computer-use", "mios_computer_use_cua")
 
 
 
+
+class TestInvocationSessions(unittest.TestCase):
+    def setUp(self):
+        self.primary={"execution_target":{"id":"/private/operator/socket","platform":"linux","session_id":"operator","backend":"hyprland"},"runtime":"/private/operator","available":True,"scope":"operator"}
+        self.nested={"execution_target":{"id":"/private/nested/socket","platform":"linux","session_id":"nested","backend":"hyprland"},"runtime":"/private/nested","available":True,"scope":"nested"}
+        self.remote={"id":"registered-guest","platform":"windows","session_id":"guest-session","backend":"win32"}
+        self.endpoint={"registration_id":"os_control.nodes.console","endpoint":"http://fixture.invalid"}
+        self.inventory={"ok":True,"sessions":[self.primary,self.nested],"registered_endpoints":[self.endpoint]}
+        self.stack=__import__("contextlib").ExitStack();self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.object(CU,"_toml_layered",return_value={"desktop":{"launch":{"overall_timeout_ms":3000}}}))
+        self.stack.enter_context(patch.object(CU,"_executor_endpoint",return_value=""))
+        self.stack.enter_context(patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":"","HYPRLAND_INSTANCE_SIGNATURE":"operator"}))
+    def capture(self,call):
+        import io,contextlib
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output): result=call()
+        self.assertEqual(result,0)
+        return json.loads(output.getvalue())
+    def test_native_discovery_is_refreshed_for_each_invocation(self):
+        from types import SimpleNamespace
+        with patch.object(CU.shutil,"which",return_value="/verified/mios-gen"),patch.object(CU.subprocess,"run",side_effect=[
+                SimpleNamespace(returncode=0,stdout=json.dumps(self.inventory)),
+                SimpleNamespace(returncode=0,stdout=json.dumps(dict(self.inventory,sessions=[])))]) as run:
+            self.assertEqual(len(CU._invocation_inventory()["sessions"]),2)
+            self.assertEqual(CU._invocation_inventory()["sessions"],[])
+        self.assertEqual(run.call_count,2)
+    def test_canonical_window_list_exposes_fresh_nested_inventory_and_exact_default(self):
+        with patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_session_windows",side_effect=lambda row:[{"id":row["scope"],"title":"Recorder"}]):
+            data=self.capture(lambda:CU._invocation_window_list(True))
+        self.assertEqual(data["execution_target"],self.primary["execution_target"])
+        self.assertEqual(len(data["session_inventory"]["sessions"]),2)
+        self.assertEqual(data["session_inventory"]["sessions"][1]["execution_target"],self.nested["execution_target"])
+    def test_explicit_nested_read_does_not_substitute_the_operator(self):
+        with patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":"nested"}),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_session_windows",return_value=[]):
+            data=self.capture(lambda:CU._invocation_window_list(True))
+        self.assertEqual(data["execution_target"],self.nested["execution_target"])
+    def test_unknown_or_offline_requested_session_never_launches_elsewhere(self):
+        with patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":"missing"}),patch.object(CU,"_invocation_inventory",return_value=dict(self.inventory,registered_endpoints=[])),patch.object(CU,"_registered_request") as request:
+            with self.assertRaisesRegex(RuntimeError,"unavailable"):CU._requested_session_launch("Recorder",[])
+        request.assert_not_called()
+    def test_registered_launch_requires_ready_windows_then_same_dispatch_identity(self):
+        windows={"ok":True,"execution_target":self.remote,"windows":[],"capabilities":{"launch":True,"target_precondition":True}}
+        launched={"launched":True,"execution_target":self.remote}
+        with patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":self.endpoint["registration_id"]}),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_registered_request",side_effect=[windows,launched]) as request:
+            data=self.capture(lambda:CU._requested_session_launch("Recorder",[]))
+        self.assertEqual(data["execution_target"],self.remote)
+        self.assertEqual([call.args[1] for call in request.call_args_list],["/windows","/launch"])
+    def test_changed_remote_identity_is_not_confirmed_or_retried(self):
+        other=dict(self.remote,session_id="replacement")
+        with patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":self.endpoint["registration_id"]}),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_registered_request",side_effect=[{"execution_target":self.remote,"windows":[],"capabilities":{"launch":True,"target_precondition":True}},{"launched":True,"execution_target":other}]) as request:
+            with self.assertRaisesRegex(RuntimeError,"selected execution session"):CU._requested_session_launch("Recorder",[])
+        self.assertEqual(request.call_count,2)
+    def test_receipt_only_and_string_success_are_rejected(self):
+        for response in ({"received":True,"execution_target":self.remote},{"launched":"true","execution_target":self.remote}):
+            with self.subTest(response=response),patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":self.endpoint["registration_id"]}),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_registered_request",side_effect=[{"execution_target":self.remote,"windows":[],"capabilities":{"launch":True,"target_precondition":True}},response]):
+                with self.assertRaises(RuntimeError):CU._requested_session_launch("Recorder",[])
+    def test_configured_unavailable_executor_never_falls_back_to_local(self):
+        with patch.object(CU,"_executor_endpoint",return_value=self.endpoint["endpoint"]),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_session_windows",return_value=[]),patch.object(CU,"_registered_request",side_effect=OSError("offline")):
+            with self.assertRaisesRegex(RuntimeError,"unavailable"):CU._invocation_window_list(True)
+
+    def test_legacy_executor_without_target_precondition_is_read_only(self):
+        with patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":self.endpoint["registration_id"]}),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_registered_request",return_value={"execution_target":self.remote,"windows":[]}) as request:
+            with self.assertRaisesRegex(RuntimeError,"session-bound"):CU._requested_session_launch("Recorder",[])
+        self.assertEqual(request.call_count,1)
+
+    def test_registered_dispatch_receipt_stays_explicitly_unconfirmed(self):
+        windows={"execution_target":self.remote,"windows":[],"capabilities":{"launch":True,"target_precondition":True}}
+        dispatched={"dispatched":True,"confirmed":False,"execution_target":self.remote}
+        with patch.dict(CU.os.environ,{"MIOS_EXECUTION_SESSION":self.endpoint["registration_id"]}),patch.object(CU,"_invocation_inventory",return_value=self.inventory),patch.object(CU,"_registered_request",side_effect=[windows,dispatched]):
+            data=self.capture(lambda:CU._requested_session_launch("Recorder",[]))
+        self.assertIs(data["dispatched"],True)
+        self.assertIs(data["confirmed"],False)
+
+
+    def test_malformed_discovery_is_not_a_ready_session(self):
+        from types import SimpleNamespace
+        with patch.object(CU.shutil,"which",return_value="/verified/mios-gen"),patch.object(CU.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout='{"sessions":[]}')):
+            with self.assertRaisesRegex(RuntimeError,"invalid inventory"):CU._invocation_inventory()
+
+
+
+class TestRegisteredLaunchSessionGuard(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from unittest.mock import AsyncMock,MagicMock
+        self.server=load_module("usr/libexec/mios/mios-computer-use-server","mios_registered_launch_test")
+        self.target={"id":"local-fixture","platform":"linux","session_id":"session-one","backend":"hyprland"}
+        self.before={"local":True,"execution_target":self.target,"windows":[]}
+        self.after=dict(self.before,windows=[{"id":"recorder","title":"Recorder","mapped":True}])
+        self.proc=MagicMock(returncode=0)
+        self.proc.communicate=AsyncMock(return_value=(json.dumps({"dispatched":True,"execution_target":self.target}).encode(),b""))
+        self.proc.wait=AsyncMock()
+        self.stack=__import__("contextlib").ExitStack();self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.object(self.server,"_toml",return_value={"desktop":{"launch":{"overall_timeout_ms":1500,"probe_timeout_ms":500}}}))
+        self.run=self.stack.enter_context(patch.object(self.server,"_run_json",new=AsyncMock(side_effect=[self.before,self.after])))
+        self.spawn=self.stack.enter_context(patch.object(self.server.asyncio,"create_subprocess_exec",new=AsyncMock(return_value=self.proc)))
+    async def test_changed_target_is_refused_before_launch_side_effect(self):
+        other=dict(self.target,session_id="new-login")
+        result=await self.server._launch_in_session("Recorder",other)
+        self.assertIs(result["launched"],False)
+        self.spawn.assert_not_awaited()
+    async def test_exact_target_precondition_and_real_window_prove_launch(self):
+        result=await self.server._launch_in_session("Recorder",self.target)
+        self.assertIs(result["launched"],True)
+        self.assertEqual(result["execution_target"],self.target)
+        self.assertEqual(self.spawn.await_args.kwargs["env"]["MIOS_EXECUTION_SESSION"],self.target["id"])
+    async def test_dispatch_alone_is_never_claimed_as_a_window(self):
+        self.run.side_effect=[self.before,self.before]
+        result=await self.server._launch_in_session("Recorder",self.target)
+        self.assertIs(result["dispatched"],True)
+        self.assertIs(result["confirmed"],False)
+        self.assertNotIn("launched",result)
+    async def test_unknown_changed_dispatch_receipt_is_not_retried(self):
+        self.proc.communicate.return_value=(json.dumps({"dispatched":True,"execution_target":dict(self.target,session_id="changed")}).encode(),b"")
+        result=await self.server._launch_in_session("Recorder",self.target)
+        self.assertIs(result["launched"],False)
+        self.assertEqual(self.spawn.await_count,1)
+    async def test_launch_name_is_literal_argv_and_not_a_shell_command(self):
+        name="Recorder; touch /must-not-execute"
+        self.run.side_effect=[self.before,self.before]
+        result=await self.server._launch_in_session(name,self.target)
+        self.assertEqual(self.spawn.await_args.args[1],name)
+        self.assertNotIn("shell",self.spawn.await_args.kwargs)
+        self.assertIs(result["dispatched"],True)
+
+
 class TestWindowDestinationProvenance(unittest.TestCase):
     def capture(self, call):
         import contextlib,io

@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -804,6 +805,206 @@ def _keyname_to_keysym(name):
     else:
         raise RuntimeError(f"unknown key for portal: {last}")
     return out
+
+
+
+def _session_target(value):
+    target = value.get("execution_target") if isinstance(value, dict) else None
+    keys = ("id", "platform", "session_id", "backend")
+    if not isinstance(target, dict) or not all(
+            isinstance(target.get(key), str) and target[key].strip() for key in keys):
+        return None
+    return {key: target[key].strip() for key in keys}
+
+
+def _invocation_inventory():
+    """Read the existing native registry afresh; never cache runtime presence."""
+    cfg = _toml_layered()
+    policy = cfg.get("desktop", {}).get("launch", {})
+    budget = policy.get("overall_timeout_ms")
+    if type(budget) is not int or not 1000 <= budget <= 60000:
+        raise RuntimeError("Invalid desktop launch discovery budget")
+    native = shutil.which("mios-gen")
+    if not native:
+        raise RuntimeError("Native session discovery is unavailable")
+    result = subprocess.run([native, "app-preflight", "--sessions"],
+                            capture_output=True, text=True, timeout=budget / 1000)
+    if result.returncode != 0:
+        raise RuntimeError("Native session discovery failed")
+    data = json.loads(result.stdout)
+    if (not isinstance(data, dict) or data.get("ok") is not True
+            or not isinstance(data.get("sessions"), list)
+            or not isinstance(data.get("registered_endpoints"), list)):
+        raise RuntimeError("Native session discovery returned an invalid inventory")
+    return data
+
+
+def _session_matches(row, requested):
+    target = _session_target(row)
+    return bool(target and requested in (target["id"], target["session_id"], target["platform"]))
+
+
+def _local_session_environment(row, environment=None):
+    """Bind read/launch commands to one freshly witnessed compositor."""
+    import stat
+    target = _session_target(row)
+    if (not target or row.get("available") is not True
+            or target["platform"] != "linux" or target["backend"] != "hyprland"):
+        raise RuntimeError("Requested native desktop session is unavailable")
+    runtime = Path(row.get("runtime", ""))
+    signature = target["session_id"]
+    if not runtime.is_absolute() or not re.fullmatch(r"[A-Za-z0-9_.-]+", signature) or signature in (".", ".."):
+        raise RuntimeError("Invalid desktop session identity")
+    socket_path = runtime / "hypr" / signature / ".socket.sock"
+    metadata = socket_path.lstat()
+    if (socket_path.resolve() != socket_path or str(socket_path) != target["id"]
+            or not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid()):
+        raise RuntimeError("Desktop session ownership changed")
+    env = dict(environment or os.environ)
+    env.update(XDG_RUNTIME_DIR=str(runtime), HYPRLAND_INSTANCE_SIGNATURE=signature)
+    return env
+
+
+def _session_windows(row):
+    env = _local_session_environment(row)
+    probe = subprocess.run(["hyprctl", "-j", "clients"], env=env,
+                           capture_output=True, text=True, timeout=5)
+    if probe.returncode != 0:
+        raise RuntimeError("Selected compositor window query failed")
+    clients = json.loads(probe.stdout)
+    if not isinstance(clients, list):
+        raise RuntimeError("Selected compositor returned invalid windows")
+    return [{"id": client.get("address"), "pid": client.get("pid"),
+             "title": client.get("title", ""), "class": client.get("class", ""),
+             "mapped": client.get("mapped"),
+             "x": client.get("at", [0, 0])[0], "y": client.get("at", [0, 0])[1],
+             "w": client.get("size", [0, 0])[0], "h": client.get("size", [0, 0])[1]}
+            for client in clients if isinstance(client, dict)]
+
+
+def _registered_request(endpoint, path, body=None, timeout=3.5):
+    # Only native-validated registered URLs reach this existing executor contract.
+    payload = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(endpoint.rstrip("/") + path, data=payload,
+        headers={} if payload is None else {"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        if not 200 <= response.status < 300:
+            raise RuntimeError("Registered executor request failed")
+        raw = response.read(1048577)
+    if len(raw) > 1048576:
+        raise RuntimeError("Registered executor response exceeds its bound")
+    data = json.loads(raw)
+    if not isinstance(data, dict) or data.get("error") or any(
+            key in data and data[key] is not True for key in ("ok", "success", "verified", "launched")):
+        raise RuntimeError("Registered executor returned a negative verdict")
+    return data
+
+
+def _registered_session(inventory, requested):
+    candidates = [row for row in inventory["registered_endpoints"]
+                  if isinstance(row, dict) and isinstance(row.get("endpoint"), str)]
+    aliases = [row for row in candidates if requested in
+               (row.get("registration_id"), str(row.get("registration_id") or "").split(".nodes.")[-1])]
+    if aliases:
+        candidates = aliases
+    matches = {}
+    deadline = time.monotonic() + min(6, _cfg("desktop", "launch", {}).get("probe_timeout_ms", 3000) / 1000)
+    for candidate in candidates[:64]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            data = _registered_request(candidate["endpoint"], "/windows",
+                                       timeout=min(remaining, 3.5))
+            target = _session_target(data)
+            if not target or not isinstance(data.get("windows"), list):
+                continue
+            if requested not in (candidate["registration_id"], candidate["registration_id"].split(".nodes.")[-1],
+                                  target["id"], target["session_id"], target["platform"]):
+                continue
+            matches[target["id"]] = dict(candidate, execution_target=target,
+                windows=data["windows"], available=True, probed=True,
+                capabilities=data.get("capabilities") or {}, scope="registered")
+        except (OSError, ValueError, RuntimeError):
+            continue
+    if len(matches) != 1:
+        raise RuntimeError("Requested registered desktop session is unavailable or ambiguous")
+    return next(iter(matches.values()))
+
+
+def _requested_session_launch(name, arguments):
+    """Canonical launch backend for an explicit registered execution session."""
+    requested = os.environ.get("MIOS_EXECUTION_SESSION", "").strip()
+    if not requested:
+        return 64
+    inventory = _invocation_inventory()
+    local = [row for row in inventory["sessions"] if _session_matches(row, requested)]
+    if len(local) == 1:
+        return 64  # The ordinary desktop bridge validates/reuses this same target.
+    if local:
+        raise RuntimeError("Requested desktop session is ambiguous")
+    selected = _registered_session(inventory, requested)
+    if arguments:
+        raise RuntimeError("Registered executor launch does not support extra arguments")
+    capabilities = selected.get("capabilities")
+    if not isinstance(capabilities, dict) or capabilities.get("launch") is not True or capabilities.get("target_precondition") is not True:
+        raise RuntimeError("Registered executor does not support session-bound application launch")
+    response = _registered_request(selected["endpoint"], "/launch",
+        {"app": name, "position": os.environ.get("MIOS_LAUNCH_POSITION", "default"),
+         "execution_target": selected["execution_target"]},
+        timeout=_cfg("desktop", "launch", {}).get("overall_timeout_ms", 15000) / 1000)
+    if (not (response.get("launched") is True or response.get("dispatched") is True)
+            or _session_target(response) != selected["execution_target"]):
+        raise RuntimeError("Registered launch did not confirm the selected execution session")
+    print(json.dumps(dict(response, dispatched=True,
+                          confirmed=response.get("confirmed") is True and response.get("launched") is True,
+                          execution_target=selected["execution_target"])))
+    return 0
+
+
+def _invocation_window_list(as_json, local_only=False):
+    inventory = _invocation_inventory()
+    requested = "" if local_only else os.environ.get("MIOS_EXECUTION_SESSION", "").strip()
+    current = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    rows = []
+    for row in inventory["sessions"]:
+        if not isinstance(row, dict) or row.get("available") is not True:
+            continue
+        try:
+            rows.append(dict(row, windows=_session_windows(row)))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            inventory.setdefault("unavailable", []).append(
+                {"execution_target": _session_target(row), "available": False,
+                 "reason": "Session window probe failed"})
+    inventory["sessions"] = rows
+    if requested:
+        matches = [row for row in rows if _session_matches(row, requested)]
+        if len(matches) > 1:
+            raise RuntimeError("Requested desktop session is ambiguous")
+        selected = matches[0] if matches else _registered_session(inventory, requested)
+    elif not local_only and _executor_endpoint():
+        endpoint = _executor_endpoint()
+        registered = [row for row in inventory["registered_endpoints"]
+                      if row.get("endpoint") == endpoint]
+        if not registered:
+            raise RuntimeError("Configured executor has no valid registered session")
+        selected = _registered_session(inventory, registered[0]["registration_id"])
+    else:
+        matches = [row for row in rows if row["execution_target"]["session_id"] == current]
+        if current and not matches:
+            raise RuntimeError("The current desktop session is no longer ready")
+        if not current:
+            matches = [row for row in rows if row.get("scope") == "operator"]
+        if len(matches) != 1:
+            raise RuntimeError("No unique operator desktop session is ready")
+        selected = matches[0]
+    result = {"windows": selected["windows"], "local": selected.get("scope") != "registered",
+              "execution_target": selected["execution_target"], "session_inventory": inventory}
+    if as_json:
+        print(json.dumps(result))
+        return 0
+    return _emit_windows(result["windows"], False, local=result["local"],
+                         execution_target=result["execution_target"])
 
 
 def _emit_windows(windows, as_json, *, local=False, execution_target=None) -> int:
@@ -1592,6 +1793,16 @@ def main() -> int:
     if ns.openai_tools or sub in ("--openai-tools", "openai-tools"):
         print(json.dumps(get_openai_tool_definitions(), indent=2))
         return 0
+
+    if sub in ("window-list", "session-launch"):
+        try:
+            if sub == "window-list":
+                return _invocation_window_list(as_json, local_only="--local-session" in args)
+            if not args:
+                raise RuntimeError("Session launch requires an application name")
+            return _requested_session_launch(args[0], args[1:])
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            _die(str(error))
 
     if sub in ("screen_observe", "screen-observe"):
         return _handle_screen_observe(args, as_json)

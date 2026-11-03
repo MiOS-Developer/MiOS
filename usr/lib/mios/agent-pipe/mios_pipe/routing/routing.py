@@ -160,6 +160,10 @@ def _deterministic_action_route(user_text: str) -> Optional[dict]:
     _low = rest.lower()
     if not rest or len(rest.split()) > 3:
         return None
+    # A remaining location is an explicit target request, not part of an app
+    # name. Let the schema-aware route resolve its runtime session argument.
+    if re.search(r"\s+(?:on|in)\s+\S", rest, re.IGNORECASE):
+        return None
     if "://" in rest or (_COMPOUND_CONNECTIVE_ALT
                          and re.search(r"\b(?:" + _COMPOUND_CONNECTIVE_ALT + r")\b", _low)):
         return None

@@ -108,7 +108,12 @@ async def _run(args: list[str], timeout=30) -> tuple[int, str, str]:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
         return 124, "", "timeout"
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
@@ -424,13 +429,82 @@ async def ex_screenshot():
 @app.get("/windows")
 @app.get("/screen-layout")
 async def ex_windows():
-    return JSONResponse(await _run_json(["window-list", "--json"]))
+    result = await _run_json(["window-list", "--json", "--local-session"])
+    if result.get("local") is True and _execution_session(result):
+        result["capabilities"] = {"launch": True, "target_precondition": True}
+    return JSONResponse(result)
 
 
 def _need_auth(request: Request):
     if not _auth_ok(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     return None
+
+
+
+def _execution_session(value):
+    target = value.get("execution_target") if isinstance(value, dict) else None
+    keys = ("id", "platform", "session_id", "backend")
+    if not isinstance(target, dict) or not all(isinstance(target.get(key), str) and target[key].strip() for key in keys):
+        return None
+    return {key: target[key] for key in keys}
+
+
+async def _launch_in_session(app_name, expected):
+    """Check the session before dispatch; never equate dispatch with a window."""
+    if not isinstance(app_name, str) or not app_name.strip() or not _execution_session({"execution_target": expected}):
+        return {"error": "A named application and exact execution session are required", "launched": False}
+    policy = (_toml().get("desktop") or {}).get("launch") or {}
+    budget, probe = policy.get("overall_timeout_ms"), policy.get("probe_timeout_ms")
+    if type(budget) is not int or type(probe) is not int or not 1000 <= budget <= 60000 or not 100 <= probe <= budget:
+        return {"error": "Invalid desktop launch budget", "launched": False}
+    before = await asyncio.wait_for(_run_json(["window-list", "--json", "--local-session"]), timeout=probe / 1000)
+    if before.get("local") is not True or _execution_session(before) != expected:
+        return {"error": "Requested execution session is no longer current", "launched": False}
+    env = dict(os.environ, MIOS_EXECUTION_SESSION=expected["id"])
+    launcher = str(Path(CU).with_name("mios-launch"))
+    proc = await asyncio.create_subprocess_exec(launcher, app_name, env=env,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        output, _ = await asyncio.wait_for(proc.communicate(), timeout=budget / 1000)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        proc.kill()
+        await proc.wait()
+        return {"error": "Launch outcome unavailable; no retry was attempted", "launched": False}
+    try:
+        receipt = json.loads(output)
+    except (ValueError, TypeError):
+        return {"error": "Launch did not produce a session-bound receipt", "launched": False}
+    if proc.returncode != 0 or receipt.get("dispatched") is not True or _execution_session(receipt) != expected:
+        return {"error": "Launch receipt did not confirm the requested session", "launched": False}
+    result = {"dispatched": True, "confirmed": False, "execution_target": expected}
+    try:
+        after = await asyncio.wait_for(_run_json(["window-list", "--json", "--local-session"]), timeout=probe / 1000)
+    except (asyncio.TimeoutError, OSError):
+        return result
+    if _execution_session(after) != expected:
+        return {"error": "Execution session changed before window verification", "launched": False}
+    import re
+    needles = [re.sub(r"[^a-z0-9]", "", value.lower()) for value in
+               (app_name, str(receipt.get("desktop_id") or "")) if value]
+    matching = [window for window in after.get("windows") or [] if isinstance(window, dict)
+                and window.get("mapped") is not False
+                and any(needle and needle in re.sub(r"[^a-z0-9]", "", " ".join(
+                    str(window.get(key) or "") for key in ("title", "class", "proc")).lower())
+                    for needle in needles)]
+    if matching:
+        result.update(ok=True, launched=True, confirmed=True, windows=matching)
+    return result
+
+
+@app.post("/launch")
+async def ex_launch(request: Request):
+    denied = _need_auth(request)
+    if denied:
+        return denied
+    body = await _safe_json(request)
+    result = await _launch_in_session(body.get("app"), body.get("execution_target"))
+    return JSONResponse(result, status_code=200 if result.get("dispatched") is True else 409)
 
 
 @app.post("/input/{action}")
