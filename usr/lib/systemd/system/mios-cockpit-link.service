@@ -1,17 +1,13 @@
-# AI-hint: Service file for mios-cockpit-link proxy. Uses systemd-socket-proxyd to proxy to host Cockpit socket.
+# AI-hint: Native Cockpit proxy for the configured public and discovery listeners; the socket owns both bindings.
 # AI-related: usr/lib/systemd/system/mios-cockpit-link.socket
 [Unit]
 Description='MiOS' Cockpit Link Proxy Service
 After=network.target cockpit.socket mios-cockpit-link.socket
-Requires=mios-cockpit-link.socket
+Requires=cockpit.socket mios-cockpit-link.socket
 ConditionVirtualization=!container
 
 [Service]
-ExecStart=/usr/lib/systemd/systemd-socket-proxyd ${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_COCKPIT_INTERNAL:-9090}
-# A stateless socket-proxy owns no files and needs no persistent identity, so run it under
-# a transient DynamicUser rather than the shared, discouraged 'nobody' account (systemd-analyze
-# verify flags User=nobody as unsafe, and 99-postcheck treats that as fatal). DynamicUser=yes
-# implies ProtectSystem=strict + ProtectHome=read-only; we set them explicitly at that level.
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:9090
 DynamicUser=yes
 NoNewPrivileges=yes
 PrivateTmp=yes

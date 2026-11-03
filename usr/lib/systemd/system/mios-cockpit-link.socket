@@ -1,10 +1,11 @@
-# AI-hint: Socket file for mios-cockpit-link proxy. Maps port 8091 on host/WSL to the cockpit service.
+# AI-hint: Native Cockpit public and discovery listeners projected from the canonical ports.
 # AI-related: usr/lib/systemd/system/mios-cockpit-link.service
 [Unit]
 Description='MiOS' Cockpit Link Proxy Socket
 ConditionVirtualization=!container
 
 [Socket]
+ListenStream=0.0.0.0:8110
 ListenStream=0.0.0.0:8120
 BindIPv6Only=both
 

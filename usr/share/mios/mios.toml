@@ -108,10 +108,11 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 55
-max_undeclared = 164
+max_undeclared = 162
 max_undeclared_user = 19
 strict_no_write = [
   "mios-boot-display-report.service",
+  "mios-cockpit-link.service",
   "mios-embed-backfill.service",
   "mios-node.service",
   "mios-policy-arbiter.service",
@@ -427,13 +428,32 @@ Wants = "k3s-agent.service"
 [units."mios-k3s-worker.target".Install]
 WantedBy = "multi-user.target"
 
+[units."mios-cockpit-link.service".Unit]
+comment = "# AI-hint: Native Cockpit proxy for the configured public and discovery listeners; the socket owns both bindings.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.socket"
+Description = "'MiOS' Cockpit Link Proxy Service"
+After = "network.target cockpit.socket mios-cockpit-link.socket"
+Requires = "cockpit.socket mios-cockpit-link.socket"
+ConditionVirtualization = "!container"
+
+[units."mios-cockpit-link.service".Service]
+ExecStart = "/usr/lib/systemd/systemd-socket-proxyd ${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_COCKPIT_INTERNAL:-9090}"
+DynamicUser = true
+NoNewPrivileges = true
+PrivateTmp = true
+PrivateDevices = true
+ProtectSystem = "strict"
+ProtectHome = true
+
+[units."mios-cockpit-link.service".Install]
+WantedBy = "multi-user.target"
+
 [units."mios-cockpit-link.socket".Unit]
-comment = "# AI-hint: Socket file for mios-cockpit-link proxy. Maps port 8091 on host/WSL to the cockpit service.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.service"
+comment = "# AI-hint: Native Cockpit public and discovery listeners projected from the canonical ports.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.service"
 Description = "'MiOS' Cockpit Link Proxy Socket"
 ConditionVirtualization = "!container"
 
 [units."mios-cockpit-link.socket".Socket]
-ListenStream = "0.0.0.0:${MIOS_PORTS_COCKPIT_LINK}"
+ListenStream = ["0.0.0.0:${MIOS_PORTS_COCKPIT}", "0.0.0.0:${MIOS_PORTS_COCKPIT_LINK}"]
 BindIPv6Only = "both"
 
 [units."mios-cockpit-link.socket".Install]
@@ -10469,7 +10489,7 @@ placeholders             = ["FEDORA_VERSION", "MIOS_VERSION", "MIOS_VERSIONS_FED
 [versions]
 fedora                   = "44"
 k3s                      = "latest"
-forgejo                  = "latest"
+forgejo                  = "17.0.1"
 ceph                     = "latest"
 
 # ----------------------------------------------------------------------------
@@ -10997,7 +11017,7 @@ core = [
   "localhost/mios-crawl4ai-slim:latest",
   "localhost/mios-firecrawl:v1.0.0",
   "code.forgejo.org/forgejo/runner:latest",
-  "codeberg.org/forgejo/forgejo:latest",
+  "codeberg.org/forgejo/forgejo:17.0.1",
   "docker.io/adguard/adguardhome:latest",
   "docker.io/headscale/headscale:latest",
   "docker.io/guacamole/guacamole:latest",
@@ -14305,39 +14325,6 @@ Documentation = "file:///usr/share/doc/mios/manual/ch66-v5-authority-inversion-a
 Wants = "network-online.target"
 
 
-[containers.mios-cockpit-link.Unit]
-After = "network-online.target cockpit.socket mios-webtools-firstboot.service"
-ConditionPathExists = "/usr/lib/systemd/system/cockpit.socket"
-ConditionVirtualization = ["!wsl", "!container"]
-Description = "'MiOS' Cockpit web-console discovery shim (Podman Desktop link)"
-Documentation = "https://cockpit-project.org/"
-Wants = "network-online.target"
-
-[containers.mios-cockpit-link.Container]
-ContainerName = "mios-cockpit-link"
-EnvironmentFile = "/etc/mios/install.env"
-Exec = "socat tcp-listen:${MIOS_PORTS_COCKPIT_LINK},bind=0.0.0.0,fork,reuseaddr tcp:host.containers.internal:9090"
-Group = "65534"
-Image = "localhost/mios-sys:latest"
-Label = [
-  "org.opencontainers.image.title=mios-cockpit-link",
-  "org.opencontainers.image.url=https://localhost:9090/",
-  "org.opencontainers.image.documentation=https://cockpit-project.org/documentation.html",
-  "io.podman_desktop.openInBrowser=https://localhost:9090/"
-]
-Pod = "mios-system.pod"
-User = "65534"
-
-[containers.mios-cockpit-link.Install]
-WantedBy = "multi-user.target default.target"
-
-[containers.mios-cockpit-link.Service]
-Delegate = "yes"
-EnvironmentFile = "/etc/mios/install.env"
-Restart = "on-failure"
-RestartSec = "15s"
-TimeoutStartSec = "60s"
-
 [containers.mios-code-server.Container]
 AutoUpdate = "registry"
 ContainerName = "mios-code-server"
@@ -14501,7 +14488,7 @@ Environment = [
 EnvironmentFile = "/etc/mios/install.env"
 Exec = "forgejo web"
 Group = "1000"
-Image = "${MIOS_FORGE_IMAGE:-codeberg.org/forgejo/forgejo:latest}"
+Image = "${MIOS_FORGE_IMAGE:-codeberg.org/forgejo/forgejo:17.0.1}"
 Label = [
   "org.opencontainers.image.title=mios-forge",
   "org.opencontainers.image.url=http://localhost:${MIOS_PORTS_FORGE_HTTP:-8400}/",

@@ -930,3 +930,69 @@ ConditionUser = "${{MIOS_REMOTE_RDP_OPERATOR_UID}}"
         );
     }
 }
+
+#[test]
+fn cockpit_is_one_native_proxy_with_both_configured_listeners() {
+    let mut doc: toml::Value = toml::from_str(&ssot()).expect("SSOT parses");
+    assert!(doc["containers"].get("mios-cockpit-link").is_none());
+    assert!(doc["quadlets"]["enable"].get("mios-cockpit-link").is_none());
+    assert!(!root()
+        .join("usr/share/containers/systemd/mios-cockpit-link.container")
+        .exists());
+    let ui = fs::read_to_string(root().join("usr/share/mios/configurator/mios.html")).unwrap();
+    assert!(!ui.contains("name: \"mios-cockpit-link\""));
+    for stack in [0, 1] {
+        doc["ports"]["stack_id"] = toml::Value::Integer(stack);
+        doc["ports"]["cockpit"] = toml::Value::Integer(18110);
+        doc["ports"]["cockpit_link"] = toml::Value::Integer(18120);
+        doc["ports"]["cockpit_internal"] = toml::Value::Integer(19090);
+        doc["ports"]["categories"]["admin"]["pinned"]["cockpit_internal"] =
+            toml::Value::Integer(19090);
+        doc["network"]["loopback"] = toml::Value::String("127.0.0.2".into());
+        let units = mios_unit_gen::render_units(&toml::to_string(&doc).unwrap()).unwrap();
+        let socket = &units["mios-cockpit-link.socket"];
+        assert!(socket.contains(&format!("ListenStream=0.0.0.0:{}", 18110 + stack * 10000)));
+        assert!(socket.contains(&format!("ListenStream=0.0.0.0:{}", 18120 + stack * 10000)));
+        assert_eq!(socket.matches("ListenStream=").count(), 2);
+        let service = &units["mios-cockpit-link.service"];
+        assert!(
+            service.contains("ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.2:19090")
+        );
+        assert!(!service.contains("${"));
+        assert!(!service.contains("podman"));
+        assert!(service.contains("Requires=cockpit.socket mios-cockpit-link.socket"));
+        assert!(service.contains("DynamicUser=yes"));
+        assert!(service.contains("NoNewPrivileges=yes"));
+    }
+}
+
+#[test]
+fn cockpit_projection_respects_native_presets_and_service_plane_role() {
+    let doc: toml::Value = toml::from_str(&ssot()).unwrap();
+    assert_eq!(
+        doc["blade"]["requires"]["mios-cockpit-link"][0].as_str(),
+        Some("service-plane")
+    );
+    let preset =
+        fs::read_to_string(root().join("usr/lib/systemd/system-preset/90-mios.preset")).unwrap();
+    for unit in [
+        "cockpit.socket",
+        "mios-cockpit-link.socket",
+        "mios-cockpit-link.service",
+    ] {
+        assert!(preset.lines().any(|line| line == format!("enable {unit}")));
+    }
+}
+
+#[test]
+fn forgejo_source_uses_the_verified_stable_patch_in_every_default_consumer() {
+    let doc: toml::Value = toml::from_str(&ssot()).unwrap();
+    assert_eq!(doc["versions"]["forgejo"].as_str(), Some("17.0.1"));
+    let image = doc["containers"]["mios-forge"]["Container"]["Image"]
+        .as_str()
+        .unwrap();
+    assert!(image.contains("codeberg.org/forgejo/forgejo:17.0.1"));
+    assert!(!image.contains(":latest"));
+    let sources = ssot();
+    assert!(!sources.contains("codeberg.org/forgejo/forgejo:latest"));
+}
