@@ -189,6 +189,42 @@ class avd_TestAdversarialIOMMUParser(unittest.TestCase):
         self.assertEqual(res["status"], "not_found")
         self.assertFalse(res["isolated"])
 
+def vfio_fixture_device(root, bdf="0000:01:00.0", *, driver="nvidia", native=None,
+                        vendor="0x10de", product="0x2484", boot=False,
+                        class_code="0x030000", group="7"):
+    """Explicit kernel and ownership evidence for the VFIO simulator."""
+    from pathlib import Path
+    base = Path(root)
+    bus = base / "bus/pci"
+    device = bus / "devices" / bdf
+    device.mkdir(parents=True, exist_ok=True)
+    native = native or driver
+    for name in {driver, native, "vfio-pci", "nvidia", "snd_hda_intel", "amdgpu", "i915", "xhci_hcd"}:
+        if not name: continue
+        directory = bus / "drivers" / name
+        directory.mkdir(parents=True, exist_ok=True)
+        for attr in ("bind", "unbind"):
+            path = directory / attr
+            if not path.exists(): path.write_text("")
+        module = base / "module" / name
+        module.mkdir(parents=True, exist_ok=True)
+        if not (directory / "module").exists(): (directory / "module").symlink_to(module)
+    for name, value in {"vendor": vendor, "device": product, "class": class_code,
+                        "boot_vga": "1" if boot else "0", "driver_override": "(null)",
+                        "native_driver": native,
+                        "modalias": f"pci:v{int(vendor,16):08X}d{int(product,16):08X}sv00000000sd00000000bc{class_code[2:4]}sc{class_code[4:6]}i{class_code[6:8]}"}.items():
+        (device / name).write_text(value + "\n")
+    if driver: (device / "driver").symlink_to(bus / "drivers" / driver)
+    groups = base / "kernel/iommu_groups" / group
+    (groups / "devices").mkdir(parents=True, exist_ok=True)
+    (groups / "devices" / bdf).symlink_to(device)
+    (device / "iommu_group").symlink_to(groups)
+    if not (bus / "drivers_probe").exists(): (bus / "drivers_probe").write_text("")
+    (base / "proc").mkdir(exist_ok=True)
+    if not (base / "live_domains.json").exists(): (base / "live_domains.json").write_text("[]")
+    return str(device)
+
+
 class avd_TestAdversarialVFIOBinder(unittest.TestCase):
     """Adversarial stress-testing for task_358 Dynamic Runtime VFIO Device Unbind and Rebind Utility."""
 
@@ -207,39 +243,15 @@ class avd_TestAdversarialVFIOBinder(unittest.TestCase):
         driver: str = "nvidia",
         boot_vga: bool = False,
     ) -> str:
-        safe_bdf = bdf.replace(":", "_")
-        dev_dir = os.path.join(self.sysfs_root, "bus", "pci", "devices", safe_bdf)
-        os.makedirs(dev_dir, exist_ok=True)
-        with open(os.path.join(dev_dir, "vendor"), "w") as f:
-            f.write(f"{vendor}\n")
-        with open(os.path.join(dev_dir, "device"), "w") as f:
-            f.write(f"{device}\n")
-        with open(os.path.join(dev_dir, "boot_vga"), "w") as f:
-            f.write("1\n" if boot_vga else "0\n")
-        with open(os.path.join(dev_dir, "current_driver"), "w") as f:
-            f.write(f"{driver}\n")
-        with open(os.path.join(dev_dir, "driver_override"), "w") as f:
-            f.write("(null)\n")
-
-        # Driver control dirs
-        for drv in [driver, "vfio-pci", "snd_hda_intel", "amdgpu", "i915"]:
-            drv_dir = os.path.join(self.sysfs_root, "bus", "pci", "drivers", drv)
-            os.makedirs(drv_dir, exist_ok=True)
-            with open(os.path.join(drv_dir, "bind"), "w") as f:
-                f.write("")
-            with open(os.path.join(drv_dir, "unbind"), "w") as f:
-                f.write("")
-            with open(os.path.join(drv_dir, "new_id"), "w") as f:
-                f.write("")
-
-        return dev_dir
+        return vfio_fixture_device(self.sysfs_root, bdf, vendor=vendor,
+            product=device, driver=driver, boot=boot_vga)
 
     def test_primary_gpu_unbind_protection_boot_vga(self) -> None:
         """Adversarial Test: Primary host display GPU (boot_vga=1) unbind is refused unless forced."""
         # Setup primary host GPU on 0000:00:02.0 with boot_vga=1
         self._setup_pci_device("0000:00:02.0", vendor="0x8086", device="0x4680", driver="i915", boot_vga=True)
 
-        binder = avd_vfio_bind_mod.VFIOBinder(sysfs_root=self.sysfs_root)
+        binder = avd_vfio_bind_mod.VFIOBinder(sysfs_root=self.sysfs_root, mock=True)
         self.assertTrue(binder.is_primary_gpu("0000:00:02.0"))
 
         # 1. Unbind attempt without force -> MUST BE REFUSED
@@ -266,7 +278,7 @@ class avd_TestAdversarialVFIOBinder(unittest.TestCase):
         # Function 1: Audio Controller
         self._setup_pci_device("0000:01:00.1", vendor="0x10de", device="0x228b", driver="snd_hda_intel", boot_vga=False)
 
-        binder = avd_vfio_bind_mod.VFIOBinder(sysfs_root=self.sysfs_root)
+        binder = avd_vfio_bind_mod.VFIOBinder(sysfs_root=self.sysfs_root, mock=True)
         siblings = binder.get_slot_siblings("0000:01:00.0")
         self.assertEqual(len(siblings), 2)
         self.assertIn("0000:01:00.0", siblings)
@@ -1414,34 +1426,10 @@ class vb_TestVFIOBind(unittest.TestCase):
         primary_vga: bool = False,
         initial_driver: str = "nvidia",
     ) -> None:
-        # Create driver dirs
-        for drv in ["nvidia", "snd_hda_intel", "vfio-pci", "amdgpu", "i915"]:
-            os.makedirs(os.path.join(sysfs_root, "bus", "pci", "drivers", drv), exist_ok=True)
-            with open(os.path.join(sysfs_root, "bus", "pci", "drivers", drv, "bind"), "w", encoding="utf-8") as f:
-                f.write("")
-            with open(os.path.join(sysfs_root, "bus", "pci", "drivers", drv, "unbind"), "w", encoding="utf-8") as f:
-                f.write("")
-
-        # Create device dirs
-        for bdf, dev_id, class_code, drv, is_boot in [
-            (bdf_vga, "0x2484", "0x030000", initial_driver, primary_vga),
-            (bdf_audio, "0x228b", "0x040300", "snd_hda_intel", False),
-        ]:
-            fs_bdf = vfio_bind.sanitize_bdf_for_fs(bdf)
-            dev_dir = os.path.join(sysfs_root, "bus", "pci", "devices", fs_bdf)
-            os.makedirs(dev_dir, exist_ok=True)
-            with open(os.path.join(dev_dir, "vendor"), "w", encoding="utf-8") as f:
-                f.write("0x10de\n")
-            with open(os.path.join(dev_dir, "device"), "w", encoding="utf-8") as f:
-                f.write(f"{dev_id}\n")
-            with open(os.path.join(dev_dir, "class"), "w", encoding="utf-8") as f:
-                f.write(f"{class_code}\n")
-            with open(os.path.join(dev_dir, "boot_vga"), "w", encoding="utf-8") as f:
-                f.write(f"{'1' if is_boot else '0'}\n")
-            with open(os.path.join(dev_dir, "driver_override"), "w", encoding="utf-8") as f:
-                f.write("(null)\n")
-            with open(os.path.join(dev_dir, "current_driver"), "w", encoding="utf-8") as f:
-                f.write(f"{drv}\n")
+        vfio_fixture_device(sysfs_root, bdf_vga, driver=initial_driver,
+                            boot=primary_vga)
+        vfio_fixture_device(sysfs_root, bdf_audio, driver="snd_hda_intel",
+                            native="snd_hda_intel", product="0x228b", class_code="0x040300")
 
     def test_bdf_normalization(self) -> None:
         self.assertEqual(vfio_bind.normalize_bdf("0000:01:00.0"), "0000:01:00.0")
@@ -1451,7 +1439,8 @@ class vb_TestVFIOBind(unittest.TestCase):
             vfio_bind.normalize_bdf("invalid-format")
 
     def test_mock_bind_and_rebind(self) -> None:
-        binder = vfio_bind.VFIOBinder(mock=True)
+        self._setup_synthetic_gpu(self.temp_dir)
+        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=True)
         res_vfio = binder.bind_to_vfio("0000:01:00.0")
         self.assertEqual(res_vfio["status"], "success")
         self.assertTrue(res_vfio["bound"])
@@ -1463,7 +1452,7 @@ class vb_TestVFIOBind(unittest.TestCase):
 
     def test_primary_gpu_unbind_refused_without_force(self) -> None:
         self._setup_synthetic_gpu(self.temp_dir, primary_vga=True)
-        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=False)
+        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=True)
 
         res = binder.bind_to_vfio("0000:01:00.0", force=False)
         self.assertEqual(res["status"], "refused")
@@ -1473,7 +1462,7 @@ class vb_TestVFIOBind(unittest.TestCase):
 
     def test_primary_gpu_unbind_succeeds_with_force(self) -> None:
         self._setup_synthetic_gpu(self.temp_dir, primary_vga=True)
-        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=False)
+        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=True)
 
         res = binder.bind_to_vfio("0000:01:00.0", force=True)
         self.assertEqual(res["status"], "success")
@@ -1482,7 +1471,7 @@ class vb_TestVFIOBind(unittest.TestCase):
     def test_synthetic_full_bind_unbind_cycle(self) -> None:
         # Set up secondary GPU (VGA + Audio companion)
         self._setup_synthetic_gpu(self.temp_dir, primary_vga=False, initial_driver="nvidia")
-        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=False)
+        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=True)
 
         # Check initial status
         st = binder.get_status("0000:01:00.0")
@@ -1510,7 +1499,8 @@ class vb_TestVFIOBind(unittest.TestCase):
             self.assertEqual(f.read().strip(), "")
 
     def test_status_json_structure(self) -> None:
-        binder = vfio_bind.VFIOBinder(mock=True)
+        self._setup_synthetic_gpu(self.temp_dir)
+        binder = vfio_bind.VFIOBinder(sysfs_root=self.temp_dir, mock=True)
         st = binder.get_status("0000:01:00.0")
         self.assertIn("target_bdf", st)
         self.assertIn("is_primary_gpu", st)
@@ -1995,6 +1985,415 @@ class OVMFContentProofTests(unittest.TestCase):
         subprocess.run(['qemu-img','create','-f','qcow2','-F','raw','-b',str(backing),str(vars_)],check=True,capture_output=True)
         rc,out=self.run_function('ovmf_vars_enrollment',vars_)
         self.assertEqual(rc,1,out);self.assertTrue(out.startswith('UNKNOWN'),out)
+
+
+class tx_TestVFIOTransactions(unittest.TestCase):
+    """Actual transaction logic with explicit, private kernel side effects."""
+    def setUp(self):
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory(prefix="mios-vfio-transaction-")
+        self.root = Path(self.tmp.name)
+        self.gpu = "0000:01:00.0"
+        self.audio = "0000:01:00.1"
+        vfio_fixture_device(self.root, self.gpu)
+        vfio_fixture_device(self.root, self.audio, driver="snd_hda_intel",
+                            product="0x228b", class_code="0x040300")
+        self.binder = vfio_bind.VFIOBinder(str(self.root), mock=True)
+        self.before = self.binder._snapshot(self.gpu)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def assert_restored(self, result):
+        self.assertEqual(result["status"], "failed", result)
+        self.assertFalse(result["bound"])
+        self.assertTrue(result["rollback"]["success"], result)
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+        self.assertFalse(list(self.root.rglob("current_driver")))
+
+    def test_three_functions_roundtrip_preserves_native_drivers(self):
+        usb = "0000:01:00.2"
+        vfio_fixture_device(self.root, usb, driver="xhci_hcd", product="0x1ad8", class_code="0x0c0330")
+        original = self.binder._snapshot(self.gpu)
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "success")
+        result = self.binder.rebind_to_host(self.gpu, host_driver="nvidia")
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["schema_version"], 1)
+        self.assertTrue(result["simulated"])
+        self.assertEqual(len(result["before"]), 3)
+        self.assertEqual(len(result["after"]), 3)
+        self.assertIsNone(result["rollback"])
+        self.assertEqual(self.binder._snapshot(self.gpu), original)
+        self.assertEqual([item["new_driver"] for item in result["siblings"]],
+                         ["nvidia", "snd_hda_intel", "xhci_hcd"])
+        self.assertFalse(list(self.root.rglob("current_driver")))
+        self.assertFalse(list(self.root.rglob("new_id")))
+
+    def test_real_reads_never_use_synthetic_state(self):
+        device = self.root / "bus/pci/devices" / self.gpu
+        (device / "driver").unlink()
+        (device / "current_driver").write_text("fake-nvidia")
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        self.assertIsNone(real.get_device_state(self.gpu).current_driver)
+        result = real.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "refused")
+        self.assertIn("explicit mock", result["error"])
+        (device / "vendor").unlink()
+        with self.assertRaises(vfio_bind.BindingError): real.get_device_state(self.gpu)
+        with self.assertRaises(vfio_bind.BindingError): real.get_device_state("0000:ff:00.0")
+
+    def test_real_writes_do_not_create_attributes_or_unlink_driver(self):
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        real._locked = True
+        missing = self.root / "bus/pci/drivers/missing/unbind"
+        with self.assertRaises(FileNotFoundError): real._write_sysfs(str(missing), self.gpu + "\n")
+        self.assertFalse(missing.parent.exists())
+        path = self.root / "bus/pci/drivers/nvidia/unbind"
+        real._write_sysfs(str(path), self.gpu + "\n")
+        self.assertEqual(real.get_device_state(self.gpu).current_driver, "nvidia")
+        real._locked = False
+        with self.assertRaises(vfio_bind.BindingError): real.unbind_device(self.gpu)
+        with self.assertRaises(vfio_bind.BindingError): real._write_sysfs(str(path), self.gpu + "\n")
+
+    def test_explicit_mock_cannot_point_at_real_sysfs(self):
+        with self.assertRaises(vfio_bind.BindingError): vfio_bind.VFIOBinder("/sys", mock=True)
+        with tempfile.TemporaryDirectory(prefix="mios-empty-sysfs-") as root:
+            binder = vfio_bind.VFIOBinder(root, mock=True)
+            self.assertEqual(binder.bind_to_vfio(self.gpu)["status"], "refused")
+
+    def test_every_vfio_write_failure_rolls_back_all_functions(self):
+        from unittest import mock
+        original_write = self.binder._write_sysfs
+        for fail_at in range(1, 7):
+            with self.subTest(fail_at=fail_at):
+                calls = []
+                def write(path, data):
+                    calls.append(path)
+                    return False if len(calls) == fail_at else original_write(path, data)
+                with mock.patch.object(self.binder, "_write_sysfs", write):
+                    self.assert_restored(self.binder.bind_to_vfio(self.gpu))
+
+    def test_every_host_write_failure_restores_vfio(self):
+        from unittest import mock
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "success")
+        self.before = self.binder._snapshot(self.gpu)
+        original_write = self.binder._write_sysfs
+        for fail_at in range(1, 9):
+            with self.subTest(fail_at=fail_at):
+                calls = []
+                def write(path, data):
+                    calls.append(path)
+                    return False if len(calls) == fail_at else original_write(path, data)
+                with mock.patch.object(self.binder, "_write_sysfs", write):
+                    self.assert_restored(self.binder.rebind_to_host(self.gpu))
+
+    def test_acknowledged_write_without_kernel_change_fails(self):
+        from unittest import mock
+        original_write = self.binder._write_sysfs
+        for operation in ("driver_override", "unbind", "drivers_probe"):
+            skipped = []
+            def write(path, data):
+                if os.path.basename(path) == operation and not skipped:
+                    skipped.append(path)
+                    return True
+                return original_write(path, data)
+            with self.subTest(operation=operation), mock.patch.object(self.binder, "_write_sysfs", write):
+                self.assert_restored(self.binder.bind_to_vfio(self.gpu))
+
+    def test_keyboard_interrupt_rolls_back_and_cli_sigterm_rolls_back(self):
+        from unittest import mock
+        import subprocess
+        original = self.binder._write_sysfs
+        interrupted = []
+        def write(path, data):
+            result = original(path, data)
+            if not interrupted:
+                interrupted.append(True)
+                raise KeyboardInterrupt()
+            return result
+        with mock.patch.object(self.binder, "_write_sysfs", write):
+            self.assert_restored(self.binder.bind_to_vfio(self.gpu))
+        code = """import sys, importlib.util, os, signal
+spec=importlib.util.spec_from_file_location('mios_vfio_signal_test',sys.argv[1])
+m=importlib.util.module_from_spec(spec);sys.modules[spec.name]=m;spec.loader.exec_module(m)
+original=m.VFIOBinder._write_sysfs
+interrupted=[]
+def write(self,path,data):
+ result=original(self,path,data)
+ if not interrupted:
+  interrupted.append(True);os.kill(os.getpid(),signal.SIGTERM)
+ return result
+m.VFIOBinder._write_sysfs=write
+sys.argv=[sys.argv[1],'--sysfs-root',sys.argv[2],'--device','0000:01:00.0','--mock','--to-vfio','--json']
+raise SystemExit(m.main())
+"""
+        result = subprocess.run([sys.executable, "-c", code, vb__TARGET_PATH, str(self.root)],
+                                text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assert_restored(json.loads(result.stdout))
+
+    def test_incomplete_rollback_reports_actual_state(self):
+        from unittest import mock
+        original_write = self.binder._write_sysfs
+        calls = []
+        def write(path, data):
+            calls.append(path)
+            return False if len(calls) in (6, 8) else original_write(path, data)
+        with mock.patch.object(self.binder, "_write_sysfs", write):
+            result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "failed", result)
+        self.assertFalse(result["bound"])
+        self.assertFalse(result["rollback"]["success"], result)
+        self.assertTrue(result["rollback"]["errors"])
+        self.assertEqual(self.binder.get_device_state(self.gpu), self.before[0])
+        self.assertIsNone(self.binder.get_device_state(self.audio).current_driver)
+        observed = {state["bdf"]: state for state in result["rollback"]["observed"]}
+        self.assertIsNone(observed[self.audio]["current_driver"])
+
+    def process(self, resource=None, mapped=False):
+        proc = self.root / "proc/42"
+        (proc / "fd").mkdir(parents=True, exist_ok=True)
+        (proc / "maps").write_text("")
+        if resource:
+            if mapped:
+                (proc / "maps").write_text("1000-2000 rw-s 0000 00:01 1 " + resource + "\n")
+            else: (proc / "fd/3").symlink_to(resource)
+        return proc
+
+    def gpu_nodes(self):
+        for cls, name, bdf in (("drm", "renderD129", self.gpu), ("sound", "controlC1", self.audio)):
+            node = self.root / "class" / cls / name
+            node.mkdir(parents=True)
+            (node / "device").symlink_to(self.root / "bus/pci/devices" / bdf)
+
+    def test_process_container_compositor_and_vfio_holders_refused(self):
+        self.gpu_nodes()
+        for resource in ("/dev/vfio/7", "/dev/vfio/devices/vfio0", "anon_inode:[vfio-device]",
+                         "/dev/iommu", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm",
+                         "/dev/nvidia-caps/nvidia-cap1", "/dev/dri/renderD129", "/dev/snd/controlC1"):
+            with self.subTest(resource=resource):
+                proc = self.process(resource)
+                result = self.binder.bind_to_vfio(self.gpu, force=True)
+                self.assertEqual(result["status"], "refused", result)
+                self.assertIn("in use", result["error"])
+                self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+                (proc / "fd/3").unlink()
+
+    def test_mapped_device_and_unattributed_stale_drm_are_refused(self):
+        self.gpu_nodes()
+        proc = self.process("/dev/dri/renderD129", mapped=True)
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "refused")
+        (proc / "maps").write_text("")
+        (proc / "fd/3").symlink_to("/dev/dri/renderD140")
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "refused")
+
+    def test_container_alias_fd_and_mapping_use_character_identity(self):
+        self.gpu_nodes()
+        # /dev/null supplies a real character inode without touching any GPU.
+        (self.root / "class/drm/renderD129/dev").write_text("1:3")
+        proc = self.process("/dev/null")
+        result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "refused", result)
+        self.assertIn("in use", result["error"])
+        (proc / "fd/3").unlink()
+        (proc / "maps").write_text("1000-2000 rw-s 0000 00:01 1 /dev/private-container-gpu\n")
+        (proc / "map_files").mkdir()
+        (proc / "map_files/1000-2000").symlink_to("/dev/null")
+        result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "refused", result)
+        self.assertIn("mapped_device", result["error"])
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+
+    def test_unrelated_desktop_gpu_can_remain_in_use(self):
+        node = self.root / "class/drm/renderD128"
+        node.mkdir(parents=True)
+        other = self.root / "devices/0000:03:00.0"
+        other.mkdir(parents=True)
+        (node / "device").symlink_to(other)
+        self.process("/dev/dri/renderD128")
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "success")
+
+    def test_live_vm_hostdev_ownership_is_not_forceable(self):
+        domain = '<domain><devices><hostdev type="pci"><source><address domain="0x0000" bus="0x01" slot="0x00" function="0x0"/></source></hostdev></devices></domain>'
+        (self.root / "live_domains.json").write_text(json.dumps([domain]))
+        result = self.binder.rebind_to_host(self.gpu)
+        self.assertEqual(result["status"], "refused", result)
+        self.assertIn("live_vm", result["error"])
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+
+    def test_unavailable_ownership_evidence_is_refused(self):
+        from unittest import mock
+        with mock.patch.object(self.binder, "_live_domain_xml", side_effect=PermissionError("denied")):
+            self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "refused")
+        proc = self.process()
+        (proc / "maps").unlink()
+        result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "refused", result)
+        self.assertIn("ownership evidence", result["error"])
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+
+    def test_ownership_changes_before_unbind_are_refused(self):
+        from unittest import mock
+        original_write = self.binder._write_sysfs
+        writes = []
+        def write(path, data):
+            writes.append(path)
+            result = original_write(path, data)
+            if len(writes) == 1: self.process("/dev/nvidia0")
+            return result
+        with mock.patch.object(self.binder, "_write_sysfs", write):
+            result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "failed", result)
+        self.assertFalse(result["rollback"]["success"])
+        self.assertFalse(any(path.endswith("/unbind") for path in writes))
+        self.assertEqual(self.binder.get_device_state(self.gpu).current_driver, "nvidia")
+        self.assertIn("in use", result["error"])
+
+    def test_extra_iommu_member_and_primary_sibling_refused(self):
+        vfio_fixture_device(self.root, "0000:02:00.0", driver="i915")
+        result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "refused", result)
+        self.assertIn("outside this slot", result["error"])
+        (self.root / "kernel/iommu_groups/7/devices/0000:02:00.0").unlink()
+        (self.root / "bus/pci/devices" / self.audio / "boot_vga").write_text("1\n")
+        result = self.binder.bind_to_vfio(self.gpu)
+        self.assertEqual(result["status"], "refused", result)
+        self.assertIn("primary host display", result["error"])
+
+    def test_driver_preparation_state_race_is_reported(self):
+        from unittest import mock
+        original_native = self.binder._native_driver
+        def native(state, requested):
+            result = original_native(state, requested)
+            if state.bdf == self.gpu:
+                (self.root / "bus/pci/devices" / self.audio / "device").write_text("0x1234\n")
+            return result
+        with mock.patch.object(self.binder, "_native_driver", native):
+            result = self.binder.rebind_to_host(self.gpu)
+        self.assertEqual(result["status"], "failed", result)
+        self.assertIn("state changed", result["error"])
+        self.assertFalse(result["rollback"]["success"])
+        self.assertEqual(self.binder.get_device_state(self.gpu), self.before[0])
+
+    def test_process_lock_and_symlink_lock_are_refused(self):
+        import subprocess
+        with self.binder._lock():
+            result = subprocess.run([sys.executable, vb__TARGET_PATH, "--device", self.gpu,
+                "--sysfs-root", str(self.root), "--mock", "--to-vfio", "--json"],
+                text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertEqual(json.loads(result.stdout)["status"], "refused")
+            self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+        os.unlink(self.binder.lock_path)
+        os.symlink(self.root / "live_domains.json", self.binder.lock_path)
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "refused")
+        self.assertEqual((self.root / "live_domains.json").read_text(), "[]")
+
+    def test_read_only_plan_and_cli_never_change_bindings(self):
+        import subprocess
+        before = {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        self.assertEqual(self.binder.plan(self.gpu, to_host=True)["status"], "planned")
+        result = subprocess.run([sys.executable, vb__TARGET_PATH, "--device", self.gpu,
+            "--sysfs-root", str(self.root), "--mock", "--plan", "--to-host", "--json"],
+            text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["status"], "planned")
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+        self.assertEqual(before, {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
+        self.assertFalse(os.path.exists(self.binder.lock_path))
+
+    def test_native_resolver_uses_modalias_and_per_function_drivers(self):
+        from unittest import mock
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        gpu = real.get_device_state(self.gpu)
+        audio = real.get_device_state(self.audio)
+        calls = []
+        def run(command):
+            calls.append(command)
+            if command[1] == "--resolve-alias":
+                return "nvidia\n" if command[-1] == gpu.modalias else "snd_hda_intel\n"
+            self.assertEqual(command[:3], ["modprobe", "--use-blacklist", "--"])
+            return ""
+        with mock.patch.object(real, "_run", run):
+            self.assertEqual(real._native_driver(gpu, "nvidia"), "nvidia")
+            self.assertEqual(real._native_driver(audio, None), "snd_hda_intel")
+        self.assertNotEqual(gpu.modalias, audio.modalias)
+        self.assertEqual(len(calls), 2)  # resolution of loaded drivers performs no module loads
+        directory = self.root / "bus/pci/drivers/nouveau"
+        directory.mkdir()
+        module = self.root / "module/nouveau"
+        module.mkdir()
+        (directory / "module").symlink_to(module)
+        def ambiguous(command): return "nvidia\nnouveau\n" if command[1] == "--resolve-alias" else ""
+        with mock.patch.object(real, "_run", ambiguous):
+            with self.assertRaises(vfio_bind.BindingError): real._native_driver(gpu, None)
+            self.assertEqual(real._native_driver(gpu, "nvidia"), "nvidia")
+            with self.assertRaises(vfio_bind.BindingError): real._native_driver(audio, "snd_hda_intel")
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+
+    def test_unloaded_requested_driver_is_resolved_without_premature_load(self):
+        from unittest import mock
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        state = real.get_device_state(self.gpu)
+        # The actual NVIDIA PCI driver may be absent while VFIO owns its only GPU.
+        shutil.rmtree(self.root / "bus/pci/drivers/nvidia")
+        calls = []
+        def resolve(command):
+            calls.append(command)
+            self.assertEqual(command[:2], ["modprobe", "--resolve-alias"])
+            return "nvidia\n"
+        with mock.patch.object(real, "_run", resolve):
+            self.assertEqual(real._native_driver(state, "nvidia"), "nvidia")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(state.current_driver, "nvidia")
+
+    def test_real_transition_loads_requested_driver_after_unbind(self):
+        from unittest import mock
+        self.assertEqual(self.binder.bind_to_vfio(self.gpu)["status"], "success")
+        shutil.rmtree(self.root / "bus/pci/drivers/nvidia")
+        real = vfio_bind.VFIOBinder(str(self.root), mock=False)
+        real.proc_root = str(self.root / "proc")
+        real.lock_path = str(self.root / ".mios-real-branch.lock")
+        # Explicit kernel adapter, separate from the real-mode transaction under test.
+        kernel = vfio_bind.VFIOBinder(str(self.root), mock=True)
+        kernel._locked = True
+        writes, loads = [], []
+        gpu = real.get_device_state(self.gpu)
+        def write(path, data):
+            writes.append((path, data))
+            return kernel._write_sysfs(path, data)
+        def command(argv):
+            if argv[0] == "virsh": return ""
+            if argv[1] == "--resolve-alias":
+                return "nvidia\n" if argv[-1] == gpu.modalias else "snd_hda_intel\n"
+            self.assertEqual(argv[:3], ["modprobe", "--use-blacklist", "--"])
+            function = self.gpu if argv[-1] == gpu.modalias else self.audio
+            state = real.get_device_state(function)
+            self.assertIsNone(state.current_driver, "module load attempted before VFIO released the function")
+            self.assertEqual(state.driver_override, "nvidia" if function == self.gpu else "snd_hda_intel")
+            loads.append(function)
+            if function == self.gpu:
+                driver = self.root / "bus/pci/drivers/nvidia"
+                driver.mkdir()
+                (driver / "unbind").write_text("")
+                (driver / "module").symlink_to(self.root / "module/nvidia")
+                # Successful module registration may bind its device immediately.
+                kernel._simulate_write(str(self.root / "bus/pci/drivers_probe"), self.gpu)
+            return ""
+        with mock.patch.object(real, "_require_runtime", return_value=None), \
+             mock.patch.object(real, "_write_sysfs", write), mock.patch.object(real, "_run", command):
+            result = real.rebind_to_host(self.gpu, host_driver="nvidia")
+        self.assertEqual(result["status"], "success", result)
+        self.assertFalse(result["simulated"])  # actual production branch, private kernel adapter
+        self.assertEqual(loads, [self.gpu, self.audio])
+        probes = [data.strip() for path, data in writes if path.endswith("/drivers_probe")]
+        self.assertEqual(probes, [self.audio])  # GPU already bound during module registration
+        self.assertEqual(self.binder._snapshot(self.gpu), self.before)
+
+    def test_driver_prepare_failure_has_verified_unchanged_rollback(self):
+        from unittest import mock
+        with mock.patch.object(self.binder, "_native_driver", side_effect=OSError("modprobe failed")):
+            self.assert_restored(self.binder.rebind_to_host(self.gpu))
 
 
 def main() -> int:
