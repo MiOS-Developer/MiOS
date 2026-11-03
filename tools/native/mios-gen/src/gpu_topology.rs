@@ -572,6 +572,7 @@ struct LightSettings {
     image: String,
     device: String,
     layers: String,
+    threads: i32,
     profile: String,
     drivers: Vec<String>,
     dropin: PathBuf,
@@ -592,7 +593,7 @@ fn light_string<'a>(table: &'a Value, key: &str) -> Result<&'a str, String> {
 
 fn light_settings(data: &Value) -> Result<LightSettings, String> {
     let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
-    let _threads = llama
+    let threads = llama
         .get("light_threads")
         .and_then(Value::as_integer)
         .and_then(|n| i32::try_from(n).ok())
@@ -737,6 +738,7 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
         image: image.into(),
         device: device.into(),
         layers: layers.into(),
+        threads,
         profile: profile.into(),
         drivers,
         dropin,
@@ -1033,8 +1035,8 @@ pub fn light_backend_plan(
         contents.push_str(&format!("GroupAdd={group}\n"));
     }
     contents.push_str(&format!(
-        "Environment=LLAMA_ARG_DEVICE={}\nEnvironment=LLAMA_ARG_N_GPU_LAYERS={}\n",
-        cfg.device, cfg.layers
+        "Environment=LLAMA_ARG_DEVICE={}\nEnvironment=LLAMA_ARG_N_GPU_LAYERS={}\nEnvironment=LLAMA_ARG_THREADS={}\n",
+        cfg.device, cfg.layers, cfg.threads
     ));
     contents.push_str(&format!(
         "Environment=XDG_CACHE_HOME={}\n",
@@ -1300,6 +1302,108 @@ mod tests {
             before,
             fs::metadata(&plan.output).unwrap().modified().unwrap()
         );
+    }
+
+    #[test]
+    fn light_thread_budget_changes_the_runtime_projection_and_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = ssot();
+        data["llamacpp"]["light_backend"] = Value::String("cpu".into());
+        data["llamacpp"]["light_threads"] = Value::Integer(1);
+        let absent = root.path().join("absent");
+        let host = Host {
+            dri: &absent,
+            sys: &absent,
+        };
+        let first = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        assert!(first.contents.contains("Environment=LLAMA_ARG_THREADS=1\n"));
+        assert_eq!(
+            first
+                .contents
+                .lines()
+                .filter(|line| line.starts_with("Environment=LLAMA_ARG_THREADS="))
+                .count(),
+            1
+        );
+        assert!(!first.contents.contains("LLAMA_ARG_THREADS_BATCH"));
+        let mut reloads = 0;
+        assert!(apply_light_with_reload(root.path(), &first, &mut || {
+            reloads += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert!(!apply_light_with_reload(root.path(), &first, &mut || {
+            reloads += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert_eq!(reloads, 1);
+
+        // Change only the existing operator knob, leaving the backend, image,
+        // device, cache and other policy untouched.
+        data["llamacpp"]["light_threads"] = Value::Integer(4);
+        let changed = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        assert_eq!(changed.output, first.output);
+        assert_eq!(
+            changed.contents,
+            first
+                .contents
+                .replace("LLAMA_ARG_THREADS=1\n", "LLAMA_ARG_THREADS=4\n")
+        );
+        assert!(apply_light_with_reload(root.path(), &changed, &mut || {
+            reloads += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert_eq!(reloads, 2);
+        assert_eq!(
+            fs::read_to_string(&changed.output).unwrap(),
+            changed.contents
+        );
+        assert!(!apply_light_with_reload(root.path(), &changed, &mut || {
+            reloads += 1;
+            Ok(())
+        })
+        .unwrap());
+        assert_eq!(reloads, 2, "unchanged thread budget must not reload");
+    }
+
+    #[test]
+    fn light_thread_budget_rejects_invalid_values_before_touching_managed_output() {
+        let root = tempfile::tempdir().unwrap();
+        let mut data = ssot();
+        data["llamacpp"]["light_backend"] = Value::String("cpu".into());
+        let absent = root.path().join("absent");
+        let host = Host {
+            dri: &absent,
+            sys: &absent,
+        };
+        let first = light_backend_plan(root.path(), &data, &host, "").unwrap();
+        apply_light_backend(root.path(), &first).unwrap();
+        let before = fs::read_to_string(&first.output).unwrap();
+        for value in [
+            Value::Integer(0),
+            Value::Integer(-1),
+            Value::Integer(i64::from(i32::MAX) + 1),
+            Value::Float(1.5),
+            Value::String("4".into()),
+            Value::Boolean(true),
+        ] {
+            let mut invalid = data.clone();
+            invalid["llamacpp"]["light_threads"] = value;
+            assert!(light_backend_plan(root.path(), &invalid, &host, "")
+                .unwrap_err()
+                .contains("llamacpp.light_threads"));
+            assert_eq!(fs::read_to_string(&first.output).unwrap(), before);
+        }
+        data["llamacpp"]
+            .as_table_mut()
+            .unwrap()
+            .remove("light_threads");
+        assert!(light_backend_plan(root.path(), &data, &host, "")
+            .unwrap_err()
+            .contains("llamacpp.light_threads"));
+        assert_eq!(fs::read_to_string(&first.output).unwrap(), before);
     }
 
     #[test]
