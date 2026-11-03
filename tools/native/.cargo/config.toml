@@ -1,4 +1,4 @@
-# AI-hint: Linux target linker and rustflags are projected from mios.toml [build.native.linux] by mios-gen cargo-manifests; other workspace settings remain local.
+# AI-hint: Linux linkers/rustflags and Windows static-runtime flags are projected from mios.toml [build.native] by mios-gen cargo-manifests; other workspace settings remain local.
 # AI-hint: Cargo aliases for native tools workspace.
 [alias]
 xtask = "run --package xtask --"
@@ -19,6 +19,7 @@ incremental = false
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-gcc-ar"
+rustflags = ["-C", "target-feature=+crt-static"]
 
 [target.aarch64-unknown-linux-musl]
 linker = "rust-lld"
@@ -26,4 +27,7 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 [target.x86_64-unknown-linux-musl]
 linker = "rust-lld"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]

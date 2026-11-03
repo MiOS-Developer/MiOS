@@ -1727,7 +1727,7 @@ check_cargo_manifest_generated() {
         local out rc=0
         out="$( "$bin" cargo-manifests --root "$ROOT" --check 2>&1 )" || rc=$?
         if (( rc == 0 )); then
-            echo "[98-drift-checks]   native workspace manifest and both Linux Cargo configurations match SSOT"
+            echo "[98-drift-checks]   native workspace manifest and both Cargo target configurations match SSOT"
             return 0
         else
             echo "$out" >&2

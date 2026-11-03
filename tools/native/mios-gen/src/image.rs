@@ -1,4 +1,4 @@
-// AI-hint: Projectors for build artifacts: BIB filesystem configs, the native workspace manifest and both Rust workspaces' SSOT Linux Cargo settings (ADR-0021, Law 14).
+// AI-hint: Projectors for build artifacts: BIB filesystem configs, the native workspace manifest and both Rust workspaces' SSOT Cargo target linking/runtime policy (ADR-0021, Law 14).
 // AI-doc: usr/share/doc/mios/manual/tools.md
 // AI-related: usr/share/mios/mios.toml, config/artifacts/bib.toml, config/artifacts/iso.toml, tools/native/Cargo.toml, tools/sync-generated.sh
 
@@ -284,7 +284,7 @@ pub mod cargo_manifests {
         "tools/native/.cargo/config.toml",
         "src/mios-rs/.cargo/config.toml",
     ];
-    const CONFIG_HEADER: &str = "# AI-hint: Linux target linker and rustflags are projected from mios.toml [build.native.linux] by mios-gen cargo-manifests; other workspace settings remain local.\n";
+    const CONFIG_HEADER: &str = "# AI-hint: Linux linkers/rustflags and Windows static-runtime flags are projected from mios.toml [build.native] by mios-gen cargo-manifests; other workspace settings remain local.\n";
 
     #[derive(serde::Deserialize)]
     struct LinuxCargoPolicy {
@@ -293,7 +293,19 @@ pub mod cargo_manifests {
         rustflags: Vec<String>,
     }
 
-    impl LinuxCargoPolicy {
+    #[derive(serde::Deserialize)]
+    struct WindowsCargoPolicy {
+        target: String,
+        rustflags: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CargoTargetPolicy {
+        linux: LinuxCargoPolicy,
+        windows: WindowsCargoPolicy,
+    }
+
+    impl CargoTargetPolicy {
         fn read(root: &Path) -> Result<Self, String> {
             let source = fs::read_to_string(root.join(SSOT_REL))
                 .map_err(|e| format!("Cargo Linux policy: cannot read {SSOT_REL}: {e}"))?;
@@ -303,30 +315,40 @@ pub mod cargo_manifests {
             let policy: Self = ssot
                 .get("build")
                 .and_then(|v| v.get("native"))
-                .and_then(|v| v.get("linux"))
-                .ok_or("Cargo Linux policy: build.native.linux is missing")?
+                .ok_or("Cargo target policy: build.native is missing")?
                 .clone()
                 .try_into()
                 .map_err(|e| format!("Cargo Linux policy: {e}"))?;
             // Match the native build engine's supported static-runtime contract.
-            if policy.targets.is_empty()
-                || policy.targets.iter().any(|(arch, target)| {
+            if policy.linux.targets.is_empty()
+                || policy.linux.targets.iter().any(|(arch, target)| {
                     !matches!(
                         (arch.as_str(), target.as_str()),
                         ("x86_64", "x86_64-unknown-linux-musl")
                             | ("aarch64", "aarch64-unknown-linux-musl")
                     )
                 })
-                || policy.linker != "rust-lld"
-                || policy.rustflags != ["-C", "target-feature=+crt-static"]
+                || policy.linux.linker != "rust-lld"
+                || policy.linux.rustflags != ["-C", "target-feature=+crt-static"]
             {
                 return Err("Cargo Linux policy requires supported MUSL targets, rust-lld and a static C runtime".into());
+            }
+            if !policy.windows.target.contains("-windows-")
+                || policy.windows.rustflags != ["-C", "target-feature=+crt-static"]
+            {
+                return Err(
+                    "Cargo Windows policy requires a Windows target and a static C runtime".into(),
+                );
             }
             Ok(policy)
         }
     }
 
-    fn render_cargo_config(source: &str, policy: &LinuxCargoPolicy) -> Result<String, String> {
+    fn render_cargo_config(
+        source: &str,
+        policy: &LinuxCargoPolicy,
+        windows: &WindowsCargoPolicy,
+    ) -> Result<String, String> {
         let mut doc: toml_edit::Document = source
             .strip_prefix(CONFIG_HEADER)
             .unwrap_or(source)
@@ -364,6 +386,76 @@ pub mod cargo_manifests {
             }
             table.insert("rustflags", toml_edit::value(flags));
         }
+        // Removing global flags must retain the static Windows CRT for the
+        // canonical SSOT target and existing compatibility targets. Keep their
+        // linker/stack/custom-feature settings; only the CRT mode is owned.
+        let windows_targets: std::collections::BTreeSet<_> = targets
+            .iter()
+            .filter(|(name, _)| name.contains("-windows-"))
+            .map(|(name, _)| name.to_owned())
+            .chain(std::iter::once(windows.target.clone()))
+            .collect();
+        for target in windows_targets {
+            if !targets.contains_key(&target) {
+                targets.insert(&target, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            let table = targets
+                .get_mut(&target)
+                .and_then(toml_edit::Item::as_table_mut)
+                .ok_or("Cargo Windows target configuration must be a table")?;
+            let existing: Vec<String> = match table.get("rustflags") {
+                None => Vec::new(),
+                Some(item) => item
+                    .as_array()
+                    .ok_or("Cargo Windows rustflags must be an array")?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(String::from)
+                            .ok_or("Cargo Windows rustflags must contain strings")
+                    })
+                    .collect::<Result<_, _>>()?,
+            };
+            let mut flags = toml_edit::Array::new();
+            for flag in &windows.rustflags {
+                flags.push(flag.as_str());
+            }
+            let mut cursor = 0;
+            while cursor < existing.len() {
+                let paired = existing[cursor] == "-C" && cursor + 1 < existing.len();
+                let feature = if paired {
+                    &existing[cursor + 1]
+                } else {
+                    &existing[cursor]
+                };
+                let feature = feature.strip_prefix(if paired {
+                    "target-feature="
+                } else {
+                    "-Ctarget-feature="
+                });
+                if let Some(feature) = feature {
+                    let kept: Vec<_> = feature
+                        .split(',')
+                        .filter(|v| !matches!(*v, "+crt-static" | "-crt-static"))
+                        .collect();
+                    if !kept.is_empty() {
+                        if paired {
+                            flags.push("-C");
+                        }
+                        flags.push(format!(
+                            "{}target-feature={}",
+                            if paired { "" } else { "-C" },
+                            kept.join(",")
+                        ));
+                    }
+                    cursor += if paired { 2 } else { 1 };
+                } else {
+                    flags.push(existing[cursor].as_str());
+                    cursor += 1;
+                }
+            }
+            table.insert("rustflags", toml_edit::value(flags));
+        }
         Ok(format!("{CONFIG_HEADER}{doc}"))
     }
 
@@ -379,7 +471,7 @@ pub mod cargo_manifests {
         ));
         }
         let version = get_ssot_version(root);
-        let policy = LinuxCargoPolicy::read(root)?;
+        let policy = CargoTargetPolicy::read(root)?;
         let mut projections = vec![(
             CARGO_TOML_REL,
             normalize_newlines(&render_cargo_manifest(&members, &version)),
@@ -390,7 +482,11 @@ pub mod cargo_manifests {
             let source = fs::read_to_string(root.join(relative)).map_err(|e| {
                 format!("[generate-cargo-manifests] FAIL: cannot read {relative}: {e}")
             })?;
-            projections.push((relative, render_cargo_config(&source, &policy)?));
+            projections.push((
+                relative,
+                render_cargo_config(&source, &policy.linux, &policy.windows)
+                    .map_err(|e| format!("{relative}: {e}"))?,
+            ));
         }
         if check {
             for (relative, expected) in &projections {
@@ -447,8 +543,15 @@ pub mod cargo_manifests {
                 rustflags: vec!["-C".into(), "target-feature=+crt-static".into()],
             };
             let original = "[alias]\nxtask='run --package xtask --'\n[build]\ntarget='x86_64-unknown-linux-musl'\nrustflags=['-C','link-arg=-pie']\n[target.x86_64-pc-windows-msvc]\nrustflags=['-C','link-arg=/STACK:8388608']\n";
-            let rendered = render_cargo_config(original, &policy).unwrap();
-            assert_eq!(render_cargo_config(&rendered, &policy).unwrap(), rendered);
+            let windows = WindowsCargoPolicy {
+                target: "x86_64-pc-windows-msvc".into(),
+                rustflags: vec!["-C".into(), "target-feature=+crt-static".into()],
+            };
+            let rendered = render_cargo_config(original, &policy, &windows).unwrap();
+            assert_eq!(
+                render_cargo_config(&rendered, &policy, &windows).unwrap(),
+                rendered
+            );
             let doc: toml::Value = rendered.parse().unwrap();
             assert!(doc["build"].get("rustflags").is_none());
             assert_eq!(
@@ -457,7 +560,7 @@ pub mod cargo_manifests {
             );
             assert_eq!(
                 doc["target"]["x86_64-pc-windows-msvc"]["rustflags"][1].as_str(),
-                Some("link-arg=/STACK:8388608")
+                Some("target-feature=+crt-static")
             );
             for target in policy.targets.values() {
                 assert_eq!(doc["target"][target]["linker"].as_str(), Some("rust-lld"));
@@ -472,6 +575,47 @@ pub mod cargo_manifests {
                 );
             }
             assert!(!rendered.contains("link-arg=-pie"));
+        }
+
+        #[test]
+        fn windows_runtime_projection_covers_declared_and_compatibility_targets() {
+            let linux = LinuxCargoPolicy {
+                targets: [("x86_64".into(), "x86_64-unknown-linux-musl".into())].into(),
+                linker: "rust-lld".into(),
+                rustflags: vec!["-C".into(), "target-feature=+crt-static".into()],
+            };
+            let windows = WindowsCargoPolicy {
+                target: "x86_64-pc-windows-msvc".into(),
+                rustflags: vec!["-C".into(), "target-feature=+crt-static".into()],
+            };
+            let source = "[target.x86_64-pc-windows-gnu]\nlinker='x86_64-w64-mingw32-gcc'\nrustflags=['-C','target-feature=+avx2,-crt-static']\n[target.x86_64-pc-windows-gnullvm]\nrustflags=['-Ctarget-feature=-crt-static,+sse2','-C','link-arg=-Wl,--stack,8388608']\n";
+            let rendered = render_cargo_config(source, &linux, &windows).unwrap();
+            assert_eq!(
+                render_cargo_config(&rendered, &linux, &windows).unwrap(),
+                rendered
+            );
+            let doc: toml::Value = rendered.parse().unwrap();
+            for target in [
+                "x86_64-pc-windows-msvc",
+                "x86_64-pc-windows-gnu",
+                "x86_64-pc-windows-gnullvm",
+            ] {
+                let flags: Vec<_> = doc["target"][target]["rustflags"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_str().unwrap())
+                    .collect();
+                assert!(flags.contains(&"target-feature=+crt-static"), "{target}");
+                assert!(!flags.iter().any(|v| v.contains("-crt-static")), "{target}");
+            }
+            assert_eq!(
+                doc["target"]["x86_64-pc-windows-gnu"]["linker"].as_str(),
+                Some("x86_64-w64-mingw32-gcc")
+            );
+            assert!(rendered.contains("target-feature=+avx2"));
+            assert!(rendered.contains("-Ctarget-feature=+sse2"));
+            assert!(rendered.contains("link-arg=-Wl,--stack,8388608"));
         }
 
         #[test]

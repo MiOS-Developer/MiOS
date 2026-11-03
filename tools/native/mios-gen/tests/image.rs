@@ -431,6 +431,50 @@ mod cargo_manifests {
                 );
             }
         }
+        // Windows CRT is independently owned even when Linux flags are valid.
+        for relative in [
+            "tools/native/.cargo/config.toml",
+            "src/mios-rs/.cargo/config.toml",
+        ] {
+            let target = root.join(relative);
+            let _restorer = Restorer::new(&target);
+            let mut doc: toml_edit::Document =
+                fs::read_to_string(&target).unwrap().parse().unwrap();
+            for flag in doc["target"]["x86_64-pc-windows-msvc"]["rustflags"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+            {
+                if flag.as_str() == Some("target-feature=+crt-static") {
+                    *flag = toml_edit::Value::from("target-feature=-crt-static");
+                }
+            }
+            fs::write(&target, doc.to_string()).unwrap();
+            let output = Command::new(bin_path)
+                .args(["cargo-manifests", "--root"])
+                .arg(&root)
+                .arg("--check")
+                .output()
+                .unwrap();
+            assert!(
+                !output.status.success(),
+                "unreported Windows CRT drift in {relative}"
+            );
+            assert!(String::from_utf8_lossy(&output.stderr).contains(relative));
+            let repaired = Command::new(bin_path)
+                .args(["cargo-manifests", "--root"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(repaired.status.success());
+            let repaired: toml::Value = fs::read_to_string(&target).unwrap().parse().unwrap();
+            assert!(repaired["target"]["x86_64-pc-windows-msvc"]["rustflags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v.as_str() == Some("target-feature=+crt-static")));
+        }
+
         // Reject weakened SSOT runtime policy, matching the native build engine.
         {
             let ssot = root.join("usr/share/mios/mios.toml");

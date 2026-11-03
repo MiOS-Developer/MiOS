@@ -1,10 +1,10 @@
-# AI-hint: Linux target linker and rustflags are projected from mios.toml [build.native.linux] by mios-gen cargo-manifests; other workspace settings remain local.
+# AI-hint: Linux linkers/rustflags and Windows static-runtime flags are projected from mios.toml [build.native] by mios-gen cargo-manifests; other workspace settings remain local.
 # AI-hint: Linker stack size configuration for Windows to match Linux 8MB default stack
 [target.x86_64-pc-windows-gnullvm]
-rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-Wl,--stack,8388608"]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/STACK:8388608"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/STACK:8388608"]
 
 [target.aarch64-unknown-linux-musl]
 linker = "rust-lld"

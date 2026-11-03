@@ -642,7 +642,7 @@ mod projection_evidence {
         write(root, "tools/native/Cargo.toml", "planted manifest drift\n");
         write(root, "VERSION", "0.3.0\n");
         write(root, "usr/share/mios/mios.toml",
-            "[build.native.linux]\nlinker='rust-lld'\nrustflags=['-C','target-feature=+crt-static']\n[build.native.linux.targets]\nx86_64='x86_64-unknown-linux-musl'\n");
+            "[build.native.linux]\nlinker='rust-lld'\nrustflags=['-C','target-feature=+crt-static']\n[build.native.linux.targets]\nx86_64='x86_64-unknown-linux-musl'\n[build.native.windows]\ntarget='x86_64-pc-windows-msvc'\nrustflags=['-C','target-feature=+crt-static']\n");
         for relative in [
             "tools/native/.cargo/config.toml",
             "src/mios-rs/.cargo/config.toml",
