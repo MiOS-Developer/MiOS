@@ -19327,7 +19327,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_refine.py",
-      "hint": "Standalone assert-script unit test for mios_refine (refactor R5 REFINE-classifier extraction). Pure stdlib, no server.py/DB/network/pytest.",
+      "hint": "Offline refine regressions using canned completions and real HTTPX streaming transports; no server process, database, network or pytest.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",

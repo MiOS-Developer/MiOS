@@ -736,7 +736,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/test_mios_psi.py` | Comprehensive unit test suite for mios_psi (task_429 PSI monitor). |
 | `usr/lib/mios/agent-pipe/test_mios_quarantine.py` | Offline stdlib-assert test for the F2 CaMeL dual-context QUARANTINE gate (the deeper half of task_33, mios_quarantine). |
 | `usr/lib/mios/agent-pipe/test_mios_quota.py` | Standalone assert-script unit test for mios_quota (WS-6 per-user quota + rate limit). Pure stdlib, no server.py/DB/pytest. |
-| `usr/lib/mios/agent-pipe/test_mios_refine.py` | Standalone assert-script unit test for mios_refine (refactor R5 REFINE-classifier extraction). Pure stdlib, no server.py/DB/network/pytest. |
+| `usr/lib/mios/agent-pipe/test_mios_refine.py` | Offline refine regressions using canned completions and real HTTPX streaming transports; no server process, database, network or pytest. |
 | `usr/lib/mios/agent-pipe/test_mios_reflect.py` | Standalone assert-script unit test for mios_reflect (strangler-fig extraction). Pure stdlib, no server.py/DB/network/pytest. |
 | `usr/lib/mios/agent-pipe/test_mios_registry.py` | Standalone assert-script unit test for mios_registry (WS-A17 versioned package + registry projection). Pure stdlib, no serv... |
 | `usr/lib/mios/agent-pipe/test_mios_reputation.py` | Standalone unit test for mios_reputation (#54 peer reputation): neutral-with-no-history, success-rate scoring, recent-failure penalty, and STAB... |
