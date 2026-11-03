@@ -280,10 +280,27 @@ pub fn resolve_one(
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Ok(format!("${{{inner}}}"));
     }
-    if name.starts_with("MIOS_PORTS_")
-        || name.starts_with("MIOS_PORT_")
-        || placeholders.contains(name)
-    {
+    // Quadlet and systemd parse these fields without a shell. A Bash default
+    // such as ${MIOS_PORTS_NODE:-8650} otherwise reaches Podman literally.
+    // Resolve ports from the layered SSOT, never a stale template fallback or
+    // ambient login-shell export. The singular prefix is a legacy alias.
+    if name.starts_with("MIOS_PORTS_") || name.starts_with("MIOS_PORT_") {
+        let canonical = name
+            .strip_prefix("MIOS_PORT_")
+            .map(|key| format!("MIOS_PORTS_{key}"))
+            .unwrap_or_else(|| name.to_string());
+        let value = ssot_exports
+            .get(&canonical)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("Quadlet port {name} is absent from the resolved [ports] SSOT"))?;
+        value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port > 0)
+            .ok_or_else(|| format!("Quadlet port {name} is not an integer in 1..=65535"))?;
+        return Ok(value.clone());
+    }
+    if placeholders.contains(name) {
         let def_expanded = if sep {
             format!(
                 ":-{}",
@@ -1500,6 +1517,62 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn ports_reach_exec_environment_health_and_publish_from_layered_ssot() {
+        let source = include_str!("../../../../usr/share/mios/mios.toml");
+        let mut doc: toml::Value = source.parse().unwrap();
+        doc["ports"]["cpu_node"] = toml::Value::Integer(18510);
+        doc["ports"]["node"] = toml::Value::Integer(18650);
+        let exports = mios_resolver::emit::build_exports_map(&doc, 0);
+        for name in ["mios-cpu-node", "mios-node"] {
+            let rendered = render_nested_quadlet(
+                name,
+                &doc["containers"][name],
+                "container",
+                &load_privileged_root(&doc),
+                &load_grandfathered_credentials(&doc),
+                &load_secret_keys(&doc),
+                &load_placeholders(&doc),
+                &exports,
+                &load_sidecars(&doc),
+            )
+            .unwrap();
+            assert!(!rendered.contains("${MIOS_PORT"), "{rendered}");
+            if name == "mios-cpu-node" {
+                assert!(rendered.contains("--port 18510 "), "{rendered}");
+                let model = doc["nodes"]["local-cpu"]["model"].as_str().unwrap();
+                assert!(rendered.contains(&format!("--alias {model} ")), "{rendered}");
+                assert!(rendered.contains("http://localhost:18510/health"), "{rendered}");
+            } else {
+                assert!(rendered.contains("Environment=MIOS_PORT=18650\n"), "{rendered}");
+                for protocol in ["tcp", "udp"] {
+                    assert!(rendered.contains(&format!("PublishPort=18650:18650/{protocol}\n")),
+                            "{rendered}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn quadlet_ports_reject_missing_invalid_values_and_stale_defaults() {
+        let mut exports = BTreeMap::from([("MIOS_PORTS_TEST".into(), "19001".into())]);
+        let placeholders = BTreeSet::new();
+        let sidecars = BTreeMap::new();
+        for template in ["${MIOS_PORTS_TEST}", "${MIOS_PORTS_TEST:-1}", "${MIOS_PORT_TEST:-2}"] {
+            assert_eq!(expand_str(template, &placeholders, &exports, &sidecars).unwrap(), "19001");
+        }
+        for invalid in ["", "0", "65536", "-1", "8510:8510", "not-a-port"] {
+            exports.insert("MIOS_PORTS_TEST".into(), invalid.into());
+            assert!(expand_str("${MIOS_PORTS_TEST:-8510}", &placeholders, &exports, &sidecars)
+                .is_err(), "accepted {invalid:?}");
+        }
+        exports.clear();
+        assert!(expand_str("${MIOS_PORTS_MISSING:-8510}", &placeholders, &exports, &sidecars).is_err());
+        let placeholders = BTreeSet::from(["FEDORA_VERSION".into()]);
+        assert_eq!(expand_str("${FEDORA_VERSION:-44}", &placeholders, &exports, &sidecars).unwrap(),
+                   "${FEDORA_VERSION:-44}");
     }
 
     #[test]

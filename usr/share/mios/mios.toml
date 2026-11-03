@@ -14389,7 +14389,7 @@ HealthRetries = "3"
 # ctx-size: 32768 (was 131072). CPU-only (n-gpu-layers 0) granite-8b with a 128k KV
 # ring is the Unhealthy-on-boot bloat (huge RAM KV even at q4_0); 32768 matches the
 # light lane + the VRAM/KV co-fit finding. Raise once CPU RAM headroom is proven.
-Exec = "--model /models/granite-4.1-8b.gguf --host 0.0.0.0 --port ${MIOS_PORTS_CPU_NODE:-8510} --ctx-size 32768 --flash-attn on --cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --threads ${MIOS_LLAMACPP_CPU_NODE_THREADS:-14} --n-gpu-layers 0 --jinja --alias mios-cpu --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}"
+Exec = "--model /models/granite-4.1-8b.gguf --host 0.0.0.0 --port ${MIOS_PORTS_CPU_NODE:-8510} --ctx-size 32768 --flash-attn on --cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --threads ${MIOS_LLAMACPP_CPU_NODE_THREADS:-14} --n-gpu-layers 0 --jinja --alias ${MIOS_NODES_LOCAL_CPU_MODEL} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}"
 Group = "${MIOS_SERVICES_LLAMACPP_GID:-827}"
 Image = "${MIOS_CUDA_IMAGE:-ghcr.io/mostlygeek/llama-swap:cuda}"
 Label = "org.opencontainers.image.title=mios-cpu-node"
