@@ -1315,9 +1315,22 @@ def _hint_index(root: str, pattern: str) -> list[tuple[str, str]]:
     tagmod = mc.load_ai_tag(root)
     if tagmod is None:
         raise DeriverError("index: cannot load mios-ai-tag to read AI-hints")
+    import subprocess
+    try:
+        index = subprocess.run(
+            ["git", "ls-files", "--stage", "-z"], cwd=root, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode("utf-8")
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise DeriverError("index: cannot enumerate tracked source modes") from exc
     out = []
-    for rel in _tracked(root):
-        if not fnmatch.fnmatchcase(rel, pattern):
+    for entry in filter(None, index.split("\0")):
+        metadata, rel = entry.split("\t", 1)
+        mode, _object, stage = metadata.split()
+        if stage != "0":
+            raise DeriverError("index: unresolved Git entries are not source metadata")
+        # Runtime/native aliases can point at installed host binaries or old
+        # wrappers. Git's mode also identifies them in Windows link stubs.
+        if mode not in ("100644", "100755") or not fnmatch.fnmatchcase(rel, pattern):
             continue
         full = os.path.join(root, rel.replace("/", os.sep))
         try:

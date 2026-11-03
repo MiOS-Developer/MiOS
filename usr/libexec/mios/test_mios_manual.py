@@ -189,5 +189,68 @@ class TestMiosManualComments(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+
+class TestHintIndexSourceModes(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader(
+            "mios_manual_index_test", os.path.join(ROOT, "usr/libexec/mios/mios-manual"))
+        cls.manual = importlib.util.module_from_spec(
+            importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(cls.manual)
+
+    def fixture(self):
+        import pathlib, shutil, subprocess, tempfile
+        holder = tempfile.TemporaryDirectory(prefix="mios-doc-index-")
+        self.addCleanup(holder.cleanup)
+        root = pathlib.Path(holder.name) / "checkout"
+        tools = root / "usr/libexec/mios"
+        tools.mkdir(parents=True)
+        shutil.copyfile(os.path.join(ROOT, "usr/libexec/mios/mios-ai-tag"),
+                        tools / "mios-ai-tag")
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True,
+                       capture_output=True)
+        return root, tools
+
+    def test_runtime_alias_and_windows_stub_cannot_supply_host_hints(self):
+        import subprocess
+        root, tools = self.fixture()
+        source = tools / "test-source"
+        alias = tools / "test-alias"
+        source.write_text("# AI-hint: canonical source.\n")
+        alias.write_text("# AI-hint: installed runtime wrapper.\n")
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True,
+                       capture_output=True)
+        oid = subprocess.check_output(
+            ["git", "-C", str(root), "hash-object", "-w", "--stdin"],
+            input=b"/usr/bin/host-runtime-alias\n").decode().strip()
+        subprocess.run(["git", "-C", str(root), "update-index", "--add",
+                        "--cacheinfo", f"120000,{oid},usr/libexec/mios/test-alias"],
+                       check=True, capture_output=True)
+        expected = [("usr/libexec/mios/test-source", "canonical source.")]
+        self.assertEqual(self.manual._hint_index(str(root), "usr/libexec/mios/test-*"), expected)
+        alias.write_text("# AI-hint: changed host implementation.\n")
+        self.assertEqual(self.manual._hint_index(str(root), "usr/libexec/mios/test-*"), expected)
+
+    def test_working_source_header_changes_are_included_before_staging(self):
+        import subprocess
+        root, tools = self.fixture()
+        source = tools / "test-source"
+        source.write_text("# AI-hint: original source.\n")
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True,
+                       capture_output=True)
+        source.write_text("# AI-hint: updated source.\n")
+        self.assertEqual(self.manual._hint_index(str(root), "usr/libexec/mios/test-*"),
+                         [("usr/libexec/mios/test-source", "updated source.")])
+
+    def test_unavailable_git_does_not_report_an_empty_clean_index(self):
+        import subprocess
+        from unittest import mock
+        root, _ = self.fixture()
+        with mock.patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "git")):
+            with self.assertRaisesRegex(self.manual.DeriverError, "tracked source modes"):
+                self.manual._hint_index(str(root), "usr/libexec/mios/test-*")
+
 if __name__ == "__main__":
     unittest.main()
