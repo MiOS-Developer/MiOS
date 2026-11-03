@@ -602,6 +602,23 @@ class TestCanonicalInputs(unittest.TestCase):
         self.assertNotIn('MIOS_USER_FULLNAME', names['MIOS_IDENTITY_FULLNAME'])
         self.assertTrue(all('MIOS_K3S_VERSION' not in aliases for aliases in names.values()))
 
+    def test_nested_backend_aliases_and_values_use_valid_leaf_identifiers(self):
+        data = {"llamacpp": {"cpu_node_threads": 14,
+                "light_runtime": {"dropin": "/etc/fixture.conf"},
+                "light_backends": {"cpu": {"device": "none"}, "vulkan": {"device": "Vulkan0"}}}}
+        values = self.resolver.emit_exports(data)
+        self.assertEqual(values["MIOS_LLAMACPP_LIGHT_RUNTIME_DROPIN"], "/etc/fixture.conf")
+        self.assertEqual(values["MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_DEVICE"], "Vulkan0")
+        self.assertEqual(values["MIOS_CPU_NODE_THREADS"], "14")
+        self.assertNotIn("MIOS_LLAMACPP_LIGHT_RUNTIME", values)
+        self.assertNotIn("MIOS_LLAMACPP_LIGHT_BACKENDS", values)
+        for path in ("llamacpp.light_runtime.dropin", "llamacpp.light-backends.vulkan/device", "paths.asset@name.value"):
+            for name in self.resolver.get_aliases(path):
+                self.assertTrue(name.startswith("MIOS_") and name.isascii() and name.isidentifier(), name)
+        for names in self.resolver.input_aliases(data).values():
+            for name in names:
+                self.assertTrue(name.isascii() and name.isidentifier(), name)
+
     def test_lexical_collisions_fail(self):
         with self.assertRaisesRegex(ValueError, 'MIOS_A_X_Y'):
             self.resolver.input_aliases({'a': {'x_y': 1, 'x': {'y': 2}}})

@@ -766,7 +766,8 @@ def get_aliases(dotted_path):
         key = dotted_path.split(".", 1)[1].upper().replace(".", "_").replace("-", "_")
         aliases.extend([f"MIOS_DB_{key}", f"MIOS_POSTGRES_{key}", f"MIOS_PG_{key}", f"MIOS_PGVECTOR_{key}"])
 
-    return aliases
+    # Metadata and exported values use one identifier grammar, including nested tables.
+    return list(dict.fromkeys(canonical_name(alias) for alias in aliases))
 
 def walk(d, prefix=""):
     results = []

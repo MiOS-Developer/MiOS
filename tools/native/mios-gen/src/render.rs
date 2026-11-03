@@ -1024,6 +1024,41 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
         use super::*;
 
         #[test]
+        fn nested_backend_tables_keep_leaf_globals_and_both_platforms_in_parity() {
+            let data: toml::Value = toml::from_str(
+                r#"
+[wsl]
+distro = "podman-MiOS-DEV"
+[llamacpp.light_runtime]
+dropin = "/etc/fixture.conf"
+[llamacpp.light_backends.vulkan]
+device = "Vulkan0"
+image_key = "llm_light_vulkan"
+"#,
+            )
+            .unwrap();
+            let exports = mios_resolver::emit::build_globals_map(&data, 0);
+            let inputs = mios_resolver::names::registry(&data)
+                .unwrap()
+                .input_aliases();
+            let names = ordered_names(&exports);
+            let sh = render_sh(&exports, &names, "fixture", &inputs);
+            let ps = render_ps1(&exports, &names, "fixture", &inputs);
+            let parity = check_globals_parity(&sh, &ps);
+            assert!(parity.is_empty(), "{parity:?}");
+            for name in [
+                "MIOS_LLAMACPP_LIGHT_RUNTIME_DROPIN",
+                "MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_DEVICE",
+                "MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_IMAGE_KEY",
+            ] {
+                assert!(exports.contains_key(name), "{name}");
+                assert!(sh.contains(name) && ps.contains(name), "{name}");
+            }
+            assert!(!exports.contains_key("MIOS_LLAMACPP_LIGHT_RUNTIME"));
+            assert!(!exports.contains_key("MIOS_LLAMACPP_LIGHT_BACKENDS"));
+        }
+
+        #[test]
         fn test_sh_assign_simple_value() {
             assert_eq!(
                 sh_assign("MIOS_PORTS_SSH", "8100"),

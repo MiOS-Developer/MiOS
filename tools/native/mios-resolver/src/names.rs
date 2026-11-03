@@ -591,7 +591,14 @@ pub fn get_aliases(dotted_path: &str) -> Vec<String> {
         }
     }
 
+    // Compatibility names obey the same identifier grammar as canonical leaves.
+    // Nested tables must not introduce dotted shell/PowerShell identifiers.
+    let mut seen = BTreeSet::new();
     aliases
+        .into_iter()
+        .map(|name| canonical_name(&name))
+        .filter(|name| seen.insert(name.clone()))
+        .collect()
 }
 
 /// mios_toml.py's key transform for these families: upper-case, '.' and '-' to '_'.

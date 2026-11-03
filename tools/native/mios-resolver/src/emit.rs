@@ -228,6 +228,71 @@ pub fn resolve_cross_references(exports: &mut BTreeMap<String, String>) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn nested_backend_leaves_have_valid_export_and_input_names() {
+        let data: Value = toml::from_str(
+            r#"
+[llamacpp]
+cpu_node_threads = 14
+[llamacpp.light_runtime]
+dropin = "/etc/fixture.conf"
+[llamacpp.light_backends.cpu]
+device = "none"
+[llamacpp.light_backends.vulkan]
+device = "Vulkan0"
+drivers = ["amdgpu", "i915"]
+"#,
+        )
+        .unwrap();
+        for values in [build_exports_map(&data, 0), build_globals_map(&data, 0)] {
+            for name in values.keys() {
+                assert!(
+                    name.starts_with("MIOS_")
+                        && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'),
+                    "{name}"
+                );
+            }
+            assert_eq!(
+                values["MIOS_LLAMACPP_LIGHT_RUNTIME_DROPIN"],
+                "/etc/fixture.conf"
+            );
+            assert_eq!(values["MIOS_LLAMACPP_LIGHT_BACKENDS_CPU_DEVICE"], "none");
+            assert_eq!(
+                values["MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_DEVICE"],
+                "Vulkan0"
+            );
+            assert_eq!(values["MIOS_CPU_NODE_THREADS"], "14");
+            assert!(!values.contains_key("MIOS_LLAMACPP_LIGHT_RUNTIME"));
+            assert!(!values.contains_key("MIOS_LLAMACPP_LIGHT_BACKENDS"));
+        }
+        let names = crate::names::registry(&data).unwrap();
+        for aliases in names.input_aliases().values() {
+            for name in aliases {
+                assert!(
+                    name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'),
+                    "{name}"
+                );
+            }
+        }
+        use std::io::Write;
+        let script = crate::emit_shell::emit_shell(&data, 0, None);
+        let mut child=std::process::Command::new("bash").args(["-e","-c",
+            "source /dev/stdin; test \"$MIOS_LLAMACPP_LIGHT_BACKENDS_CPU_DEVICE\" = none; test \"$MIOS_LLAMACPP_LIGHT_RUNTIME_DROPIN\" = /etc/fixture.conf"])
+            .env_clear().stdin(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     /// The tag-split has been removed once already, on cosmetic grounds, and
     /// that broke the one consumer: automation/36-ceph-k3s.sh computes
     /// K3S_TAG="${MIOS_K3S_VERSION:-}" and then ${K3S_TAG/-k3s/+k3s}. With the
