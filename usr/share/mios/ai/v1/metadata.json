@@ -4,7 +4,7 @@
   "total_metadata_entries": 3388,
   "total_hints": 3382,
   "total_functions_indexed": 2105,
-  "total_related_links": 6639,
+  "total_related_links": 6640,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -4035,7 +4035,7 @@
     },
     {
       "path": "src/mios-rs/.cargo/config.toml",
-      "hint": "Linker stack size configuration for Windows to match Linux 8MB default stack",
+      "hint": "Linux linkers/rustflags and Windows static-runtime flags are projected from mios.toml [build.native] by mios-gen cargo-manifests; other workspace settings remain local.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -11654,7 +11654,7 @@
     },
     {
       "path": "tools/native/.cargo/config.toml",
-      "hint": "Cargo aliases for native tools workspace.",
+      "hint": "Linux linkers/rustflags and Windows static-runtime flags are projected from mios.toml [build.native] by mios-gen cargo-manifests; other workspace settings remain local.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -12646,7 +12646,7 @@
     },
     {
       "path": "tools/native/mios-gen/src/image.rs",
-      "hint": "Projectors for build artifacts: BIB filesystem configs under config/artifacts/ and the tools/native workspace Cargo.toml (ADR-0021, Law 14).",
+      "hint": "Projectors for build artifacts: BIB filesystem configs, the native workspace manifest and both Rust workspaces' SSOT Cargo target linking/runtime policy (ADR-0021, Law 14).",
       "related": [
         "usr/share/mios/mios.toml",
         "config/artifacts/bib.toml",
@@ -25558,10 +25558,11 @@
     },
     {
       "path": "usr/libexec/mios/mios-bound-images-firstboot",
-      "hint": "FBM first-boot bound-image provisioner. Reads [ai].firstboot_bound_images from mios.toml",
+      "hint": "First-boot bound-image provisioner. Resolve the layered fleet and pull only missing images; publish completion only when every configured image is available. Incomplete runs leave the next boot or explicit run eligible and never block boot.",
       "related": [
         "mios-bound-images-firstboot.service",
-        "/usr/share/mios/mios.toml"
+        "/usr/share/mios/mios.toml",
+        "/usr/lib/mios/mios_toml.py"
       ],
       "functions": [],
       "doc": null,

@@ -57,7 +57,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-bench` | MiOS agentic-capability benchmark harness CLI. `score` (OFFLINE, pure): reads a trial-results JSON, prints the CLASSic rollup + pass@k / pass^k (tau-bench) via the tested mios_bench core. `run`... |
 | `usr/libexec/mios/mios-blade` | The `mios blade` verb -- the day-2 face of the blade archetype (WS-BLADE). Writes the HOST tier (/etc/mios/role.conf) and re-runs role-apply, which detects the change and activates the new role... |
 | `usr/libexec/mios/mios-blade-enroll` | Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (task_473, task_2706). |
-| `usr/libexec/mios/mios-bound-images-firstboot` | FBM first-boot bound-image provisioner. Reads [ai].firstboot_bound_images from mios.toml |
+| `usr/libexec/mios/mios-bound-images-firstboot` | First-boot bound-image provisioner. Resolve the layered fleet and pull only missing images; publish completion only when every configured image is available. Incomplete runs leave the next boot or... |
 | `usr/libexec/mios/mios-build-driver` | Entry point for the MiOS-DEV build pipeline; executes the full multi-format build process (OCI, WSL, QEMU, etc.) and renders the interactive dashboard within a Windows-hosted terminal session. |
 | `usr/libexec/mios/mios-build-status` | Provides a summary of the most recent build's status, log location, and success state by analyzing /var/log/mios/build-driver-*.log files and active build-driver processes. |
 | `usr/libexec/mios/mios-build-tail` | Retrieves and streams the most recent raw build log from /var/log/mios or /tmp, used by agents to inspect real-time or historical build output from the mios-build-driver. |

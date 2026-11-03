@@ -1301,7 +1301,10 @@
         "debug_enable",
         "surface_default"
       ],
-      "public_symbols": []
+      "public_symbols": [
+        "DisconnectAwareStreamingResponse",
+        "disconnect_aware_response"
+      ]
     },
     "usr/lib/mios/agent-pipe/mios_pipe/routing/swarm.py": {
       "configure_kwargs": [
