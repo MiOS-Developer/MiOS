@@ -2313,9 +2313,6 @@ KNOWLEDGE_STORE_GATE_UNSATISFIED = os.environ.get(
     "MIOS_KNOWLEDGE_STORE_GATE_UNSATISFIED", "true").strip().lower() not in ("0", "false", "no")
 KNOWLEDGE_TABLE = (os.environ.get("MIOS_KNOWLEDGE_TABLE", "knowledge").strip()
                    or "knowledge")
-MEMORY_GUARD_MODE = (os.environ.get("MIOS_MEMORY_GUARD_MODE")
-                     or (_toml_section("pgvector").get("memory_guard_mode", "off"))
-                     ).strip().lower()
 KNOWLEDGE_ANSWER_MAX = int(
     os.environ.get("MIOS_KNOWLEDGE_ANSWER_MAX", "8000") or 8000)
 KNOWLEDGE_RECALL_ENABLED = os.environ.get(
@@ -2335,6 +2332,7 @@ _RECALL_POSSESSIVE_RE = re.compile(
 )
 
 from mios_knowledge import (   # noqa: E402
+    MEMORY_GUARD_MODE,
     _recall_floor,
     _row_age_seconds,
     _humanize_age,

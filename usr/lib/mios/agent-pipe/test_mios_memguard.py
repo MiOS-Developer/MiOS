@@ -344,6 +344,43 @@ class TestMemoryPoisoningDriftCheck(unittest.TestCase):
         rc = dc.check_memory_poisoning_scan()
         self.assertEqual(rc, 0)
 
+    def test_server_uses_the_canonical_memory_guard_policy(self):
+        import ast
+        import importlib.util
+        from pathlib import Path
+        from unittest import mock
+        from mios_pipe.kernel import config
+        import mios_toml
+
+        source = Path(__file__).parent
+        tree = ast.parse((source / "server.py").read_text())
+        policy = [node for node in tree.body if
+                  (isinstance(node, ast.Assign) and any(
+                      isinstance(target, ast.Name) and target.id == "MEMORY_GUARD_MODE"
+                      for target in node.targets)) or
+                  (isinstance(node, ast.ImportFrom) and any(
+                      alias.name == "MEMORY_GUARD_MODE" for alias in node.names))]
+        self.assertEqual(len(policy), 1)
+        startup = compile(ast.Module(body=policy, type_ignores=[]), "server.py", "exec")
+        cases = [({"memory_guard_mode": "strip"}, "", "strip"),
+                 ({"memory_guard_mode": "reject"}, " LOG ", "log"),
+                 ({}, "", "log"), (OSError("config unavailable"), "", "log")]
+        for settings, override, expected in cases:
+            with self.subTest(settings=settings, override=override):
+                options = {"side_effect": settings} if isinstance(settings, Exception) else {"return_value": settings}
+                with mock.patch.dict(os.environ, {"MIOS_MEMORY_GUARD_MODE": override}), \
+                     mock.patch.object(config, "_toml_section", **options), \
+                     mock.patch.object(mios_toml, "load_merged", return_value={}):
+                    spec = importlib.util.spec_from_file_location(
+                        "mios_memory_guard_fixture", source / "mios_pipe/memory/knowledge.py")
+                    knowledge = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(knowledge)
+                    namespace = {"os": os, "_toml_section": config._toml_section}
+                    with mock.patch.dict(sys.modules, {"mios_knowledge": knowledge}):
+                        exec(startup, namespace)
+                    self.assertEqual(namespace["MEMORY_GUARD_MODE"], expected)
+                    self.assertEqual(knowledge.MEMORY_GUARD_MODE, expected)
+
     def test_memory_poisoning_scan_negative_controls(self):
         """Negative Controls: planted discrepancies fail closed with non-zero exit."""
         import importlib.util
@@ -393,6 +430,21 @@ class TestMemoryPoisoningDriftCheck(unittest.TestCase):
 
                 self.assertEqual(rc, 1)
                 self.assertIn("knowledge.py hardcodes MEMORY_GUARD_MODE = 'off'", stderr_buf.getvalue())
+
+                # A server fallback must not replace the canonical active policy.
+                knowledge_path = os.path.join(tmpdir, "usr/lib/mios/agent-pipe/mios_pipe/memory/knowledge.py")
+                with open(knowledge_path, "w") as fh:
+                    fh.write('MEMORY_GUARD_MODE = "log"\n')
+                with open(os.path.join(tmpdir, "usr/lib/mios/agent-pipe/server.py"), "w") as fh:
+                    fh.write('MEMORY_GUARD_MODE = _toml_section("pgvector").get("memory_guard_mode", "off")\n')
+                stderr_buf = io.StringIO()
+                sys.stderr = stderr_buf
+                try:
+                    rc = dc.check_memory_poisoning_scan()
+                finally:
+                    sys.stderr = orig_stderr
+                self.assertEqual(rc, 1)
+                self.assertIn("server.py falls back to memory_guard_mode = 'off'", stderr_buf.getvalue())
 
             finally:
                 if orig_root is not None:
