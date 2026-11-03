@@ -71,6 +71,53 @@ for test_uid in 0 1000; do
     fi
 done
 
+# Exercise the shipped post-smoke measurements without running a browser build.
+# Real du reads populated stores; only the OS identity and namespace entry are fixtures.
+sed -n '/^size_of()/,/^M_FREE_GB=/p' "$WRAP" | sed '$d' >"$TMP/measurements.sh"
+cat >"$TMP/measure-hook.sh" <<'HOOK'
+set -euo pipefail
+id() { if [ "${1:-}" = -u ]; then echo "$MIOS_TEST_UID"; else command id "$@"; fi; }
+podman() {
+    printf '%s\n' "$*" >>"$MIOS_TEST_CALLS"
+    [ "$MIOS_TEST_UID" != 0 ] || { echo 'Error: please use unshare with rootless' >&2; return 125; }
+    [ "${1:-}" = unshare ] || { echo 'missing storage namespace' >&2; return 2; }
+    shift
+    command "$@"
+}
+PODMAN=(podman)
+PB_WORK=$MIOS_TEST_WORK
+STORE=$MIOS_TEST_STORE
+FFV=fixture
+source "$MIOS_TEST_MEASUREMENTS"
+printf 'MEASURED %s %s\n' "$M_DISK_WORK" "$M_DISK_STORE"
+HOOK
+mkdir -p "$TMP/usage/work/ff-fixture" "$TMP/store with spaces"
+printf 'work payload\n' >"$TMP/usage/work/ff-fixture/payload"
+printf 'store payload\n' >"$TMP/store with spaces/payload"
+expected_work=$(du -sxb "$TMP/usage/work/ff-fixture" | awk '{print $1}')
+expected_store=$(du -sxb "$TMP/store with spaces" | awk '{print $1}')
+for test_uid in 0 1000; do
+    : >"$TMP/namespace-calls"
+    want 0 "metrics: populated store for uid $test_uid" env \
+        MIOS_TEST_UID="$test_uid" MIOS_TEST_CALLS="$TMP/namespace-calls" \
+        MIOS_TEST_WORK="$TMP/usage" MIOS_TEST_STORE="$TMP/store with spaces" \
+        MIOS_TEST_MEASUREMENTS="$TMP/measurements.sh" bash "$TMP/measure-hook.sh"
+    if grep -qx "MEASURED $expected_work $expected_store" "$TMP/out"; then
+        ok "metrics: uid $test_uid records actual work and store bytes"
+    else bad "metrics: uid $test_uid lost usage"; cat "$TMP/out"; fi
+    if { [ "$test_uid" = 0 ] && [ ! -s "$TMP/namespace-calls" ]; } ||
+       { [ "$test_uid" != 0 ] && grep -qx "unshare du -sxb $TMP/store with spaces" "$TMP/namespace-calls"; }; then
+        ok "metrics: uid $test_uid uses its storage ownership namespace"
+    else bad "metrics: uid $test_uid uses the wrong namespace"; fi
+    want 1 "metrics: missing store fails for uid $test_uid" env \
+        MIOS_TEST_UID="$test_uid" MIOS_TEST_CALLS="$TMP/namespace-calls" \
+        MIOS_TEST_WORK="$TMP/usage" MIOS_TEST_STORE="$TMP/missing-store" \
+        MIOS_TEST_MEASUREMENTS="$TMP/measurements.sh" bash "$TMP/measure-hook.sh"
+    if grep -q 'missing-store.*No such file or directory' "$TMP/out" && ! grep -q MEASURED "$TMP/out"; then
+        ok "metrics: uid $test_uid exposes the measurement failure"
+    else bad "metrics: uid $test_uid hides or accepts the failed measurement"; fi
+done
+
 # --- heavy.lock -----------------------------------------------------------------------------
 # shellcheck source=/usr/lib/mios/heavy-lock.sh
 . "$ROOT/usr/lib/mios/heavy-lock.sh"

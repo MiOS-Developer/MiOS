@@ -248,9 +248,15 @@ if [ "$rc" -eq 0 ] && [ -z "$NO_SMOKE" ]; then
     SMOKE_RC=0; run_smoke "$RUN" || SMOKE_RC=$?
 fi
 FFV=$(sed -n 's/^firefox_version=//p' "$RUN/versions.env")
-size_of() { "$@" 2>/dev/null | awk 'END{print $1+0}'; }
+size_of() { "$@" | awk 'END{print $1+0}'; }
 M_DISK_WORK=$(size_of du -sxb "$PB_WORK/work/ff-$FFV")
-M_DISK_STORE=$(size_of "${PODMAN[@]}" unshare du -sxb "$STORE")
+# Root owns the store directly; podman unshare only accepts rootless callers.
+# Rootless storage needs its user namespace to traverse mapped layer owners.
+if [ "$(id -u)" -eq 0 ]; then
+    M_DISK_STORE=$(size_of du -sxb "$STORE")
+else
+    M_DISK_STORE=$(size_of "${PODMAN[@]}" unshare du -sxb "$STORE")
+fi
 M_FREE_GB=$(free_gb "$PB_WORK")
 M_TS="$TS"
 M_LANE="$PB_LANE"
