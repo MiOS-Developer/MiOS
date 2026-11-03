@@ -30,11 +30,13 @@ struct Policy {
     signal_program: String,
     terminal_command: Vec<String>,
     application_dirs: Vec<String>,
+    #[serde(skip)]
+    flatpak_launchers: std::collections::BTreeMap<String, FlatpakLauncher>,
 }
 impl Policy {
     fn read(root: &Path) -> Result<Self, String> {
         let ssot = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
-        let p: Self = serde_json::from_value(
+        let mut p: Self = serde_json::from_value(
             serde_json::to_value(
                 ssot.get("desktop")
                     .and_then(|d| d.get("launch"))
@@ -71,8 +73,73 @@ impl Policy {
         {
             return Err("invalid desktop.launch programs or application directories".into());
         }
+        p.flatpak_launchers = flatpak_launchers(&ssot);
         Ok(p)
     }
+}
+
+#[derive(Clone)]
+struct FlatpakLauncher {
+    app_id: String,
+    exec: String,
+}
+
+fn flatpak_launchers(ssot: &toml::Value) -> std::collections::BTreeMap<String, FlatpakLauncher> {
+    ssot.get("desktop")
+        .and_then(|d| d.get("launchers"))
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, launcher)| {
+            let app = launcher.get("flatpak_app_id")?.as_str()?;
+            let exec = launcher.get("exec_cmd")?.as_str()?;
+            (valid_id(id) && valid_id(app) && !exec.is_empty()).then(|| {
+                (
+                    id.clone(),
+                    FlatpakLauncher {
+                        app_id: app.to_owned(),
+                        exec: exec.to_owned(),
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+// Only the trusted configured wrapper prefix and the configured Flatpak's
+// "run" prefix differ. Compare the complete remaining Exec text conservatively:
+// branch, architecture, command, field codes and application arguments stay
+// significant. Unsupported quoting/spacing remains ambiguous, never executed.
+fn equivalent_flatpak_exec(policy: &Policy, wrapper: &str, export: &str) -> bool {
+    let Some((wrapper_program, wrapper_args)) = wrapper.split_once(' ') else {
+        return false;
+    };
+    if !Path::new(wrapper_program).is_absolute() || wrapper_program.contains(['"', '\\', '\'']) {
+        return false;
+    }
+    let Some((program, args)) = export.split_once(' ') else {
+        return false;
+    };
+    if args.strip_prefix("run ") != Some(wrapper_args) {
+        return false;
+    }
+    if program == policy.flatpak_program {
+        return true;
+    }
+    // Exported files use an absolute executable, while policy may use PATH.
+    // Resolve that configured program rather than trusting any matching basename.
+    let configured = Path::new(&policy.flatpak_program);
+    let configured = if configured.is_absolute() {
+        Some(configured.to_owned())
+    } else {
+        env::split_paths(&env::var_os("PATH").unwrap_or_default())
+            .map(|base| base.join(configured))
+            .find(|path| path.is_absolute() && path.is_file())
+    };
+    configured
+        .and_then(|path| fs::canonicalize(path).ok())
+        .zip(fs::canonicalize(program).ok())
+        .is_some_and(|(configured, exported)| configured == exported)
 }
 
 fn bounded(
@@ -402,7 +469,7 @@ fn resolve_desktop(policy: &Policy, query: &str, home: Option<&Path>) -> Result<
                 None
             };
             if let Some(score) = score {
-                matches.push((score, id, path.to_owned(), name));
+                matches.push((score, id, path.to_owned(), name, fields));
             }
         }
     }
@@ -410,17 +477,51 @@ fn resolve_desktop(policy: &Policy, query: &str, home: Option<&Path>) -> Result<
     let Some(best) = matches.first() else {
         return Err("Application desktop entry is not installed".into());
     };
-    if matches.iter().filter(|item| item.0 == best.0).count() != 1 {
-        return Err(format!(
-            "Ambiguous desktop application: {}",
-            matches
-                .iter()
-                .filter(|item| item.0 == best.0)
-                .map(|item| item.1.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
+    let tied: Vec<_> = matches.iter().filter(|item| item.0 == best.0).collect();
+    // The SSOT launcher and Flatpak export have different desktop IDs but
+    // represent the same application. Prefer the declared launcher only when
+    // every tied entry proves that identity. Other launch variants, unbound
+    // duplicates and distinct applications still require an explicit ID.
+    let best = if tied.len() == 1 {
+        best
+    } else {
+        let canonical: Vec<_> = tied
+            .iter()
+            .copied()
+            .filter(|item| {
+                policy
+                    .flatpak_launchers
+                    .get(&item.1)
+                    .is_some_and(|launcher| {
+                        item.4.get("X-Flatpak") == Some(&launcher.app_id)
+                            && item.4.get("Exec") == Some(&launcher.exec)
+                            && tied.iter().all(|other| {
+                                other.4.get("X-Flatpak") == Some(&launcher.app_id)
+                                    && (other.1 == item.1
+                                        || (other.1 == launcher.app_id
+                                            && other.4.get("Exec").is_some_and(|exec| {
+                                                equivalent_flatpak_exec(
+                                                    policy,
+                                                    &launcher.exec,
+                                                    exec,
+                                                )
+                                            })))
+                            })
+                    })
+            })
+            .collect();
+        if canonical.len() == 1 {
+            canonical[0]
+        } else {
+            return Err(format!(
+                "Ambiguous desktop application: {}",
+                tied.iter()
+                    .map(|item| item.1.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    };
     Ok(
         json!({"ok":true,"verb":"app_resolve","query":query,"desktop_id":best.1,"desktop_file":best.2,"name":best.3,"overall_timeout_ms":policy.overall_timeout_ms}),
     )
@@ -1028,6 +1129,7 @@ mod tests {
             signal_program: "kill".into(),
             terminal_command: vec!["true".into()],
             application_dirs: vec!["/usr/share/applications".into()],
+            flatpak_launchers: Default::default(),
         }
     }
 
@@ -1405,6 +1507,199 @@ mod tests {
             resolve_desktop(&p, "Export App", None).unwrap()["desktop_id"],
             "org.example.Export"
         );
+    }
+
+    fn flatpak_registry_fixture() -> (tempfile::TempDir, Policy) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = policy();
+        p.application_dirs = vec![dir.path().display().to_string()];
+        let ssot: toml::Value = toml::from_str(
+            "[desktop.launchers.mios-browser]\nflatpak_app_id='org.example.Browser'\nexec_cmd='/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding org.example.Browser @@u %u @@'\n",
+        )
+        .unwrap();
+        p.flatpak_launchers = flatpak_launchers(&ssot);
+        p.flatpak_program = "/usr/bin/flatpak".into();
+        fs::write(dir.path().join("mios-browser.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Example Browser\nStartupWMClass=browser\nX-Flatpak=org.example.Browser\nExec=/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding org.example.Browser @@u %u @@\n").unwrap();
+        fs::write(dir.path().join("org.example.Browser.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Example Browser\nStartupWMClass=browser\nX-Flatpak=org.example.Browser\nExec=/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding org.example.Browser @@u %u @@\n").unwrap();
+        (dir, p)
+    }
+
+    #[test]
+    fn registry_prefers_ssot_launcher_for_the_same_flatpak_identity() {
+        let (_dir, p) = flatpak_registry_fixture();
+        for query in ["browser", "Example Browser", "example browser"] {
+            assert_eq!(
+                resolve_desktop(&p, query, None).unwrap()["desktop_id"],
+                "mios-browser"
+            );
+        }
+        for id in ["org.example.Browser", "mios-browser"] {
+            assert_eq!(resolve_desktop(&p, id, None).unwrap()["desktop_id"], id);
+        }
+        assert_eq!(
+            resolve_desktop(&p, "org.example.Browser.desktop", None).unwrap()["desktop_id"],
+            "org.example.Browser"
+        );
+    }
+
+    #[test]
+    fn registry_preserves_ambiguity_for_distinct_flatpaks_and_undeclared_variants() {
+        let (dir, mut p) = flatpak_registry_fixture();
+        let export = dir.path().join("org.example.Browser.desktop");
+        let source = fs::read_to_string(&export).unwrap();
+        // A coincident label/window class does not make different Flatpaks equal.
+        fs::write(
+            &export,
+            source.replace(
+                "X-Flatpak=org.example.Browser",
+                "X-Flatpak=org.example.Other",
+            ),
+        )
+        .unwrap();
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        fs::write(&export, &source).unwrap();
+        // An unknown custom launch variant is not silently discarded.
+        let variant = dir.path().join("private-browser.desktop");
+        fs::write(&variant, source.replace(" @@u", " --private-window @@u")).unwrap();
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        // Two declared launchers for one Flatpak are also a real choice.
+        let launcher = p.flatpak_launchers.get("mios-browser").unwrap().clone();
+        p.flatpak_launchers
+            .insert("private-browser".into(), launcher.clone());
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        fs::remove_file(variant).unwrap();
+        // A stale/missing SSOT identity never becomes a prefix-based preference.
+        p.flatpak_launchers.clear();
+        assert!(resolve_desktop(&p, "Example Browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        p.flatpak_launchers.insert(
+            "mios-browser".into(),
+            FlatpakLauncher {
+                app_id: "org.example.Other".into(),
+                exec: launcher.exec.clone(),
+            },
+        );
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        // Metadata is required on both entries; shared executable text is insufficient.
+        p.flatpak_launchers.insert("mios-browser".into(), launcher);
+        fs::write(
+            &export,
+            source.replace("X-Flatpak=org.example.Browser\n", ""),
+        )
+        .unwrap();
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+    }
+
+    #[test]
+    fn registry_preserves_flatpak_exec_flags_and_rejects_changed_wrappers() {
+        let (dir, p) = flatpak_registry_fixture();
+        let export = dir.path().join("org.example.Browser.desktop");
+        let wrapper = dir.path().join("mios-browser.desktop");
+        let original_export = fs::read_to_string(&export).unwrap();
+        let original_wrapper = fs::read_to_string(&wrapper).unwrap();
+        for (old, new) in [
+            ("--branch=stable", "--branch=beta"),
+            ("--arch=x86_64", "--arch=aarch64"),
+            ("--command=launch-script.sh", "--command=other-command"),
+            ("--file-forwarding ", ""),
+            (" @@u", " --private-window @@u"),
+            (" %u ", " %U "),
+            ("/usr/bin/flatpak run", "/tmp/flatpak run"),
+            ("/usr/bin/flatpak run", "/usr/bin/flatpak install"),
+            ("Exec=/usr/bin/flatpak", "Exec=unrelated-program"),
+        ] {
+            fs::write(&export, original_export.replace(old, new)).unwrap();
+            assert!(
+                resolve_desktop(&p, "browser", None)
+                    .unwrap_err()
+                    .contains("Ambiguous"),
+                "{old} -> {new}"
+            );
+        }
+        fs::write(&export, &original_export).unwrap();
+        // Even if metadata still matches, a changed user/system wrapper is not
+        // the trusted launcher declaration.
+        for (old, new) in [
+            ("mios-flatpak-run", "other-wrapper"),
+            ("--branch=stable", "--branch=beta"),
+            (" @@u", " --private-window @@u"),
+        ] {
+            fs::write(&wrapper, original_wrapper.replace(old, new)).unwrap();
+            assert!(
+                resolve_desktop(&p, "browser", None)
+                    .unwrap_err()
+                    .contains("Ambiguous"),
+                "{old} -> {new}"
+            );
+        }
+        fs::write(&wrapper, original_wrapper).unwrap();
+        assert_eq!(
+            resolve_desktop(&p, "browser", None).unwrap()["desktop_id"],
+            "mios-browser"
+        );
+    }
+
+    #[test]
+    fn registry_preserves_hidden_and_user_overrides_when_coalescing_flatpaks() {
+        let (dir, mut p) = flatpak_registry_fixture();
+        let user_dir = tempfile::tempdir().unwrap();
+        let overrides = user_dir.path();
+        p.application_dirs
+            .insert(0, overrides.display().to_string());
+        fs::write(
+            overrides.join("mios-browser.desktop"),
+            "[Desktop Entry]\nHidden=true\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_desktop(&p, "browser", None).unwrap()["desktop_id"],
+            "org.example.Browser"
+        );
+        assert!(resolve_desktop(&p, "mios-browser", None).is_err());
+        fs::write(
+            overrides.join("mios-browser.desktop"),
+            "[Desktop Entry]\nName=Example Browser\nStartupWMClass=browser\nExec=custom-browser\n",
+        )
+        .unwrap();
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("Ambiguous"));
+        let source = fs::read_to_string(dir.path().join("mios-browser.desktop")).unwrap();
+        fs::write(overrides.join("mios-browser.desktop"), source).unwrap();
+        assert_eq!(
+            resolve_desktop(&p, "browser", None).unwrap()["desktop_file"],
+            overrides.join("mios-browser.desktop").display().to_string()
+        );
+        fs::write(
+            overrides.join("org.example.Browser.desktop"),
+            "[Desktop Entry]\nHidden=true\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_desktop(&p, "browser", None).unwrap()["desktop_id"],
+            "mios-browser"
+        );
+        fs::write(
+            overrides.join("mios-browser.desktop"),
+            "[Desktop Entry]\nHidden=true\n",
+        )
+        .unwrap();
+        assert!(resolve_desktop(&p, "browser", None)
+            .unwrap_err()
+            .contains("not installed"));
     }
 
     #[test]
