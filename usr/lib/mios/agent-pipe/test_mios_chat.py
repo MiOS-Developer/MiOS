@@ -440,6 +440,114 @@ asyncio.run(run())
           result.stderr if result.returncode else "ASGI 2.4, exact SSE error + DONE, HTTPX/admission cleanup")
 
 
+def _test_refine_preserves_constraints_and_tool_free_chat():
+    from fastapi.responses import JSONResponse, StreamingResponse
+    from mios_pipe.routing import sse
+    original = "Write a brief response with the requested capitalization only. Do not use tools or change any files."
+    history = [{"role": "developer", "content": "Preserve the caller's requested response format."},
+               {"role": "user", "content": original}]
+    seen, relayed = [], []
+
+    def reply(content, streaming):
+        if streaming:
+            async def chunks():
+                yield sse._sse_chunk(content, chat_id="constraint", model="m")
+                yield sse._sse_done()
+            return StreamingResponse(chunks(), media_type="text/event-stream")
+        return JSONResponse(content={"choices": [{"message": {"content": content}}]})
+
+    async def native(*args, **kwargs):
+        CALLS.append("native")
+        seen.append(("native", kwargs))
+        return reply("toolful-route", kwargs["streaming"])
+
+    async def local(*args, **kwargs):
+        CALLS.append("local_state")
+        seen.append(("local_state", kwargs))
+        return reply("observed-state", kwargs["streaming"])
+
+    async def plain(body):
+        CALLS.append("plain")
+        relayed.append(body)
+        return reply("generated-without-tools", body["stream"])
+
+    async def collect(result, streaming):
+        if not streaming:
+            return result.content["choices"][0]["message"]["content"]
+        text = []
+        async for chunk in result.body_iterator:
+            for line in chunk.decode().splitlines():
+                if line.startswith("data: ") and line != "data: [DONE]":
+                    item = json.loads(line[6:])
+                    if item.get("error"):
+                        raise AssertionError(item)
+                    choices = item.get("choices") or []
+                    if choices:
+                        text.append((choices[0].get("delta") or {}).get("content") or "")
+        return "".join(text)
+
+    async def exercise(refined, streaming, domain=None, flags=None):
+        seen.clear()
+        relayed.clear()
+        _wire_common(
+            refine_intent=_ahandler("refine", dict(refined)),
+            _route_domain=_ahandler("domain", domain),
+            _respond_native_loop_direct=native, _respond_local_state=local,
+            _plain_chat_complete=plain, _live_agent_names=_ahandler("live", []),
+            SWARM_DECOMPOSE_MIN_WORDS=1,
+            _sse_status_phase=sse._sse_status_phase, _sse_status=sse._sse_status,
+            _sse_chunk=sse._sse_chunk, _sse_done=sse._sse_done,
+            _sse_reasoning=sse._sse_reasoning, _stream_answer=sse._stream_answer,
+            _budget_release_inflight=_anoop)
+        body = {"model": "m", "messages": history, "stream": streaming,
+                "max_tokens": 17, "stop": ["END"], "store": False}
+        if flags:
+            body["mios_flags"] = flags
+        result = await mios_chat.chat_completions_logic(FakeRequest(body))
+        return await collect(result, streaming)
+
+    for streaming in (False, True):
+        CALLS.clear()
+        text = asyncio.run(exercise(
+            {"intent": "agent", "refined_text": "Shortened", "domain_type": "internal"}, streaming))
+        check(f"refine keeps original text and constraints on executor path stream={streaming}",
+              text == "toolful-route" and len(seen) == 1
+              and seen[0][1]["last_user_text"] == original
+              and seen[0][1]["messages"] == history
+              and seen[0][1].get("persist_response") is False, repr(seen))
+
+        CALLS.clear()
+        pure = {"intent": "chat", "refined_text": "Shortened", "reply": "Inferred answer",
+                "domain_type": "external", "web": False, "news": False, "local_state": False}
+        text = asyncio.run(exercise(pure, streaming))
+        check(f"domain-null conversation ignores advisory domain/length and never executes stream={streaming}",
+              text == "Inferred answer" and not seen and not relayed
+              and not ({"native", "local_state", "plain", "quick_chat", "recall"} & set(CALLS)), repr(CALLS))
+
+        for inferred in ("", '{"tool":"coderun","success":true}'):
+            CALLS.clear()
+            text = asyncio.run(exercise(dict(pure, reply=inferred), streaming))
+            check(f"missing/unverified chat reply has one original tool-free fallback stream={streaming} inferred={bool(inferred)}",
+                  text == "generated-without-tools" and not seen and len(relayed) == 1
+                  and relayed[0]["tool_choice"] == "none" and relayed[0]["messages"] == history
+                  and relayed[0]["max_tokens"] == 17 and relayed[0]["stop"] == ["END"]
+                  and CALLS.count("plain") == 1 and "native" not in CALLS, repr(CALLS))
+
+        controls = (
+            ("local-state", dict(pure, local_state=True, domain="local_state", domain_type="internal"), "local_state", None, "local_state"),
+            ("web", dict(pure, web=True), "web", None, "native"),
+            ("action-domain", pure, "applications", None, "native"),
+            ("compute-required", dict(pure, hint_tools=["coderun"], _needs_compute=True), None, None, "native"),
+            ("forced-tool", pure, None, {"force_tool": True}, "native"),
+        )
+        for label, refined, domain, flags, expected in controls:
+            CALLS.clear()
+            text = asyncio.run(exercise(refined, streaming, domain=domain, flags=flags))
+            check(f"required {label} retains executor routing stream={streaming}",
+                  len(seen) == 1 and seen[0][0] == expected and not relayed
+                  and seen[0][1]["last_user_text"] == original, repr(CALLS))
+
+
 def _test_real_refine_conversation_chain():
     import types
     import test_mios_refine as refine
@@ -549,6 +657,8 @@ def main():
     _test_explicit_agent_contract()
 
     _test_real_asgi_error_and_disconnect()
+
+    _test_refine_preserves_constraints_and_tool_free_chat()
 
     _test_real_refine_conversation_chain()
 
@@ -1192,7 +1302,8 @@ def _test_tool_choice_none_stripping():
           and payload["stop"] == ["END"] and payload["store"] is False
           and payload["temperature"] == 0 and not payload["stream"])
     check("plain backend receives no tools or internal routing controls",
-          not any(key in payload for key in ("tools", "tool_choice", "mios_flags"))
+          payload.get("tool_choice") == "none"
+          and not any(key in payload for key in ("tools", "mios_flags"))
           and CALLS == ["budget_admit"], repr(CALLS))
     check("plain JSON completion remains unchanged", result.content == completion
           and result.status_code == 200 and releases == [None])

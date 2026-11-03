@@ -293,6 +293,7 @@ def chat_streaming(client: OpenAI, msgs: list[dict[str, Any]],
                 },
             }
         _rsn_open = False
+        _turn_content: list[str] = []
         with client.chat.completions.stream(**kwargs) as s:
             for ev in s:
                 if ev.type == "content.delta":
@@ -300,6 +301,7 @@ def chat_streaming(client: OpenAI, msgs: list[dict[str, Any]],
                         sys.stderr.write("\x1b[0m\n")
                         sys.stderr.flush()
                         _rsn_open = False
+                    _turn_content.append(ev.delta)
                     sys.stdout.write(ev.delta)
                     sys.stdout.flush()
                     if answer_box is not None:
@@ -324,10 +326,29 @@ def chat_streaming(client: OpenAI, msgs: list[dict[str, Any]],
             sys.stderr.write("\x1b[0m\n")
             sys.stderr.flush()
 
-        msg = final.choices[0].message
+        choices = getattr(final, "choices", None) or []
+        if not choices:
+            raise RuntimeError("Gateway stream ended without a final assistant response")
+        choice = choices[0]
+        msg = choice.message
+        calls = getattr(msg, "tool_calls", None)
+        reason = getattr(choice, "finish_reason", None)
+        if calls:
+            if reason != "tool_calls":
+                raise RuntimeError("Gateway stream ended with incomplete tool calls")
+        elif reason != "stop" or not str(getattr(msg, "content", "") or "").strip():
+            raise RuntimeError(
+                f"Gateway stream ended without a completed assistant answer (finish_reason={reason!r})")
         msgs.append(msg.model_dump(exclude_none=True))
 
-        if not getattr(msg, "tool_calls", None):
+        if not calls:
+            content = str(msg.content)
+            printed = "".join(_turn_content)
+            remaining = content[len(printed):] if content.startswith(printed) else content
+            if remaining:
+                sys.stdout.write(remaining)
+                if answer_box is not None:
+                    answer_box.append(remaining)
             sys.stdout.write("\n")
             return
 

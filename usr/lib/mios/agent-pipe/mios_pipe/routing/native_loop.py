@@ -432,7 +432,8 @@ async def _respond_native_loop_direct(
                         elif _s.get("content") is not None:
                             _piece = str(_s["content"])
                             if _piece:
-                                _streamed_parts.append(_piece)
+                                if _s.get("answer") is True:
+                                    _streamed_parts.append(_piece)
                                 yield _sse_chunk(_piece, chat_id=chat_id, model=model)
                         elif _s.get("label"):
                             yield _sse_status(chat_id=chat_id, model=model,
@@ -456,18 +457,28 @@ async def _respond_native_loop_direct(
                     _content = (_b["choices"][0]["message"]["content"] or "").strip()
                 except Exception:  # noqa: BLE001
                     _content = ""
+                if not _content:
+                    yield ("data: " + json.dumps({"error": {
+                        "message": "Tool progress ended without a final assistant answer",
+                        "type": "server_error", "code": "inference_unavailable"}})
+                        + "\n\n").encode("utf-8")
+                    yield _sse_done()
+                    return
                 yield _sse_status_phase(chat_id=chat_id, model=model,
                                         phase="subagent_done", done=True)
                 _streamed = "".join(_streamed_parts)
-                if _content and not _streamed.strip():
+                _remaining = ("" if _content.strip() == _streamed.strip() else
+                              _content[len(_streamed):] if _content.startswith(_streamed)
+                              else _content)
+                if _remaining:
                     if NATIVE_LOOP_STREAM_TOKENS and NATIVE_LOOP_STREAM_CHUNK > 0:
                         _delay = max(0.0, NATIVE_LOOP_STREAM_DELAY_MS / 1000.0)
-                        for _piece in _iter_answer_chunks(_content, NATIVE_LOOP_STREAM_CHUNK):
+                        for _piece in _iter_answer_chunks(_remaining, NATIVE_LOOP_STREAM_CHUNK):
                             yield _sse_chunk(_piece, chat_id=chat_id, model=model)
                             if _delay:
                                 await asyncio.sleep(_delay)
                     else:
-                        yield _sse_chunk(_content, chat_id=chat_id, model=model)
+                        yield _sse_chunk(_remaining, chat_id=chat_id, model=model)
                 yield _sse_chunk("", chat_id=chat_id, model=model, finish_reason="stop")
                 yield _sse_done()
             finally:
@@ -574,8 +585,10 @@ async def _respond_native_loop_direct(
         _plan_bits.append("Refined request: " + _rt)
     if _io:
         _plan_bits.append("Intended outcome: " + _io)
-    _plan_block = ("PLAN for this turn -- work to THIS refined intent, treat it as fully "
-                   "answerable, and do not anchor on the user's literal wording:\n"
+    _plan_block = ("ADVISORY REFINEMENT for this turn -- clarify the original request "
+                   "without broadening its authorized scope. The original user messages "
+                   "and their constraints on tools, actions, output and format remain "
+                   "authoritative over this refinement:\n"
                    + "\n".join(_plan_bits) + "\n\n") if _plan_bits else ""
     _date_block = ""
     if NATIVE_LOOP_DATE_ANCHOR:
@@ -801,6 +814,7 @@ async def _respond_native_loop_direct(
             try:
                 if emit is not None:
                     _raw_parts = []
+                    _finish_reason = None
                     async with _c.stream("POST", f"{BACKEND}/chat/completions",
                                          content=json.dumps(_pb).encode("utf-8"),
                                          headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S) as _r:
@@ -815,13 +829,17 @@ async def _respond_native_loop_direct(
                                 except Exception: continue
                                 ch = chunk.get("choices") or []
                                 if not ch: continue
+                                if ch[0].get("finish_reason") is not None:
+                                    _finish_reason = ch[0]["finish_reason"]
                                 delta = ch[0].get("delta") or {}
                                 _content = delta.get("content") or ""
                                 _reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
                                 if _reasoning: emit({"reasoning": _reasoning})
                                 if _content:
                                     _raw_parts.append(_content)
-                                    emit({"content": _content})
+                                    emit({"content": _content, "answer": True})
+                    if _finish_reason != "stop":
+                        raise ValueError("final inference stream ended without a stop acknowledgment")
                     _raw = "".join(_raw_parts)
                     _live_streamed = bool(_raw.strip())
                 else:
@@ -829,7 +847,8 @@ async def _respond_native_loop_direct(
                                        content=json.dumps(_pb).encode("utf-8"),
                                        headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S)
                     _ch = (_r.json().get("choices") or [])
-                    _raw = str((_ch[0].get("message") if _ch else {}).get("content") or "")
+                    _raw = (str((_ch[0].get("message") or {}).get("content") or "")
+                            if _ch and _ch[0].get("finish_reason") == "stop" else "")
             except Exception as _e:  # noqa: BLE001
                 log.warning("native-loop final completion failed: %s", _e)
                 _raw = ""
@@ -847,7 +866,8 @@ async def _respond_native_loop_direct(
                                     content=json.dumps(_fb).encode("utf-8"),
                                     timeout=NATIVE_LOOP_TIMEOUT_S)
                 _fch = (_fr.json().get("choices") or [])
-                _raw = str((_fch[0].get("message") if _fch else {}).get("content") or "")
+                _raw = (str((_fch[0].get("message") or {}).get("content") or "")
+                        if _fch and _fch[0].get("finish_reason") == "stop" else "")
                 if _raw.strip():
                     log.info("native-loop: heavy lane empty -> light-lane fallback answered")
             except Exception as _e2:  # noqa: BLE001
@@ -864,8 +884,7 @@ async def _respond_native_loop_direct(
         _stripped = re.sub(r"(?is)</?think>", "", _raw).strip()
     _raw = _stripped
     _ans = _raw
-    _surfaced_raw_evidence = False
-    if not getattr(locals(), "_live_streamed", False):
+    if not _live_streamed:
         try:
             _p = await polish_response(
                 _raw, refined, session_id=session_id,
@@ -875,37 +894,8 @@ async def _respond_native_loop_direct(
                 _ans = _p
         except Exception as _e:  # noqa: BLE001
             log.debug("native-loop polish skipped: %s", _e)
-    if not _ans or not _ans.strip():
-        if _raw and _raw.strip():
-            log.info("native-loop: relaying raw synthesis (polish empty)")
-            _ans = _raw.strip()
-        else:
-            _snips = []
-            for _mm in _m2:
-                if isinstance(_mm, dict) and _mm.get("role") == "tool":
-                    _ct = str(_mm.get("content") or "").strip()
-                    if _ct:
-                        _snips.append(_ct[:600])
-                    if len(_snips) >= 3:
-                        break
-            _ans = "\n\n".join(_snips).strip()
-            _surfaced_raw_evidence = bool(_ans)   # RAW executor evidence -> preserve verbatim
-            if (not _ans or _is_punt(_ans)) and _recall_text and _recall_text.strip():
-                _facts = re.sub(
-                    r"(?im)^\s*(Durable facts|Relevant knowledge|Recent web|Context from|Saved).*$",
-                    "", _recall_text)
-                _facts = re.sub(
-                    r"(?im)^.*(do NOT call a tool|may be OUTDATED|answer FROM IT|fetch with a tool|these saved facts|verify).*$",
-                    "", _facts)
-                _facts = re.sub(r"\[\d(?:\.\d+)?\]\s*", "", _facts)
-                _facts = re.sub(r"(?i)\bthis fact:\s*", "", _facts)
-                _facts = "\n".join(l.rstrip() for l in _facts.splitlines() if l.strip())
-                _ans = ("From your saved memory:\n" + _facts
-                        if _facts.strip() else _recall_text.strip())
-                log.info("native-loop: surfaced injected recall (raw+polish+tools empty)")
-            else:
-                log.info("native-loop: %s", "surfaced tool evidence (raw+polish empty)"
-                         if _ans else "no answer/raw/evidence (empty)")
+    # Tool output is evidence, not a substitute for a completed assistant answer.
+    # Missing synthesis reaches the explicit inference error below.
     if _routed_domain_var.get(None) == "web":
         try:
             _real_norm = {re.sub(r"[/\s.]+$", "", str(_s.get("url") or ""))
@@ -951,7 +941,7 @@ async def _respond_native_loop_direct(
         if _append:
             _ans = _ans.rstrip() + _append
             if _live_streamed and emit is not None:
-                emit({"content": _append})
+                emit({"content": _append, "answer": True})
             log.info("native-loop: appended %d real source(s)", len(_refs))
     if not _ans or not _ans.strip():
         return JSONResponse(status_code=503, content={"error": {

@@ -254,6 +254,13 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
                 break
             ch = (r.json().get("choices") or [])
             msg = (ch[0].get("message") if ch else {}) or {}
+            finish_reason = (ch[0].get("finish_reason") if ch else None)
+            if finish_reason not in ("stop", "tool_calls"):
+                if terminal_response is not None:
+                    terminal_response["_backend_failed"] = True
+                    terminal_response["_incomplete"] = True
+                log.warning("v1 tool-loop incomplete completion: finish_reason=%r", finish_reason)
+                break
             _rc = msg.get("reasoning_content") or ""
             if not _rc and msg.get("content"):
                 _m = re.search(r"<think>(.*?)</think>", msg["content"], re.DOTALL | re.IGNORECASE)
@@ -278,6 +285,11 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
                 _c = re.sub(r"<function=.*?</function>", "", _c, flags=re.DOTALL | re.IGNORECASE)
                 msg["content"] = _c.strip()
         if not tcs:
+            if finish_reason != "stop":
+                if terminal_response is not None:
+                    terminal_response["_backend_failed"] = True
+                    terminal_response["_incomplete"] = True
+                break
             if not _nudged and _looks_like_disclaimer(msg.get("content") or ""):
                 _nudged = True
                 push(" 🪤")

@@ -626,6 +626,7 @@ async def _plain_chat_complete(body: dict) -> Any:
     payload = dict(body)
     for key in ("tools", "tool_choice", "parallel_tool_calls", "mios_flags", "_allow_write", "num_ctx"):
         payload.pop(key, None)
+    payload["tool_choice"] = "none"
     requested_model = body.get("model")
     agent_model = str((_toml_section("ai") or {}).get("agent_model") or "").strip()
     # The front door advertises the configured agent identity, while the
@@ -1110,7 +1111,6 @@ async def chat_completions_logic(request: Request) -> Any:
     if streaming:
         outer_ctx = locals().copy()
         async def _stream_refine_and_dispatch() -> AsyncGenerator[bytes, None]:
-            nonlocal last_user_text, messages
             refined = None
             if not _incoming_turn:
                 yield _sse_status_phase(chat_id=chat_id, model=model, phase="refine")
@@ -1142,16 +1142,6 @@ async def chat_completions_logic(request: Request) -> Any:
                     if not refine_task.done():
                         refine_task.cancel()
                     await asyncio.gather(refine_task, return_exceptions=True)
-                if refined and refined.get("refined_text"):
-                    _refined_q = str(refined["refined_text"]).strip()
-                    if _refined_q:
-                        last_user_text = _refined_q
-                        for _i in range(len(messages) - 1, -1, -1):
-                            _m = messages[_i]
-                            if isinstance(_m, dict) and _m.get("role") == "user" \
-                                    and isinstance(_m.get("content"), str):
-                                messages[_i] = {**_m, "content": _refined_q}
-                                break
 
             try:
                 _turn_volatile_var.set(bool(refined and (
@@ -1292,16 +1282,6 @@ async def chat_completions_logic(request: Request) -> Any:
     if not _incoming_turn:
         await _vram_checkpoint()
         refined = await refine_intent(last_user_text, messages)
-        if refined and refined.get("refined_text"):
-            _refined_q = str(refined["refined_text"]).strip()
-            if _refined_q:
-                last_user_text = _refined_q
-                for _i in range(len(messages) - 1, -1, -1):
-                    _m = messages[_i]
-                    if isinstance(_m, dict) and _m.get("role") == "user" \
-                            and isinstance(_m.get("content"), str):
-                        messages[_i] = {**_m, "content": _refined_q}
-                        break
     try:
         _turn_volatile_var.set(bool(refined and (
             refined.get("local_state") or refined.get("news")
@@ -1674,6 +1654,16 @@ async def chat_completions(request: Request) -> Any:
     from mios_sse import disconnect_aware_response
     return disconnect_aware_response(await chat_completions_logic(request))
 
+def _is_tool_free_chat(refined: dict, domain, *, forced: bool = False) -> bool:
+    """A conversation needs no executor; advisory domain metadata cannot invent one."""
+    return (
+        refined.get("intent") == "chat" and domain is None and not forced
+        and not any(refined.get(key) for key in (
+            "local_state", "web", "news", "browser_action", "needs_location",
+            "tool", "tasks", "hint_tools", "_needs_compute"))
+    )
+
+
 async def _kernel_chat_handler(decision, **ctx):
     import re, time
     from fastapi.responses import JSONResponse, StreamingResponse
@@ -1688,8 +1678,23 @@ async def _kernel_chat_handler(decision, **ctx):
     session_id = ctx.get("session_id")
     _routed_domain_var = ctx.get("_routed_domain_var") or globals().get("_routed_domain_var")
 
-    _chat_reply = ""
-    if not _force_council and not _force_delegate:
+    _force_tool = bool(ctx.get("_force_tool"))
+    _tool_free = _is_tool_free_chat(
+        refined, _routed_domain_var.get(None),
+        forced=bool(_force_council or _force_delegate or _force_tool))
+    _chat_reply = str(refined.get("reply") or "").strip() if _tool_free else ""
+    if _tool_free and (not _chat_reply or (
+            _ANTIFAB_ENABLE and _contains_tool_result_block(_chat_reply))):
+        # Preserve the complete original turn and its output/tool restrictions.
+        # An absent or invalid inferred reply is one tool-free generation, never
+        # a promotion to an executor or an approval-producing compute prefetch.
+        plain = dict(ctx.get("body") or {})
+        plain["messages"] = list(messages or [
+            {"role": "user", "content": last_user_text or ""}])
+        plain["stream"] = bool(streaming)
+        plain["tool_choice"] = "none"
+        return await _plain_chat_complete(plain)
+    if not _tool_free and not _force_council and not _force_delegate and not _force_tool:
         _mem_block = await _recall_agent_memory(last_user_text)
         _mem_scores = [float(_s) for _s in re.findall(r"\[(\d(?:\.\d+)?)\]", _mem_block or "")]
         _mem_top = max(_mem_scores) if _mem_scores else 0.0
@@ -1718,7 +1723,7 @@ async def _kernel_chat_handler(decision, **ctx):
             and not (refined.get("web") or refined.get("news")
                      or refined.get("domain_type") in ("external", "both")
                      or _routed_domain_var.get(None) == "web")
-            and not _force_council and not _force_delegate):
+            and not _force_council and not _force_delegate and not _force_tool):
         _chat_reply = str(refined.get("reply") or "").strip()
         if not _chat_reply:
             _chat_reply = await _quick_chat_reply(last_user_text, messages)
@@ -1905,7 +1910,7 @@ async def _kernel_agent_handler(decision, **ctx):
             and _domain != "web"
             and "local_state" in str(refined.get("domain", ""))
             and not _force_council and not _force_delegate):
-        if await _needs_external_knowledge(last_user_text, messages):
+        if await _needs_external_knowledge(last_user_text):
             log.info("hybrid promotion: local_state query needs external facts -> web=True")
             refined["web"] = True
             refined["domain_type"] = "both"

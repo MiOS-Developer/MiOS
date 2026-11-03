@@ -23,7 +23,7 @@ class _FakeResp:
         self._c = content
 
     def json(self):
-        return {"choices": [{"message": {"content": self._c}}]}
+        return {"choices": [{"message": {"content": self._c}, "finish_reason": "stop"}]}
 
 class _FakeClient:
     """Stands in for httpx.AsyncClient: only `.post` (final completion) is used
@@ -41,8 +41,23 @@ class _FakeClient:
     async def post(self, url, **k):
         return _FakeResp(FINAL_ANSWER)
 
-    def stream(self, *a, **k):  # pragma: no cover - guard
-        raise AssertionError("stream() should not run on the emit=None path")
+    def stream(self, *a, **k):
+        stream_content = getattr(self, "stream_content", FINAL_ANSWER)
+        stream_reason = getattr(self, "stream_reason", "stop")
+        class Stream:
+            status_code = 200
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return False
+            def raise_for_status(self):
+                pass
+            async def aiter_lines(self):
+                yield "data: " + json.dumps({"choices": [{"delta": {"content": stream_content},
+                    "finish_reason": None}]})
+                yield "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": stream_reason}]})
+                yield "data: [DONE]"
+        return Stream()
 
 _FAKE_HTTPX = types.SimpleNamespace(
     AsyncClient=_FakeClient,
@@ -145,7 +160,29 @@ def _run():
     assert txt == FINAL_ANSWER, txt
     print("branch-2 tool loop runs then final answer terminates: OK ->", repr(txt))
 
+    captured = []
+    original = "Explain this topic in two sentences. Do not change files or execute commands."
+    _base_configure({}, [], [])
+    async def capture_constraints(*args, **kwargs):
+        captured.extend(args[4])
+        kwargs["terminal_response"]["content"] = FINAL_ANSWER
+        return list(args[4]) + [{"role": "assistant", "content": FINAL_ANSWER}]
+    M._v1_secondary_tool_loop = capture_constraints
+    resp = asyncio.run(M._respond_native_loop_direct(
+        {"intent": "agent", "refined_text": "A shortened topic", "intended_outcome": "A short explanation"},
+        streaming=False, chat_id="constraints", model="m", session_id="s",
+        last_user_text=original, persona_system="",
+        messages=[{"role": "user", "content": original}],
+        request=None, emit=None, tool_choice=None))
+    content = "\n".join(str(message.get("content") or "") for message in captured)
+    assert original in content, captured
+    assert "original user messages" in content and "authoritative over this refinement" in content
+    assert "do not anchor on the user's literal wording" not in content
+    assert _body_text(resp) == FINAL_ANSWER
+    print("native advisory refinement preserves original constraints and scope: OK")
+
     class EmptyClient(_FakeClient):
+        stream_content = ""
         async def post(self, url, **kwargs):
             return _FakeResp("")
 
@@ -224,7 +261,7 @@ class _FakeResp2:
     def json(self):
         if self._native:
             return {"message": {"content": self._c}}
-        return {"choices": [{"message": {"content": self._c}}]}
+        return {"choices": [{"message": {"content": self._c}, "finish_reason": "stop"}]}
 
 def _fake_httpx_returning(content, **kw):
     class _C:
@@ -609,7 +646,7 @@ def _run_registered_cpu_fallback():
                 response.text = "offline primary failure"
                 if case in ("gpu-limit", "gpu-tool-recovery") and Primary.calls == 1:
                     response.json = lambda: {"choices": [{"message": {"tool_calls": [
-                        {"id": "opaque-call", "type": "function", "function": {"name": "opaque_tool", "arguments": "{}"}}]}}]}
+                        {"id": "opaque-call", "type": "function", "function": {"name": "opaque_tool", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}
                 return response
             def stream(self, method, url, **kwargs):
                 Primary.calls += 1
@@ -684,7 +721,75 @@ def _run_registered_cpu_fallback():
     print("registered CPU fallback: real registry/readiness/auth/admission/model/cancellation and policy controls: OK")
 
 
+
+def _run_progress_and_completion_contract():
+    raw = json.dumps({"url": "https://example.invalid/news", "items": ["evidence"]})
+    for complete in (True, False):
+        _base_configure({}, [], [])
+        M._DEBUG_ENABLE = True
+        M._loads_lenient = json.loads
+        class NoRetry(_FakeClient):
+            async def post(self, *args, **kwargs):
+                raise AssertionError("accepted completion or failed backend must not repeat inference")
+        M.httpx = types.SimpleNamespace(AsyncClient=NoRetry, Timeout=lambda *a, **k: None)
+        async def tool_loop(*args, **kwargs):
+            args[7](raw)
+            terminal = kwargs["terminal_response"]
+            if complete:
+                terminal["content"] = FINAL_ANSWER
+            else:
+                terminal["_backend_failed"] = True
+            return list(args[4]) + [{"role": "tool", "content": raw}]
+        M._v1_secondary_tool_loop = tool_loop
+        async def run():
+            response = await M._respond_native_loop_direct(
+                {"web": True, "news": True}, streaming=True, chat_id="progress",
+                model="m", session_id=None, last_user_text="What is new today?",
+                persona_system="", messages=[{"role": "user", "content": "What is new today?"}],
+                request=None)
+            return b"".join([chunk async for chunk in response.body_iterator]).decode()
+        wire = asyncio.run(run())
+        assert "example.invalid/news" in wire, wire
+        if complete:
+            assert FINAL_ANSWER in wire, wire
+            assert '"finish_reason": "stop"' in wire, wire
+            assert '"error":' not in wire, wire
+        else:
+            assert '"code": "inference_unavailable"' in wire, wire
+            assert '"finish_reason": "stop"' not in wire, wire
+        assert "data: [DONE]" in wire
+    M._DEBUG_ENABLE = False
+    _base_configure({}, [], [])
+    M._v1_secondary_tool_loop = _async_const([])
+    class SpacedClient(_FakeClient):
+        stream_content = "  " + FINAL_ANSWER + "\n"
+    M.httpx = types.SimpleNamespace(AsyncClient=SpacedClient, Timeout=lambda *a, **k: None)
+    async def spaced():
+        response = await M._respond_native_loop_direct(
+            {}, streaming=True, chat_id="whitespace", model="m", session_id=None,
+            last_user_text="An offline request", persona_system="",
+            messages=[{"role": "user", "content": "An offline request"}], request=None)
+        return b"".join([chunk async for chunk in response.body_iterator]).decode()
+    assert asyncio.run(spaced()).count(FINAL_ANSWER) == 1
+    for reason in (None, "length"):
+        _base_configure({}, [], [])
+        M._v1_secondary_tool_loop = _async_const([])
+        class TruncatedClient(_FakeClient):
+            stream_reason = reason
+        M.httpx = types.SimpleNamespace(AsyncClient=TruncatedClient, Timeout=lambda *a, **k: None)
+        async def incomplete():
+            response = await M._respond_native_loop_direct(
+                {}, streaming=True, chat_id="truncated", model="m", session_id=None,
+                last_user_text="An offline request", persona_system="",
+                messages=[{"role": "user", "content": "An offline request"}], request=None)
+            return b"".join([chunk async for chunk in response.body_iterator]).decode()
+        wire = asyncio.run(incomplete())
+        assert '"code": "inference_unavailable"' in wire, wire
+        assert '"finish_reason": "stop"' not in wire, wire
+    print("web progress preserves final synthesis; tool-only and truncated streams fail explicitly: OK")
+
 if __name__ == "__main__":
+    _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
     _run()
     _run_moved()

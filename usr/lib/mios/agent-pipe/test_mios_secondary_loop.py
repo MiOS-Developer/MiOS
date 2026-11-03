@@ -35,7 +35,8 @@ class _FakeClient:
     async def post(self, url, content=None, headers=None, timeout=None):
         self.calls += 1
         msg = self._q.pop(0) if self._q else {"content": "done."}
-        return _Resp({"choices": [{"message": msg}]})
+        return _Resp({"choices": [{"message": msg,
+            "finish_reason": "tool_calls" if msg.get("tool_calls") else "stop"}]})
 
 def _msg(content="", tool_calls=None):
     m = {"content": content}
@@ -123,6 +124,23 @@ assert not any(m.get("content") in (M._TOOL_NUDGE,) for m in out), \
 assert not any(str(m.get("content") or "").startswith(M._REPLAN_NUDGE)
                for m in out), "no replan on a clean answer"
 print("TEST 3 PASS: clean final answer terminates in one pass")
+
+for reason in (None, "length", "content_filter", "tool_calls"):
+    _wire(exec_result=([], False))
+    class IncompleteClient(_FakeClient):
+        async def post(self, *args, **kwargs):
+            self.calls += 1
+            return _Resp({"choices": [{"message": {"content": "Partial answer"},
+                "finish_reason": reason}]})
+    client = IncompleteClient([])
+    terminal = {}
+    asyncio.run(M._v1_secondary_tool_loop(
+        client, "http://ep/v1", "m", {}, [{"role": "user", "content": "go"}],
+        [], None, lambda *args: None, terminal_response=terminal))
+    assert client.calls == 1
+    assert terminal.get("_backend_failed") and terminal.get("_incomplete"), terminal
+    assert not terminal.get("content"), terminal
+print("Incomplete or mismatched completion acknowledgements fail without repeated inference: OK")
 
 M.configure(daemon_diagnose_enable=False)
 diag = asyncio.run(M._daemon_diagnose(_FakeClient([]), "it failed", "the goal"))
