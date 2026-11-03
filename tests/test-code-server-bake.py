@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -656,6 +657,155 @@ class TestBuilders(unittest.TestCase):
                                ("theme.edge", "code_server_perimeter_px"): 0})
             self.assertNotEqual(r.returncode, 0, img)
             self.assertIn(f"'{img}' has no pinned tag", r.stderr)
+
+
+class TestDevcontainerPublicationSmoke(unittest.TestCase):
+    """Exercise the actual publication gate across a private container boundary."""
+
+    def _run(self, fault="", revision="", collision=False, minimum=4):
+        with tempfile.TemporaryDirectory(prefix="mios-devcontainer-publication-") as tmp:
+            root = Path(tmp)
+            (root / "usr/share/mios").mkdir(parents=True)
+            (root / ".devcontainer").mkdir()
+            (root / "usr/share/mios/mios.toml").write_text(
+                "[identity]\nusername='developer'\n[bootstrap.dev_vm]\nminimum_cpus="
+                + str(minimum) + "\n[ci]\nsuite_timeout_s=30\n")
+            doc = {"remoteUser": "developer", "build": {"args": {"MIOS_IDENTITY_USERNAME": "developer"}}}
+            (root / ".devcontainer/devcontainer.json").write_text(json.dumps(doc))
+            (root / ".devcontainer/Containerfile").write_text(_read(DEV_CF))
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=MiOS",
+                            "-c", "user.email=mios@example.invalid", "commit", "-qm", "fixture"], check=True)
+            expected = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            tools = root / "bin"
+            tools.mkdir()
+            calls = root / "calls.json"
+            calls.write_text("[]")
+            sudo = tools / "sudo"
+            sudo.write_text("#!" + sys.executable + "\n" + r'''
+import json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+assert args[0]=="podman"
+args=args[1:]
+log=Path(os.environ["MIOS_SMOKE_CALLS"])
+calls=json.loads(log.read_text());calls.append(args);log.write_text(json.dumps(calls))
+fault=os.environ["MIOS_SMOKE_FAULT"]
+if args[0]=="run":
+    if os.environ["MIOS_SMOKE_COLLISION"]=="1": raise SystemExit(125)
+    print("mios-fixture-container")
+elif args[0]=="exec":
+    if "/usr/share/mios/source-revision" in args:
+        if fault=="missing-revision": raise SystemExit(1)
+        print(os.environ["MIOS_SMOKE_REVISION"])
+    elif "/run/mios-devcontainer-smoke/account-wiring.sh" in args:
+        if fault=="account": raise SystemExit(7)
+    elif "--user" in args:
+        assert args[args.index("--user")+1]=="developer"
+        if fault=="attach": raise SystemExit(7)
+    else: raise AssertionError(args)
+elif args[0]=="rm":
+    assert args==["rm","--force","mios-fixture-container"]
+else: raise AssertionError(args)
+''')
+            sudo.chmod(0o755)
+            state = root / "mios-account-smoke"
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                       MIOS_SMOKE_CALLS=str(calls), MIOS_SMOKE_FAULT=fault,
+                       MIOS_SMOKE_COLLISION="1" if collision else "0",
+                       MIOS_SMOKE_REVISION=revision or expected)
+            script = 'source "$1"; mios_ci_require_cpus() { test "$2" -ge 4; }; mios_ci_verify_devcontainer_account "$2" localhost/mios:test "$3"'
+            result = subprocess.run(["bash", "-c", script, "mios-publication",
+                                     os.path.join(ROOT, "tools/lib/ci-runtime.sh"), str(root), str(state)],
+                                    env=env, text=True, capture_output=True)
+            wired = (state / "account-wiring.sh").read_text() if (state / "account-wiring.sh").exists() else None
+            receipt = (state / "verified-account.txt").read_text() if (state / "verified-account.txt").exists() else None
+            return result, json.loads(calls.read_text()), wired, receipt, expected
+
+    def test_current_source_and_actual_wrapper_run_reach_nonroot_attach(self):
+        result, calls, wired, receipt, expected = self._run()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        first = calls[0]
+        self.assertEqual("run", first[0])
+        self.assertIn("--pull=never", first)
+        self.assertEqual("none", first[first.index("--network") + 1])
+        self.assertEqual("4", first[first.index("--cpus") + 1])
+        self.assertEqual("0:0", first[first.index("--user") + 1])
+        actual = re.search(r"(?ms)^RUN (.*?)(?=^ENV )", _read(DEV_CF)).group(1).replace("\\\n", " ")
+        self.assertEqual(actual, wired)
+        self.assertTrue(any("--user" in call and "developer" in call for call in calls[1:]))
+        self.assertEqual(["rm", "--force", "mios-fixture-container"], calls[-1])
+        self.assertIn("source_revision=" + expected, receipt)
+        self.assertIn("remote_user=developer\nuid=1000\n", receipt)
+
+    def test_missing_or_stale_source_proof_stops_before_account_mutation(self):
+        for kwargs in ({"fault": "missing-revision"}, {"revision": "0" * 40}):
+            with self.subTest(kwargs=kwargs):
+                result, calls, _, receipt, _ = self._run(**kwargs)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse(any("/run/mios-devcontainer-smoke/account-wiring.sh" in call for call in calls))
+                self.assertEqual("rm", calls[-1][0])
+                self.assertIsNone(receipt)
+
+    def test_failed_account_or_nonroot_attach_never_publishes_success_receipt(self):
+        for fault in ("account", "attach"):
+            with self.subTest(fault=fault):
+                result, calls, _, receipt, _ = self._run(fault=fault)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIsNone(receipt)
+                self.assertEqual("rm", calls[-1][0])
+                if fault == "account":
+                    self.assertFalse(any("--user" in call for call in calls[1:]))
+
+    def test_collision_is_preserved_and_invalid_cpu_floor_never_starts(self):
+        result, calls, _, receipt, _ = self._run(collision=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(["run"], [call[0] for call in calls])
+        self.assertIsNone(receipt)
+        result, calls, _, _, _ = self._run(minimum=2)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual([], calls)
+
+    def test_source_proof_uses_context_git_and_refuses_an_unresolvable_worktree(self):
+        producer = next(line.strip().removesuffix("\\").strip().removesuffix(";")
+                        for line in _read(OS_CF).splitlines()
+                        if "git -c safe.directory=/ctx -C /ctx rev-parse --verify" in line)
+        with tempfile.TemporaryDirectory(prefix="mios-source-proof-") as tmp:
+            root = Path(tmp) / "checkout"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=MiOS",
+                            "-c", "user.email=mios@example.invalid", "commit", "--allow-empty",
+                            "-qm", "fixture"], check=True)
+            expected = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+            proof = Path(tmp) / "source-revision"
+            command = producer.replace("/ctx", shlex.quote(str(root))).replace(
+                "/usr/share/mios/source-revision", shlex.quote(str(proof)))
+            result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(expected, proof.read_text().strip())
+            broken = Path(tmp) / "unresolvable-worktree"
+            broken.mkdir()
+            (broken / ".git").write_text("gitdir: /nonexistent/mios-source-control\n")
+            command = producer.replace("/ctx", shlex.quote(str(broken))).replace(
+                "/usr/share/mios/source-revision", shlex.quote(str(proof)))
+            result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
+            self.assertNotEqual(0, result.returncode)
+            self.assertNotEqual(expected, proof.read_text().strip())
+
+    def test_both_publishers_gate_the_actual_image_before_external_actions(self):
+        for relative, external in (
+            (".github/workflows/mios-ci.yml", "      - name: Push the image"),
+            (".forgejo/workflows/build-mios.yml", "      - name: Record the tag"),
+        ):
+            source = _read(os.path.join(ROOT, relative))
+            gate = source.index("mios_ci_verify_devcontainer_account . localhost/mios:latest")
+            self.assertLess(gate, source.index(external))
+        source = _read(OS_CF)
+        proof = source.index("> /usr/share/mios/source-revision")
+        self.assertLess(source.index("git -c safe.directory=/ctx -C /ctx rev-parse --verify 'HEAD^{commit}'"), proof)
+        self.assertLess(proof, source.index("rm -rf /tmp/build"))
 
 
 class TestDevcontainerAccountProvisioning(unittest.TestCase):

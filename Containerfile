@@ -148,6 +148,8 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     chmod +x /tmp/build/automation/build.sh /tmp/build/automation/*.sh 2>/dev/null || true; \
     chmod +x /usr/libexec/mios/copy-build-log.sh 2>/dev/null || true; \
     CTX=/tmp/build /tmp/build/automation/build.sh; \
+    git -c safe.directory=/ctx -C /ctx rev-parse --verify 'HEAD^{commit}' > /usr/share/mios/source-revision; \
+    chmod 0644 /usr/share/mios/source-revision; \
     dnf clean all; \
     rm -rf /tmp/build; \
     find /var -mindepth 1 -maxdepth 1 ! -name tmp ! -name cache -exec rm -rf {} +; \

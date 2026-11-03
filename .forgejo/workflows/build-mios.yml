@@ -158,6 +158,11 @@ jobs:
           source ./tools/lib/ci-runtime.sh
           mios_ci_verify_bootc_labels localhost/mios:latest
 
+      - name: Verify source revision and devcontainer account before publication
+        run: |
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_verify_devcontainer_account . localhost/mios:latest "$RUNNER_TEMP/mios-devcontainer-account"
+
       - name: Record the tag for the host's next bootc switch
         run: |
           install -d -m 0755 /var/lib/mios/forge-runner

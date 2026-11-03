@@ -405,6 +405,11 @@ jobs:
           fi
           sudo podman tag "${IMAGE_TAG}" "localhost/mios:latest"
 
+      - name: Verify source revision and devcontainer account before publication
+        run: |
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_verify_devcontainer_account . localhost/mios:latest "$RUNNER_TEMP/mios-devcontainer-account"
+
       - name: Resolve the registry tags
         id: meta
         if: env.PUBLISH == 'true' && github.event_name != 'pull_request'

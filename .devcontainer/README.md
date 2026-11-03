@@ -32,6 +32,14 @@ migration, `[image].name` identifies the publication target while
 is published and verified; source account tests do not prove that a retained
 registry image provides these helpers.
 
+Both image publishers run the wrapper's exact account instruction in the
+newly built MiOS image, then attach as the configured user and check UID 1000,
+the home, workspace access and noninteractive sudo. The gate also compares
+`/usr/share/mios/source-revision`, written from the build context's Git
+commit, with the publishing checkout. An inherited OCI revision label is not
+the source proof. A failed smoke blocks publication; it does not start
+sidecars or update a running Codespace.
+
 ## Recovering a missing-account startup
 
 An error such as `unable to find user user: no matching entries in passwd file`

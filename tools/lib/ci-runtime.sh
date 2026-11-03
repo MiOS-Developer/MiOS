@@ -295,3 +295,71 @@ MIOS_PORTAL_RUNTIME
         '
     sudo chown -R "$(id -u):$(id -g)" "$root/.staged-portal"
 )
+
+
+# Verify the actual source-matched MiOS payload before publishing it for Dev
+# Containers. Execute the wrapper's exact account RUN inside a private MiOSDEV
+# container; no sidecars, services, devices or remote lifecycle actions start.
+mios_ci_verify_devcontainer_account() (
+    set -euo pipefail
+    local root image state expected config cpus limit user container observed
+    [[ "$#" = 3 ]] || { echo "usage: mios_ci_verify_devcontainer_account ROOT IMAGE STATE_DIR" >&2; exit 2; }
+    root="$(cd "$1" && pwd)"
+    image="$2"
+    state="$3"
+    [[ -n "$image" && ! -e "$state" ]] || { echo "Image is empty or devcontainer smoke state already exists: $state" >&2; exit 1; }
+    expected="$(git -C "$root" rev-parse --verify 'HEAD^{commit}')"
+    config="$(python3 - "$root" <<'PY'
+import json, re, sys, tomllib
+from pathlib import Path
+root = Path(sys.argv[1])
+data = tomllib.loads((root / "usr/share/mios/mios.toml").read_text())
+doc = json.loads((root / ".devcontainer/devcontainer.json").read_text())
+user = doc["remoteUser"]
+assert user == doc["build"]["args"]["MIOS_IDENTITY_USERNAME"] == data["identity"]["username"]
+assert isinstance(user, str) and re.fullmatch(r"[a-z_][a-z0-9_-]*", user) and user != "root"
+cpus, limit = data["bootstrap"]["dev_vm"]["minimum_cpus"], data["ci"]["suite_timeout_s"]
+assert type(cpus) is int and cpus >= 4 and type(limit) is int and limit > 0
+print(cpus, limit, user)
+PY
+)"
+    read -r cpus limit user <<<"$config"
+    mios_ci_require_cpus "$root" "$cpus"
+    mkdir -m 0700 "$state"
+    state="$(cd "$state" && pwd)"
+    python3 - "$root/.devcontainer/Containerfile" "$state/account-wiring.sh" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+runs = re.findall(r"(?ms)^RUN (.*?)(?=^ENV )", text)
+if len(runs) != 1 or len(re.findall(r"(?m)^RUN ", text)) != 1:
+    raise SystemExit("devcontainer smoke requires exactly one account RUN instruction")
+Path(sys.argv[2]).write_text(runs[0].replace("\\\n", " "))
+PY
+    # Set the cleanup trap only after successful creation. A name collision
+    # belongs to its owner and must never remove that participant's container.
+    container="$(sudo podman run --detach --pull=never \
+        --name podman-MiOS-DEV-mios-devcontainer-account --user 0:0 \
+        --cpus "$cpus" --network none --ulimit core=0:0 \
+        -v "$state:/run/mios-devcontainer-smoke:ro" \
+        --entrypoint /usr/bin/sleep "$image" "$limit")"
+    trap 'sudo podman rm --force "$container" >/dev/null' EXIT
+    observed="$(sudo podman exec "$container" /usr/bin/cat /usr/share/mios/source-revision)"
+    [[ "$observed" = "$expected" ]] || {
+        echo "MiOS image source revision does not match the checkout; refusing publication" >&2; exit 1;
+    }
+    timeout "$limit" sudo podman exec -e "MIOS_IDENTITY_USERNAME=$user" \
+        "$container" /bin/bash /run/mios-devcontainer-smoke/account-wiring.sh
+    # These expressions must expand in the target container as the selected user.
+    # shellcheck disable=SC2016
+    timeout "$limit" sudo podman exec --user "$user" "$container" /bin/bash -c '
+        set -euo pipefail
+        test "$(id -u)" = 1000
+        account_home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+        test -d "$account_home"
+        test -w /workspaces
+        sudo -n /usr/bin/true
+    '
+    printf 'source_revision=%s\nremote_user=%s\nuid=1000\n' "$expected" "$user" >"$state/verified-account.txt"
+    echo "MiOS source revision and devcontainer account smoke verified"
+)
