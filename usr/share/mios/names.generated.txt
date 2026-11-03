@@ -2928,6 +2928,8 @@ llamacpp.models_dir  MIOS_LLAMACPP_MODELS_DIR
 llamacpp.config  MIOS_LLAMACPP_CONFIG
 llamacpp.cpu_node_threads  MIOS_LLAMACPP_CPU_NODE_THREADS
 llamacpp.light_threads  MIOS_LLAMACPP_LIGHT_THREADS
+llamacpp.light_batch_size  MIOS_LLAMACPP_LIGHT_BATCH_SIZE
+llamacpp.light_ubatch_size  MIOS_LLAMACPP_LIGHT_UBATCH_SIZE
 llamacpp.light_backend  MIOS_LLAMACPP_LIGHT_BACKEND
 llamacpp.light_gpu_profile  MIOS_LLAMACPP_LIGHT_GPU_PROFILE
 llamacpp.bake_models  MIOS_LLAMACPP_BAKE_MODELS

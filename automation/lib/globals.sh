@@ -3504,11 +3504,13 @@ _mios_input MIOS_SERVICES_LLAMACPP_GID MIOS_LLAMACPP_GID || { return 1 2>/dev/nu
 : "${MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_DRIVERS:=amdgpu,i915,xe,nvidia,nouveau}"
 : "${MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_GPU_LAYERS:=all}"
 : "${MIOS_LLAMACPP_LIGHT_BACKENDS_VULKAN_IMAGE_KEY:=llm_light_vulkan}"
+: "${MIOS_LLAMACPP_LIGHT_BATCH_SIZE:=2048}"
 : "${MIOS_LLAMACPP_LIGHT_GPU_PROFILE:=auto}"
 : "${MIOS_LLAMACPP_LIGHT_RUNTIME_CUDA_INFORMATION_DIR:=/proc/driver/nvidia/gpus}"
 : "${MIOS_LLAMACPP_LIGHT_RUNTIME_DROPIN:=/etc/containers/systemd/mios-llm-light.container.d/30-mios-light-backend.conf}"
 : "${MIOS_LLAMACPP_LIGHT_RUNTIME_LOCK:=/run/mios/light-backend/lock}"
 : "${MIOS_LLAMACPP_LIGHT_THREADS:=1}"
+: "${MIOS_LLAMACPP_LIGHT_UBATCH_SIZE:=512}"
 : "${MIOS_LLAMACPP_MODELS_DIR:=/usr/share/mios/llamacpp/models}"
 : "${MIOS_LLAMACPP_SLOT_DIR:=/var/lib/mios/llamacpp/slots}"
 _mios_input MIOS_SERVICES_LLAMACPP_UID MIOS_LLAMACPP_UID || { return 1 2>/dev/null || exit 1; }
