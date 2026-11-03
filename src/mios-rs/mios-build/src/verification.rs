@@ -312,6 +312,41 @@ pub fn windows_build_catalog(root: &Path, output: &Path) -> Result<usize, String
     Ok(plan.len())
 }
 
+/// Compatibility commands belong to one installed artifact. Inspect the image-
+/// root link target without following an absolute FHS link onto the build host.
+fn check_linux_alias(
+    root: &Path,
+    install_dir: &str,
+    binary: &str,
+    alias: &str,
+) -> Result<(), String> {
+    if alias == install_dir {
+        return Ok(());
+    }
+    let prefix = root.canonicalize().map_err(|e| e.to_string())?;
+    let directory = root.join(alias.trim_start_matches('/'));
+    let resolved = directory
+        .canonicalize()
+        .map_err(|e| format!("native compatibility directory {alias}: {e}"))?;
+    if !resolved.starts_with(&prefix) {
+        return Err(format!(
+            "native compatibility directory {alias} escapes the image root"
+        ));
+    }
+    let path = directory.join(binary);
+    let target = std::fs::read_link(&path).map_err(|e| {
+        format!("native compatibility {alias}/{binary} must be a canonical symlink: {e}")
+    })?;
+    let expected = Path::new(install_dir).join(binary);
+    if target != expected {
+        return Err(format!(
+            "native compatibility {alias}/{binary} diverges from {}",
+            expected.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Uses the shipped role catalog without Cargo metadata, so the final image can
 /// check its real installed programs after the build toolchain has been stripped.
 /// Windows callers provide the installed flat bin directory; Linux uses FHS.
@@ -344,6 +379,15 @@ pub fn runtime_check(
             });
             artifact_check(root, &path, platform, arch)
                 .map_err(|e| format!("installed native {binary}: {e}"))?;
+            if platform == "linux" && bin_dir.is_none() {
+                let mut aliases = category.compat_dirs.clone();
+                if category.expose_bin {
+                    aliases.push("/usr/bin".into());
+                }
+                for alias in aliases {
+                    check_linux_alias(root, &category.install_dir, binary, &alias)?;
+                }
+            }
             count += 1;
         }
     }
@@ -493,6 +537,124 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linux_runtime_checks_every_catalogued_compatibility_path() {
+        use std::os::unix::fs::symlink;
+        let root = fixture();
+        // One member per declared role exercises every alias shape without
+        // repeatedly parsing the complete shipped SSOT for each mutation.
+        std::fs::write(
+            root.path().join("usr/share/mios/mios.toml"),
+            r#"[build.native]
+workspaces=["tools/native","src/mios-rs"]
+windows_only=[]
+[build.native.linux]
+jobs=4
+targets={x86_64="x86_64-unknown-linux-musl",aarch64="aarch64-unknown-linux-musl"}
+linker="rust-lld"
+rustflags=["-C","target-feature=+crt-static"]
+pie={x86_64=true,aarch64=false}
+[build.native.categories.cli]
+binaries=["cli-fixture"]
+install_dir="/usr/bin"
+expose_bin=false
+compat_dirs=["/usr/libexec/mios"]
+[build.native.categories.apps]
+binaries=["app-fixture"]
+install_dir="/usr/bin"
+expose_bin=false
+compat_dirs=[]
+[build.native.categories.services]
+binaries=["service-fixture"]
+install_dir="/usr/libexec/mios"
+expose_bin=false
+compat_dirs=[]
+[build.native.categories.daemons]
+binaries=["daemon-fixture"]
+install_dir="/usr/libexec/mios"
+expose_bin=true
+compat_dirs=[]
+ "#,
+        )
+        .unwrap();
+        let config = config(root.path()).unwrap();
+        let bytes = crate::native_catalog_tests::static_pie();
+        let mut aliases = Vec::new();
+        let mut expected_count = 0;
+        for category in config.categories.values() {
+            for binary in &category.binaries {
+                if !super::super::supports_platform(&config, binary, "linux") {
+                    continue;
+                }
+                let canonical = root
+                    .path()
+                    .join(category.install_dir.trim_start_matches('/'))
+                    .join(binary);
+                std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+                std::fs::write(&canonical, &bytes).unwrap();
+                let mut directories = category.compat_dirs.clone();
+                if category.expose_bin {
+                    directories.push("/usr/bin".into());
+                }
+                for directory in directories {
+                    if directory == category.install_dir {
+                        continue;
+                    }
+                    let alias = root
+                        .path()
+                        .join(directory.trim_start_matches('/'))
+                        .join(binary);
+                    std::fs::create_dir_all(alias.parent().unwrap()).unwrap();
+                    let target = Path::new(&category.install_dir).join(binary);
+                    symlink(&target, &alias).unwrap();
+                    aliases.push((alias, target));
+                }
+                expected_count += 1;
+            }
+        }
+        assert!(!aliases.is_empty());
+        assert_eq!(
+            runtime_check(root.path(), "linux", "x86_64", None).unwrap(),
+            expected_count
+        );
+        for (alias, target) in aliases {
+            std::fs::remove_file(&alias).unwrap();
+            let mut stale = bytes.clone();
+            stale.extend_from_slice(b"divergent previous generation");
+            std::fs::write(&alias, &stale).unwrap();
+            let error = runtime_check(root.path(), "linux", "x86_64", None).unwrap_err();
+            assert!(error.contains("compatibility"), "{error}");
+            std::fs::remove_file(&alias).unwrap();
+            symlink("/usr/bin/not-the-catalogued-program", &alias).unwrap();
+            assert!(runtime_check(root.path(), "linux", "x86_64", None)
+                .unwrap_err()
+                .contains("diverges"));
+            std::fs::remove_file(&alias).unwrap();
+            assert!(runtime_check(root.path(), "linux", "x86_64", None).is_err());
+            symlink(target, &alias).unwrap();
+        }
+        assert_eq!(
+            runtime_check(root.path(), "linux", "x86_64", None).unwrap(),
+            expected_count
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linux_runtime_compatibility_directory_cannot_escape_the_image_root() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let foreign = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("usr/libexec")).unwrap();
+        symlink(foreign.path(), root.path().join("usr/libexec/mios")).unwrap();
+        assert!(
+            check_linux_alias(root.path(), "/usr/bin", "fixture", "/usr/libexec/mios")
+                .unwrap_err()
+                .contains("escapes")
+        );
     }
 
     #[test]
