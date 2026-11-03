@@ -771,14 +771,14 @@ enum Commands {
         check: bool,
     },
 
-    /// Projects tools/native/Cargo.toml workspace members and version from SSOT
+    /// Projects native workspace members/version and both workspaces' Linux Cargo policy from SSOT
     #[command(name = "cargo-manifests", alias = "cargo-manifest")]
     CargoManifests {
         /// Repository root directory
         #[arg(long)]
         root: Option<PathBuf>,
 
-        /// Check mode: verify committed tools/native/Cargo.toml matches projection without modifying it
+        /// Verify the native manifest and both Linux Cargo configurations without modifying them
         #[arg(long)]
         check: bool,
     },
@@ -2422,10 +2422,10 @@ fn main() -> ExitCode {
                     Ok(res) => {
                         if cli.format != "json" {
                             if check {
-                                println!("PASS: tools/native/Cargo.toml matches its generator projection.");
+                                println!("PASS: tools/native/Cargo.toml matches its generator projection. Both workspaces' Linux Cargo settings match SSOT.");
                             } else {
                                 println!(
-                                    "Updated tools/native/Cargo.toml: {} members, version {}.",
+                                    "Updated tools/native/Cargo.toml and Linux Cargo settings: {} members, version {}.",
                                     res.members_count, res.version
                                 );
                             }

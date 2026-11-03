@@ -1727,12 +1727,12 @@ check_cargo_manifest_generated() {
         local out rc=0
         out="$( "$bin" cargo-manifests --root "$ROOT" --check 2>&1 )" || rc=$?
         if (( rc == 0 )); then
-            echo "[98-drift-checks]   tools/native/Cargo.toml matches its generator projection"
+            echo "[98-drift-checks]   native workspace manifest and both Linux Cargo configurations match SSOT"
             return 0
         else
             echo "$out" >&2
-            _emit_projection_evidence "cargo-manifests" "tools/native/Cargo.toml"
-            _violation "check_cargo_manifest_generated: tools/native/Cargo.toml drifted from mios-gen cargo-manifests -- re-run mios-gen cargo-manifests (Law 8 SSOT-PROJECTION)"
+            _emit_projection_evidence "cargo-manifests" "tools/native/Cargo.toml" "tools/native/.cargo/config.toml" "src/mios-rs/.cargo/config.toml"
+            _violation "check_cargo_manifest_generated: Cargo workspace manifest/configuration drifted from mios-gen cargo-manifests -- re-run mios-gen cargo-manifests (Law 8 SSOT-PROJECTION)"
             return
         fi
     fi

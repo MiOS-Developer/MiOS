@@ -228,6 +228,8 @@ mod cargo_manifests {
             "VERSION",
             "usr/share/mios/mios.toml",
             "tools/native/Cargo.toml",
+            "tools/native/.cargo/config.toml",
+            "src/mios-rs/.cargo/config.toml",
         ] {
             let destination = root.join(relative);
             fs::create_dir_all(destination.parent().expect("fixture parent")).unwrap();
@@ -348,6 +350,109 @@ mod cargo_manifests {
             "Expected FAIL message in stderr, got: {}",
             neg_stderr
         );
+        }
+
+        // Both configurations participate in the gate. Altering flags/linkers
+        // or deleting an input must fail by the exact affected path.
+        for relative in [
+            "tools/native/.cargo/config.toml",
+            "src/mios-rs/.cargo/config.toml",
+        ] {
+            let target = root.join(relative);
+            for mutation in ["linker", "runtime", "missing"] {
+                let _restorer = Restorer::new(&target);
+                let original = fs::read_to_string(&target).unwrap();
+                match mutation {
+                    "linker" => fs::write(
+                        &target,
+                        original.replace("linker = \"rust-lld\"", "linker = \"cc\""),
+                    )
+                    .unwrap(),
+                    "runtime" => {
+                        fs::write(&target, original.replace("+crt-static", "-crt-static")).unwrap()
+                    }
+                    "missing" => fs::remove_file(&target).unwrap(),
+                    _ => unreachable!(),
+                }
+                let output = Command::new(bin_path)
+                    .args(["cargo-manifests", "--root"])
+                    .arg(&root)
+                    .arg("--check")
+                    .output()
+                    .unwrap();
+                assert!(
+                    !output.status.success(),
+                    "unreported {mutation} drift in {relative}"
+                );
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains(relative),
+                    "wrong drift target"
+                );
+            }
+        }
+        // Re-projecting repairs owned flags while retaining workspace-specific
+        // aliases, Windows stack/linker settings and profile/environment values.
+        for relative in [
+            "tools/native/.cargo/config.toml",
+            "src/mios-rs/.cargo/config.toml",
+        ] {
+            let target = root.join(relative);
+            let _restorer = Restorer::new(&target);
+            let original = fs::read_to_string(&target).unwrap();
+            let original_doc: toml::Value = original.parse().unwrap();
+            fs::write(
+                &target,
+                original.replace("linker = \"rust-lld\"", "linker = \"cc\""),
+            )
+            .unwrap();
+            let output = Command::new(bin_path)
+                .args(["cargo-manifests", "--root"])
+                .arg(&root)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "failed to repair {relative}");
+            assert_eq!(
+                fs::read_to_string(&target).unwrap(),
+                original,
+                "non-idempotent projection"
+            );
+            let reparsed: toml::Value = fs::read_to_string(&target).unwrap().parse().unwrap();
+            for key in ["alias", "env", "profile"] {
+                assert_eq!(reparsed.get(key), original_doc.get(key));
+            }
+            for target in [
+                "x86_64-pc-windows-gnu",
+                "x86_64-pc-windows-gnullvm",
+                "x86_64-pc-windows-msvc",
+            ] {
+                assert_eq!(
+                    reparsed.get("target").and_then(|v| v.get(target)),
+                    original_doc.get("target").and_then(|v| v.get(target))
+                );
+            }
+        }
+        // Reject weakened SSOT runtime policy, matching the native build engine.
+        {
+            let ssot = root.join("usr/share/mios/mios.toml");
+            let _restorer = Restorer::new(&ssot);
+            let original = fs::read_to_string(&ssot).unwrap();
+            fs::write(
+                &ssot,
+                original.replacen(
+                    "rustflags = [\"-C\", \"target-feature=+crt-static\"]",
+                    "rustflags = [\"-C\", \"target-feature=-crt-static\"]",
+                    1,
+                ),
+            )
+            .unwrap();
+            let output = Command::new(bin_path)
+                .args(["cargo-manifests", "--root"])
+                .arg(&root)
+                .arg("--check")
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("static C runtime"));
         }
 
         // Verify post-restoration check passes

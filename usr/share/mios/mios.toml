@@ -2644,7 +2644,7 @@ surfaces = [
   { generator = "tools/native/mios-bake-plan/src/main.rs", check = "check_bake_plan", output = "usr/lib/mios/bake/plan.d/NN-<group>.list, usr/lib/mios/bake/plan.d/firstboot.list, usr/share/mios/artifacts/sbom/bound-images.tsv" },
   { generator = "tools/native/mios-gen/src/image.rs", check = "check_bib_configs_projection", output = "config/artifacts/bib.toml, config/artifacts/iso.toml" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_blade_karg", output = "usr/lib/bootc/kargs.d/05-mios-blade.toml" },
-  { generator = "tools/native/mios-gen/src/image.rs", check = "check_cargo_manifest_generated", output = "tools/native/Cargo.toml" },
+  { generator = "tools/native/mios-gen/src/image.rs", check = "check_cargo_manifest_generated", output = "tools/native/Cargo.toml, tools/native/.cargo/config.toml, src/mios-rs/.cargo/config.toml" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_cockpit_projection", output = "etc/cockpit/cockpit.conf" },
   { generator = "tools/native/mios-gen/src/main.rs", check = "check_egress_firewall", output = "usr/share/mios/security/egress.nft" },
   { generator = "tools/native/mios-gen/src/flatpak_overrides.rs", check = "check_flatpak_overrides", output = "var/lib/flatpak/overrides/global" },

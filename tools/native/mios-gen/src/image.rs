@@ -1,4 +1,4 @@
-// AI-hint: Projectors for build artifacts: BIB filesystem configs under config/artifacts/ and the tools/native workspace Cargo.toml (ADR-0021, Law 14).
+// AI-hint: Projectors for build artifacts: BIB filesystem configs, the native workspace manifest and both Rust workspaces' SSOT Linux Cargo settings (ADR-0021, Law 14).
 // AI-doc: usr/share/doc/mios/manual/tools.md
 // AI-related: usr/share/mios/mios.toml, config/artifacts/bib.toml, config/artifacts/iso.toml, tools/native/Cargo.toml, tools/sync-generated.sh
 
@@ -280,11 +280,97 @@ pub mod cargo_manifests {
         s.replace("\r\n", "\n")
     }
 
-    /// Run check or projection for tools/native/Cargo.toml.
-    pub fn run_cargo_manifests(root: &Path, check: bool) -> Result<CargoManifestResult, String> {
-        let native_dir = root.join(NATIVE_REL);
-        let cargo_toml_path = root.join(CARGO_TOML_REL);
+    const CARGO_CONFIGS: [&str; 2] = [
+        "tools/native/.cargo/config.toml",
+        "src/mios-rs/.cargo/config.toml",
+    ];
+    const CONFIG_HEADER: &str = "# AI-hint: Linux target linker and rustflags are projected from mios.toml [build.native.linux] by mios-gen cargo-manifests; other workspace settings remain local.\n";
 
+    #[derive(serde::Deserialize)]
+    struct LinuxCargoPolicy {
+        targets: std::collections::BTreeMap<String, String>,
+        linker: String,
+        rustflags: Vec<String>,
+    }
+
+    impl LinuxCargoPolicy {
+        fn read(root: &Path) -> Result<Self, String> {
+            let source = fs::read_to_string(root.join(SSOT_REL))
+                .map_err(|e| format!("Cargo Linux policy: cannot read {SSOT_REL}: {e}"))?;
+            let ssot: toml::Value = source
+                .parse()
+                .map_err(|e| format!("Cargo Linux policy: {e}"))?;
+            let policy: Self = ssot
+                .get("build")
+                .and_then(|v| v.get("native"))
+                .and_then(|v| v.get("linux"))
+                .ok_or("Cargo Linux policy: build.native.linux is missing")?
+                .clone()
+                .try_into()
+                .map_err(|e| format!("Cargo Linux policy: {e}"))?;
+            // Match the native build engine's supported static-runtime contract.
+            if policy.targets.is_empty()
+                || policy.targets.iter().any(|(arch, target)| {
+                    !matches!(
+                        (arch.as_str(), target.as_str()),
+                        ("x86_64", "x86_64-unknown-linux-musl")
+                            | ("aarch64", "aarch64-unknown-linux-musl")
+                    )
+                })
+                || policy.linker != "rust-lld"
+                || policy.rustflags != ["-C", "target-feature=+crt-static"]
+            {
+                return Err("Cargo Linux policy requires supported MUSL targets, rust-lld and a static C runtime".into());
+            }
+            Ok(policy)
+        }
+    }
+
+    fn render_cargo_config(source: &str, policy: &LinuxCargoPolicy) -> Result<String, String> {
+        let mut doc: toml_edit::Document = source
+            .strip_prefix(CONFIG_HEADER)
+            .unwrap_or(source)
+            .parse()
+            .map_err(|e| format!("Cargo workspace configuration: {e}"))?;
+        // Linux flags belong to the target, so explicit compiler-host/Windows
+        // builds do not accidentally inherit the native workspace's MUSL flags.
+        if let Some(build) = doc.get_mut("build") {
+            build
+                .as_table_mut()
+                .ok_or("Cargo build configuration must be a table")?
+                .remove("rustflags");
+        }
+        if doc.get("target").is_none() {
+            let mut target = toml_edit::Table::new();
+            target.set_implicit(true);
+            doc.insert("target", toml_edit::Item::Table(target));
+        }
+        let targets = doc
+            .get_mut("target")
+            .and_then(toml_edit::Item::as_table_mut)
+            .ok_or("Cargo target configuration must be a table")?;
+        for target in policy.targets.values() {
+            if !targets.contains_key(target) {
+                targets.insert(target, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            let table = targets
+                .get_mut(target)
+                .and_then(toml_edit::Item::as_table_mut)
+                .ok_or("Cargo Linux target configuration must be a table")?;
+            table.insert("linker", toml_edit::value(policy.linker.as_str()));
+            let mut flags = toml_edit::Array::new();
+            for flag in &policy.rustflags {
+                flags.push(flag.as_str());
+            }
+            table.insert("rustflags", toml_edit::value(flags));
+        }
+        Ok(format!("{CONFIG_HEADER}{doc}"))
+    }
+
+    /// Project the native manifest and both workspaces' Linux Cargo policy.
+    pub fn run_cargo_manifests(root: &Path, check: bool) -> Result<CargoManifestResult, String> {
+        use std::io::Write;
+        let native_dir = root.join(NATIVE_REL);
         let members = enumerate_members(&native_dir)?;
         if members.is_empty() {
             return Err(format!(
@@ -292,55 +378,101 @@ pub mod cargo_manifests {
             native_dir.display()
         ));
         }
-
         let version = get_ssot_version(root);
-        let projected_content = render_cargo_manifest(&members, &version);
-
-        if check {
-            if !cargo_toml_path.is_file() {
-                return Err(format!(
-                    "[generate-cargo-manifests] FAIL: cannot read {} (file not found)",
-                    cargo_toml_path.display()
-                ));
-            }
-
-            let committed_content = fs::read_to_string(&cargo_toml_path).map_err(|e| {
-                format!(
-                    "[generate-cargo-manifests] FAIL: cannot read {} ({})",
-                    cargo_toml_path.display(),
-                    e
-                )
+        let policy = LinuxCargoPolicy::read(root)?;
+        let mut projections = vec![(
+            CARGO_TOML_REL,
+            normalize_newlines(&render_cargo_manifest(&members, &version)),
+        )];
+        // Read every input before publication; a missing configuration must not
+        // silently discard aliases, cross-target settings or profile choices.
+        for relative in CARGO_CONFIGS {
+            let source = fs::read_to_string(root.join(relative)).map_err(|e| {
+                format!("[generate-cargo-manifests] FAIL: cannot read {relative}: {e}")
             })?;
-
-            let to_write = normalize_newlines(&projected_content);
-            if committed_content != to_write {
-                return Err(
-                "[generate-cargo-manifests] FAIL: tools/native/Cargo.toml differs from its projection".to_string()
-            );
-            }
-
-            Ok(CargoManifestResult {
-                members_count: members.len(),
-                version,
-                clean: true,
-            })
-        } else {
-            // Write mode
-            let to_write = normalize_newlines(&projected_content);
-            fs::write(&cargo_toml_path, to_write.as_bytes())
-                .map_err(|e| format!("Failed to write {}: {}", cargo_toml_path.display(), e))?;
-
-            Ok(CargoManifestResult {
-                members_count: members.len(),
-                version,
-                clean: true,
-            })
+            projections.push((relative, render_cargo_config(&source, &policy)?));
         }
+        if check {
+            for (relative, expected) in &projections {
+                let actual = fs::read_to_string(root.join(relative)).map_err(|e| {
+                    format!("[generate-cargo-manifests] FAIL: cannot read {relative}: {e}")
+                })?;
+                if actual != *expected {
+                    return Err(format!(
+                        "[generate-cargo-manifests] FAIL: {relative} differs from its projection"
+                    ));
+                }
+            }
+        } else {
+            for (relative, expected) in &projections {
+                let path = root.join(relative);
+                let mut staged = tempfile::NamedTempFile::new_in(
+                    path.parent().ok_or("Cargo projection parent is missing")?,
+                )
+                .map_err(|e| format!("Stage {relative}: {e}"))?;
+                if let Ok(metadata) = fs::metadata(&path) {
+                    staged
+                        .as_file()
+                        .set_permissions(metadata.permissions())
+                        .map_err(|e| format!("Preserve {relative} permissions: {e}"))?;
+                }
+                staged
+                    .write_all(expected.as_bytes())
+                    .map_err(|e| format!("Stage {relative}: {e}"))?;
+                staged
+                    .persist(&path)
+                    .map_err(|e| format!("Publish {relative}: {e}"))?;
+            }
+        }
+        Ok(CargoManifestResult {
+            members_count: members.len(),
+            version,
+            clean: true,
+        })
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn linux_cargo_policy_is_target_scoped_and_preserves_workspace_settings() {
+            let policy = LinuxCargoPolicy {
+                targets: [
+                    ("x86_64".into(), "x86_64-unknown-linux-musl".into()),
+                    ("aarch64".into(), "aarch64-unknown-linux-musl".into()),
+                ]
+                .into(),
+                linker: "rust-lld".into(),
+                rustflags: vec!["-C".into(), "target-feature=+crt-static".into()],
+            };
+            let original = "[alias]\nxtask='run --package xtask --'\n[build]\ntarget='x86_64-unknown-linux-musl'\nrustflags=['-C','link-arg=-pie']\n[target.x86_64-pc-windows-msvc]\nrustflags=['-C','link-arg=/STACK:8388608']\n";
+            let rendered = render_cargo_config(original, &policy).unwrap();
+            assert_eq!(render_cargo_config(&rendered, &policy).unwrap(), rendered);
+            let doc: toml::Value = rendered.parse().unwrap();
+            assert!(doc["build"].get("rustflags").is_none());
+            assert_eq!(
+                doc["alias"]["xtask"].as_str(),
+                Some("run --package xtask --")
+            );
+            assert_eq!(
+                doc["target"]["x86_64-pc-windows-msvc"]["rustflags"][1].as_str(),
+                Some("link-arg=/STACK:8388608")
+            );
+            for target in policy.targets.values() {
+                assert_eq!(doc["target"][target]["linker"].as_str(), Some("rust-lld"));
+                assert_eq!(
+                    doc["target"][target]["rustflags"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|v| v.as_str().unwrap())
+                        .collect::<Vec<_>>(),
+                    ["-C", "target-feature=+crt-static"]
+                );
+            }
+            assert!(!rendered.contains("link-arg=-pie"));
+        }
 
         #[test]
         fn test_render_cargo_manifest_format() {
