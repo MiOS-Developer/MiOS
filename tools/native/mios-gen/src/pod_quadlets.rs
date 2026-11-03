@@ -292,7 +292,9 @@ pub fn resolve_one(
         let value = ssot_exports
             .get(&canonical)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("Quadlet port {name} is absent from the resolved [ports] SSOT"))?;
+            .ok_or_else(|| {
+                format!("Quadlet port {name} is absent from the resolved [ports] SSOT")
+            })?;
         let port = value
             .parse::<u16>()
             .ok()
@@ -1543,13 +1545,24 @@ mod tests {
             if name == "mios-cpu-node" {
                 assert!(rendered.contains("--port 18510 "), "{rendered}");
                 let model = doc["nodes"]["local-cpu"]["model"].as_str().unwrap();
-                assert!(rendered.contains(&format!("--alias {model} ")), "{rendered}");
-                assert!(rendered.contains("http://localhost:18510/health"), "{rendered}");
+                assert!(
+                    rendered.contains(&format!("--alias {model} ")),
+                    "{rendered}"
+                );
+                assert!(
+                    rendered.contains("http://localhost:18510/health"),
+                    "{rendered}"
+                );
             } else {
-                assert!(rendered.contains("Environment=MIOS_PORT=18650\n"), "{rendered}");
+                assert!(
+                    rendered.contains("Environment=MIOS_PORT=18650\n"),
+                    "{rendered}"
+                );
                 for protocol in ["tcp", "udp"] {
-                    assert!(rendered.contains(&format!("PublishPort=18650:18650/{protocol}\n")),
-                            "{rendered}");
+                    assert!(
+                        rendered.contains(&format!("PublishPort=18650:18650/{protocol}\n")),
+                        "{rendered}"
+                    );
                 }
             }
         }
@@ -1560,23 +1573,52 @@ mod tests {
         let mut exports = BTreeMap::from([("MIOS_PORTS_TEST".into(), "19001".into())]);
         let placeholders = BTreeSet::new();
         let sidecars = BTreeMap::new();
-        for template in ["${MIOS_PORTS_TEST}", "${MIOS_PORTS_TEST:-1}", "${MIOS_PORT_TEST:-2}"] {
-            assert_eq!(expand_str(template, &placeholders, &exports, &sidecars).unwrap(), "19001");
+        for template in [
+            "${MIOS_PORTS_TEST}",
+            "${MIOS_PORTS_TEST:-1}",
+            "${MIOS_PORT_TEST:-2}",
+        ] {
+            assert_eq!(
+                expand_str(template, &placeholders, &exports, &sidecars).unwrap(),
+                "19001"
+            );
         }
         for invalid in ["", "0", "65536", "-1", "8510:8510", "not-a-port"] {
             exports.insert("MIOS_PORTS_TEST".into(), invalid.into());
-            assert!(expand_str("${MIOS_PORTS_TEST:-8510}", &placeholders, &exports, &sidecars)
-                .is_err(), "accepted {invalid:?}");
+            assert!(
+                expand_str(
+                    "${MIOS_PORTS_TEST:-8510}",
+                    &placeholders,
+                    &exports,
+                    &sidecars
+                )
+                .is_err(),
+                "accepted {invalid:?}"
+            );
         }
         exports.insert("MIOS_PORTS_TEST".into(), "65535".into());
-        assert_eq!(expand_str("${MIOS_PORTS_TEST}", &placeholders, &exports, &sidecars).unwrap(), "65535");
+        assert_eq!(
+            expand_str("${MIOS_PORTS_TEST}", &placeholders, &exports, &sidecars).unwrap(),
+            "65535"
+        );
         exports.insert("MIOS_PORTS_TEST".into(), "+19001".into());
-        assert_eq!(expand_str("${MIOS_PORTS_TEST}", &placeholders, &exports, &sidecars).unwrap(), "19001");
+        assert_eq!(
+            expand_str("${MIOS_PORTS_TEST}", &placeholders, &exports, &sidecars).unwrap(),
+            "19001"
+        );
         exports.clear();
-        assert!(expand_str("${MIOS_PORTS_MISSING:-8510}", &placeholders, &exports, &sidecars).is_err());
+        assert!(expand_str(
+            "${MIOS_PORTS_MISSING:-8510}",
+            &placeholders,
+            &exports,
+            &sidecars
+        )
+        .is_err());
         let placeholders = BTreeSet::from(["FEDORA_VERSION".into()]);
-        assert_eq!(expand_str("${FEDORA_VERSION:-44}", &placeholders, &exports, &sidecars).unwrap(),
-                   "${FEDORA_VERSION:-44}");
+        assert_eq!(
+            expand_str("${FEDORA_VERSION:-44}", &placeholders, &exports, &sidecars).unwrap(),
+            "${FEDORA_VERSION:-44}"
+        );
     }
 
     #[test]

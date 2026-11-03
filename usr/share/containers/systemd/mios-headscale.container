@@ -16,7 +16,7 @@ Group=833
 Image=docker.io/headscale/headscale:latest
 Label=org.opencontainers.image.title=mios-headscale
 Label=org.opencontainers.image.url=https://github.com/juanfont/headscale
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_HEADSCALE:-8085}/metrics
+Label=io.podman_desktop.openInBrowser=http://localhost:8085/metrics
 Pod=mios-system.pod
 User=833
 Volume=/etc/headscale:/etc/headscale:Z

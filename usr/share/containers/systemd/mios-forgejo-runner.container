@@ -24,7 +24,7 @@ Group=0
 Image=code.forgejo.org/forgejo/runner:latest
 Label=org.opencontainers.image.title=mios-forgejo-runner
 Label=org.opencontainers.image.documentation=https://forgejo.org/docs/latest/admin/actions/
-Label=io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_FORGE_HTTP:-8400}/-/admin/actions/runners
+Label=io.podman_desktop.openInBrowser=http://localhost:8400/-/admin/actions/runners
 Pod=mios-webtools.pod
 PodmanArgs=--privileged
 User=0

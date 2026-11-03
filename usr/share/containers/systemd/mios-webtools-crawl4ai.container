@@ -8,8 +8,8 @@ Description='MiOS' web-tools crawl4ai slim engine (Chrome-CDP primary + camoufox
 
 [Container]
 ContainerName=mios-webtools-crawl4ai
-Environment=MIOS_SERVICES_WEBTOOLS_CDP_URL=http://127.0.0.1:${MIOS_PORTS_CHROME_CDP:-9222}
-Environment=MIOS_PORTS_CRAWL4AI=${MIOS_PORTS_CRAWL4AI:-8810}
+Environment=MIOS_SERVICES_WEBTOOLS_CDP_URL=http://127.0.0.1:9222
+Environment=MIOS_PORTS_CRAWL4AI=8810
 Environment=MIOS_CRAWL_BIND=127.0.0.1
 Environment=MIOS_SERVICES_WEBTOOLS_CAMOUFOX=true
 Environment=MIOS_SERVICES_WEBTOOLS_MIN_CHARS=200
