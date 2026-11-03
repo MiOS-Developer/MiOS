@@ -3162,6 +3162,7 @@ ai.system_prompt_file  MIOS_AI_SYSTEM_PROMPT_FILE
 ai.prompt_shortcut  MIOS_AI_PROMPT_SHORTCUT
 ai.bake_models  MIOS_AI_BAKE_MODELS
 ai.ram_floor_gb  MIOS_AI_RAM_FLOOR_GB
+ai.micro_model  MIOS_AI_MICRO_MODEL
 ai.kv.slot_save_path  MIOS_AI_KV_SLOT_SAVE_PATH
 ai.kv.swa_full  MIOS_AI_KV_SWA_FULL
 ai.catalog  MIOS_AI_CATALOG
@@ -3179,7 +3180,6 @@ ai.host_thresholds.vision_grounding_endpoint  MIOS_AI_HOST_THRESHOLDS_VISION_GRO
 ai.host_thresholds.chat_vision_model  MIOS_AI_HOST_THRESHOLDS_CHAT_VISION_MODEL
 ai.host_thresholds.grounding_endpoint  MIOS_AI_HOST_THRESHOLDS_GROUNDING_ENDPOINT
 ai.host_thresholds.grounding_model  MIOS_AI_HOST_THRESHOLDS_GROUNDING_MODEL
-ai.host_thresholds.micro_model  MIOS_AI_HOST_THRESHOLDS_MICRO_MODEL
 ai.host_thresholds.sys_agent_model  MIOS_AI_HOST_THRESHOLDS_SYS_AGENT_MODEL
 ai.host_thresholds.micro_keep_alive_seconds  MIOS_AI_HOST_THRESHOLDS_MICRO_KEEP_ALIVE_SECONDS
 desktop.runtime_installs  MIOS_DESKTOP_RUNTIME_INSTALLS
@@ -8556,6 +8556,7 @@ images.mios-llm-heavy.engine.select  MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_SELECT
 images.mios-llm-heavy.engine.vllm.Image.Image  MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_VLLM_IMAGE_IMAGE
 images.mios-llm-heavy.engine.sglang.Image.Image  MIOS_IMAGES_MIOS_LLM_HEAVY_ENGINE_SGLANG_IMAGE_IMAGE
 images.mios-micro.Image.Image  MIOS_IMAGES_MIOS_MICRO_IMAGE_IMAGE
+images.mios-micro.Image.Policy  MIOS_IMAGES_MIOS_MICRO_IMAGE_POLICY
 images.mios-micro.Service.TimeoutStartSec  MIOS_IMAGES_MIOS_MICRO_SERVICE_TIMEOUTSTARTSEC
 containers.mios-adguard.Container.AddCapability  MIOS_CONTAINERS_MIOS_ADGUARD_CONTAINER_ADDCAPABILITY
 containers.mios-adguard.Container.ContainerName  MIOS_CONTAINERS_MIOS_ADGUARD_CONTAINER_CONTAINERNAME
