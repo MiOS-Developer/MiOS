@@ -14406,7 +14406,7 @@ Wants = "network-online.target"
 ContainerName = "mios-cpu-node"
 Entrypoint = "/app/llama-server"
 Environment = "HOME=/var/lib/mios/llamacpp"
-# Health gate: the upstream llama-swap:cuda image bakes `curl localhost:8220/` as its
+# Health gate: the upstream llama-swap image bakes `curl localhost:8220/` as its
 # HEALTHCHECK, which never matches our SSOT listen port -> the lane reports Unhealthy
 # forever even while it serves 200 on ${MIOS_PORTS_CPU_NODE}. Override the baked check
 # against the real runtime port's llama-server /health (200 ready / 503 loading).
@@ -14421,7 +14421,7 @@ HealthRetries = "3"
 # light lane + the VRAM/KV co-fit finding. Raise once CPU RAM headroom is proven.
 Exec = "--model /models/granite-4.1-8b.gguf --host 0.0.0.0 --port ${MIOS_PORTS_CPU_NODE:-8510} --ctx-size 32768 --flash-attn on --cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --threads ${MIOS_LLAMACPP_CPU_NODE_THREADS:-14} --n-gpu-layers 0 --jinja --alias ${MIOS_NODES_LOCAL_CPU_MODEL} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}"
 Group = "${MIOS_SERVICES_LLAMACPP_GID:-827}"
-Image = "${MIOS_CUDA_IMAGE:-ghcr.io/mostlygeek/llama-swap:cuda}"
+Image = "${MIOS_LLM_LIGHT_CPU_IMAGE}"
 Label = "org.opencontainers.image.title=mios-cpu-node"
 Pod = "mios-ai.pod"
 User = "${MIOS_SERVICES_LLAMACPP_UID:-827}"

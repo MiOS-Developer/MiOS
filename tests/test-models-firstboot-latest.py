@@ -167,6 +167,36 @@ class FirstbootLatest(unittest.TestCase):
         self.assertEqual(before, {f.name:(f.read_bytes(),f.stat().st_mtime_ns,f.stat().st_mode) for f in seed.iterdir()})
         self.assertTrue((self.state / ".models-firstboot-done").exists(), result.stdout)
 
+    def test_cpu_node_uses_independently_configured_cpu_image(self):
+        cpu_image = "registry.example.invalid/inference:cpu-fixture"
+        gpu_image = "registry.example.invalid/inference:gpu-fixture"
+        config = self.t / "cpu-image.toml"
+        config.write_text(
+            f'[image.sidecars]\nllm_light_cpu = "{cpu_image}"\n'
+            f'llm_light = "{gpu_image}"\n')
+        out = self.t / "quadlets"
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("MIOS_", "PYTHON", "CONTAINER_"))}
+        env.update(
+            MIOS_VENDOR_TOML=str(ROOT / "usr/share/mios/mios.toml"),
+            MIOS_VENDOR_TOML_D=str(ROOT / "usr/lib/mios/mios.d"),
+            MIOS_HOST_TOML=str(config), MIOS_USER_TOML="/dev/null",
+            MIOS_HOST_TOML_D=str(self.t / "absent-host.d"),
+            MIOS_USER_TOML_D=str(self.t / "absent-user.d"),
+            MIOS_POD_OUT=str(out))
+        result = subprocess.run(
+            ["/usr/bin/mios-gen", "pod-quadlets", "--root", str(ROOT)],
+            env=env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        node = (out / "mios-cpu-node.container").read_text()
+        self.assertIn(f"Image={cpu_image}\n", node)
+        self.assertNotIn(gpu_image, node)
+        self.assertIn("--n-gpu-layers 0 ", node)
+        with (ROOT / "usr/share/mios/mios.toml").open("rb") as source:
+            ssot = tomllib.load(source)
+        committed = (ROOT / "usr/share/containers/systemd/mios-cpu-node.container").read_text()
+        self.assertIn(f'Image={ssot["image"]["sidecars"]["llm_light_cpu"]}\n', committed)
+
     def test_shared_model_and_static_config_mounts_do_not_relabel_usr(self):
         with (ROOT / "usr/share/mios/mios.toml").open("rb") as stream:
             config = tomllib.load(stream)
