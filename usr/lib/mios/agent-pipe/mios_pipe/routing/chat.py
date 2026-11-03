@@ -1235,13 +1235,20 @@ async def chat_completions_logic(request: Request) -> Any:
                         async for chunk in res.body_iterator:
                             yield chunk
                     else:
-                        try:
-                            _content = json.loads(bytes(res.body).decode("utf-8"))["choices"][0]["message"]["content"]
+                        payload = json.loads(bytes(res.body).decode("utf-8"))
+                        if isinstance(payload.get("error"), dict):
+                            yield ("data: " + json.dumps({"error": payload["error"]}) + "\n\n").encode("utf-8")
+                        else:
+                            _content = payload["choices"][0]["message"]["content"]
                             yield _sse_chunk(_content, chat_id=chat_id, model=model)
-                        except Exception:
-                            pass
+                            yield _sse_chunk("", chat_id=chat_id, model=model, finish_reason="stop")
+                        yield _sse_done()
                 except Exception as _run_err:
                     log.warning("streaming dispatcher execution failed: %s", _run_err)
+                    yield ("data: " + json.dumps({"error": {
+                        "type": "server_error", "code": "dispatch_failed",
+                        "message": "Agent dispatch failed"}}) + "\n\n").encode("utf-8")
+                    yield _sse_done()
                 finally:
                     await _budget_release_inflight(_budget_turn_token)
             else:
@@ -1654,7 +1661,8 @@ chat_router = APIRouter()
 async def responses_api(request: Request) -> Any:
     """OpenAI Responses API (Tier-2, additive) route. Calls responses_api_logic
     (same module)."""
-    return await responses_api_logic(request)
+    from mios_sse import disconnect_aware_response
+    return disconnect_aware_response(await responses_api_logic(request))
 
 @chat_router.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> Any:
@@ -1663,7 +1671,8 @@ async def chat_completions(request: Request) -> Any:
     handler calls it directly. Every routing-precedence guard/branch lives in the
     logic function, behaviour-identical.
     """
-    return await chat_completions_logic(request)
+    from mios_sse import disconnect_aware_response
+    return disconnect_aware_response(await chat_completions_logic(request))
 
 async def _kernel_chat_handler(decision, **ctx):
     import re, time

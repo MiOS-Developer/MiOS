@@ -10,6 +10,46 @@ import re
 import time
 from typing import Any, Optional
 
+def disconnect_aware_response(response):
+    """Watch ASGI disconnects even while upstream awaits produce no body events."""
+    from starlette.responses import StreamingResponse
+    from starlette.requests import ClientDisconnect
+
+    if not isinstance(response, StreamingResponse):
+        return response
+
+    class DisconnectAwareStreamingResponse(StreamingResponse):
+        async def __call__(self, scope, receive, send):
+            stream = asyncio.create_task(self.stream_response(send))
+            disconnected = asyncio.create_task(self.listen_for_disconnect(receive))
+            try:
+                done, _ = await asyncio.wait(
+                    (stream, disconnected), return_when=asyncio.FIRST_COMPLETED)
+                if stream in done:
+                    try:
+                        await stream
+                    except OSError as exc:
+                        raise ClientDisconnect() from exc
+                else:
+                    await disconnected
+            finally:
+                for task in (stream, disconnected):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(stream, disconnected, return_exceptions=True)
+                close = getattr(self.body_iterator, "aclose", None)
+                if close is not None:
+                    await close()
+            if self.background is not None:
+                await self.background()
+
+    wrapped = DisconnectAwareStreamingResponse(
+        response.body_iterator, status_code=response.status_code,
+        media_type=response.media_type, background=response.background)
+    wrapped.raw_headers = response.raw_headers
+    return wrapped
+
+
 STATUS_AS_REASONING = os.environ.get(
     "MIOS_STATUS_AS_REASONING", "true").lower() not in {"false", "0", "no"}
 

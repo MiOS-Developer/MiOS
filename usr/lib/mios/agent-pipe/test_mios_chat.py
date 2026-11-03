@@ -358,6 +358,88 @@ def _test_explicit_agent_contract():
           and result["force_delegate"] is None)
 
 
+def _test_real_asgi_error_and_disconnect():
+    """Fresh real ASGI modules avoid the lightweight router fixture's import stubs."""
+    import subprocess
+    child = r'''import asyncio, json
+import httpx
+from fastapi import FastAPI
+import fastapi.responses
+import test_mios_chat as fixture
+import mios_pipe.routing.chat as chat
+import mios_pipe.routing.sse as sse
+import test_mios_agent_call as calls
+app = FastAPI()
+app.include_router(chat.chat_router)
+async def live(): return set()
+def wire(**extra):
+    fixture._wire_common(_AGENT_REGISTRY={"offline": {"endpoint": "", "enabled": False}},
+        _live_agent_names=live, refine_intent=fixture._ahandler("refine", {"intent": "agent"}),
+        _sse_status_phase=sse._sse_status_phase, _sse_status=sse._sse_status,
+        _sse_reasoning=sse._sse_reasoning, _sse_chunk=sse._sse_chunk,
+        _sse_done=sse._sse_done, **extra)
+async def run():
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://asgi.invalid") as client:
+        for target, status, code in ((True, 400, "invalid_agent"), ("offline", 503, "agent_unavailable")):
+            wire(_budget_release_inflight=fixture._anoop)
+            body = {"messages": [{"role": "user", "content": "Process this task."}], "mios_flags": {"force_delegate": target}}
+            plain = await client.post("/v1/chat/completions", json=body)
+            stream = await client.post("/v1/chat/completions", json={**body, "stream": True})
+            assert plain.status_code == status and plain.json()["error"]["code"] == code
+            data = [json.loads(line[6:]) for line in stream.text.splitlines() if line.startswith("data: ") and line != "data: [DONE]"]
+            errors = [item["error"] for item in data if "error" in item]
+            assert stream.status_code == 200 and errors == [plain.json()["error"]], stream.text
+            assert stream.text.count("data: [DONE]") == 1, stream.text
+    import mios_pipe.routing.agent_call as actual
+    from unittest.mock import patch
+    calls._configure()
+    active, budget = [], []
+    class PendingBody(httpx.AsyncByteStream):
+        closed = False
+        def __init__(self): self.started = asyncio.Event()
+        async def __aiter__(self):
+            self.started.set()
+            await asyncio.Event().wait()
+            yield b"unreachable"
+        async def aclose(self): self.closed = True
+    pending = PendingBody()
+    async def model_active(ep, model, delta, est): active.append(delta)
+    async def admit(*args): budget.append(1); return True, ""
+    async def release(*args): budget.append(-1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=pending))) as upstream:
+        async def native(*args, **kwargs):
+            return await calls.T._call_agent_complete("secondary", calls.CFG, dict(calls.BODY), {}, upstream)
+        wire(_respond_native_loop_direct=native, _budget_admit=admit, _budget_release_inflight=release)
+        request = json.dumps({"messages": [{"role": "user", "content": "Process this task."}], "stream": True}).encode()
+        incoming = asyncio.Queue()
+        await incoming.put({"type": "http.request", "body": request, "more_body": False})
+        sent = []
+        async def send(event): sent.append(event)
+        scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+                 "http_version": "1.1", "method": "POST", "scheme": "http",
+                 "path": "/v1/chat/completions", "raw_path": b"/v1/chat/completions",
+                 "query_string": b"", "headers": [(b"host", b"asgi.invalid"), (b"content-type", b"application/json")],
+                 "server": ("asgi.invalid", 80), "client": ("127.0.0.1", 12345)}
+        with patch.object(actual, "_model_active", model_active), patch.object(actual, "KV_PAGING_ENABLE", False), patch.object(actual, "RR_ENABLE", False):
+            task = asyncio.create_task(app(scope, incoming.get, send))
+            await asyncio.wait_for(pending.started.wait(), 1)
+            assert active == [1] and budget == [1]
+            await incoming.put({"type": "http.disconnect"})
+            await asyncio.wait_for(task, 1)
+            assert pending.closed and active == [1, -1] and budget == [1, -1]
+            assert not actual._IN_FLIGHT_PROMPTS
+            assert scope["asgi"]["spec_version"] == "2.4"
+            assert len(asyncio.all_tasks()) == 1
+    print("REAL_ASGI_ERROR_AND_DISCONNECT_PASS")
+asyncio.run(run())
+'''
+    result = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True, timeout=15)
+    check("real ASGI preserves errors and cancels blocked upstream on disconnect",
+          result.returncode == 0 and "REAL_ASGI_ERROR_AND_DISCONNECT_PASS" in result.stdout,
+          result.stderr if result.returncode else "ASGI 2.4, exact SSE error + DONE, HTTPX/admission cleanup")
+
+
 def main():
     _wire_common()
     r = _run({"model": "m"})
@@ -398,6 +480,8 @@ def main():
     _test_exact_action_fastpath()
 
     _test_explicit_agent_contract()
+
+    _test_real_asgi_error_and_disconnect()
 
     _test_responses_api()
 

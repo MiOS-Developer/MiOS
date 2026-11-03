@@ -578,7 +578,7 @@ async def _dedup_cancellation_controls():
         follower.cancel()
         try: await follower
         except asyncio.CancelledError: pass
-        ok(not shared.cancelled() and not leader.done(), "cancelled follower preserves shared producer")
+        ok(not shared.task.cancelled() and not leader.done(), "cancelled follower preserves shared producer")
         release.set()
         ok(await leader == ("secondary", "ready"), "producer succeeds after follower disconnect")
         ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "success releases dedup and model admission")
@@ -588,15 +588,55 @@ async def _dedup_cancellation_controls():
         follower = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
         await asyncio.sleep(0)
         leader.cancel()
+        try: await leader
+        except asyncio.CancelledError: pass
+        ok(not follower.done() and active == [1], "original subscriber cancellation preserves valid follower")
+        release.set()
+        ok(await follower == ("secondary", "ready"), "valid follower receives shared producer result")
+        ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "final subscriber releases dedup and admission")
+        active.clear(); entered.clear(); release.clear()
+        leader = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
+        await asyncio.wait_for(entered.wait(), 0.5)
+        follower = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, None))
+        await asyncio.sleep(0)
+        leader.cancel(); follower.cancel()
         results = await asyncio.gather(leader, follower, return_exceptions=True)
-        ok(all(isinstance(result, asyncio.CancelledError) for result in results), "producer cancellation propagates to all waiters")
-        ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "cancelled producer releases dedup and admission")
+        ok(all(isinstance(result, asyncio.CancelledError) for result in results), "each cancelled subscriber propagates cancellation")
+        ok(not actual._IN_FLIGHT_PROMPTS and active == [1, -1], "last cancellation drains producer and admission")
         ok(actual._dispatch_depth_var.get() == 0, "cancelled request resets dispatch depth")
         release.set()
         ok(await T._call_agent_complete("secondary", CFG, dict(BODY), {}, None) == ("secondary", "ready"),
            "same prompt can run again after cancellation")
 
 asyncio.run(_dedup_cancellation_controls())
+
+async def _dedup_transport_isolation():
+    from unittest.mock import patch
+    import mios_pipe.routing.agent_call as actual
+    _configure()
+    entered = asyncio.Event()
+    count = 0
+    release = asyncio.Event()
+    async def pending(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 2: entered.set()
+        await release.wait()
+        return "secondary", "ready"
+    with patch.object(actual, "_call_agent_complete_inner", pending):
+        a = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, object()))
+        b = asyncio.create_task(T._call_agent_complete("secondary", CFG, dict(BODY), {}, object()))
+        await asyncio.wait_for(entered.wait(), 0.5)
+        ok(len(actual._IN_FLIGHT_PROMPTS) == 2, "borrowed HTTPX transport owners are never cross-shared")
+        a.cancel()
+        try: await a
+        except asyncio.CancelledError: pass
+        ok(not b.done(), "one transport owner cannot cancel another request")
+        release.set()
+        await b
+        ok(not actual._IN_FLIGHT_PROMPTS, "separate transport requests release all entries")
+
+asyncio.run(_dedup_transport_isolation())
 
 async def _real_completion_cancellation():
     from unittest.mock import patch

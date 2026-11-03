@@ -51,7 +51,13 @@ _autonomous_var: contextvars.ContextVar[bool] = contextvars.ContextVar("autonomo
 _autonomous_source_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("autonomous_source", default=None)
 _dispatch_depth_var: contextvars.ContextVar[int] = contextvars.ContextVar("dispatch_depth", default=0)
 
-_IN_FLIGHT_PROMPTS: dict[str, asyncio.Future] = {}
+class _SharedCompletion:
+    def __init__(self, task: asyncio.Task):
+        self.task = task
+        self.subscribers = 0
+
+
+_IN_FLIGHT_PROMPTS: dict[str, _SharedCompletion] = {}
 _IN_FLIGHT_LOCK = asyncio.Lock()
 
 _SESSION_TOKENS: dict[str, collections.deque] = {}
@@ -334,16 +340,13 @@ def _get_budget_ceil(key: str, default: int) -> int:
     except Exception:
         return default
 
-def _hash_request(ep: str, body: dict) -> str:
+def _hash_request(ep: str, body: dict, headers: dict, client, name: str, model: str) -> str:
     import hashlib
-    msgs = body.get("messages") or []
-    msgs_str = json.dumps(msgs, sort_keys=True)
-    model = body.get("model") or ""
-    h = hashlib.sha256()
-    h.update(str(ep).encode("utf-8"))
-    h.update(str(model).encode("utf-8"))
-    h.update(msgs_str.encode("utf-8"))
-    return h.hexdigest()
+    # A borrowed client's transport/auth lifetime cannot outlive its owner.
+    request = {"endpoint": ep, "agent": name, "model": model, "body": body, "headers": headers or {},
+               "client": id(client), "session": _conv_key_var.get() if _conv_key_var else "",
+               "autonomous_source": _autonomous_source_var.get()}
+    return hashlib.sha256(json.dumps(request, sort_keys=True).encode("utf-8")).hexdigest()
 
 from typing import Any
 async def _call_agent_complete(name, cfg, body, headers, client,
@@ -409,22 +412,7 @@ async def _call_agent_complete(name, cfg, body, headers, client,
         if _autonomous_var.get():
             _prio = -100.0
 
-        req_hash = _hash_request(_ep or "", body)
-
-        is_first = False
-        fut = None
-        async with _IN_FLIGHT_LOCK:
-            if req_hash in _IN_FLIGHT_PROMPTS:
-                fut = _IN_FLIGHT_PROMPTS[req_hash]
-                log.info("Request dedup: prompt hash %s is already in-flight. Sharing result.", req_hash)
-            else:
-                fut = asyncio.get_running_loop().create_future()
-                _IN_FLIGHT_PROMPTS[req_hash] = fut
-                is_first = True
-
-        if not is_first:
-            # One disconnected follower must not cancel the shared producer.
-            return await asyncio.shield(fut)
+        req_hash = _hash_request(_ep or "", body, headers, client, name, _adm_model)
 
         async def _execute_query():
             _est = _opt_int_mb(cfg.get("vram_mb"))   # Phase-1 per-worker VRAM (0 = unknown)
@@ -458,7 +446,7 @@ async def _call_agent_complete(name, cfg, body, headers, client,
                         _record_cost(cfg, _ep, _cost_t0, body, _t)   # WS-RES-GOV observe-only
                         return _n, _strip_agent_chrome(_t)
 
-        try:
+        async def _produce():
             res = await _execute_query()
 
             _n, _t = res
@@ -476,23 +464,28 @@ async def _call_agent_complete(name, cfg, body, headers, client,
                 async with _BUDGET_LOCK:
                     _add_to_window(_AUTONOMOUS_SOURCE_TOKENS, src, tokens_used, time.monotonic())
 
-            async with _IN_FLIGHT_LOCK:
-                _IN_FLIGHT_PROMPTS.pop(req_hash, None)
-                if not fut.done():
-                    fut.set_result(res)
             return res
-        except asyncio.CancelledError:
+
+        async with _IN_FLIGHT_LOCK:
+            shared = _IN_FLIGHT_PROMPTS.get(req_hash)
+            if shared is None:
+                shared = _SharedCompletion(asyncio.create_task(_produce()))
+                _IN_FLIGHT_PROMPTS[req_hash] = shared
+            shared.subscribers += 1
+        try:
+            return await asyncio.shield(shared.task)
+        finally:
+            drain = None
             async with _IN_FLIGHT_LOCK:
-                _IN_FLIGHT_PROMPTS.pop(req_hash, None)
-                if not fut.done():
-                    fut.cancel()
-            raise
-        except Exception as e:
-            async with _IN_FLIGHT_LOCK:
-                _IN_FLIGHT_PROMPTS.pop(req_hash, None)
-                if not fut.done():
-                    fut.set_exception(e)
-            raise e
+                shared.subscribers -= 1
+                if shared.subscribers == 0:
+                    if _IN_FLIGHT_PROMPTS.get(req_hash) is shared:
+                        _IN_FLIGHT_PROMPTS.pop(req_hash)
+                    if not shared.task.done():
+                        shared.task.cancel()
+                    drain = shared.task
+            if drain is not None:
+                await asyncio.gather(drain, return_exceptions=True)
 
     finally:
         _dispatch_depth_var.reset(depth_token)
