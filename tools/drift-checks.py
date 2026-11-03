@@ -4415,7 +4415,7 @@ def check_unit_security() -> int:
                         for pline in fh:
                             sline = pline.strip()
                             if sline.startswith('enable') and ('mios-attest.service' in sline or 'mios-attest-server' in sline):
-                                attest_viols.append(f"{os.path.relpath(os.path.join(pd, pf), root)}: mios-attest-server enabled in preset (ruling Q7: unit must be disabled until Keylime)")
+                                attest_viols.append(f"{os.path.relpath(os.path.join(pd, pf), root).replace(os.sep, '/')}: mios-attest-server enabled in preset (ruling Q7: unit must be disabled until Keylime)")
 
     if attest_viols:
         print('\n'.join(attest_viols), file=sys.stderr)
@@ -4503,7 +4503,7 @@ def check_preset_roster_complete() -> int:
         for f in sorted(os.listdir(systemd_dir)):
             if f.startswith("mios-") and any(f.endswith(ext) for ext in (".service", ".timer", ".path", ".target", ".socket")) and not f.endswith(".d"):
                 if f not in decisions:
-                    violations.append(f"Undeclared MiOS unit: {f} has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+                    violations.append(f"Undeclared MiOS unit: {f} has no enable/disable decision in {os.path.relpath(preset_path, root).replace(os.sep, '/')}")
 
     # Check Quadlet-generated mios-* units
     if os.path.isdir(quadlet_dir):
@@ -4511,7 +4511,7 @@ def check_preset_roster_complete() -> int:
             if f.startswith("mios-") and f.endswith(".container"):
                 unit_name = f[:-10] + ".service"
                 if unit_name not in decisions:
-                    violations.append(f"Undeclared Quadlet unit: {unit_name} (from {f}) has no enable/disable decision in {os.path.relpath(preset_path, root)}")
+                    violations.append(f"Undeclared Quadlet unit: {unit_name} (from {f}) has no enable/disable decision in {os.path.relpath(preset_path, root).replace(os.sep, '/')}")
 
     # Axis 1: every enable/disable target in preset must resolve to a real unit or known upstream unit
     known_upstream = {
