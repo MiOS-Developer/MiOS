@@ -18053,7 +18053,7 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # image's own kernel is the input). A suite that cannot run its live tier exits
 # 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
-            "systemd-ukify", "systemd-boot-unsigned"]
+            "systemd-ukify", "systemd-boot-unsigned", "lua"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.
