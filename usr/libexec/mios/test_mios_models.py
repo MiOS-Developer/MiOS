@@ -26,46 +26,72 @@ def check(name, cond, detail=""):
         _fails += 1
         print(f"FAIL - {name}" + (f" -- {detail}" if detail else ""))
 
-def run_cli(args, user_toml, models_dir=None):
-    env = dict(os.environ)
-    env["MIOS_USER_TOML"] = str(user_toml)
-    env["MIOS_VENDOR_TOML"] = str(_VENDOR)
-    env.pop("MIOS_HOST_TOML", None)
-    r = subprocess.run([sys.executable, str(_CLI)] + args,
-                       capture_output=True, text=True, env=env)
+def isolated_env(tmp, vendor, user):
+    """Resolve the checkout's code against only this fixture's TOML layers."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+    env.update({
+        "PYTHONPATH": str(_ROOT / "usr/lib/mios"),
+        "MIOS_VENDOR_TOML": str(vendor),
+        "MIOS_HOST_TOML": str(tmp / "absent-host.toml"),
+        "MIOS_USER_TOML": str(user),
+        "MIOS_VENDOR_TOML_D": str(tmp / "absent-vendor.d"),
+        "MIOS_HOST_TOML_D": str(tmp / "absent-host.d"),
+        "MIOS_USER_TOML_D": str(tmp / "absent-user.d"),
+    })
+    return env
+
+
+def run_cli(args, user_toml):
+    env = isolated_env(user_toml.parent, _VENDOR, user_toml)
+    # Load the actual CLI and redirect its disk view before entering main.
+    # In particular, rm must never inspect or remove a deployed model.
+    driver = (
+        "import importlib.machinery,importlib.util,pathlib,sys;"
+        "loader=importlib.machinery.SourceFileLoader('mios_models_test',sys.argv[1]);"
+        "spec=importlib.util.spec_from_loader(loader.name,loader);"
+        "cli=importlib.util.module_from_spec(spec);loader.exec_module(cli);"
+        "cli.MODELS_DIR=pathlib.Path(sys.argv.pop(2));sys.argv.pop(1);cli.main()"
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", driver, str(_CLI), str(user_toml.parent / "models"), *args],
+        capture_output=True, text=True, env=env, timeout=30)
     return r.returncode, r.stdout + r.stderr
 
+
 def mk_fetcher(tmp):
-    """A copy of the fetcher with its absolute /var paths redirected into tmp,
-    plus a curl stub that writes $MIOS_FAKE_PAYLOAD to curl's -o target."""
+    """Keep the real provisioner unchanged; replace only offline transport."""
     models = tmp / "models"
     binn = tmp / "bin"
     models.mkdir(parents=True, exist_ok=True)
     binn.mkdir(parents=True, exist_ok=True)
     (binn / "curl").write_text(
-        '#!/usr/bin/env bash\n'
-        'out=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { out="$2"; shift; }; shift; done\n'
-        'printf \'%s\' "$MIOS_FAKE_PAYLOAD" > "$out"\n')
+        "#!/usr/bin/env python3\n"
+        "import os,pathlib,shutil,sys\n"
+        "args=sys.argv[1:]\n"
+        "out=args[args.index('-o')+1]\n"
+        "payload=pathlib.Path(os.environ['MIOS_TEST_PAYLOAD'])\n"
+        "if payload.is_file(): shutil.copyfile(payload,out)\n")
     (binn / "curl").chmod(0o755)
-    src = _FETCH.read_text(encoding="utf-8")
-    src = (src.replace("/var/lib/mios/llamacpp/models", str(models))
-              .replace("/var/lib/mios/.models-firstboot-done", str(tmp / "done"))
-              .replace("/var/lib/mios/.models-firstboot-progress", str(tmp / "prog")))
-    fetch = tmp / "fetch.py"
-    fetch.write_text(src, encoding="utf-8")
-    return fetch, models, binn
+    return models, binn
 
-def run_fetcher(fetch, binn, toml_path, payload):
-    env = dict(os.environ)
+
+def run_fetcher(tmp, binn, toml_path, payload):
+    env = isolated_env(tmp, toml_path, tmp / "absent-user.toml")
     env["PATH"] = f"{binn}{os.pathsep}{env['PATH']}"
-    env["MIOS_TOML"] = str(toml_path)
-    env["MIOS_FAKE_PAYLOAD"] = payload
-    r = subprocess.run([sys.executable, str(fetch)],
-                       capture_output=True, text=True, env=env)
+    env["MIOS_MODELS_DIR"] = str(tmp / "models")
+    env["MIOS_MODELS_STATE_DIR"] = str(tmp / "state")
+    payload_path = tmp / "payload"
+    if payload is not None:
+        payload_path.write_bytes(payload)
+    else:
+        payload_path.unlink(missing_ok=True)
+    env["MIOS_TEST_PAYLOAD"] = str(payload_path)
+    r = subprocess.run([sys.executable, str(_FETCH)],
+                       capture_output=True, text=True, env=env, timeout=30)
     return r.stdout + r.stderr, r.returncode
 
 def t_cli_reads_the_ssot():
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="miosmodels-"))
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="mios-model-cli-"))
     try:
         user = tmp / "mios.toml"
         vendor_before = hashlib.sha256(_VENDOR.read_bytes()).hexdigest()
@@ -110,46 +136,69 @@ def t_cli_reads_the_ssot():
         shutil.rmtree(tmp, ignore_errors=True)
 
 def t_fetcher_verifies_sha256():
-    payload = "the-real-weights"
-    digest = hashlib.sha256(payload.encode()).hexdigest()
+    payload = b"GGUF\x00the-real-weights\xff"
+    digest = hashlib.sha256(payload).hexdigest()
+    source = "https://example.invalid/good.gguf"
 
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="miosfetch-"))
-    try:
-        toml = tmp / "vendor.toml"
-        toml.write_text(
-            '[[ai.firstboot_models]]\n'
-            'name = "good.gguf"\n'
-            'source = "https://example.invalid/good.gguf"\n'
-            f'sha256 = "{digest}"\n', encoding="utf-8")
-
-        fetch, models, binn = mk_fetcher(tmp)
-        out, rc = run_fetcher(fetch, binn, toml, payload)
-        check("fetch: a matching payload verifies", "sha256 OK" in out, out)
-        check("fetch: a matching payload is installed",
-              (models / "good.gguf").exists(), out)
-        check("fetch: a complete run writes the sentinel",
-              (tmp / "done").exists(), out)
-        check("fetch: a complete run exits 0", rc == 0, out)
-
-        # Reset and replay with a substituted payload.
-        (tmp / "done").unlink(missing_ok=True)
-        (models / "good.gguf").unlink(missing_ok=True)
-        out, rc = run_fetcher(fetch, binn, toml, "EVIL-substituted-weights")
-        check("fetch: a mismatching payload is REJECTED",
-              "MISMATCH" in out, out)
-        check("fetch: the rejected weight is NOT installed",
-              not (models / "good.gguf").exists(), out)
-        check("fetch: the part file is discarded so a resume cannot poison it",
-              not (models / "good.gguf.part").exists(), out)
-        # The sentinel is the unit's ConditionPathExists gate. Writing it after a
-        # rejected download would retire the provisioner having fetched nothing.
-        check("fetch: a rejected model leaves the sentinel UNWRITTEN so the timer retries",
-              not (tmp / "done").exists(), out)
-        check("fetch: names what is still missing", "still missing" in out, out)
-        check("fetch: still exits 0 (degrade-open; a pull never blocks boot)",
-              rc == 0, out)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    # These controls exercise the real verification and publication path.
+    # Human-facing log phrasing is not an integrity or retry contract.
+    cases = (
+        ("matching", payload, digest, True),
+        ("substituted", b"EVIL-substituted-weights", digest, False),
+        ("empty", b"", digest, False),
+        ("missing", None, digest, False),
+        ("invalid digest", payload, "deadbeef", False),
+        ("unprovable digest", payload, "", False),
+    )
+    for label, downloaded, expected_digest, accepted in cases:
+        with tempfile.TemporaryDirectory(prefix="mios-model-fetch-") as directory:
+            tmp = pathlib.Path(directory)
+            models, binn = mk_fetcher(tmp)
+            state = tmp / "state"
+            state.mkdir()
+            done = state / ".models-firstboot-done"
+            ready = models / ".ready"
+            # A failed re-verification must invalidate old completion gates;
+            # the success case must publish fresh markers of its own.
+            if not accepted:
+                done.touch()
+                ready.touch()
+            toml = tmp / "vendor.toml"
+            toml.write_text(
+                '[ai]\nfirstboot_pulls = true\n'
+                '[[ai.firstboot_models]]\n'
+                'name = "good.gguf"\n'
+                f'source = "{source}"\n'
+                f'sha256 = "{expected_digest}"\n'
+                '[llamacpp]\n'
+                f'models_dir = "{models.as_posix()}"\n'
+                'bake_models = "good.gguf=offline/test:good.gguf"\n',
+                encoding="utf-8")
+            out, rc = run_fetcher(tmp, binn, toml, downloaded)
+            target = models / "good.gguf"
+            ledger = models / "models.tsv"
+            check(f"fetch {label}: exits 0 without blocking boot", rc == 0, out)
+            check(f"fetch {label}: no unverified partial remains",
+                  not (models / "good.gguf.part").exists(), out)
+            if accepted:
+                actual = target.read_bytes() if target.is_file() else None
+                check("fetch: installs the exact matching bytes", actual == payload, out)
+                check("fetch: installed bytes match the declared sha256",
+                      actual is not None and hashlib.sha256(actual).hexdigest() == digest, out)
+                rows = ([line.split("\t") for line in ledger.read_text().splitlines()[1:]]
+                        if ledger.exists() else [])
+                check("fetch: provenance records the verified name, source and digest",
+                      any(row[:4] == ["good.gguf", source, "", digest] for row in rows), out)
+                check("fetch: the verified required fleet publishes readiness", ready.is_file(), out)
+                check("fetch: a complete run writes the sentinel", done.is_file(), out)
+            else:
+                check(f"fetch {label}: rejected weight is not installed", not target.exists(), out)
+                check(f"fetch {label}: no successful provenance is recorded", not ledger.exists(), out)
+                check(f"fetch {label}: stale completion sentinel is invalidated", not done.exists(), out)
+                check(f"fetch {label}: stale serving readiness is invalidated", not ready.exists(), out)
+                progress = state / ".models-firstboot-progress"
+                check(f"fetch {label}: retry state identifies the incomplete model",
+                      progress.is_file() and "good.gguf" in progress.read_text(), out)
 
 def main():
     t_cli_reads_the_ssot()
