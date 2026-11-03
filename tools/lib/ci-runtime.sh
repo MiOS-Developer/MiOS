@@ -109,9 +109,11 @@ mios_ci_build_portal() (
     # Buildah context-overlay upper/work stays on the runner filesystem.
     mkdir -m 1777 "$state/tmp"
     overlay="$state/paths.toml"
-    # Buildah's OCI RUN lacks a systemd bus. Keep its cgroup manager private
-    # to this nested CI builder; host builds retain their normal configuration.
-    printf '%s\n' '[engine]' 'cgroup_manager = "cgroupfs"' >"$state/containers.conf"
+    # Nested commands reuse the private development container's working network
+    # instead of a second bridge/resolver boundary. Its outer isolation stays put.
+    # Buildah's OCI RUN also lacks a systemd bus; both defaults are CI-local.
+    printf '%s\n' '[containers]' 'netns = "host"' \
+        '[engine]' 'cgroup_manager = "cgroupfs"' >"$state/containers.conf"
     [[ "$PB_ICON_SRC" = /* && "$PB_ICON_SRC" != *"/../"* ]] || {
         echo "Portal icon must be an absolute checkout path" >&2; exit 1;
     }

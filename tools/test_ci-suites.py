@@ -719,7 +719,8 @@ class TestPortalRuntimeContext(unittest.TestCase):
 
     def _run_producer(self, *, omit_temp_mount=False, runtime_failure=False, collision=False,
                       requested_cpus="4", minimum="4", host_cpus=4, operation="portal",
-                      omit_manager_override=False, manager="cgroupfs"):
+                      omit_manager_override=False, manager="cgroupfs",
+                      omit_network_override=False, network="host"):
         with tempfile.TemporaryDirectory(prefix="mios-portal-context-") as tmp:
             base = Path(tmp)
             root, state, calls = base / "checkout", base / "private state", base / "calls.jsonl"
@@ -762,6 +763,12 @@ else:
                 helper = helper.replace(override, "")
             if manager != "cgroupfs":
                 helper = helper.replace('cgroup_manager = "cgroupfs"', f'cgroup_manager = "{manager}"')
+            if omit_network_override:
+                setting = shlex.quote('netns = "host"')
+                self.assertEqual(helper.count(setting), 1)
+                helper = helper.replace(setting, "")
+            if network != "host":
+                helper = helper.replace('netns = "host"', f'netns = "{network}"')
             source = base / "runtime.sh"
             source.write_text(helper)
             shipped_helper = root / "tools/lib/ci-runtime.sh"
@@ -790,11 +797,15 @@ if args[:2] == ["podman", "exec"]:
     state_mount = next(item for item in mounts if item.endswith(":/var/lib/mios-build:rw"))
     state_path = pathlib.Path(state_mount.rsplit(":", 2)[0])
     config = state_path / "containers.conf"
-    configured = (tomllib.loads(config.read_text()).get("engine") or {{}}).get("cgroup_manager")
+    settings = tomllib.loads(config.read_text())
+    configured = (settings.get("engine") or {{}}).get("cgroup_manager")
     if ("CONTAINERS_CONF_OVERRIDE=/var/lib/mios-build/containers.conf" not in args
             or configured != "cgroupfs"):
         print("crun: cannot open sd-bus: No such file or directory", file=sys.stderr)
         sys.exit(87)
+    if (settings.get("containers") or {{}}).get("netns") != "host":
+        print("Could not resolve host: nested private network lost the working resolver", file=sys.stderr)
+        sys.exit(88)
     if {runtime_failure!r}:
         print("fixture: inner builder failed", file=sys.stderr)
         sys.exit(43)
@@ -839,6 +850,27 @@ if args[:2] == ["podman", "exec"]:
         self.assertIn(setting, execute)
         self.assertNotIn(setting, run)
         self.assertFalse(any("/etc/containers" in arg for row in calls for arg in row))
+
+    def test_nested_network_reuses_only_the_private_development_namespace(self):
+        result, calls, _ = self._run_producer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = next(row for row in calls if row[:2] == ["podman", "run"])
+        execute = next(row for row in calls if row[:2] == ["podman", "exec"])
+        setting = "CONTAINERS_CONF_OVERRIDE=/var/lib/mios-build/containers.conf"
+        self.assertIn(setting, execute)
+        self.assertNotIn(setting, run)
+        for option in ("--network", "--net", "--dns"):
+            self.assertNotIn(option, run)
+        self.assertFalse(any("/etc/resolv.conf" in arg for row in calls for arg in row))
+
+    def test_missing_or_private_nested_network_reproduces_dns_failure_and_cleans_container(self):
+        for options in ({"omit_network_override": True}, {"network": "private"}):
+            with self.subTest(options=options):
+                result, calls, _ = self._run_producer(**options)
+                self.assertEqual(result.returncode, 88, result.stderr)
+                self.assertIn("Could not resolve host", result.stderr)
+                self.assertTrue(any(row[:2] == ["podman", "rm"] for row in calls))
+                self.assertFalse(any(row[0] == "chown" for row in calls))
 
     def test_missing_or_systemd_manager_reproduces_bus_failure_and_cleans_container(self):
         for options in ({"omit_manager_override": True}, {"manager": "systemd"}):
