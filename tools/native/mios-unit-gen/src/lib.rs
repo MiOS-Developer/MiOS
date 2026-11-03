@@ -746,7 +746,8 @@ pub struct PrivilegedUnitsRoster {
 ///
 /// where NAME is `MIOS_PORTS_<key>` / `MIOS_PORT_<key>` ([ports].<key> +
 /// stack_id * 10000), `MIOS_NETWORK_<key>` ([network].<key>), or
-/// `MIOS_IDENTITY_USERNAME` ([identity].username). A bare `${NAME}`
+/// `MIOS_IDENTITY_USERNAME` ([identity].username), or
+/// `MIOS_REMOTE_RDP_OPERATOR_UID` ([remote.rdp].operator_uid). A bare `${NAME}`
 /// on an Exec*= line stays: that is a runtime reference systemd expands from
 /// the unit's environment. A name the SSOT does not declare is left as written,
 /// and `unexpandable_placeholders` turns what survives into a gate failure.
@@ -765,6 +766,15 @@ fn resolve_port_placeholders(key: &str, value: &str, ssot: Option<&toml::Value>)
         .unwrap_or(0)
         * 10000;
     let lookup = |name: &str| -> Option<String> {
+        if name == "MIOS_REMOTE_RDP_OPERATOR_UID" {
+            let uid = ssot
+                .get("remote")?
+                .get("rdp")?
+                .get("operator_uid")?
+                .as_integer()?;
+            // Root and the reserved invalid UID cannot own the desktop broker.
+            return (uid > 0 && uid < i64::from(u32::MAX)).then(|| uid.to_string());
+        }
         if name == "MIOS_IDENTITY_USERNAME" {
             let username = ssot.get("identity")?.get("username")?.as_str()?;
             return (!username.trim().is_empty() && !username.chars().any(char::is_control))

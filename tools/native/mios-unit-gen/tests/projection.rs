@@ -888,25 +888,45 @@ fn test_reimport_of_every_faithful_unit_round_trips() {
 }
 
 #[test]
-fn launcher_condition_uses_the_configured_operator() {
-    for username in ["mios", "operator-custom"] {
+fn launcher_condition_uses_the_configured_operator_uid() {
+    let mut source: toml::Value = toml::from_str(&ssot()).unwrap();
+    for (username, uid) in [("renamed-operator", 1000), ("alternate-operator", 1107)] {
+        source["identity"]["username"] = username.into();
+        source["remote"]["rdp"]["operator_uid"] = uid.into();
+        let rendered =
+            mios_unit_gen::render_user_units(&toml::to_string(&source).unwrap()).unwrap();
+        let unit = &rendered["mios-launcher.service"];
+        assert!(unit.contains(&format!("ConditionUser={uid}\n")));
+        for other in ["root", "user", username, "0", "820", "828"] {
+            assert!(!unit
+                .lines()
+                .any(|line| line == format!("ConditionUser={other}")));
+        }
+        assert!(mios_unit_gen::unexpandable_placeholders(unit).is_empty());
+    }
+}
+
+#[test]
+fn launcher_condition_rejects_missing_or_invalid_operator_uid() {
+    for field in [
+        "",
+        "operator_uid = 0",
+        "operator_uid = -1",
+        "operator_uid = 4294967295",
+        "operator_uid = \"1000\"",
+    ] {
         let source = format!(
-            r#"[identity]
-username = "{username}"
+            r#"[remote.rdp]
+{field}
 [user_units."mios-launcher.service".Unit]
-ConditionUser = "${{MIOS_IDENTITY_USERNAME}}"
+ConditionUser = "${{MIOS_REMOTE_RDP_OPERATOR_UID}}"
 "#
         );
         let rendered = mios_unit_gen::render_user_units(&source).unwrap();
-        let unit = &rendered["mios-launcher.service"];
-        assert!(unit.contains(&format!("ConditionUser={username}\n")));
-        assert!(mios_unit_gen::unexpandable_placeholders(unit).is_empty());
+        assert!(
+            !mios_unit_gen::unexpandable_placeholders(&rendered["mios-launcher.service"])
+                .is_empty(),
+            "{field}"
+        );
     }
-    let missing = r#"[user_units."mios-launcher.service".Unit]
-ConditionUser = "${MIOS_IDENTITY_USERNAME}"
-"#;
-    let rendered = mios_unit_gen::render_user_units(missing).unwrap();
-    assert!(
-        !mios_unit_gen::unexpandable_placeholders(&rendered["mios-launcher.service"]).is_empty()
-    );
 }
