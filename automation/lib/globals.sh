@@ -4495,6 +4495,11 @@ _mios_input MIOS_ROUTING_REMEMBER_TRIGGER_PHRASES MIOS_REMEMBER_TRIGGER_PHRASES 
 : "${MIOS_REPOS_EXTERNAL_HYPRLAND_ENABLED:=true}"
 : "${MIOS_REPOS_EXTERNAL_HYPRLAND_GPGKEY:=https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/pubkey.gpg}"
 : "${MIOS_REPOS_EXTERNAL_HYPRLAND_NAME:=MiOS Hyprland and Quickshell dependencies (nett00n COPR)}"
+[ -n "${MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_BASEURL+x}" ] || MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_BASEURL='https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch'
+: "${MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_ENABLED:=true}"
+: "${MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_GPGKEY:=https://nvidia.github.io/libnvidia-container/gpgkey}"
+: "${MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_NAME:=NVIDIA Container Toolkit stable}"
+: "${MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_REPO_GPGCHECK:=true}"
 : "${MIOS_REPOS_FEDORA_ENABLED:=true}"
 : "${MIOS_REPOS_FEDORA_GPGCHECK:=true}"
 [ -n "${MIOS_REPOS_FEDORA_GPGKEY+x}" ] || MIOS_REPOS_FEDORA_GPGKEY='file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64'

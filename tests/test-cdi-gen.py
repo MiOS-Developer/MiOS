@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -588,6 +589,148 @@ class TestCdiGen(unittest.TestCase):
             self.assertEqual(status, 1)
             self.assertEqual(result["status"], "error")
             self.assertEqual(target.read_text(), "keep")
+
+
+class TestDay0Toolkit(unittest.TestCase):
+    """Exercise the real automation boundaries with private package/command fixtures."""
+
+    def phase(self, number, *, missing_tool="", missing_unit="", owner="nvidia-container-toolkit-base",
+              install_exit=0, runtime=True, driver=True):
+        with tempfile.TemporaryDirectory(prefix="mios-toolkit-") as tmp:
+            root = Path(tmp)
+            automation = root / "automation"
+            (automation / "lib").mkdir(parents=True)
+            logdir = root / "usr/lib/mios"
+            logdir.mkdir(parents=True)
+            (logdir / "log.sh").write_text(
+                'mios_log() { echo "$*"; }\n'
+                'mios_ok() { echo "$*"; }\n'
+                'mios_skip() { echo "$*"; }\n'
+                'mios_warn() { echo "$*" >&2; }\n'
+                'mios_err() { echo "$*" >&2; }\n'
+            )
+            (automation / "lib/common.sh").write_text(
+                'die() { echo "$*" >&2; exit 1; }\n'
+            )
+            (automation / "lib/packages.sh").write_text(
+                '_in_build_profile() { return 0; }\n'
+                '_is_section_enabled() {\n'
+                ' case "$1" in\n'
+                ' gpu-nvidia-runtime) [[ "$FAKE_RUNTIME" == 1 ]];;\n'
+                ' gpu-nvidia) [[ "$FAKE_DRIVER" == 1 ]];;\n'
+                ' *) return 0;; esac;\n}\n'
+                'install_packages_strict() {\n'
+                ' echo "strict:$1" >> "$FAKE_CALLS";\n'
+                ' [[ "$1" != gpu-nvidia-runtime ]] || return "$FAKE_INSTALL_EXIT";\n'
+                '}\n'
+                'install_packages() { echo "optional:$1" >> "$FAKE_CALLS"; }\n'
+                'command() {\n'
+                ' if [[ "$1" == -v ]]; then\n'
+                '  [[ "$2" != "$FAKE_MISSING_TOOL" ]] || return 1;\n'
+                '  case "$2" in nvidia-ctk|nvidia-container-cli|nvidia-cdi-hook) return 0;; akmods) return 1;; esac;\n'
+                ' fi; builtin command "$@";\n}\n'
+            )
+            bindir = root / "bin"
+            bindir.mkdir()
+            for name, body in {
+                "modinfo": "exit 0",
+                "rpm": 'printf "%s" "$FAKE_UNIT_OWNER"',
+                "nvidia-ctk": 'echo "ctk:$*" >> "$FAKE_CALLS"; exit 7',
+            }.items():
+                p = bindir / name
+                p.write_text("#!/bin/bash\n" + body + "\n")
+                p.chmod(0o755)
+            units = root / "usr/lib/systemd/system"
+            units.mkdir(parents=True)
+            for name in ("nvidia-cdi-refresh.service", "nvidia-cdi-refresh.path"):
+                if name != missing_unit:
+                    (units / name).write_text("[Unit]\n")
+            source_root = Path(globals().get("_DAY0_AUTOMATION_ROOT", _ROOT))
+            filename = "20-hardware.sh" if number == 20 else "26-nvidia-cdi-refresh.sh"
+            source = (source_root / "automation" / filename).read_text()
+            if number == 20:
+                source = source.split("\nHW_PROFILE=", 1)[0]
+            source = source.replace("/usr/lib/systemd/system", str(units))
+            source = source.replace("/usr/share/containers/oci/hooks.d", str(root / "hooks"))
+            target = automation / filename
+            target.write_text(source)
+            calls = root / "calls"
+            env = os.environ.copy()
+            env.update(PATH=str(bindir) + ":" + env["PATH"], FAKE_CALLS=str(calls),
+                       FAKE_MISSING_TOOL=missing_tool, FAKE_UNIT_OWNER=owner,
+                       FAKE_INSTALL_EXIT=str(install_exit), FAKE_RUNTIME=str(int(runtime)),
+                       FAKE_DRIVER=str(int(driver)))
+            result = subprocess.run(["bash", str(target)], env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return result, calls.read_text() if calls.exists() else ""
+
+    def test_existing_kernel_module_does_not_skip_required_runtime_install(self):
+        result, calls = self.phase(20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("strict:gpu-nvidia-runtime", calls)
+        self.assertNotIn("optional:gpu-nvidia\n", calls)
+        self.assertNotIn("ctk:", calls)
+        self.assertNotIn("NVIDIA CDI spec generated", result.stdout)
+
+    def test_missing_runtime_command_fails_closed(self):
+        for name in ("nvidia-ctk", "nvidia-container-cli", "nvidia-cdi-hook"):
+            with self.subTest(command=name):
+                result, _ = self.phase(20, missing_tool=name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(name, result.stderr)
+
+    def test_failed_runtime_package_install_is_not_success(self):
+        result, _ = self.phase(20, install_exit=7)
+        self.assertEqual(result.returncode, 7)
+
+    def test_required_units_must_exist_and_have_official_owner(self):
+        for unit in ("nvidia-cdi-refresh.service", "nvidia-cdi-refresh.path"):
+            with self.subTest(unit=unit):
+                result, _ = self.phase(20, missing_unit=unit)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(unit, result.stderr)
+        result, _ = self.phase(20, owner="unrelated-package")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_disabled_required_runtime_is_not_silently_skipped(self):
+        result, _ = self.phase(20, runtime=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires selected", result.stderr)
+
+    def test_explicit_non_nvidia_profile_does_not_require_runtime(self):
+        result, calls = self.phase(20, runtime=False, driver=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("strict:gpu-nvidia-runtime", calls)
+
+    def test_refresh_phase_requires_both_units(self):
+        for unit in ("nvidia-cdi-refresh.service", "nvidia-cdi-refresh.path"):
+            with self.subTest(unit=unit):
+                result, _ = self.phase(26, missing_unit=unit)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(unit, result.stderr)
+
+    def test_refresh_enablement_does_not_generate_or_apply_hardware(self):
+        result, calls = self.phase(26)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("ctk:", calls)
+        result, _ = self.phase(26, runtime=False, driver=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_vendor_runtime_dependency_and_stable_repo_are_declared(self):
+        with (_ROOT / "usr/share/mios/mios.toml").open("rb") as stream:
+            doc = tomllib.load(stream)
+        packages = doc["packages"]
+        self.assertEqual(set(packages["gpu-nvidia-runtime"]["pkgs"]),
+                         {"libnvidia-container1", "libnvidia-container-tools",
+                          "nvidia-container-toolkit-base", "nvidia-container-toolkit"})
+        self.assertIn("gpu-nvidia-runtime", packages["gpu-nvidia"]["requires_sections"])
+        self.assertIn("gpu-nvidia-runtime", doc["bootstrap"]["linux"]["categories"])
+        repo = doc["repos"]["external"]["nvidia-container-toolkit"]
+        self.assertTrue(repo["enabled"])
+        self.assertTrue(repo["repo_gpgcheck"])
+        self.assertIn("/stable/rpm/", repo["baseurl"])
+        self.assertNotIn("/experimental/", repo["baseurl"])
+        self.assertEqual(repo["gpgkey"], "https://nvidia.github.io/libnvidia-container/gpgkey")
 
 
 if __name__ == "__main__":

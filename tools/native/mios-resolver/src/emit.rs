@@ -805,7 +805,18 @@ pub mod emit_repos {
                     "repos.external.{id} requires HTTPS baseurl and gpgkey"
                 ));
             }
-            result.push_str(&format!("\n[mios-{id}]\nname={name}\nbaseurl={baseurl}\ngpgkey={gpgkey}\nenabled=1\ngpgcheck=1\nskip_if_unavailable=False\n"));
+            let metadata_policy = match data.get("repo_gpgcheck") {
+                None => String::new(),
+                Some(Value::Boolean(value)) => {
+                    format!("repo_gpgcheck={}\n", u8::from(*value))
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "repos.external.{id}.repo_gpgcheck must be a boolean"
+                    ));
+                }
+            };
+            result.push_str(&format!("\n[mios-{id}]\nname={name}\nbaseurl={baseurl}\ngpgkey={gpgkey}\nenabled=1\ngpgcheck=1\n{metadata_policy}skip_if_unavailable=False\n"));
         }
         Ok(result)
     }
@@ -823,6 +834,28 @@ pub mod emit_repos {
                 Value::String("good\n[evil]\ngpgcheck=0".into());
             assert!(emit_repos(&data).is_err());
         }
+        #[test]
+        fn signed_metadata_policy_preserves_package_signature_verification() {
+            let mut data: Value = "[repos.external.nvidia-container-toolkit]\nenabled=true\nname='NVIDIA stable'\nbaseurl='https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch'\ngpgkey='https://nvidia.github.io/libnvidia-container/gpgkey'\nrepo_gpgcheck=true".parse().unwrap();
+            let output = emit_repos(&data).unwrap();
+            assert!(output.contains("gpgcheck=1\nrepo_gpgcheck=1\n"));
+            assert!(!output.contains("experimental"));
+            data["repos"]["external"]["nvidia-container-toolkit"]["repo_gpgcheck"] =
+                Value::Boolean(false);
+            let output = emit_repos(&data).unwrap();
+            assert!(output.contains("gpgcheck=1\nrepo_gpgcheck=0\nskip_if_unavailable=False"));
+        }
+
+        #[test]
+        fn malformed_metadata_policy_fails_instead_of_disabling_verification() {
+            for invalid in ["'false'", "0", "[]", "{}"] {
+                let data: Value = format!("[repos.external.vendor]\nenabled=true\nname='Vendor'\nbaseurl='https://example.test/rpm/'\ngpgkey='https://example.test/key'\nrepo_gpgcheck={invalid}").parse().unwrap();
+                assert!(emit_repos(&data)
+                    .unwrap_err()
+                    .contains("repo_gpgcheck must be a boolean"));
+            }
+        }
+
         #[test]
         fn disabled_repo_is_omitted_and_insecure_enabled_repo_rejected() {
             let mut data: Value = "[repos.external.custom]\nenabled=false".parse().unwrap();

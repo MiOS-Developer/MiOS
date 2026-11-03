@@ -1915,6 +1915,13 @@ name = "MiOS Hyprland and Quickshell dependencies (nett00n COPR)"
 baseurl = "https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/fedora-$releasever-$basearch/"
 gpgkey = "https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/pubkey.gpg"
 
+[repos.external.nvidia-container-toolkit]
+enabled = true
+name = "NVIDIA Container Toolkit stable"
+baseurl = "https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch"
+gpgkey = "https://nvidia.github.io/libnvidia-container/gpgkey"
+repo_gpgcheck = true
+
 [repos.fedora]
 name = "Fedora {ver} - $basearch"
 metalink = "https://mirrors.fedoraproject.org/metalink?repo=fedora-{ver}&arch=$basearch"
@@ -8049,7 +8056,7 @@ unified_radix_tree = true           # --enable-unified-radix-tree (UnifiedRadixT
 sections = [
     "base", "mcp", "security", "utils", "build-toolchain", "containers",
     "cockpit", "storage", "virt", "guests",
-    "gpu-mesa", "gpu-nvidia", "gpu-amd-compute", "gpu-intel-compute",
+    "gpu-mesa", "gpu-nvidia", "gpu-nvidia-runtime", "gpu-amd-compute", "gpu-intel-compute",
     "gnome", "gnome-core-apps", "phosh",
     "ai", "k3s", "k3s-selinux-build", "cockpit-plugins-build",
     "sbom-tools", "uki", "self-build", "network-discovery", "updater",
@@ -8206,7 +8213,7 @@ enable = true   # default ON; toggle via /configurator.html (configurator.packag
 sections = [
     "base", "security", "utils", "build-toolchain", "containers",
     "cockpit", "storage", "virt",
-    "gpu-mesa", "gpu-nvidia", "gpu-amd-compute", "gpu-intel-compute",
+    "gpu-mesa", "gpu-nvidia", "gpu-nvidia-runtime", "gpu-amd-compute", "gpu-intel-compute",
     "gnome-flatpak-runtime",
     "ai", "sbom-tools", "self-build", "network-discovery", "updater",
     "cockpit-plugins-build", "k3s-selinux-build", "uki",
@@ -8414,14 +8421,25 @@ pkgs = [
 
 [packages.gpu-nvidia]
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
+requires_sections = ["gpu-nvidia-runtime"]
 pkgs = [
     "akmod-nvidia",
     "xorg-x11-drv-nvidia-cuda",
-    "nvidia-container-toolkit",
     "nvidia-persistenced",
     "nvidia-settings",
     "xorg-x11-drv-nvidia-power",
     "nvidia-container-selinux",
+]
+
+# Userspace container runtime is required independently of the kernel-driver
+# fallback: an image may already contain its NVIDIA modules.
+[packages.gpu-nvidia-runtime]
+enable = true
+pkgs = [
+    "libnvidia-container1",
+    "libnvidia-container-tools",
+    "nvidia-container-toolkit-base",
+    "nvidia-container-toolkit",
 ]
 
 [packages.gpu-cdi-toolkits]
@@ -11315,6 +11333,7 @@ platform_profile = "performance"
 categories = [
     "build-toolchain", "self-build", "windows-cross-build", "containers", "virt",
     "dev_vm_essentials", "devcontainer", "mcp", "agent_cli", "sbom-tools", "boot", "wintools",
+    "gpu-nvidia-runtime",
 ]
 # Rawhide RPM Fusion / workstation repo packages are wrong for a stable release.
 skip_packages = ["rpmfusion-free-release-rawhide", "rpmfusion-nonfree-release-rawhide", "fedora-workstation-repositories"]

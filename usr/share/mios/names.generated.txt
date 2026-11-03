@@ -98,6 +98,11 @@ repos.external.hyprland.enabled  MIOS_REPOS_EXTERNAL_HYPRLAND_ENABLED
 repos.external.hyprland.name  MIOS_REPOS_EXTERNAL_HYPRLAND_NAME
 repos.external.hyprland.baseurl  MIOS_REPOS_EXTERNAL_HYPRLAND_BASEURL
 repos.external.hyprland.gpgkey  MIOS_REPOS_EXTERNAL_HYPRLAND_GPGKEY
+repos.external.nvidia-container-toolkit.enabled  MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_ENABLED
+repos.external.nvidia-container-toolkit.name  MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_NAME
+repos.external.nvidia-container-toolkit.baseurl  MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_BASEURL
+repos.external.nvidia-container-toolkit.gpgkey  MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_GPGKEY
+repos.external.nvidia-container-toolkit.repo_gpgcheck  MIOS_REPOS_EXTERNAL_NVIDIA_CONTAINER_TOOLKIT_REPO_GPGCHECK
 repos.fedora.name  MIOS_REPOS_FEDORA_NAME
 repos.fedora.metalink  MIOS_REPOS_FEDORA_METALINK
 repos.fedora.enabled  MIOS_REPOS_FEDORA_ENABLED
@@ -3316,7 +3321,10 @@ packages.gpu-amd-compute.pkgs  MIOS_PACKAGES_GPU_AMD_COMPUTE_PKGS
 packages.gpu-intel-compute.enable  MIOS_PACKAGES_GPU_INTEL_COMPUTE_ENABLE
 packages.gpu-intel-compute.pkgs  MIOS_PACKAGES_GPU_INTEL_COMPUTE_PKGS
 packages.gpu-nvidia.enable  MIOS_PACKAGES_GPU_NVIDIA_ENABLE
+packages.gpu-nvidia.requires_sections  MIOS_PACKAGES_GPU_NVIDIA_REQUIRES_SECTIONS
 packages.gpu-nvidia.pkgs  MIOS_PACKAGES_GPU_NVIDIA_PKGS
+packages.gpu-nvidia-runtime.enable  MIOS_PACKAGES_GPU_NVIDIA_RUNTIME_ENABLE
+packages.gpu-nvidia-runtime.pkgs  MIOS_PACKAGES_GPU_NVIDIA_RUNTIME_PKGS
 packages.gpu-cdi-toolkits.enable  MIOS_PACKAGES_GPU_CDI_TOOLKITS_ENABLE
 packages.gpu-cdi-toolkits.pkgs  MIOS_PACKAGES_GPU_CDI_TOOLKITS_PKGS
 packages.virt.enable  MIOS_PACKAGES_VIRT_ENABLE

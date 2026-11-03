@@ -47,6 +47,36 @@ process.stdout.write(JSON.stringify({toml, reparsed}));
 '''
 
 class TestConfiguratorSecurity(unittest.TestCase):
+    def test_nvidia_runtime_and_signed_repo_roundtrip(self):
+        sections = {
+            "repos.external.nvidia-container-toolkit": {
+                "enabled": True, "name": "NVIDIA stable",
+                "baseurl": "https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch",
+                "gpgkey": "https://nvidia.github.io/libnvidia-container/gpgkey",
+                "repo_gpgcheck": True,
+            },
+            "packages.gpu-nvidia-runtime": {
+                "enable": True,
+                "pkgs": ["libnvidia-container1", "libnvidia-container-tools",
+                         "nvidia-container-toolkit-base", "nvidia-container-toolkit"],
+            },
+        }
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        result = subprocess.run(["node", "-e", ROUNDTRIP_NODE],
+                                input=json.dumps({"path": str(html), "sections": sections}),
+                                capture_output=True, text=True, check=True, timeout=15)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["reparsed"], sections)
+        standard = tomllib.loads(output["toml"])
+        self.assertEqual(standard["repos"]["external"]["nvidia-container-toolkit"],
+                         sections["repos.external.nvidia-container-toolkit"])
+        self.assertEqual(standard["packages"]["gpu-nvidia-runtime"],
+                         sections["packages.gpu-nvidia-runtime"])
+        markup = html.read_text()
+        for key in sections["repos.external.nvidia-container-toolkit"]:
+            self.assertIn('data-key="repos.external.nvidia-container-toolkit.' + key + '"', markup)
+        self.assertIn('data-key="packages.gpu-nvidia-runtime.pkgs"', markup)
+
     def test_session_arrays_roundtrip_without_capturing_controller_flags(self):
         routes = json.loads(r'''[
           {"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],

@@ -3,8 +3,25 @@
 # AI-hint: Configures and enables systemd units for NVIDIA CDI (Container Device Interface) auto-refresh, removes legacy...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
-for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
+for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do
+    if [[ -r "$_mlog" ]]; then
+        # shellcheck source=usr/lib/mios/log.sh
+        . "$_mlog" && break
+    fi
+done
+# shellcheck source=automation/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+# shellcheck source=automation/lib/packages.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/packages.sh"
+
+if ! _in_build_profile "gpu-nvidia-runtime" || ! _is_section_enabled "gpu-nvidia-runtime"; then
+    mios_skip "NVIDIA refresh is outside the selected runtime package profile"
+    exit 0
+fi
+for _unit in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do
+    [[ -f "/usr/lib/systemd/system/$_unit" ]] ||
+        die "Required official NVIDIA runtime unit is missing: $_unit"
+done
 
 OCI_HOOK=/usr/share/containers/oci/hooks.d/oci-nvidia-hook.json
 if [[ -f "$OCI_HOOK" ]]; then

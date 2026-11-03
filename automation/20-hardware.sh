@@ -3,12 +3,43 @@
 # AI-hint: Configures GPU drivers by installing Mesa, AMD ROCm, and Intel compute runtimes, while performing a multi-stage check and fallb...
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
-# shellcheck source=usr/lib/mios/log.sh
-for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
+for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do
+    if [[ -r "$_mlog" ]]; then
+        # shellcheck source=usr/lib/mios/log.sh
+        . "$_mlog" && break
+    fi
+done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=automation/lib/packages.sh
 source "${SCRIPT_DIR}/lib/packages.sh"
 
 KVER=$(cat /tmp/mios-kver 2>/dev/null || find /lib/modules/ -mindepth 1 -maxdepth 1 -printf "%f\n" | sort -V | tail -1)
+
+# Container userspace is independent of the base image's kernel modules.
+# Install this section strictly before considering the driver fallback.
+if _in_build_profile "gpu-nvidia-runtime" && _is_section_enabled "gpu-nvidia-runtime"; then
+    mios_log "Install required NVIDIA container runtime"
+    install_packages_strict "gpu-nvidia-runtime"
+    for _tool in nvidia-ctk nvidia-container-cli nvidia-cdi-hook; do
+        if ! command -v "$_tool" >/dev/null 2>&1; then
+            mios_err "Required NVIDIA runtime command is missing: $_tool"
+            exit 1
+        fi
+    done
+    for _unit in nvidia-cdi-refresh.service nvidia-cdi-refresh.path; do
+        _unit_path="/usr/lib/systemd/system/$_unit"
+        if [[ ! -f "$_unit_path" ]] ||
+           [[ "$(rpm -qf --qf '%{NAME}' "$_unit_path" 2>/dev/null)" != nvidia-container-toolkit-base ]]; then
+            mios_err "Required official NVIDIA runtime unit is missing: $_unit"
+            exit 1
+        fi
+    done
+elif _in_build_profile "gpu-nvidia" && _is_section_enabled "gpu-nvidia"; then
+    mios_err "[packages.gpu-nvidia] requires selected [packages.gpu-nvidia-runtime]"
+    exit 1
+else
+    mios_skip "NVIDIA container runtime is outside the selected package profile"
+fi
 
 mios_log "Install Mesa GPU stack"
 install_packages_strict "gpu-mesa"
@@ -50,10 +81,11 @@ if [[ $NVIDIA_PRESENT -eq 0 ]]; then
     mios_warn "Sudo akmods"
 fi
 
-if command -v nvidia-ctk &>/dev/null; then
-    nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml 2>/dev/null || true
-    mios_ok "NVIDIA CDI spec generated"
-fi
+# The official refresh service owns the canonical NVIDIA specification.
+# Its hardware-owner condition skips VFIO-owned and absent GPUs without
+# treating either state as a failed image build; generation errors remain
+# visible in that service instead of being reported here as success.
+mios_log "NVIDIA CDI generation is deferred to the hardware-aware official refresh service"
 
 HW_PROFILE="${SCRIPT_DIR}/../usr/libexec/mios/mios-hardware-profile"
 if [[ -x "$HW_PROFILE" ]]; then

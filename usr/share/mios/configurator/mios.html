@@ -2671,6 +2671,21 @@
         section makes its consumer fail with the section names instead of
         producing an incomplete development environment.
       </p>
+      <fieldset>
+        <legend>NVIDIA container runtime repository</legend>
+        <label for="f-nvidia-repo-enabled">Enable the official stable repository</label>
+        <input id="f-nvidia-repo-enabled" data-key="repos.external.nvidia-container-toolkit.enabled" data-type="bool" type="checkbox">
+        <label for="f-nvidia-repo-name">Repository display name</label>
+        <input id="f-nvidia-repo-name" data-key="repos.external.nvidia-container-toolkit.name" type="text" placeholder="NVIDIA Container Toolkit stable">
+        <label for="f-nvidia-runtime-packages">Runtime RPM packages</label>
+        <input id="f-nvidia-runtime-packages" data-key="packages.gpu-nvidia-runtime.pkgs" data-array="csv" type="text" placeholder="libnvidia-container1,libnvidia-container-tools,nvidia-container-toolkit-base,nvidia-container-toolkit">
+        <label for="f-nvidia-repo-baseurl">Stable RPM repository URL</label>
+        <input id="f-nvidia-repo-baseurl" data-key="repos.external.nvidia-container-toolkit.baseurl" type="text" placeholder="https://nvidia.github.io/libnvidia-container/stable/rpm/$basearch">
+        <label for="f-nvidia-repo-gpgkey">Package and metadata signing key URL</label>
+        <input id="f-nvidia-repo-gpgkey" data-key="repos.external.nvidia-container-toolkit.gpgkey" type="text" placeholder="https://nvidia.github.io/libnvidia-container/gpgkey">
+        <label for="f-nvidia-repo-metadata">Verify repository metadata signatures</label>
+        <input id="f-nvidia-repo-metadata" data-key="repos.external.nvidia-container-toolkit.repo_gpgcheck" data-type="bool" type="checkbox">
+      </fieldset>
       <label for="f-retain-toolchain">retain_toolchain (keep MiOS self-development and self-build dependencies)</label>
       <input type="text" id="f-retain-toolchain" data-key="packages.self-build.retain_toolchain" data-type="bool" placeholder="true">
     </fieldset>
@@ -4694,7 +4709,8 @@ const PACKAGES = [
   { name: "nut",                   default: true,  group: "host",    desc: "Network UPS Tools (APC/Eaton/CyberPower)" },
   // gpu / compute
   { name: "gpu-mesa",              default: true,  group: "gpu",     desc: "Mesa userspace drivers (Intel/AMD/Vulkan)" },
-  { name: "gpu-nvidia",            default: true,  group: "gpu",     desc: "akmod-nvidia, CUDA, NVIDIA Container Toolkit" },
+  { name: "gpu-nvidia",            default: true,  group: "gpu",     desc: "NVIDIA kernel driver and CUDA userspace" },
+  { name: "gpu-nvidia-runtime",    default: true,  group: "gpu",     desc: "Required NVIDIA container runtime and automatic CDI refresh (independent of kernel modules)" },
   { name: "gpu-amd-compute",       default: true,  group: "gpu",     desc: "ROCm runtime (amdgpu compute)" },
   { name: "gpu-intel-compute",     default: true,  group: "gpu",     desc: "Intel Compute Runtime (oneAPI)" },
   { name: "gpu-cdi-toolkits",      default: true,  group: "gpu",     desc: "Container Device Interface toolkits (GPU passthrough into containers)" },
