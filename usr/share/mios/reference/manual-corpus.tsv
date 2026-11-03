@@ -22348,9 +22348,9 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	220	220	1	6	ad592102
 usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	221	221	1	5	e85e6815b0f3	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	222	222	1	5	94e910330a23	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	223	223	1	9	acd5683c4060	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	262	262	1	3	9d23a76185cb	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	306	307	2	17	deca351497ac	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	314	314	1	10	9b64f8e38126	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	264	264	1	3	9d23a76185cb	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	310	311	2	17	deca351497ac	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	318	318	1	10	9b64f8e38126	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/smartroute.py	1	2	2	17	6606cbfb11db	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/smartroute.py	3	17	14	121	5395ee0379d5	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:5395ee0379d5	121	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/smartroute.py	9	11	3	30	481e6666bb5e	STAY	midsize-why		0				0
@@ -24063,6 +24063,7 @@ usr/lib/mios/agent-pipe/test_mios_native_loop.py	379	381	3	25	acc0c2170261	STAY	
 usr/lib/mios/agent-pipe/test_mios_native_loop.py	394	395	2	24	f03e6db13f61	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_native_loop.py	488	488	1	4	5c7ae9717df2	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_native_loop.py	554	554	1	11	3bcd4e2dd978	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_native_loop.py	559	559	1	7	8fe822cad792	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_ocr_mask.py	1	3	3	14	09001e352e26	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_ocr_mask.py	4	4	1	7	2f695d0c8e31	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_oscontrol.py	1	3	3	17	9efaad93cd02	STAY	ai-header		0				0
