@@ -1,20 +1,24 @@
 # AI-hint: MiOS mios-llm-light container. (WS-7 pods-as-SSOT).
 # DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [containers.mios-llm-light] in mios.toml.
 # /usr/share/containers/systemd/mios-llm-light.container
+# Engine: cpu (selected by [llamacpp].light_backend; declared engines: cpu, cuda, vulkan).
 
 [Unit]
-After=network-online.target mios-cdi-detect.service mios-webtools-firstboot.service
+After=network-online.target mios-cdi-detect.service mios-light-backend.service mios-webtools-firstboot.service
 ConditionPathExists=/usr/share/mios/llamacpp/models/.ready
 Description='MiOS' LLM-Light (llama.cpp multi-model + KV-paging lane, served via the upstream llama-swap proxy, FOSS)
+Requires=mios-light-backend.service
 Wants=network-online.target
 
 [Container]
-AddDevice=nvidia.com/gpu=all
+AddDevice=
 ContainerName=mios-llm-light
 Entrypoint=/app/llama-swap
 Environment=HOME=/var/lib/mios/llamacpp
 Environment=LLAMA_ARG_THREADS=1
 Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64
+Environment=LLAMA_ARG_DEVICE=none
+Environment=LLAMA_ARG_N_GPU_LAYERS=0
 EnvironmentFile=/etc/mios/install.env
 Exec=--config /app/config.yaml --listen 0.0.0.0:${MIOS_PORTS_LLM_LIGHT}
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
@@ -24,7 +28,7 @@ HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=60s
 HealthTimeout=10s
-Image=ghcr.io/mostlygeek/llama-swap:cuda
+Image=ghcr.io/mostlygeek/llama-swap:cpu
 Label=org.opencontainers.image.title=mios-llm-light
 Label=org.opencontainers.image.documentation=https://github.com/mostlygeek/llama-swap
 Mount=type=image,source=mios-micro.image,destination=/models-micro

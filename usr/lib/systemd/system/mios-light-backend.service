@@ -1,3 +1,5 @@
+# AI-hint: Validates the selected light inference backend and projects verified device access before the lane starts.
+# AI-related: tools/native/mios-gen/src/gpu_topology.rs, usr/share/containers/systemd/mios-llm-light.container
 [Unit]
 Description='MiOS' validated light inference backend projection
 After=mios-cdi-detect.service

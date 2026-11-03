@@ -230,7 +230,6 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-screen-stream` | Hardware-accelerated PipeWire WebRTC desktop video streamer (task_732). |
 | `usr/libexec/mios/mios-screenshot` | Screenshot entry point behind the screenshot/snap/prtscr aliases: in a Linux Wayland session it hands off to the native /usr/bin/mios-shot (mios-shot modes and flags pass through; the legacy... |
 | `usr/libexec/mios/mios-seccomp-filter` | Emits the compiled seccomp cBPF program that mios-sandbox-exec hands bwrap on --seccomp FD. Reads the denylist and action from mios.toml [sandbox] through the layered resolver, builds the program... |
-| `usr/libexec/mios/mios-shaderglass` | ShaderGlass overlay launcher (keybinds, drawer, operator): thin glue for `miosd shaderglass` -- attach/detach/toggle a ShaderGlass pane on a window, setup mode, next shader (cycle, saved per app),... |
 | `usr/libexec/mios/mios-shadow-test` | Shadow dual-process candidate daemon validator and query mirroring harness (task_485, task_2718). |
 | `usr/libexec/mios/mios-share-picker` | xdg-desktop-portal-hyprland custom picker ([desktop.hyprland.xdph].custom_picker_binary): `miosd shaderglass pick` answers the ShaderGlass supervisor's one-shot request with its target window (no... |
 | `usr/libexec/mios/mios-shell-session` | SHELL-01 runner for the persistent PTY substrate. Drives tmux with the pure protocol in mios_pipe.routing.pty: `exec` sends one nonce-framed command into the chat's session (creating it under the... |
@@ -303,7 +302,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 273 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 272 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)
