@@ -797,7 +797,7 @@ async def _respond_native_loop_direct(
         if emit is not None:
             _pb["stream"] = True
 
-        if not _raw.strip():
+        if not _raw.strip() and not _terminal_response.get("_backend_failed"):
             try:
                 if emit is not None:
                     _raw_parts = []

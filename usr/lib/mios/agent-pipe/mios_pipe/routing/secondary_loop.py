@@ -247,6 +247,8 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
                 content=json.dumps(nb).encode("utf-8"),
                 headers=_hdrs, timeout=timeout)
             if r.status_code != 200:
+                if terminal_response is not None:
+                    terminal_response["_backend_failed"] = True
                 log.warning("v1 tool-loop non-200: status=%s model=%s url=%s body=%s",
                             r.status_code, model, f"{ep}/chat/completions", r.text[:240])
                 break
@@ -260,6 +262,8 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
             if _rc:
                 push(f"\n\n🤖 {model} thinking:\n{_rc}\n")
         except Exception as e:  # noqa: BLE001 -- best-effort
+            if terminal_response is not None:
+                terminal_response["_backend_failed"] = True
             log.debug("v1 secondary tool-loop call failed: %s", e)
             break
         tcs = msg.get("tool_calls") or []

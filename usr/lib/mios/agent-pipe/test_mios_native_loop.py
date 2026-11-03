@@ -556,6 +556,16 @@ def _run_registered_cpu_fallback():
     async def run(case):
         _base_configure({}, [], [])
         calls._configure()
+        actual_calls.RR_ENABLE = False  # undo the imported fixture's RR-specific scenario
+        import mios_secondary_loop as secondary
+        secondary.configure(apply_outbound_auth=lambda *a: None,
+            endpoint_supports_parallel_tools=lambda *a: False,
+            secondary_tool_max_iters=1 if case == "gpu-limit" else 4,
+            secondary_replan_max=1, daemon_diagnose_enable=False)
+        secondary._rescue_tool_calls = lambda *a: []
+        async def execute(*args, **kwargs):
+            return [{"role": "tool", "tool_call_id": "opaque-call", "content": '{"success": false}'}], True
+        secondary._exec_tool_calls = execute
         active, admitted, requests, readiness = [], [], [], []
         async def admit(*args, **kwargs): admitted.append(args)
         async def model_active(ep, model, delta, est): active.append(delta)
@@ -591,7 +601,16 @@ def _run_registered_cpu_fallback():
             async def post(self, url, **kwargs):
                 Primary.calls += 1
                 assert url == "http://x/v1/chat/completions"
-                return _FakeResp("Primary answer." if case == "primary-success" else "")
+                if case == "gpu-transport-failure": raise OSError("offline transport failure")
+                response = _FakeResp("Primary answer." if case in ("primary-success", "gpu-success")
+                    or (case in ("gpu-empty", "gpu-limit") and Primary.calls == 2)
+                    or (case == "gpu-tool-recovery" and Primary.calls == 3) else "")
+                response.status_code = 502 if case == "gpu-http-failure" else 200
+                response.text = "offline primary failure"
+                if case in ("gpu-limit", "gpu-tool-recovery") and Primary.calls == 1:
+                    response.json = lambda: {"choices": [{"message": {"tool_calls": [
+                        {"id": "opaque-call", "type": "function", "function": {"name": "opaque_tool", "arguments": "{}"}}]}}]}
+                return response
             def stream(self, method, url, **kwargs):
                 Primary.calls += 1
                 assert url == "http://x/v1/chat/completions"
@@ -608,7 +627,22 @@ def _run_registered_cpu_fallback():
                 _call_agent_complete=actual_calls._call_agent_complete,
                 _get_client=_async_const(client), _endpoint_key=_endpoint_key,
                 REFINE_ENDPOINT="http://x", NATIVE_LOOP_TIMEOUT_S=0.03 if case == "timeout" else 1.0)
-            M._v1_secondary_tool_loop = _async_const([])
+            async def real_secondary(*args, **kwargs):
+                import mios_config
+                original = mios_config._toml_section
+                def section(name):
+                    if name == "agent_pipe":
+                        return {"tool_max_iters": 1 if case == "gpu-limit" else 4,
+                                "replan_max": 1, "reflexion_enable": False}
+                    return original(name)
+                mios_config._toml_section = section
+                try:
+                    result = await secondary._v1_secondary_tool_loop(*args, **kwargs)
+                    failed = kwargs["terminal_response"].get("_backend_failed", False)
+                    assert bool(failed) is (case in ("gpu-http-failure", "gpu-transport-failure"))
+                    return result
+                finally: mios_config._toml_section = original
+            M._v1_secondary_tool_loop = real_secondary if case.startswith("gpu-") else _async_const([])
             async def invoke():
                 return await M._respond_native_loop_direct(None, streaming=case == "stream",
                     chat_id="fallback", model="public-alias", session_id=None,
@@ -630,20 +664,22 @@ def _run_registered_cpu_fallback():
                     content = b"".join([chunk async for chunk in response.body_iterator]).decode()
                     assert "Configured CPU answer." in content and '"model": "public-alias"' in content
                     assert content.count("data: [DONE]") == 1
-                elif case == "cpu":
+                elif case in ("cpu", "gpu-http-failure", "gpu-transport-failure"):
                     assert _body_text(response) == "Configured CPU answer."
                     assert json.loads(bytes(response.body))["model"] == "public-alias"
-                elif case == "primary-success": assert _body_text(response) == "Primary answer."
+                elif case in ("primary-success", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"):
+                    assert _body_text(response) == "Primary answer.", (case, _body_text(response), Primary.calls)
                 else: assert response.status_code == 503
-            assert Primary.calls == 1, "same primary retried because /v1 spelling differed"
+            expected = 2 if case in ("gpu-empty", "gpu-limit") else 3 if case == "gpu-tool-recovery" else 1
+            assert Primary.calls == expected, (case, Primary.calls, "failed primary retried or required synthesis skipped")
             if case == "timeout":
                 assert closed.is_set() and not actual_calls._IN_FLIGHT_PROMPTS
-            if case in ("cpu", "stream", "cancel", "timeout", "empty-cpu"):
+            if case in ("cpu", "stream", "cancel", "timeout", "empty-cpu", "gpu-http-failure", "gpu-transport-failure"):
                 assert len(requests) == 1 and len(admitted) == 1 and active == [1, -1]
             else:
                 assert not requests and not admitted and not active
-            if case in ("primary-success", "explicit", "selected"): assert not readiness
-    for case in ("cpu", "stream", "unready", "empty-registry", "primary-success", "explicit", "selected", "cancel", "timeout", "empty-cpu"):
+            if case in ("primary-success", "explicit", "selected", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"): assert not readiness
+    for case in ("cpu", "stream", "unready", "empty-registry", "primary-success", "explicit", "selected", "cancel", "timeout", "empty-cpu", "gpu-http-failure", "gpu-transport-failure", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"):
         asyncio.run(run(case))
     print("registered CPU fallback: real registry/readiness/auth/admission/model/cancellation and policy controls: OK")
 
