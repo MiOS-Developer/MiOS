@@ -7,6 +7,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import glob
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
@@ -157,6 +158,13 @@ class Hardware:
     def __exit__(self, *args):
         self.stack.close()
         self.temp.cleanup()
+
+    def mark_managed(self, name):
+        state_path = self.output / ".mios-cdi-state"
+        state = json.loads(state_path.read_text()) if state_path.exists() else {
+            "owner": "mios-cdi-gen", "version": 1, "files": {}}
+        state["files"][name] = hashlib.sha256((self.output / name).read_bytes()).hexdigest()
+        state_path.write_text(json.dumps(state))
 
     def cli(self, *args):
         output = io.StringIO()
@@ -349,14 +357,15 @@ class TestCdiGen(unittest.TestCase):
             status, result = f.cli("--vendor", "all")
             self.assertEqual(status, 0)
             self.assertEqual(result["generated"], ["amd"])
-            self.assertEqual(sorted(p.name for p in f.output.iterdir()), ["amd.json"])
+            self.assertEqual(sorted(p.name for p in f.output.iterdir() if not p.name.startswith(".mios-cdi-")), ["amd.json"])
             self.assertEqual((f.output / "amd.json").stat().st_mode & 0o777, 0o644)
 
-    def test_detach_removes_only_own_stale_spec_and_dry_run_preserves_it(self):
+    def test_detach_removes_only_recorded_spec_and_dry_run_preserves_it(self):
         with Hardware() as f:
-            f.output.mkdir()
-            (f.output / "nvidia.yaml").write_text("stale")
+            f.nvidia()
+            self.assertEqual(f.cli("--vendor", "nvidia")[0], 0)
             (f.output / "operator.json").write_text("operator")
+            f.driver("/sys/bus/pci/devices/0000:01:00.0", "vfio-pci")
             status, _ = f.cli("--vendor", "nvidia", "--dry-run")
             self.assertEqual(status, 1)
             self.assertTrue((f.output / "nvidia.yaml").exists())
@@ -368,8 +377,7 @@ class TestCdiGen(unittest.TestCase):
     def test_toolkit_failure_cannot_leave_previous_nvidia_advertisement(self):
         with Hardware() as f:
             f.nvidia()
-            f.output.mkdir()
-            (f.output / "nvidia.yaml").write_text("stale")
+            self.assertEqual(f.cli("--vendor", "nvidia")[0], 0)
             f.tool_status = 42
             status, result = f.cli("--vendor", "nvidia")
             self.assertEqual(status, 1)
@@ -389,13 +397,14 @@ class TestCdiGen(unittest.TestCase):
             status, result = f.cli("--vendor", "all")
             self.assertEqual(status, 0)
             self.assertEqual(result["generated"], ["intel"])
-            self.assertEqual(sorted(p.name for p in f.output.iterdir()), ["intel.json"])
+            self.assertEqual(sorted(p.name for p in f.output.iterdir() if not p.name.startswith(".mios-cdi-")), ["intel.json"])
 
     def test_canonical_nvidia_output_retires_legacy_json(self):
         with Hardware() as f:
             f.nvidia()
             f.output.mkdir()
             (f.output / "nvidia.json").write_text("legacy")
+            f.mark_managed("nvidia.json")
             (f.output / "operator.yaml").write_text("keep")
             status, result = f.cli("--vendor", "nvidia")
             self.assertEqual(status, 0)
@@ -421,6 +430,60 @@ class TestCdiGen(unittest.TestCase):
             f.tool_output = json.dumps(spec)
             with self.assertRaisesRegex(RuntimeError, "control device"):
                 f.module.build_nvidia_cdi_spec(f.module.find_nvidia_devices())
+
+    def test_unmarked_legacy_spec_requires_review_and_is_preserved(self):
+        with Hardware() as f:
+            f.nvidia()
+            f.output.mkdir()
+            legacy = f.output / "nvidia.json"
+            legacy.write_text("unproven legacy output")
+            status, result = f.cli("--vendor", "nvidia")
+            self.assertEqual(status, 1)
+            self.assertIn("unmanaged CDI", result["errors"]["output"])
+            self.assertEqual(legacy.read_text(), "unproven legacy output")
+            self.assertFalse((f.output / "nvidia.yaml").exists())
+            self.assertEqual(result["published"], [])
+
+    def test_unmanaged_canonical_spec_survives_absent_hardware(self):
+        with Hardware() as f:
+            f.output.mkdir()
+            target = f.output / "nvidia.yaml"
+            target.write_text("administrator spec")
+            status, result = f.cli("--vendor", "nvidia")
+            self.assertEqual(status, 1)
+            self.assertIn("unmanaged CDI", result["errors"]["output"])
+            self.assertEqual(target.read_text(), "administrator spec")
+
+    def test_administrator_changes_to_recorded_output_are_preserved(self):
+        with Hardware() as f:
+            f.nvidia()
+            self.assertEqual(f.cli("--vendor", "nvidia")[0], 0)
+            target = f.output / "nvidia.yaml"
+            target.write_text("administrator edit")
+            f.driver("/sys/bus/pci/devices/0000:01:00.0", "vfio-pci")
+            status, result = f.cli("--vendor", "nvidia")
+            self.assertEqual(status, 1)
+            self.assertIn("modified CDI", result["errors"]["output"])
+            self.assertEqual(target.read_text(), "administrator edit")
+
+    def test_ownership_ledger_must_be_ours_and_cannot_follow_links(self):
+        for mode in ("wrong-owner", "linked"):
+            with self.subTest(mode=mode), Hardware() as f:
+                f.dri()
+                f.output.mkdir()
+                state = f.output / ".mios-cdi-state"
+                if mode == "linked":
+                    referent = f.root / "administrator"
+                    referent.write_text("preserve")
+                    state.symlink_to(referent)
+                else:
+                    state.write_text('{"owner":"administrator","version":1,"files":{}}')
+                status, result = f.cli("--vendor", "amd")
+                self.assertEqual(status, 1)
+                self.assertEqual(result["published"], [])
+                self.assertFalse((f.output / "amd.json").exists())
+                if mode == "linked":
+                    self.assertEqual(referent.read_text(), "preserve")
 
     def test_linked_output_is_refused_without_modifying_referent(self):
         with Hardware() as f:

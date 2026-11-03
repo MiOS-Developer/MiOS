@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import argparse
 import glob
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -211,6 +213,78 @@ def _filename(vendor: str) -> str:
     return "nvidia.yaml" if vendor == "nvidia" else vendor + ".json"
 
 
+def _digest(path: str) -> str:
+    if os.path.islink(path) or not os.path.isfile(path):
+        raise RuntimeError("refusing non-regular CDI target: " + path)
+    with open(path, "rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def _load_state(path: str) -> Dict[str, Any]:
+    if not os.path.lexists(path):
+        return {"owner": "mios-cdi-gen", "version": 1, "files": {}}
+    if os.path.islink(path) or not os.path.isfile(path):
+        raise RuntimeError("refusing non-regular CDI ownership state: " + path)
+    with open(path, encoding="utf-8") as source:
+        state = json.load(source)
+    names = {"nvidia.yaml", "nvidia.json", "amd.json", "intel.json"}
+    if (not isinstance(state, dict) or state.get("owner") != "mios-cdi-gen"
+            or state.get("version") != 1 or not isinstance(state.get("files"), dict)
+            or any(name not in names or not isinstance(digest, str)
+                   or re.fullmatch("[a-f0-9]{64}", digest) is None
+                   for name, digest in state["files"].items())):
+        raise RuntimeError("unrecognized CDI ownership state: " + path)
+    return state
+
+
+def _reconcile(output_dir: str, selected: tuple, generated: Dict[str, Any]) -> List[str]:
+    """Only this producer's unchanged, recorded output can be replaced or removed."""
+    if not generated and not os.path.exists(output_dir):
+        return []
+    os.makedirs(output_dir, mode=0o755, exist_ok=True)
+    descriptor = os.open(os.path.join(output_dir, ".mios-cdi-lock"),
+                         os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError("CDI lock must be a regular file")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        state_path = os.path.join(output_dir, ".mios-cdi-state")
+        state = _load_state(state_path)
+        # Check every affected file before changing any: an unmarked legacy
+        # output or an administrator edit needs a reviewed migration, not a guess.
+        for vendor in selected:
+            names = [_filename(vendor)] + (["nvidia.json"] if vendor == "nvidia" else [])
+            for name in names:
+                target = os.path.join(output_dir, name)
+                if os.path.lexists(target):
+                    recorded = state["files"].get(name)
+                    if recorded is None:
+                        raise RuntimeError("refusing unmanaged CDI target: " + target)
+                    if _digest(target) != recorded:
+                        raise RuntimeError("preserving modified CDI target: " + target)
+        published = []
+        for vendor in selected:
+            name = _filename(vendor)
+            target = os.path.join(output_dir, name)
+            if vendor in generated:
+                _publish(target, generated[vendor]["spec"])
+                state["files"][name] = _digest(target)
+                published.append(target)
+            else:
+                if os.path.lexists(target):
+                    os.unlink(target)
+                state["files"].pop(name, None)
+            if vendor == "nvidia":
+                legacy = os.path.join(output_dir, "nvidia.json")
+                if os.path.lexists(legacy):
+                    os.unlink(legacy)
+                state["files"].pop("nvidia.json", None)
+        _publish(state_path, state)
+        return published
+    finally:
+        os.close(descriptor)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate CDI for probed, host-bound GPU devices")
     parser.add_argument("--output-dir", default="/etc/cdi", help="Destination directory for CDI specifications")
@@ -237,28 +311,16 @@ def main() -> int:
                                  "devices": len(spec["devices"]), "spec": spec}
         except (OSError, RuntimeError, ValueError) as error:
             errors[vendor] = str(error)
+    published: List[str] = []
     if not args.dry_run:
         try:
-            # Do not retain this producer's stale advertisement after detach or
-            # failed discovery. Other filenames and directories remain untouched.
-            for vendor in selected:
-                names = [_filename(vendor)] + (["nvidia.json"] if vendor == "nvidia" else [])
-                for name in names:
-                    target = os.path.join(args.output_dir, name)
-                    if (vendor not in generated or name != _filename(vendor)) and os.path.lexists(target):
-                        if os.path.islink(target) or not os.path.isfile(target):
-                            raise RuntimeError("refusing non-regular CDI target: " + target)
-                        os.unlink(target)
-            if generated and not errors:
-                os.makedirs(args.output_dir, mode=0o755, exist_ok=True)
-                for details in generated.values():
-                    _publish(details["target"], details["spec"])
-        except (OSError, RuntimeError) as error:
+            published = _reconcile(args.output_dir, selected, generated)
+        except (OSError, RuntimeError, ValueError) as error:
             errors["output"] = str(error)
     failed = bool(errors) or (args.vendor not in ("auto", "all") and args.vendor in unavailable)
     result = {"status": "error" if errors else ("unavailable" if failed else "success"),
               "dry_run": args.dry_run, "output_dir": args.output_dir,
-              "generated": list(generated), "specs": generated,
+              "generated": list(generated), "specs": generated, "published": published,
               "unavailable": unavailable, "errors": errors}
     if args.json:
         print(json.dumps(result, indent=2))
