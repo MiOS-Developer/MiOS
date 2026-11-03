@@ -95,18 +95,21 @@ class Projections(unittest.TestCase):
 
     def test_native_json_and_rdp_file(self):
         with tempfile.TemporaryDirectory() as d:
-            env = dict(ENV, MIOS_VENDOR_TOML=str(SSOT))
+            env = dict(ENV, MIOS_VENDOR_TOML=str(SSOT), MIOS_TOML_GET=str(ROOT / 'usr/libexec/mios/mios-toml-get'))
             r = subprocess.run([str(ROOT / 'usr/libexec/mios/mios-rdp'), 'native-config', d], capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
             nj = json.loads(Path(d, 'native.json').read_text())
             self.assertEqual(nj['device_forwarding']['usb']['allow'], [])
             self.assertIs(nj['redirect']['usb'], False)
-            off = subprocess.run([str(ROOT / 'usr/libexec/mios/mios-rdp'), 'rdp-file'], capture_output=True, text=True, env=env).stdout
-            self.assertNotIn('usbdevicestoredirect', off, 'USB must not be requested while the server forbids it')
+            off = subprocess.run([str(ROOT / 'usr/libexec/mios/mios-rdp'), 'rdp-file'], capture_output=True, text=True, env=env)
+            self.assertEqual(off.returncode, 0, off.stderr)
+            self.assertIn('full address:s:', off.stdout)
+            self.assertNotIn('usbdevicestoredirect', off.stdout, 'USB must not be requested while the server forbids it')
             on_toml = Path(d, 'on.toml')
             on_toml.write_text(SSOT.read_text().replace('usb                 = false         # MS-RDPEUSB', 'usb                 = true          # MS-RDPEUSB', 1))
-            on = subprocess.run([str(ROOT / 'usr/libexec/mios/mios-rdp'), 'rdp-file'], capture_output=True, text=True, env=dict(env, MIOS_VENDOR_TOML=str(on_toml))).stdout
-            self.assertIn('usbdevicestoredirect:s:*', on)
+            on = subprocess.run([str(ROOT / 'usr/libexec/mios/mios-rdp'), 'rdp-file'], capture_output=True, text=True, env=dict(env, MIOS_VENDOR_TOML=str(on_toml)))
+            self.assertEqual(on.returncode, 0, on.stderr)
+            self.assertIn('usbdevicestoredirect:s:*', on.stdout)
 
 
 @unittest.skipUnless(GEN and os.access(GEN, os.X_OK), 'mios-gen not built')

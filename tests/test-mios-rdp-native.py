@@ -254,12 +254,14 @@ class TestBackendSelection(unittest.TestCase):
         self.toml = _exe(self.tmp, "mios-toml-get", FAKE_TOML)
         # Backend controls must not masquerade as real listener switches in the host journal.
         _exe(self.tmp, "logger", "pass\n")
+        _exe(self.tmp, "tailscale", "import sys\nsys.exit(127)\n")
+        _exe(self.tmp, "hostname", "print('mios-test.local')\n")
         self.native = os.path.join(self.tmp, "native")
         self.state = os.path.join(self.tmp, "state")
         os.makedirs(self.native)
         os.makedirs(self.state)
 
-    def run_rdp(self, server, *args, binary=True, marker=False, override=None, systemctl=None):
+    def run_rdp(self, server, *args, binary=True, marker=False, override=None, systemctl=None, settings=None):
         b = os.path.join(self.native, "mios-rdp-server")
         if binary:
             _exe(self.native, "mios-rdp-server", "print('x')\n")
@@ -278,14 +280,43 @@ class TestBackendSelection(unittest.TestCase):
         elif os.path.exists(o):
             os.unlink(o)
         rdp = {"enabled": True, "operator_uid": os.getuid()}
+        rdp.update(settings or {})
         if server:
             rdp["server"] = server
         env = dict(os.environ, MIOS_TOML_GET=self.toml, MIOS_RDP_NATIVE_DIR=self.native, MIOS_RDP_STATE_DIR=self.state,
                    FAKE_SECTION_remote_rdp=json.dumps(rdp), MIOS_PORTS_RDP="8300")
+        env["PATH"] = self.tmp + os.pathsep + env.get("PATH", "")
         if systemctl is not None:
             _exe(self.tmp, "systemctl", systemctl)
-            env["PATH"] = self.tmp + os.pathsep + env.get("PATH", "")
         return subprocess.run(["bash", _RDP, *args], env=env, capture_output=True, text=True, timeout=30)
+
+    def test_rdp_file_falls_back_when_tailnet_discovery_fails(self):
+        r = self.run_rdp("native", "rdp-file", settings={"redirect": {"usb": True}})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("full address:s:mios-test.local:8300", r.stdout)
+        self.assertIn("usbdevicestoredirect:s:*", r.stdout)
+
+    def test_rdp_file_prefers_live_tailnet_name(self):
+        _exe(self.tmp, "tailscale", 'import json\nprint(json.dumps({"Self": {"DNSName": "mios-test.tail.test."}}))\n')
+        r = self.run_rdp("native", "rdp-file")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("full address:s:mios-test.tail.test:8300", r.stdout)
+        self.assertNotIn("usbdevicestoredirect", r.stdout)
+
+    def test_configuration_is_data_not_shell_source(self):
+        marker = os.path.join(self.tmp, "must-not-exist")
+        value = f'$(touch {marker}); \"quoted\"\nsecond line'
+        r = self.run_rdp("native", "native-config", self.tmp, settings={"output": value})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.tmp, "native.json")) as f:
+            self.assertEqual(json.load(f)["output"], value)
+        self.assertFalse(os.path.exists(marker))
+
+    def test_configuration_rejects_nul_delimiters(self):
+        r = self.run_rdp("native", "native-config", self.tmp, settings={"output": "bad\0value"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid RDP configuration fields", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "native.json")))
 
     @unittest.skipUnless(os.getuid() == 0, "backend switching requires root")
     def test_native_switch_preserves_listener_when_helper_cannot_start(self):
@@ -472,7 +503,7 @@ class TestSsotDefaults(unittest.TestCase):
         self.assertFalse(n.get("udp_transport", False))
 
     def test_pam_configuration(self):
-        for path in ("/usr/lib/pam.d/mios-rdp", "/etc/pam.d/mios-rdp"):
+        for path in (os.path.join(_ROOT, "usr/lib/pam.d/mios-rdp"),):
             self.assertTrue(os.path.exists(path), f"missing PAM config {path}")
             st = os.stat(path)
             self.assertEqual(oct(st.st_mode & 0o777), "0o644", f"bad mode on {path}")
@@ -491,9 +522,8 @@ class TestSsotDefaults(unittest.TestCase):
         self.assertTrue(d.get("egl", {}).get("ok"), f"egl self-test failed: {d}")
         self.assertTrue(d.get("invariants", {}).get("ok"), f"pipeline/redirect invariants failed: {d}")
 
-    def test_build_json_matches_binaries(self):
+    def check_build_receipt(self, rdp_dir):
         import hashlib
-        rdp_dir = os.path.dirname(_SERVER)
         build_json = os.path.join(rdp_dir, "build.json")
         self.assertTrue(os.path.exists(build_json), f"missing {build_json}")
         with open(build_json) as f:
@@ -509,17 +539,47 @@ class TestSsotDefaults(unittest.TestCase):
                     h.update(chunk)
             self.assertEqual(meta["binaries"][bname], h.hexdigest(), f"SHA-256 mismatch for {bname}")
 
+    def test_build_json_matches_binaries(self):
+        rdp_dir = os.path.dirname(_SERVER)
+        outputs = ("mios-rdp-server", "mios-rdp-priv", "build.json")
+        # Image build outputs are not tracked source files. A partial build or
+        # an explicit candidate must still fail on missing receipts/binaries.
+        if not os.environ.get("MIOS_RDP_SERVER_BIN") and not any(
+                os.path.lexists(os.path.join(rdp_dir, name)) for name in outputs):
+            self.skipTest("native build outputs absent; source checkout only")
+        self.check_build_receipt(rdp_dir)
+
+    def test_build_receipt_integrity_two_sided(self):
+        import hashlib
+        with tempfile.TemporaryDirectory(prefix="mios-rdp-receipt-") as d:
+            binaries = {}
+            for name in ("mios-rdp-server", "mios-rdp-priv"):
+                payload = (name + " fixture").encode()
+                with open(os.path.join(d, name), "wb") as f:
+                    f.write(payload)
+                binaries[name] = hashlib.sha256(payload).hexdigest()
+            with self.assertRaisesRegex(AssertionError, "missing .*build.json"):
+                self.check_build_receipt(d)
+            with open(os.path.join(d, "build.json"), "w") as f:
+                json.dump({"self_test": {"openh264": True, "egl": True},
+                           "features": ["nscodec"], "binaries": binaries}, f)
+            self.check_build_receipt(d)
+            with open(os.path.join(d, "mios-rdp-server"), "ab") as f:
+                f.write(b"tampered")
+            with self.assertRaisesRegex(AssertionError, "SHA-256 mismatch for mios-rdp-server"):
+                self.check_build_receipt(d)
+
     def test_systemd_units_and_ssot_invariants(self):
-        with open("/usr/lib/systemd/user/mios-rdp-native.service") as f:
+        with open(os.path.join(_ROOT, "usr/lib/systemd/user/mios-rdp-native.service")) as f:
             native_u = f.read()
         self.assertIn("RestartMode=direct", native_u)
         self.assertIn("StartLimitBurst=5", native_u)
         self.assertIn("OnFailure=mios-rdp-native-failed.service", native_u)
         self.assertIn("ExecCondition=/usr/libexec/mios/mios-rdp enabled native", native_u)
-        with open("/usr/lib/systemd/user/mios-rdp-vnc.service") as f:
+        with open(os.path.join(_ROOT, "usr/lib/systemd/user/mios-rdp-vnc.service")) as f:
             vnc_u = f.read()
         self.assertIn("ExecCondition=/usr/libexec/mios/mios-rdp enabled xrdp", vnc_u)
-        with open("/usr/lib/systemd/system/mios-rdp-priv@.service") as f:
+        with open(os.path.join(_ROOT, "usr/lib/systemd/system/mios-rdp-priv@.service")) as f:
             priv_u = f.read()
         self.assertIn("CAP_SYS_PTRACE", priv_u)
         self.assertIn("~process_vm_readv process_vm_writev", priv_u)
@@ -597,6 +657,16 @@ class TestSsotDefaults(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("MIOS_RDP_NATIVE_LIVE") == "1", "live native-server checks are opt-in (MIOS_RDP_NATIVE_LIVE=1)")
 class TestLive(unittest.TestCase):
     """Private server on 127.0.0.1:18301 (test-auth build: MIOS_RDP_BIN) + FreeRDP in Xvfb + SCALETEST."""
+
+    def test_installed_pam_compatibility(self):
+        for path in ("/usr/lib/pam.d/mios-rdp", "/etc/pam.d/mios-rdp"):
+            self.assertTrue(os.path.exists(path), f"missing PAM config {path}")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+            with open(path) as f:
+                content = f.read()
+            self.assertIn("auth       include      password-auth", content)
+            self.assertIn("account    required     pam_succeed_if.so user ingroup mios-rdp", content)
+            self.assertIn("account    required     pam_succeed_if.so uid >= 1000 quiet", content)
 
     def run_fixture(self, name, *args, timeout=400):
         with tempfile.TemporaryDirectory(prefix="mios-rdp-live-") as live_dir:

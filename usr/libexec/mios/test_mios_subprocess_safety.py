@@ -92,6 +92,12 @@ def test_negative_control_detects_plant():
             break
     check("negative control: os.system regex matches planted string", detected)
 
+def has_shell_eval(code):
+    # The compositor Lua IPC verb is an argument to hyprctl. Keep checking
+    # the rest of the line, including any nested or subsequent shell builtin.
+    code = re.sub(r"\bhyprctl\s+eval\b", "hyprctl", code)
+    return re.search(r"\beval\b", code) is not None
+
 def test_no_unattested_eval_in_libexec():
     attested = re.compile(r"^#\s*TD-1:\s*eval-safe,\s*input=.+,\s*not agent-controlled")
     viol = []
@@ -115,7 +121,7 @@ def test_no_unattested_eval_in_libexec():
                 if stripped.startswith("#"):
                     continue
                 code_part = line.split("#")[0].strip()
-                if re.search(r'\beval\b', code_part):
+                if has_shell_eval(code_part):
                     if idx > 0 and attested.match(lines[idx - 1].strip()):
                         continue
                     rel = os.path.relpath(path, _HERE).replace(os.sep, "/")
@@ -132,7 +138,7 @@ def test_negative_control_detects_unattested_eval():
     detected_bad = False
     for idx, line in enumerate(bad_lines):
         code_part = line.split("#")[0].strip()
-        if re.search(r'\beval\b', code_part):
+        if has_shell_eval(code_part):
             if idx == 0 or not attested.match(bad_lines[idx - 1].strip()):
                 detected_bad = True
     check("negative control: unattested eval flagged as violation", detected_bad)
@@ -142,10 +148,20 @@ def test_negative_control_detects_unattested_eval():
     flagged_good = False
     for idx, line in enumerate(good_lines):
         code_part = line.split("#")[0].strip()
-        if re.search(r'\beval\b', code_part):
+        if has_shell_eval(code_part):
             if idx == 0 or not attested.match(good_lines[idx - 1].strip()):
                 flagged_good = True
     check("negative control: attested eval passes check", not flagged_good)
+    check("compositor Lua subcommand is not shell evaluation",
+          not has_shell_eval("hyprctl eval 'hl.plugin.example.active()'"))
+    for sample in (
+        'hyprctl eval "literal"; eval "$agent_input"',
+        'hyprctl eval "literal"; builtin eval "$agent_input"',
+        'hyprctl eval "$(eval "$agent_input")"',
+    ):
+        check("negative control: shell evaluation beside compositor command is detected",
+              has_shell_eval(sample), sample)
+
 
 def main():
     test_no_os_system_in_libexec()

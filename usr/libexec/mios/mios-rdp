@@ -21,10 +21,12 @@ SVC=mios-rdp
 log() { printf '[mios-rdp] %s\n' "$*" >&2; }
 
 load_cfg() {
-    local json
+    local json cfg_key cfg_value index
+    local -a cfg_fields
     json="$("$TOML_GET" --section remote.rdp 2>/dev/null || echo '{}')"
-    eval "$(printf '%s' "$json" | python3 -I -c '
-import json, shlex, sys
+    # Read data fields, never shell source, from the configuration formatter.
+    mapfile -d '' -t cfg_fields < <(printf '%s' "$json" | python3 -I -c '
+import json, sys
 raw = sys.stdin.read().strip() or "{}"
 try:
     d = json.loads(raw)
@@ -69,7 +71,7 @@ merged = {k: d.get(k, dv) for k, dv in defaults.items()}
 for sub in ("native", "redirect", "naming"):
     v = d.get(sub)
     merged[sub] = v if isinstance(v, dict) else {}
-print("RDP_JSON=%s" % shlex.quote(json.dumps(merged)))
+fields = ["RDP_JSON", json.dumps(merged)]
 for k, dv in defaults.items():
     v = d.get(k, dv)
     if isinstance(v, dict):
@@ -78,8 +80,21 @@ for k, dv in defaults.items():
         v = "true" if v else "false"
     elif isinstance(v, list):
         v = " ".join(str(x) for x in v)
-    print("RDP_%s=%s" % (k.upper(), shlex.quote(str(v))))
-')"
+    fields.extend(("RDP_" + k.upper(), str(v)))
+if any("\0" in field for field in fields):
+    raise ValueError("RDP configuration contains a NUL")
+sys.stdout.write("\0".join(fields + ["MIOS_RDP_CONFIG_COMPLETE"]) + "\0")
+')
+    # The final marker also detects formatter failure through process substitution.
+    if (( ${#cfg_fields[@]} == 0 || ${#cfg_fields[@]} % 2 != 1 )) ||
+        [[ "${cfg_fields[-1]}" != MIOS_RDP_CONFIG_COMPLETE ]]; then
+        log "invalid RDP configuration fields"; return 1
+    fi
+    for ((index = 0; index < ${#cfg_fields[@]} - 1; index += 2)); do
+        cfg_key="${cfg_fields[index]}"; cfg_value="${cfg_fields[index+1]}"
+        [[ "$cfg_key" =~ ^RDP_[A-Z_]+$ ]] || { log "invalid RDP configuration key"; return 1; }
+        printf -v "$cfg_key" '%s' "$cfg_value"
+    done
     RDP_PORT="${MIOS_PORTS_RDP:-$("$TOML_GET" ports rdp 8300 2>/dev/null || echo 8300)}"
     [[ "$RDP_PORT" =~ ^[0-9]+$ ]] || { log "invalid [ports].rdp '$RDP_PORT'"; exit 1; }
     [[ "$RDP_OPERATOR_UID" =~ ^[0-9]+$ ]] || { log "invalid operator_uid"; exit 1; }
@@ -666,7 +681,7 @@ cmd_rdp_file() {
 try:
     print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))
 except Exception:
-    pass' 2>/dev/null)"
+    pass' 2>/dev/null)" || host=""
     [[ -n "$host" ]] || host="$(hostname -f 2>/dev/null || hostname)"
     cat <<EOF
 full address:s:${host}:${RDP_PORT}
