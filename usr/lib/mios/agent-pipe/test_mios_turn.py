@@ -142,6 +142,39 @@ class TestLiveAgentNames(unittest.TestCase):
         live = asyncio.run(mios_turn._live_agent_names())
         self.assertEqual(live, {"local"})
 
+    def test_disabled_and_empty_endpoints_are_never_live(self):
+        reg = {"ready": {"endpoint": "http://ready"},
+               "disabled": {"endpoint": "http://disabled", "enabled": False},
+               "empty": {"endpoint": ""}, "blank": {"endpoint": "  "},
+               "missing": {}, "invalid": {"endpoint": 123}}
+        _configure(reg)
+        self.assertEqual(asyncio.run(mios_turn._live_agent_names()), {"ready"})
+
+    def test_probe_requires_successful_models_response(self):
+        import httpx
+        import types
+        from unittest.mock import patch
+        reg = {name: {"endpoint": f"http://{name}.invalid/v1", "health_gate": True}
+               for name in ("online", "unauthorized", "missing")}
+        _configure(reg)
+        status = {"online.invalid": 200, "unauthorized.invalid": 401, "missing.invalid": 404}
+        calls = []
+        def respond(request):
+            calls.append(request)
+            self.assertEqual(request.headers.get("Authorization"), "Bearer synthetic")
+            return httpx.Response(status[request.url.host], json={"data": []})
+        mios_turn.configure(_probe_auth_headers=lambda endpoint: {"Authorization": "Bearer synthetic"})
+        transport = httpx.MockTransport(respond)
+        client = httpx.AsyncClient
+        fake = types.SimpleNamespace(Timeout=httpx.Timeout,
+            AsyncClient=lambda **kwargs: client(transport=transport, **kwargs))
+        import mios_pipe.routing.turn as actual
+        with patch.object(actual, "httpx", fake):
+            self.assertEqual(asyncio.run(mios_turn._live_agent_names()), {"online"})
+        self.assertEqual(len(calls), 3)
+        self.assertFalse(mios_turn._NODE_LIVE["unauthorized"][1])
+        self.assertFalse(mios_turn._NODE_LIVE["missing"][1])
+
 class TestProbeVerifyTLS(unittest.TestCase):
     """task_254: probes verify TLS unless the SSOT opts out. See ADR-0016."""
 

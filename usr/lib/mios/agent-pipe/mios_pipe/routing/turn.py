@@ -43,6 +43,10 @@ async def _live_agent_names() -> set:
     to_probe: list = []
     now = time.time()
     for name, cfg in _AGENT_REGISTRY.items():
+        if (not isinstance(cfg, dict) or cfg.get("enabled") is False
+                or not isinstance(cfg.get("endpoint"), str)
+                or not cfg["endpoint"].strip()):
+            continue
         if not _should_health_probe(cfg):
             live.add(name)
             continue
@@ -62,7 +66,7 @@ async def _live_agent_names() -> set:
                 return False
             try:  # OpenAI /v1/models (llama.cpp + vLLM + every MiOS lane speak this)
                 r = await client.get(f"{ep}/models", headers=_probe_auth_headers(ep))
-                return r.status_code < 500
+                return 200 <= r.status_code < 300
             except Exception:
                 return False
 

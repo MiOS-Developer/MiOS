@@ -289,6 +289,75 @@ def _test_refine_disconnect_cleanup():
         asyncio.run(exercise(mode))
 
 
+def _test_explicit_agent_contract():
+    import time
+    import mios_turn as turn
+    import mios_fanout as fanout
+    registry = {
+        "unavailable-mobile": {"role": "mobile", "endpoint": "", "health_gate": True},
+        "primary": {"role": "general", "endpoint": "http://primary/v1", "default": True},
+        "worker-online": {"role": "research", "endpoint": "http://online/v1", "health_gate": True},
+        "worker-offline": {"role": "research", "endpoint": "http://offline/v1", "health_gate": True},
+        "worker-disabled": {"endpoint": "http://disabled/v1", "enabled": False},
+    }
+    live_cache = {"worker-online": (time.time(), True), "worker-offline": (time.time(), False)}
+    turn.configure(_AGENT_REGISTRY=registry, _NODE_LIVE=live_cache,
+                   _should_health_probe=lambda cfg: bool(cfg.get("health_gate")),
+                   _probe_auth_headers=lambda endpoint: {})
+    calls = []
+    async def native(refined, **kwargs):
+        calls.append(kwargs)
+        return kwargs
+    def forbidden_picker(role):
+        raise AssertionError("ordinary text must not enter the general role picker")
+    _wire_common(_AGENT_REGISTRY=registry, _live_agent_names=turn._live_agent_names,
+                 _pick_agent=forbidden_picker, _respond_native_loop_direct=native)
+    async def handler(query, forced=None, council=False, refined=None):
+        return await mios_chat._kernel_agent_handler(None,
+            refined=refined or {"intent": "agent"}, last_user_text=query,
+            messages=[{"role": "user", "content": query}], streaming=False,
+            _force_delegate=forced, _force_council=council, _mflags={})
+    for query in ("Explain this paragraph.", "I am comparing primary and worker-online.",
+                  "What is a mobile role?", "Please give a concise answer."):
+        result = asyncio.run(handler(query))
+        check("ordinary prose never invents a forced delegate", result["force_delegate"] is None
+              and result["target_agents"] == [], query)
+    result = asyncio.run(handler("Process this task.", forced="worker-online"))
+    check("explicit ready agent uses its registered name", result["force_delegate"] == "worker-online"
+          and result["target_agents"] == ["worker-online"])
+    for target, status in ((True, 400), (("primary", registry["primary"]), 400),
+                           (["primary"], 400), ("unknown", 400),
+                           ("unavailable-mobile", 503), ("worker-disabled", 503),
+                           ("worker-offline", 503)):
+        before = len(calls)
+        result = asyncio.run(handler("Process this task.", forced=target))
+        check("invalid or unavailable explicit target is rejected", result.status_code == status
+              and len(calls) == before, str(target))
+    registry["worker-added"] = {"endpoint": "http://added/v1", "health_gate": True}
+    live_cache["worker-added"] = (time.time(), True)
+    result = asyncio.run(handler("Process this task.", forced="worker-added"))
+    check("newly registered ready endpoint remains routable", result["target_agents"] == ["worker-added"])
+    _wire_common(_AGENT_REGISTRY=registry, _live_agent_names=turn._live_agent_names,
+                 _pick_agent=turn._pick_agent, _respond_native_loop_direct=native,
+                 refine_intent=_ahandler("refine", {"intent": "agent"}))
+    result = _run({"messages": [{"role": "user", "content": "Process this task."}],
+                   "mios_flags": {"force_delegate": "worker-online"}})
+    check("request preserves named force_delegate instead of bool", result["force_delegate"] == "worker-online")
+    fanout.configure(agent_registry=registry, dispatch_cfg={}, depth_exhausted=lambda: False,
+                     dispatch_depth=lambda: 0, lane_sem_key=lambda cfg: cfg.get("role", "general"))
+    _apply(_pick_fanout_agents=fanout._pick_fanout_agents)
+    result = asyncio.run(handler("Research this subject.", council=True))
+    check("fanout tuple contract becomes live names only", set(result["target_agents"])
+          == {"worker-online", "worker-added"}
+          and all(isinstance(name, str) for name in result["target_agents"]))
+    registry.clear()
+    result = asyncio.run(handler("Research this subject.", council=True))
+    check("explicit council with no usable agents fails clearly", result.status_code == 503)
+    result = asyncio.run(handler("Research this subject.", refined={"intent": "agent", "web": True}))
+    check("empty optional pool preserves normal primary routing", result["target_agents"] == []
+          and result["force_delegate"] is None)
+
+
 def main():
     _wire_common()
     r = _run({"model": "m"})
@@ -327,6 +396,8 @@ def main():
           f"reply={reply!r} calls={CALLS}")
 
     _test_exact_action_fastpath()
+
+    _test_explicit_agent_contract()
 
     _test_responses_api()
 

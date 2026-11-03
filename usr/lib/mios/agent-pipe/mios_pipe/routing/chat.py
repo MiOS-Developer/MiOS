@@ -986,7 +986,7 @@ async def chat_completions_logic(request: Request) -> Any:
     _mflags = body.get("mios_flags")
     _mflags = _mflags if isinstance(_mflags, dict) else {}
     _force_council = bool(_mflags.get("force_council"))
-    _force_delegate = bool(_mflags.get("force_delegate"))
+    _force_delegate = _mflags.get("force_delegate") or None
     _force_tool = bool(_mflags.get("force_tool"))
     if _mflags:
         log.info("swarm flags: council=%s delegate=%s tool=%s",
@@ -1911,24 +1911,49 @@ async def _kernel_agent_handler(decision, **ctx):
             session_id=session_id, last_user_text=last_user_text,
             persona_system=_persona_system)
 
-    if not _force_council and not _force_delegate and _mflags.get("force_council") is None:
-        _agent_match = _pick_agent(last_user_text)
-        if _agent_match and _agent_match != "MiOS":
-            log.info("legacy explicit route: %r matched -> forcing delegate to %s",
-                     last_user_text, _agent_match)
-            _force_delegate = _agent_match
-
+    # The general role picker returns (name, cfg), even for unmatched prose.
+    # Only an explicit named flag may force a delegate; ordinary text keeps routing.
     if not _force_council and _force_delegate:
+        if not isinstance(_force_delegate, str):
+            return JSONResponse(status_code=400, content={"error": {
+                "type": "invalid_request_error", "code": "invalid_agent",
+                "message": "force_delegate must name a registered agent"}})
         if _force_delegate == "MiOS":
-            _force_delegate = ""
+            _force_delegate = None
         else:
+            cfg = (_AGENT_REGISTRY or {}).get(_force_delegate)
+            if not isinstance(cfg, dict):
+                return JSONResponse(status_code=400, content={"error": {
+                    "type": "invalid_request_error", "code": "invalid_agent",
+                    "message": "force_delegate names an unknown agent"}})
+            if (cfg.get("enabled") is False or not str(cfg.get("endpoint") or "").strip()
+                    or _force_delegate not in await _live_agent_names()):
+                return JSONResponse(status_code=503, content={"error": {
+                    "type": "server_error", "code": "agent_unavailable",
+                    "message": "The requested agent is unavailable"}})
             log.info("force_delegate: skipping council, 100%% weight to %s", _force_delegate)
 
     _selected = [_force_delegate] if _force_delegate else []
     if _force_council or (not _force_delegate and (
             refined.get("deep") or _routed_domain_var.get(None) in ("web", "local_files")
             or refined.get("web") or refined.get("news"))):
-        _selected = await _pick_fanout_agents(last_user_text, refined, _force_council)
+        live = await _live_agent_names()
+        if not live and _force_council:
+            return JSONResponse(status_code=503, content={"error": {
+                "type": "server_error", "code": "agent_unavailable",
+                "message": "No agents are available for the requested council"}})
+        primary_name = ""
+        if live:
+            primary_name, _primary_cfg = _pick_agent("")
+            if primary_name not in live:
+                primary_name = next((name for name in _AGENT_REGISTRY if name in live), "")
+        candidates = (await _pick_fanout_agents(
+            primary_name, refined, force_council=bool(_force_council), live_agents=live)
+            if primary_name else [])
+        # The fan-out selector returns (name, cfg); dispatch accepts names only.
+        _selected = [entry[0] for entry in candidates
+                     if isinstance(entry, tuple) and len(entry) == 2
+                     and isinstance(entry[0], str) and entry[0] in live]
         if len(_selected) > 1:
             log.info("council fan-out (%d): %s", len(_selected), _selected)
         elif len(_selected) == 1:
