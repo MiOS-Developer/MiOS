@@ -440,7 +440,92 @@ def _run_all_folded_native_loop_suites():
         import sys
         sys.exit(f"Folded test suite failed: exit code {rc}")
 
+def _run_stream_cleanup_and_local_grounding():
+    async def cleanup():
+        _base_configure({}, [], [])
+        entered, closed = asyncio.Event(), asyncio.Event()
+        preflight = []
+        async def recall(*args): preflight.append(True); return ""
+        async def blocked(*args, **kwargs):
+            entered.set()
+            try: await asyncio.Event().wait()
+            finally: closed.set()
+        M._v1_secondary_tool_loop = blocked
+        M._recall_agent_memory = recall
+        before = set(asyncio.all_tasks())
+        response = await M._respond_native_loop_direct(None, streaming=True,
+            chat_id="c", model="m", session_id=None, last_user_text="Opaque work request.",
+            persona_system="", messages=[{"role": "user", "content": "Opaque work request."}], request=None)
+        async def consume():
+            async for _ in response.body_iterator: pass
+        reader = asyncio.create_task(consume())
+        await asyncio.wait_for(entered.wait(), 0.5)
+        reader.cancel()
+        try: await reader
+        except asyncio.CancelledError: pass
+        assert closed.is_set() and set(asyncio.all_tasks()) == before
+        assert len(preflight) == 1, preflight
+    asyncio.run(cleanup())
+    print("production native stream cancellation drains worker; preflight exactly once: OK")
+    async def grounding():
+        for needs_state in (False, True):
+            _base_configure({}, [], [])
+            M._ROUTING_DOMAINS = {"opaque-capability": {"verbs": ["inspect_opaque"]}}
+            M._routed_domain_var.set("opaque-capability")
+            captured = []
+            async def loop(client, endpoint, model, headers, messages, *args, **kwargs):
+                captured.extend(messages)
+                return messages
+            M._v1_secondary_tool_loop = loop
+            await M._respond_native_loop_direct({"intent": "agent", "local_state": needs_state},
+                streaming=False, chat_id="c", model="m", session_id=None,
+                last_user_text="An opaque capability request.", persona_system="",
+                messages=[{"role": "user", "content": "An opaque capability request."}], request=None)
+            system = captured[0]["content"]
+            assert ("SOURCE = THIS MACHINE" in system) is needs_state
+            assert "inspect_opaque" in system  # relevant tools remain available
+    asyncio.run(grounding())
+    print("capability domains preserve tool hints; local-state mandate only for actual local state: OK")
+
+
+def _run_terminal_completion_reuse():
+    import mios_secondary_loop as secondary
+    for mode in ("buffered", "emit", "stream"):
+        _base_configure({}, [], [])
+        secondary.configure(apply_outbound_auth=lambda *a: None,
+            endpoint_supports_parallel_tools=lambda *a: False,
+            db_read=lambda *a, **k: None)
+        secondary._rescue_tool_calls = lambda *a: []
+        class Client(_FakeClient):
+            calls = 0
+            async def post(self, url, **kwargs):
+                Client.calls += 1
+                assert Client.calls == 1, "accepted tool-loop answer triggered repeated inference"
+                response = _FakeResp("An opaque terminal assistant answer.")
+                response.status_code = 200
+                return response
+        M.httpx = types.SimpleNamespace(AsyncClient=Client, Timeout=lambda *a, **k: None)
+        M._v1_secondary_tool_loop = secondary._v1_secondary_tool_loop
+        emitted = []
+        async def run():
+            response = await M._respond_native_loop_direct(
+                {"local_state": False, "web": False, "news": False},
+                streaming=mode == "stream", chat_id="terminal", model="m", session_id=None,
+                last_user_text="An opaque request.", persona_system="",
+                messages=[{"role": "user", "content": "An opaque request."}], request=None,
+                emit=emitted.append if mode == "emit" else None)
+            if mode == "stream":
+                content = b"".join([chunk async for chunk in response.body_iterator]).decode()
+            else: content = _body_text(response)
+            assert "An opaque terminal assistant answer." in content, content
+            assert Client.calls == 1
+        asyncio.run(run())
+    print("actual secondary/native terminal completion reused in all output modes: OK")
+
+
 if __name__ == "__main__":
     _run_all_folded_native_loop_suites()
     _run()
     _run_moved()
+    _run_stream_cleanup_and_local_grounding()
+    _run_terminal_completion_reuse()

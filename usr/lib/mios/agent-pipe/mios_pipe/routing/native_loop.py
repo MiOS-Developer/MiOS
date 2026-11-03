@@ -349,6 +349,89 @@ async def _respond_native_loop_direct(
                              "message": {"role": "assistant", "content": _idans},
                              "finish_reason": "stop"}],
                 "usage": _usage_estimate(last_user_text, _idans)})
+    if streaming and emit is None:
+        async def _stream_native() -> AsyncGenerator[bytes, None]:
+            yield _sse_status_phase(chat_id=chat_id, model=model, phase="prompt")
+            yield _sse_status_phase(chat_id=chat_id, model=model, phase="route")
+            _q: asyncio.Queue = asyncio.Queue()
+            _holder: dict = {}
+
+            async def _work() -> None:
+                try:
+                    _holder["resp"] = await _respond_native_loop_direct(
+                        refined, streaming=False, chat_id=chat_id, model=model,
+                        session_id=session_id, last_user_text=last_user_text,
+                        persona_system=persona_system, messages=messages,
+                        request=request, emit=_q.put_nowait, tool_choice=tool_choice,
+                        force_delegate=force_delegate, target_agents=target_agents,
+                        persist_response=persist_response, **kwargs)
+                except Exception as _e:  # noqa: BLE001
+                    _holder["err"] = str(_e)
+                finally:
+                    _q.put_nowait(None)
+
+            _wtask = asyncio.create_task(_work())
+            try:
+                yield _sse_chunk("", chat_id=chat_id, model=model, role="assistant")
+                _streamed_parts: list = []
+                while True:
+                    try:
+                        _s = await asyncio.wait_for(_q.get(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        yield b": keepalive\n\n"
+                        continue
+                    if _s is None:
+                        break
+                    if isinstance(_s, dict):
+                        if _s.get("reasoning"):
+                            yield _sse_reasoning(str(_s["reasoning"]),
+                                                 chat_id=chat_id, model=model)
+                        elif _s.get("content") is not None:
+                            _piece = str(_s["content"])
+                            if _piece:
+                                _streamed_parts.append(_piece)
+                                yield _sse_chunk(_piece, chat_id=chat_id, model=model)
+                        elif _s.get("label"):
+                            yield _sse_status(chat_id=chat_id, model=model,
+                                              emoji=str(_s.get("emoji", "·")),
+                                              label=str(_s["label"]),
+                                              detail=_s.get("detail"))
+                await _wtask
+                _resp = _holder.get("resp")
+                if _holder.get("err") or getattr(_resp, "status_code", 200) >= 400:
+                    try:
+                        _error = json.loads(bytes(_resp.body).decode("utf-8"))["error"]
+                    except Exception:
+                        _error = {"message": "The configured inference backend is unavailable",
+                                  "type": "server_error", "code": "inference_unavailable"}
+                    yield f"data: {json.dumps({'error': _error})}\n\n".encode("utf-8")
+                    yield _sse_done()
+                    return
+                _content = ""
+                try:
+                    _b = _loads_lenient(bytes(_resp.body).decode("utf-8"))
+                    _content = (_b["choices"][0]["message"]["content"] or "").strip()
+                except Exception:  # noqa: BLE001
+                    _content = ""
+                yield _sse_status_phase(chat_id=chat_id, model=model,
+                                        phase="subagent_done", done=True)
+                _streamed = "".join(_streamed_parts)
+                if _content and not _streamed.strip():
+                    if NATIVE_LOOP_STREAM_TOKENS and NATIVE_LOOP_STREAM_CHUNK > 0:
+                        _delay = max(0.0, NATIVE_LOOP_STREAM_DELAY_MS / 1000.0)
+                        for _piece in _iter_answer_chunks(_content, NATIVE_LOOP_STREAM_CHUNK):
+                            yield _sse_chunk(_piece, chat_id=chat_id, model=model)
+                            if _delay:
+                                await asyncio.sleep(_delay)
+                    else:
+                        yield _sse_chunk(_content, chat_id=chat_id, model=model)
+                yield _sse_chunk("", chat_id=chat_id, model=model, finish_reason="stop")
+                yield _sse_done()
+            finally:
+                if not _wtask.done():
+                    _wtask.cancel()
+                await asyncio.gather(_wtask, return_exceptions=True)
+        return StreamingResponse(_stream_native(), media_type="text/event-stream")
     from mios_grounding import _env_grounding_static, _env_grounding_dynamic
     _sys = "\n\n".join(p for p in (
         _agent_contract(),
@@ -400,7 +483,6 @@ async def _respond_native_loop_direct(
                    if isinstance(h, str) and str(h).strip()]
     _rdom_nl = _routed_domain_var.get(None)
     _local_domain_nl = bool(_rdom_nl) and _rdom_nl != "web"
-    _local_query_nl = bool(refined and refined.get("local_state")) or _local_domain_nl
     if _local_domain_nl and _ROUTING_DOMAINS:
         _dverbs = [str(v) for v in ((_ROUTING_DOMAINS.get(_rdom_nl) or {}).get("verbs") or [])
                    if str(v).strip()]
@@ -411,8 +493,9 @@ async def _respond_native_loop_direct(
                 _seen_h.add(_h)
                 _merged_h.append(_h)
         _hint_tools = _merged_h
-        _sys += ("\n\nSOURCE = THIS MACHINE (the request routed to the local '"
-                 + _rdom_nl + "' domain). You do NOT know this machine's actual file "
+    if refined and refined.get("local_state"):
+        _sys += ("\n\nSOURCE = THIS MACHINE (the refined request requires live local state). "
+                 "You do NOT know this machine's actual file "
                  "paths, file contents, or live state from memory -- any specific "
                  "path, filename, value, or result you state WITHOUT first calling a "
                  "local tool is a FABRICATION. You MUST call the appropriate local "
@@ -540,84 +623,6 @@ async def _respond_native_loop_direct(
     if (_BACKEND_KEY
             and BACKEND.split("://")[-1].split("/")[0] == _BACKEND_HOSTPORT):
         _hdrs["Authorization"] = f"Bearer {_BACKEND_KEY}"
-    if streaming and emit is None:
-        async def _stream_native() -> AsyncGenerator[bytes, None]:
-            yield _sse_status_phase(chat_id=chat_id, model=model, phase="prompt")
-            yield _sse_status_phase(chat_id=chat_id, model=model, phase="route")
-            _q: asyncio.Queue = asyncio.Queue()
-            _holder: dict = {}
-
-            async def _work() -> None:
-                try:
-                    _holder["resp"] = await _respond_native_loop_direct(
-                        refined, streaming=False, chat_id=chat_id, model=model,
-                        session_id=session_id, last_user_text=last_user_text,
-                        persona_system=persona_system, messages=messages,
-                        request=request, emit=_q.put_nowait, tool_choice=tool_choice,
-                        force_delegate=force_delegate, target_agents=target_agents,
-                        persist_response=persist_response, **kwargs)
-                except Exception as _e:  # noqa: BLE001
-                    _holder["err"] = str(_e)
-                finally:
-                    _q.put_nowait(None)
-
-            _wtask = asyncio.create_task(_work())
-            yield _sse_chunk("", chat_id=chat_id, model=model, role="assistant")
-            _streamed_parts: list = []
-            while True:
-                try:
-                    _s = await asyncio.wait_for(_q.get(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    yield b": keepalive\n\n"
-                    continue
-                if _s is None:
-                    break
-                if isinstance(_s, dict):
-                    if _s.get("reasoning"):
-                        yield _sse_reasoning(str(_s["reasoning"]),
-                                             chat_id=chat_id, model=model)
-                    elif _s.get("content") is not None:
-                        _piece = str(_s["content"])
-                        if _piece:
-                            _streamed_parts.append(_piece)
-                            yield _sse_chunk(_piece, chat_id=chat_id, model=model)
-                    elif _s.get("label"):
-                        yield _sse_status(chat_id=chat_id, model=model,
-                                          emoji=str(_s.get("emoji", "·")),
-                                          label=str(_s["label"]),
-                                          detail=_s.get("detail"))
-            await _wtask
-            _resp = _holder.get("resp")
-            if _holder.get("err") or getattr(_resp, "status_code", 200) >= 400:
-                try:
-                    _error = json.loads(bytes(_resp.body).decode("utf-8"))["error"]
-                except Exception:
-                    _error = {"message": "The configured inference backend is unavailable",
-                              "type": "server_error", "code": "inference_unavailable"}
-                yield f"data: {json.dumps({'error': _error})}\n\n".encode("utf-8")
-                yield _sse_done()
-                return
-            _content = ""
-            try:
-                _b = _loads_lenient(bytes(_resp.body).decode("utf-8"))
-                _content = (_b["choices"][0]["message"]["content"] or "").strip()
-            except Exception:  # noqa: BLE001
-                _content = ""
-            yield _sse_status_phase(chat_id=chat_id, model=model,
-                                    phase="subagent_done", done=True)
-            _streamed = "".join(_streamed_parts)
-            if _content and not _streamed.strip():
-                if NATIVE_LOOP_STREAM_TOKENS and NATIVE_LOOP_STREAM_CHUNK > 0:
-                    _delay = max(0.0, NATIVE_LOOP_STREAM_DELAY_MS / 1000.0)
-                    for _piece in _iter_answer_chunks(_content, NATIVE_LOOP_STREAM_CHUNK):
-                        yield _sse_chunk(_piece, chat_id=chat_id, model=model)
-                        if _delay:
-                            await asyncio.sleep(_delay)
-                else:
-                    yield _sse_chunk(_content, chat_id=chat_id, model=model)
-            yield _sse_chunk("", chat_id=chat_id, model=model, finish_reason="stop")
-            yield _sse_done()
-        return StreamingResponse(_stream_native(), media_type="text/event-stream")
     _raw = ""
     _fired: list = []
     async with httpx.AsyncClient(timeout=httpx.Timeout(NATIVE_LOOP_TIMEOUT_S),
@@ -736,9 +741,12 @@ async def _respond_native_loop_direct(
                         "machine (real paths from the file index). Report the ACTUAL "
                         "full path(s) found below; do NOT invent or template a path "
                         "(no '<YourUsername>' placeholders):\n" + "\n".join(_hits)})
+        _terminal_response: dict = {}
         _m2 = await _v1_secondary_tool_loop(
             _c, BACKEND, BACKEND_MODEL, _hdrs, _msgs, _tools,
-            NATIVE_LOOP_TIMEOUT_S, _push, allow_write=True, tool_choice=tool_choice)
+            NATIVE_LOOP_TIMEOUT_S, _push, allow_write=True, tool_choice=tool_choice,
+            terminal_response=_terminal_response)
+        _raw = str(_terminal_response.get("content") or "")
         _pb = {"model": BACKEND_MODEL, "messages": _m2, "stream": False,
                "parallel_tool_calls": _endpoint_supports_parallel_tools(BACKEND),
                "chat_template_kwargs": {"enable_thinking": False}}
@@ -746,41 +754,42 @@ async def _respond_native_loop_direct(
         if emit is not None:
             _pb["stream"] = True
 
-        try:
-            if emit is not None:
-                _raw_parts = []
-                async with _c.stream("POST", f"{BACKEND}/chat/completions",
-                                     content=json.dumps(_pb).encode("utf-8"),
-                                     headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S) as _r:
-                    if _r.status_code != 200:
-                        log.warning("native-loop final non-200: %s %s", _r.status_code, await _r.aread())
-                    else:
-                        async for line in _r.aiter_lines():
-                            if not line or not line.startswith("data:"): continue
-                            data = line[5:].strip()
-                            if data == "[DONE]": break
-                            try: chunk = _loads_lenient(data)
-                            except Exception: continue
-                            ch = chunk.get("choices") or []
-                            if not ch: continue
-                            delta = ch[0].get("delta") or {}
-                            _content = delta.get("content") or ""
-                            _reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
-                            if _reasoning: emit({"reasoning": _reasoning})
-                            if _content:
-                                _raw_parts.append(_content)
-                                emit({"content": _content})
-                _raw = "".join(_raw_parts)
-                _live_streamed = bool(_raw.strip())
-            else:
-                _r = await _c.post(f"{BACKEND}/chat/completions",
-                                   content=json.dumps(_pb).encode("utf-8"),
-                                   headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S)
-                _ch = (_r.json().get("choices") or [])
-                _raw = str((_ch[0].get("message") if _ch else {}).get("content") or "")
-        except Exception as _e:  # noqa: BLE001
-            log.warning("native-loop final completion failed: %s", _e)
-            _raw = ""
+        if not _raw.strip():
+            try:
+                if emit is not None:
+                    _raw_parts = []
+                    async with _c.stream("POST", f"{BACKEND}/chat/completions",
+                                         content=json.dumps(_pb).encode("utf-8"),
+                                         headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S) as _r:
+                        if _r.status_code != 200:
+                            log.warning("native-loop final non-200: %s %s", _r.status_code, await _r.aread())
+                        else:
+                            async for line in _r.aiter_lines():
+                                if not line or not line.startswith("data:"): continue
+                                data = line[5:].strip()
+                                if data == "[DONE]": break
+                                try: chunk = _loads_lenient(data)
+                                except Exception: continue
+                                ch = chunk.get("choices") or []
+                                if not ch: continue
+                                delta = ch[0].get("delta") or {}
+                                _content = delta.get("content") or ""
+                                _reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                                if _reasoning: emit({"reasoning": _reasoning})
+                                if _content:
+                                    _raw_parts.append(_content)
+                                    emit({"content": _content})
+                    _raw = "".join(_raw_parts)
+                    _live_streamed = bool(_raw.strip())
+                else:
+                    _r = await _c.post(f"{BACKEND}/chat/completions",
+                                       content=json.dumps(_pb).encode("utf-8"),
+                                       headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S)
+                    _ch = (_r.json().get("choices") or [])
+                    _raw = str((_ch[0].get("message") if _ch else {}).get("content") or "")
+            except Exception as _e:  # noqa: BLE001
+                log.warning("native-loop final completion failed: %s", _e)
+                _raw = ""
         if not _raw.strip() and REFINE_ENDPOINT and REFINE_ENDPOINT != BACKEND:
             try:
                 _fb = {"model": REFINE_MODEL, "messages": _m2, "stream": False,

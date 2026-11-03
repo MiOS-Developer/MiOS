@@ -126,8 +126,9 @@ async def _route_domain(user_text: str) -> Optional[str]:
     if not _ROUTING_ENABLE or not _ROUTING_DOMAINS or not (user_text or "").strip():
         return None
     names = list(_ROUTING_DOMAINS.keys())
-    sys = ("Classify the user request into exactly ONE domain (the kind of "
-           "capability it needs). Domains:\n"
+    sys = ("Classify the user request into a capability domain only when one is needed (the kind of "
+           "capability it needs). Return domain=null for conversation or a reply that needs no listed capability. "
+           "Do not force conversation into an action or machine-state domain. Domains:\n"
            + "\n".join(f"{n}: {_ROUTING_DOMAINS[n]['desc']}" for n in names))
     payload = {
         "model": ROUTER_MODEL,
@@ -136,7 +137,7 @@ async def _route_domain(user_text: str) -> Optional[str]:
         "response_format": {"type": "json_schema", "json_schema": {
             "name": "route", "strict": True, "schema": {
                 "type": "object",
-                "properties": {"domain": {"type": "string", "enum": names}},
+                "properties": {"domain": {"type": ["string", "null"], "enum": names + [None]}},
                 "required": ["domain"], "additionalProperties": False}}},
         "chat_template_kwargs": {"enable_thinking": False},
         "temperature": 0.0, "max_tokens": 30, "stream": False,

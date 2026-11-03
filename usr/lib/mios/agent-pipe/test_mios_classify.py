@@ -96,6 +96,20 @@ class TestRouteDomain(unittest.TestCase):
         M.httpx.AsyncClient = _FakeClient
         self.assertEqual(asyncio.run(M._route_domain("research X on the web")), "web")
 
+    def test_conversation_is_representable_without_a_capability_domain(self):
+        _configure(enable=True)
+        captured = []
+        class Client(_FakeClient):
+            async def post(self, url, **kwargs):
+                captured.append(kwargs["json"])
+                return _FakeResp(200, {"choices": [{"message": {"content": '{"domain":null}'}}]})
+        M.httpx.AsyncClient = Client
+        self.assertIsNone(asyncio.run(M._route_domain("A conversational turn.")))
+        domain = captured[0]["response_format"]["json_schema"]["schema"]["properties"]["domain"]
+        self.assertIn("null", domain["type"])
+        self.assertIn(None, domain["enum"])
+        self.assertIn("web", domain["enum"])
+
     def test_out_of_enum_fails_open_to_none(self):
         _configure(enable=True)
         _FakeClient._resp = (200, {"choices": [

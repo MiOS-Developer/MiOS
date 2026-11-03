@@ -181,7 +181,8 @@ async def _daemon_diagnose(client, failed_summary: str, goal: str) -> str:
 async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
                                   messages: list, tools: list, timeout,
                                   push, allow_write: bool = False, tool_choice=None,
-                                  session_id: Optional[str] = None) -> list:
+                                  session_id: Optional[str] = None,
+                                  terminal_response: Optional[dict] = None) -> list:
     import sys
     import time
     msgs = list(messages)
@@ -302,6 +303,10 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
                     _REPLAN_NUDGE + ("\n\nMONITOR DIAGNOSIS (a second perspective): "
                                      + _diag if _diag else ""))})
                 continue
+            # Preserve the accepted completion for callers that already have an
+            # answer; tool-limit/failure exits still require final synthesis.
+            if terminal_response is not None and str(msg.get("content") or "").strip():
+                terminal_response.update(msg)
             break
 
         _sigs = [_tool_call_sig(_tc) for _tc in tcs]

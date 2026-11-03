@@ -440,6 +440,73 @@ asyncio.run(run())
           result.stderr if result.returncode else "ASGI 2.4, exact SSE error + DONE, HTTPX/admission cleanup")
 
 
+def _test_real_refine_conversation_chain():
+    import types
+    import test_mios_refine as refine
+    import mios_pipe.routing.refine as actual_refine
+    import mios_pipe.routing.classify as classify
+    import mios_pipe.routing.sse as sse
+    saved_refine = vars(actual_refine).copy()
+    saved_fake = vars(refine._FAKE).copy()
+    saved_classify = vars(classify).copy()
+    try:
+        refine._configure()
+        state = {"domain": None}
+        captured = []
+        class Client:
+            def __init__(self, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): return False
+            async def post(self, url, **kwargs):
+                captured.append(kwargs["json"])
+                return refine._FakeResp({"choices": [{"message": {"content": json.dumps({"domain": state["domain"]})}}]})
+        classify.configure(routing_domains={"web": {"desc": "External research", "verbs": ["web_search"]}}, routing_enable=True)
+        classify.httpx = types.SimpleNamespace(AsyncClient=Client, HTTPError=Exception)
+        class ReplyStream(refine._FakeResp):
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): return False
+            async def aiter_text(self):
+                content = self._body["choices"][0]["message"]["content"]
+                yield "data: " + json.dumps({"choices": [{"delta": {"content": content}}]}) + "\n\ndata: [DONE]\n\n"
+        class ReplyClient(refine._FakeClient):
+            def stream(self, *args, **kwargs): return ReplyStream(self._body)
+        refine._FAKE.AsyncClient = lambda timeout=None: ReplyClient(refine._FAKE.body)
+        reply = "Model-produced conversational reply."
+        refine._FAKE.body = {"choices": [{"message": {"content": json.dumps({
+            "intent": "chat", "reply": reply, "web": False, "news": False, "local_state": False})}}]}
+        async def run(streaming):
+            _wire_common(_route_domain=classify._route_domain, refine_intent=actual_refine.refine_intent,
+                _sse_status_phase=sse._sse_status_phase, _sse_status=sse._sse_status,
+                _sse_chunk=sse._sse_chunk, _sse_done=sse._sse_done,
+                _sse_reasoning=sse._sse_reasoning, _stream_answer=sse._stream_answer,
+                _budget_release_inflight=_anoop)
+            result = await mios_chat.chat_completions_logic(FakeRequest({
+                "messages": [{"role": "user", "content": "A brief conversation."}], "stream": streaming}))
+            if streaming:
+                pieces = []
+                async for chunk in result.body_iterator:
+                    for line in chunk.decode().splitlines():
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            item = json.loads(line[6:])
+                            pieces.append(item["choices"][0]["delta"].get("content") or "")
+                return "".join(pieces)
+            return result.content["choices"][0]["message"]["content"]
+        for streaming in (False, True):
+            CALLS.clear()
+            text = asyncio.run(run(streaming))
+            check(f"real domain/refine/chat chain reuses inferred reply stream={streaming}",
+                  text == reply and "native" not in CALLS and "quick_chat" not in CALLS)
+        schema = captured[0]["response_format"]["json_schema"]["schema"]["properties"]["domain"]
+        check("real domain schema can represent conversation", None in schema["enum"])
+        for flags, expected in (({"local_state": True}, "internal"), ({"web": True, "news": True}, "external")):
+            parsed = refine._run("An opaque request.", json.dumps({"intent": "agent", **flags}))
+            check("tool-required refinement retains its evidence domain", parsed["domain_type"] == expected)
+    finally:
+        vars(actual_refine).clear(); vars(actual_refine).update(saved_refine)
+        vars(refine._FAKE).clear(); vars(refine._FAKE).update(saved_fake)
+        vars(classify).clear(); vars(classify).update(saved_classify)
+
+
 def main():
     _wire_common()
     r = _run({"model": "m"})
@@ -482,6 +549,8 @@ def main():
     _test_explicit_agent_contract()
 
     _test_real_asgi_error_and_disconnect()
+
+    _test_real_refine_conversation_chain()
 
     _test_responses_api()
 

@@ -428,8 +428,9 @@ _REFINE_SYSTEM_LITE = (
     "    local read tools fire -- e.g. 'what's open' -> live -> the OPEN WINDOWS,\n"
     "    not the whole installed-app catalogue. Classify the question's MEANING,\n"
     "    not by keywords.\n"
-    '  "domain_type": "internal" | "external" | "both" -- the FUNDAMENTAL domain\n'
-    "    of the request. internal = answered or done ENTIRELY on THIS machine (a\n"
+    '  "domain_type": "internal" | "external" | "both" | null -- the domain\n'
+    "    null = conversation with no local-state/action or external-information need.\n"
+    "    internal = answered or done ENTIRELY on THIS machine (a\n"
     "    local_state read OR a local action/dispatch); external = answered ENTIRELY\n"
     "    from the web / outside world (research, news, lookups, comparisons of\n"
     "    EXTERNAL products); both = genuinely needs a LOCAL part AND an EXTERNAL\n"
@@ -904,7 +905,11 @@ async def _refine_intent(user_text: str,
     _dt = parsed.get("domain_type")
     _dt = _dt.strip().lower() if isinstance(_dt, str) else ""
     if _dt not in ("internal", "external", "both"):
-        _dt = "internal" if parsed.get("local_state") else "external"
+        if parsed.get("intent") == "chat" and not any(parsed.get(key) for key in
+                ("local_state", "web", "news", "browser_action")):
+            _dt = None
+        else:
+            _dt = "internal" if parsed.get("local_state") else "external"
     if parsed.get("local_state") and (parsed.get("web") or parsed.get("news")):
         _dt = "both"
     parsed["domain_type"] = _dt
