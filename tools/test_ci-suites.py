@@ -714,6 +714,89 @@ class TestCpuCapacity(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", "the Portal producer runs in POSIX MiOSDEV")
+class TestPortalSmokeBackend(unittest.TestCase):
+    """Run the producer's real Portal router, lock and child lifecycle."""
+
+    def _run_backend(self, directory, port, *, child_exit=0, host="localhost"):
+        helper = Path(_ROOT, "tools/lib/ci-runtime.sh").read_text()
+        script = helper.split('<<"MIOS_PORTAL_RUNTIME"\n', 1)[1].split(
+            "\nMIOS_PORTAL_RUNTIME\n", 1)[0]
+        ast_path = directory / "runtime.py"
+        ast_path.write_text(script)
+        config = directory / "mios.toml"
+        config.write_text("[portal]\nrequire_login=true\n[ci]\nsuite_timeout_s=5\n")
+        child = directory / "child.py"
+        child.write_text("""import pathlib,sys,urllib.request,urllib.error
+url, marker, status = sys.argv[1:]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+with opener.open(url, timeout=3) as response:
+    html = response.read().decode()
+    assert response.status == 200 and response.url.endswith("/login")
+    assert '<form method="POST" action="/portal/login">' in html
+with opener.open(url + "portal/icon.svg", timeout=3) as response:
+    assert response.status == 200 and b"<svg" in response.read()
+try:
+    opener.open(url + "portal/stats", timeout=3)
+except urllib.error.HTTPError as error:
+    assert error.code == 401
+else:
+    raise AssertionError("the real Portal authentication gate was lost")
+pathlib.Path(marker).write_text("real Portal routes verified")
+sys.exit(int(status))
+""")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+        env.update(
+            PYTHONPATH=os.pathsep.join([str(Path(_ROOT, "usr/lib/mios/agent-pipe")),
+                                       str(Path(_ROOT, "usr/lib/mios"))]),
+            MIOS_TOML_ROOT=_ROOT, MIOS_VENDOR_TOML=str(config),
+            MIOS_HOST_TOML=str(directory / "absent"), MIOS_USER_TOML=str(directory / "absent"),
+            MIOS_VENDOR_TOML_D=str(directory / "absent"), MIOS_HOST_TOML_D=str(directory / "absent"),
+            MIOS_USER_TOML_D=str(directory / "absent"),
+            HTTP_PROXY="http://127.0.0.1:9", HTTPS_PROXY="http://127.0.0.1:9")
+        url = f"http://{host}:{port}/"
+        result = subprocess.run(
+            [sys.executable, str(ast_path), url, str(directory / "heavy lock"),
+             sys.executable, str(child), url, str(directory / "child-ran"), str(child_exit)],
+            env=env, cwd=_ROOT, text=True, capture_output=True, timeout=20)
+        return result, (directory / "child-ran").exists()
+
+    def test_actual_portal_routes_authenticate_then_cleanup_on_success_or_child_failure(self):
+        import socket
+        for child_exit in (0, 43):
+            with self.subTest(child_exit=child_exit), tempfile.TemporaryDirectory(
+                    prefix="mios-portal-backend-") as tmp:
+                with socket.socket() as port_probe:
+                    port_probe.bind(("127.0.0.1", 0))
+                    port = port_probe.getsockname()[1]
+                result, ran = self._run_backend(Path(tmp), port, child_exit=child_exit)
+                self.assertEqual(child_exit, result.returncode, result.stdout + result.stderr)
+                self.assertTrue(ran, result.stdout + result.stderr)
+                self.assertIn(f"Portal smoke backend ready at http://localhost:{port}/", result.stdout)
+                with socket.socket() as probe:
+                    self.assertNotEqual(0, probe.connect_ex(("127.0.0.1", port)))
+
+    def test_an_occupied_endpoint_never_runs_the_builder_or_reuses_its_owner(self):
+        import socket
+        with tempfile.TemporaryDirectory(prefix="mios-portal-occupied-") as tmp, socket.socket() as owner:
+            owner.bind(("127.0.0.1", 0))
+            owner.listen()
+            port = owner.getsockname()[1]
+            result, ran = self._run_backend(Path(tmp), port)
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertFalse(ran)
+            self.assertNotIn("Portal smoke backend ready", result.stdout)
+            with socket.socket() as probe:
+                self.assertEqual(0, probe.connect_ex(("127.0.0.1", port)))
+
+    def test_an_external_endpoint_is_rejected_before_any_build_or_request(self):
+        with tempfile.TemporaryDirectory(prefix="mios-portal-endpoint-") as tmp:
+            result, ran = self._run_backend(Path(tmp), 43210, host="example.invalid")
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse(ran)
+            self.assertIn("configured localhost HTTP endpoint", result.stderr)
+
+
+@unittest.skipIf(os.name == "nt", "the Portal producer runs in POSIX MiOSDEV")
 class TestPortalRuntimeContext(unittest.TestCase):
     """Execute the CI producer with a private runtime that rejects overlay-backed temp."""
 

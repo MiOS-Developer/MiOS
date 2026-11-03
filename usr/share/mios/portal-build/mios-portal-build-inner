@@ -508,6 +508,7 @@ do_smoke() {
             fi
         else
             log "smoke: $name FAILED (see smoke/$name.log)"; rc=1
+            cat "/out/smoke/$name.log" >&2
         fi
     done
     rm -rf "$d"

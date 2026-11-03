@@ -174,10 +174,75 @@ PY
             eval "$config"
             free_gb=$(( $(df --output=avail -k /var/lib/mios-build/portal | tail -1) / 1024 / 1024 ))
             [[ "$free_gb" -ge "$PB_MIN_FREE_GB" ]] || { echo "Portal requires $PB_MIN_FREE_GB GB free" >&2; exit 1; }
-            . ./usr/lib/mios/heavy-lock.sh
-            mios_heavy_lock_exec "$PB_LOCK" systemd-run --scope --quiet --collect \
+            # The browser smoke opens the real Portal URL. A fresh CI machine
+            # has no gateway service, so serve its actual router in this private
+            # development namespace for the complete build/smoke lifetime.
+            runtime=/var/lib/mios-build/portal-runtime
+            python3 -m venv "$runtime"
+            "$runtime/bin/python3" -m pip install -r ./usr/lib/mios/agent-pipe/requirements.txt
+            PYTHONPATH="$PWD/usr/lib/mios/agent-pipe:$PWD/usr/lib/mios" \
+                "$runtime/bin/python3" - "$PB_PORTAL_URL" "$PB_LOCK" systemd-run --scope --quiet --collect \
                 -p MemoryMax="$PB_SCOPE_MEM" -p MemorySwapMax="$PB_SCOPE_SWAP" -p Delegate=yes \
-                ./usr/libexec/mios/mios-portal-build build
+                ./usr/libexec/mios/mios-portal-build build <<"MIOS_PORTAL_RUNTIME"
+import asyncio
+import sys
+from urllib.parse import urlsplit
+
+import httpx
+import uvicorn
+from fastapi import FastAPI
+
+import mios_toml
+from mios_pipe.routing.portal import portal_router
+
+url = urlsplit(sys.argv[1])
+if url.scheme != "http" or url.hostname != "localhost" or not url.port:
+    raise SystemExit("Portal smoke requires its configured localhost HTTP endpoint")
+startup_timeout = mios_toml.load_merged()["ci"]["suite_timeout_s"]
+app = FastAPI()
+app.include_router(portal_router)
+server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=url.port, access_log=False))
+
+async def main():
+    serving = asyncio.create_task(server.serve())
+    process = None
+    waiting = None
+    try:
+        async def ready():
+            while not server.started:
+                if serving.done():
+                    await serving
+                    raise RuntimeError("Portal server exited before binding its endpoint")
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(ready(), timeout=startup_timeout)
+        async with httpx.AsyncClient(trust_env=False, follow_redirects=True) as client:
+            response = await client.get(sys.argv[1])
+            response.raise_for_status()
+            if response.status_code != 200 or not response.headers.get("content-type", "").startswith("text/html"):
+                raise RuntimeError("Portal endpoint did not serve its HTML page")
+        print("Portal smoke backend ready at " + sys.argv[1], flush=True)
+        # Preserve the canonical lock helper and every bounded scope argument.
+        process = await asyncio.create_subprocess_exec(
+            "bash", "--noprofile", "--norc", "-c",
+            "source \"$1\"; shift; mios_heavy_lock_exec \"$@\"",
+            "mios-portal-ci", "./usr/lib/mios/heavy-lock.sh", *sys.argv[2:])
+        waiting = asyncio.create_task(process.wait())
+        finished, _ = await asyncio.wait((waiting, serving), return_when=asyncio.FIRST_COMPLETED)
+        if serving in finished and not waiting.done():
+            await serving
+            raise RuntimeError("Portal server exited during the build or smoke")
+        return await waiting
+    finally:
+        if process is not None and process.returncode is None:
+            process.terminate()
+            await process.wait()
+        if waiting is not None:
+            await waiting
+        server.should_exit = True
+        await serving
+
+raise SystemExit(asyncio.run(main()))
+MIOS_PORTAL_RUNTIME
             ./usr/libexec/mios/mios-portal-tree stage-run \
                 --run "/var/lib/mios-build/artifacts/mios-portal/$MIOS_PORTAL_BUILD_TS" \
                 --out "$PWD/.staged-portal"
