@@ -349,25 +349,88 @@ def hypr_json(*args: str):
     return json.loads(hypr("-j", *args) or "null")
 
 
-def expected_rows() -> tuple[int, int]:
-    with open(THEME) as f:
+def expected_rows(theme_path: str = THEME) -> tuple[int, int]:
+    with open(theme_path) as f:
         sh = json.load(f)["shell"]
     m = int(sh["edge_margin_px"])
     return int(sh["top_height_px"]) + 2 * m, int(sh["dock_height_px"]) + 2 * m
 
 
+def generate_theme_bridge(out_dir: str, host_toml: str | None = None) -> str:
+    """Project the real theme bridge into scratch; no installed state is read."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+    env.update(MIOS_TOML_ROOT=ROOT, MIOS_VENDOR_TOML=SSOT,
+               MIOS_VENDOR_TOML_D=os.path.join(ROOT, "usr/lib/mios/mios.d"),
+               MIOS_HOST_TOML=host_toml or os.path.join(out_dir, "absent-host.toml"),
+               MIOS_USER_TOML=os.path.join(out_dir, "absent-user.toml"),
+               MIOS_HOST_TOML_D=os.path.join(out_dir, "absent-host.d"),
+               MIOS_USER_TOML_D=os.path.join(out_dir, "absent-user.d"),
+               MIOS_THEME_OUT_DIR=out_dir)
+    gen = os.environ.get("MIOS_GEN_BIN") or shutil.which("mios-gen")
+    if gen:
+        env["MIOS_GEN"] = gen
+    subprocess.run(["bash", os.path.join(ROOT, "usr/libexec/mios/mios-sync-theme"), "--bridge-only"],
+                   env=env, check=True, capture_output=True, text=True, timeout=40)
+    return os.path.join(out_dir, "theme.json")
+
+
 class TestMarginUnification(unittest.TestCase):
+    def setUp(self):
+        import tomllib
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bridge = generate_theme_bridge(os.path.join(self.tmp.name, "theme"))
+        with open(SSOT, "rb") as f:
+            self.ssot = tomllib.load(f)
+
     def test_expected_rows_unify_top_and_dock_gaps(self):
-        top, bottom = expected_rows()
-        self.assertEqual(top, 44, f"Top reservation must be 44px, got {top}")
-        self.assertEqual(bottom, 72, f"Bottom reservation must be 72px, got {bottom}")
-        # Top gap: top reservation (44) - (margins.top (8) + rowHeight (28)) = 44 - 36 = 8px
-        top_gap = top - (8 + 28)
-        # Dock gap on 1080p: dock_top (1016) - window_bottom (1080 - 72 = 1008) = 8px
-        bottom_gap = (1080 - 64) - (1080 - bottom)
-        self.assertEqual(top_gap, 8, f"TopBar gap must be 8px, got {top_gap}")
-        self.assertEqual(bottom_gap, 8, f"Dock gap must be 8px, got {bottom_gap}")
+        with open(self.bridge) as f:
+            generated = json.load(f)
+        sh = self.ssot["theme"]["shell"]
+        self.assertEqual(generated["shell"], sh)
+        top, bottom = expected_rows(self.bridge)
+        margin = int(sh["edge_margin_px"])
+        bar, dock = int(sh["top_height_px"]), int(sh["dock_height_px"])
+        self.assertEqual(top, bar + 2 * margin)
+        self.assertEqual(bottom, dock + 2 * margin)
+        top_gap = top - (margin + bar)
+        bottom_gap = bottom - (dock + margin)
+        self.assertEqual(top_gap, margin)
+        self.assertEqual(bottom_gap, margin)
         self.assertEqual(top_gap, bottom_gap)
+
+    def test_generated_css_and_design_follow_the_same_geometry(self):
+        sh = self.ssot["theme"]["shell"]
+        with open(self.bridge) as f:
+            theme = json.load(f)
+        with open(os.path.join(os.path.dirname(self.bridge), "mios-theme.css")) as f:
+            css = f.read()
+        self.assertEqual(theme["design"]["bar_px"], sh["top_height_px"])
+        self.assertEqual(theme["design"]["gap_px"], sh["edge_margin_px"])
+        self.assertIn(f"--mios-bar: {sh['top_height_px']}px;", css)
+        self.assertIn(f"--mios-gap: {sh['edge_margin_px']}px;", css)
+        self.assertIn(f"--mios-accent: {theme['accent']};", css)
+
+    def test_changed_layer_changes_reservations_and_css(self):
+        host = os.path.join(self.tmp.name, "host.toml")
+        with open(host, "w") as f:
+            f.write("[theme.shell]\ntop_height_px = 32\ndock_height_px = 60\nedge_margin_px = 11\n")
+        bridge = generate_theme_bridge(os.path.join(self.tmp.name, "changed"), host)
+        self.assertEqual(expected_rows(bridge), (54, 82))
+        self.assertNotEqual(expected_rows(bridge), expected_rows(self.bridge))
+        with open(os.path.join(os.path.dirname(bridge), "mios-theme.css")) as f:
+            css = f.read()
+        self.assertIn("--mios-bar: 32px;", css)
+        self.assertIn("--mios-gap: 11px;", css)
+
+    def test_missing_or_incomplete_bridge_fails_closed(self):
+        with self.assertRaises(FileNotFoundError):
+            expected_rows(os.path.join(self.tmp.name, "missing.json"))
+        broken = os.path.join(self.tmp.name, "broken.json")
+        with open(broken, "w") as f:
+            json.dump({"shell": {"top_height_px": 28, "dock_height_px": 56}}, f)
+        with self.assertRaises(KeyError):
+            expected_rows(broken)
 
 
 @unittest.skipUnless(NEST_SIG and NEST_XDG and NEST_WL,

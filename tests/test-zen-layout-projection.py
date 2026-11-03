@@ -1,5 +1,5 @@
-# AI-hint: Hermetic tests for the operator's Zen layout (design-2026-10-16 sketch 4): MiOS top bar above,
-#   Zen tab sidebar LEFT (in-window, foot-bar toggle collapses it to an icon strip), pages centre, AI chat
+# AI-hint: Hermetic tests for the current SSOT Zen layout: MiOS top bar above,
+#   compact glass tab popout LEFT, pages centre, AI chat
 #   sidebar RIGHT auto-hiding. Checks the SSOT [browser.zen].prefs, their projection into user.js by
 #   mios-theme-render --web, and that user CSS / user.js lines outside the MiOS blocks survive.
 # AI-related: usr/share/mios/mios.toml [browser.zen], usr/libexec/mios/mios-theme-render (apply_web),
@@ -12,10 +12,13 @@ import importlib.machinery
 import importlib.util
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.environ.get("MIOS_ROOT") or os.path.normpath(os.path.join(HERE, ".."))
@@ -23,10 +26,9 @@ RENDER = os.path.join(ROOT, "usr", "libexec", "mios", "mios-theme-render")
 SSOT = os.environ.get("MIOS_SSOT_TOML") or os.path.join(ROOT, "usr", "share", "mios", "mios.toml")
 CHROME = os.path.join(ROOT, "usr", "share", "mios", "theme", "gecko-userChrome.css")
 
-# Sketch 4, as Zen/Firefox prefs (Zen 1.23: sidebar.revamp is locked false, so the AI chat uses the
-# legacy #sidebar-box, docked to the end by sidebar.position_start=false).
+# Current [browser.zen] contract: compact tabs left; AI chat overlays the right edge.
 LAYOUT = {
-    "zen.view.compact.enable-at-startup": "false",  # left tab sidebar sits in the window, not a hover popout
+    "zen.view.compact.enable-at-startup": "true",   # compact glass tab popout, as documented in SSOT
     "zen.tabs.vertical.right-side": "false",        # tabs/apps on the LEFT
     "sidebar.position_start": "false",              # AI chat sidebar on the RIGHT
     "browser.ml.chat.sidebar": "true",              # the chatbot opens in that sidebar
@@ -56,20 +58,47 @@ def user_js_prefs(text):
 
 
 def zen_layout_problems(prefs_js):
-    """Sketch-4 deviations in a {pref: literal} map (empty list = layout honoured)."""
+    """Current layout deviations in a {pref: literal} map."""
     return [f"{k}={prefs_js.get(k)!r} (want {v})" for k, v in LAYOUT.items() if prefs_js.get(k) != v]
 
 
+def render_web_sources(root, host_toml=None):
+    """Render only the two registered CSS surfaces from real templates and SSOT."""
+    doc = load_ssot()
+    targets = {}
+    for name in ("web", "gecko-chrome"):
+        surface = doc["dotfiles"]["registry"][name]
+        template = os.path.join(root, surface["template"])
+        os.makedirs(os.path.dirname(template), exist_ok=True)
+        shutil.copyfile(os.path.join(ROOT, surface["template"]), template)
+        targets[name] = os.path.join(root, surface["target"])
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+    env.update(MIOS_THEME_ROOT=root, MIOS_TOML_ROOT=ROOT, MIOS_VENDOR_TOML=SSOT,
+               MIOS_VENDOR_TOML_D=os.path.join(ROOT, "usr/lib/mios/mios.d"),
+               MIOS_HOST_TOML=host_toml or os.path.join(root, "absent-host.toml"),
+               MIOS_USER_TOML=os.path.join(root, "absent-user.toml"),
+               MIOS_HOST_TOML_D=os.path.join(root, "absent-host.d"),
+               MIOS_USER_TOML_D=os.path.join(root, "absent-user.d"),
+               PYTHONPATH=os.path.join(ROOT, "usr/lib/mios"))
+    subprocess.run([sys.executable, os.path.join(ROOT, "usr/libexec/mios/mios-dotfiles-render"),
+                    "render", "web", "gecko-chrome"], env=env, check=True,
+                   capture_output=True, text=True, timeout=30)
+    for path in targets.values():
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            raise AssertionError(f"CSS projection missing: {path}")
+    return targets
+
+
 class TestZenLayoutPolicy(unittest.TestCase):
-    def test_ssot_block_projects_sketch_layout(self):  # positive
+    def test_ssot_block_projects_current_layout(self):  # positive
         R = load_render()
         block = R._user_js_block(list(load_ssot()["browser"]["zen"]["prefs"]))
         self.assertEqual(zen_layout_problems(user_js_prefs(block)), [])
 
-    def test_floating_left_sidebar_is_detected(self):  # negative control
+    def test_noncompact_left_sidebar_is_detected(self):  # negative control
         R = load_render()
         prefs = [p for p in load_ssot()["browser"]["zen"]["prefs"] if not p.startswith("zen.view.compact.enable-at-startup|")]
-        prefs.append("zen.view.compact.enable-at-startup|bool|true")
+        prefs.append("zen.view.compact.enable-at-startup|bool|false")
         problems = zen_layout_problems(user_js_prefs(R._user_js_block(prefs)))
         self.assertTrue(any("compact.enable-at-startup" in p for p in problems), problems)
 
@@ -115,7 +144,13 @@ class TestZenProjection(unittest.TestCase):
         merged = load_ssot()
         merged["browser"]["zen"]["profile_roots"] = [root]
         merged.setdefault("browser_ai", {})["enable"] = False
-        self.R.mios_toml.load_merged = lambda *a, **k: merged
+        self.merged = merged
+        self.asset_root = os.path.join(self.tmp.name, "projection")
+        self.sources = render_web_sources(self.asset_root)
+        self.R._ROOT = self.asset_root
+        patch = mock.patch.object(self.R.mios_toml, "load_merged", return_value=merged)
+        patch.start()
+        self.addCleanup(patch.stop)
         self.R._zen_global_menu = lambda *a, **k: []  # no flatpak override from a test
 
     def tearDown(self):
@@ -130,6 +165,39 @@ class TestZenProjection(unittest.TestCase):
         self.assertIn(os.path.join(self.profile, "user.js"), written)
         self.assertEqual(zen_layout_problems(user_js_prefs(self.read("user.js"))), [])
         self.assertIn('mios.zen.ai-sidebar.autohide', self.read("chrome", "userChrome.css"))
+
+    def test_generated_css_matches_ssot_and_profile(self):
+        self.R.apply_web()
+        for surface, profile_name in (("web", "userContent.css"), ("gecko-chrome", "userChrome.css")):
+            with open(self.sources[surface], encoding="utf-8") as f:
+                rendered = f.read()
+            target = load_ssot()["dotfiles"]["registry"][surface]["target"]
+            with open(os.path.join(ROOT, target), encoding="utf-8") as f:
+                self.assertEqual(rendered, f.read(), f"{surface} artifact drift")
+            self.assertNotIn("@MIOS:", rendered)
+            self.assertIn(rendered.rstrip(), self.read("chrome", profile_name))
+        chrome = self.read("chrome", "userChrome.css")
+        zen = self.merged["browser"]["zen"]
+        self.assertIn(f"height: calc(100% * {zen['compact_height_ratio']})", chrome)
+        self.assertIn(f"width: {zen['ai_sidebar_width_px']}px", chrome)
+        self.assertIn(f"translateX(calc(100% - {zen['ai_sidebar_peek_px']}px))", chrome)
+        colors = self.R.mios_toml.colors(self.merged)
+        self.assertIn(f"accent-color: {colors['accent']}", self.read("chrome", "userContent.css"))
+
+    def test_generated_css_honors_changed_layer(self):
+        overlay = os.path.join(self.tmp.name, "host.toml")
+        with open(overlay, "w") as f:
+            f.write("[browser.zen]\nai_sidebar_peek_px = 9\n")
+        render_web_sources(self.asset_root, overlay)
+        self.R.apply_web()
+        chrome = self.read("chrome", "userChrome.css")
+        self.assertIn("translateX(calc(100% - 9px))", chrome)
+        self.assertNotIn("translateX(calc(100% - 6px))", chrome)
+
+    def test_missing_generated_css_fails_without_installed_fallback(self):
+        os.unlink(self.sources["web"])
+        with self.assertRaises(FileNotFoundError):
+            self.R.apply_web()
 
     def test_user_css_and_user_js_outside_blocks_untouched(self):  # negative: no collateral edits
         self.R.apply_web()

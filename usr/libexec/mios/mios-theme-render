@@ -382,8 +382,8 @@ def apply_web(dry_run: bool = False) -> List[str]:
     """Project the rendered SSOT web/chrome CSS and [browser.zen].prefs into every Gecko profile."""
     merged = mios_toml.load_merged()
     zen = merged["browser"]["zen"]
-    sources = {"userContent.css": "/usr/share/mios/theme/mios-web.css",
-               "userChrome.css": "/usr/share/mios/theme/gecko-userChrome.css"}
+    sources = {"userContent.css": os.path.join(_ROOT, "usr/share/mios/theme/mios-web.css"),
+               "userChrome.css": os.path.join(_ROOT, "usr/share/mios/theme/gecko-userChrome.css")}
     texts = {}
     for name, src in sources.items():
         with open(src, encoding="utf-8") as fh:
