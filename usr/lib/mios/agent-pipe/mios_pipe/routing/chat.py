@@ -626,7 +626,13 @@ async def _plain_chat_complete(body: dict) -> Any:
     payload = dict(body)
     for key in ("tools", "tool_choice", "parallel_tool_calls", "mios_flags", "_allow_write", "num_ctx"):
         payload.pop(key, None)
-    payload["model"] = body.get("model") or BACKEND_MODEL
+    requested_model = body.get("model")
+    agent_model = str((_toml_section("ai") or {}).get("agent_model") or "").strip()
+    # The front door advertises the configured agent identity, while the
+    # inference lane serves BACKEND_MODEL. Other explicit model IDs stay exact.
+    payload["model"] = (BACKEND_MODEL if not requested_model
+                        or (agent_model and requested_model == agent_model)
+                        else requested_model)
     streaming = bool(payload.get("stream", False))
     payload["stream"] = streaming
     headers = {"Content-Type": "application/json"}

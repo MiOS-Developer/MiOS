@@ -878,18 +878,24 @@ def _test_tool_choice_none_stripping():
             self.calls = []
             self.reply = Reply(completion)
             self.failure = None
+            self.accepted_models = None
+        def resolved_reply(self, payload):
+            if self.accepted_models is not None and payload["model"] not in self.accepted_models:
+                return Reply({"error": {"message": "model is not served",
+                                       "type": "invalid_request_error"}}, 404)
+            return self.reply
         async def post(self, url, **kwargs):
             self.calls.append((url, kwargs))
             if self.failure:
                 raise self.failure
-            return self.reply
+            return self.resolved_reply(kwargs["json"])
         def build_request(self, method, url, **kwargs):
             return method, url, kwargs
         async def send(self, request, **kwargs):
             self.calls.append((request[1], request[2]))
             if self.failure:
                 raise self.failure
-            return self.reply
+            return self.resolved_reply(request[2]["json"])
 
     client = Client()
     async def get_client():
@@ -925,6 +931,34 @@ def _test_tool_choice_none_stripping():
           and CALLS == ["budget_admit"], repr(CALLS))
     check("plain JSON completion remains unchanged", result.content == completion
           and result.status_code == 200 and releases == [None])
+
+    from mios_pipe.routing import chat as chat_module
+    alias = "fixture-agent"
+    client.accepted_models = {"default"}
+    client.reply = Reply(dict(completion, model="default"))
+    with mock.patch.object(chat_module, "_toml_section", return_value={"agent_model": alias}):
+        wire()
+        result = _run(dict(body, model=alias))
+        check("configured public alias resolves to the selected backend model",
+              result.status_code == 200 and client.calls[-1][1]["json"]["model"] == "default"
+              and CALLS == ["budget_admit"])
+        client.reply = Reply(None, chunks=(b"data: [DONE]\n\n",))
+        result = _run(dict(body, model=alias, stream=True))
+        async def drain(response):
+            return b"".join([chunk async for chunk in response.body_iterator])
+        streamed = asyncio.run(drain(result))
+        check("plain streaming resolves the same public alias without model planning",
+              streamed == b"data: [DONE]\n\n" and client.calls[-1][1]["json"]["model"] == "default")
+        before = len(client.calls)
+        result = _run(dict(body, model="unserved-explicit-model"))
+        check("unknown explicit model is never replaced or retried with the configured model",
+              result.status_code == 404 and len(client.calls) == before + 1
+              and client.calls[-1][1]["json"]["model"] == "unserved-explicit-model")
+    with mock.patch.object(chat_module, "_toml_section", return_value={}):
+        result = _run(dict(body, model=alias))
+        check("missing public alias config does not invent a model mapping", result.status_code == 404)
+    client.accepted_models = None
+    client.reply = Reply(completion)
 
     wire(_INGRESS_KEY="fixture-key", _BACKEND_KEY="backend-fixture")
     from mios_pipe.kernel import config as config_module
@@ -1028,6 +1062,29 @@ def _test_tool_choice_none_stripping():
             for event in events:
                 _SDK_EVENT_ADAPTER.validate_python(event)
             check("Responses plain SSE validates against strict SDK wire models", True)
+        client.accepted_models = {"default"}
+        client.reply = Reply(dict(completion, model="default"))
+        with mock.patch.object(chat_module, "_toml_section", return_value={"agent_model": alias}):
+            alias_body = dict(response_body, model=alias)
+            result = asyncio.run(mios_chat.responses_api_logic(FakeRequest(alias_body)))
+            check("Responses public alias stays selected while backend uses its configured model",
+                  result.status_code == 200 and result.content["model"] == alias
+                  and result.content["output_text"] == "OK"
+                  and client.calls[-1][1]["json"]["model"] == "default"
+                  and client.calls[-1][1]["json"]["max_tokens"] == 8)
+            result = asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest(dict(alias_body, stream=True))))
+            alias_events = [json.loads(line[6:]) for line in asyncio.run(consume(result)).decode().splitlines()
+                            if line.startswith("data: ")]
+            check("strict Responses alias stream completes for the unchanged selected public identity",
+                  alias_events[-1]["type"] == "response.completed"
+                  and alias_events[-1]["response"]["model"] == alias
+                  and client.calls[-1][1]["json"]["model"] == "default")
+            if _SDK_EVENT_ADAPTER is not None:
+                for event in alias_events:
+                    _SDK_EVENT_ADAPTER.validate_python(event)
+                check("mapped alias Responses events validate against strict SDK models", True)
+        client.accepted_models = None
         client.reply = Reply(rejected, 404)
         result = asyncio.run(mios_chat.responses_api_logic(FakeRequest(response_body)))
         check("Responses plain backend error preserves failure status",
