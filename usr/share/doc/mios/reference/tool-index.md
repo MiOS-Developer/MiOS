@@ -63,7 +63,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-build-tail` | Retrieves and streams the most recent raw build log from /var/log/mios or /tmp, used by agents to inspect real-time or historical build output from the mios-build-driver. |
 | `usr/libexec/mios/mios-cache-clear` | Executes a safe, selective purge of non-essential OWUI, Hermes, and system cache data while preserving critical auth, config, and model assets to reset state without causing user lockouts or data... |
 | `usr/libexec/mios/mios-cdi-detect` | Detects GPU hardware (NVIDIA, AMD, Intel) and generates corresponding CDI specification files in /run/cdi/ to enable containerized GPU access before the nvidia-cdi-refresh service. |
-| `usr/libexec/mios/mios-cdi-gen` | Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469). |
+| `usr/libexec/mios/mios-cdi-gen` | Generate CDI only for currently host-bound character devices; NVIDIA specs come intact from its official toolkit. |
 | `usr/libexec/mios/mios-cdp-fetch` | Fetches rendered text and title from a URL via the Chrome DevTools Protocol (CDP) on port 9222 to provide the agent with grounded, non-hallucinated DOM content instead of predicted text. |
 | `usr/libexec/mios/mios-ceph-configure` | Automated client cache configuration utility for CephFS, rendering performance options into /etc/ceph/ceph.conf. |
 | `usr/libexec/mios/mios-ceph-snap` | Atomic CephFS subvolume snapshot scheduler and instant rollback daemon (task_738). |

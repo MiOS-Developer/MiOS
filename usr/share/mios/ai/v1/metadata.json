@@ -4,7 +4,7 @@
   "total_metadata_entries": 3388,
   "total_hints": 3382,
   "total_functions_indexed": 2105,
-  "total_related_links": 6640,
+  "total_related_links": 6645,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -6805,8 +6805,11 @@
     },
     {
       "path": "tests/test-cdi-gen.py",
-      "hint": "Automated unit test suite for scoped CDI specification generator (task_469).",
-      "related": [],
+      "hint": "Private hardware and official-toolkit boundary controls for hardware-backed CDI generation.",
+      "related": [
+        "usr/libexec/mios/mios-cdi-gen",
+        "tests/test-cdi-device-isolate.sh"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch20-container-device-interface-plumbing.md",
       "comment_style": "hash",
@@ -25662,8 +25665,12 @@
     },
     {
       "path": "usr/libexec/mios/mios-cdi-gen",
-      "hint": "Scoped CDI specification generator for NVIDIA, AMD, and Intel rootless Podman containers (task_469).",
-      "related": [],
+      "hint": "Generate CDI only for currently host-bound character devices; NVIDIA specs come intact from its official toolkit.",
+      "related": [
+        "tests/test-cdi-gen.py",
+        "tests/test-cdi-device-isolate.sh",
+        "usr/share/mios/mios.toml"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch14-cdi-gpu-passthrough-and-isolation.md",
       "comment_style": "hash",
