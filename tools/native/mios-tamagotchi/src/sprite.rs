@@ -2426,11 +2426,9 @@ mod body_face_tests {
                     for z in -1..=1 {
                         assert!(model.cells.contains_key(&(0, -2, z)));
                     }
-                    let low = if style == SpriteStyle::EightBit {
-                        -6
-                    } else {
-                        -10
-                    };
+                    // Stubby mature legs are measured from their actual soles;
+                    // a fixed long-shin threshold would require non-chibi limbs.
+                    let low = model.cells.keys().map(|&(_, y, _)| y).min().unwrap() + 2;
                     for side in [-1, 1] {
                         assert!(
                             model

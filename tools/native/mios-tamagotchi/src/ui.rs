@@ -88,6 +88,7 @@ pub struct Ui {
     reaction_started: usize,
     reaction_frames: usize,
     viewport: Cell<(u16, u16)>,
+    camera_viewport: Cell<(u16, u16)>,
     position: (u16, u16),
     destination: (u16, u16),
     yaw: u16,
@@ -143,6 +144,7 @@ impl Ui {
             reaction_started: 0,
             reaction_frames: 0,
             viewport: Cell::new((u16::MAX, u16::MAX)),
+            camera_viewport: Cell::new((u16::MAX, u16::MAX)),
             position: (500, 700),
             destination: (500, 700),
             yaw: 0,
@@ -228,8 +230,12 @@ impl Ui {
             .clamp(50, 400) as u16;
         self.frame = frame;
     }
+    fn set_scene(&self, area: Rect) {
+        self.pet_area.set(area);
+        self.camera_viewport.set((area.width, area.height));
+    }
     fn camera(&self) -> Camera {
-        let (w, h) = self.viewport.get();
+        let (w, h) = self.camera_viewport.get();
         let effective = |view| {
             if (w < 28 || h < 10) && view == CameraView::Pet {
                 CameraView::Face
@@ -1212,7 +1218,7 @@ impl Ui {
         let border = panel(&room_title, colors, ascii);
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
-        self.pet_area.set(room_inner);
+        self.set_scene(room_inner);
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
@@ -1339,15 +1345,20 @@ impl Ui {
         area: Rect,
     ) {
         let talking = self.menu == Some(Menu::Talk) && !self.native_modal;
-        let layout = crate::hud::split(
+        let mut layout = crate::hud::split(
             area,
             config.hud_golden_ratio,
             config.hud_landscape_columns,
             config.hud_portrait_ratio_percent,
         );
+        if talking && !layout.landscape && layout.info.height < 3 {
+            layout.scene.height = area.height.saturating_sub(3);
+            layout.info.y = layout.scene.bottom();
+            layout.info.height = area.height.saturating_sub(layout.scene.height);
+        }
         let scene = layout.scene;
         let info = layout.info;
-        self.pet_area.set(scene);
+        self.set_scene(scene);
         let sprite = self.pet_sprite(&config.game, frame);
         let expression = self.expression(&config.game, frame);
         screen.render_widget(
@@ -1592,6 +1603,7 @@ impl Ui {
         if area.width == 0 || area.height == 0 {
             return;
         }
+        screen.render_widget(Clear, area);
         self.dialog_area.set(area);
         let talking = self.menu == Some(Menu::Talk) && !self.native_modal;
         let text = self.words(config, !talking);
@@ -1635,18 +1647,24 @@ impl Ui {
                 "Back",
             ][self.menu_selected.min(6)];
             let (accept, back) = self.controller.as_ref().map_or_else(
-                || ("Enter".into(), "Esc".into()),
+                || {
+                    (
+                        if body.width < 18 {
+                            "Ent".into()
+                        } else {
+                            "Enter".into()
+                        },
+                        "Esc".into(),
+                    )
+                },
                 |pad| (tiny_button(&pad.accept), tiny_button(&pad.back)),
             );
             lines.push(
                 Line::from(if body.width < 18 {
                     format!(
-                        "{accept}: {}",
-                        if self.menu_selected == 0 {
-                            "More"
-                        } else {
-                            label
-                        }
+                        "{accept}:{}",
+                        ["More", "Feed", "Play", "Wash", "Rest", "Med", "Back"]
+                            [self.menu_selected.min(6)]
                     )
                 } else {
                     format!("[{accept}] {label}")
@@ -2078,6 +2096,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(2))),
             info,
         );
+        self.set_scene(room);
         let expression = Expression::Happy;
         let appearance = Appearance {
             shape: character.shape,
@@ -2347,6 +2366,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(7))),
                 label,
             );
+            self.set_scene(room);
             let sprite = match self.view_mode {
                 ViewMode::Pixel => {
                     Sprite::animated(stage, expression, self.sprite_style, self.frame)
@@ -3856,5 +3876,48 @@ mod progression_ui_tests {
             "{text}"
         );
         assert_eq!(ui.game, before);
+    }
+    #[test]
+    fn compact_auto_face_uses_the_scene_budget_and_micro_talk_clears_old_sprite_cells() {
+        let (config, mut ui) = pet();
+        draw(&ui, &config, 40, 12, 0);
+        assert_eq!(ui.camera().view, CameraView::Face);
+        assert_eq!(ui.pet_area.get().height, 6);
+        assert!(ui.game.progress.hatched);
+        let id = ui.game.character;
+        let character = ui.catalogue.iter_mut().find(|c| c.id == id).unwrap();
+        character.hatch = "Hi".into();
+        character.dialogue = vec!["Hi".into(), "Hi".into()];
+        let saved = ui.game.clone();
+        ui.open(Menu::Talk);
+        ui.native_request = None;
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(12, 6)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let dialogue = ui.dialog_area.get();
+        assert!(
+            ui.pet_area.get().bottom() <= dialogue.y,
+            "thoughts must lie below the pet"
+        );
+        let buffer = terminal.backend().buffer();
+        let row = (dialogue.x..dialogue.right())
+            .map(|x| buffer[(x, dialogue.y)].symbol())
+            .collect::<String>();
+        assert_eq!(
+            row, "Hi        ",
+            "short dialog must clear any old kaomoji/room glyphs"
+        );
+        let text = buffer
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(
+            text.contains("Ent:More") && text.contains("Esc:Back"),
+            "{text}"
+        );
+        assert_eq!(ui.game, saved);
     }
 }

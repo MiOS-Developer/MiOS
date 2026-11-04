@@ -567,7 +567,6 @@ mod tests {
 
 #[cfg(test)]
 mod aptitude_tests {
-    use super::*;
     use crate::{config::Config, game::Game};
 
     #[test]
