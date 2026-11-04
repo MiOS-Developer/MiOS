@@ -296,10 +296,14 @@ fn animal_head(model: &mut Anatomy, family: u8, variant: bool) {
             model.nose([0.0, 5.5, 5.55], [0.95, 0.65, 0.65], 0);
         }
         5 => {
-            model.head(if variant { [8.7, 5.9, 4.4] } else { [9.0, 5.8, 4.1] });
+            model.head(if variant { [8.7, 5.4, 4.4] } else { [9.0, 5.3, 4.1] });
+            if let Some(head) = &mut model.head {
+                head.face_center[1] = head.center[1] + 0.10 * head.radii[1];
+                head.face_half[1] = 0.62 * head.radii[1];
+            }
             // Brow lobes are continuous head tissue, with no eyeball meshes.
             for side in [-1.0, 1.0] {
-                model.add([side * 5.3, 10.5, -0.25], [2.6, 2.5, 2.1], HEAD);
+                model.add([side * 4.9, 10.1, -0.25], [2.8, 1.8, 2.1], HEAD);
             }
             if variant {
                 // Low kappa dish and a short, solid bill.
@@ -491,7 +495,19 @@ mod tests {
             let h = m.head.unwrap();
             let dx = (h.face_center[0] - h.center[0]).abs() + h.face_half[0];
             let dy = (h.face_center[1] - h.center[1]).abs() + h.face_half[1];
-            assert!((dx / h.radii[0]).powi(2) + (dy / h.radii[1]).powi(2) < 1.1);
+            // The padded texture's corners are clipped by the actual head
+            // surface. Its center and four axial extrema stay inside the
+            // ellipsoid; an expanded frog expression need not fit blank corners.
+            for point in [
+                h.face_center,
+                [h.face_center[0] - h.face_half[0], h.face_center[1]],
+                [h.face_center[0] + h.face_half[0], h.face_center[1]],
+                [h.face_center[0], h.face_center[1] - h.face_half[1]],
+                [h.face_center[0], h.face_center[1] + h.face_half[1]],
+            ] {
+                assert!(((point[0] - h.center[0]) / h.radii[0]).powi(2)
+                    + ((point[1] - h.center[1]) / h.radii[1]).powi(2) <= 1.0);
+            }
             assert!(dx <= h.radii[0] && dy <= h.radii[1]);
             assert!(m.parts.iter().any(|p| p.material < 16 && p.center[0].abs() < 1.0
                 && (4.7..=5.6).contains(&p.center[1])
@@ -499,6 +515,34 @@ mod tests {
             assert!(!m.parts.iter().any(|p| p.material < 16
                 && p.center[0].abs() > 1.0
                 && (6.0..=9.0).contains(&p.center[1]) && p.center[2] > 2.0));
+        }
+    }
+
+    #[test]
+    fn frog_brows_form_a_low_connected_crown_and_face_uses_its_height() {
+        for shape in [5, 13] {
+            let m = adult(shape);
+            let h = m.head.unwrap();
+            assert!(h.radii[0] / h.radii[1] > 1.6);
+            let brows: Vec<_> = m.parts.iter().filter(|p|
+                p.material == HEAD && p.center[1] > h.center[1]).collect();
+            assert_eq!(brows.len(), 2);
+            for brow in brows {
+                assert!(brow.center[1] + brow.radii[1] <= 12.0);
+                assert!(brow.radii[0] > brow.radii[1]);
+                // The lobe center is in the main head's XY section, proving
+                // these are joined brow mounds rather than detached round ears.
+                assert!((brow.center[0] / h.radii[0]).powi(2)
+                    + ((brow.center[1] - h.center[1]) / h.radii[1]).powi(2) < 1.0);
+            }
+            assert!((h.face_half[1] / h.radii[1] - 0.62).abs() < 0.0001);
+            assert!(((h.face_center[1] - h.center[1]) / h.radii[1] - 0.10).abs() < 0.0001);
+            // The unchanged physical nose/bill stays below the expression
+            // center and above its lower occupied glyph band.
+            let lower_glyph_band = h.face_center[1] - h.face_half[1] * 5.0 / 7.0;
+            assert!(m.parts.iter().any(|p| p.material < 16
+                && p.center[0].abs() < 1.0 && p.center[2] > h.radii[2] - 0.2
+                && p.center[1] > lower_glyph_band && p.center[1] < h.face_center[1]));
         }
     }
 
