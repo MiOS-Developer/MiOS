@@ -256,8 +256,8 @@ mod detail_policy_tests {
             Renderer::Braille,
         ] {
             let (dx, dy) = renderer.packing();
-            let width = 64 / u16::from(dx);
-            let height = 48 / u16::from(dy);
+            let width = 64 / dx;
+            let height = 48 / dy;
             let choose = |w, h| {
                 rules.choose(
                     SpriteStyle::EightBit,
