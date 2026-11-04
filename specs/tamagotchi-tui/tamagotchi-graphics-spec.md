@@ -1,5 +1,7 @@
 # Tamagotchi TUI - Graphics & Rendering Specification
 
+> The implemented rendering/input foundation is documented in [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md). Remaining examples describe future design, not available APIs.
+
 ## Overview
 
 This document specifies the **graphics and rendering architecture** for the MiOS Tamagotchi TUI application, targeting:
@@ -373,74 +375,17 @@ pub const COLOR_16BIT: ColorPalette = ColorPalette {
 
 ### 5.1 Terminal Capability Detection
 
-```rust
-#[derive(Clone, Debug)]
-pub struct TerminalCapabilities {
-    pub width: u16,
-    pub height: u16,
-    pub color_depth: ColorDepth,
-    pub unicode_support: UnicodeSupport,
-    pub mouse_support: bool,
-    pub extended_keys: bool,
-    pub is_tty: bool,
-    pub is_headless: bool,
-}
+The implemented policy lives in `tools/native/mios-tamagotchi/src/capabilities.rs`.
+It checks both input and output TTYs, selects color independently of glyphs, and
+uses `supports_color::on(Stream::Stdout)` rather than nonexistent Crossterm
+color queries. Unknown or Linux-console fonts default to ASCII; explicit glyph
+overrides require operator verification. `NO_COLOR` disables colors. Redirected
+streams and `TERM=dumb` produce one plain ASCII snapshot without raw mode.
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ColorDepth {
-    Monochrome,   // 2 colors
-    Basic16,      // 16 ANSI colors
-    Extended256,  // 256 colors
-    TrueColor,    // 24-bit RGB
-}
+For future enhanced-key handling, the supported query is
+`crossterm::terminal::supports_keyboard_enhancement()`, before starting the event
+reader. No portable query certifies every glyph or mouse protocol.
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum UnicodeSupport {
-    None,         // ASCII only
-    Basic,        // Box drawing, basic symbols
-    Extended,     // Braille, block elements
-    Full,         // All Unicode
-}
-
-impl TerminalCapabilities {
-    pub fn detect() -> Self {
-        let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
-        
-        let color_depth = if crossterm::terminal::supports_color_256() {
-            ColorDepth::Extended256
-        } else if crossterm::terminal::supports_color_16() {
-            ColorDepth::Basic16
-        } else {
-            ColorDepth::Monochrome
-        };
-        
-        let unicode_support = Self::detect_unicode();
-        let mouse_support = crossterm::terminal::supports_mouse();
-        let extended_keys = crossterm::terminal::supports_extended_keys();
-        let is_tty = std::io::stdin().is_terminal();
-        
-        Self {
-            width,
-            height,
-            color_depth,
-            unicode_support,
-            mouse_support,
-            extended_keys,
-            is_tty,
-            is_headless: !is_tty,
-        }
-    }
-    
-    pub fn graphics_tier(&self) -> GraphicsTier {
-        match (self.color_depth, self.unicode_support) {
-            (ColorDepth::TrueColor, UnicodeSupport::Full) => GraphicsTier::Tier3,
-            (ColorDepth::Extended256, _) => GraphicsTier::Tier2,
-            (ColorDepth::Basic16, UnicodeSupport::Basic) => GraphicsTier::Tier1,
-            _ => GraphicsTier::Tier0,
-        }
-    }
-}
-```
 
 ### 5.2 Adaptive Renderer
 

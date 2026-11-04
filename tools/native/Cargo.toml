@@ -26,6 +26,7 @@ members = [
     "mios-size-ceiling",
     "mios-ssot-lint",
     "mios-ssot-walk",
+    "mios-tamagotchi",
     "mios-task",
     "mios-template-compile",
     "mios-template-conform",

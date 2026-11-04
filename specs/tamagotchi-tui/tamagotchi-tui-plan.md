@@ -1,5 +1,7 @@
 # MiOS Rust-Native Tamagotchi TUI App - Comprehensive Plan
 
+> A playable local care/memory/save sample now exists as `mios-tamagotchi`. See [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md). The complete device feature set and live deployment validation remain tracked work; this plan is not a completion claim.
+
 ## Executive Summary
 
 This document outlines the complete plan to create a Rust-native Terminal User Interface (TUI) application for Linux that replicates and extends all functionalities of the best Japanese Tamagotchi versions, with full integration into MiOS's Inputd platform for controls and keybindings.
@@ -289,63 +291,21 @@ Key components:
 
 ### 4.3 Implementation
 
-#### Keybinding Registration (in mios.toml)
+#### Current terminal integration
 
-```toml
-# Tamagotchi TUI specific bindings
-[[keybindings.actions]]
-id = "tamagotchi"
-label = "Tamagotchi TUI"
-key = "t"
-command = "/usr/local/bin/tamagotchi-tui"
-desktop_command = "alacritty -e /usr/local/bin/tamagotchi-tui"
-tmux_command = "new-window -n Tamagotchi /usr/local/bin/tamagotchi-tui"
+The native preview consumes ordinary Crossterm key events through the existing
+Inputd terminal navigation projection. The current SSOT already maps
+`BTN_DPAD_*` to arrow keys, `BTN_SOUTH` to Enter, `BTN_EAST` to Escape, and
+`BTN_WEST` to Tab/Shift+Tab. The TUI handles these keys in `input::action` and
+ignores release events; repeats navigate without toggling pause repeatedly.
+Existing `controller.sessions` routing targets an exact tmux pane when needed.
 
-# Tamagotchi-specific controller context
-[keybindings.global.controller.nav.tamagotchi]
-up = "care_menu"
-down = "games_menu"
-left = "previous_tama"
-right = "next_tama"
-start = "pause"
-select = "status"
-
-[keybindings.global.controller.room.tamagotchi]
-north = ["feed", "play_game"]
-south = ["discipline", "clean"]
-east = ["next_screen", "accept"]
-west = ["previous_screen", "cancel"]
-```
-
-#### Inputd Client Library
-
-```rust
-// tamagotchi-inputd/src/lib.rs
-pub struct TamagotchiInputClient {
-    config: GlobalConfig,
-    bindings: Vec<Binding>,
-    event_rx: mpsc::Receiver<Event>,
-    command_tx: mpsc::Sender<String>,
-}
-
-impl TamagotchiInputClient {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let config = load_mios_config()?;
-        let bindings = Self::register_bindings(&config)?;
-        let (event_rx, command_tx) = connect_to_inputd()?;
-        Ok(Self { config, bindings, event_rx, command_tx })
-    }
-    
-    pub async fn next_event(&mut self) -> Option<Event> {
-        self.event_rx.recv().await
-    }
-    
-    pub fn send_command(&mut self, command: &str) -> Result<(), Box<dyn Error>> {
-        self.command_tx.blocking_send(command.to_string())?;
-        Ok(())
-    }
-}
-```
+No new global Tamagotchi context or nested `room.tamagotchi` table is registered.
+Inputd navigation profiles use kernel button identifiers and namespaced actions;
+the room table accepts action strings or tap/hold arrays, not per-app tables.
+The existing `vpad` is an injectable virtual controller, not a physical-input
+subscription service. A future native event subscriber requires a separately
+specified and implemented protocol; `connect_to_inputd()` is not an available API.
 
 #### Controller Mapping
 

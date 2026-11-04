@@ -1,0 +1,17 @@
+// AI-hint: Reusable terminal capability, sprite packing and input foundation for the Tamagotchi TUI.
+// AI-related: specs/tamagotchi-tui, usr/share/mios/mios.toml [tamagotchi]
+#![forbid(unsafe_code)]
+
+pub mod capabilities;
+pub mod config;
+pub mod game;
+pub mod input;
+pub mod render;
+pub mod save;
+pub mod sprite;
+pub mod ui;
+
+#[cfg(test)]
+mod game_tests;
+#[cfg(test)]
+mod tests;

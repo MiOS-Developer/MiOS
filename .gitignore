@@ -1110,3 +1110,15 @@ usr/share/mios/virtio/*.iso
 !/usr/share/mios/hyprland/patches/hypr3d-mios-dock-capture.patch
 !/tests/test-hypr3d-dock-capture.py
 !tests/test-machine-os-mirror.py
+
+# Native Tamagotchi terminal foundation; binaries and build caches stay untracked.
+!/tools/native/mios-tamagotchi/
+!/tools/native/mios-tamagotchi/Cargo.toml
+!/tools/native/mios-tamagotchi/src/
+!/tools/native/mios-tamagotchi/src/*.rs
+!/tools/native/mios-tamagotchi/tests/
+!/tools/native/mios-tamagotchi/tests/*.rs
+!/usr/share/doc/mios/tamagotchi-tui.md
+
+# Operator prompt for remote Blade agents and subagents.
+!/handoff.md
