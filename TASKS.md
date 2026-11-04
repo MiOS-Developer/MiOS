@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1747 |
-| in_progress | 68 |
+| pending | 1748 |
+| in_progress | 69 |
 | completed | 1851 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3706 |
+| total | 3708 |
 
 0 record(s) carry at least one override.
 
@@ -4437,6 +4437,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3704` Expose Tamagotchi render settings through the bootstrap configurator -- pending · P2 · size M · depends_on task_3702
 - `task_3705` Verify Tamagotchi terminal rendering and controller routing on real sessions -- pending · P2 · size M · depends_on task_3702
 - `task_3706` Implement Tamagotchi gameplay and persistence above the terminal foundation -- pending · P2 · size L · depends_on task_3702
+- `task_3707` Deliver a playable Tamagotchi sample with safe local saves -- in_progress · owner mios-tamagotchi-playable · P1 · size M · depends_on task_3702
+- `task_3708` Install and play the Tamagotchi sample on live MiOS Blade nodes -- pending · P1 · size M · depends_on task_3707
 
 ## test-coverage
 
