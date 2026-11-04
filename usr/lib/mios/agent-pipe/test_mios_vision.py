@@ -745,6 +745,13 @@ def test_custom_namespace_real_httpx_contract():
                 before = len(requests)
                 response = await vision._client_tools_complete(invalid, False, "fixture", "public")
                 assert response.status_code == 400 and len(requests) == before
+                unsupported = copy.deepcopy(body)
+                unsupported["tools"].append({"type": "web_search", "secret": "private-value"})
+                response = await vision._client_tools_complete(unsupported, False, "fixture", "public")
+                error = json.loads(response.body)["error"]
+                assert response.status_code == 400 and len(requests) == before
+                assert error["param"] == "tools[3].type" and "web_search" in error["message"]
+                assert "private-value" not in error["message"]
                 mode = "invalid"
                 response = await vision._client_tools_complete(body, False, "fixture", "public")
                 assert response.status_code == 502 and b"invalid_backend_tool_call" in response.body

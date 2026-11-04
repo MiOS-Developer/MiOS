@@ -115,6 +115,10 @@ _mcp_tool_to_openai_tool = lambda key, info: convert_mcp_to_openai_schema(
 class ClientToolSchemaError(ValueError):
     """A caller-owned tool cannot be represented without changing its contract."""
 
+    def __init__(self, message, *, param="tools"):
+        super().__init__(message)
+        self.param = param
+
 
 class ClientToolResponseError(ValueError):
     """An engine returned a tool outside the caller's declared tool set."""
@@ -203,7 +207,7 @@ class ClientToolProjection:
         tools = body.get("tools")
         if not isinstance(tools, list) or not tools:
             raise ClientToolSchemaError("tools must be a non-empty array")
-        for tool in tools:
+        for tool_index, tool in enumerate(tools):
             if not isinstance(tool, dict):
                 raise ClientToolSchemaError("each tool must be an object")
             namespace, children = None, [tool]
@@ -216,10 +220,18 @@ class ClientToolProjection:
                 children = tool.get("tools")
                 if not isinstance(children, list) or not children:
                     raise ClientToolSchemaError("a namespace must contain function or custom tools")
-            for child in children:
+            for child_index, child in enumerate(children):
                 kind = child.get("type") if isinstance(child, dict) else None
                 if kind not in ("function", "custom"):
-                    raise ClientToolSchemaError("only function and custom tools can be projected")
+                    # Report only a bounded protocol tag and numeric location:
+                    # never serialize the definition, prompt, name or headers.
+                    label = kind if isinstance(kind, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", kind) else "<invalid>"
+                    param = f"tools[{tool_index}]"
+                    if namespace is not None:
+                        param += f".tools[{child_index}]"
+                    raise ClientToolSchemaError(
+                        f"unsupported caller tool type '{label}'; this engine accepts function/custom tools",
+                        param=param + ".type")
                 definition = child.get(kind, child)
                 if not isinstance(definition, dict):
                     raise ClientToolSchemaError("tool definition must be an object")

@@ -658,7 +658,7 @@ async def _client_namespace_tools_complete(body: dict, streaming: bool, chat_id:
     try:
         projection = await asyncio.to_thread(ClientToolProjection, body)
     except ClientToolSchemaError as exc:
-        return _client_tools_error(str(exc), 400, param="tools", code="invalid_tool_schema")
+        return _client_tools_error(str(exc), 400, param=exc.param, code="invalid_tool_schema")
     request = {k: v for k, v in projection.body.items()
                if k not in ("mios_flags", "_allow_write", "num_ctx")}
     endpoint, selected_model = await _pick_client_inference_backend(body.get('model'))

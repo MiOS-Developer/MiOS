@@ -365,5 +365,29 @@ class CustomProjectionTests(unittest.TestCase):
                     "name": alias, "arguments": '{"input":"hello"}'}}]}}]})
 
 
+
+    def test_unsupported_tool_type_reports_only_protocol_tag_and_location(self):
+        for tools, expected in [
+            ([{"type": "web_search", "name": "private-name", "secret": "private-value"}], "tools[0].type"),
+            ([{"type": "namespace", "name": "private-space",
+               "tools": [{"type": "code_interpreter", "secret": "private-value"}]}],
+             "tools[0].tools[0].type"),
+        ]:
+            with self.subTest(location=expected), self.assertRaises(S.ClientToolSchemaError) as raised:
+                S.ClientToolProjection({"tools": tools})
+            self.assertEqual(raised.exception.param, expected)
+            self.assertNotIn("private", str(raised.exception))
+            tag = tools[0].get("tools", tools)[0]["type"]
+            self.assertIn(tag, str(raised.exception))
+
+    def test_malformed_type_diagnostic_does_not_echo_field_contents(self):
+        value = "private-value\nAuthorization: private-header"
+        with self.assertRaises(S.ClientToolSchemaError) as raised:
+            S.ClientToolProjection({"tools": [{"type": value, "name": "private-name"}]})
+        self.assertEqual(raised.exception.param, "tools[0].type")
+        self.assertIn("<invalid>", str(raised.exception))
+        self.assertNotIn("private", str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
