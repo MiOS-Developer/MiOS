@@ -187,6 +187,35 @@ class NamespaceProjectionTests(unittest.TestCase):
             self.assertEqual(restored["id"], "actual-call")
         self.assertEqual(projection.reverse, S.ClientToolProjection(body).reverse)
 
+    def test_qualified_caller_names_keep_the_semantic_leaf_and_full_reverse_identity(self):
+        names = ["mcp__mios_control__mios_agent_register",
+                 "mcp__mios_control__mios_agent_receive",
+                 "mcp__mios_control__mios_agent_list",
+                 "mcp__other_control__mios_agent_list"]
+        body = {"tools": [{"type": "function", "name": name,
+                           "description": "Declared caller operation",
+                           "parameters": {"type": "object", "properties": {}}}
+                          for name in names]}
+        projection = S.ClientToolProjection(body)
+        aliases = list(projection.names)
+        self.assertEqual(len(set(aliases)), len(names))
+        for name, alias in zip(names, aliases):
+            self.assertTrue(alias.startswith("mios_tool_" + name.rsplit("__", 1)[-1] + "_"), alias)
+            self.assertNotIn("mcp__mios_control", alias)
+            self.assertLessEqual(len(alias), 64)
+            call = {"id": "qualified-call", "type": "function",
+                    "function": {"name": alias, "arguments": "{}"}}
+            restored = projection.restore_call(call)
+            self.assertEqual(restored["function"]["name"], name)
+            self.assertEqual(restored["id"], "qualified-call")
+        namespace_body = {"tools": [{"type": "namespace", "name": "controller",
+                                      "tools": body["tools"]}]}
+        namespaced = S.ClientToolProjection(namespace_body)
+        for name, alias in namespaced.reverse.items():
+            restored = namespaced.restore_call({"id": "scoped", "type": "function",
+                                               "function": {"name": alias, "arguments": "{}"}})
+            self.assertEqual((restored["namespace"], restored["function"]["name"]), name)
+
     def test_invalid_names_cannot_enter_engine_alias_or_identity_description(self):
         for name in ["line\nbreak", "semi;colon", "space name", "x" * 129, "nonascii-é"]:
             with self.subTest(name=repr(name)), self.assertRaises(S.ClientToolSchemaError):

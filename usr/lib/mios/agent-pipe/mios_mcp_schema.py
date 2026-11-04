@@ -248,7 +248,8 @@ class ClientToolProjection:
                     raise ClientToolSchemaError("this engine cannot preserve deferred, asynchronous or programmatic tools")
                 # Keep the caller verb recognizable to the engine while a
                 # 128-bit identity suffix separates namespaces and truncated names.
-                stem = re.sub(r"[^a-zA-Z0-9_-]", "_", name)[:21]
+                leaf = name.rsplit("__", 1)[-1] or name
+                stem = re.sub(r"[^a-zA-Z0-9_-]", "_", leaf)[:21]
                 alias = "mios_tool_" + stem + "_" + hashlib.sha256(json.dumps(key).encode()).hexdigest()[:32]
                 if alias in self.names:
                     raise ClientToolSchemaError("tool projection identity collision")
