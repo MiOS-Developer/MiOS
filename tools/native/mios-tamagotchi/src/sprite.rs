@@ -3480,21 +3480,23 @@ mod species_detail_tests {
                 0,
                 shape,
             );
-            let mut plain = VoxelModel::default();
-            plain.steps = m
-                .steps
-                .iter()
-                .copied()
-                .filter(|step| {
-                    !matches!(
-                        step,
-                        Sculpt::Ellipsoid {
-                            fine_only: true,
-                            ..
-                        }
-                    )
-                })
-                .collect();
+            let plain = VoxelModel {
+                steps: m
+                    .steps
+                    .iter()
+                    .copied()
+                    .filter(|step| {
+                        !matches!(
+                            step,
+                            Sculpt::Ellipsoid {
+                                fine_only: true,
+                                ..
+                            }
+                        )
+                    })
+                    .collect(),
+                ..VoxelModel::default()
+            };
             assert_ne!(
                 m.replay(FINE_LATTICE),
                 plain.replay(FINE_LATTICE),

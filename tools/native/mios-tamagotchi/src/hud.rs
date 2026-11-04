@@ -60,7 +60,7 @@ pub fn counter(value: u32) -> String {
             return format!(
                 "{}{suffix}{}",
                 value / unit,
-                if value % unit == 0 { "" } else { "+" }
+                if value.is_multiple_of(unit) { "" } else { "+" }
             );
         }
     }
