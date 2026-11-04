@@ -510,7 +510,9 @@
         "web_research_search_timeout",
         "write_skill_md_fire"
       ],
-      "public_symbols": []
+      "public_symbols": [
+        "literal"
+      ]
     },
     "usr/lib/mios/agent-pipe/mios_pipe/mcp_dispatch.py": {
       "configure_kwargs": [],

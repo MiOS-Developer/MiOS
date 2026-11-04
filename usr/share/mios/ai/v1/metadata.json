@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4145,
+  "total_files_scanned": 4146,
   "total_metadata_entries": 3403,
   "total_hints": 3397,
   "total_functions_indexed": 2107,
-  "total_related_links": 6703,
+  "total_related_links": 6705,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -16519,7 +16519,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_mcp_schema.py",
-      "hint": "Strict OpenAI function-schema conversion for MCP tool definitions.",
+      "hint": "Strict OpenAI tool schemas and caller-owned function/custom namespace projection.",
       "related": [
         "mios_mcp",
         "mios_mcp_transport"
@@ -29225,8 +29225,11 @@
     },
     {
       "path": "usr/libexec/mios/mios-web-extract",
-      "hint": "Python utility to fetch a URL and strip HTML noise (scripts, styles, nav) to return raw, readable text for grounding agent responses on actual web content rather than search snippets.",
-      "related": [],
+      "hint": "Fetch readable source text while retaining explicit article/publication metadata for dated evidence; publication, modification, retrieval and event dates remain distinct.",
+      "related": [
+        "usr/lib/mios/agent-pipe/mios_pipe/routing/web_research.py",
+        "usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",

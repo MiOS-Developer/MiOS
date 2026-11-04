@@ -288,7 +288,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-viking` | Provides a tiered, read-only virtual filesystem (viking://) for agents to navigate local skills, knowledge, and memory via L0 (abstract), L1 (overview), and L2 (raw) levels to manage context window... |
 | `usr/libexec/mios/mios-vscode-custom-css` | MiOS VS Code and code-server Custom CSS extension installer and workbench patcher. |
 | `usr/libexec/mios/mios-wallpaper` | Unified CLI entry point and execution wrapper for the MiOS Living Wallpaper daemon (WBRAND-05 / task_722). |
-| `usr/libexec/mios/mios-web-extract` | Python utility to fetch a URL and strip HTML noise (scripts, styles, nav) to return raw, readable text for grounding agent responses on actual web content rather than search snippets. |
+| `usr/libexec/mios/mios-web-extract` | Fetch readable source text while retaining explicit article/publication metadata for dated evidence; publication, modification, retrieval and event dates remain distinct. |
 | `usr/libexec/mios/mios-web-search` | Python backend for the web_search verb that queries a local SearXNG instance using concurrent fan-out (RAG-Fusion) to provide agents with real-time, grounded data for facts, weather, and news. |
 | `usr/libexec/mios/mios-webtools-firstboot.sh` | Build-if-missing bootstrap for the mios-webtools container images |
 | `usr/libexec/mios/mios-win-scan` | Wine-free native enumerator of the REAL Windows host's installed apps + games, read straight off the drvfs /mnt mount (NO .exe execution) so the inventory is correct even when WSL-interop is hijacked... |
@@ -437,7 +437,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/mios_manifest.py` | Re-export shim for mios_pipe.lifecycle.manifest |
 | `usr/lib/mios/agent-pipe/mios_manifest_rag.py` | MiOS system and orchestration module providing mios manifest rag capabilities. |
 | `usr/lib/mios/agent-pipe/mios_mcp.py` | Declarative MCP server lifecycle manager and dynamic tool schema converter in agent-pipe. |
-| `usr/lib/mios/agent-pipe/mios_mcp_schema.py` | Strict OpenAI function-schema conversion for MCP tool definitions. |
+| `usr/lib/mios/agent-pipe/mios_mcp_schema.py` | Strict OpenAI tool schemas and caller-owned function/custom namespace projection. |
 | `usr/lib/mios/agent-pipe/mios_mcp_transport.py` | Upstream FOSS MCP SDK v2 client transports for stdio, Streamable HTTP and legacy SSE. |
 | `usr/lib/mios/agent-pipe/mios_memguard.py` | Re-export shim for mios_pipe.access.memguard |
 | `usr/lib/mios/agent-pipe/mios_memory.py` | Re-export shim for mios_pipe.memory.memory |
