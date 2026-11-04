@@ -255,7 +255,7 @@ impl Widget for RoomWidget<'_> {
                 let ground = y >= floor;
                 let bg = if ground {
                     self.colors
-                        .ink(if ((x - area.x) / 8 + (y - floor)) % 2 == 0 {
+                        .ink(if ((x - area.x) / 8 + (y - floor)).is_multiple_of(2) {
                             14
                         } else {
                             6
@@ -265,7 +265,7 @@ impl Widget for RoomWidget<'_> {
                 };
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_char(
-                        if !ground && (x - area.x) % 7 == 0 && (y - area.y) % 3 == 1 {
+                        if !ground && (x - area.x).is_multiple_of(7) && (y - area.y) % 3 == 1 {
                             if ascii {
                                 '.'
                             } else {
@@ -375,21 +375,21 @@ impl Widget for RoomWidget<'_> {
         .render(body, buf);
         let effect = match self.expression {
             Expression::Eating => {
-                if self.frame % 2 == 0 {
+                if self.frame.is_multiple_of(2) {
                     "nom"
                 } else {
                     "munch"
                 }
             }
             Expression::Sleeping => {
-                if self.frame % 2 == 0 {
+                if self.frame.is_multiple_of(2) {
                     "z Z"
                 } else {
                     "Z z"
                 }
             }
             Expression::Cleaning => {
-                if self.frame % 2 == 0 {
+                if self.frame.is_multiple_of(2) {
                     "o . o"
                 } else {
                     ". o ."
@@ -397,7 +397,7 @@ impl Widget for RoomWidget<'_> {
             }
             Expression::Healing => "+ + +",
             Expression::Celebrate | Expression::Excited => {
-                if self.frame % 2 == 0 {
+                if self.frame.is_multiple_of(2) {
                     "* <3 *"
                 } else {
                     "<3 * <3"
@@ -410,7 +410,7 @@ impl Widget for RoomWidget<'_> {
             Expression::Angry => "! !",
             Expression::Surprised => "!",
             Expression::Playful => {
-                if self.frame % 2 == 0 {
+                if self.frame.is_multiple_of(2) {
                     "*  *"
                 } else {
                     " * "

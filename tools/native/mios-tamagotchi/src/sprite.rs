@@ -285,7 +285,7 @@ impl Sprite {
             Hungry => {
                 self.stamp(3, 5, &["60"]);
                 self.stamp(p, 0, &["8b"]); // food thought traverses overhead
-                self.paint(3, 6, if phase % 2 == 0 { 4 } else { 14 });
+                self.paint(3, 6, if phase.is_multiple_of(2) { 4 } else { 14 });
             }
             Playful => {
                 self.paint(5, eye_y, 0);
@@ -304,7 +304,15 @@ impl Sprite {
                 self.stamp(6, p, &["7", "27"]);
             }
             Eating => {
-                self.stamp(3, 5, if phase % 2 == 0 { &["60"] } else { &["66"] });
+                self.stamp(
+                    3,
+                    5,
+                    if phase.is_multiple_of(2) {
+                        &["60"]
+                    } else {
+                        &["66"]
+                    },
+                );
                 // Leaf, fruit, bite, then crumb: visible consumption, not a blink.
                 match phase {
                     0 => self.stamp(6, 3, &["b.", "88", "88"]),
@@ -417,7 +425,15 @@ impl Sprite {
             Hungry => {
                 self.stamp(6, mouth_y, &["0660", ".00."]);
                 self.stamp(2 + p, 0, &[".b.", "888", "8e8", ".8."]);
-                self.stamp(6, 12, if phase % 2 == 0 { &["4ee4"] } else { &["e44e"] });
+                self.stamp(
+                    6,
+                    12,
+                    if phase.is_multiple_of(2) {
+                        &["4ee4"]
+                    } else {
+                        &["e44e"]
+                    },
+                );
             }
             Playful => {
                 self.stamp(10, eye_y, &["00", ".0"]);
@@ -443,7 +459,7 @@ impl Sprite {
                 self.stamp(
                     6,
                     mouth_y,
-                    if phase % 2 == 0 {
+                    if phase.is_multiple_of(2) {
                         &["6006", ".55."]
                     } else {
                         &["6666", ".66."]
