@@ -913,7 +913,7 @@ impl Ui {
             (content, None)
         };
         let expression = self.expression(&config.game, frame);
-        let room_title = format!(" ROOM / {:?} ", expression);
+        let room_title = format!(" ROOM / {:?} {} ", expression, expression.kaomoji(frame));
         let border = panel(&room_title, colors, ascii);
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
@@ -1056,9 +1056,15 @@ impl Ui {
         } else {
             "LIVE"
         };
+        let expression = self.expression(&config.game, frame);
+        let face = expression.kaomoji(frame);
+        let heading = if title.width < 28 {
+            format!("{:?} {} {face}", self.game.stage(&config.game), &state[..1])
+        } else {
+            format!("{:?} / {state} {face}", self.game.stage(&config.game))
+        };
         screen.render_widget(
-            Paragraph::new(format!("{:?} / {state}", self.game.stage(&config.game)))
-                .style(Style::default().fg(colors.ink(7))),
+            Paragraph::new(heading).style(Style::default().fg(colors.ink(7))),
             title,
         );
         screen.render_widget(
@@ -2429,6 +2435,43 @@ mod graphics_tests {
             .collect();
         assert!(text.contains("R R R"), "{text}");
     }
+    #[test]
+    fn minimal_hud_retains_ascii_face_and_inline_dialogue_below_a_tiny_pet() {
+        let (config, mut ui) = pet();
+        ui.hud_mode = HudMode::Minimal;
+        ui.game.paused = true;
+        let saved = ui.game.clone();
+        let face = ui.expression(&config.game, 0).kaomoji(0);
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains(face), "{text}");
+        ui.open(Menu::Talk);
+        ui.native_request = None;
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("Read more"), "{text}");
+        assert!(text.contains("Back / Tab"), "{text}");
+        assert_eq!(ui.game, saved);
+    }
+
     #[test]
     fn tiny_roster_exposes_adoption_and_unordered_catalogue_confirms_selected_identity() {
         let (config, mut ui) = pet();

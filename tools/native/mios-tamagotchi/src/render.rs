@@ -206,6 +206,48 @@ impl Widget for SpriteWidget<'_> {
                 }
             }
         }
+        // Literal ASCII faces stay on the projected head, never on a rear view
+        // or outside a clipped/tiny sprite. Small views retain the HUD face.
+        if let Some(face) = self.sprite.face_overlay() {
+            let length = face.text.len() as u32;
+            let center = u32::from(face.center_x) * u32::from(scale) / u32::from(dx);
+            let row = u32::from(face.y) * u32::from(scale) / u32::from(dy);
+            let Some(start) = center.checked_sub(length / 2) else {
+                return;
+            };
+            if length == 0
+                || !face.text.is_ascii()
+                || face.text.bytes().any(|c| c.is_ascii_control())
+                || start.saturating_add(length) > columns
+                || row >= rows
+            {
+                return;
+            }
+            let covered = (start..start + length).all(|col| {
+                (0..dy).any(|y| {
+                    (0..dx).any(|x| {
+                        self.sprite
+                            .pixel(
+                                col * u32::from(dx) + u32::from(x),
+                                row * u32::from(dy) + u32::from(y),
+                                scale,
+                            )
+                            .is_some()
+                    })
+                })
+            });
+            if covered {
+                for (offset, glyph) in face.text.chars().enumerate() {
+                    if let Some(cell) =
+                        buf.cell_mut(((left + start + offset as u32) as u16, (top + row) as u16))
+                    {
+                        cell.set_char(glyph)
+                            .set_fg(self.colors.ink(0))
+                            .set_bg(self.colors.ink(4));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -467,6 +509,101 @@ impl Widget for RoomWidget<'_> {
         for (offset, ch) in effect.chars().enumerate() {
             if let Some(cell) = buf.cell_mut((x + offset as u16, y)) {
                 cell.set_char(ch).set_fg(self.colors.ink(7)).set_bg(wall);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod face_tests {
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+
+    #[test]
+    fn literal_kaomoji_is_in_headless_and_graphical_front_faces_but_not_rear_views() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        for shape in 0..16 {
+            let appearance = Appearance {
+                shape,
+                body: 1,
+                accent: 11,
+            };
+            let front = Sprite::voxel_with_appearance(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                0,
+                false,
+                appearance,
+            );
+            let expected = Expression::Happy.kaomoji(0);
+            assert!(
+                snapshot(&front, &config).unwrap().contains(expected),
+                "shape {shape}"
+            );
+            let area = Rect::new(2, 2, front.width(), front.height().div_ceil(2));
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 100));
+            SpriteWidget {
+                sprite: &front,
+                renderer: Renderer::HalfBlock,
+                scale: 1,
+                colors: &colors,
+            }
+            .render(area, &mut buffer);
+            let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
+            assert!(text.contains(expected), "shape {shape}");
+            let rear = Sprite::voxel_with_appearance(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                180,
+                false,
+                appearance,
+            );
+            assert!(!snapshot(&rear, &config).unwrap().contains(expected));
+        }
+    }
+
+    #[test]
+    fn scaled_faces_never_escape_the_pet_or_buffer_and_tiny_views_remain_bounded() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let sprite = Sprite::voxel(
+            Stage::Adult,
+            Expression::Idle,
+            SpriteStyle::SixteenBit,
+            0,
+            0,
+            false,
+        );
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            for (width, height) in [(1, 1), (3, 2), (10, 4), (40, 40), (80, 80)] {
+                let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 100));
+                let compact = sprite.downsample_to_fit(width, height);
+                SpriteWidget {
+                    sprite: &compact,
+                    renderer,
+                    scale: 0,
+                    colors: &colors,
+                }
+                .render(Rect::new(2, 2, width, height), &mut buffer);
+                assert!(buffer
+                    .content
+                    .iter()
+                    .all(|c| !c.symbol().contains('\u{1b}')));
+                assert_eq!(buffer[(0, 0)].symbol(), " ");
+                assert_eq!(buffer[(99, 99)].symbol(), " ");
             }
         }
     }
