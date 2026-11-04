@@ -28,6 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+const SHORTCUTS: [&str; 8] = ["F", "G", "C", "R", "M", "P", "S", "N"];
 const LABELS: [&str; 8] = [
     "Feed", "Memory", "Clean", "Rest", "Medicine", "Pause", "Save", "New pet",
 ];
@@ -79,9 +80,13 @@ pub struct Ui {
     camera_started: usize,
     camera_blend: u16,
     menu_scroll: usize,
+    menu_history: Vec<Menu>,
+    menu_number_start: Cell<usize>,
+    menu_number_count: Cell<usize>,
     pub sprite_style: SpriteStyle,
     pub renderer: Option<Renderer>,
     pub controller: Option<ControllerPrompts>,
+    controller_status: String,
     frame: usize,
     reaction: Option<Expression>,
     reaction_until: usize,
@@ -111,6 +116,8 @@ pub struct Ui {
     pet_area: Cell<Rect>,
     dialog_area: Cell<Rect>,
     care_targets: RefCell<Vec<(Rect, usize)>>,
+    menu_targets: RefCell<Vec<(Rect, usize)>>,
+    control_targets: RefCell<Vec<(Rect, Action)>>,
 }
 impl Ui {
     pub fn new(game: Game) -> Self {
@@ -136,9 +143,13 @@ impl Ui {
             camera_started: 0,
             camera_blend: 100,
             menu_scroll: 0,
+            menu_history: Vec::new(),
+            menu_number_start: Cell::new(0),
+            menu_number_count: Cell::new(0),
             sprite_style: SpriteStyle::EightBit,
             renderer: None,
             controller: None,
+            controller_status: "Inputd: checking local focus and assigned pad.".into(),
             frame: 0,
             reaction: None,
             reaction_until: 0,
@@ -168,6 +179,8 @@ impl Ui {
             pet_area: Cell::new(Rect::default()),
             dialog_area: Cell::new(Rect::default()),
             care_targets: RefCell::new(Vec::new()),
+            menu_targets: RefCell::new(Vec::new()),
+            control_targets: RefCell::new(Vec::new()),
         }
     }
     pub fn configured(game: Game, config: &Config) -> Self {
@@ -564,9 +577,125 @@ impl Ui {
         }
     }
     fn open(&mut self, menu: Menu) {
+        if let Some(parent) = self.menu {
+            if parent != menu && self.menu_history.len() < 16 {
+                self.menu_history.push(parent);
+            }
+        } else {
+            self.menu_history.clear();
+        }
         self.menu = Some(menu);
         self.menu_selected = 0;
         self.menu_scroll = 0;
+        self.menu_number_start.set(0);
+        self.menu_number_count.set(0);
+    }
+    fn back(&mut self) {
+        self.menu = self.menu_history.pop();
+        self.menu_selected = 0;
+        self.menu_scroll = 0;
+        self.menu_number_start.set(0);
+        self.menu_number_count.set(0);
+    }
+    fn action_hint(&self) -> String {
+        if self.selected <= 4 {
+            if self.game.paused {
+                return "P Resume / care paused".into();
+            }
+            if self.game.health == 0 {
+                return "N New pet / pet died".into();
+            }
+            if self.game.challenge.is_some() {
+                return "Arrows: memory / Esc cancels".into();
+            }
+            if !self.game.progress.hatched {
+                return "Egg: care after hatch".into();
+            }
+        }
+        format!("[{}] {}", SHORTCUTS[self.selected], LABELS[self.selected])
+    }
+    fn menu_controls(&self, area: Rect) {
+        if area.height == 0 {
+            return;
+        }
+        self.control_targets
+            .borrow_mut()
+            .push((Rect::new(area.x, area.y, area.width, 1), Action::Accept));
+        if area.height > 1 {
+            self.control_targets.borrow_mut().push((
+                Rect::new(area.x, area.bottom() - 1, area.width, 1),
+                Action::Cancel,
+            ));
+        }
+    }
+    fn click(&mut self, column: u16, row: u16, rules: &Rules) -> Effect {
+        let point = (column, row).into();
+        let control = self
+            .control_targets
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(area, _)| area.contains(point))
+            .map(|(_, action)| *action);
+        if let Some(action) = control {
+            let code = match action {
+                Action::Accept => crossterm::event::KeyCode::Enter,
+                Action::Confirm => crossterm::event::KeyCode::Char('y'),
+                Action::Cancel => crossterm::event::KeyCode::Esc,
+                Action::Menu => crossterm::event::KeyCode::Char('o'),
+                Action::Help => crossterm::event::KeyCode::Char('?'),
+                Action::Pause => crossterm::event::KeyCode::Char('p'),
+                Action::Quit => crossterm::event::KeyCode::Char('q'),
+                _ => return Effect::Continue,
+            };
+            return self.handle(
+                KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+                rules,
+            );
+        }
+        if self.confirm_reset || self.native_modal {
+            return Effect::Continue;
+        }
+        if self.menu.is_some() {
+            let index = self
+                .menu_targets
+                .borrow()
+                .iter()
+                .find(|(area, _)| area.contains(point))
+                .map(|(_, index)| *index);
+            if let Some(index) = index {
+                self.menu_selected = index;
+                return self.handle(
+                    KeyEvent::new(
+                        crossterm::event::KeyCode::Enter,
+                        crossterm::event::KeyModifiers::NONE,
+                    ),
+                    rules,
+                );
+            }
+            return Effect::Continue;
+        }
+        let index = self
+            .care_targets
+            .borrow()
+            .iter()
+            .find(|(area, _)| area.contains(point))
+            .map(|(_, index)| *index);
+        if let Some(index) = index {
+            self.selected = index;
+            self.handle(
+                KeyEvent::new(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                ),
+                rules,
+            )
+        } else {
+            if self.pet_area.get().contains(point) {
+                self.open_talk();
+            }
+            Effect::Continue
+        }
     }
     fn care(&mut self, care: Care, rules: &Rules) {
         let before = self.game.clone();
@@ -720,11 +849,8 @@ impl Ui {
                 self.notice = "Memory game cancelled.".into();
                 return Effect::Continue;
             }
-            if self.controller.is_some() {
-                self.open(Menu::Home);
-                return Effect::Continue;
-            }
-            return Effect::Quit;
+            self.open(Menu::Home);
+            return Effect::Continue;
         }
         if a == Action::Pause {
             self.game.paused = !self.game.paused;
@@ -791,10 +917,17 @@ impl Ui {
         let Some(menu) = self.menu else {
             return Effect::Continue;
         };
+        if let Action::Number(number) = action {
+            if number < self.menu_number_count.get() {
+                self.menu_selected = self.menu_number_start.get() + number;
+                return self.menu_input(Action::Accept, rules);
+            }
+            return Effect::Continue;
+        }
         if menu == Menu::Roster {
             let count = self.catalogue.len().max(1);
             match action {
-                Action::Cancel => self.menu = None,
+                Action::Cancel => self.back(),
                 Action::Previous | Action::Direction(Direction::Up | Direction::Left) => {
                     self.menu_selected = (self.menu_selected + count - 1) % count
                 }
@@ -824,7 +957,7 @@ impl Ui {
                     self.menu = None;
                     self.ask_reset();
                 }
-                Action::Cancel => self.menu = None,
+                Action::Cancel => self.back(),
                 Action::Direction(Direction::Left) | Action::Previous => {
                     self.menu_selected = (self.menu_selected + 15) % 16
                 }
@@ -873,9 +1006,7 @@ impl Ui {
             Menu::Habitat => self.habitat_rules.as_ref().map_or(2, |r| r.items.len() + 2),
         };
         match action {
-            Action::Cancel => {
-                self.menu = None;
-            }
+            Action::Cancel => self.back(),
             Action::Previous | Action::Direction(Direction::Up | Direction::Left) => {
                 self.menu_selected = (self.menu_selected + count - 1) % count
             }
@@ -916,19 +1047,23 @@ impl Ui {
                     _ => self.open(Menu::Training),
                 },
                 Menu::Care => {
-                    self.menu = None;
                     if self.menu_selected < 4 {
+                        self.menu = None;
                         self.care(
                             [Care::Feed, Care::Clean, Care::Rest, Care::Medicine]
                                 [self.menu_selected],
                             rules,
                         );
+                    } else {
+                        self.back();
                     }
                 }
                 Menu::Games => {
-                    self.menu = None;
                     if self.menu_selected == 0 {
+                        self.menu = None;
                         self.care(Care::Play, rules);
+                    } else {
+                        self.back();
                     }
                 }
                 Menu::Graphics => match self.menu_selected {
@@ -950,11 +1085,11 @@ impl Ui {
                     15 => self.zoom_by(true),
                     16 => self.zoom_by(false),
                     17 => self.change_camera(self.camera_view, 100),
-                    _ => self.menu = None,
+                    _ => self.back(),
                 },
                 Menu::Training => {
                     if self.menu_selected >= 5 {
-                        self.menu = None;
+                        self.back();
                     } else {
                         match self.game.train(self.menu_selected, rules) {
                             Ok(message) => {
@@ -968,7 +1103,7 @@ impl Ui {
                         }
                     }
                 }
-                Menu::Status | Menu::Help => self.menu = None,
+                Menu::Status | Menu::Help => self.back(),
                 Menu::Talk => {
                     if self.menu_selected == 0 {
                         let rows = self.dialog_rows.get().max(1);
@@ -978,6 +1113,8 @@ impl Ui {
                             self.dialog_page = 0;
                             self.dialog_variant = self.dialog_variant.wrapping_add(1);
                         }
+                    } else if self.menu_selected == 6 {
+                        self.back();
                     } else {
                         self.menu = None;
                         if self.menu_selected < 6 {
@@ -1014,7 +1151,7 @@ impl Ui {
                                 (usize::from(self.game.habitat.theme) + 1) % habitat.themes.len();
                             self.game.set_theme(next as u8, habitat)
                         } else {
-                            self.menu = None;
+                            self.back();
                             return Effect::Continue;
                         };
                         self.notice = outcome.unwrap_or_else(|error| error);
@@ -1076,6 +1213,9 @@ impl Ui {
         self.pet_area.set(Rect::default());
         self.dialog_area.set(Rect::default());
         self.care_targets.borrow_mut().clear();
+        self.menu_targets.borrow_mut().clear();
+        self.control_targets.borrow_mut().clear();
+        self.menu_number_count.set(0);
         let face = self.expression(&config.game, frame).kaomoji(frame);
         let stage = format!("{:?}", self.game.stage(&config.game));
         let clock = if self.game.paused {
@@ -1159,7 +1299,7 @@ impl Ui {
             Constraint::Length(3),
             Constraint::Min(1),
             Constraint::Length(config.inline_dialog_rows),
-            Constraint::Length(5),
+            Constraint::Length(6),
         ])
         .areas(inner);
         let style = match self.sprite_style {
@@ -1282,12 +1422,14 @@ impl Ui {
         let actions = border.inner(dock);
         screen.render_widget(border, dock);
         let mut lines = Vec::new();
-        let shortcuts = ["F", "G", "C", "R", "M", "P", "S", "N"];
+        let shortcuts = SHORTCUTS;
         for row in 0..2 {
             let mut spans = Vec::new();
             let mut offset = 0u16;
             for i in row * 4..row * 4 + 4 {
-                let label = if i == 3 && self.game.sleeping {
+                let label = if i == 5 && self.game.paused {
+                    "Resume"
+                } else if i == 3 && self.game.sleeping {
                     "Wake"
                 } else {
                     LABELS[i]
@@ -1300,17 +1442,14 @@ impl Ui {
                 } else {
                     Style::default().fg(colors.ink(2)).bg(colors.ink(6))
                 };
-                let caption = if let Some(pad) = &self.controller {
-                    if self.selected == i {
-                        format!("[{}] {label}", pad.accept)
-                    } else {
-                        label.into()
-                    }
+                let caption = format!("[{}] {label}", shortcuts[i]);
+                let width = if i % 4 == 3 {
+                    actions.width.saturating_sub(offset)
                 } else {
-                    format!("[{}] {label}", shortcuts[i])
+                    actions.width / 4
                 };
-                let printed = format!(" {caption:<14} ");
-                let width = printed.len().min(usize::from(u16::MAX)) as u16;
+                let caption = caption.chars().take(usize::from(width)).collect::<String>();
+                let printed = format!("{caption:width$}", width = usize::from(width));
                 let rect = Rect::new(
                     actions.x.saturating_add(offset),
                     actions.y.saturating_add(row as u16),
@@ -1319,24 +1458,54 @@ impl Ui {
                 )
                 .intersection(actions);
                 self.care_targets.borrow_mut().push((rect, i));
-                offset = offset.saturating_add(width + 1);
+                offset = offset.saturating_add(width);
                 spans.push(Span::styled(printed, style));
-                spans.push(Span::raw(" "));
             }
             lines.push(Line::from(spans));
         }
+        let navigation = if let Some(pad) = &self.controller {
+            format!(
+                "{} [{}] Act [{}] Menu / ? Help / Q Quit",
+                pad.navigate, pad.accept, pad.back
+            )
+        } else {
+            "O Menu Esc Back ? Help | Arrows/Tab Enter | Q Quit".into()
+        };
+        lines.push(Line::from(navigation.clone()).style(Style::default().fg(colors.ink(13))));
         lines.push(
-            Line::from(if let Some(pad) = &self.controller {
-                format!(
-                    "{} Select [{}] Act  [{}] Menu  [{}] Next",
-                    pad.navigate, pad.accept, pad.back, pad.next
-                )
+            Line::from(if self.game.paused {
+                "P Resume / care paused / ? Help".to_owned()
             } else {
-                " O Menu H Habitat | +/- zoom 0 reset Z view | Arrows/Tab + Enter | Q Quit".into()
+                self.controller_status.clone()
             })
             .style(Style::default().fg(colors.ink(13))),
         );
         screen.render_widget(Paragraph::new(lines), actions);
+        if actions.height > 2 {
+            let menu_caption = self
+                .controller
+                .as_ref()
+                .map_or_else(|| "O Menu".to_owned(), |pad| format!("[{}] Menu", pad.back));
+            for (caption, action) in [
+                (menu_caption.as_str(), Action::Menu),
+                ("Esc Back", Action::Cancel),
+                ("? Help", Action::Help),
+                ("Q Quit", Action::Quit),
+            ] {
+                if let Some(offset) = navigation.find(caption) {
+                    let offset = (offset as u16).min(actions.width);
+                    self.control_targets.borrow_mut().push((
+                        Rect::new(
+                            actions.x + offset,
+                            actions.y + 2,
+                            (caption.len() as u16).min(actions.width.saturating_sub(offset)),
+                            1,
+                        ),
+                        action,
+                    ));
+                }
+            }
+        }
         if let Some(challenge) = &self.game.challenge {
             let text = if challenge.reveal > 0 {
                 format!(
@@ -1427,7 +1596,7 @@ impl Ui {
         } else if layout.landscape || (info.height >= 10 && info.width >= 18) {
             self.draw_information(screen, config, colors, info, frame, layout.landscape);
         } else {
-            let control_rows = if self.controller.is_some() { 2 } else { 1 }.min(info.height);
+            let control_rows = 2.min(info.height);
             let controls = Rect::new(
                 info.x,
                 info.bottom().saturating_sub(control_rows),
@@ -1450,26 +1619,35 @@ impl Ui {
             if thought.height > 0 {
                 self.draw_dialogue(screen, config, colors, renderer, thought, true);
             }
-            let hint = if let Some(pad) = &self.controller {
-                format!(
-                    "{}:{}\n{}:Menu",
-                    tiny_button(&pad.accept),
-                    ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected],
-                    tiny_button(&pad.back)
-                )
+            let hint = if self.game.paused && self.selected <= 4 {
+                if controls.width < 18 {
+                    "P Resume\nO Menu ?".into()
+                } else {
+                    "P Resume / care paused\nO Menu / ? Help".into()
+                }
+            } else if let Some(pad) = &self.controller {
+                let short =
+                    ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected];
+                let first = if controls.width < 18 && (frame / 14).is_multiple_of(2) {
+                    format!("{}:{short}", tiny_button(&pad.accept))
+                } else {
+                    format!("{} {short} Ent", SHORTCUTS[self.selected])
+                };
+                format!("{first}\n{}:Menu ?", tiny_button(&pad.back))
             } else if controls.width < 18 {
                 format!(
-                    "Ent {} O",
+                    "{} {} Ent\nO Menu ?",
+                    SHORTCUTS[self.selected],
                     ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected]
                 )
             } else {
                 format!(
-                    "[Enter] {} O",
-                    ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected]
+                    "[{}] {} / [Enter]\nO Menu / ? Help",
+                    SHORTCUTS[self.selected], LABELS[self.selected]
                 )
             };
             screen.render_widget(
-                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                Paragraph::new(hint.clone()).style(Style::default().fg(colors.ink(13))),
                 controls,
             );
             self.care_targets.borrow_mut().push((
@@ -1481,6 +1659,35 @@ impl Ui {
                 ),
                 self.selected,
             ));
+            if self.game.paused && self.selected <= 4 {
+                self.control_targets.borrow_mut().push((
+                    Rect::new(controls.x, controls.y, controls.width, 1),
+                    Action::Pause,
+                ));
+            }
+            if controls.height > 1 {
+                let menu_width = hint
+                    .lines()
+                    .nth(1)
+                    .and_then(|line| line.find('?'))
+                    .map_or(controls.width, |offset| offset as u16)
+                    .min(controls.width);
+                self.control_targets.borrow_mut().extend([
+                    (
+                        Rect::new(controls.x, controls.y + 1, menu_width, 1),
+                        Action::Menu,
+                    ),
+                    (
+                        Rect::new(
+                            controls.x + menu_width,
+                            controls.y + 1,
+                            controls.width - menu_width,
+                            1,
+                        ),
+                        Action::Help,
+                    ),
+                ]);
+            }
         }
         if let Some(challenge) = &self.game.challenge {
             let text = if challenge.reveal > 0 {
@@ -1522,7 +1729,8 @@ impl Ui {
         frame: usize,
         landscape: bool,
     ) {
-        let footer_rows: u16 = if self.controller.is_some() { 3 } else { 2 };
+        let expanded_controls = info.width >= 28 && info.height >= 10;
+        let footer_rows: u16 = if expanded_controls { 6 } else { 3 };
         let footer_rows = footer_rows.min(info.height);
         let upper = Rect::new(
             info.x,
@@ -1634,10 +1842,13 @@ impl Ui {
                 }
             )));
         }
-        if budget.saturating_sub(lines.len()) >= 3 {
-            if let Some(pad) = &self.controller {
-                lines.push(Line::from(format!("{} / focused Inputd", pad.family)));
-            }
+        if budget.saturating_sub(lines.len()) >= 2 {
+            lines.extend(
+                wrap_dialogue(&self.controller_status, usize::from(info.width))
+                    .into_iter()
+                    .take(2)
+                    .map(Line::from),
+            );
         }
         lines.extend(
             wrap_dialogue(&self.words(config, true), usize::from(info.width))
@@ -1650,37 +1861,136 @@ impl Ui {
             Paragraph::new(lines).style(Style::default().fg(colors.ink(2)).bg(colors.background)),
             upper,
         );
-        let hints = if let Some(pad) = &self.controller {
+        let selected = self.action_hint();
+        let care_rows = [
+            ["F Feed", "G Memory", "C Clean", "R Rest"],
+            [
+                "M Medicine",
+                if self.game.paused {
+                    "P Resume"
+                } else {
+                    "P Pause"
+                },
+                "S Save",
+                "N New",
+            ],
+        ];
+        let resume = self.game.paused && self.selected <= 4;
+        let selected_segment = if resume {
+            "P Resume".to_owned()
+        } else {
+            self.controller.as_ref().map_or_else(
+                || format!("[Enter] {selected}"),
+                |pad| format!("{} {selected}", compact_button(&pad.accept)),
+            )
+        };
+        let hints = if expanded_controls {
+            let navigation = self.controller.as_ref().map_or_else(
+                || {
+                    if resume {
+                        "P Resume / care paused / Q Quit".into()
+                    } else {
+                        format!("Arrows/Tab / {selected_segment} / Q Quit")
+                    }
+                },
+                |pad| format!("{} / {selected_segment} / Q Quit", pad.navigate),
+            );
+            let menu = self.controller.as_ref().map_or_else(
+                || "O Menu / Esc Back / ? Help".to_string(),
+                |pad| format!("{} / O Menu / ? Help", compact_button(&pad.back)),
+            );
             format!(
-                "{} {}
-{} Menu
-{} Next / V L",
+                "{}\n{}\n{navigation}\n{menu}\n+/- 0 Z / T Talk B Roster H Items L Train V Graphics\n{}",
+                care_rows[0].join("  "),
+                care_rows[1].join("  "),
+                frame_label(&self.controller_status, info.width, frame / 28)
+            )
+        } else if let Some(pad) = &self.controller {
+            format!(
+                "{} {selected}\n{} Menu / ? Help\n{} Next / +/- Z",
                 tiny_button(&pad.accept),
-                LABELS[self.selected],
                 tiny_button(&pad.back),
                 tiny_button(&pad.next)
             )
-        } else if info.width < 28 {
-            format!(
-                "Ent {} O Menu
-+/- 0 Z L",
-                ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected]
-            )
         } else {
-            format!(
-                "[Enter] {} O Menu
-+/- zoom 0 Z / L Train",
-                LABELS[self.selected]
-            )
+            format!("{selected} Ent\nO Menu / ? Help\n+/- 0 Z / L")
         };
         screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hints.clone()).style(Style::default().fg(colors.ink(13))),
             footer,
         );
-        self.care_targets.borrow_mut().push((
-            Rect::new(footer.x, footer.y, footer.width, 1.min(footer.height)),
-            self.selected,
-        ));
+        let action_row = if expanded_controls { 2 } else { 0 };
+        let action_line = hints.lines().nth(usize::from(action_row)).unwrap_or("");
+        let segment = if expanded_controls {
+            selected_segment.as_str()
+        } else if resume {
+            "P Resume"
+        } else {
+            action_line
+        };
+        if let Some(offset) = action_line.find(segment) {
+            let offset = offset.min(usize::from(footer.width)) as u16;
+            let width = (segment.len() as u16).min(footer.width.saturating_sub(offset));
+            let area = Rect::new(footer.x + offset, footer.y + action_row, width, 1);
+            if resume {
+                self.control_targets
+                    .borrow_mut()
+                    .push((area, Action::Pause));
+            } else {
+                self.care_targets.borrow_mut().push((area, self.selected));
+            }
+        }
+        if let Some(offset) = action_line.find("Q Quit") {
+            let offset = offset.min(usize::from(footer.width)) as u16;
+            self.control_targets.borrow_mut().push((
+                Rect::new(
+                    footer.x + offset,
+                    footer.y + action_row,
+                    6.min(footer.width.saturating_sub(offset)),
+                    1,
+                ),
+                Action::Quit,
+            ));
+        }
+        if expanded_controls {
+            for (row, captions) in care_rows.iter().enumerate() {
+                let mut x = footer.x;
+                for (column, caption) in captions.iter().enumerate() {
+                    let width = (caption.len() as u16).min(footer.right().saturating_sub(x));
+                    self.care_targets.borrow_mut().push((
+                        Rect::new(x, footer.y + row as u16, width, 1),
+                        row * 4 + column,
+                    ));
+                    x = x.saturating_add(caption.len() as u16 + 2);
+                }
+            }
+        }
+        let menu_row = if expanded_controls { 3 } else { 1 };
+        if footer.height > menu_row {
+            let menu_width = if expanded_controls {
+                self.controller
+                    .as_ref()
+                    .map_or(19, |pad| (compact_button(&pad.back).len() + 12) as u16)
+            } else {
+                9
+            }
+            .min(footer.width);
+            self.control_targets.borrow_mut().extend([
+                (
+                    Rect::new(footer.x, footer.y + menu_row, menu_width, 1),
+                    Action::Menu,
+                ),
+                (
+                    Rect::new(
+                        footer.x + menu_width,
+                        footer.y + menu_row,
+                        footer.width.saturating_sub(menu_width),
+                        1,
+                    ),
+                    Action::Help,
+                ),
+            ]);
+        }
     }
 
     fn draw_dialogue(
@@ -1729,6 +2039,20 @@ impl Ui {
             .map(Line::from)
             .collect();
         if talking {
+            lines.resize(rows, Line::from(""));
+            self.menu_number_start.set(self.menu_selected.min(6));
+            self.menu_number_count.set(1);
+            let controls = Rect::new(
+                body.x,
+                body.bottom().saturating_sub(2),
+                body.width,
+                2.min(body.height),
+            );
+            self.menu_controls(controls);
+            self.menu_targets.borrow_mut().push((
+                Rect::new(body.x, body.y, body.width, body.height.saturating_sub(2)),
+                0,
+            ));
             let label = [
                 "Read more",
                 "Feed",
@@ -1754,12 +2078,16 @@ impl Ui {
             lines.push(
                 Line::from(if body.width < 18 {
                     format!(
-                        "{accept}:{}",
+                        "1 {}:{}",
+                        ["Ent", "F", "G", "C", "R", "M", "Esc"][self.menu_selected.min(6)],
                         ["More", "Feed", "Play", "Wash", "Rest", "Med", "Back"]
                             [self.menu_selected.min(6)]
                     )
                 } else {
-                    format!("[{accept}] {label}")
+                    format!(
+                        "1 {} {label} / {accept}",
+                        ["", "[F]", "[G]", "[C]", "[R]", "[M]", "Esc"][self.menu_selected.min(6)]
+                    )
                 })
                 .style(Style::default().fg(colors.ink(7))),
             );
@@ -1861,6 +2189,9 @@ impl Ui {
         );
         let rows = usize::from(list.height);
         let start = selected.saturating_sub(rows.saturating_sub(1));
+        self.menu_number_start.set(start);
+        self.menu_number_count.set(rows.min(6 - start));
+        self.menu_controls(controls);
         let lines = (start..6)
             .take(rows)
             .map(|index| {
@@ -1885,11 +2216,15 @@ impl Ui {
                         )
                     }
                 };
-                let text = if micro {
-                    text
-                } else {
-                    format!("{} {text}", if index == selected { ">" } else { " " })
-                };
+                self.menu_targets.borrow_mut().push((
+                    Rect::new(list.x, list.y + (index - start) as u16, list.width, 1),
+                    index,
+                ));
+                let text = format!(
+                    "{}{} {text}",
+                    if index == selected { ">" } else { " " },
+                    index - start + 1
+                );
                 Line::from(text).style(if index == selected {
                     Style::default()
                         .fg(colors.ink(0))
@@ -1961,8 +2296,7 @@ impl Ui {
                 if micro {
                     "Ent train\nEsc Back".to_owned()
                 } else {
-                    "Enter: train selected skill / Tab: next\nEscape: return / L: training"
-                        .to_owned()
+                    "1..6 / Enter: train / Tab: next\nEscape: Back / L: training".to_owned()
                 }
             },
             |pad| {
@@ -2059,8 +2393,12 @@ impl Ui {
         }
         entries.push("0c NEXT THEME".into());
         entries.push("Back".into());
-        let rows = usize::from(list.height).max(1);
+        let rows = usize::from(list.height).clamp(1, 9);
         let start = self.menu_selected.saturating_sub(rows - 1);
+        self.menu_number_start.set(start);
+        self.menu_number_count
+            .set(rows.min(entries.len().saturating_sub(start)));
+        self.menu_controls(controls);
         let lines: Vec<Line> = entries
             .iter()
             .enumerate()
@@ -2069,20 +2407,27 @@ impl Ui {
             .map(|(index, text)| {
                 let selected = index == self.menu_selected;
                 let text = if micro {
-                    frame_label(text, list.width.saturating_sub(2), self.frame / 14)
+                    frame_label(text, list.width.saturating_sub(3), self.frame / 14)
                 } else {
                     text.clone()
                 };
-                Line::from(format!("{} {text}", if selected { ">" } else { " " })).style(
-                    if selected {
-                        Style::default()
-                            .fg(colors.ink(0))
-                            .bg(colors.ink(7))
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(colors.ink(2))
-                    },
-                )
+                self.menu_targets.borrow_mut().push((
+                    Rect::new(list.x, list.y + (index - start) as u16, list.width, 1),
+                    index,
+                ));
+                Line::from(format!(
+                    "{}{} {text}",
+                    if selected { ">" } else { " " },
+                    index - start + 1
+                ))
+                .style(if selected {
+                    Style::default()
+                        .fg(colors.ink(0))
+                        .bg(colors.ink(7))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(colors.ink(2))
+                })
             })
             .collect();
         screen.render_widget(Paragraph::new(lines), list);
@@ -2091,7 +2436,7 @@ impl Ui {
                 if micro {
                     "Ent use\nEsc Back".into()
                 } else {
-                    "Enter: buy/place\nEsc: Back / Tab".into()
+                    "1..9 / Enter: buy/place\nEsc: Back / Tab".into()
                 }
             },
             |p| {
@@ -2272,45 +2617,48 @@ impl Ui {
             Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
             controls,
         );
+        self.menu_controls(controls);
     }
     fn draw_reset(&self, screen: &mut Frame, colors: &Colors, ascii: bool) {
-        let area = screen.area();
-        if self.confirm_reset {
-            let modal = center(area, 62, 7);
-            screen.render_widget(Clear, modal);
-            let question = self
-                .adopt_character
-                .and_then(|id| self.catalogue.iter().find(|character| character.id == id))
-                .map_or_else(
-                    || "Replace pet?".to_owned(),
-                    |c| format!("Adopt {}?", c.name),
-                );
-            let prompt = if area.width < 40 || area.height < 14 {
-                if let Some(pad) = &self.controller {
-                    format!(
-                        "{question}\n{}: New\n{}: Keep",
-                        compact_button(&pad.accept),
-                        compact_button(&pad.back)
-                    )
-                } else {
-                    format!("{question}\nEnter/Y: New\nEsc: Keep")
-                }
-            } else if let Some(pad) = &self.controller {
-                format!(
-                    "Replace this pet with a new egg?\nYour current save changes only after confirmation.\n\n[{}] New pet    [{}] Keep current pet",
-                    pad.accept, pad.back
-                )
-            } else {
-                "Replace this pet with a new egg?\nYour current save changes only after confirmation.\n\nEnter / Y: new pet    Escape: keep current pet".into()
-            };
-            screen.render_widget(
-                Paragraph::new(prompt)
-                    .block(panel(" NEW PET? ", colors, ascii))
-                    .style(Style::default().fg(colors.ink(2)).bg(colors.background))
-                    .wrap(Wrap { trim: true }),
-                modal,
-            );
+        if !self.confirm_reset {
+            return;
         }
+        self.care_targets.borrow_mut().clear();
+        self.menu_targets.borrow_mut().clear();
+        self.control_targets.borrow_mut().clear();
+        let modal = center(screen.area(), 62, 7);
+        screen.render_widget(Clear, modal);
+        let block = panel(" NEW PET? ", colors, ascii);
+        let body = block.inner(modal);
+        screen.render_widget(block, modal);
+        let question = self
+            .adopt_character
+            .and_then(|id| self.catalogue.iter().find(|character| character.id == id))
+            .map_or_else(
+                || "Replace pet?".to_owned(),
+                |c| format!("Adopt {}?", c.name),
+            );
+        let question_area = Rect::new(body.x, body.y, body.width, body.height.saturating_sub(2));
+        screen.render_widget(
+            Paragraph::new(question)
+                .style(Style::default().fg(colors.ink(2)).bg(colors.background)),
+            question_area,
+        );
+        let controls = Rect::new(
+            body.x,
+            body.bottom().saturating_sub(2),
+            body.width,
+            2.min(body.height),
+        );
+        let prompt = self.controller.as_ref().map_or_else(
+            || "Enter/Y: New\nEsc: Keep".to_owned(),
+            |pad| format!("[{}] New pet / Y\n[{}] Keep / Esc", pad.accept, pad.back),
+        );
+        screen.render_widget(
+            Paragraph::new(prompt).style(Style::default().fg(colors.ink(13)).bg(colors.background)),
+            controls,
+        );
+        self.menu_controls(controls);
     }
     fn draw_status(&self, screen: &mut Frame, area: Rect, colors: &Colors, ascii: bool) {
         let block = panel(" STATUS ", colors, ascii);
@@ -2387,6 +2735,9 @@ impl Ui {
         if menu == Menu::Talk {
             return;
         }
+        // Opaque menu owns all clicks; never activate care through its background.
+        self.care_targets.borrow_mut().clear();
+        self.control_targets.borrow_mut().clear();
         if menu == Menu::Training {
             self.draw_training(screen, config, colors, renderer);
             return;
@@ -2518,6 +2869,7 @@ impl Ui {
                 Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
                 controls,
             );
+            self.menu_controls(controls);
             return;
         }
         let (title, entries) = match menu {
@@ -2580,11 +2932,7 @@ impl Ui {
             }
         };
         let extra = if matches!(menu, Menu::Status | Menu::Help) {
-            if self.controller.is_some() && menu == Menu::Help {
-                16
-            } else {
-                12
-            }
+            20
         } else {
             4
         };
@@ -2610,8 +2958,10 @@ impl Ui {
                     .map(|s| Line::from(s.to_owned())),
             );
             lines.push(Line::from("Offline time is frozen. Saves stay local."));
+            lines.push(Line::from(self.controller_status.clone()));
             lines.push(Line::from(""));
         } else if menu == Menu::Help {
+            lines.push(Line::from(self.controller_status.clone()));
             if let Some(pad) = &self.controller {
                 lines.push(Line::from(format!("{} / focused controller", pad.family)));
                 lines.push(Line::from(format!(
@@ -2622,18 +2972,38 @@ impl Ui {
                     "[{}] Next action. Back in the room opens Menu.",
                     pad.next
                 )));
-                lines.push(Line::from(pad.release.clone()));
+                lines.push(Line::from(format!(
+                    "{} release (native Inputd)",
+                    pad.release
+                )));
+                if let Some(quit) = &pad.quit {
+                    lines.push(Line::from(format!("{quit}: Quit (mapped Ctrl+C)")));
+                }
+                lines.push(Line::from(
+                    "Pad chooses menus/care/camera; never moves the pet.",
+                ));
+                lines.push(Line::from(
+                    "Keyboard shortcuts stay active with a focused pad.",
+                ));
             }
             for line in [
                 "Feed, clean, rest and play to raise a happy adult.",
                 "Watch three arrows, then repeat after they disappear.",
                 "F Feed  G Memory  C Clean  R Rest  M Medicine",
-                "P Pause  S Save  N New pet (asks first)",
+                "P Pause/resume  S Save  N New pet (asks first)",
+                "T Talk  B Roster preview  H Habitat/items  L Training",
                 "L Training: Swim / Flight / Run / Power / Stamina.",
                 "Hatch rolls name, stats and aptitude. Care funds training.",
                 "Arrows / Tab select; Enter / Space activates.",
                 "O / F1 Menu  I Status  V Graphics  ? Help",
-                "Escape closes a menu; Q saves and quits.",
+                "Esc: back/cancel; in the room, opens Home.",
+                "Q / Ctrl+C: save and quit, including tiny views.",
+                "1..9: activate the numbered visible menu row.",
+                "0 always resets zoom; arrows still answer memory.",
+                "Click an action/menu row to choose it.",
+                "Click the pet: Talk. Right-click: Home/context.",
+                "Click footer Choose/Back or O Menu / ? Help.",
+                "Wheel: zoom in the room; scroll choices in menus.",
                 "Menus freeze care time; animation keeps moving.",
                 "Compact HUD: *=100. Tiny frames page all needs.",
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
@@ -2666,98 +3036,119 @@ impl Ui {
                 })
                 .collect();
         }
-        for (i, entry) in entries.iter().enumerate() {
-            let selected = i == self.menu_selected;
-            lines.push(
-                Line::from(format!(
-                    " {} {} ",
-                    if selected { ">" } else { " " },
-                    entry
-                        .chars()
-                        .take(usize::from(body.width.saturating_sub(3)))
-                        .collect::<String>()
-                ))
-                .style(if selected {
-                    Style::default()
-                        .fg(colors.ink(0))
-                        .bg(colors.ink(7))
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(colors.ink(2))
-                }),
-            );
-        }
-        lines.push(Line::from(""));
-        let footer: Vec<Line> = if body.width < 32 {
-            if let Some(pad) = &self.controller {
-                vec![
-                    Line::from(format!(
-                        "{}: OK",
-                        if body.width < 18 {
-                            tiny_button(&pad.accept)
-                        } else {
-                            compact_button(&pad.accept)
-                        }
-                    )),
-                    Line::from(format!(
-                        "{}: Back",
-                        if body.width < 18 {
-                            tiny_button(&pad.back)
-                        } else {
-                            compact_button(&pad.back)
-                        }
-                    )),
-                ]
-            } else {
-                vec![Line::from("Enter: OK"), Line::from("Esc: Back")]
-            }
+        let footer_rows = 2.min(body.height);
+        let visible = usize::from(body.height.saturating_sub(footer_rows));
+        let mut page = Vec::new();
+        if matches!(menu, Menu::Status | Menu::Help) {
+            let start = self
+                .menu_scroll
+                .min(lines.len().saturating_sub(visible.max(1)));
+            page.extend(lines.into_iter().skip(start).take(visible));
         } else {
-            vec![Line::from(if let Some(pad) = &self.controller {
+            let visible = visible.min(9);
+            let start = self
+                .menu_selected
+                .saturating_sub(visible.saturating_sub(1))
+                .min(entries.len().saturating_sub(visible));
+            self.menu_number_start.set(start);
+            self.menu_number_count
+                .set(visible.min(entries.len().saturating_sub(start)));
+            for (row, (index, entry)) in entries
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(visible)
+                .enumerate()
+            {
+                let selected = index == self.menu_selected;
+                let binding = menu_binding(menu, index);
+                let short = if body.width < 18 && menu == Menu::Care {
+                    ["Feed", "Clean", "Rest", "Med", "Back"][index]
+                } else {
+                    entry
+                };
+                let key = binding.map_or(String::new(), |key| {
+                    if body.width < 18 {
+                        format!("{key} ")
+                    } else {
+                        format!("[{key}] ")
+                    }
+                });
+                let prefix = format!("{}{} {key}", if selected { ">" } else { " " }, row + 1);
+                let label = frame_label(
+                    short,
+                    body.width.saturating_sub(prefix.len() as u16),
+                    self.frame / 14,
+                );
+                let text = format!("{prefix}{label}");
+                page.push(
+                    Line::from(
+                        text.chars()
+                            .take(usize::from(body.width))
+                            .collect::<String>(),
+                    )
+                    .style(if selected {
+                        Style::default()
+                            .fg(colors.ink(0))
+                            .bg(colors.ink(7))
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(colors.ink(2))
+                    }),
+                );
+                self.menu_targets
+                    .borrow_mut()
+                    .push((Rect::new(body.x, body.y + row as u16, body.width, 1), index));
+            }
+        }
+        let controls = Rect::new(
+            body.x,
+            body.bottom().saturating_sub(footer_rows),
+            body.width,
+            footer_rows,
+        );
+        let hint = if let Some(pad) = &self.controller {
+            if body.width < 32 {
                 format!(
-                    "{} [{}] Choose [{}] Back [{}] Next",
-                    pad.navigate, pad.accept, pad.back, pad.next
+                    "{}: OK\n{}: Back",
+                    if body.width < 18 {
+                        tiny_button(&pad.accept)
+                    } else {
+                        compact_button(&pad.accept)
+                    },
+                    if body.width < 18 {
+                        tiny_button(&pad.back)
+                    } else {
+                        compact_button(&pad.back)
+                    }
                 )
             } else {
-                "Arrows / Tab: select   Enter: choose   Esc: back".into()
-            })]
-        };
-        let footer: Vec<_> = footer
-            .into_iter()
-            .map(|l| l.style(Style::default().fg(colors.ink(13))))
-            .collect();
-        lines.extend(footer.clone());
-        let height = usize::from(body.height);
-        if lines.len() > height && height > footer.len() {
-            if matches!(menu, Menu::Status | Menu::Help) {
-                let end = lines.len().saturating_sub(footer.len() + 2);
-                let visible = height.saturating_sub(footer.len() + 1);
-                let start = self.menu_scroll.min(end.saturating_sub(visible));
-                let mut page = lines[start..(start + visible).min(end)].to_vec();
-                page.push(Line::from(if body.width < 18 {
-                    "> Back"
-                } else {
-                    "> Back / scroll"
-                }));
-                page.extend(footer);
-                lines = page;
-            } else {
-                let visible = height.saturating_sub(footer.len());
-                let start = self
-                    .menu_selected
-                    .saturating_sub(visible.saturating_sub(1))
-                    .min(entries.len().saturating_sub(visible));
-                let mut page = lines[start..(start + visible).min(entries.len())].to_vec();
-                page.extend(footer);
-                lines = page;
+                format!(
+                    "{} [{}] Choose / 1..9 rows\n[{}] Back / Q Quit / ? Help",
+                    pad.navigate, pad.accept, pad.back
+                )
             }
-        }
+        } else if body.width < 32 {
+            "Enter: OK\nEsc: Back".into()
+        } else {
+            "Arrows/Tab / Enter: choose / 1..9 rows\nEsc: Back / Q: Quit / ?: Help".into()
+        };
         screen.render_widget(
-            Paragraph::new(lines)
-                .style(Style::default().bg(colors.background))
-                .wrap(Wrap { trim: true }),
-            body,
+            Paragraph::new(page).style(Style::default().bg(colors.background)),
+            Rect::new(
+                body.x,
+                body.y,
+                body.width,
+                body.height.saturating_sub(footer_rows),
+            ),
         );
+        screen.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+            controls,
+        );
+        self.menu_controls(controls);
     }
+
     fn summary_for_menu(&self) -> String {
         let base = format!(
             "{}\nAge {} game ticks / {} coins / {} wins\n\nFullness {}%     Happiness {}%\nHygiene  {}%     Energy    {}%\nHealth   {}%\n\n{}{}",
@@ -2805,6 +3196,38 @@ impl Ui {
         format!("{base}\n{stats}\nL: Training / care costs apply")
     }
 }
+fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
+    match menu {
+        Menu::Home => [
+            None,
+            Some("G"),
+            Some("T"),
+            Some("B"),
+            Some("I"),
+            Some("V"),
+            None,
+            Some("?"),
+            Some("S"),
+            Some("Q"),
+            Some("H"),
+            Some("L"),
+        ]
+        .get(index)
+        .copied()
+        .flatten(),
+        Menu::Care => ["F", "C", "R", "M", "Esc"].get(index).copied(),
+        Menu::Games => ["G", "Esc"].get(index).copied(),
+        Menu::Graphics => match index {
+            15 => Some("+/="),
+            16 => Some("-"),
+            17 => Some("0"),
+            18 => Some("Esc"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn frame_label(value: &str, width: u16, page: usize) -> String {
     let pages = wrap_dialogue(value, usize::from(width));
     pages
@@ -2980,6 +3403,7 @@ pub fn run(
             (animation.elapsed().as_millis() / u128::from(config.animation_frame_ms)) as usize;
         ui.animate(frame);
         ui.controller = controller.poll();
+        ui.controller_status = controller.status().to_owned();
         terminal
             .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?;
         if event::poll(Duration::from_millis(
@@ -2992,12 +3416,24 @@ pub fn run(
             let effect = match incoming {
                 Event::Key(key) => ui.handle(key, &config.game),
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => {
-                    ui.zoom_by(true);
-                    Effect::Continue
+                    if ui.menu.is_some() {
+                        ui.menu_input(Action::Previous, &config.game)
+                    } else if !ui.confirm_reset {
+                        ui.zoom_by(true);
+                        Effect::Continue
+                    } else {
+                        Effect::Continue
+                    }
                 }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollDown => {
-                    ui.zoom_by(false);
-                    Effect::Continue
+                    if ui.menu.is_some() {
+                        ui.menu_input(Action::Next, &config.game)
+                    } else if !ui.confirm_reset {
+                        ui.zoom_by(false);
+                        Effect::Continue
+                    } else {
+                        Effect::Continue
+                    }
                 }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Right) => {
                     ui.open(Menu::Home);
@@ -3005,36 +3441,7 @@ pub fn run(
                     Effect::Continue
                 }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
-                    let point = (mouse.column, mouse.row).into();
-                    let selected = ui
-                        .care_targets
-                        .borrow()
-                        .iter()
-                        .find(|(r, _)| r.contains(point))
-                        .map(|(_, i)| *i);
-                    if let Some(index) = selected {
-                        ui.selected = index;
-                        ui.handle(
-                            KeyEvent::new(
-                                crossterm::event::KeyCode::Enter,
-                                crossterm::event::KeyModifiers::NONE,
-                            ),
-                            &config.game,
-                        )
-                    } else if ui.dialog_area.get().contains(point) && ui.menu == Some(Menu::Talk) {
-                        ui.handle(
-                            KeyEvent::new(
-                                crossterm::event::KeyCode::Enter,
-                                crossterm::event::KeyModifiers::NONE,
-                            ),
-                            &config.game,
-                        )
-                    } else if ui.pet_area.get().contains(point) {
-                        ui.open_talk();
-                        Effect::Continue
-                    } else {
-                        Effect::Continue
-                    }
+                    ui.click(mouse.column, mouse.row, &config.game)
                 }
                 _ => Effect::Continue,
             };
@@ -3104,6 +3511,8 @@ mod graphics_tests {
         assert_eq!(ui.menu, Some(Menu::Home));
         ui.handle(key(KeyCode::Enter), &config.game);
         assert_eq!(ui.menu, Some(Menu::Games));
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Home));
         ui.handle(key(KeyCode::Esc), &config.game);
         assert_eq!(ui.menu, None);
         assert_eq!(ui.game, saved);
@@ -3238,7 +3647,13 @@ mod graphics_tests {
             .map(|c| c.symbol())
             .collect();
         assert!(text.contains("Sprite studio"));
-        assert!(text.contains("> Quit"));
+        assert!(text.contains("[Q] Quit"));
+        assert!(
+            ui.menu_targets
+                .borrow()
+                .iter()
+                .any(|(_, index)| *index == 9)
+        );
         assert_eq!(ui.handle(key(KeyCode::Enter), &config.game), Effect::Quit);
     }
     #[test]
@@ -3305,9 +3720,9 @@ mod graphics_tests {
         };
         let text = render(&ui, &mut terminal);
         assert!(text.contains("DualSense / CONTROLLER"));
-        assert!(text.contains("[Cross] Feed"));
+        assert!(text.contains("[Cross] Act"));
         assert!(text.contains("[Circle] Menu"));
-        assert!(!text.contains("[F] Feed"));
+        assert!(text.contains("[F] Feed"));
         assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
         assert_eq!(ui.menu, Some(Menu::Home));
         let text = render(&ui, &mut terminal);
@@ -3329,7 +3744,8 @@ mod graphics_tests {
         let text = render(&ui, &mut terminal);
         assert!(text.contains("[F] Feed"));
         assert!(text.contains("O Menu"));
-        assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Quit);
+        assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
+        assert_eq!(ui.menu, Some(Menu::Home));
     }
     #[test]
     fn autonomous_rng_wandering_never_follows_menu_controls_or_changes_saved_game() {
@@ -4181,5 +4597,211 @@ mod portrait_density_tests {
             assert!(text.contains("W0") && text.contains("$10"), "{text}");
             assert_eq!(ui.game, saved);
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_navigation_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn pet() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 3730);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        game.fullness = 30;
+        (config.clone(), Ui::configured(game, &config))
+    }
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16) -> String {
+        let colors = Colors::from_config(config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+    #[test]
+    fn back_never_quits_and_nested_back_returns_parent_without_changing_pet() {
+        for (width, height) in [(12, 6), (62, 30), (61, 45), (4, 2)] {
+            let (config, mut ui) = pet();
+            let before = ui.game.clone();
+            draw(&ui, &config, width, height);
+            assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
+            if width >= 12 {
+                assert_eq!(ui.menu, Some(Menu::Home));
+                ui.handle(key(KeyCode::Enter), &config.game);
+                assert_eq!(ui.menu, Some(Menu::Care));
+                ui.handle(key(KeyCode::Esc), &config.game);
+                assert_eq!(ui.menu, Some(Menu::Home));
+                ui.handle(key(KeyCode::Esc), &config.game);
+                assert_eq!(ui.menu, None);
+            }
+            assert_eq!(ui.game, before);
+            assert_eq!(
+                ui.handle(key(KeyCode::Char('Q')), &config.game),
+                Effect::Quit
+            );
+        }
+    }
+    #[test]
+    fn numbered_menu_and_full_width_mouse_rows_charge_once_and_do_not_click_through() {
+        let (config, mut ui) = pet();
+        ui.open(Menu::Home);
+        draw(&ui, &config, 62, 30);
+        ui.handle(key(KeyCode::Char('1')), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Care));
+        let text = draw(&ui, &config, 62, 30);
+        assert!(text.contains("[F] Feed"));
+        let before = ui.game.clone();
+        let target = ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .find(|(_, index)| *index == 0)
+            .unwrap()
+            .0;
+        ui.click(target.right() - 1, target.y, &config.game);
+        assert_eq!(ui.game.coins, before.coins - config.game.feed_cost);
+        let charged = ui.game.clone();
+        let mut repeated = key(KeyCode::Char('1'));
+        repeated.kind = KeyEventKind::Repeat;
+        ui.handle(repeated, &config.game);
+        repeated.kind = KeyEventKind::Release;
+        ui.handle(repeated, &config.game);
+        assert_eq!(ui.game, charged);
+        ui.open(Menu::Home);
+        draw(&ui, &config, 62, 30);
+        // A point outside the opaque menu must not reach a retained care target.
+        ui.care_targets
+            .borrow_mut()
+            .push((Rect::new(0, 0, 62, 30), 0));
+        ui.click(0, 0, &config.game);
+        assert_eq!(ui.game, charged);
+    }
+    #[test]
+    fn paused_phone_controls_explain_resume_and_mouse_resume_does_not_feed() {
+        for (width, height) in [(12, 6), (62, 30), (61, 45)] {
+            let (config, mut ui) = pet();
+            ui.hud_mode = HudMode::Minimal;
+            ui.game.paused = true;
+            ui.controller_status = "Inputd: no controller assigned to this nested session.".into();
+            let saved = ui.game.clone();
+            let text = draw(&ui, &config, width, height);
+            assert!(text.contains("P Resume"), "{width}x{height}: {text}");
+            if width > 12 {
+                for label in [
+                    "F Feed",
+                    "G Memory",
+                    "C Clean",
+                    "M Medicine",
+                    "S Save",
+                    "N New",
+                    "care paused",
+                    "Inputd:",
+                ] {
+                    assert!(text.contains(label), "{width}x{height}: {label}: {text}");
+                }
+            }
+            let target = ui
+                .control_targets
+                .borrow()
+                .iter()
+                .find(|(_, action)| *action == Action::Pause)
+                .unwrap()
+                .0;
+            ui.click(target.x, target.y, &config.game);
+            let mut resumed = saved;
+            resumed.paused = false;
+            assert_eq!(ui.game, resumed);
+        }
+    }
+
+    #[test]
+    fn hud_quit_and_paused_save_targets_match_the_printed_captions() {
+        for paused in [false, true] {
+            let (config, mut ui) = pet();
+            ui.hud_mode = HudMode::Minimal;
+            ui.game.paused = paused;
+            let text = draw(&ui, &config, 61, 45);
+            let before = ui.game.clone();
+            for (caption, index) in [("S Save", 6), ("N New", 7)] {
+                let position = text.find(caption).unwrap();
+                let point = ((position % 61) as u16, (position / 61) as u16).into();
+                assert!(
+                    ui.care_targets
+                        .borrow()
+                        .iter()
+                        .any(|(area, action)| *action == index && area.contains(point)),
+                    "{caption}: {text}"
+                );
+            }
+            let target = ui
+                .control_targets
+                .borrow()
+                .iter()
+                .find(|(_, action)| *action == Action::Quit)
+                .unwrap()
+                .0;
+            assert!(
+                ui.care_targets
+                    .borrow()
+                    .iter()
+                    .all(|(area, _)| area.intersection(target).is_empty())
+            );
+            assert_eq!(ui.click(target.x, target.y, &config.game), Effect::Quit);
+            assert_eq!(ui.game, before);
+        }
+    }
+
+    #[test]
+    fn watch_help_pages_all_input_methods_and_memory_arrows_keep_their_meaning() {
+        let (config, mut ui) = pet();
+        ui.controller_status = "Inputd: no controller assigned to this nested session.".into();
+        ui.open(Menu::Help);
+        let saved = ui.game.clone();
+        let mut pages = String::new();
+        for page in 0..192 {
+            ui.menu_scroll = page;
+            pages.push_str(&draw(&ui, &config, 12, 6));
+        }
+        for label in ["Inputd:", "Click", "Wheel:", "Ctrl+C:", "1..9:", "camera"] {
+            assert!(pages.contains(label), "{label}");
+        }
+        assert_eq!(ui.game, saved);
+        ui.menu = None;
+        ui.care(Care::Play, &config.game);
+        let challenge = ui.game.challenge.as_mut().unwrap();
+        challenge.reveal = 0;
+        let direction = challenge.pattern[0];
+        let code = match direction {
+            Direction::Up => KeyCode::Up,
+            Direction::Down => KeyCode::Down,
+            Direction::Left => KeyCode::Left,
+            Direction::Right => KeyCode::Right,
+        };
+        let before = ui.game.clone();
+        let mut repeated = key(code);
+        repeated.kind = KeyEventKind::Repeat;
+        ui.handle(repeated, &config.game);
+        ui.handle(key(KeyCode::Char('1')), &config.game);
+        assert_eq!(ui.game, before);
+        ui.handle(key(code), &config.game);
+        assert_eq!(ui.game.challenge.as_ref().unwrap().entered, 1);
+        assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
+        assert!(ui.game.challenge.is_none());
+        assert!(ui.menu.is_none());
     }
 }

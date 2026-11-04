@@ -341,4 +341,67 @@ mod tests {
             "an inherited value wins"
         );
     }
+    #[test]
+    fn concurrent_seats_keep_devices_and_room_packets_independent() {
+        let t = tempfile::tempdir().unwrap();
+        let proc_root = t.path().join("proc");
+        let registry = t.path().join("registry");
+        std::fs::create_dir_all(&registry).unwrap();
+        fake_proc(&proc_root, 41, 900);
+        fake_proc(&proc_root, 42, 901);
+        let mut expected = Vec::new();
+        for (seat, pid, start, event, js, instance) in [
+            ("pet-one", 41, 900, "event30", "js3", "first_1_41"),
+            ("pet-two", 42, 901, "event32", "js4", "second_1_42"),
+        ] {
+            let mut record: Json =
+                serde_json::from_str(&entry(seat, pid, start, "running", Some("/placeholder")))
+                    .unwrap();
+            let runtime = format!("/run/user/1000/mios-nested-{seat}");
+            let packet = format!("{runtime}/tmp/mios-hypr3d-pad.bin");
+            let event = format!("/dev/input/{event}");
+            let js = format!("/dev/input/{js}");
+            record["runtime"] = runtime.clone().into();
+            record["instance"] = instance.into();
+            record["pad_state"] = packet.clone().into();
+            record["devices"] = serde_json::json!([
+                {"path":event,"kind":"controller","siblings":[js]},
+                {"path":format!("{runtime}/keyboard"),"kind":"keyboard","siblings":[]}
+            ]);
+            std::fs::write(registry.join(format!("{seat}.json")), record.to_string()).unwrap();
+            expected.push((seat, runtime, packet, event, js));
+        }
+        let first = session(&registry, &proc_root, "pet-one").unwrap();
+        let second = session(&registry, &proc_root, "pet-two").unwrap();
+        assert_ne!(first.runtime, second.runtime);
+        assert_ne!(first.instance, second.instance);
+        assert_ne!(first.pad_state, second.pad_state);
+        let assigned = assigned_nodes(&registry, &proc_root);
+        for (seat, runtime, packet, event, js) in &expected {
+            let resolved = session(&registry, &proc_root, seat).unwrap();
+            assert_eq!(resolved.runtime, PathBuf::from(runtime));
+            assert_eq!(resolved.pad_state, PathBuf::from(packet));
+            assert_eq!(resolved.controllers, vec![PathBuf::from(event)]);
+            assert_eq!(
+                assigned.get(Path::new(event)).map(String::as_str),
+                Some(*seat)
+            );
+            assert_eq!(assigned.get(Path::new(js)).map(String::as_str), Some(*seat));
+        }
+        assert!(!assigned.contains_key(Path::new("/dev/input/event14")));
+        assert!(session(&registry, &proc_root, "unassigned").is_err());
+
+        // Recycling one launcher releases only its devices; the other seat
+        // keeps its own controller and packet without falling back to the host.
+        fake_proc(&proc_root, 41, 902);
+        assert!(session(&registry, &proc_root, "pet-one").is_err());
+        let remaining = assigned_nodes(&registry, &proc_root);
+        assert!(!remaining.contains_key(Path::new(&expected[0].3)));
+        assert!(!remaining.contains_key(Path::new(&expected[0].4)));
+        assert_eq!(
+            remaining.get(Path::new(&expected[1].3)).map(String::as_str),
+            Some("pet-two")
+        );
+        assert_eq!(session(&registry, &proc_root, "pet-two").unwrap(), second);
+    }
 }

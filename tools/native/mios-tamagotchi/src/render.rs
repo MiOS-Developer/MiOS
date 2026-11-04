@@ -548,8 +548,7 @@ impl FaceTexture {
                             - (center - radius).max(f64::from(start)))
                         .max(0.0)
                     };
-                    coverage += overlap(grid[0], radius[0], x)
-                        * overlap(grid[1], radius[1], y);
+                    coverage += overlap(grid[0], radius[0], x) * overlap(grid[1], radius[1], y);
                 }
             }
         }
@@ -609,8 +608,14 @@ fn projected_face_uv(
             _ => 0.0,
         })
     };
-    let horizontal = derivative(neighbor(sx + 1, sy), sx.checked_sub(1).and_then(|x| neighbor(x, sy)));
-    let vertical = derivative(neighbor(sx, sy + 1), sy.checked_sub(1).and_then(|y| neighbor(sx, y)));
+    let horizontal = derivative(
+        neighbor(sx + 1, sy),
+        sx.checked_sub(1).and_then(|x| neighbor(x, sy)),
+    );
+    let vertical = derivative(
+        neighbor(sx, sy + 1),
+        sy.checked_sub(1).and_then(|y| neighbor(sx, y)),
+    );
     let offset = [
         (f64::from(x) + 0.5 - projection.left) / projection.scale - f64::from(sx) - 0.5,
         (f64::from(y) + 0.5 - projection.top) / projection.scale_y - f64::from(sy) - 0.5,
@@ -645,7 +650,11 @@ fn draw_surface_glyphs(
     for (index, glyph) in texture.text.bytes().enumerate() {
         let target = [
             (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0),
-            if index == texture.text.len() / 2 { 0.68 } else { 0.45 },
+            if index == texture.text.len() / 2 {
+                0.68
+            } else {
+                0.45
+            },
         ];
         let mut best = None;
         let mut best_distance = f64::INFINITY;
@@ -2057,17 +2066,27 @@ mod camera_tests {
     fn thin_atlas_keeps_curved_parentheses_eyes_and_mouth_separate() {
         let texture = FaceTexture { text: "(^_^)" };
         let atlas: Vec<String> = (0..9)
-            .map(|y| (0..37).map(|x| if texture.bit(x, y) { '#' } else { ' ' }).collect())
+            .map(|y| {
+                (0..37)
+                    .map(|x| if texture.bit(x, y) { '#' } else { ' ' })
+                    .collect()
+            })
             .collect();
         assert_eq!(atlas[0], "   #                             #   ");
         // The same outer stem persists through three rows: a curve, not < or >.
-        assert!(atlas[3..6].iter().all(|row| row.starts_with('#') && row.ends_with('#')));
+        assert!(
+            atlas[3..6]
+                .iter()
+                .all(|row| row.starts_with('#') && row.ends_with('#'))
+        );
         for glyph in 0..4 {
             for x in glyph * 8 + 5..glyph * 8 + 8 {
                 for y in 0..9 {
                     let uv = [(f64::from(x) + 1.5) / 39.0, (f64::from(y) + 1.5) / 11.0];
-                    assert!(!texture.sample(uv, [1.0 / 39.0, 1.0 / 11.0]),
-                        "ink bridged the side bearing at {x},{y}");
+                    assert!(
+                        !texture.sample(uv, [1.0 / 39.0, 1.0 / 11.0]),
+                        "ink bridged the side bearing at {x},{y}"
+                    );
                 }
             }
         }
@@ -2095,17 +2114,39 @@ mod camera_tests {
     fn phone_glyph_lod_is_legible_and_every_changed_cell_is_visible_head_material() {
         let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
         for yaw in [0, 45, 180, 315] {
-            let sprite = Sprite::voxel(Stage::Adult, Expression::Happy,
-                SpriteStyle::SixteenBit, 0, yaw, false);
-            for renderer in [Renderer::Ascii, Renderer::HalfBlock, Renderer::Quadrant, Renderer::Braille] {
+            let sprite = Sprite::voxel(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                yaw,
+                false,
+            );
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
                 let area = Rect::new(2, 2, 62, 30);
                 let bounds = SolidBounds::of(&sprite).unwrap();
-                let projection = Projection::camera(&sprite, bounds, area, renderer, 0, (500, 500),
-                    Camera { view: CameraView::Face, ..Camera::default() });
+                let projection = Projection::camera(
+                    &sprite,
+                    bounds,
+                    area,
+                    renderer,
+                    0,
+                    (500, 500),
+                    Camera {
+                        view: CameraView::Face,
+                        ..Camera::default()
+                    },
+                );
                 let mut before = Buffer::empty(Rect::new(0, 0, 66, 34));
                 draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
                 let mut after = before.clone();
-                let painted = draw_surface_glyphs(&sprite, renderer, &colors, projection, area, &mut after);
+                let painted =
+                    draw_surface_glyphs(&sprite, renderer, &colors, projection, area, &mut after);
                 let mut glyphs = Vec::new();
                 let (dx, dy) = renderer.packing();
                 for row in after.area.y..after.area.bottom() {
@@ -2116,10 +2157,16 @@ mod camera_tests {
                             glyphs.push(after[(col, row)].symbol().to_owned());
                             for y in 0..dy {
                                 for x in 0..dx {
-                                    assert!(projected_face_uv(&sprite, projection,
-                                        u32::from(col) * u32::from(dx) + u32::from(x),
-                                        u32::from(row) * u32::from(dy) + u32::from(y)).is_some(),
-                                        "{renderer:?} yaw {yaw}: literal covered a nose/occluder");
+                                    assert!(
+                                        projected_face_uv(
+                                            &sprite,
+                                            projection,
+                                            u32::from(col) * u32::from(dx) + u32::from(x),
+                                            u32::from(row) * u32::from(dy) + u32::from(y)
+                                        )
+                                        .is_some(),
+                                        "{renderer:?} yaw {yaw}: literal covered a nose/occluder"
+                                    );
                                 }
                             }
                         }

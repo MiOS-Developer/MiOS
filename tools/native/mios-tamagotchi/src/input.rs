@@ -28,6 +28,7 @@ pub enum Action {
     Help,
     Direction(Direction),
     Care(Care),
+    Number(usize),
 }
 pub fn action(key: KeyEvent) -> Option<Action> {
     if key.kind == KeyEventKind::Release {
@@ -41,7 +42,13 @@ pub fn action(key: KeyEvent) -> Option<Action> {
     ) {
         return None;
     }
-    let direction = match key.code {
+    // Legends use capitals; both cases address the same unmodified shortcut.
+    // Ctrl+C and other modified chords were handled before this normalization.
+    let code = match key.code {
+        KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
+        code => code,
+    };
+    let direction = match code {
         KeyCode::Up => Some(Direction::Up),
         KeyCode::Down => Some(Direction::Down),
         KeyCode::Left => Some(Direction::Left),
@@ -51,10 +58,11 @@ pub fn action(key: KeyEvent) -> Option<Action> {
     if let Some(d) = direction {
         return Some(Action::Direction(d));
     }
-    match key.code {
+    match code {
         KeyCode::Tab => Some(Action::Next),
         KeyCode::BackTab => Some(Action::Previous),
         _ if key.kind != KeyEventKind::Press => None,
+        KeyCode::Char(c @ '1'..='9') => Some(Action::Number((c as u8 - b'1') as usize)),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Esc => Some(Action::Cancel),
         KeyCode::Enter | KeyCode::Char(' ') => Some(Action::Accept),
@@ -121,6 +129,7 @@ struct Sample {
     // Age includes the entire query, never just delivery to the UI.
     started: Instant,
     prompts: Option<ControllerPrompts>,
+    reason: &'static str,
 }
 
 pub struct ControllerMonitor {
@@ -159,8 +168,22 @@ impl ControllerMonitor {
                             max_bytes,
                             stop: &stop,
                         };
-                        let prompts = identity.as_ref().and_then(|id| detect(id, &query));
-                        if results.send(Sample { started, prompts }).is_err() {
+                        let detected = identity
+                            .as_ref()
+                            .ok_or("Inputd: no verified local session (remote/console).")
+                            .and_then(|id| detect(id, &query));
+                        let (prompts, reason) = match detected {
+                            Ok(prompts) => (Some(prompts), "Inputd: assigned pad focused here."),
+                            Err(reason) => (None, reason),
+                        };
+                        if results
+                            .send(Sample {
+                                started,
+                                prompts,
+                                reason,
+                            })
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -196,6 +219,20 @@ impl ControllerMonitor {
             .as_ref()
             .filter(|s| now.saturating_duration_since(s.started) < self.stale)
             .and_then(|s| s.prompts.clone())
+    }
+
+    /// Diagnostic only: never grants ownership or enables controller prompts.
+    pub fn status(&self) -> &str {
+        if !self.enabled {
+            return "Inputd: controller hints disabled in settings.";
+        }
+        match &self.cached {
+            None => "Inputd: checking local focus and assigned pad.",
+            Some(sample) if sample.started.elapsed() >= self.stale => {
+                "Inputd: focus/device evidence stale; keyboard active."
+            }
+            Some(sample) => sample.reason,
+        }
     }
 }
 
@@ -529,27 +566,46 @@ fn connected(devices: &Json, seat: Option<&Seat>) -> Option<String> {
     }
 }
 
-fn detect(id: &Identity, query: &Query<'_>) -> Option<ControllerPrompts> {
-    let seat = own_seat(id, query)?;
-    let context = query.json("mios-inputd", &["context"], None)?;
-    let tmux = focus(id, &context, query)?;
-    let map = query.json("mios-inputd", &["map"], None)?;
-    let devices = query.json(
-        "mios-gen",
-        &["nested-session", "--list-devices"],
-        Some(
-            seat.as_ref()
-                .map_or(id.runtime.as_path(), |s| s.parent.as_path()),
-        ),
-    )?;
-    let family = connected(&devices, seat.as_ref())?;
-    let prompts = resolve_prompts(&map, &context, tmux, &family)?;
-    // Refuse a focus transition during the multi-command sample.
-    let after = query.json("mios-inputd", &["context"], None)?;
-    if context != after || focus(id, &after, query)? != tmux || !query.active() {
-        return None;
+fn detect(id: &Identity, query: &Query<'_>) -> Result<ControllerPrompts, &'static str> {
+    let seat = own_seat(id, query).ok_or("Inputd: nested ownership could not be verified.")?;
+    // An empty owned-device list is conclusive. Never borrow a parent pad.
+    if seat.as_ref().is_some_and(|s| {
+        s.entry["devices"]
+            .as_array()
+            .is_some_and(|devices| !devices.iter().any(|d| d["kind"] == "controller"))
+    }) {
+        return Err("Inputd: no controller assigned to this nested session.");
     }
-    Some(prompts)
+    let context = query
+        .json("mios-inputd", &["context"], None)
+        .ok_or("Inputd: local context unavailable (remote/console).")?;
+    let tmux = focus(id, &context, query)
+        .ok_or("Inputd: this terminal pane is not verifiably focused.")?;
+    let map = query
+        .json("mios-inputd", &["map"], None)
+        .ok_or("Inputd: binding map unavailable.")?;
+    let devices = query
+        .json(
+            "mios-gen",
+            &["nested-session", "--list-devices"],
+            Some(
+                seat.as_ref()
+                    .map_or(id.runtime.as_path(), |s| s.parent.as_path()),
+            ),
+        )
+        .ok_or("Inputd: connected-device ownership unavailable.")?;
+    let family = connected(&devices, seat.as_ref())
+        .ok_or("Inputd: no connected controller assigned to this session.")?;
+    let prompts = resolve_prompts(&map, &context, tmux, &family)
+        .ok_or("Inputd: current context has no usable terminal bindings.")?;
+    // Refuse a focus transition during the multi-command sample.
+    let after = query
+        .json("mios-inputd", &["context"], None)
+        .ok_or("Inputd: focus recheck unavailable.")?;
+    if context != after || focus(id, &after, query) != Some(tmux) || !query.active() {
+        return Err("Inputd: focus changed; keyboard active.");
+    }
+    Ok(prompts)
 }
 
 type Bindings = BTreeMap<String, Json>;
@@ -1112,24 +1168,30 @@ mod controller_tests {
             cached: Some(Sample {
                 started: now - Duration::from_secs(3),
                 prompts: resolve_prompts(&map(), &context(), true, "Sony"),
+                reason: "Inputd: assigned pad focused here.",
             }),
             enabled: true,
         };
         assert!(monitor.poll().is_none());
+        assert!(monitor.status().contains("stale"));
         results
             .send(Sample {
                 started: Instant::now(),
                 prompts: resolve_prompts(&map(), &context(), true, "Sony"),
+                reason: "Inputd: assigned pad focused here.",
             })
             .unwrap();
         assert!(monitor.poll().is_some());
+        assert!(monitor.status().contains("assigned pad focused"));
         results
             .send(Sample {
                 started: Instant::now(),
                 prompts: None,
+                reason: "Inputd: no controller assigned to this nested session.",
             })
             .unwrap();
         assert!(monitor.poll().is_none());
+        assert!(monitor.status().contains("no controller assigned"));
     }
 
     #[test]
@@ -1197,6 +1259,47 @@ mod controller_tests {
     }
 
     #[test]
+    fn multiple_assigned_controller_families_stay_inside_their_own_session() {
+        let sony = pad(
+            "/dev/input/event14",
+            "Sony DualSense",
+            false,
+            json!("own-seat"),
+        );
+        let xbox = pad(
+            "/dev/input/event15",
+            "Microsoft Xbox",
+            false,
+            json!("own-seat"),
+        );
+        let foreign = pad(
+            "/dev/input/event16",
+            "Nintendo Switch Pro",
+            false,
+            json!("other-seat"),
+        );
+        let mut own = seat();
+        own.entry["devices"] = json!([
+            {"path":"/dev/input/event14","name":"Sony DualSense","kind":"controller","virtual":false},
+            {"path":"/dev/input/event15","name":"Microsoft Xbox","kind":"controller","virtual":false}
+        ]);
+        assert_eq!(
+            connected(
+                &json!([sony.clone(), xbox.clone(), foreign.clone()]),
+                Some(&own)
+            ),
+            Some("Controller".into())
+        );
+        assert_eq!(
+            connected(&json!([sony.clone(), foreign.clone()]), Some(&own)),
+            Some("Sony".into())
+        );
+        assert!(connected(&json!([foreign.clone()]), Some(&own)).is_none());
+        own.entry["devices"] = json!([]);
+        assert!(connected(&json!([sony, xbox, foreign]), Some(&own)).is_none());
+    }
+
+    #[test]
     fn nested_parent_runtime_requires_matching_live_own_registry() {
         let temp = tempfile::tempdir().unwrap();
         let runtime = temp.path().join("nested");
@@ -1249,12 +1352,12 @@ mod training_action_tests {
     use super::{Action, action};
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     #[test]
-    fn training_opens_only_on_an_unmodified_lowercase_press() {
+    fn training_opens_on_either_case_without_accepting_other_modifiers() {
         let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
         assert_eq!(action(key), Some(Action::Training));
         assert_eq!(
             action(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE)),
-            None
+            Some(Action::Training)
         );
         for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
             let mut other = key;
@@ -1270,5 +1373,54 @@ mod training_action_tests {
         ] {
             assert_eq!(action(KeyEvent::new(KeyCode::Char('l'), modifier)), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_key_regressions {
+    use super::*;
+    #[test]
+    fn displayed_capitals_work_in_both_cases_but_repeat_release_and_foreign_chords_do_not() {
+        for (lower, expected) in [
+            ('f', Action::Care(Care::Feed)),
+            ('g', Action::Care(Care::Play)),
+            ('c', Action::Care(Care::Clean)),
+            ('r', Action::Care(Care::Rest)),
+            ('m', Action::Care(Care::Medicine)),
+            ('p', Action::Pause),
+            ('s', Action::Save),
+            ('n', Action::Reset),
+            ('q', Action::Quit),
+            ('o', Action::Menu),
+            ('z', Action::Camera),
+            ('l', Action::Training),
+        ] {
+            for character in [lower, lower.to_ascii_uppercase()] {
+                let mut key = KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE);
+                assert_eq!(action(key), Some(expected));
+                for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+                    key.kind = kind;
+                    assert_eq!(action(key), None);
+                }
+                key.kind = KeyEventKind::Press;
+                key.modifiers = KeyModifiers::ALT;
+                assert_eq!(action(key), None);
+            }
+        }
+        for number in '1'..='9' {
+            let mut key = KeyEvent::new(KeyCode::Char(number), KeyModifiers::NONE);
+            assert!(matches!(action(key), Some(Action::Number(_))));
+            key.kind = KeyEventKind::Repeat;
+            assert!(action(key).is_none());
+        }
+        assert_eq!(
+            action(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE)),
+            Some(Action::ZoomReset)
+        );
+        assert!(action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)).is_none());
+        assert_eq!(
+            action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Action::Quit)
+        );
     }
 }
