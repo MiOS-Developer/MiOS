@@ -4118,6 +4118,11 @@ default_provider = "mios"
 web_search = "disabled"
 [agent_cli.interaction.clients.codex.values.tui]
 alternate_screen = "always"
+# The managed local tool server must finish discovery before the first model turn.
+# Other operator-configured servers retain their own startup policies.
+[agent_cli.interaction.clients.codex.values.mcp_servers.mios-control]
+required = true
+startup_timeout_sec = 10
 
 [agent_cli.zcode]
 version = "3.15.1"

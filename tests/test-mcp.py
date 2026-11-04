@@ -1193,6 +1193,76 @@ class TestAgentCliCatalog(unittest.TestCase):
                 )
 
 
+class TestManagedMcpClientStartup(unittest.TestCase):
+    """The owned local tool server is ready before the first client model turn."""
+
+    def test_native_projection_preserves_managed_policy_and_external_servers(self):
+        import pathlib
+        import subprocess
+        import tomllib
+        server = _load_mios_mcp_server_module()
+        real_run = subprocess.run
+
+        def native_only(command, **kwargs):
+            if command[0] == "/usr/bin/mios-ai-config":
+                # This test exercises the real terminal settings generator;
+                # the unrelated JSON client projection passes its input through.
+                return subprocess.CompletedProcess(command, 0, kwargs["input"], "")
+            return real_run(command, **kwargs)
+
+        with tempfile.TemporaryDirectory(prefix="mios-client-policy-") as directory:
+            base = pathlib.Path(directory)
+            home = base / "home"
+            (home / ".codex").mkdir(parents=True)
+            target = home / ".codex/config.toml"
+            target.write_text(
+                'model_provider = "operator"\nmodel = "operator-model"\n'
+                '[mcp_servers.operator-service]\ncommand = "/operator/tool"\n'
+                'required = false\nstartup_timeout_sec = 2\n'
+            )
+            overlay = base / "host.toml"
+            environment = {
+                "MIOS_TOML_ROOT": _ROOT,
+                "MIOS_VENDOR_TOML": os.path.join(_ROOT, "usr/share/mios/mios.toml"),
+                "MIOS_VENDOR_TOML_D": "/nonexistent/vendor.d",
+                "MIOS_HOST_TOML": str(overlay),
+                "MIOS_HOST_TOML_D": "/nonexistent/host.d",
+                "MIOS_USER_TOML": "/nonexistent/user.toml",
+                "MIOS_USER_TOML_D": "/nonexistent/user.d",
+            }
+            with mock.patch.dict(os.environ, environment), \
+                 mock.patch.object(server, "_agent_cli_config", return_value={
+                     "linux_prefix": "/nonexistent",
+                     "zcode": {"config_relative": ".agent/cli/config.json"},
+                 }), \
+                 mock.patch.object(server.subprocess, "run", side_effect=native_only):
+                for required, timeout in ((True, 10), (False, 17)):
+                    with self.subTest(required=required, timeout=timeout):
+                        if not required:
+                            overlay.write_text(
+                                "[agent_cli.interaction.clients.codex.values.mcp_servers.mios-control]\n"
+                                "required = false\nstartup_timeout_sec = 17\n"
+                            )
+                        mios_toml.clear_cache()
+                        server._project_agent_clients(home)
+                        data = tomllib.loads(target.read_text())
+                        owned = data["mcp_servers"]["mios-control"]
+                        self.assertEqual(owned["required"], required)
+                        self.assertEqual(owned["startup_timeout_sec"], timeout)
+                        self.assertTrue(owned["enabled"])
+                        self.assertIn("/usr/libexec/mios/mios-mcp-server", owned["args"])
+                        self.assertEqual(data["model_provider"], "operator")
+                        self.assertEqual(data["model"], "operator-model")
+                        self.assertEqual(data["mcp_servers"]["operator-service"], {
+                            "command": "/operator/tool", "required": False,
+                            "startup_timeout_sec": 2,
+                        })
+                        before = target.read_bytes()
+                        server._project_agent_clients(home)
+                        self.assertEqual(target.read_bytes(), before)
+        mios_toml.clear_cache()
+
+
 class TestLaunchAgentReadiness(unittest.TestCase):
     """A real launch must prove inference; local metadata needs no backend."""
 

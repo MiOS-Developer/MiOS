@@ -1936,12 +1936,18 @@ def _project_agent_clients(home=None):
     """Refresh only our server entry in the caller's client files, without credentials."""
     cfg = mios_toml.load_merged()["mcp"]
     home = Path(home or Path.home())
-    # Native projection preserves unrelated operator preferences and credentials.
-    interaction = subprocess.run(["/usr/libexec/mios/mios-gen", "render-agent-interaction",
-                                  "--root", "/", "--home", str(home), "--runtime"],
-                                 capture_output=True, text=True, timeout=15)
-    if interaction.returncode:
-        raise RuntimeError("Native client interaction projection failed: " + interaction.stderr.strip())
+
+    def project_interaction():
+        interaction = subprocess.run(["/usr/libexec/mios/mios-gen", "render-agent-interaction",
+                                      "--root", "/", "--home", str(home), "--runtime"],
+                                     capture_output=True, text=True, timeout=15)
+        if interaction.returncode:
+            raise RuntimeError("Native client interaction projection failed: " + interaction.stderr.strip())
+
+    # Prime existing settings before appending owned transport tables. Reapply
+    # below so declared server policy survives their refresh without reordering
+    # unrelated settings on the second launch.
+    project_interaction()
     entry = {"command": cfg["python"], "args": ["/usr/libexec/mios/mios-mcp-server"]}
     exports = mios_toml.emit_exports()
     endpoint = os.environ.get("MIOS_AI_ENDPOINT") or exports.get("MIOS_AI_ENDPOINT")
@@ -2024,6 +2030,10 @@ def _project_agent_clients(home=None):
     codex.parent.mkdir(parents=True, exist_ok=True)
     if not codex.exists() or codex.read_text() != text:
         mios_toml.write_atomic(str(codex), text)
+    # Apply declared policy after refreshing owned transport tables, so startup
+    # requirements and operator SSOT overrides survive each launch. Other server
+    # entries and undeclared preferences remain outside this projection.
+    project_interaction()
 
 
 def _project_agent_wrappers(cfg=None):
