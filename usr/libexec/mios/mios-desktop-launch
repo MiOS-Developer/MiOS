@@ -1,139 +1,20 @@
 #!/bin/sh
-# AI-hint: Dedicated desktop application launcher. Decouples GUI apps from caller stdio pipes, strips MIOS_* environment variables to prevent bubblewrap argument overflow, detaches session, and encapsulates execution in a transient systemd user scope while propagating dispatch status.
-# AI-related: usr/share/mios/quickshell/AppLaunch.qml, usr/share/mios/mios.toml [desktop.launch], usr/libexec/mios/mios-flatpak-run
+# AI-hint: Native desktop dispatch adapter. Return the requested app's executable-start receipt; never wait for a GUI lifetime or repeat an unknown dispatch.
+# AI-related: tools/native/mios-gen/src/app_preflight.rs, usr/libexec/mios/mios-launch, usr/share/mios/mios.toml [desktop.launch]
 # AI-doc: usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md
-
 set -eu
-
-# Handle both 'mios-desktop-launch launch <desktop-file>' and 'mios-desktop-launch <desktop-file>'
-if [ "${1:-}" = "launch" ]; then
-    shift
-fi
-
+if [ "${1:-}" = "launch" ]; then shift; fi
 if [ "$#" -lt 1 ]; then
     echo "Usage: mios-desktop-launch [launch] <desktop-file> [args...]" >&2
     exit 1
 fi
-
-# Ensure standard file descriptors 0, 1, 2 are open and safely connected
-if ! : <&0 2>/dev/null; then
-    exec 0</dev/null
-fi
-if ! : >&1 2>/dev/null; then
-    exec 1>/dev/null
-fi
-if ! : >&2 2>/dev/null; then
-    exec 2>/dev/null
-fi
-
-# Linear-time unsetting of MIOS_* environment variables
-# Prevents bubblewrap (bwrap) argument limit exhaustion (>9,000 args)
-UNSET_ARGS=$(env | sed -n 's/^\(MIOS_[A-Za-z0-9_]*\)=.*/-u \1/p')
-
-# Check if systemd user scope is functional and reachable
-_USE_SYSTEMD=0
-if command -v systemd-run >/dev/null 2>&1; then
-    if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ] || [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/private" ]; then
-        if systemd-run --user --quiet true 2>/dev/null; then
-            _USE_SYSTEMD=1
-        fi
-    fi
-fi
-
-# Locate gio or fallback launcher
-LAUNCHER="gio"
-LAUNCH_ARGS="launch"
-if ! command -v "$LAUNCHER" >/dev/null 2>&1; then
-    if command -v gtk-launch >/dev/null 2>&1; then
-        LAUNCHER="gtk-launch"
-        LAUNCH_ARGS=""
-    else
-        echo "mios-desktop-launch: error: gio or gtk-launch not found" >&2
-        exit 127
-    fi
-fi
-
-# Ensure XDG_CURRENT_DESKTOP includes GNOME and Phosh for GNOME Settings / Phosh apps
+# Keep the public adapter usable when a caller has closed a standard descriptor.
+if ! : <&0 2>/dev/null; then exec 0</dev/null; fi
+if ! : >&1 2>/dev/null; then exec 1>/dev/null; fi
+if ! : >&2 2>/dev/null; then exec 2>/dev/null; fi
+# Retain the existing desktop compatibility environment. The native dispatcher
+# strips every MIOS_* variable from the application, after resolving its policy.
 CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-Hyprland}"
-case "$CURRENT_DESKTOP" in
-    *GNOME*) ;;
-    *) CURRENT_DESKTOP="${CURRENT_DESKTOP}:GNOME:Phosh" ;;
-esac
+case "$CURRENT_DESKTOP" in *GNOME*) ;; *) CURRENT_DESKTOP="${CURRENT_DESKTOP}:GNOME:Phosh" ;; esac
 export XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP"
-
-# Bypass DBusActivatable=true headless daemon invocation (e.g. Calls daemon)
-TARGET_DESK="${1:-}"
-DIRECT_EXEC=""
-if [ -n "$TARGET_DESK" ]; then
-    DESK_PATH=""
-    if [ -f "$TARGET_DESK" ]; then
-        DESK_PATH="$TARGET_DESK"
-    else
-        for d in /usr/share/applications /usr/local/share/applications "${HOME:-/root}/.local/share/applications" /var/lib/flatpak/exports/share/applications; do
-            if [ -f "$d/$TARGET_DESK" ]; then
-                DESK_PATH="$d/$TARGET_DESK"
-                break
-            elif [ -f "$d/${TARGET_DESK}.desktop" ]; then
-                DESK_PATH="$d/${TARGET_DESK}.desktop"
-                break
-            fi
-        done
-    fi
-    if [ -n "$DESK_PATH" ] && [ -f "$DESK_PATH" ]; then
-        if grep -q '^DBusActivatable=true' "$DESK_PATH" 2>/dev/null; then
-            RAW_LINE=$(grep -m1 '^Exec=' "$DESK_PATH" | sed 's/^Exec=//')
-            if [ -n "$RAW_LINE" ]; then
-                DIRECT_EXEC=$(echo "$RAW_LINE" | sed -E 's/%[a-zA-Z]//g')
-                shift
-            fi
-        fi
-    fi
-fi
-
-# Execute launch detached with stdio decoupled (stdin/stdout/stderr connected to /dev/null)
-# Propagate launch exit status to the caller
-STATUS=0
-if [ "$_USE_SYSTEMD" = "1" ]; then
-    _SCOPE_NAME="app-launch-$$-$(date +%s%N 2>/dev/null || echo $RANDOM)"
-    if [ -n "$DIRECT_EXEC" ]; then
-        if command -v setsid >/dev/null 2>&1; then
-            # shellcheck disable=SC2086
-            setsid -w systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
-                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        else
-            # shellcheck disable=SC2086
-            systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
-                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        fi
-    else
-        if command -v setsid >/dev/null 2>&1; then
-            # shellcheck disable=SC2086
-            setsid -w systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
-                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        else
-            # shellcheck disable=SC2086
-            systemd-run --user --scope --collect --quiet --slice=app.slice --unit="$_SCOPE_NAME" \
-                env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        fi
-    fi
-else
-    if [ -n "$DIRECT_EXEC" ]; then
-        if command -v setsid >/dev/null 2>&1; then
-            # shellcheck disable=SC2086
-            setsid -w env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        else
-            # shellcheck disable=SC2086
-            env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" sh -c "exec $DIRECT_EXEC \"\$@\"" dummy "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        fi
-    else
-        if command -v setsid >/dev/null 2>&1; then
-            # shellcheck disable=SC2086
-            setsid -w env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        else
-            # shellcheck disable=SC2086
-            env $UNSET_ARGS XDG_CURRENT_DESKTOP="$CURRENT_DESKTOP" "$LAUNCHER" $LAUNCH_ARGS "$@" </dev/null >/dev/null 2>&1 || STATUS=$?
-        fi
-    fi
-fi
-
-exit "$STATUS"
+exec mios-gen desktop-dispatch --root "${MIOS_TOML_ROOT:-/}" -- "$@"

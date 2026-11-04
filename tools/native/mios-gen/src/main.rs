@@ -450,6 +450,18 @@ enum Commands {
         action: DockAction,
     },
 
+    /// Start an installed desktop application and return an exec receipt without waiting for its lifetime.
+    #[cfg(unix)]
+    DesktopDispatch {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        in_scope: bool,
+        desktop: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Validate a desktop launch and recover a missing document-portal mount before sandbox creation.
     #[cfg(unix)]
     AppPreflight {
@@ -2014,6 +2026,23 @@ fn main() -> ExitCode {
                     },
                 ),
             }
+            .map_err(|e| (e, 1)),
+        ),
+        #[cfg(unix)]
+        Commands::DesktopDispatch {
+            root,
+            in_scope,
+            desktop,
+            args,
+        } => (
+            "desktop-dispatch",
+            "desktop",
+            app_preflight::dispatch(
+                &root.unwrap_or_else(|| PathBuf::from("/")),
+                &desktop,
+                &args,
+                in_scope,
+            )
             .map_err(|e| (e, 1)),
         ),
         #[cfg(unix)]

@@ -28,6 +28,11 @@ struct Policy {
     flatpak_program: String,
     systemctl_program: String,
     signal_program: String,
+    scope_program: String,
+    scope_slice: String,
+    scope_prefix: String,
+    activation_program: String,
+    activation_fallback_program: String,
     terminal_command: Vec<String>,
     application_dirs: Vec<String>,
     #[serde(skip)]
@@ -67,11 +72,30 @@ impl Policy {
             }
         }
         if p.application_dirs.is_empty()
-            || [&p.flatpak_program, &p.systemctl_program, &p.signal_program]
-                .iter()
-                .any(|s| s.is_empty() || s.chars().any(char::is_control))
+            || [
+                &p.flatpak_program,
+                &p.systemctl_program,
+                &p.signal_program,
+                &p.scope_program,
+                &p.activation_program,
+                &p.activation_fallback_program,
+            ]
+            .iter()
+            .any(|s| s.is_empty() || s.chars().any(char::is_control))
         {
             return Err("invalid desktop.launch programs or application directories".into());
+        }
+        for name in [&p.scope_slice, &p.scope_prefix] {
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+            {
+                return Err("Invalid desktop scope name".into());
+            }
+        }
+        if !p.scope_slice.ends_with(".slice") {
+            return Err("Desktop scope slice must end in .slice".into());
         }
         p.flatpak_launchers = flatpak_launchers(&ssot);
         Ok(p)
@@ -1190,10 +1214,196 @@ mod tests {
             flatpak_program: "flatpak".into(),
             systemctl_program: "systemctl".into(),
             signal_program: "kill".into(),
+            scope_program: "systemd-run".into(),
+            scope_slice: "app.slice".into(),
+            scope_prefix: "mios-app-".into(),
+            activation_program: "gio".into(),
+            activation_fallback_program: "gtk-launch".into(),
             terminal_command: vec!["true".into()],
             application_dirs: vec!["/usr/share/applications".into()],
             flatpak_launchers: Default::default(),
         }
+    }
+
+    #[test]
+    fn desktop_exec_uses_argv_not_shell_and_expands_only_defined_codes() {
+        let p = policy();
+        let path = Path::new("/apps/fixture.desktop");
+        let fields = desktop_fields("[Desktop Entry]\nName=Fixture\\sApplication\nIcon=fixture\nExec=/bin/echo \"two words\" --literal=$HOME %% %c %k %i %U\n");
+        assert_eq!(
+            desktop_argv(
+                &p,
+                path,
+                &fields,
+                &[
+                    "file with spaces".into(),
+                    "https://example.invalid/a".into()
+                ]
+            )
+            .unwrap(),
+            vec![
+                "/bin/echo",
+                "two words",
+                "--literal=$HOME",
+                "%",
+                "Fixture Application",
+                "/apps/fixture.desktop",
+                "--icon",
+                "fixture",
+                "file with spaces",
+                "https://example.invalid/a"
+            ]
+        );
+        let fields = desktop_fields(
+            "[Desktop Entry]\nExec=/bin/echo \"\" \"$(touch /tmp/not-executed)\" ; whoami\n",
+        );
+        assert_eq!(
+            desktop_argv(&p, path, &fields, &[]).unwrap(),
+            vec!["/bin/echo", "", "$(touch /tmp/not-executed)", ";", "whoami"]
+        );
+    }
+
+    #[test]
+    fn malformed_desktop_exec_never_becomes_a_shell_command() {
+        for raw in [
+            "/bin/echo \"unfinished",
+            "/bin/echo %x",
+            "/bin/echo prefix%U",
+            "/bin/echo %U %F",
+            "",
+            "A=x /bin/echo",
+        ] {
+            let fields = desktop_fields(&format!("[Desktop Entry]\nExec={raw}\n"));
+            assert!(
+                desktop_argv(&policy(), Path::new("/apps/f.desktop"), &fields, &[]).is_err(),
+                "{raw}"
+            );
+        }
+        let fields = desktop_fields("[Desktop Entry]\nExec=/bin/echo %f\n");
+        assert!(desktop_argv(
+            &policy(),
+            Path::new("/apps/f.desktop"),
+            &fields,
+            &["one".into(), "two".into()]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn desktop_entry_terminal_path_and_keyfile_escaping_are_preserved() {
+        let mut p = policy();
+        p.terminal_command = vec![
+            "terminal".into(),
+            "--title".into(),
+            "{name}".into(),
+            "-e".into(),
+        ];
+        let fields = desktop_fields(
+            "[Desktop Entry]\nName=App\nExec=/bin/echo \"a\\\\\\\\b\" %d\nTerminal=true\n",
+        );
+        assert_eq!(
+            desktop_argv(&p, Path::new("/apps/f.desktop"), &fields, &[]).unwrap(),
+            vec!["terminal", "--title", "App", "-e", "/bin/echo", "a\\b"]
+        );
+        assert!(desktop_string(r"bad\q").is_err());
+        assert!(exec_words("/bin/echo \\\\").is_err());
+    }
+
+    #[test]
+    fn desktop_exec_preserves_env_wrappers_and_explicit_shell_argv() {
+        for (raw, wanted) in [
+            (
+                r#"env "APP_HOME=/a b" /usr/bin/example --no-sandbox %U"#,
+                vec![
+                    "env",
+                    "APP_HOME=/a b",
+                    "/usr/bin/example",
+                    "--no-sandbox",
+                    "https://example.invalid/",
+                ],
+            ),
+            (
+                r#"/usr/bin/terminal -e env -u TMUX -u TMUX_PANE /usr/bin/menu"#,
+                vec![
+                    "/usr/bin/terminal",
+                    "-e",
+                    "env",
+                    "-u",
+                    "TMUX",
+                    "-u",
+                    "TMUX_PANE",
+                    "/usr/bin/menu",
+                    "https://example.invalid/",
+                ],
+            ),
+            (
+                r#"/bin/sh -c "printf '%%s' \\"literal $HOME\\"" fixture"#,
+                vec![
+                    "/bin/sh",
+                    "-c",
+                    "printf '%s' \"literal $HOME\"",
+                    "fixture",
+                    "https://example.invalid/",
+                ],
+            ),
+            (
+                r#"handler --template "https://example.invalid/?lat=<LAT>&lon=<LON>" %u"#,
+                vec![
+                    "handler",
+                    "--template",
+                    "https://example.invalid/?lat=<LAT>&lon=<LON>",
+                    "https://example.invalid/",
+                ],
+            ),
+        ] {
+            let fields = desktop_fields(&format!("[Desktop Entry]\nExec={raw}\n"));
+            assert_eq!(
+                desktop_argv(
+                    &policy(),
+                    Path::new("/apps/f.desktop"),
+                    &fields,
+                    &["https://example.invalid/".into()]
+                )
+                .unwrap(),
+                wanted,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn actual_exec_failure_has_no_success_receipt() {
+        let entry = (
+            "fixture".into(),
+            PathBuf::from("/apps/fixture.desktop"),
+            desktop_fields("[Desktop Entry]\nExec=/mios-fixture-no-executable\n"),
+        );
+        let error = dispatch_exec(&policy(), &entry, &[], Value::Null).unwrap_err();
+        assert!(
+            error.contains("Cannot execute desktop application"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn actual_exec_ack_does_not_wait_for_the_application_lifetime() {
+        let entry = (
+            "fixture".into(),
+            PathBuf::from("/apps/fixture.desktop"),
+            desktop_fields("[Desktop Entry]\nExec=/bin/sleep 30\n"),
+        );
+        let start = Instant::now();
+        let receipt = dispatch_exec(&policy(), &entry, &[], json!({"id":"owned-target"})).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(receipt["method"], "exec");
+        assert_eq!(receipt["execution_target"]["id"], "owned-target");
+        let pid = receipt["pid"].as_u64().unwrap().to_string();
+        assert!(Path::new("/proc").join(&pid).is_dir());
+        assert!(Command::new("kill")
+            .args(["--", &pid])
+            .status()
+            .unwrap()
+            .success());
     }
 
     #[test]
@@ -1880,4 +2090,466 @@ mod tests {
             Some("org.example.App")
         );
     }
+}
+
+// Dispatch acknowledges exec, never a window's lifetime or visibility. The finite
+// scope child owns the actual executable-start handshake.
+fn dispatch_target(deadline: Instant) -> Result<Value, String> {
+    let expected = env::var("MIOS_DESKTOP_DISPATCH_TARGET")
+        .ok()
+        .map(|raw| serde_json::from_str::<Value>(&raw))
+        .transpose()
+        .map_err(|_| "Invalid requested desktop target")?;
+    let signature = env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or_default();
+    let target = if signature.is_empty() {
+        if !env::var_os("DISPLAY").is_some_and(|s| !s.is_empty())
+            && !env::var_os("WAYLAND_DISPLAY").is_some_and(|s| !s.is_empty())
+        {
+            return Err("Graphical session is unavailable".into());
+        }
+        Value::Null
+    } else {
+        if !inventory_name(&signature) {
+            return Err("Invalid compositor instance".into());
+        }
+        let uid = rustix::process::getuid().as_raw();
+        let runtime =
+            PathBuf::from(env::var_os("XDG_RUNTIME_DIR").ok_or("Missing desktop runtime")?);
+        if !runtime.is_absolute()
+            || !inventory_owned(&runtime, uid, false)
+            || fs::canonicalize(&runtime).ok().as_ref() != Some(&runtime)
+        {
+            return Err("Desktop runtime ownership changed".into());
+        }
+        let control = runtime.join("hypr").join(&signature).join(".socket.sock");
+        if fs::canonicalize(&control).ok().as_ref() != Some(&control) {
+            return Err("Compositor socket path changed".into());
+        }
+        let display =
+            env::var("WAYLAND_DISPLAY").map_err(|_| "Missing selected Wayland display")?;
+        if !inventory_name(&display) || !inventory_owned(&runtime.join(display), uid, true) {
+            return Err("Selected display ownership changed".into());
+        }
+        inventory_version(&control, uid, deadline)?;
+        json!({"id":control,"platform":"linux","session_id":signature,"backend":"hyprland"})
+    };
+    if expected.is_some_and(|expected| expected != target) {
+        return Err("Selected desktop target changed before dispatch".into());
+    }
+    Ok(target)
+}
+
+fn desktop_string(raw: &str) -> Result<String, String> {
+    let mut chars = raw.chars();
+    let mut value = String::new();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            value.push(c);
+            continue;
+        }
+        value.push(match chars.next() {
+            Some('s') => ' ',
+            Some('n') => '\n',
+            Some('t') => '\t',
+            Some('r') => '\r',
+            Some('\\') => '\\',
+            _ => return Err("Invalid desktop entry string escape".into()),
+        });
+    }
+    if value.contains('\0') {
+        return Err("NUL in desktop entry".into());
+    }
+    Ok(value)
+}
+
+fn exec_words(raw: &str) -> Result<Vec<String>, String> {
+    let decoded = desktop_string(raw)?;
+    let mut chars = decoded.chars();
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut started = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            '\\' => {
+                let next = chars.next().ok_or("Unfinished desktop Exec escape")?;
+                if quoted && !matches!(next, '"' | '$' | '\\') && next as u32 != 96 {
+                    return Err("Invalid quoted desktop Exec escape".into());
+                }
+                word.push(next);
+                started = true;
+            }
+            c if !quoted && c.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            c => {
+                word.push(c);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err("Unclosed desktop Exec quote".into());
+    }
+    if started {
+        words.push(word);
+    }
+    if words
+        .first()
+        .is_none_or(|word| word.is_empty() || word.contains('='))
+    {
+        return Err("Missing or invalid desktop Exec program".into());
+    }
+    Ok(words)
+}
+
+fn desktop_argv(
+    policy: &Policy,
+    path: &Path,
+    fields: &std::collections::BTreeMap<String, String>,
+    args: &[String],
+) -> Result<Vec<String>, String> {
+    let words = exec_words(fields.get("Exec").ok_or("Desktop entry has no Exec")?)?;
+    let mut argv = Vec::new();
+    let mut resource_field = false;
+    for word in words {
+        if matches!(word.as_str(), "%F" | "%U" | "%f" | "%u") {
+            if resource_field {
+                return Err("Repeated desktop resource field".into());
+            }
+            resource_field = true;
+            if matches!(word.as_str(), "%f" | "%u") && args.len() > 1 {
+                return Err(
+                    "Single-resource desktop entry cannot launch multiple resources once".into(),
+                );
+            }
+            argv.extend(args.iter().cloned());
+            continue;
+        }
+        if word == "%i" {
+            if let Some(icon) = fields.get("Icon").filter(|s| !s.is_empty()) {
+                argv.extend(["--icon".into(), desktop_string(icon)?]);
+            }
+            continue;
+        }
+        let mut expanded = String::new();
+        let mut chars = word.chars();
+        while let Some(c) = chars.next() {
+            if c != '%' {
+                expanded.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('%') => expanded.push('%'),
+                Some('c') => expanded.push_str(&desktop_string(
+                    fields.get("Name").map_or("", String::as_str),
+                )?),
+                Some('k') => expanded.push_str(path.to_str().ok_or("Non-UTF8 desktop path")?),
+                Some('d' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
+                _ => return Err("Invalid or embedded desktop Exec field code".into()),
+            }
+        }
+        if !expanded.is_empty() || word.is_empty() {
+            argv.push(expanded);
+        }
+    }
+    if !resource_field {
+        argv.extend_from_slice(args);
+    }
+    if argv.first().is_none_or(String::is_empty) {
+        return Err("Empty desktop command".into());
+    }
+    if fields.get("Terminal").is_some_and(|s| s == "true") {
+        if policy.terminal_command.is_empty() {
+            return Err("Terminal command is not configured".into());
+        }
+        let name = desktop_string(fields.get("Name").map_or("", String::as_str))?;
+        let mut terminal: Vec<String> = policy
+            .terminal_command
+            .iter()
+            .map(|s| s.replace("{name}", &name))
+            .collect();
+        terminal.extend(argv);
+        argv = terminal;
+    }
+    Ok(argv)
+}
+
+fn dispatch_entry(policy: &Policy, query: &str) -> Result<DesktopEntry, String> {
+    let requested = Path::new(query);
+    let requested_path = requested
+        .is_absolute()
+        .then(|| fs::canonicalize(requested))
+        .transpose()
+        .map_err(|e| format!("Cannot resolve desktop entry: {e}"))?;
+    let mut matches = desktop_entries(policy, None)?
+        .into_iter()
+        .filter(|(id, path, _)| {
+            if let Some(requested) = &requested_path {
+                fs::canonicalize(path).is_ok_and(|path| &path == requested)
+            } else {
+                id == query.trim_end_matches(".desktop")
+            }
+        });
+    let entry = matches
+        .next()
+        .ok_or("Desktop entry is not in the installed registry")?;
+    if matches.next().is_some() {
+        return Err("Ambiguous installed desktop entry".into());
+    }
+    Ok(entry)
+}
+
+fn multiple_single_resources(
+    fields: &std::collections::BTreeMap<String, String>,
+    args: &[String],
+) -> Result<bool, String> {
+    if args.len() <= 1 {
+        return Ok(false);
+    }
+    fields
+        .get("Exec")
+        .map(|raw| {
+            exec_words(raw).map(|words| {
+                words
+                    .iter()
+                    .any(|word| matches!(word.as_str(), "%f" | "%u"))
+            })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(false))
+}
+
+fn dispatch_exec(
+    policy: &Policy,
+    entry: &DesktopEntry,
+    args: &[String],
+    target: Value,
+) -> Result<Value, String> {
+    let (id, path, fields) = entry;
+    if let Some(program) = fields.get("TryExec").filter(|s| !s.is_empty()) {
+        if !executable(&desktop_string(program)?) {
+            return Err("Desktop TryExec is unavailable".into());
+        }
+    }
+    if !fields.get("Exec").is_some_and(|s| !s.is_empty())
+        || multiple_single_resources(fields, args)?
+    {
+        return dispatch_activation(policy, entry, args, target);
+    }
+    let argv = desktop_argv(policy, path, fields, args)?;
+    let mut command = Command::new(&argv[0]);
+    command
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    for (key, _) in env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("MIOS_")) {
+        command.env_remove(key);
+    }
+    if let Some(directory) = fields.get("Path").filter(|s| !s.is_empty()) {
+        let directory = desktop_string(directory)?;
+        if !Path::new(&directory).is_absolute() {
+            return Err("Desktop working directory is not absolute".into());
+        }
+        command.current_dir(directory);
+    }
+    command.env("GIO_LAUNCHED_DESKTOP_FILE", path);
+    // std's exec-error pipe closes only after exec succeeds, including PATH
+    // resolution and interpreter errors. Dropping Child never waits for the app.
+    let child = command
+        .spawn()
+        .map_err(|e| format!("Cannot execute desktop application: {e}"))?;
+    Ok(
+        json!({"dispatched":true,"confirmed":false,"method":"exec","pid":child.id(),
+        "desktop_id":id,"desktop_file":path,"execution_target":target}),
+    )
+}
+
+// D-Bus-only entries have no executable to acknowledge. GIO's successful
+// activation reply is reported explicitly, without inventing an application PID.
+fn dispatch_activation(
+    policy: &Policy,
+    entry: &DesktopEntry,
+    args: &[String],
+    target: Value,
+) -> Result<Value, String> {
+    let mut command = if executable(&policy.activation_program) {
+        let mut command = Command::new(&policy.activation_program);
+        command.arg("launch").arg(&entry.1);
+        command
+    } else if executable(&policy.activation_fallback_program) {
+        let mut command = Command::new(&policy.activation_fallback_program);
+        command.arg(&entry.0);
+        command
+    } else {
+        return Err("Desktop activation executables are unavailable".into());
+    };
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    for (key, _) in env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("MIOS_")) {
+        command.env_remove(key);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Cannot start desktop activation: {e}"))?;
+    let deadline = Instant::now() + Duration::from_millis(policy.overall_timeout_ms);
+    loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            if !status.success() {
+                return Err("Desktop activation was rejected".into());
+            }
+            return Ok(
+                json!({"dispatched":true,"confirmed":false,"method":"activation","pid":null,
+                "desktop_id":entry.0,"desktop_file":entry.1,"execution_target":target}),
+            );
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Desktop activation outcome unavailable; refusing duplicate launch".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn scope_receipt(
+    policy: &Policy,
+    root: &Path,
+    entry: &DesktopEntry,
+    args: &[String],
+    target: &Value,
+) -> Result<Value, String> {
+    let mut output = tempfile::tempfile().map_err(|e| e.to_string())?;
+    let mut errors = tempfile::tempfile().map_err(|e| e.to_string())?;
+    let own = env::current_exe().map_err(|e| e.to_string())?;
+    let token = tempfile::Builder::new()
+        .prefix(&policy.scope_prefix)
+        .tempfile()
+        .map_err(|e| e.to_string())?;
+    let unit = token
+        .path()
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid scope token")?;
+    let mut command = Command::new(&policy.scope_program);
+    command
+        .args([
+            "--user",
+            "--scope",
+            "--collect",
+            "--quiet",
+            "--expand-environment=no",
+        ])
+        .arg(format!("--slice={}", policy.scope_slice))
+        .arg(format!("--unit={unit}"))
+        .arg("--")
+        .arg(own)
+        .args(["desktop-dispatch", "--in-scope", "--root"])
+        .arg(root)
+        .arg("--")
+        .arg(&entry.1)
+        .args(args)
+        .env("MIOS_DESKTOP_DISPATCH_TARGET", target.to_string())
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().map_err(|e| e.to_string())?)
+        .stderr(errors.try_clone().map_err(|e| e.to_string())?)
+        .process_group(0);
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Cannot start desktop scope: {e}"))?;
+    let deadline = Instant::now() + Duration::from_millis(policy.overall_timeout_ms);
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            // The app may already be alive: reap only our finite waiter. No
+            // process-group signal, duplicate launch or fallback is permitted.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Desktop dispatch outcome unavailable; refusing duplicate launch".into());
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    output.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    errors.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let mut text = String::new();
+    let mut error = String::new();
+    output
+        .take(65537)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    errors
+        .take(8192)
+        .read_to_string(&mut error)
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!("Desktop scope failed: {error}"));
+    }
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|_| "Desktop scope returned no valid exec receipt")?;
+    if receipt["dispatched"] != true
+        || !matches!(receipt["method"].as_str(), Some("exec" | "activation"))
+        || (receipt["method"] == "exec" && receipt["pid"].as_u64().is_none_or(|pid| pid == 0))
+        || receipt["desktop_file"] != json!(entry.1)
+        || receipt["desktop_id"] != entry.0
+        || &receipt["execution_target"] != target
+    {
+        return Err(
+            "Desktop scope exec receipt does not match the selected application and target".into(),
+        );
+    }
+    Ok(receipt)
+}
+
+pub fn dispatch(root: &Path, desktop: &str, args: &[String], in_scope: bool) -> Result<(), String> {
+    let policy = Policy::read(root)?;
+    let deadline = Instant::now() + Duration::from_millis(policy.probe_timeout_ms);
+    let target = dispatch_target(deadline)?;
+    let entry = dispatch_entry(&policy, desktop)?;
+    // Parse before asking the manager to create a scope; invalid entries never fork.
+    if entry.2.get("Exec").is_some_and(|s| !s.is_empty()) {
+        // A single-resource desktop entry may intentionally ask GIO to
+        // activate one instance per resource. That is one acknowledged
+        // activation request, never a retry of an unknown dispatch.
+        let validation_args = if multiple_single_resources(&entry.2, args)? {
+            &args[..1]
+        } else {
+            args
+        };
+        let _ = desktop_argv(&policy, &entry.1, &entry.2, validation_args)?;
+    }
+    let receipt = if in_scope {
+        dispatch_exec(&policy, &entry, args, target)?
+    } else if executable(&policy.scope_program)
+        && bounded(
+            &policy,
+            &policy.systemctl_program,
+            &["--user".into(), "show-environment".into()],
+            deadline,
+        )
+        .is_ok_and(|(code, _)| code == 0)
+    {
+        scope_receipt(&policy, root, &entry, args, &target)?
+    } else {
+        dispatch_exec(&policy, &entry, args, target)?
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&receipt).map_err(|e| e.to_string())?
+    );
+    Ok(())
 }

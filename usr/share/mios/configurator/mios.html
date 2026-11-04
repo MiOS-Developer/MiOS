@@ -1164,6 +1164,16 @@
         <input type="text" id="f-launch-notification-program" data-key="desktop.launch.notification_program" value="notify-send">
         <label for="f-launch-desktop-launcher-program">Desktop activation executable</label>
         <input type="text" id="f-launch-desktop-launcher-program" data-key="desktop.launch.desktop_launcher_program" value="/usr/libexec/mios/mios-desktop-launch">
+        <label for="f-launch-scope-program">Desktop scope executable</label>
+        <input type="text" id="f-launch-scope-program" data-key="desktop.launch.scope_program" value="systemd-run">
+        <label for="f-launch-scope-slice">Desktop application slice</label>
+        <input type="text" id="f-launch-scope-slice" data-key="desktop.launch.scope_slice" value="app.slice">
+        <label for="f-launch-scope-prefix">Desktop scope name prefix</label>
+        <input type="text" id="f-launch-scope-prefix" data-key="desktop.launch.scope_prefix" value="app-launch-">
+        <label for="f-launch-activation-program">D-Bus desktop activation executable</label>
+        <input type="text" id="f-launch-activation-program" data-key="desktop.launch.activation_program" value="gio">
+        <label for="f-launch-activation-fallback-program">Fallback desktop activation executable</label>
+        <input type="text" id="f-launch-activation-fallback-program" data-key="desktop.launch.activation_fallback_program" value="gtk-launch">
         <label for="f-launch-environment-program">Application environment executable</label>
         <input type="text" id="f-launch-environment-program" data-key="desktop.launch.environment_program" value="env">
         <label for="f-launch-terminal-command">Terminal argv (comma-separated)</label>

@@ -233,6 +233,12 @@ else:
 from pathlib import Path
 with Path(os.environ['MIOS_APP_TEST_CALLS']+".count").open("a") as receipt:receipt.write("1\\n")
 Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1:],'home':os.environ['HOME'],'xdg_config':os.environ['XDG_CONFIG_HOME'],'wayland':os.environ.get('WAYLAND_DISPLAY'),'signature':os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'),'preload':os.environ.get('LD_PRELOAD')}))
+receipt={'dispatched':True,'confirmed':False,'method':'exec','pid':os.getpid(),'desktop_id':'org.example.Recorder','desktop_file':sys.argv[1],'execution_target':json.loads(os.environ['MIOS_DESKTOP_DISPATCH_TARGET'])}
+if os.environ.get('MIOS_APP_TEST_WRONG_TARGET'):receipt['execution_target']={'id':'unrelated'}
+if os.environ.get('MIOS_APP_TEST_WRONG_APP'):receipt['desktop_id']='org.example.Other'
+if os.environ.get('MIOS_APP_TEST_NO_EXEC'):receipt.pop('pid')
+print(json.dumps(receipt))
+
 """)
         import socket
         self.runtime=self.base/"runtime";self.runtime.mkdir(mode=0o700)
@@ -312,6 +318,17 @@ Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1
         self.assertTrue(self.calls.exists())
         self.assertEqual(len(Path(str(self.calls)+".count").read_text().splitlines()),1)
 
+    def test_mismatched_or_missing_exec_receipts_fail_without_a_second_launch(self):
+        for flag in ("MIOS_APP_TEST_WRONG_TARGET","MIOS_APP_TEST_WRONG_APP","MIOS_APP_TEST_NO_EXEC"):
+            with self.subTest(flag=flag):
+                self.env[flag]="1"
+                self.broker();result=self.invoke();self.thread.join(timeout=6)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn("receipt does not match",result.stderr)
+                self.assertEqual(len(Path(str(self.calls)+".count").read_text().splitlines()),1)
+                self.sock.unlink();self.calls.unlink();Path(str(self.calls)+".count").unlink()
+                self.env.pop(flag)
+
     def test_preflight_failure_does_not_dispatch_or_fall_back(self):
         self.env["MIOS_APP_TEST_PREFLIGHT_FAIL"]="1";self.broker()
         result=self.invoke();self.assertNotEqual(result.returncode,0)
@@ -342,6 +359,212 @@ Path(os.environ['MIOS_APP_TEST_CALLS']).write_text(json.dumps({'argv':sys.argv[1
         result=self.invoke();self.assertNotEqual(result.returncode,0)
         self.assertIn("refusing privileged GUI fallback",result.stderr)
         self.assertFalse(self.calls.exists())
+
+
+
+
+class NativeDesktopDispatchTests(unittest.TestCase):
+    """Real executable-start and broker receipts; all sockets/apps are private."""
+    def setUp(self):
+        import socket,threading,sys
+        self.temp=tempfile.TemporaryDirectory(prefix="mios-native-dispatch-")
+        self.base=Path(self.temp.name)
+        self.runtime=self.base/"runtime";self.runtime.mkdir(mode=0o700)
+        self.home=self.base/"home";self.home.mkdir()
+        self.root=self.base/"root";(self.root/"usr/share/mios").mkdir(parents=True)
+        self.apps=self.base/"applications";self.apps.mkdir()
+        self.bin=self.base/"bin";self.bin.mkdir()
+        self.calls=self.base/"app.json";self.scope_calls=self.base/"scope.json"
+        self.pid=None
+        self.env={k:v for k,v in os.environ.items() if not k.startswith("MIOS_") and k not in
+                  ("DISPLAY","WAYLAND_DISPLAY","HYPRLAND_INSTANCE_SIGNATURE","DBUS_SESSION_BUS_ADDRESS")}
+        self.env.update(HOME=str(self.home),XDG_CONFIG_HOME=str(self.home/"config"),
+            XDG_DATA_HOME=str(self.home/"data"),XDG_DATA_DIRS=str(self.base/"empty"),
+            XDG_RUNTIME_DIR=str(self.runtime),WAYLAND_DISPLAY="wayland-private",
+            HYPRLAND_INSTANCE_SIGNATURE="receipt-fixture",MIOS_SECRET_FIXTURE="must-not-reach-app",
+            PATH=str(self.bin)+os.pathsep+os.defpath)
+        self.control=self.runtime/"hypr/receipt-fixture/.socket.sock"
+        self.control.parent.mkdir(parents=True)
+        self.server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+        self.server.bind(str(self.control));self.server.listen(8);self.server.settimeout(.1)
+        self.wayland=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+        self.wayland.bind(str(self.runtime/"wayland-private"))
+        self.stop=threading.Event()
+        def serve():
+            while not self.stop.is_set():
+                try:connection,_=self.server.accept()
+                except TimeoutError:continue
+                except OSError:break
+                with connection:
+                    connection.recv(1024)
+                    connection.sendall(b'{"version":"private-receipt-fixture"}')
+        self.thread=threading.Thread(target=serve,daemon=True);self.thread.start()
+        self.target={"id":str(self.control),"platform":"linux","session_id":"receipt-fixture","backend":"hyprland"}
+        self.env["MIOS_DESKTOP_DISPATCH_TARGET"]=json.dumps(self.target)
+        self.app=self.program("private-app","""import json,os,sys,time
+from pathlib import Path
+Path(%r).write_text(json.dumps({'pid':os.getpid(),'argv':sys.argv[1:],
+ 'home':os.environ['HOME'],'wayland':os.environ.get('WAYLAND_DISPLAY'),
+ 'mios_keys':[key for key in os.environ if key.startswith('MIOS_')]}))
+time.sleep(30)
+""" % str(self.calls))
+        self.scope=self.program("private-scope","""import json,os,subprocess,sys,time
+from pathlib import Path
+args=sys.argv[1:];Path(%r).write_text(json.dumps(args))
+command=args[args.index('--')+1:]
+mode=Path(%r).read_text() if Path(%r).exists() else 'good'
+if mode=='failed':raise SystemExit(7)
+if mode=='corrupt':
+ result=subprocess.run(command,capture_output=True,text=True);print('malformed');raise SystemExit(result.returncode)
+if mode=='timeout':
+ subprocess.run(command,check=True);time.sleep(5);raise SystemExit(0)
+os.execv(command[0],command)
+""" % (str(self.scope_calls),str(self.base/"mode"),str(self.base/"mode")))
+        self.manager=self.program("private-manager","import sys; raise SystemExit(0)")
+        self.activation=self.program("private-activation","import sys; raise SystemExit(0)")
+        self.desktop=self.apps/"org.example.Receipt.desktop"
+        self.desktop.write_text("[Desktop Entry]\nType=Application\nName=Receipt\nExec="+str(self.app)+' "literal $HOME" %U\n')
+        self.policy=tomllib.loads((ROOT/"usr/share/mios/mios.toml").read_text())["desktop"]["launch"].copy()
+        self.policy.update(application_dirs=[str(self.apps)],overall_timeout_ms=1000,probe_timeout_ms=500,
+            scope_program=str(self.scope),systemctl_program=str(self.manager),activation_program=str(self.activation))
+        self.save()
+
+    def program(self,name,code):
+        import sys
+        path=self.bin/name;path.write_text("#!"+sys.executable+"\n"+code);path.chmod(0o755);return path
+
+    def save(self):
+        (self.root/"usr/share/mios/mios.toml").write_text("[desktop.launch]\n"+
+            "".join(key+" = "+json.dumps(value)+"\n" for key,value in self.policy.items()))
+
+    def invoke(self,*args):
+        done=subprocess.run([BINARY,"desktop-dispatch","--root",str(self.root),"--",str(self.desktop),*args],
+            env=self.env,capture_output=True,text=True,timeout=5)
+        for _ in range(100):
+            if self.calls.exists():
+                self.pid=json.loads(self.calls.read_text())["pid"];break
+            if done.returncode:break
+            time.sleep(.005)
+        return done
+
+    def tearDown(self):
+        if self.pid:
+            try:os.kill(self.pid,signal.SIGTERM)
+            except ProcessLookupError:pass
+        self.stop.set();self.server.close();self.wayland.close();self.thread.join(timeout=1)
+        self.temp.cleanup()
+
+    def test_long_lived_actual_exec_receipt_arrives_before_exit_with_exact_target(self):
+        start=time.monotonic();result=self.invoke("file with spaces","$(touch should-not-execute)")
+        self.assertEqual(result.returncode,0,result.stderr);self.assertLess(time.monotonic()-start,1)
+        receipt=json.loads(result.stdout)
+        self.assertEqual(receipt["pid"],self.pid);self.assertEqual(receipt["execution_target"],self.target)
+        self.assertEqual(receipt["desktop_file"],str(self.desktop));self.assertFalse(receipt["confirmed"])
+        self.assertTrue(Path("/proc",str(self.pid)).exists())
+        call=json.loads(self.calls.read_text())
+        self.assertEqual(call["argv"],["literal $HOME","file with spaces","$(touch should-not-execute)"])
+        self.assertEqual(call["mios_keys"],[]);self.assertEqual(call["wayland"],"wayland-private")
+        scope=json.loads(self.scope_calls.read_text())
+        self.assertIn("--scope",scope);self.assertIn("--expand-environment=no",scope)
+        self.assertNotIn("must-not-reach-app",json.dumps(scope))
+
+    def test_actual_broker_capture_returns_native_receipt_while_app_remains_alive(self):
+        import importlib.machinery,importlib.util,socket,threading,shlex
+        from unittest import mock
+        loader=importlib.machinery.SourceFileLoader("mios_native_broker",str(ROOT/"usr/libexec/mios/mios-launcher-daemon"))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        module=importlib.util.module_from_spec(spec);loader.exec_module(module)
+        # This private shell avoids loading an installed host login profile. The
+        # real broker framing, capture subprocess and native scope child all run.
+        self.program("bash","import os,sys; os.execv('/bin/bash',['/bin/bash','--noprofile','--norc','-c',sys.argv[-1]])")
+        server,client=socket.socketpair();client.settimeout(4)
+        command=shlex.join([BINARY,"desktop-dispatch","--root",str(self.root),"--",str(self.desktop),"from broker"])
+        with mock.patch.object(module,"_operator_environment",return_value=dict(self.env)):
+            thread=threading.Thread(target=module.handle,args=(server,),daemon=True);thread.start()
+            client.sendall(("CAPTURE_JSON: "+command+"\n").encode())
+            response=bytearray()
+            while not response.endswith(b"\n"):
+                response.extend(client.recv(4096))
+            thread.join(timeout=2)
+        client.close();server.close()
+        envelope=json.loads(response)
+        self.assertEqual(envelope["exit_code"],0,envelope["stderr"])
+        receipt=json.loads(envelope["stdout"])
+        self.pid=receipt["pid"]
+        self.assertEqual(receipt["execution_target"],self.target)
+        self.assertEqual(envelope["operator_context"],self.target)
+        self.assertTrue(Path("/proc",str(self.pid)).exists())
+        self.assertFalse(thread.is_alive())
+
+    def test_failed_actual_exec_is_not_reported_as_success(self):
+        self.desktop.write_text("[Desktop Entry]\nType=Application\nName=Missing\nExec=/mios-no-such-fixture-executable\n")
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("Cannot execute desktop application",result.stderr);self.assertFalse(self.calls.exists())
+
+    def test_changed_target_is_rejected_before_any_dispatch(self):
+        self.env["MIOS_DESKTOP_DISPATCH_TARGET"]=json.dumps(dict(self.target,id="/unrelated"))
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("target changed",result.stderr);self.assertFalse(self.scope_calls.exists());self.assertFalse(self.calls.exists())
+
+    def test_unowned_or_symlinked_compositor_cannot_receive_a_dispatch(self):
+        self.control.unlink();self.control.symlink_to(self.runtime/"wayland-private")
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertFalse(self.calls.exists());self.assertFalse(self.scope_calls.exists())
+
+    def test_unregistered_desktop_file_fails_without_dispatch(self):
+        outside=self.base/"outside.desktop";outside.write_text(self.desktop.read_text())
+        self.desktop=outside
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("installed registry",result.stderr);self.assertFalse(self.calls.exists())
+
+    def test_ambiguous_canonical_desktop_path_fails_without_dispatch(self):
+        (self.apps/"org.example.Other.desktop").symlink_to(self.desktop)
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("Ambiguous installed desktop",result.stderr);self.assertFalse(self.calls.exists())
+
+    def test_corrupted_scope_receipt_does_not_repeat_a_started_app(self):
+        (self.base/"mode").write_text("corrupt")
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        for _ in range(100):
+            if self.calls.exists():self.pid=json.loads(self.calls.read_text())["pid"];break
+            time.sleep(.005)
+        self.assertIsNotNone(self.pid);self.assertIn("valid exec receipt",result.stderr)
+        self.assertTrue(Path("/proc",str(self.pid)).exists())
+
+    def test_scope_timeout_reports_unknown_outcome_without_relaunch(self):
+        (self.base/"mode").write_text("timeout")
+        start=time.monotonic();result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertLess(time.monotonic()-start,2);self.assertIn("refusing duplicate launch",result.stderr)
+        self.assertIsNotNone(self.pid);self.assertTrue(Path("/proc",str(self.pid)).exists())
+
+    def test_manager_failure_does_not_fall_back_after_scope_dispatch(self):
+        (self.base/"mode").write_text("failed")
+        result=self.invoke();self.assertNotEqual(result.returncode,0)
+        self.assertIn("scope failed",result.stderr);self.assertFalse(self.calls.exists())
+
+    def test_multiple_single_file_resources_preserve_gio_activation_contract(self):
+        self.desktop.write_text("[Desktop Entry]\nType=Application\nName=Files\nExec=/mios-fixture-handler %f\n")
+        result=self.invoke("first file","second file")
+        self.assertEqual(result.returncode,0,result.stderr)
+        receipt=json.loads(result.stdout);self.assertEqual(receipt["method"],"activation")
+        self.assertIsNone(receipt["pid"]);self.assertFalse(self.calls.exists())
+
+    def test_dbus_activation_retains_the_configured_gtk_fallback(self):
+        output=self.base/"activation.json"
+        fallback=self.program("private-fallback","import json,sys;from pathlib import Path;Path("+repr(str(output))+").write_text(json.dumps(sys.argv[1:]))")
+        self.policy["activation_program"]="/mios-fixture-no-gio"
+        self.policy["activation_fallback_program"]=str(fallback);self.save()
+        self.desktop.write_text("[Desktop Entry]\nType=Application\nName=Activation\nDBusActivatable=true\n")
+        result=self.invoke("literal resource")
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(output.read_text()),["org.example.Receipt","literal resource"])
+        self.assertEqual(json.loads(result.stdout)["method"],"activation")
+
+    def test_dbus_only_entry_reports_activation_without_a_fake_pid(self):
+        self.desktop.write_text("[Desktop Entry]\nType=Application\nName=Activation\nDBusActivatable=true\n")
+        result=self.invoke();self.assertEqual(result.returncode,0,result.stderr)
+        receipt=json.loads(result.stdout);self.assertEqual(receipt["method"],"activation")
+        self.assertIsNone(receipt["pid"]);self.assertFalse(self.calls.exists())
 
 
 if __name__=='__main__':unittest.main()
