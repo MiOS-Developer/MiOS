@@ -10,7 +10,7 @@ use ratatui::{
 use crate::{
     capabilities::{Depth, Renderer},
     config::{Config, parse_rgb},
-    sprite::{Sprite, cell_size, fit_scale},
+    sprite::{Sprite, SpriteStyle, cell_size, fit_scale},
 };
 
 #[derive(Clone, Debug)]
@@ -1198,6 +1198,7 @@ pub struct HabitatView<'a> {
 
 pub struct RoomWidget<'a> {
     pub sprite: &'a Sprite,
+    pub detail: SpriteStyle,
     pub renderer: Renderer,
     pub scale: u16,
     pub colors: &'a Colors,
@@ -1232,18 +1233,26 @@ impl Widget for RoomWidget<'_> {
         let accent = theme.map_or(6, |t| usize::from(t.accent));
         let pattern = theme.map_or(0, |t| t.pattern);
         let wall = self.colors.ink(wall_index);
+        let pitch = if self.detail == SpriteStyle::EightBit {
+            2
+        } else {
+            1
+        };
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
                 let ground = y >= floor;
+                let px = (x - area.x) / pitch;
+                let py = (y - area.y) / pitch;
                 let bg = if ground {
+                    let ground_y = (y - floor) / pitch;
                     let tile = match pattern {
-                        1 => (x - area.x) / 5,
-                        2 => (x - area.x) / 8 + (y - floor) / 2,
+                        1 => px / 5,
+                        2 => px / 8 + ground_y / 2,
                         3 => 0,
-                        4 => (x - area.x) / 4 + (y - floor),
-                        5 => (x - area.x) / 7 + (y - floor) / 3,
-                        6 => (x - area.x) / 9 + (y - floor),
-                        7 => (x - area.x) / 6 + (y - floor) % 2,
+                        4 => px / 4 + ground_y,
+                        5 => px / 7 + ground_y / 3,
+                        6 => px / 9 + ground_y,
+                        7 => px / 6 + ground_y % 2,
                         _ => 0,
                     };
                     self.colors.ink(if tile.is_multiple_of(2) {
@@ -1255,21 +1264,19 @@ impl Widget for RoomWidget<'_> {
                     wall
                 };
                 if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_char(
-                        if !ground && (x - area.x).is_multiple_of(7) && (y - area.y) % 3 == 1 {
-                            if pattern == 6 {
-                                '*'
-                            } else if pattern == 5 {
-                                '\''
-                            } else if ascii {
-                                '.'
-                            } else {
-                                '·'
-                            }
+                    cell.set_char(if !ground && px.is_multiple_of(7) && py % 3 == 1 {
+                        if pattern == 6 {
+                            '*'
+                        } else if pattern == 5 {
+                            '\''
+                        } else if ascii {
+                            '.'
                         } else {
-                            ' '
-                        },
-                    )
+                            '·'
+                        }
+                    } else {
+                        ' '
+                    })
                     .set_bg(bg)
                     .set_fg(self.colors.ink(14));
                 }
@@ -1356,7 +1363,7 @@ impl Widget for RoomWidget<'_> {
             );
         }
         if let Some(view) = self.habitat {
-            draw_habitat(area, buf, self.colors, view, floor);
+            draw_habitat(area, buf, self.colors, view, floor, self.detail);
         }
         // Keep a real text row beneath the drawable pet, including when zoom
         // crops its lower body. This is an expression caption, never a rear face.
@@ -1856,7 +1863,14 @@ mod face_tests {
     }
 }
 
-fn draw_habitat(area: Rect, buf: &mut Buffer, colors: &Colors, view: HabitatView<'_>, floor: u16) {
+fn draw_habitat(
+    area: Rect,
+    buf: &mut Buffer,
+    colors: &Colors,
+    view: HabitatView<'_>,
+    floor: u16,
+    detail: SpriteStyle,
+) {
     if area.width < 3 || area.height < 2 {
         return;
     }
@@ -1866,8 +1880,14 @@ fn draw_habitat(area: Rect, buf: &mut Buffer, colors: &Colors, view: HabitatView
     // A seeded structural window belongs to the room, never to paid inventory.
     if area.width >= 12 && area.height >= 6 {
         let (nx, _) = view.state.layout(15);
-        let x = area.x + ((u32::from(area.width - 5) * u32::from(nx.min(1000))) / 1000) as u16;
-        for (dy, row) in ["+---+", "| . |", "+---+"].iter().enumerate() {
+        let rows: &[&str] = if detail == SpriteStyle::EightBit {
+            &["[ ]", "[_]"]
+        } else {
+            &["+---+", "| . |", "+---+"]
+        };
+        let width = rows[0].len() as u16;
+        let x = area.x + ((u32::from(area.width - width) * u32::from(nx.min(1000))) / 1000) as u16;
+        for (dy, row) in rows.iter().enumerate() {
             for (dx, glyph) in row.chars().enumerate() {
                 if let Some(c) = buf.cell_mut((x + dx as u16, area.y + 1 + dy as u16)) {
                     c.set_char(glyph)
@@ -1898,7 +1918,8 @@ fn draw_habitat(area: Rect, buf: &mut Buffer, colors: &Colors, view: HabitatView
         }
         let kind = usize::from(item.kind).min(7);
         let tiny = ["Y", "b", "T", "*", "=", "#", "+", "!"];
-        let rows: &[&str] = if area.height < 5 || area.width < 8 {
+        let rows: &[&str] = if detail == SpriteStyle::EightBit || area.height < 5 || area.width < 8
+        {
             &tiny[kind..=kind]
         } else {
             art[kind]
@@ -1951,6 +1972,7 @@ mod habitat_tests {
         let colors = Colors::from_config(config, Depth::Indexed).unwrap();
         let mut buffer = Buffer::empty(Rect::new(0, 0, 90, 34));
         RoomWidget {
+            detail: SpriteStyle::EightBit,
             sprite: &sprite,
             renderer: Renderer::HalfBlock,
             scale: 0,
@@ -1968,6 +1990,87 @@ mod habitat_tests {
         }
         .render(Rect::new(1, 1, 88, 32), &mut buffer);
         buffer
+    }
+
+    #[test]
+    fn global_detail_changes_room_patterns_and_items_without_changing_game_or_habitat() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 42);
+        let theme = config
+            .habitat
+            .themes
+            .iter()
+            .find(|t| t.pattern == 2)
+            .expect("sample habitat must exercise a tiled theme");
+        game.habitat.theme = theme.id;
+        game.buy_item(0, &config.habitat).unwrap();
+        game.toggle_item(0, &config.habitat).unwrap();
+        assert_ne!(
+            game.habitat.placed, 0,
+            "the detail gate must include an actually placed item"
+        );
+        let before = serde_json::to_vec(&game).unwrap();
+        let visual_seed = game.visual_seed();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let area = Rect::new(1, 1, 80, 26);
+        let render = |detail| {
+            let sprite = Sprite::voxel(Stage::Child, Expression::Idle, detail, 0, 0, false);
+            let mut buf = Buffer::empty(Rect::new(0, 0, 82, 28));
+            RoomWidget {
+                detail,
+                sprite: &sprite,
+                renderer: Renderer::HalfBlock,
+                scale: 0,
+                colors: &colors,
+                expression: Expression::Idle,
+                frame: 0,
+                position: (500, 700),
+                camera: Camera::default(),
+                habitat: Some(HabitatView {
+                    state: &game.habitat,
+                    rules: &config.habitat,
+                    wins: game.wins,
+                    age: game.age_ticks,
+                }),
+            }
+            .render(area, &mut buf);
+            buf
+        };
+        let fine = render(SpriteStyle::SixteenBit);
+        let coarse = render(SpriteStyle::EightBit);
+        assert_ne!(fine, coarse, "global detail must change actual room output");
+        let floor = area.y + area.height * 3 / 4;
+        assert_eq!(
+            fine[(area.x + 8, floor)].bg,
+            colors.ink(usize::from(theme.accent))
+        );
+        assert_eq!(
+            coarse[(area.x + 8, floor)].bg,
+            colors.ink(usize::from(theme.floor))
+        );
+        let (nx, _) = game.habitat.layout(15);
+        let fine_window_x =
+            area.x + ((u32::from(area.width - 5) * u32::from(nx.min(1000))) / 1000) as u16;
+        let coarse_window_x =
+            area.x + ((u32::from(area.width - 3) * u32::from(nx.min(1000))) / 1000) as u16;
+        let x = [area.x, area.x + 14]
+            .into_iter()
+            .find(|x| {
+                !(*x >= fine_window_x && *x < fine_window_x + 5)
+                    && !(*x >= coarse_window_x && *x < coarse_window_x + 3)
+            })
+            .unwrap();
+        assert_eq!(fine[(x, area.y + 2)].symbol(), " ");
+        assert_eq!(coarse[(x, area.y + 2)].symbol(), "·");
+        assert_eq!(
+            coarse[(x + 1, area.y + 2)].symbol(),
+            "·",
+            "eight-bit wall motifs must occupy a coarser two-cell pitch"
+        );
+        assert_eq!(before, serde_json::to_vec(&game).unwrap());
+        assert_eq!(visual_seed, game.visual_seed());
+        assert_eq!(fine[(0, 0)].symbol(), " ");
+        assert_eq!(coarse[(81, 27)].symbol(), " ");
     }
 
     #[test]
@@ -2169,6 +2272,7 @@ mod camera_tests {
                     }
                     let baseline = buf.clone();
                     RoomWidget {
+                        detail: SpriteStyle::SixteenBit,
                         sprite: &sprite,
                         renderer,
                         scale: 0,
@@ -2380,6 +2484,7 @@ mod camera_tests {
             );
             let mut buf = Buffer::empty(Rect::new(0, 0, 22, 10));
             RoomWidget {
+                detail: SpriteStyle::SixteenBit,
                 sprite: &sprite,
                 renderer: Renderer::Ascii,
                 scale: 0,
@@ -2426,6 +2531,7 @@ mod camera_tests {
                 let area = Rect::new(0, 0, 40, 12);
                 let mut buf = Buffer::empty(area);
                 RoomWidget {
+                    detail: SpriteStyle::SixteenBit,
                     sprite: &sprite,
                     renderer: Renderer::Ascii,
                     scale: 0,
@@ -2478,6 +2584,7 @@ mod camera_tests {
                     let face = sprite.face_overlay().expect("front-facing head");
                     let mut buf = Buffer::empty(Rect::new(0, 0, 14, 8));
                     RoomWidget {
+                        detail: SpriteStyle::SixteenBit,
                         sprite: &sprite,
                         renderer,
                         scale: 0,
@@ -2850,11 +2957,16 @@ mod camera_tests {
 
     #[test]
     fn bird_child_sick_frames_keep_native_eyes_and_mouth_at_small_head_scales() {
-        for frame in 0..Expression::Sick.kaomoji_cycle().len() {
+        for (style, frame) in [SpriteStyle::EightBit, SpriteStyle::SixteenBit]
+            .into_iter()
+            .flat_map(|style| {
+                (0..Expression::Sick.kaomoji_cycle().len()).map(move |frame| (style, frame))
+            })
+        {
             let sprite = Sprite::voxel_with_appearance(
                 Stage::Child,
                 Expression::Sick,
-                SpriteStyle::SixteenBit,
+                style,
                 frame,
                 0,
                 false,
@@ -2887,7 +2999,7 @@ mod camera_tests {
                     let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
                     assert!(
                         literal == canonical || literal == core,
-                        "actual bird child Sick frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}"
+                        "actual bird child Sick {style:?} frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}"
                     );
                 }
             }
@@ -2897,11 +3009,16 @@ mod camera_tests {
     #[test]
     fn bird_child_sick_phone_camera_zoom_keeps_complete_literal_expression_cores() {
         let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
-        for frame in 0..Expression::Sick.kaomoji_cycle().len() {
+        for (style, frame) in [SpriteStyle::EightBit, SpriteStyle::SixteenBit]
+            .into_iter()
+            .flat_map(|style| {
+                (0..Expression::Sick.kaomoji_cycle().len()).map(move |frame| (style, frame))
+            })
+        {
             let sprite = Sprite::voxel_with_appearance(
                 Stage::Child,
                 Expression::Sick,
-                SpriteStyle::SixteenBit,
+                style,
                 frame,
                 0,
                 false,
@@ -2946,7 +3063,7 @@ mod camera_tests {
                                 draw_camera_face(
                                     &sprite, renderer, &colors, projection, area, &mut after
                                 ),
-                                "bird child Sick frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core"
+                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core"
                             );
                             let mut marks = Vec::new();
                             for y in 0..area.height {
@@ -2961,7 +3078,7 @@ mod camera_tests {
                             let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
                             assert!(
                                 literal == canonical || literal == core,
-                                "bird child Sick frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}"
+                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}"
                             );
                         }
                     }
@@ -3222,6 +3339,7 @@ mod camera_tests {
                         }
                         let before = buf.clone();
                         RoomWidget {
+                            detail: SpriteStyle::SixteenBit,
                             sprite: &sprite,
                             renderer,
                             scale: 0,

@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1747 |
-| in_progress | 80 |
+| in_progress | 82 |
 | completed | 1866 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3733 |
+| total | 3735 |
 
 0 record(s) carry at least one override.
 
@@ -4462,6 +4462,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3730` Expose real Inputd bindings and direct keyboard mouse menu navigation -- in_progress · owner mios-mons-navigation-worker · P1
 - `task_3732` Expand readable kaomoji emotion cycles for MiOS-Mon -- in_progress · owner mios-tamagotchi-live-coordinator · P1
 - `task_3733` Shade voxel forms with species-bound colors and ASCII tonal shadows -- in_progress · owner mios-mons-navigation-worker · P1
+- `task_3734` Make font and viewport changes drive one global automatic detail mode -- in_progress · owner mios-mons-navigation-worker · P1
+- `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- in_progress · owner mios-mons-face-legibility-worker · P1
 
 ## test-coverage
 

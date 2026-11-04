@@ -3413,6 +3413,18 @@
         <input type="number" id="f-mon-tamagotchi-hud-minimal-height" data-inherit="true" data-key="tamagotchi.hud_minimal_height" placeholder="Inherit vendor" data-type="int" min="8" max="80" step="1">
         <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
         <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
+      </fieldset><fieldset><legend>Global responsive detail</legend>
+        <p>The terminal font size applies to all text. The resulting cell grid and zoom select one shared detail level for the pet, face, habitat and previews.</p>
+        <label for="f-mon-detail-automatic">Automatic 8-bit / 16-bit detail</label>
+        <select id="f-mon-detail-automatic" data-inherit="true" data-key="tamagotchi.presentation.automatic" data-type="bool">
+          <option value="">Inherit vendor</option><option value="true">Automatic</option><option value="false">Manual sprite style</option>
+        </select>
+        <label for="f-mon-detail-min-width">Detailed mode minimum width (packed pixels)</label>
+        <input type="number" id="f-mon-detail-min-width" data-inherit="true" data-key="tamagotchi.presentation.min_width" placeholder="Inherit vendor" data-type="int" min="8" max="1024" step="1">
+        <label for="f-mon-detail-min-height">Detailed mode minimum height (packed pixels)</label>
+        <input type="number" id="f-mon-detail-min-height" data-inherit="true" data-key="tamagotchi.presentation.min_height" placeholder="Inherit vendor" data-type="int" min="4" max="1024" step="1">
+        <label for="f-mon-detail-hysteresis-percent">Resize stability band (%)</label>
+        <input type="number" id="f-mon-detail-hysteresis-percent" data-inherit="true" data-key="tamagotchi.presentation.hysteresis_percent" placeholder="Inherit vendor" data-type="int" min="0" max="50" step="1">
       </fieldset><fieldset><legend>Voxel shading</legend>
         <p>Lighting keeps the species palette and adds shape to ears, muzzles, limbs and tails. ASCII views use a tonal character ramp.</p>
         <label for="f-mon-light-enabled">Directional shading</label>

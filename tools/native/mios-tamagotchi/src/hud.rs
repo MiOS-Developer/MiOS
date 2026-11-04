@@ -1,7 +1,71 @@
 // AI-hint: Cell-budgeted golden-ratio HUD geometry and exact compact status labels.
 // AI-related: ui.rs, config.rs, usr/share/mios/mios.toml [mcp.tmux.workspace]
-use crate::game::Game;
+use crate::{capabilities::Renderer, game::Game, sprite::SpriteStyle};
 use ratatui::layout::Rect;
+
+/// One scene-wide detail decision, shared by the pet, room, HUD and menus.
+/// All operator thresholds come from the layered SSOT; no private defaults.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetailRules {
+    pub automatic: bool,
+    pub min_width: u16,
+    pub min_height: u16,
+    pub hysteresis_percent: u16,
+}
+
+impl DetailRules {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(8..=1024).contains(&self.min_width)
+            || !(4..=1024).contains(&self.min_height)
+            || self.hysteresis_percent > 50
+        {
+            return Err("detail policy: min_width must be8..1024, min_height4..1024 and hysteresis_percent0..50".into());
+        }
+        Ok(())
+    }
+
+    pub fn choose(
+        &self,
+        previous: SpriteStyle,
+        manual: SpriteStyle,
+        scene: Rect,
+        renderer: Renderer,
+        zoom_percent: u16,
+    ) -> SpriteStyle {
+        if scene.is_empty() {
+            return SpriteStyle::EightBit;
+        }
+        if !self.automatic {
+            return manual;
+        }
+        let (dx, dy) = renderer.packing();
+        let zoom = u64::from(zoom_percent.clamp(50, 400));
+        let width = u64::from(scene.width) * u64::from(dx) * zoom / 100;
+        let height = u64::from(scene.height) * u64::from(dy) * zoom / 100;
+        match previous {
+            SpriteStyle::EightBit => {
+                if width >= u64::from(self.min_width) && height >= u64::from(self.min_height) {
+                    SpriteStyle::SixteenBit
+                } else {
+                    SpriteStyle::EightBit
+                }
+            }
+            SpriteStyle::SixteenBit => {
+                // Compare hundredths to keep a fractional hysteresis boundary
+                // exact. Integer truncation must not delay a necessary drop.
+                let retain = 100 - u64::from(self.hysteresis_percent.min(50));
+                if width * 100 < u64::from(self.min_width) * retain
+                    || height * 100 < u64::from(self.min_height) * retain
+                {
+                    SpriteStyle::EightBit
+                } else {
+                    SpriteStyle::SixteenBit
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct HudLayout {
@@ -166,6 +230,170 @@ mod tests {
             assert!(all.contains(text), "{all}");
         }
         assert!(pages.iter().all(|s| s.len() <= 10));
+    }
+}
+
+#[cfg(test)]
+mod detail_policy_tests {
+    use super::*;
+
+    fn rules() -> DetailRules {
+        DetailRules {
+            automatic: true,
+            min_width: 64,
+            min_height: 48,
+            hysteresis_percent: 15,
+        }
+    }
+
+    #[test]
+    fn packed_scene_boundaries_require_both_dimensions_in_every_renderer() {
+        let rules = rules();
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            let (dx, dy) = renderer.packing();
+            let width = 64 / u16::from(dx);
+            let height = 48 / u16::from(dy);
+            let choose = |w, h| {
+                rules.choose(
+                    SpriteStyle::EightBit,
+                    SpriteStyle::SixteenBit,
+                    Rect::new(0, 0, w, h),
+                    renderer,
+                    100,
+                )
+            };
+            assert_eq!(
+                choose(width, height),
+                SpriteStyle::SixteenBit,
+                "{renderer:?}"
+            );
+            assert_eq!(
+                choose(width - 1, height),
+                SpriteStyle::EightBit,
+                "{renderer:?} width"
+            );
+            assert_eq!(
+                choose(width, height - 1),
+                SpriteStyle::EightBit,
+                "{renderer:?} height"
+            );
+        }
+    }
+
+    #[test]
+    fn hysteresis_has_exact_enter_and_drop_boundaries_without_flapping() {
+        let rules = rules();
+        let choose = |previous, width, height| {
+            rules.choose(
+                previous,
+                SpriteStyle::SixteenBit,
+                Rect::new(0, 0, width, height),
+                Renderer::HalfBlock,
+                100,
+            )
+        };
+        assert_eq!(
+            choose(SpriteStyle::EightBit, 64, 24),
+            SpriteStyle::SixteenBit
+        );
+        assert_eq!(
+            choose(SpriteStyle::SixteenBit, 55, 21),
+            SpriteStyle::SixteenBit
+        );
+        assert_eq!(choose(SpriteStyle::EightBit, 55, 21), SpriteStyle::EightBit);
+        assert_eq!(
+            choose(SpriteStyle::SixteenBit, 54, 21),
+            SpriteStyle::EightBit
+        );
+        assert_eq!(
+            choose(SpriteStyle::SixteenBit, 55, 20),
+            SpriteStyle::EightBit
+        );
+        // Real font-size demonstration budgets:12pt ->24pt ->12pt.
+        let fine = choose(SpriteStyle::EightBit, 95, 25);
+        let coarse = choose(fine, 46, 11);
+        assert_eq!(fine, SpriteStyle::SixteenBit);
+        assert_eq!(coarse, SpriteStyle::EightBit);
+        assert_eq!(choose(coarse, 95, 25), SpriteStyle::SixteenBit);
+        assert_eq!(
+            choose(SpriteStyle::SixteenBit, 54, 26),
+            SpriteStyle::EightBit
+        );
+    }
+
+    #[test]
+    fn zoom_is_bounded_and_changes_the_same_global_pixel_budget() {
+        let rules = rules();
+        let choose = |width, height, zoom| {
+            rules.choose(
+                SpriteStyle::EightBit,
+                SpriteStyle::EightBit,
+                Rect::new(0, 0, width, height),
+                Renderer::HalfBlock,
+                zoom,
+            )
+        };
+        assert_eq!(choose(32, 12, 200), SpriteStyle::SixteenBit);
+        assert_eq!(choose(64, 24, 50), SpriteStyle::EightBit);
+        assert_eq!(choose(16, 6, 400), SpriteStyle::SixteenBit);
+        assert_eq!(choose(16, 6, u16::MAX), choose(16, 6, 400));
+        assert_eq!(choose(128, 48, 0), choose(128, 48, 50));
+        assert_eq!(
+            choose(u16::MAX, u16::MAX, u16::MAX),
+            SpriteStyle::SixteenBit
+        );
+        assert_eq!(
+            rules.choose(
+                SpriteStyle::SixteenBit,
+                SpriteStyle::SixteenBit,
+                Rect::new(0, 0, 95, 25),
+                Renderer::HalfBlock,
+                50
+            ),
+            SpriteStyle::EightBit
+        );
+    }
+
+    #[test]
+    fn manual_override_and_zero_area_are_explicit_and_rules_validate_strictly() {
+        let mut rules = rules();
+        rules.automatic = false;
+        for manual in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            for previous in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                for scene in [Rect::new(0, 0, 1, 1), Rect::new(0, 0, 1024, 1024)] {
+                    assert_eq!(
+                        rules.choose(previous, manual, scene, Renderer::Braille, 400),
+                        manual
+                    );
+                }
+                for scene in [Rect::new(0, 0, 0, 100), Rect::new(0, 0, 100, 0)] {
+                    assert_eq!(
+                        rules.choose(previous, manual, scene, Renderer::Braille, 100),
+                        SpriteStyle::EightBit
+                    );
+                }
+            }
+        }
+        assert!(rules.validate().is_ok());
+        for width in [7, 1025, u16::MAX] {
+            let mut bad = rules.clone();
+            bad.min_width = width;
+            assert!(bad.validate().is_err());
+        }
+        for height in [3, 1025, u16::MAX] {
+            let mut bad = rules.clone();
+            bad.min_height = height;
+            assert!(bad.validate().is_err());
+        }
+        rules.hysteresis_percent = 51;
+        assert!(rules.validate().is_err());
+        assert!(serde_json::from_str::<DetailRules>(
+            r#"{"automatic":true,"min_width":64,"min_height":48,"hysteresis_percent":15,"private_default":1}"#).is_err());
     }
 }
 

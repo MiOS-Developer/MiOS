@@ -104,6 +104,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(style) = args.sprite_style {
         config.sprite_style = style;
+        config.presentation.automatic = false;
     }
     if let Some(view) = args.view {
         config.view_mode = view;

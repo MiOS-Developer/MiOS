@@ -20068,6 +20068,13 @@ outline_percent = 20       # silhouette-edge darkening,0..100
 light_direction = [-45, 65, 45] # view-space X/right Y/up Z/viewer, each-100..100; nonzero
 ascii_ramp = ".:-=+*#%@"    # low-to-high density, printable ASCII; occupied surfaces remain visible
 
+# One shared interactive detail decision follows cell budget, font-driven resize and zoom.
+[tamagotchi.presentation]
+automatic = true
+min_width = 64           # minimum packed-raster width for detailed mode
+min_height = 48          # minimum packed-raster height for detailed mode
+hysteresis_percent = 15  # retain detailed mode through minor size fluctuations
+
 [tamagotchi.game]
 tick_seconds = 2          # accelerated sample clock; offline time is frozen
 hatch_ticks = 3

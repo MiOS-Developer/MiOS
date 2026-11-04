@@ -540,3 +540,18 @@ ambient and directional light, contact shade, silhouette edge shade, view-space
 light direction and ASCII ramp. These are local application rendering settings;
 changing a preview does not replace the running host's configuration or mutate
 pet needs, age, coins, progression or RNG.
+
+
+## Global detail when fonts or viewports change
+
+Automatic detail uses one shared 8-bit/16-bit decision for the room, pet, face
+and character previews. It responds to the actual terminal cell grid, renderer
+packing and camera zoom. Enlarging the terminal font reduces the available
+cells and selects coarse detail; restoring space selects finer detail. The HUD
+and menus reflow within that same viewport and show the effective mode.
+
+The layered [tamagotchi.presentation] table owns automatic selection, the
+minimum packed-pixel dimensions and resize hysteresis. Graphics offers manual
+8-bit/16-bit choices and a return to Automatic. An explicit --sprite-style
+choice selects manual detail. Terminal font size is a client-wide setting, so
+changing it scales every ASCII label and facial character together.

@@ -45,6 +45,7 @@ pub struct Config {
     pub zoom_step_percent: u16,
     pub zoom_transition_frames: usize,
     pub hud_mode: HudMode,
+    pub presentation: crate::hud::DetailRules,
     #[serde(skip)]
     pub hud_golden_ratio: f64,
     #[serde(skip)]
@@ -136,6 +137,7 @@ impl Config {
     pub fn validate(&self) -> Result<(), String> {
         self.game.validate()?;
         self.voxel_lighting.validate()?;
+        self.presentation.validate()?;
         self.habitat.validate()?;
         if !(1000..=600_000).contains(&self.dialog_timeout_ms)
             || !(50..=2000).contains(&self.dialog_query_timeout_ms)
@@ -298,6 +300,39 @@ mod voxel_lighting_validation_tests {
                 .parse::<toml::Value>()
                 .unwrap();
             assert!(Config::from_value(&overlay).is_err(), "{setting}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod presentation_validation_tests {
+    use super::Config;
+    #[test]
+    fn layered_detail_rules_are_required_in_vendor_and_validate_user_overrides() {
+        let vendor = Config::sample().unwrap();
+        let sparse = "[tamagotchi]\nzoom_percent = 125"
+            .parse::<toml::Value>()
+            .unwrap();
+        let resolved = Config::from_value(&sparse).unwrap();
+        assert_eq!(
+            resolved.presentation.min_width,
+            vendor.presentation.min_width
+        );
+        assert_eq!(
+            resolved.presentation.min_height,
+            vendor.presentation.min_height
+        );
+        assert_eq!(resolved.zoom_percent, 125);
+        for setting in [
+            "min_width = 0",
+            "min_height = 0",
+            "hysteresis_percent = 101",
+            "unknown = 1",
+        ] {
+            let value = format!("[tamagotchi.presentation]\n{setting}\n")
+                .parse::<toml::Value>()
+                .unwrap();
+            assert!(Config::from_value(&value).is_err(), "{setting}");
         }
     }
 }

@@ -26,6 +26,7 @@ pub enum Action {
     ZoomReset,
     Camera,
     Help,
+    Detail,
     Direction(Direction),
     Care(Care),
     Number(usize),
@@ -82,6 +83,7 @@ pub fn action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('0') => Some(Action::ZoomReset),
         KeyCode::Char('z') => Some(Action::Camera),
         KeyCode::Char('?') => Some(Action::Help),
+        KeyCode::Char('d') => Some(Action::Detail),
         KeyCode::Char('f') => Some(Action::Care(Care::Feed)),
         KeyCode::Char('g') => Some(Action::Care(Care::Play)),
         KeyCode::Char('c') => Some(Action::Care(Care::Clean)),
@@ -1394,6 +1396,7 @@ mod direct_key_regressions {
             ('o', Action::Menu),
             ('z', Action::Camera),
             ('l', Action::Training),
+            ('d', Action::Detail),
         ] {
             for character in [lower, lower.to_ascii_uppercase()] {
                 let mut key = KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE);

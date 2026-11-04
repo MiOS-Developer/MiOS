@@ -84,6 +84,9 @@ pub struct Ui {
     menu_number_start: Cell<usize>,
     menu_number_count: Cell<usize>,
     pub sprite_style: SpriteStyle,
+    presentation: Option<crate::hud::DetailRules>,
+    effective_style: Cell<SpriteStyle>,
+    detail_ready: Cell<bool>,
     pub renderer: Option<Renderer>,
     pub controller: Option<ControllerPrompts>,
     controller_status: String,
@@ -147,6 +150,9 @@ impl Ui {
             menu_number_start: Cell::new(0),
             menu_number_count: Cell::new(0),
             sprite_style: SpriteStyle::EightBit,
+            presentation: None,
+            effective_style: Cell::new(SpriteStyle::EightBit),
+            detail_ready: Cell::new(false),
             renderer: None,
             controller: None,
             controller_status: "Inputd: checking local focus and assigned pad.".into(),
@@ -200,6 +206,8 @@ impl Ui {
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
         ui.sprite_style = config.sprite_style;
+        ui.presentation = Some(config.presentation.clone());
+        ui.effective_style.set(config.sprite_style);
         ui.camera_view = config.camera_view;
         ui.camera_from_view = config.camera_view;
         ui.zoom_percent = config.zoom_percent;
@@ -244,6 +252,77 @@ impl Ui {
             + (i32::from(self.zoom_target) - i32::from(self.zoom_origin)) * eased / 100)
             .clamp(50, 400) as u16;
         self.frame = frame;
+    }
+    pub fn effective_style(&self) -> SpriteStyle {
+        if self.detail_ready.get() {
+            self.effective_style.get()
+        } else {
+            self.sprite_style
+        }
+    }
+    fn automatic_detail(&self) -> bool {
+        self.presentation
+            .as_ref()
+            .is_some_and(|rules| rules.automatic)
+    }
+    fn detail_label(&self) -> String {
+        format!(
+            "{}{}-bit",
+            if self.automatic_detail() {
+                "AUTO"
+            } else {
+                "MANUAL"
+            },
+            if self.effective_style() == SpriteStyle::EightBit {
+                8
+            } else {
+                16
+            }
+        )
+    }
+    fn detail_tag(&self) -> String {
+        format!(
+            "{}{}",
+            if self.effective_style() == SpriteStyle::EightBit {
+                8
+            } else {
+                16
+            },
+            if self.automatic_detail() { "A" } else { "M" }
+        )
+    }
+    fn select_detail(&self, scene: Rect, renderer: Renderer) {
+        let style = self
+            .presentation
+            .as_ref()
+            .map_or(self.sprite_style, |rules| {
+                rules.choose(
+                    self.effective_style(),
+                    self.sprite_style,
+                    scene,
+                    renderer,
+                    self.zoom_percent,
+                )
+            });
+        self.effective_style.set(style);
+        self.detail_ready.set(true);
+    }
+    fn manual_style(&mut self, style: SpriteStyle) {
+        self.sprite_style = style;
+        if let Some(rules) = &mut self.presentation {
+            rules.automatic = false;
+        }
+        self.effective_style.set(style);
+        self.detail_ready.set(true);
+    }
+    fn toggle_detail(&mut self) {
+        if let Some(rules) = &mut self.presentation {
+            rules.automatic = !rules.automatic;
+            if !rules.automatic {
+                self.effective_style.set(self.sprite_style);
+            }
+        }
+        self.notice = format!("{} / D toggles automatic detail.", self.detail_label());
     }
     fn effective_view(&self, view: CameraView, dimensions: (u16, u16)) -> CameraView {
         if (dimensions.0 < 28 || dimensions.1 < 10) && view == CameraView::Pet {
@@ -409,14 +488,17 @@ impl Ui {
             frame
         };
         match self.view_mode {
-            ViewMode::Pixel => {
-                Sprite::animated(self.game.stage(rules), expression, self.sprite_style, pose)
-                    .recolored(self.appearance().body, self.appearance().accent)
-            }
+            ViewMode::Pixel => Sprite::animated(
+                self.game.stage(rules),
+                expression,
+                self.effective_style(),
+                pose,
+            )
+            .recolored(self.appearance().body, self.appearance().accent),
             ViewMode::Voxel => Sprite::voxel_with_appearance(
                 self.game.stage(rules),
                 expression,
-                self.sprite_style,
+                self.effective_style(),
                 pose,
                 self.camera_yaw(self.yaw),
                 self.walking(),
@@ -839,6 +921,10 @@ impl Ui {
                 self.open(Menu::Help);
                 return Effect::Continue;
             }
+            Action::Detail => {
+                self.toggle_detail();
+                return Effect::Continue;
+            }
             _ => {}
         }
         if self.menu.is_some() {
@@ -971,10 +1057,10 @@ impl Ui {
                     self.gallery_stage = (self.gallery_stage + 1) % 5
                 }
                 Action::Accept => {
-                    self.sprite_style = match self.sprite_style {
+                    self.manual_style(match self.effective_style() {
                         SpriteStyle::EightBit => SpriteStyle::SixteenBit,
                         SpriteStyle::SixteenBit => SpriteStyle::EightBit,
-                    }
+                    });
                 }
                 _ => {}
             }
@@ -997,7 +1083,7 @@ impl Ui {
             Menu::Home => 12,
             Menu::Care => 5,
             Menu::Games => 2,
-            Menu::Graphics => 19,
+            Menu::Graphics => 20,
             Menu::Training => 6,
             Menu::Status | Menu::Help => 1,
             Menu::Gallery => 16,
@@ -1069,8 +1155,8 @@ impl Ui {
                 Menu::Graphics => match self.menu_selected {
                     0 => self.view_mode = ViewMode::Voxel,
                     1 => self.view_mode = ViewMode::Pixel,
-                    2 => self.sprite_style = SpriteStyle::EightBit,
-                    3 => self.sprite_style = SpriteStyle::SixteenBit,
+                    2 => self.manual_style(SpriteStyle::EightBit),
+                    3 => self.manual_style(SpriteStyle::SixteenBit),
                     4 => self.renderer = Some(Renderer::HalfBlock),
                     5 => self.renderer = Some(Renderer::Ascii),
                     6 => self.renderer = Some(Renderer::Quadrant),
@@ -1085,6 +1171,7 @@ impl Ui {
                     15 => self.zoom_by(true),
                     16 => self.zoom_by(false),
                     17 => self.change_camera(self.camera_view, 100),
+                    19 => self.toggle_detail(),
                     _ => self.back(),
                 },
                 Menu::Training => {
@@ -1210,6 +1297,20 @@ impl Ui {
         let renderer = self.renderer.unwrap_or(renderer);
         let ascii = renderer == Renderer::Ascii;
         let area = screen.area();
+        let viewport = Rect::new(
+            area.x.saturating_add(1),
+            area.y.saturating_add(1),
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+        let detail_scene = crate::hud::split(
+            viewport,
+            config.hud_golden_ratio,
+            config.hud_landscape_columns,
+            config.hud_portrait_ratio_percent,
+        )
+        .scene;
+        self.select_detail(detail_scene, renderer);
         self.pet_area.set(Rect::default());
         self.dialog_area.set(Rect::default());
         self.care_targets.borrow_mut().clear();
@@ -1227,20 +1328,22 @@ impl Ui {
         };
         let heading = if area.width < 16 {
             format!(
-                "{} {}{clock}",
-                self.name().chars().take(5).collect::<String>(),
+                "{} {} {}{clock}",
+                self.detail_tag(),
+                self.name().chars().take(3).collect::<String>(),
                 &stage[..1]
             )
         } else if area.width < 28 {
             let name = self
                 .name()
                 .chars()
-                .take(usize::from(area.width.saturating_sub(11)))
+                .take(usize::from(area.width.saturating_sub(15)))
                 .collect::<String>();
-            format!("{name} {}{clock} {face}", &stage[..1])
+            format!("{} {name} {}{clock} {face}", self.detail_tag(), &stage[..1])
         } else {
             format!(
-                "PET ROOM {} {} {stage} {clock} {face} {:?} {}%",
+                "PET ROOM {} {} {} {stage} {clock} {face} {:?} {}%",
+                self.detail_label(),
                 self.name(),
                 self.current_character()
                     .map_or("pet", |c| c.species.as_str()),
@@ -1302,10 +1405,7 @@ impl Ui {
             Constraint::Length(6),
         ])
         .areas(inner);
-        let style = match self.sprite_style {
-            SpriteStyle::EightBit => "8-BIT",
-            SpriteStyle::SixteenBit => "16-BIT",
-        };
+        let style = self.detail_label();
         let clock = if self.game.paused {
             "PAUSED"
         } else if self.overlay_open() {
@@ -1394,6 +1494,7 @@ impl Ui {
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
+                detail: self.effective_style(),
                 camera: self.camera(),
                 sprite: &sprite,
                 renderer,
@@ -1564,6 +1665,7 @@ impl Ui {
         let expression = self.expression(&config.game, frame);
         screen.render_widget(
             RoomWidget {
+                detail: self.effective_style(),
                 camera: self.camera(),
                 sprite: &sprite,
                 renderer,
@@ -2208,9 +2310,13 @@ impl Ui {
         screen.render_widget(Clear, area);
         let selected = self.menu_selected.min(5);
         let title = if area.width < 20 {
-            format!("TRAIN {}/6", selected + 1)
+            format!("{} T{}/6", self.detail_tag(), selected + 1)
         } else {
-            format!(" TRAINING / {} / Lv/value ", self.name())
+            format!(
+                " TRAINING / {} / {} / Lv/value ",
+                self.detail_label(),
+                self.name()
+            )
         };
         let block = panel(&title, colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
@@ -2380,7 +2486,12 @@ impl Ui {
             center(screen.area(), 66, 26)
         };
         screen.render_widget(Clear, area);
-        let block = panel(" HABITAT / ITEMS ", colors, renderer == Renderer::Ascii);
+        let title = if area.width < 24 {
+            format!("{} ITEMS", self.detail_tag())
+        } else {
+            format!("{} HABITAT / ITEMS", self.detail_label())
+        };
+        let block = panel(&title, colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
         screen.render_widget(block, area);
         let micro = inner.width < 18 || inner.height <= 5;
@@ -2530,16 +2641,18 @@ impl Ui {
         let micro = area.width < 18 || area.height <= 7;
         let title = if micro {
             format!(
-                "{}/{} {}",
+                "{} {}/{} {}",
+                self.detail_tag(),
                 self.menu_selected + 1,
                 self.catalogue.len(),
                 character.name
             )
         } else {
             format!(
-                " ROSTER {}/{} / PREVIEW ",
+                " ROSTER {}/{} / {} ",
                 self.menu_selected + 1,
-                self.catalogue.len()
+                self.catalogue.len(),
+                self.detail_label()
             )
         };
         let block = panel(&title, colors, ascii).title_bottom(Line::from(frame_label(
@@ -2595,14 +2708,14 @@ impl Ui {
             ViewMode::Pixel => Sprite::animated(
                 crate::game::Stage::Adult,
                 expression,
-                self.sprite_style,
+                self.effective_style(),
                 self.frame,
             )
             .recolored(character.body, character.accent),
             ViewMode::Voxel => Sprite::voxel_with_appearance(
                 crate::game::Stage::Adult,
                 expression,
-                self.sprite_style,
+                self.effective_style(),
                 self.frame,
                 self.camera_yaw(((self.frame * 3) % 360) as u16),
                 false,
@@ -2611,6 +2724,7 @@ impl Ui {
         };
         screen.render_widget(
             RoomWidget {
+                detail: self.effective_style(),
                 camera: self.camera(),
                 sprite: &sprite,
                 renderer,
@@ -2831,13 +2945,17 @@ impl Ui {
             screen.render_widget(Clear, area);
             let micro = area.width < 18 || area.height <= 7;
             let title = if micro {
-                frame_label(
-                    &format!("{stage:?} {expression:?}"),
-                    area.width.saturating_sub(2),
-                    self.frame / 14,
+                format!(
+                    "{} {}",
+                    self.detail_tag(),
+                    frame_label(
+                        &format!("{stage:?} {expression:?}"),
+                        area.width.saturating_sub(6),
+                        self.frame / 14
+                    )
                 )
             } else {
-                " SPRITE STUDIO / PREVIEW ".into()
+                format!(" SPRITE STUDIO / {} ", self.detail_label())
             };
             let block = panel(&title, colors, ascii).title_bottom(Line::from(if micro {
                 "<> mood ^v".to_string()
@@ -2855,7 +2973,9 @@ impl Ui {
             screen.render_widget(
                 Paragraph::new(format!(
                     "{:?} / {:?} / {:?}\nPreview only. Your pet is unchanged.",
-                    stage, expression, self.sprite_style
+                    stage,
+                    expression,
+                    self.effective_style()
                 ))
                 .style(Style::default().fg(colors.ink(7))),
                 label,
@@ -2863,13 +2983,13 @@ impl Ui {
             self.set_scene(room);
             let sprite = match self.view_mode {
                 ViewMode::Pixel => {
-                    Sprite::animated(stage, expression, self.sprite_style, self.frame)
+                    Sprite::animated(stage, expression, self.effective_style(), self.frame)
                         .recolored(self.appearance().body, self.appearance().accent)
                 }
                 ViewMode::Voxel => Sprite::voxel_with_appearance(
                     stage,
                     expression,
-                    self.sprite_style,
+                    self.effective_style(),
                     self.frame,
                     self.camera_yaw(((self.frame * 3) % 360) as u16),
                     false,
@@ -2878,6 +2998,7 @@ impl Ui {
             };
             screen.render_widget(
                 RoomWidget {
+                    detail: self.effective_style(),
                     camera: self.camera(),
                     sprite: &sprite,
                     renderer,
@@ -2973,6 +3094,7 @@ impl Ui {
                     "Zoom out (-)",
                     "Reset zoom (0)",
                     "Back",
+                    "Automatic detail / D toggle",
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
@@ -2992,9 +3114,20 @@ impl Ui {
         };
         screen.render_widget(Clear, modal);
         let menu_title = if menu == Menu::Graphics {
-            format!(" GRAPHICS / {:?} {}% ", self.camera_view, self.zoom_target)
+            if screen.area().width < 24 {
+                format!("V {}", self.detail_tag())
+            } else {
+                format!(
+                    " GRAPHICS / {} / {:?} {}% ",
+                    self.detail_label(),
+                    self.camera_view,
+                    self.zoom_target
+                )
+            }
+        } else if screen.area().width < 24 {
+            format!("{} {title}", self.detail_tag())
         } else {
-            title.to_owned()
+            format!("{} {title}", self.detail_label())
         };
         let block = panel(&menu_title, colors, ascii);
         let body = block.inner(modal);
@@ -3010,6 +3143,17 @@ impl Ui {
             lines.push(Line::from(self.controller_status.clone()));
             lines.push(Line::from(""));
         } else if menu == Menu::Help {
+            lines.push(Line::from(format!(
+                "Global detail: {}",
+                self.detail_label()
+            )));
+            lines.push(Line::from(
+                "D toggles Auto detail; Graphics 8/16 chooses Manual.",
+            ));
+            lines.push(Line::from("8A/16A means Auto; 8M/16M means Manual."));
+            lines.push(Line::from(
+                "Viewport, font cells and zoom select one shared scene/face style.",
+            ));
             lines.push(Line::from(self.controller_status.clone()));
             if let Some(pad) = &self.controller {
                 lines.push(Line::from(format!("{} / focused controller", pad.family)));
@@ -3271,6 +3415,7 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
             16 => Some("-"),
             17 => Some("0"),
             18 => Some("Esc"),
+            19 => Some("D"),
             _ => None,
         },
         _ => None,
@@ -4863,5 +5008,198 @@ mod direct_navigation_regressions {
         assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
         assert!(ui.game.challenge.is_none());
         assert!(ui.menu.is_none());
+    }
+}
+
+#[cfg(test)]
+mod global_detail_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn fixture() -> (Config, Ui) {
+        let mut config = Config::sample().unwrap();
+        config.presentation.automatic = true;
+        config.presentation.min_width = 64;
+        config.presentation.min_height = 48;
+        config.presentation.hysteresis_percent = 15;
+        config.sprite_style = SpriteStyle::EightBit;
+        let mut game = Game::new(&config.game, 3734);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        game.age_ticks = config.game.adult_ticks;
+        game.paused = true;
+        let mut ui = Ui::configured(game, &config);
+        ui.hud_mode = HudMode::Minimal;
+        ui.view_mode = ViewMode::Voxel;
+        (config, ui)
+    }
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16) -> Terminal<TestBackend> {
+        let colors = Colors::from_config(config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, Renderer::HalfBlock, &colors, 0, false))
+            .unwrap();
+        terminal
+    }
+    fn text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn same_pet_changes_global_canvas_with_font_cells_zoom_and_all_menu_views() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        for (width, height, zoom, expected) in [
+            (153, 27, 100, SpriteStyle::SixteenBit),
+            (76, 13, 100, SpriteStyle::EightBit),
+            (153, 27, 100, SpriteStyle::SixteenBit),
+            (153, 27, 50, SpriteStyle::EightBit),
+            (153, 27, 100, SpriteStyle::SixteenBit),
+            (54, 26, 100, SpriteStyle::EightBit),
+            (12, 6, 100, SpriteStyle::EightBit),
+        ] {
+            ui.zoom_percent = zoom;
+            ui.zoom_target = zoom;
+            for menu in [
+                None,
+                Some(Menu::Home),
+                Some(Menu::Gallery),
+                Some(Menu::Roster),
+                Some(Menu::Habitat),
+            ] {
+                ui.menu = menu;
+                ui.menu_selected = 0;
+                let terminal = draw(&ui, &config, width, height);
+                assert_eq!(
+                    ui.effective_style(),
+                    expected,
+                    "{width}x{height} zoom{zoom} {menu:?}"
+                );
+                assert_eq!(
+                    ui.pet_sprite(&config.game, 0).width,
+                    if expected == SpriteStyle::EightBit {
+                        24
+                    } else {
+                        64
+                    }
+                );
+                let mode = if width < 24 {
+                    ui.detail_tag()
+                } else {
+                    ui.detail_label()
+                };
+                assert!(
+                    text(&terminal).contains(&mode),
+                    "{width}x{height} {menu:?}: {}",
+                    text(&terminal)
+                );
+                assert_eq!(ui.game, game);
+            }
+        }
+    }
+
+    #[test]
+    fn roster_and_studio_render_the_same_scene_as_the_actual_manual_style() {
+        for menu in [Menu::Gallery, Menu::Roster] {
+            let (config, mut automatic) = fixture();
+            let mut manual = Ui::configured(automatic.game.clone(), &config);
+            manual.hud_mode = automatic.hud_mode;
+            manual.view_mode = automatic.view_mode;
+            automatic.menu = Some(menu);
+            manual.menu = Some(menu);
+            manual.manual_style(SpriteStyle::SixteenBit);
+            let auto_frame = draw(&automatic, &config, 153, 27);
+            let manual_frame = draw(&manual, &config, 153, 27);
+            assert_eq!(automatic.effective_style(), SpriteStyle::SixteenBit);
+            assert_eq!(
+                automatic.sprite_style,
+                SpriteStyle::EightBit,
+                "manual preference is retained"
+            );
+            assert_eq!(automatic.pet_area.get(), manual.pet_area.get());
+            let scene = automatic.pet_area.get();
+            for y in scene.y..scene.bottom() {
+                for x in scene.x..scene.right() {
+                    assert_eq!(
+                        auto_frame.backend().buffer()[(x, y)],
+                        manual_frame.backend().buffer()[(x, y)],
+                        "{menu:?} {x},{y}"
+                    );
+                }
+            }
+            assert_eq!(automatic.game, manual.game);
+        }
+    }
+
+    #[test]
+    fn manual_legacy_indices_and_auto_row_are_reachable_without_watch_care_changes() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        ui.open(Menu::Graphics);
+        ui.menu_selected = 2;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        draw(&ui, &config, 153, 27);
+        assert!(!ui.automatic_detail());
+        assert_eq!(ui.effective_style(), SpriteStyle::EightBit);
+        ui.menu_selected = 3;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        draw(&ui, &config, 12, 6);
+        assert!(!ui.automatic_detail());
+        assert_eq!(ui.effective_style(), SpriteStyle::SixteenBit);
+        ui.open(Menu::Graphics);
+        for _ in 0..19 {
+            ui.handle(key(KeyCode::Down), &config.game);
+        }
+        let terminal = draw(&ui, &config, 12, 6);
+        assert_eq!(ui.menu_selected, 19);
+        assert!(
+            ui.menu_targets
+                .borrow()
+                .iter()
+                .any(|(_, index)| *index == 19)
+        );
+        assert!(text(&terminal).contains("Enter: OK") && text(&terminal).contains("Esc: Back"));
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(ui.automatic_detail());
+        let terminal = draw(&ui, &config, 12, 6);
+        assert_eq!(ui.effective_style(), SpriteStyle::EightBit);
+        assert!(text(&terminal).contains("8A"));
+        ui.handle(key(KeyCode::Char('D')), &config.game);
+        assert!(!ui.automatic_detail());
+        ui.handle(key(KeyCode::Char('d')), &config.game);
+        assert!(ui.automatic_detail());
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn resize_hysteresis_retains_mode_inside_the_band_without_changing_simulation() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        draw(&ui, &config, 153, 27);
+        assert_eq!(ui.effective_style(), SpriteStyle::SixteenBit);
+        for height in [26, 25, 26, 25, 27] {
+            draw(&ui, &config, 153, height);
+            assert_eq!(ui.effective_style(), SpriteStyle::SixteenBit);
+        }
+        draw(&ui, &config, 153, 21);
+        assert_eq!(ui.effective_style(), SpriteStyle::EightBit);
+        draw(&ui, &config, 153, 25);
+        assert_eq!(ui.effective_style(), SpriteStyle::EightBit);
+        draw(&ui, &config, 153, 27);
+        assert_eq!(ui.effective_style(), SpriteStyle::SixteenBit);
+        ui.manual_style(SpriteStyle::EightBit);
+        assert_eq!(ui.game, game);
     }
 }
