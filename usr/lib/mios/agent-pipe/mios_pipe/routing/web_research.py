@@ -13,6 +13,7 @@ import httpx
 
 from mios_config import _toml_section
 from mios_jsonsalvage import loads_lenient as _loads_lenient
+from mios_grounding import _temporal_reference
 
 log = logging.getLogger("mios-agent-pipe")
 
@@ -473,7 +474,8 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
     except Exception:  # noqa: BLE001
         pass
     _time_sensitive = bool((refined or {}).get("news") or (refined or {}).get("needs_recency"))
-    if (_time_sensitive and not re.search(r"\b(?:19|20)\d{2}\b", search_q)):
+    if (_time_sensitive and not (refined or {}).get("news")
+            and not re.search(r"\b(?:19|20)\d{2}\b", search_q)):
         search_q = f"{search_q} {_current_year()}".strip()
     _use_news = WEB_RESEARCH_USE_NEWS_CATEGORY and bool((refined or {}).get("news"))
     _time_range = WEB_RESEARCH_TIME_RANGE or str((refined or {}).get("_news_time_range") or "")
@@ -567,7 +569,7 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
         from mios_verity import _news_research_evidence
         return await _news_research_evidence(
             search_q, refined, search=_search, fetch=_fetch_all, documents=documents,
-            rank_links=_rank_article_links, today=_current_date_str(), time_range=_time_range,
+            rank_links=_rank_article_links, today=_temporal_reference(_cenv, fallback_date=_current_date_str())["date"], time_range=_time_range,
             news_category=_use_news, timezone=str(_cenv.get("timezone") or ""),
             fetch_n=want, passes=WEB_RESEARCH_PASSES, crawl_max=link_budget,
             min_chars=WEB_RESEARCH_MIN_CHARS, block_chars=WEB_RESEARCH_BLOCK_CHARS,

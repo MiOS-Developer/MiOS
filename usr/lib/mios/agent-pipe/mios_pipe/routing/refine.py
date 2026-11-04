@@ -15,7 +15,10 @@ import httpx
 
 import mios_tokenize
 from mios_jsonsalvage import loads_lenient as _loads_lenient
-from mios_grounding import _env_grounding, _env_grounding_static, _env_grounding_dynamic
+from mios_grounding import (
+    _env_grounding, _env_grounding_static, _env_grounding_dynamic,
+    _REQUESTED_TIME_WINDOW_PROMPT, _REQUESTED_TIME_WINDOW_SCHEMA,
+    _temporal_reference, _temporal_reference_prompt, _refine_requested_time_window)
 from mios_routing import _deterministic_action_route
 from mios_dci import dci_critic_pass, DCI_ENABLED, DCI_FLOW_TRIGGER_CONF
 
@@ -152,6 +155,7 @@ def configure(*, logger=None, agent_registry=None, verb_catalog=None,
         REFINE_DISPATCH_ARG_MAX_WORDS = int(dispatch_arg_max_words)
     if _cuts_changed:
         _REFINE_SYSTEM = _build_refine_system()
+
 
 def _build_refine_system() -> str:
     return (
@@ -346,7 +350,7 @@ def _build_refine_system() -> str:
     "are explicitly requested by the user or present in the chat history/context. Keep generic brand\n"
     "or product names (e.g. 'spotify' or 'photoshop') EXACTLY as requested in the refined query\n"
     "so that downstream search/resolver tools can check the actual installed system inventory.\n"
-    )
+    ) + "\n\n" + _REQUESTED_TIME_WINDOW_PROMPT
 
 _REFINE_SYSTEM = _build_refine_system()
 
@@ -621,6 +625,7 @@ async def _refine_intent(user_text: str,
     )
     static_parts = [
         _REFINE_SYSTEM_LITE,
+        _REQUESTED_TIME_WINDOW_PROMPT,
         _env_grounding_static(),
         f"Registered sub-agents:\n{agents_summary}"
     ]
@@ -650,7 +655,8 @@ async def _refine_intent(user_text: str,
                 "Prefer this app when fulfilling the user's intent if applicable."
             )
 
-    system = "\n\n".join(static_parts) + "\n\n" + _env_grounding_dynamic()
+    temporal_reference = _temporal_reference()
+    system = "\n\n".join(static_parts) + "\n\n" + _env_grounding_dynamic() + _temporal_reference_prompt(temporal_reference)
     msgs = [{"role": "system", "content": system}]
     if history:
         for h in history[-2:]:
@@ -687,6 +693,7 @@ async def _refine_intent(user_text: str,
                                "enum": ["chat", "dispatch", "agent", "multi_task"]},
                     "refined_text": {"type": "string"},
                     "news": {"type": "boolean"},
+                    "requested_time_window": _REQUESTED_TIME_WINDOW_SCHEMA,
                     "web": {"type": "boolean"},
                     "local_state": {"type": "boolean"},
                     "needs_location": {"type": "boolean"},
@@ -709,7 +716,7 @@ async def _refine_intent(user_text: str,
                             "web": {"type": "boolean"},
                             "local_state": {"type": "boolean"}},
                         "required": ["title", "refined_text", "web", "local_state"]}}},
-                "required": ["intent", "refined_text", "news", "web", "local_state",
+                "required": ["intent", "refined_text", "news", "requested_time_window", "web", "local_state",
                              "needs_location", "browser_action", "domain_type",
                              "state_scope", "inventory_filter", "intended_outcome",
                              "target_agent", "hint_tools", "tool", "args", "reply",
@@ -866,15 +873,11 @@ async def _refine_intent(user_text: str,
     parsed["_elapsed_s"] = round(elapsed, 1)
     parsed["_model"] = selected_model
     parsed["_endpoint"] = endpoint.rstrip("/").removesuffix("/v1")
-    _news = parsed.get("news")
-    parsed["news"] = (_news is True) or (
-        isinstance(_news, str) and _news.strip().lower() in {"true", "1", "yes"})
-    _nl = parsed.get("needs_location")
-    parsed["needs_location"] = (_nl is True) or (
-        isinstance(_nl, str) and _nl.strip().lower() in {"true", "1", "yes"})
-    _ba = parsed.get("browser_action")
-    parsed["browser_action"] = (_ba is True) or (
-        isinstance(_ba, str) and _ba.strip().lower() in {"true", "1", "yes"})
+    for flag in ("news", "needs_location", "browser_action"):
+        value = parsed.get(flag)
+        parsed[flag] = value is True or (
+            isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"})
+    _refine_requested_time_window(parsed, temporal_reference)
     _ht = parsed.get("hint_tools")
     if isinstance(_ht, list) and _ht and _VERB_CATALOG:
         _folded_keys = {v.replace("-", "_").rstrip("s") for v in _VERB_CATALOG}

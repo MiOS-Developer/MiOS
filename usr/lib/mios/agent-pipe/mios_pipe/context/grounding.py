@@ -631,3 +631,91 @@ def _current_year() -> str:
         if m:
             return m.group(1)
     return str(time.localtime().tm_year)
+
+
+def _temporal_reference(env=None, *, fallback_date=None) -> dict:
+    """Machine-readable counterpart of temporal grounding, using the same caller context."""
+    from zoneinfo import ZoneInfo
+    context = _get_client_env() if env is None else (env or {})
+    timezone = str(context.get("timezone") or "").strip() or None
+    date = context.get("date") or context.get("datetime")
+    if date:
+        date = str(date)[:10]
+    elif timezone:
+        try:
+            date = datetime.datetime.now(ZoneInfo(timezone)).date().isoformat()
+        except (KeyError, ValueError):
+            date = str(fallback_date or datetime.datetime.now().date().isoformat())
+    else:
+        date = str(fallback_date or (_current_date_str() if callable(_current_date_str)
+                                    else datetime.datetime.now().date().isoformat()))
+    return {"date": date, "timezone": timezone}
+
+
+def _validate_requested_time_window(value, reference: dict):
+    """Validate model-classified intent bounds; never replace invalid intent with defaults."""
+    from zoneinfo import ZoneInfo
+    if value is None:
+        return None, ""
+    if not isinstance(value, dict) or set(value) != {"start_date", "end_date", "timezone"}:
+        return None, "The requested date interval is incomplete or malformed."
+    try:
+        start, end = value["start_date"], value["end_date"]
+        if not isinstance(start, str) or not isinstance(end, str):
+            raise ValueError("incomplete")
+        first, last = datetime.date.fromisoformat(start), datetime.date.fromisoformat(end)
+        if first.isoformat() != start or last.isoformat() != end:
+            raise ValueError("noncanonical date")
+        current = datetime.date.fromisoformat(reference["date"])
+        timezone = value["timezone"]
+        if timezone is None:
+            timezone = reference.get("timezone")
+        if timezone is not None:
+            if not isinstance(timezone, str) or not timezone.strip():
+                raise ValueError("invalid timezone")
+            ZoneInfo(timezone)
+    except (ValueError, TypeError, KeyError):
+        return None, "The requested date interval or timezone could not be validated."
+    if first > last:
+        return None, "The requested date interval ends before it starts."
+    if last > current:
+        return None, "Future publication dates cannot be verified as completed news reports."
+    return {"start_date": start, "end_date": end, "timezone": timezone}, ""
+
+
+_REQUESTED_TIME_WINDOW_PROMPT = (
+    "REQUESTED PUBLICATION WINDOW:\n"
+    "Emit requested_time_window=null only when the user has not specified a publication/news-freshness interval.\n"
+    "Otherwise emit {\"start_date\":\"YYYY-MM-DD\",\"end_date\":\"YYYY-MM-DD\",\"timezone\":\"IANA zone or null\"}.\n"
+    "Bounds are inclusive calendar dates. Resolve relative periods against CURRENT_DATE and CURRENT_TIMEZONE\n"
+    "from this request, including calendar-day, weekly and explicitly historical intervals; do not substitute\n"
+    "the operator's default month filter or the date of retrieved material. A request for the current day\n"
+    "has identical start/end dates equal to CURRENT_DATE. Keep historical bounds in their requested year.\n"
+    "Use the caller timezone unless the user explicitly requests a different one; null means the existing\n"
+    "caller/local timezone. If a requested interval cannot be resolved, emit an object with null unresolved\n"
+    "bounds rather than null for the entire field. Never invent missing bounds or a timezone.\n"
+    "These are publication/freshness bounds; an event date, article modification date or retrieval timestamp\n"
+    "does not establish publication date. This is intent classification, not verification that news occurred.\n"
+)
+
+_REQUESTED_TIME_WINDOW_SCHEMA = {'type': ['object', 'null'],
+ 'additionalProperties': False,
+ 'description': 'Requested publication freshness interval; null only when unspecified.',
+ 'properties': {'start_date': {'type': ['string', 'null']},
+                'end_date': {'type': ['string', 'null']},
+                'timezone': {'type': ['string', 'null']}},
+ 'required': ['start_date', 'end_date', 'timezone']}
+
+
+def _temporal_reference_prompt(reference):
+    return ("\nCURRENT_DATE: " + reference["date"]
+            + "\nCURRENT_TIMEZONE: " + str(reference["timezone"] or "local"))
+
+
+def _refine_requested_time_window(parsed, reference):
+    window, error = _validate_requested_time_window(parsed.get("requested_time_window"), reference)
+    if parsed.get("news") and "requested_time_window" not in parsed:
+        error = "The news refiner did not return date-window metadata."
+    parsed["requested_time_window"] = window
+    if error:
+        parsed["_requested_time_window_error"] = error

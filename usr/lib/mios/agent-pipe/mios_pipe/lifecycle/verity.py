@@ -475,8 +475,36 @@ async def polish_response(raw_text: str,
     return polished
 
 
+
+
+def _news_search_window(query, refined, *, today, timezone, default_range):
+    """Honor classified request bounds; an invalid explicit interval cannot become a default."""
+    import datetime
+    from mios_grounding import _validate_requested_time_window
+    error = str(refined.get("_requested_time_window_error") or "")
+    window = None
+    if not error:
+        window, error = _validate_requested_time_window(
+            refined.get("requested_time_window"), {"date": today, "timezone": timezone or None})
+    if error:
+        return query, "", None, error
+    if window:
+        start, end = window["start_date"], window["end_date"]
+        query = f"{query} {start}" + (f" {end}" if start != end else "")
+        time_range = ""
+        if end == today[:10]:
+            age = (datetime.date.fromisoformat(end) - datetime.date.fromisoformat(start)).days
+            time_range = next((name for days, name in
+                               ((0, "day"), (7, "week"), (31, "month"), (366, "year"))
+                               if age <= days), "")
+        return query, time_range, window, ""
+    if not re.search(r"\b(?:19|20)\d{2}\b", query):
+        query = f"{query} {today[:4]}".strip()
+    return query, default_range, None, ""
+
 def _news_article_evidence(result: dict, document: dict, *, today: str,
-                           time_range: str, min_chars: int, block_chars: int, timezone: str = ""):
+                           time_range: str, min_chars: int, block_chars: int,
+                           timezone: str = "", requested_window=None):
     """Accept publisher-dated article prose, never a search/index date as an event."""
     import datetime
     from urllib.parse import urlsplit
@@ -496,12 +524,17 @@ def _news_article_evidence(result: dict, document: dict, *, today: str,
         current = datetime.date.fromisoformat(today[:10])
     except (ValueError, KeyError):
         return None, "unverified-publication-date-or-timezone"
-    windows = {"day": 0, "week": 7, "month": 31, "year": 366}
-    if time_range not in windows:
-        return None, "unverified-time-window"
-    age = (current - published).days
-    if age < 0 or age > windows[time_range]:
-        return None, "outside-publication-window"
+    if requested_window:
+        if not (requested_window["start_date"] <= published.isoformat() <= requested_window["end_date"]):
+            return None, "outside-requested-publication-window"
+    else:
+        windows = {"day": 0, "week": 7, "month": 31, "year": 366}
+        if time_range not in windows:
+            return None, "unverified-time-window"
+        if not 0 <= (current - published).days <= windows[time_range]:
+            return None, "outside-publication-window"
+    if published > current:
+        return None, "future-publication-date"
     url = str(result.get("url") or "").strip()
     if urlsplit(url).scheme not in {"http", "https"}:
         return None, "invalid-source-url"
@@ -515,14 +548,21 @@ def _news_article_evidence(result: dict, document: dict, *, today: str,
     }, ""
 
 
-def _news_evidence_answer(records: list, today: str, search_window: str = "") -> str:
+def _news_evidence_answer(records: list, today: str, search_window: str = "",
+                          requested_window=None, window_error="") -> str:
     """An extractive receipt: no model-memory claims or inferred event dates."""
     import html
     def literal(text):
         value = html.escape(str(text)).replace(chr(96), "\\" + chr(96))
         return re.sub(r"([\\*_{}\[\]<>])", r"\\\1", value)
-    scope = (" The search used the configured " + search_window + " window; "
-             "I haven't verified that it matches the exact requested date period.") if search_window else ""
+    if window_error:
+        scope = " " + window_error + " No default search period was substituted."
+    elif requested_window:
+        scope = (f" Interpreted publication-date interval: {requested_window['start_date']} through "
+                 f"{requested_window['end_date']} ({requested_window['timezone'] or 'local timezone'}).")
+    else:
+        scope = (" No explicit date interval was specified; the search used the configured "
+                 + search_window + " period.") if search_window else ""
     if not records:
         return ("I couldn't verify substantive, dated article evidence for this news request. "
                 "The retrieved results are insufficient for a factual news summary." + scope)
@@ -543,7 +583,11 @@ async def _news_research_evidence(query, refined, *, search, fetch, documents,
     """Use existing retrieval tools; only accepted dated article excerpts are citable."""
     from collections import Counter
     records, seen, rejected = [], set(), Counter()
-    results = await search(query, news=news_category, time_range=time_range)
+    query, time_range, requested_window, window_error = _news_search_window(
+        query, refined, today=today, timezone=timezone, default_range=time_range)
+    if requested_window and requested_window["timezone"]:
+        timezone = requested_window["timezone"]
+    results = [] if window_error else await search(query, news=news_category, time_range=time_range)
     pending = [r for r in results if isinstance(r, dict) and r.get("url")]
     drill_left = crawl_max
     for _ in range(max(1, passes)):
@@ -559,7 +603,8 @@ async def _news_research_evidence(query, refined, *, search, fetch, documents,
         for result, (text, engine, links) in zip(batch, fetched):
             item, reason = _news_article_evidence(
                 result, documents.get(result["url"], {}), today=today, time_range=time_range,
-                min_chars=min_chars, block_chars=block_chars, timezone=timezone)
+                min_chars=min_chars, block_chars=block_chars, timezone=timezone,
+                requested_window=requested_window)
             if item:
                 records.append(item)
             else:
@@ -573,7 +618,9 @@ async def _news_research_evidence(query, refined, *, search, fetch, documents,
             break
     records = records[:fetch_n]
     record(records)
-    answer = _news_evidence_answer(records, today, time_range)
+    answer = _news_evidence_answer(records, today, time_range, requested_window, window_error)
+    refined["_news_window"] = requested_window
+    refined["_news_search_time_range"] = time_range
     refined["_news_evidence"] = records
     refined["_news_answer"] = answer
     refined["_news_evidence_rejected"] = dict(rejected)
@@ -617,4 +664,5 @@ async def _respond_news_evidence(refined, *, streaming, chat_id, model, query, t
         "choices": [{"index": 0, "message": {"role": "assistant", "content": answer,
                      "annotations": _sources_annotations(refs, answer)}, "finish_reason": "stop"}],
         "mios_sources": _sources_metadata(refs), "mios_news_evidence": records,
+        "mios_news_window": refined.get("_news_window"),
     })

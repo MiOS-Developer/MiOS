@@ -433,6 +433,145 @@ def t_selected_model_receipt_and_protected_stage():
           and json.loads(requests[0].content)["model"] == result["_model"] == "explicit-stage-model")
 
 
+
+def t_requested_time_window_refiner_handler_news_integration():
+    """Canned classifications exercise real refiner protocol, handler and evidence filtering."""
+    import copy
+    import importlib
+    import types
+    import sys
+    from starlette.responses import JSONResponse, StreamingResponse
+    from unittest import mock
+    import httpx
+    import test_mios_native_loop as native_fixture
+    import test_mios_web_research as web_fixture
+    refine = importlib.import_module("mios_pipe.routing.refine")
+    native = importlib.import_module("mios_pipe.routing.native_loop")
+    chat = importlib.import_module("mios_pipe.routing.chat")
+    fanout = importlib.import_module("mios_pipe.routing.fanout")
+    grounding = importlib.import_module("mios_pipe.context.grounding")
+    web = importlib.import_module("mios_pipe.routing.web_research")
+    today, zone = "2026-11-03", "America/New_York"
+    environment = {"date": today, "timezone": zone}
+    environment_var = contextvars.ContextVar("fixture_temporal_environment", default=environment)
+    registry = {"gateway": {"endpoint": "http://gateway.invalid/v1", "model": "fixture", "lane": "gpu"}}
+    registry.update({name: {"endpoint": f"http://peer-{i}.invalid/v1", "model": "fixture", "lane": "cpu"}
+                     for i, name in enumerate(("node:local-heavy", "node:local-cpu", "node:local-llamaswap"))})
+    docs = {
+        "today": {"published_date": today + "T09:00:00-05:00", "event_dates": ["2024-08-15"]},
+        "week": {"published_date": "2026-10-28", "event_dates": [today]},
+        "historical": {"published_date": "2024-02-10", "event_dates": [today]},
+    }
+    for name, document in docs.items():
+        document.update(document_type="article", title="Synthetic " + name + " report",
+            article_text=("The source presents a fictional dated report with methods and limitations. "
+                          "Its publication date is separate from the event it describes. " * 4),
+            fetched_at=today + "T18:00:00Z", content="Article bytes", links=[])
+    cases = [
+        ("current day", "what is new today?", {"start_date": today, "end_date": today, "timezone": zone},
+         ["today"], "day"),
+        ("weekly", "reports from the preceding week", {"start_date": "2026-10-26", "end_date": "2026-11-01", "timezone": zone},
+         ["week"], ""),
+        ("historical", "reports from the historical interval", {"start_date": "2024-02-01", "end_date": "2024-02-29", "timezone": zone},
+         ["historical"], ""),
+        ("unspecified", "show reports", None, ["today", "week"], "month"),
+        ("incomplete", "reports from an unresolved interval", {"start_date": today, "end_date": None, "timezone": zone}, [], None),
+        ("reversed", "reports for an invalid interval", {"start_date": today, "end_date": "2026-10-01", "timezone": zone}, [], None),
+        ("future", "reports with future publication dates", {"start_date": "2026-11-04", "end_date": "2026-11-05", "timezone": zone}, [], None),
+        ("invalid calendar", "reports for an impossible date", {"start_date": "2026-02-30", "end_date": today, "timezone": zone}, [], None),
+        ("invalid timezone", "reports for an unsupported timezone", {"start_date": today, "end_date": today, "timezone": "Invalid/Fixture"}, [], None),
+    ]
+    requests, search_calls = [], []
+    classification = {}
+    real_client = httpx.AsyncClient
+    def handle(request):
+        requests.append(request)
+        payload = json.loads(request.content)
+        schema = payload["response_format"]["json_schema"]["schema"]
+        field = schema["properties"]["requested_time_window"]
+        assert "requested_time_window" in schema["required"]
+        assert field["type"] == ["object", "null"] and field["additionalProperties"] is False
+        assert field["required"] == ["start_date", "end_date", "timezone"]
+        system = payload["messages"][0]["content"]
+        assert "REQUESTED PUBLICATION WINDOW" in system
+        assert "CURRENT_DATE: " + today in system and "CURRENT_TIMEZONE: " + zone in system
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(classification)},
+                                                     "finish_reason": "stop"}]})
+    def client(**kwargs):
+        return real_client(transport=httpx.MockTransport(handle), **kwargs)
+    async def subprocess_fixture(*args, **kwargs):
+        if args[0] == "mios-web-search":
+            search_calls.append(list(args))
+            return web_fixture._FakeProc(json.dumps({"results": [
+                {"url": "https://dates.invalid/" + name, "title": document["title"],
+                 "publishedDate": today, "content": "A search date is not publication proof."}
+                for name, document in docs.items()]}).encode())
+        if args[0] == "mios-web-extract":
+            return web_fixture._FakeProc(json.dumps(docs[args[-1].rsplit("/", 1)[-1]]).encode())
+        raise AssertionError("unexpected subprocess")
+    async def run():
+        nonlocal classification
+        _configure()
+        native_fixture._base_configure({}, [], [])
+        web_fixture._configure(current_date_str=lambda: today, current_year=lambda: "2026",
+            client_env_var=environment_var, web_research_time_range="month",
+            web_research_recency_range="month", web_research_fetch_n=3,
+            web_research_passes=1, web_research_crawl_max=0, web_research_min_chars=300)
+        with mock.patch.multiple(sys.modules["fastapi.responses"],
+                 JSONResponse=JSONResponse, StreamingResponse=StreamingResponse), \
+             mock.patch.multiple(native, JSONResponse=JSONResponse, StreamingResponse=StreamingResponse), \
+             mock.patch.object(grounding, "_get_client_env", lambda: environment_var.get()), \
+             mock.patch.multiple(refine, httpx=types.SimpleNamespace(AsyncClient=client, HTTPError=httpx.HTTPError),
+                 _env_grounding_static=lambda: "", _env_grounding_dynamic=lambda: ""), \
+             mock.patch.multiple(chat, _AGENT_REGISTRY=registry,
+                 _live_agent_names=native_fixture._async_const(set(registry)),
+                 _pick_agent=lambda role: ("gateway", registry["gateway"]),
+                 _pick_fanout_agents=fanout._pick_fanout_agents,
+                 _respond_native_loop_direct=native._respond_native_loop_direct), \
+             mock.patch.multiple(fanout, _AGENT_REGISTRY=registry,
+                 _DISPATCH_CFG={"enable": True, "mode": "council", "fanout_max": 4},
+                 _depth_exhausted=lambda: False, _dispatch_depth=lambda: 0,
+                 _lane_sem_key=lambda cfg: cfg.get("lane", ""),
+                 _dedup_pool_by_target=lambda peers: list(peers), ADMIT_ENABLE=False,
+                 COUNCIL_MAX_DEFAULT=4), \
+             mock.patch.object(asyncio, "create_subprocess_exec", subprocess_fixture), \
+             mock.patch.object(native, "_v1_secondary_tool_loop",
+                 side_effect=AssertionError("dated evidence must not become unchecked model synthesis")):
+            for label, query, window, expected, expected_search_range in cases:
+                classification = {"intent": "chat", "news": True, "web": True,
+                    "local_state": False, "refined_text": query, "target_agent": None,
+                    "hint_tools": [], "reply": None, "tasks": None, "requested_time_window": window}
+                parsed = await refine.refine_intent(query)
+                before = len(search_calls)
+                response = await chat._kernel_agent_handler(None, refined=parsed,
+                    last_user_text=query, messages=[{"role": "user", "content": query}],
+                    streaming=False, chat_id="time-window", model="public", session_id=None,
+                    _routed_domain_var=contextvars.ContextVar("window-domain", default="web"),
+                    _persona_system="", _force_delegate=None, _force_council=False,
+                    _mflags={}, body={"model": "public"})
+                data = json.loads(response.body)
+                observed = [item["url"].rsplit("/", 1)[-1] for item in data["mios_news_evidence"]]
+                assert observed == expected, (label, observed, data)
+                answer = data["choices"][0]["message"]["content"]
+                if expected_search_range is None:
+                    assert len(search_calls) == before and parsed.get("_requested_time_window_error"), (label, data)
+                    assert "No default search period was substituted" in answer, (label, answer)
+                else:
+                    args = search_calls[-1]
+                    actual_range = args[args.index("--time-range") + 1] if "--time-range" in args else ""
+                    assert actual_range == expected_search_range, (label, args)
+                    if window is not None:
+                        assert data["mios_news_window"] == window
+                        assert window["start_date"] in args[-1] and window["end_date"] in args[-1]
+                        assert "configured month" not in answer and "haven't verified" not in answer, answer
+                        assert "Interpreted publication-date interval" in answer
+                    else:
+                        assert "No explicit date interval was specified" in answer and data["mios_news_window"] is None
+                check("real refiner -> auto-council handler -> news: " + label, True)
+            assert len(requests) == len(cases)
+    asyncio.run(run())
+
+
 def main():
     _configure()
     t_salvage_corpus()
@@ -441,6 +580,7 @@ def main():
     t_critic_refine()
     t_deterministic_before_inference()
     t_selected_model_receipt_and_protected_stage()
+    t_requested_time_window_refiner_handler_news_integration()
     t_stream_deadline_and_cancellation()
     print(f"\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
