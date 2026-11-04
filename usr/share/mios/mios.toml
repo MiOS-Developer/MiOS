@@ -19295,6 +19295,10 @@ calls = [{ tool = "mios-gen", args = ["env-snapshot", "--root", "{root}", "--out
 [[generation.sync.steps]]
 id = "ai.manifests"
 calls = [{ tool = "mios-gen", args = ["ai-manifest", "--root", "{root}"] }]
+# Canonical AST package surface includes every mounted public router before parity gates run.
+[[generation.sync.steps]]
+id = "ai.surface"
+calls = [{ script = "usr/lib/mios/agent-pipe/mios_surface.py", args = ["{root}/usr/lib/mios/agent-pipe/server.py", "--package", "--out", "{root}/usr/share/mios/ai/v1/surface.generated.json"] }]
 [[generation.sync.steps]]
 id = "ai.metadata"
 calls = [{ script = "usr/libexec/mios/mios-ai-metadata.py", args = ["--root", "{root}", "--export", "{root}/usr/share/mios/ai/v1/metadata.json"] }]

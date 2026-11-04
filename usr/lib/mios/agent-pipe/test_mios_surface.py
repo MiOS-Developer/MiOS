@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-# AI-hint: Standalone assert-script unit test for mios_surface (refactor WS R0 parity gate + R13 Step 2a whole-package projection). Pur...
+# AI-hint: Canonical AST surface, atomic projector CLI and declared native generation tests, plus real FastAPI route parity without application lifespan.
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 """Unit tests for mios_surface (refactor R0 surface-parity gate)."""
 
+import contextlib
+import io
+import json
 import os
+import stat
+import subprocess
+import tomllib
+from pathlib import Path
+from unittest import mock
 import shutil
 import sys
 import tempfile
@@ -340,6 +348,171 @@ def t_package_superset_of_surface_on_current_tree():
     check("package preserves the provided count",
           pkg["counts"]["provided"] == surf["counts"]["provided"], str(pkg["counts"]))
 
+def _cli(*args):
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        rc = s.main(["mios_surface", *map(str, args)])
+    return rc, stdout.getvalue(), stderr.getvalue()
+
+
+def t_cli_atomic_output():
+    with tempfile.TemporaryDirectory(prefix="mios-surface-output-") as tmp:
+        tmp = Path(tmp)
+        entry, output = tmp / "entry.py", tmp / "surface.json"
+        entry.write_text(_BEFORE, encoding="utf-8")
+        rc, stdout, _ = _cli(entry)
+        expected = s.project_surface(str(entry))
+        check("CLI stdout retains the canonical projection and newline",
+              rc == 0 and json.loads(stdout) == expected and stdout.endswith("\n"))
+        rc, stdout, _ = _cli(entry, "--out", output)
+        check("CLI --out writes the complete stdout projection without emitting JSON",
+              rc == 0 and stdout == "" and json.loads(output.read_text()) == expected)
+        check("new golden is readable", os.name != "posix" or stat.S_IMODE(output.stat().st_mode) == 0o644)
+        output.chmod(0o640)
+        before = output.stat()
+        rc, _, _ = _cli(entry, "--out", output)
+        check("identical projection preserves the output inode and timestamps",
+              rc == 0 and output.stat().st_ino == before.st_ino
+              and output.stat().st_mtime_ns == before.st_mtime_ns)
+        check("CLI --check still reports an exact match", _cli(entry, "--check", output)[0] == 0)
+        stale = dict(expected, routes=expected["routes"] + ["GET /stale -> stale"])
+        output.write_text(json.dumps(stale), encoding="utf-8")
+        before_bytes = output.read_bytes()
+        rc, _, error = _cli(entry, "--check", output)
+        check("check mode rejects drift and leaves the golden unchanged",
+              rc == 1 and "REMOVED" in error and output.read_bytes() == before_bytes)
+        rc, _, _ = _cli(entry, "--out", output)
+        check("atomic replacement repairs drift and preserves existing permissions",
+              rc == 0 and json.loads(output.read_text()) == expected
+              and (os.name != "posix" or stat.S_IMODE(output.stat().st_mode) == 0o640))
+        before_bytes = output.read_bytes()
+        for args in [
+            (entry, "--out"),
+            (entry, "--out", output, "--unknown"),
+            (entry, "--out", output, "--check", output),
+            (entry, "--out", output, "--search-dir"),
+            (entry, "--out", output, "--search-dir", tmp),
+            (entry, "--out", output, "extra.py"),
+            (),
+        ]:
+            rc, stdout, _ = _cli(*args)
+            check(f"invalid CLI arguments fail before writes: {args[1:] if args else 'missing target'}",
+                  rc == 2 and stdout == "" and output.read_bytes() == before_bytes)
+        with mock.patch.object(s.os, "replace", side_effect=OSError("planted replace failure")):
+            # Force changed bytes so the atomic replacement is actually attempted.
+            entry.write_text(_BEFORE + "\nNEW_SYMBOL = 1\n", encoding="utf-8")
+            rc, stdout, error = _cli(entry, "--out", output)
+        check("replace failure preserves the previous golden and reports failure",
+              rc == 1 and stdout == "" and "planted replace failure" in error
+              and output.read_bytes() == before_bytes)
+        check("failed replacement removes the private temporary file",
+              not list(tmp.glob(".mios-surface-*")))
+        with mock.patch.object(s.os, "fsync", side_effect=OSError("planted write failure")):
+            rc, stdout, error = _cli(entry, "--out", output)
+        check("incomplete durable write preserves the previous golden and cleans temporary output",
+              rc == 1 and stdout == "" and "planted write failure" in error
+              and output.read_bytes() == before_bytes and not list(tmp.glob(".mios-surface-*")))
+        entry.write_text("def broken(:\n", encoding="utf-8")
+        rc, _, _ = _cli(entry, "--out", output)
+        check("invalid source cannot partially replace the golden",
+              rc == 1 and output.read_bytes() == before_bytes)
+        entry.write_text(_BEFORE, encoding="utf-8")
+        rc, _, _ = _cli(entry, "--out", tmp)
+        check("directory output fails closed", rc == 1 and output.read_bytes() == before_bytes)
+        if os.name == "posix":
+            link = tmp / "golden-link"
+            link.symlink_to(output)
+            rc, _, _ = _cli(entry, "--out", link)
+            check("symlink output fails closed without following or replacing it",
+                  rc == 1 and link.is_symlink() and output.read_bytes() == before_bytes)
+        source_before = entry.read_bytes()
+        check("output cannot replace the projection source",
+              _cli(entry, "--out", entry)[0] == 1 and entry.read_bytes() == source_before)
+
+
+def t_declared_generation_step():
+    root = Path(__file__).resolve().parents[4]
+    data = tomllib.loads((root / "usr/share/mios/mios.toml").read_text())
+    steps = [step for step in data["generation"]["sync"]["steps"] if step["id"] == "ai.surface"]
+    check("surface projection is declared exactly once in generation.sync", len(steps) == 1)
+    if len(steps) != 1:
+        return
+    calls = steps[0]["calls"]
+    expected = {
+        "script": "usr/lib/mios/agent-pipe/mios_surface.py",
+        "args": ["{root}/usr/lib/mios/agent-pipe/server.py", "--package", "--out",
+                 "{root}/usr/share/mios/ai/v1/surface.generated.json"],
+    }
+    check("declared surface stage uses the canonical whole-package projector", calls == [expected])
+    generator = os.environ.get("MIOS_GEN") or shutil.which("mios-gen")
+    check("native generation runner exists", bool(generator))
+    if not generator:
+        return
+    with tempfile.TemporaryDirectory(prefix="mios-surface-stage-") as tmp:
+        tmp = Path(tmp)
+        script = tmp / expected["script"]
+        script.parent.mkdir(parents=True)
+        shutil.copyfile(s.__file__, script)
+        entry = script.with_name("server.py")
+        entry.write_text("from mios_fixture_routes import router\napp.include_router(router)\n", encoding="utf-8")
+        script.with_name("mios_fixture_routes.py").write_text(
+            'from fastapi import APIRouter\nrouter = APIRouter(prefix="/v1")\n'
+            '@router.get("")\ndef mounted_handler():\n    return {}\n', encoding="utf-8")
+        golden = tmp / "usr/share/mios/ai/v1/surface.generated.json"
+        golden.parent.mkdir(parents=True)
+        toml = tmp / "usr/share/mios/mios.toml"
+        toml.write_text('[generation.sync]\nunit_projections=[]\n[[generation.sync.steps]]\n'
+                        'id="ai.surface"\ncalls=[{script=' + json.dumps(expected["script"])
+                        + ', args=' + json.dumps(expected["args"]) + '}]\n')
+        subprocess.run(["git", "init", "-q", str(tmp)], check=True, capture_output=True)
+        run = subprocess.run([generator, "sync", "--root", str(tmp)], capture_output=True, text=True, timeout=60)
+        check("native sync runs the declared projector into its canonical output",
+              run.returncode == 0 and golden.is_file(), run.stdout + run.stderr)
+        if run.returncode == 0 and golden.is_file():
+            generated = json.loads(golden.read_text())
+            check("declared stage includes real mounted package routes",
+                  generated == s.project_package(str(entry))
+                  and "GET /v1 -> mounted_handler" in generated["routes"])
+            original = golden.read_bytes()
+            entry.write_text("def broken(:\n")
+            failed = subprocess.run([generator, "sync", "--root", str(tmp)],
+                                    capture_output=True, text=True, timeout=60)
+            check("native stage propagates projector failure without truncating output",
+                  failed.returncode != 0 and golden.read_bytes() == original
+                  and "ai.surface" in failed.stderr)
+
+
+def t_real_app_projection_parity():
+    # Read the actual application table without starting FastAPI lifespan, daemons,
+    # sockets or inference. Reuse the runtime parity gate's route normalization.
+    import fastapi
+    from starlette.routing import WebSocketRoute
+    from test_mios_routing import _app_route_pairs, _golden_route_pairs, _resolve_mios_toml
+    _resolve_mios_toml()
+    import server
+    check("surface runtime proof uses the real FastAPI application",
+          isinstance(server.app, fastapi.FastAPI) and bool(server.app.routes))
+    projected = s.project_package(server.__file__)
+    actual = _app_route_pairs(server.app, WebSocketRoute)
+    check("whole-package projection equals the real application method/path table",
+          _golden_route_pairs(projected) == actual,
+          f"projected-only={sorted(_golden_route_pairs(projected) - actual)} "
+          f"runtime-only={sorted(actual - _golden_route_pairs(projected))}")
+    check("whole-package route count matches the nonempty runtime surface",
+          projected["counts"]["routes"] == len(actual) and len(actual) > 0)
+    golden = Path(__file__).resolve().parents[4] / "usr/share/mios/ai/v1/surface.generated.json"
+    check("committed golden is the exact canonical package projection",
+          json.loads(golden.read_text()) == projected)
+    # Regress the concrete missing mounted route and prove the same parity contract detects it.
+    without = dict(projected, routes=[r for r in projected["routes"] if not r.startswith("GET /v1 -> ")])
+    check("mounted /v1 route omission is detected by runtime parity",
+          ("GET", "/v1") in actual and _golden_route_pairs(without) != actual
+          and bool(s.diff_surface(projected, without)))
+    extra = dict(projected, routes=projected["routes"] + ["GET /mios-fixture-absent -> absent"])
+    check("fabricated extra route is detected by runtime parity",
+          _golden_route_pairs(extra) != actual and bool(s.diff_surface(projected, extra)))
+
+
 def main():
     t_routes()
     t_provided()
@@ -355,6 +528,9 @@ def main():
     t_package_unresolved_degrades()
     t_package_dynamic_mount_degrades()
     t_package_superset_of_surface_on_current_tree()
+    t_cli_atomic_output()
+    t_declared_generation_step()
+    t_real_app_projection_parity()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

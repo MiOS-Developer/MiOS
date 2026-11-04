@@ -35,6 +35,7 @@
     "GET /skills/openai-tools -> skills_openai_tools",
     "GET /skills/show -> skills_show",
     "GET /sw.js -> portal_sw",
+    "GET /v1 -> portal_v1_chat_page",
     "GET /v1/a2a/peers -> a2a_peers_list",
     "GET /v1/a2a/skills -> a2a_skills_list",
     "GET /v1/agent-card -> a2a_agent_card_alias",
@@ -472,6 +473,7 @@
     "_AGENT_CONTRACT_PATHS",
     "_AGENT_PIPE_TOML",
     "_AGENT_REGISTRY",
+    "_ALLOWED_LOCAL_UIDS",
     "_ANCHOR_STOPWORDS",
     "_ANCHOR_TOKEN_RE",
     "_ANTH_REJECT_KEYS",
@@ -1024,6 +1026,7 @@
     "_load_verb_catalog",
     "_loads_lenient",
     "_looks_like_disclaimer",
+    "_make_peercred_protocol",
     "_make_schema_strict",
     "_mark_pending_decided",
     "_match_user_cfg",
@@ -1082,6 +1085,7 @@
     "_passport_verify",
     "_pcfg",
     "_pdp",
+    "_peercred_auth_mw",
     "_pending_hash",
     "_perm_rank",
     "_persona_prompt",
@@ -1328,6 +1332,7 @@
     "embeddings",
     "execute_dag",
     "execute_skill",
+    "extract_peercred",
     "functools",
     "get_domain_guidelines",
     "get_psi_monitor",
@@ -1455,7 +1460,7 @@
     "websockets"
   ],
   "counts": {
-    "routes": 95,
-    "provided": 1356
+    "routes": 96,
+    "provided": 1360
   }
 }

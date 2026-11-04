@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
 import json
 import os
+import stat
+import tempfile
 import sys
 from typing import Any, NamedTuple
 
@@ -401,41 +404,72 @@ def diff_surface(generated: dict[str, Any], committed: dict[str, Any]) -> list[s
             diffs.append(f"{key}: ADDED {added!r} (in server.py, not in golden -- regenerate golden if intended)")
     return diffs
 
+def _write_atomic(path: str, text: str) -> None:
+    """Replace one regular output only after serialization and a complete durable write."""
+    destination = os.path.abspath(path)
+    payload = text.encode("utf-8")
+    try:
+        previous = os.lstat(destination)
+    except FileNotFoundError:
+        previous = None
+    if previous is not None and not stat.S_ISREG(previous.st_mode):
+        raise ValueError(f"output must be a regular file: {path}")
+    if previous is not None:
+        with open(destination, "rb") as fh:
+            if fh.read() == payload:
+                return
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb",
+                                         dir=os.path.dirname(destination),
+                                         prefix=".mios-surface-", delete=False) as fh:
+            temporary = fh.name
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+            os.chmod(temporary, stat.S_IMODE(previous.st_mode) if previous else 0o644)
+        os.replace(temporary, destination)
+        temporary = None
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
+
+
 def main(argv: list[str]) -> int:
-    target: str | None = None
-    check: str | None = None
-    package = False
-    search_dir: str | None = None
-    i = 1
-    while i < len(argv):
-        a = argv[i]
-        if a == "--check":
-            i += 1
-            check = argv[i] if i < len(argv) else None
-        elif a == "--search-dir":
-            i += 1
-            search_dir = argv[i] if i < len(argv) else None
-        elif a == "--package":
-            package = True
-        elif not a.startswith("--") and target is None:
-            target = a
-        i += 1
-    if target is None:
-        sys.stderr.write(
-            "usage: mios_surface <server.py> [--check <golden.json>] "
-            "[--package [--search-dir <dir>]]\n")
-        return 2
-    proj = project_package(target, search_dir=search_dir) if package else project_surface(target)
-    if check is not None:
-        with open(check, encoding="utf-8") as fh:
-            committed = json.load(fh)
-        diffs = diff_surface(proj, committed)
-        for d in diffs:
-            sys.stderr.write("    " + d + "\n")
-        return 1 if diffs else 0
-    json.dump(proj, sys.stdout, indent=2, ensure_ascii=False)
-    sys.stdout.write("\n")
-    return 0
+    parser = argparse.ArgumentParser(prog="mios_surface", allow_abbrev=False)
+    parser.add_argument("target", metavar="server.py")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", metavar="golden.json")
+    mode.add_argument("--out", metavar="golden.json")
+    parser.add_argument("--package", action="store_true")
+    parser.add_argument("--search-dir", metavar="dir")
+    try:
+        args = parser.parse_args(argv[1:])
+        if args.search_dir is not None and not args.package:
+            parser.error("--search-dir requires --package")
+    except SystemExit as exc:
+        return int(exc.code)
+    try:
+        if args.out is not None and os.path.realpath(args.out) == os.path.realpath(args.target):
+            raise ValueError("output must not replace the projection source")
+        proj = project_package(args.target, search_dir=args.search_dir) if args.package else project_surface(args.target)
+        if args.check is not None:
+            with open(args.check, encoding="utf-8") as fh:
+                committed = json.load(fh)
+            diffs = diff_surface(proj, committed)
+            for difference in diffs:
+                sys.stderr.write("    " + difference + "\n")
+            return 1 if diffs else 0
+        text = json.dumps(proj, indent=2, ensure_ascii=False) + "\n"
+        if args.out is not None:
+            _write_atomic(args.out, text)
+        else:
+            sys.stdout.write(text)
+        return 0
+    except (OSError, SyntaxError, ValueError, TypeError) as exc:
+        sys.stderr.write(f"mios_surface: {exc}\n")
+        return 1
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
