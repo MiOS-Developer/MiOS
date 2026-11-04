@@ -158,7 +158,7 @@ impl Ui {
             return Effect::Quit;
         }
         let (width, height) = self.viewport.get();
-        if (width < 34 || height < 12) && (self.confirm_reset || a == Action::Reset) {
+        if (width < 34 || height < 12) && !matches!(a, Action::Save | Action::Pause) {
             self.confirm_reset = false;
             self.notice = "Enlarge the viewport to confirm a new pet.".into();
             return Effect::Continue;
@@ -419,9 +419,9 @@ impl Ui {
         let renderer = self.renderer.unwrap_or(renderer);
         let ascii = renderer == Renderer::Ascii;
         let area = screen.area();
-        self.viewport.set((area.width, area.height));
         let outer = panel(" MIOS / PET ROOM ", colors, ascii);
         let inner = outer.inner(area);
+        self.viewport.set((inner.width, inner.height));
         screen.render_widget(outer, area);
         if inner.width < 34 || inner.height < 12 {
             screen.render_widget(
@@ -1131,14 +1131,16 @@ mod graphics_tests {
         ui.game.challenge = None;
         let before = ui.game.clone();
         let colors = Colors::from_config(&config, Depth::Mono).unwrap();
-        let mut terminal = Terminal::new(TestBackend::new(12, 3)).unwrap();
-        terminal
-            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
-            .unwrap();
-        ui.handle(key(KeyCode::Char('n')), &config.game);
-        ui.handle(key(KeyCode::Enter), &config.game);
-        assert!(!ui.confirm_reset);
-        assert_eq!(ui.game, before);
+        for (width, height) in [(12, 3), (34, 12), (35, 13)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            ui.handle(key(KeyCode::Char('n')), &config.game);
+            ui.handle(key(KeyCode::Enter), &config.game);
+            assert!(!ui.confirm_reset);
+            assert_eq!(ui.game, before);
+        }
         ui.open(Menu::Gallery);
         assert_eq!(
             ui.handle(key(KeyCode::Char('s')), &config.game),
