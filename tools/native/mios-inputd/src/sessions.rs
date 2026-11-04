@@ -236,6 +236,46 @@ fn transport(route: &SessionRoute, rest: Vec<String>) -> Result<Vec<String>, Str
     }
 }
 
+/// Printable separators survive tmux display-message sanitization. The untrusted
+/// session name is last, so it can contain the delimiter without changing fields.
+pub const IDENTITY_FORMAT: &str = "#{pid}|#{window_id}|#{pane_id}|#{session_name}";
+
+pub struct Identity<'a> {
+    pub pid: u32,
+    pub window: &'a str,
+    pub pane: &'a str,
+    pub session: &'a str,
+}
+
+pub fn parse_identity(reply: &str) -> Result<Identity<'_>, String> {
+    let parts: Vec<_> = reply
+        .trim_end_matches(['\r', '\n'])
+        .splitn(4, '|')
+        .collect();
+    if parts.len() != 4 || parts[3].trim().is_empty() || parts[3].chars().any(char::is_control) {
+        return Err("tmux did not report an exact session/pane identity".into());
+    }
+    let pid = parts[0]
+        .parse::<u32>()
+        .ok()
+        .filter(|p| *p > 0)
+        .ok_or("invalid tmux server identity")?;
+    for (value, prefix, label) in [(parts[1], '@', "window"), (parts[2], '%', "pane")] {
+        if !value
+            .strip_prefix(prefix)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+        {
+            return Err(format!("invalid tmux {label} identity"));
+        }
+    }
+    Ok(Identity {
+        pid,
+        window: parts[1],
+        pane: parts[2],
+        session: parts[3],
+    })
+}
+
 /// Query identity before dispatch: callers compare the exact session name and
 /// pane, and pin the server PID for the worker lifetime. No configured value is
 /// interpolated into a tmux format expression.
@@ -247,7 +287,7 @@ pub fn inspect_argv(route: &SessionRoute) -> Result<Vec<String>, String> {
             "-p".into(),
             "-t".into(),
             route.pane.clone(),
-            "#{pid}\t#{session_name}\t#{window_id}\t#{pane_id}".into(),
+            IDENTITY_FORMAT.into(),
         ],
     )
 }
@@ -292,7 +332,7 @@ pub fn focus_target(
     }
     let mut panes = BTreeMap::new();
     for line in output.lines() {
-        let parts = line.split('\t').collect::<Vec<_>>();
+        let parts = line.split('|').collect::<Vec<_>>();
         if parts.len() != 5
             || !parts[0]
                 .strip_prefix('%')
@@ -384,7 +424,7 @@ pub fn plan(
                     "-t".into(),
                     route.pane.clone(),
                     "-F".into(),
-                    "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}".into(),
+                    "#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}".into(),
                 ]
             }
             ["page-up"] => vec![
@@ -678,7 +718,7 @@ mod tests {
         );
         assert_eq!(
             inspect_argv(&route).unwrap().last().unwrap(),
-            "#{pid}\t#{session_name}\t#{window_id}\t#{pane_id}"
+            IDENTITY_FORMAT
         );
         assert_eq!(
             &select_argv(&route).unwrap()[3..],
@@ -687,10 +727,31 @@ mod tests {
     }
 
     #[test]
+    fn printable_identity_keeps_delimiters_and_format_tokens_as_session_data() {
+        let session = "work|#{danger};$(ignored)";
+        let reply = format!("123|@4|%11|{session}\n");
+        let parsed = parse_identity(&reply).unwrap();
+        assert_eq!(
+            (parsed.pid, parsed.window, parsed.pane, parsed.session),
+            (123, "@4", "%11", session)
+        );
+        for bad in [
+            "123_work_@4_%11\n",
+            "0|@4|%11|work",
+            "123|@x|%11|work",
+            "123|@4|%x|work",
+            "123|@4|%11|",
+            "123|@4|%11|wo\trk",
+        ] {
+            assert!(parse_identity(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn focus_follows_each_controller_cursor_without_reading_active_pane() {
         let first = route("one", "/dev/input/event1", "%11");
         let second = route("two", "/dev/input/event2", "%22");
-        let layout = "%11\t0\t0\t40\t20\n%22\t41\t0\t40\t20\n%33\t41\t21\t40\t20\n";
+        let layout = "%11|0|0|40|20\n%22|41|0|40|20\n%33|41|21|40|20\n";
         let moved = focus_target(&first, "tmux:focus right", layout).unwrap();
         assert_eq!(moved.pane, "%22");
         assert_eq!(moved.name, "one");
@@ -715,11 +776,11 @@ mod tests {
         );
         for invalid in [
             "",
-            "%22\t0\t0\t10\t10",
-            "%11\t0\t0\t0\t10",
-            "%11\t0\t0\t10\t10\n%11\t0\t0\t10\t10",
-            "%11;bad\t0\t0\t10\t10",
-            "%11\t0\t0\t99999999\t10",
+            "%22|0|0|10|10",
+            "%11|0|0|0|10",
+            "%11|0|0|10|10\n%11|0|0|10|10",
+            "%11;bad|0|0|10|10",
+            "%11|0|0|99999999|10",
         ] {
             assert!(
                 focus_target(&first, "tmux:focus right", invalid).is_err(),

@@ -4800,10 +4800,10 @@ looking_glass_escape_key = "Scroll_Lock"
 x11_rdp_escape_key = "Control_R"
 
 # Tier 4: the controller. One physical bridge (mios-inputd) owns every pad. Captured: the app gets everything through
-# the virtual pad except a held toggle_chord (release, capture_hold_ms) and mode_override_chord (half-capture: the
+# the virtual pad except a held toggle_chord (drain at capture_hold_ms, release capture after both buttons are up) and mode_override_chord (half-capture: the
 # sticks and triggers drive the host mouse; every button still goes to the app; Start or the chord again returns).
 # Capture is per window, never per class: North press = capture (in the room the aimed window, staying in 3D), North
-# hold = fullscreen + capture, held toggle_chord = release to the desktop. Ownership is per session (every pad).
+# hold = fullscreen + capture; held toggle_chord drains the app, then returns only after BOTH physical buttons are up. Ownership is per session (every pad).
 # Uncaptured: unmodified buttons follow the nav profile of the context (I2) and the room map ([desktop.hyprland.hypr3d.
 # controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
 [keybindings.global.controller]
@@ -4845,7 +4845,10 @@ debounce_ms = 250                     # toggle_chord: both sticks within this wi
 scan_ms = 2000                        # device scan; also how often serve re-checks seat/device access while idle
 pointer_hz = 250
 stick_deadzone = 0.12                 # THE deadzone for pointer, scroll and nav flicks
-pointer_max_speed_px = 18.0
+pointer_max_speed_px = 18.0          # compatibility for older binaries; new pointer policy uses px/s below
+pointer_max_speed_px_s = 1200.0     # full-stick logical pixels per second, independent of pointer_hz
+pointer_response_exponent = 2.0     # radial response: 1 linear, >1 gives fine control near the deadzone
+pointer_smoothing_ms = 60.0         # velocity response time; center stops immediately (no drift)
 scroll_sensitivity = 45.0
 
 # Guide held + button (uncaptured contexts with a compositor; none on a VT). One action per press, never repeated.
@@ -9768,7 +9771,7 @@ pixel_snap = true                          # the texel grid lands on the output 
 # /usr/libexec/mios/mios-gamepad-hypr3d is no longer a recovery path; it keeps its own defaults when run by hand.
 [desktop.hyprland.hypr3d.controller]
 enabled = true
-# Simultaneous thumbstick chord: tap toggles the room (uncaptured); a hold of capture_hold_ms releases a capture.
+# Simultaneous thumbstick chord: tap toggles the room (uncaptured); a capture_hold_ms hold drains captured input, then both physical releases return ownership.
 toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
 # Radial/axis deadzone threshold [0.0..1.0] for room movement and look.
 deadzone = 0.15
@@ -19625,6 +19628,9 @@ keep_above = true                    # native stay-on-top: keep PiPs pinned (Hyp
 fullscreen_release_ms = 600          # after a maximize/fullscreen ends, keep the pre-fullscreen PiP bounds this long while the HUDs return
 spring_stiffness = 260.0             # springy settle (k); damping c ~ 2*sqrt(k)*zeta
 spring_damping = 22.0
+throw_min_speed_px_s = 400.0       # gentle drags keep the nearest-rail gravity; 0 disables throwing
+throw_max_speed_px_s = 6000.0      # cap release velocity (logical pixels/s), including delayed/jumped frames
+throw_deceleration_px_s2 = 3200.0 # unit-area stopping force; larger panes carry more inertia than small panes
 settle_ms = 350                      # operator must hold still this long before gravity pulls
 idle_poll_ms = 120
 active_poll_ms = 16

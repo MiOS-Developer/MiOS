@@ -185,6 +185,42 @@ enum CaptureConfirmation {
 /// Cursor mode, context and capture target saved while a shell overlay owns navigation.
 type SavedShellCursor = (bool, String, Option<(String, u64)>);
 
+/// Continuous pointer velocity. Integrating the exponential response analytically makes travel independent of
+/// polling rate; radial shaping keeps diagonals balanced. A centered stick stops immediately, without drift.
+#[derive(Default)]
+struct PointerMotion {
+    velocity: [f64; 2],
+}
+impl PointerMotion {
+    fn advance(
+        &mut self,
+        input: (f64, f64),
+        dt: f64,
+        speed: f64,
+        exponent: f64,
+        tau: f64,
+    ) -> [f64; 2] {
+        let magnitude = input.0.hypot(input.1).min(1.0);
+        if magnitude == 0.0 {
+            self.velocity = [0.0; 2];
+            return [0.0; 2];
+        }
+        let shape = magnitude.powf(exponent - 1.0) * speed;
+        let target = [input.0 * shape, input.1 * shape];
+        let mut travel = [0.0; 2];
+        for i in 0..2 {
+            if tau <= 0.0 {
+                self.velocity[i] = target[i];
+                travel[i] = target[i] * dt;
+            } else {
+                let decay = (-dt / tau).exp();
+                travel[i] = target[i] * dt + (self.velocity[i] - target[i]) * tau * (1.0 - decay);
+                self.velocity[i] = target[i] + (self.velocity[i] - target[i]) * decay;
+            }
+        }
+        travel
+    }
+}
 pub struct Router {
     /// Room-table presses waiting for their release or hold (spec P1, C-14b).
     room_pending: BTreeMap<u16, RoomPending>,
@@ -218,6 +254,7 @@ pub struct Router {
     escape_elapsed: f64,
     escape_fired: bool,
     pending_guide: bool,
+    pointer_motion: PointerMotion,
     fraction_x: f64,
     fraction_y: f64,
     fraction_scroll: f64,
@@ -277,6 +314,7 @@ impl Router {
             escape_elapsed: 0.0,
             escape_fired: false,
             pending_guide: false,
+            pointer_motion: PointerMotion::default(),
             fraction_x: 0.0,
             fraction_y: 0.0,
             fraction_scroll: 0.0,
@@ -438,6 +476,8 @@ impl Router {
     ) -> Output {
         let target_changed = self.capture_target != target;
         if target_changed {
+            self.escape_elapsed = 0.0;
+            self.escape_fired = false;
             self.guide_clean = None;
             self.guide_single = None;
         }
@@ -524,6 +564,8 @@ impl Router {
         self.suppressed.extend(&self.pressed);
         self.blocked.extend(&self.pressed);
         self.room_pending.clear();
+        self.escape_elapsed = 0.0;
+        self.escape_fired = false;
         self.guide_tap = None;
         self.context = context.into();
         self.cursor = false;
@@ -571,6 +613,9 @@ impl Router {
         o
     }
     fn release_outputs(&mut self) -> Output {
+        self.pointer_motion = PointerMotion::default();
+        self.fraction_x = 0.0;
+        self.fraction_y = 0.0;
         let mut app: Vec<_> = self
             .app_held
             .iter()
@@ -698,6 +743,8 @@ impl Router {
             || axis_code(&self.legacy.resize_axis).ok() == Some(code)
     }
     fn set_ownership(&mut self, owned: bool) -> Output {
+        self.escape_elapsed = 0.0;
+        self.escape_fired = false;
         self.guide_clean = None;
         self.guide_single = None;
         let room = self.room();
@@ -1019,6 +1066,10 @@ impl Router {
             o.app.push(e);
             return o;
         }
+        // After the hold qualifies, input stays drained until the physical chord has fully released.
+        if self.escape_fired && e.kind != EV_KEY {
+            return o;
+        }
         if e.kind == EV_KEY {
             let already = self.pressed.contains(&e.code);
             if e.value != 0 {
@@ -1031,6 +1082,21 @@ impl Router {
             }
             if e.value == 1 && !already {
                 self.chord_times.insert(e.code, now);
+            }
+            if !self.escape_fired && !self.legacy.toggle_chord.iter().all(|b| self.button(b)) {
+                self.escape_elapsed = 0.0;
+            }
+            // A qualified return chord first drains every app/pointer output. Keep ownership until BOTH physical
+            // buttons are up: a held thumbstick must never become a room click during the asynchronous handoff.
+            if self.escape_fired {
+                if !self.legacy.toggle_chord.iter().any(|b| self.button(b)) {
+                    self.escape_fired = false;
+                    self.escape_elapsed = 0.0;
+                    if !self.repairing {
+                        o.extend(self.release_window());
+                    }
+                }
+                return o;
             }
             if self.shell_overlay {
                 if e.value == 0 && self.suppressed.remove(&e.code) {
@@ -1654,11 +1720,19 @@ impl Router {
             self.escape_elapsed += dt;
             if self.escape_elapsed * 1000.0 >= self.global.controller.capture_hold_ms as f64 {
                 self.escape_fired = true;
-                o.extend(self.release_window());
+                o.extend(self.release_outputs());
+                o.extend(self.nav_flush());
+                self.suppressed.extend(&self.pressed);
+                self.pad.neutralize();
+                for (code, axis) in &mut self.axes {
+                    axis.value = axis.neutral(*code);
+                }
             }
-        } else if !held {
+        } else if !held && !self.escape_fired {
             self.escape_elapsed = 0.0;
-            self.escape_fired = false;
+        }
+        if self.escape_fired {
+            return o;
         }
         if let Some((_, t)) = &mut self.guide_tap {
             *t += dt * 1000.0;
@@ -1669,6 +1743,9 @@ impl Router {
         self.nav_timers(dt, &mut o);
         self.update_pad();
         if !self.pointer_mode() {
+            self.pointer_motion = PointerMotion::default();
+            self.fraction_x = 0.0;
+            self.fraction_y = 0.0;
             if self.nav_active() && !self.guide_layer() {
                 self.nav_wheel(dt, &mut o);
             }
@@ -1681,14 +1758,28 @@ impl Router {
         let ControllerConfig {
             stick_deadzone,
             pointer_max_speed_px,
+            pointer_max_speed_px_s,
+            pointer_response_exponent,
+            pointer_smoothing_ms,
             pointer_hz,
             scroll_sensitivity,
             ..
         } = self.global.controller;
         let (rx, ry) = self.right_axes();
         let (x, y) = self.stick(rx, ry, stick_deadzone, 1.0);
-        self.fraction_x += x * pointer_max_speed_px * f64::from(pointer_hz) * dt;
-        self.fraction_y += y * pointer_max_speed_px * f64::from(pointer_hz) * dt;
+        let travel = self.pointer_motion.advance(
+            (x, y),
+            dt,
+            pointer_max_speed_px_s.unwrap_or(pointer_max_speed_px * f64::from(pointer_hz)),
+            pointer_response_exponent.unwrap_or(1.0),
+            pointer_smoothing_ms / 1000.0,
+        );
+        if x == 0.0 && y == 0.0 {
+            self.fraction_x = 0.0;
+            self.fraction_y = 0.0;
+        }
+        self.fraction_x += travel[0];
+        self.fraction_y += travel[1];
         for (code, frac) in [(0, &mut self.fraction_x), (1, &mut self.fraction_y)] {
             let value = frac.trunc() as i32;
             *frac -= f64::from(value);
@@ -2179,6 +2270,61 @@ mod tests {
         r.event(Event::new(EV_KEY, c, v), t)
     }
     #[test]
+    fn pointer_velocity_is_rate_independent_curved_and_quiet_at_center() {
+        let mut totals = vec![];
+        for hz in [50, 125, 250, 1000] {
+            let mut r = router();
+            r.cursor = true;
+            r.global.controller.pointer_hz = hz;
+            r.global.controller.pointer_max_speed_px_s = Some(1200.0);
+            r.global.controller.pointer_response_exponent = Some(2.0);
+            r.global.controller.pointer_smoothing_ms = 60.0;
+            r.axes.get_mut(&3).unwrap().value = 32767;
+            let mut total = 0;
+            for _ in 0..hz {
+                total += r
+                    .tick(1.0 / f64::from(hz))
+                    .pointer
+                    .iter()
+                    .filter(|e| e.kind == EV_REL && e.code == 0)
+                    .map(|e| e.value)
+                    .sum::<i32>();
+            }
+            assert!((1127..=1129).contains(&total), "{hz} Hz: {total}");
+            totals.push(total);
+            r.axes.get_mut(&3).unwrap().value = 1000;
+            for _ in 0..hz {
+                assert!(
+                    r.tick(1.0 / f64::from(hz)).pointer.is_empty(),
+                    "center must never glide"
+                );
+            }
+        }
+        assert!(totals.iter().all(|n| (n - totals[0]).abs() <= 1));
+        let mut low = PointerMotion::default();
+        let fine = low.advance((0.25, 0.0), 1.0, 1200.0, 2.0, 0.0);
+        assert_eq!(
+            fine,
+            [75.0, 0.0],
+            "quarter deflection is fine motion, not a linear jump"
+        );
+        let mut diagonal = PointerMotion::default();
+        let d = diagonal.advance((0.5_f64.sqrt(), 0.5_f64.sqrt()), 1.0, 1200.0, 2.0, 0.0);
+        assert!((d[0].hypot(d[1]) - 1200.0).abs() < 1e-6);
+    }
+    #[test]
+    fn pointer_smoothing_avoids_steps_and_ownership_changes_clear_momentum() {
+        let mut motion = PointerMotion::default();
+        let initial = motion.advance((1.0, 0.0), 0.004, 1200.0, 2.0, 0.06);
+        assert!(initial[0] > 0.0 && initial[0] < 0.2);
+        let mut r = router();
+        r.pointer_motion.velocity = [900.0, 300.0];
+        r.fraction_x = 0.9;
+        r.release_outputs();
+        assert_eq!(r.pointer_motion.velocity, [0.0; 2]);
+        assert_eq!(r.fraction_x, 0.0);
+    }
+    #[test]
     fn kernel_truth_repairs_releases_without_unlatching_held_chords() {
         let mut r = router();
         key(&mut r, 0x130, 1, 1);
@@ -2286,7 +2432,17 @@ mod tests {
         for _ in 0..4 {
             assert!(r.tick(0.1).actions.is_empty());
         }
-        assert_eq!(r.tick(0.1).actions, vec!["input:window off"]);
+        assert!(r.tick(0.1).actions.is_empty());
+        assert!(
+            r.app_owned(),
+            "the held chord keeps ownership after draining"
+        );
+        assert!(key(&mut r, 0x13d, 0, 3).actions.is_empty());
+        assert!(
+            r.app_owned(),
+            "one physical release cannot return to the room"
+        );
+        assert_eq!(key(&mut r, 0x13e, 0, 4).actions, vec!["input:window off"]);
         assert!(
             r.room(),
             "release returns ownership without closing the room"
@@ -2303,11 +2459,76 @@ mod tests {
         for _ in 0..8 {
             fired.extend(game.tick(0.1).actions);
         }
-        assert_eq!(
-            fired,
-            vec!["input:window off"],
-            "a held L3+R3 releases a captured game exactly once"
+        assert!(fired.is_empty(), "a held L3+R3 only arms the return");
+        assert!(key(&mut game, 0x13e, 0, 3).actions.is_empty());
+        fired.extend(key(&mut game, 0x13d, 0, 4).actions);
+        assert_eq!(fired, vec!["input:window off"]);
+        assert!(game.tick(0.1).actions.is_empty());
+    }
+    #[test]
+    fn return_chord_drains_before_both_releases_and_never_replays_held_input() {
+        for first in [0x13d, 0x13e] {
+            let last = if first == 0x13d { 0x13e } else { 0x13d };
+            let mut r = router();
+            r.set_focus("app-capture", Some(("0xapp".into(), 42)), true);
+            key(&mut r, 0x130, 1, 1);
+            r.event(Event::new(EV_ABS, 3, 26000), 2);
+            key(&mut r, 0x13d, 1, 3);
+            key(&mut r, 0x13e, 1, 4);
+            let mut out = Output::default();
+            for _ in 0..5 {
+                out.extend(r.tick(0.1));
+            }
+            assert!(
+                r.app_owned() && !r.room(),
+                "hold must not restore room ownership"
+            );
+            assert!(out.actions.is_empty());
+            for code in [0x130, 0x13d, 0x13e] {
+                assert!(
+                    out.app.contains(&Event::new(EV_KEY, code, 0)),
+                    "drain {code}"
+                );
+            }
+            assert!(out.app.contains(&Event::new(EV_ABS, 3, 0)));
+            assert!(r.event(Event::new(EV_ABS, 3, 32000), 5).app.is_empty());
+            assert!(key(&mut r, 0x131, 1, 6).app.is_empty());
+            assert!(r.tick(0.1).pointer.is_empty());
+            assert!(key(&mut r, first, 0, 7).actions.is_empty());
+            assert!(r.app_owned());
+            let out = key(&mut r, last, 0, 8);
+            assert_eq!(out.actions, vec!["input:window off"]);
+            assert!(out.app.iter().all(|e| e.kind != EV_KEY || e.value == 0));
+            assert!(r.room());
+            assert_eq!((r.pad.rx, r.pad.ry), (0.0, 0.0));
+            assert!(key(&mut r, 0x130, 0, 9).actions.is_empty());
+            assert!(key(&mut r, 0x131, 0, 10).actions.is_empty());
+            assert!(r.tick(0.1).actions.is_empty());
+        }
+    }
+    #[test]
+    fn short_return_chord_and_repaired_release_never_request_ownership() {
+        let mut r = router();
+        r.set_focus("app-capture", Some(("0xapp".into(), 42)), true);
+        key(&mut r, 0x13d, 1, 1);
+        key(&mut r, 0x13e, 1, 2);
+        for _ in 0..4 {
+            assert!(r.tick(0.1).actions.is_empty());
+        }
+        assert!(key(&mut r, 0x13d, 0, 3).actions.is_empty());
+        assert!(key(&mut r, 0x13e, 0, 4).actions.is_empty());
+        assert!(r.app_owned());
+        key(&mut r, 0x13d, 1, 5);
+        key(&mut r, 0x13e, 1, 6);
+        for _ in 0..5 {
+            r.tick(0.1);
+        }
+        let repaired = r.reconcile(&BTreeSet::new(), 7);
+        assert!(
+            repaired.actions.is_empty(),
+            "kernel repair cannot invent an ownership action"
         );
+        assert!(r.app_owned());
     }
     #[test]
     fn north_tap_hands_all_controls_to_a_window_without_fullscreen_or_room_motion() {
@@ -2891,8 +3112,8 @@ mod ownership_contract {
             key(&mut r, L3, 1, 30);
             key(&mut r, R3, 1, 31);
             t.extend(hold(&mut r, 700).actions);
-            key(&mut r, L3, 0, 40);
-            key(&mut r, R3, 0, 41);
+            t.extend(key(&mut r, L3, 0, 40).actions);
+            t.extend(key(&mut r, R3, 0, 41).actions);
             r.set_focus(
                 &cfg.classify_window(Some(class), false, false),
                 Some((format!("0x{class}"), 9)),
@@ -3668,7 +3889,9 @@ mod nav_contract {
         key(&mut r, GUIDE, 0);
         key(&mut r, L3, 1);
         key(&mut r, R3, 1);
-        assert_eq!(wait(&mut r, 500).actions, vec!["input:window off"]);
+        assert!(wait(&mut r, 500).actions.is_empty());
+        assert!(key(&mut r, L3, 0).actions.is_empty());
+        assert_eq!(key(&mut r, R3, 0).actions, vec!["input:window off"]);
         assert!(r.room(), "held release returns to the room");
     }
     #[test]
@@ -3709,7 +3932,9 @@ mod nav_contract {
         assert!(key(&mut r, SOUTH, 0).actions.is_empty());
         key(&mut r, L3, 1);
         key(&mut r, R3, 1);
-        assert_eq!(wait(&mut r, 500).actions, vec!["input:window off"]);
+        assert!(wait(&mut r, 500).actions.is_empty());
+        assert!(key(&mut r, L3, 0).actions.is_empty());
+        assert_eq!(key(&mut r, R3, 0).actions, vec!["input:window off"]);
         assert!(!r.app_owned() && !r.captured_navigation());
     }
     #[test]
