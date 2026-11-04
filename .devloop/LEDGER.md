@@ -3874,8 +3874,8 @@ UI delta is delegated to the continuing independent verifier.
 
 
 Final independent task3719 accepted:28PASS/0FAIL/6UNVERIFIED in aggregate.
-Receipt SHA2e16a0c3786716381cb5517f9a9a354fb52722e89309923b6fdeb9fb05611a91,
-delta SHAccd6d42c1346fdf544a43809736163e6bdde534555ce06a2e8a4a35ae849943b.
+Receipt SHAa11ab0c9e182df0e8f5533eb6e2b95b3bc873865d46fbffa9dbcee7a197fcba0,
+delta SHAc5b69747d4d6323a3a111a6dfd041d23efb5bdabeebc8a809e60a4ab18b5b322.
 All referenced case proof paths exist. Original verification pet remained
 Baby12PAUSED, bytes unchanged, final946PID2660230. All four retained process
 exe hashes match final946 and launchers remain independently alive.
@@ -3887,3 +3887,5 @@ Final human handoff and full per-node receipt:
   /home/mios/.local/state/mios/mios-tamagotchi-live/mios-consolidated-receipt.json
 Existing mobile frontdoor independently verified HTTPS200/TLS0 and protected
 login401/TLS0; only desktop client attached, no real phone certification.
+
+Final verifier release/exit ACK received; native verify socket now contains only original game pane0. Worker appended release receipts before exit; above receipt checksums reconciled after that final mutation. Continuing launcher owner coordinator, all four viewports preserved.
