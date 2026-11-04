@@ -1337,13 +1337,17 @@ def _test_tool_choice_none_stripping():
     client.reply = Reply(completion)
 
     wire(_INGRESS_KEY="fixture-key", _BACKEND_KEY="backend-fixture")
-    from mios_pipe.kernel import config as config_module
-    with mock.patch.object(config_module, "_AUTH_HOSTPORTS", {"backend.invalid"}):
+    from mios_pipe.access import authn
+    with mock.patch.multiple(authn,
+                             _BACKEND_KEY="backend-fixture",
+                             _AUTH_HOSTPORTS={"backend.invalid"}, _AGENT_AUTH_BY_HOSTPORT={}):
         _run(body, {"Authorization": "Bearer fixture-key"})
     check("plain relay uses backend credential, never ingress credential",
           client.calls[-1][1]["headers"].get("Authorization") == "Bearer backend-fixture")
     wire(_BACKEND_KEY="backend-fixture")
-    with mock.patch.object(config_module, "_AUTH_HOSTPORTS", set()):
+    with mock.patch.multiple(authn,
+                             _BACKEND_KEY="backend-fixture",
+                             _AUTH_HOSTPORTS=set(), _AGENT_AUTH_BY_HOSTPORT={}):
         _run(body)
     check("plain relay does not send credentials to unregistered backend origins",
           "Authorization" not in client.calls[-1][1]["headers"])

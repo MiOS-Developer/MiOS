@@ -37,6 +37,17 @@ def configure(**deps) -> None:
         if _k in _INJECTED:
             g[_k] = _v
 
+def _inference_headers(endpoint: str) -> dict:
+    """Resolve only the selected destination's outbound credential.
+
+    Start fresh for every destination so retries cannot carry another node's key.
+    """
+    from mios_pipe.access.authn import _apply_outbound_auth
+    headers = {"Content-Type": "application/json"}
+    _apply_outbound_auth(headers, endpoint)
+    return headers
+
+
 _gpu_state_cache = {"state": "AI_EXCLUSIVE", "ts": -1e9}
 
 def get_gpu_arbiter_state() -> str:
@@ -86,7 +97,8 @@ async def _heavy_lane_up() -> bool:
     ok = False
     try:
         client = await _get_client()
-        r = await client.get(f"{_TOOL_BACKEND_HEAVY}/models", timeout=2.0)
+        r = await client.get(f"{_TOOL_BACKEND_HEAVY}/models", timeout=2.0,
+                             headers=_inference_headers(_TOOL_BACKEND_HEAVY))
         ok = mios_lanes.serves_model(r, _TOOL_BACKEND_HEAVY_MODEL)
     except Exception:  # noqa: BLE001 -- any failure => heavy is down, use light
         ok = False
@@ -145,7 +157,8 @@ def _lane_resolver():
         if get_gpu_arbiter_state() != "AI_EXCLUSIVE" and url.rstrip("/") in heavy_endpoints:
             return False
         client = await _get_client()
-        r = await client.get(f"{url}/models", timeout=2.0)
+        r = await client.get(f"{url}/models", timeout=2.0,
+                             headers=_inference_headers(url))
         if url.rstrip("/") in heavy_endpoints:
             expected = (_TOOL_BACKEND_HEAVY_MODEL if url.rstrip("/") == _TOOL_BACKEND_HEAVY.rstrip("/")
                         else _vllm_model)

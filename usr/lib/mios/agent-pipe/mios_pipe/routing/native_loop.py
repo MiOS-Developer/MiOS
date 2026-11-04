@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import json
@@ -1237,7 +1237,7 @@ async def _formulate_compute_snippet(user_text: str) -> str:
                 endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
                 model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
         if r.status_code != 200:
             return ""
         code = ((r.json().get("choices") or [{}])[0].get("message", {})
@@ -1294,7 +1294,7 @@ async def _formulate_web_query(user_text: str, local_grounding: str) -> str:
                 endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
                 model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
         if r.status_code != 200:
             return user_text
         q = ((r.json().get("choices") or [{}])[0].get("message", {})
@@ -1331,7 +1331,7 @@ async def _format_local_state(question: str, grounding: str,
     try:
         async with httpx.AsyncClient(timeout=POLISH_TIMEOUT_S) as s:
             r = await s.post(_url, json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code != 200:
                 log.warning("local-state format: backend %s: %s", r.status_code, r.text[:200])
                 return None

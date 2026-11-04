@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import logging
@@ -156,7 +156,7 @@ async def _clarify_question(user_text: str, answer: str) -> str:
                 endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
                 model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
         if r.status_code != 200:
             return ""
         content = ((r.json().get("choices") or [{}])[0].get("message", {})
@@ -201,7 +201,7 @@ async def _verity_factcheck(draft: str, user_q: str,
                     {"role": "system", "content": sys_p},
                     {"role": "user",
                      "content": f"Question: {user_q[:300]}\n\nDraft:\n{draft[:1500]} /no_think"}]},
-                headers={"Content-Type": "application/json"})
+                headers=_inference_headers(endpoint))
             if r.status_code == 200:
                 _vm = ((r.json().get("choices") or [{}])[0]).get("message") or {}
                 c = _vm.get("content") or _vm.get("reasoning_content") or ""
@@ -369,7 +369,7 @@ async def polish_response(raw_text: str,
     try:
         async with httpx.AsyncClient(timeout=POLISH_TIMEOUT_S) as s:
             r = await s.post(url, json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code != 200:
                 log.warning("polish: backend %s in %.1fs: %s", r.status_code, time.time() - t0, r.text[:200])
                 return None

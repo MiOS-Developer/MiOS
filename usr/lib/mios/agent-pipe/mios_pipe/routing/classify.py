@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import json
@@ -98,7 +98,7 @@ async def classify_intent(user_text: str) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(timeout=ROUTER_TIMEOUT_S) as s:
             r = await s.post(url, json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code != 200:
                 return None
             body = r.json()
@@ -156,7 +156,7 @@ async def _route_domain(user_text: str) -> Optional[str]:
                 endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
                 model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
         if r.status_code != 200:
             return None
         content = ((r.json().get("choices") or [{}])[0].get("message", {})

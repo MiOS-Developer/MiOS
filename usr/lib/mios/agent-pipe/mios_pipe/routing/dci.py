@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import json
@@ -227,7 +227,7 @@ async def _dci_call_persona(
             r = await s.post(
                 f"{endpoint}/chat/completions",
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=_inference_headers(endpoint),
             )
             if r.status_code != 200:
                 return None

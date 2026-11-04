@@ -34,7 +34,7 @@ class _FakeClient:
         self._boom = boom
         self.requests = []
 
-    async def get(self, url, timeout=None):
+    async def get(self, url, timeout=None, headers=None):
         self.requests.append(url)
         if self._boom:
             raise RuntimeError("connect refused")
@@ -261,14 +261,19 @@ class AutomaticInferenceHotPathTests(unittest.IsolatedAsyncioTestCase):
         self.lanes = importlib.import_module("mios_pipe.routing.lanes_resolver")
         self.chat = importlib.import_module("mios_pipe.routing.chat")
         self.config = importlib.import_module("mios_pipe.kernel.config")
+        self.authn = importlib.import_module("mios_pipe.access.authn")
         self.requests = []
         self.gpu_ready = True
         self.gpu_failure = False
+        self.gpu_protected = False
         self.floor = "http://floor.invalid/v1"
         self.gpu = "http://fast.invalid/v1"
 
         def handle(request):
             self.requests.append(request)
+            if (self.gpu_protected and request.url.host == "fast.invalid"
+                    and request.headers.get("authorization") != "Bearer gpu-secret"):
+                return httpx.Response(401, json={"error": {"message": "node key required"}})
             if request.method == "GET":
                 model = ("gpu-brain" if self.gpu_ready else "unrelated") if request.url.host == "fast.invalid" else "brain"
                 return httpx.Response(200, json={"data": [{"id": model}]})
@@ -295,6 +300,8 @@ class AutomaticInferenceHotPathTests(unittest.IsolatedAsyncioTestCase):
                 _scratchpad_key=lambda *args: "fixture",
                 _toml_section=lambda section: {"agent_model": "public"}),
             mock.patch.object(self.config, "_AUTH_HOSTPORTS", {"floor.invalid"}),
+            mock.patch.multiple(self.authn, _BACKEND_KEY="floor-secret",
+                _AUTH_HOSTPORTS={"floor.invalid"}, _AGENT_AUTH_BY_HOSTPORT={}),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -319,6 +326,35 @@ class AutomaticInferenceHotPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((sent["model"], sent["max_tokens"], sent["stop"], sent["store"]),
                          ("gpu-brain", 8, ["END"], False))
         self.assertNotIn("authorization", posts[0].headers)
+
+    async def test_protected_gpu_probe_and_completion_use_only_its_registered_key(self):
+        self.gpu_protected = True
+        with mock.patch.object(self.authn, "_AGENT_AUTH_BY_HOSTPORT",
+                               {"fast.invalid": "Authorization: Bearer gpu-secret"}):
+            posts = await self.request()
+        self.assertEqual([str(p.url) for p in posts], [self.gpu + "/chat/completions"])
+        gpu_requests = [r for r in self.requests if r.url.host == "fast.invalid"]
+        self.assertTrue(any(r.method == "GET" for r in gpu_requests))
+        self.assertTrue(all(r.headers.get("authorization") == "Bearer gpu-secret"
+                            for r in gpu_requests))
+        self.assertFalse(any("floor-secret" in str(r.headers) for r in gpu_requests))
+
+    async def test_protected_gpu_fallback_drops_gpu_key_and_uses_cpu_key(self):
+        self.gpu_protected = self.gpu_failure = True
+        with mock.patch.object(self.authn, "_AGENT_AUTH_BY_HOSTPORT",
+                               {"fast.invalid": "Authorization: Bearer gpu-secret"}):
+            posts = await self.request()
+        self.assertEqual([p.headers.get("authorization") for p in posts],
+                         ["Bearer gpu-secret", "Bearer floor-secret"])
+        self.assertEqual([str(p.url) for p in posts],
+                         [self.gpu + "/chat/completions", self.floor + "/chat/completions"])
+
+    async def test_unregistered_protected_gpu_is_unavailable_without_leaking_cpu_key(self):
+        self.gpu_protected = True
+        posts = await self.request()
+        self.assertEqual([str(p.url) for p in posts], [self.floor + "/chat/completions"])
+        self.assertFalse(any(r.headers.get("authorization") for r in self.requests
+                             if r.url.host == "fast.invalid"))
 
     async def test_wrong_model_identity_keeps_cpu_floor(self):
         self.gpu_ready = False

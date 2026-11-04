@@ -1,7 +1,7 @@
 # AI-hint: REFINE intent-classifier extracted verbatim from server.py (refactor R5/mios_refine wave).
 # AI-doc: usr/share/doc/mios/manual/routing.md
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import json
@@ -736,7 +736,7 @@ async def _refine_intent(user_text: str,
         try:
             if on_token:
                 async with httpx.AsyncClient(timeout=REFINE_TIMEOUT_S) as s:
-                    async with s.stream("POST", url, json=payload, headers={"Content-Type": "application/json"}) as r:
+                    async with s.stream("POST", url, json=payload, headers=_inference_headers(endpoint)) as r:
                         if r.status_code != 200:
                             err_txt = await r.aread()
                             log.warning("refine stream: backend %s in %.1fs: %s", r.status_code, time.time() - t0, err_txt[:200])
@@ -808,7 +808,7 @@ async def _refine_intent(user_text: str,
             else:
                 async with httpx.AsyncClient(timeout=REFINE_TIMEOUT_S) as s:
                     r = await s.post(url, json=payload,
-                                     headers={"Content-Type": "application/json"})
+                                     headers=_inference_headers(endpoint))
                     if r.status_code != 200:
                         log.warning("refine: backend %s in %.1fs: %s", r.status_code, time.time() - t0, r.text[:200])
                         return None
@@ -861,10 +861,10 @@ async def _refine_intent(user_text: str,
                     elapsed, type(parsed).__name__)
         return None
     log.info("refine: %.1fs [%s] intent=%s domain=%s target=%s",
-             elapsed, REFINE_MODEL, parsed.get("intent"),
+             elapsed, selected_model, parsed.get("intent"),
              parsed.get("domain_type"), parsed.get("target_agent"))
     parsed["_elapsed_s"] = round(elapsed, 1)
-    parsed["_model"] = REFINE_MODEL
+    parsed["_model"] = selected_model
     parsed["_endpoint"] = endpoint.rstrip("/").removesuffix("/v1")
     _news = parsed.get("news")
     parsed["news"] = (_news is True) or (

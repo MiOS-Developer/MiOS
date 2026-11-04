@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import json
 import logging
@@ -196,7 +196,7 @@ async def _model_select(corpus: str, candidates: list, want: int) -> Optional[li
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(url, json=body)
+            r = await client.post(url, json=body, headers=_inference_headers(endpoint))
         if r.status_code != 200:
             return None
         content = (((r.json().get("choices") or [{}])[0].get("message") or {})

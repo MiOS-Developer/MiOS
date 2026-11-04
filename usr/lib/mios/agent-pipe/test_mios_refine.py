@@ -386,6 +386,53 @@ def t_stream_deadline_and_cancellation():
         mr.REFINE_TIMEOUT_S, mr.REFINE_ATTEMPTS = saved_timeout, saved_attempts
 
 
+def t_selected_model_receipt_and_protected_stage():
+    """Exercise real HTTPX requests, endpoint credentials, and the returned receipt."""
+    import types
+    from unittest import mock
+    from mios_pipe.access import authn
+    import importlib
+    lanes = importlib.import_module('mios_pipe.routing.lanes_resolver')
+    target_module = importlib.import_module('mios_pipe.routing.refine')
+    real_client = httpx.AsyncClient
+    requests = []
+    def handle(request):
+        requests.append(request)
+        if request.headers.get("X-Node-Key") != "stage-secret":
+            return httpx.Response(401, json={"error": {"message": "node key required"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content":
+            json.dumps({"intent": "chat", "refined_text": "hello", "reply": "ready"})}}]})
+    def client(**kwargs):
+        return real_client(transport=httpx.MockTransport(handle), **kwargs)
+    target = "http://protected.invalid/v1"
+    selected = mock.AsyncMock(return_value=(target, "selected-gpu-model"))
+    with mock.patch.object(target_module, "httpx", types.SimpleNamespace(
+            AsyncClient=client, HTTPError=httpx.HTTPError)), \
+         mock.patch.object(target_module, "_pick_inference_backend", selected), \
+         mock.patch.multiple(authn, _BACKEND_KEY="cpu-secret", _AUTH_HOSTPORTS={"cpu.invalid"},
+             _AGENT_AUTH_BY_HOSTPORT={"protected.invalid": "X-Node-Key: stage-secret"}):
+        result = asyncio.run(mr.refine_intent("hello"))
+    sent = json.loads(requests[0].content)
+    check("protected refine stage uses selected model and endpoint", sent["model"] == "selected-gpu-model"
+          and str(requests[0].url) == target + "/chat/completions")
+    check("refine receipt reports actual selected model", result["_model"] == "selected-gpu-model"
+          and result["_endpoint"] == target.removesuffix("/v1"))
+    check("protected stage receives only its node credential", requests[0].headers.get("x-node-key") == "stage-secret"
+          and "authorization" not in requests[0].headers)
+    requests.clear()
+    with mock.patch.object(target_module, "httpx", types.SimpleNamespace(
+            AsyncClient=client, HTTPError=httpx.HTTPError)), \
+         mock.patch.object(target_module, "REFINE_ENDPOINT", target), \
+         mock.patch.object(target_module, "REFINE_MODEL", "explicit-stage-model"), \
+         mock.patch.dict(__import__("os").environ, {"MIOS_REFINE_ENDPOINT": target}), \
+         mock.patch.object(lanes, "_pick_tool_backend", side_effect=AssertionError("explicit endpoint moved")), \
+         mock.patch.multiple(authn, _BACKEND_KEY="cpu-secret", _AUTH_HOSTPORTS={"cpu.invalid"},
+             _AGENT_AUTH_BY_HOSTPORT={"protected.invalid": "X-Node-Key: stage-secret"}):
+        result = asyncio.run(mr.refine_intent("hello"))
+    check("explicit stage endpoint and model preserved", str(requests[0].url) == target + "/chat/completions"
+          and json.loads(requests[0].content)["model"] == result["_model"] == "explicit-stage-model")
+
+
 def main():
     _configure()
     t_salvage_corpus()
@@ -393,6 +440,7 @@ def main():
     t_cutoffs_ssot()
     t_critic_refine()
     t_deterministic_before_inference()
+    t_selected_model_receipt_and_protected_stage()
     t_stream_deadline_and_cancellation()
     print(f"\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0

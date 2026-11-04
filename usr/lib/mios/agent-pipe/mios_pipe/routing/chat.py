@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import collections
@@ -338,7 +338,7 @@ async def _quick_chat_reply(user_text: str, history: list = None) -> str:
                 REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
                 model_env=("MIOS_REFINE_MODEL",))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code != 200:
                 return ""
             body = r.json()
@@ -367,7 +367,7 @@ async def _is_memory_question(user_text: str, facts: str) -> bool:
                 REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
                 model_env=("MIOS_REFINE_MODEL",))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code == 200:
                 _lm = (((r.json().get("choices") or [{}])[0]).get("message") or {})
                 ans = str(_lm.get("content") or "").strip().upper()
@@ -399,7 +399,7 @@ async def _ask_for_location(user_text: str) -> str:
                 REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
                 model_env=("MIOS_REFINE_MODEL",))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code == 200:
                 _lm = ((r.json().get("choices") or [{}])[0]).get("message") or {}
                 c = (_lm.get("content") or _lm.get("reasoning_content") or "").strip()
@@ -462,7 +462,7 @@ async def _needs_external_knowledge(user_text: str) -> bool:
                 endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
                 model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
             r = await s.post(f"{endpoint}/chat/completions", json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
         if r.status_code != 200:
             return False
         content = ((r.json().get("choices") or [{}])[0].get("message", {})
@@ -662,10 +662,7 @@ async def _plain_chat_complete(body: dict) -> Any:
             explicit_model=bool(requested_model and requested_model != agent_model))
         if not requested_model or (agent_model and requested_model == agent_model):
             payload["model"] = selected_model
-        headers = {"Content-Type": "application/json"}
-        from mios_config import _AUTH_HOSTPORTS
-        if _BACKEND_KEY and str(backend).split("://")[-1].split("/")[0] in _AUTH_HOSTPORTS:
-            headers["Authorization"] = f"Bearer {_BACKEND_KEY}"
+        headers = _inference_headers(backend)
         if not backend:
             raise ValueError("no inference backend is configured")
         client = await _get_client()
@@ -681,9 +678,7 @@ async def _plain_chat_complete(body: dict) -> Any:
                     and backend.rstrip("/") != BACKEND.rstrip("/")):
                 # No tools or streamed output have run: one bounded CPU-floor retry is safe.
                 fallback_payload = dict(payload, model=fallback_model)
-                fallback_headers = {"Content-Type": "application/json"}
-                if _BACKEND_KEY and str(BACKEND).split("://")[-1].split("/")[0] in _AUTH_HOSTPORTS:
-                    fallback_headers["Authorization"] = f"Bearer {_BACKEND_KEY}"
+                fallback_headers = _inference_headers(BACKEND)
                 reply = await client.post(f"{BACKEND.rstrip('/')}/chat/completions",
                                           json=fallback_payload, headers=fallback_headers)
             return JSONResponse(content=reply.json(), status_code=reply.status_code)

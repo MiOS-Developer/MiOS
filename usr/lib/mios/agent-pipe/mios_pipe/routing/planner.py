@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from mios_lanes_resolver import _pick_inference_backend
+from mios_lanes_resolver import _pick_inference_backend, _inference_headers
 
 import asyncio
 import json
@@ -356,7 +356,7 @@ async def decompose_intent(user_text: str) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
             r = await s.post(url, json=payload,
-                             headers={"Content-Type": "application/json"})
+                             headers=_inference_headers(endpoint))
             if r.status_code != 200:
                 return None
             body = r.json()
