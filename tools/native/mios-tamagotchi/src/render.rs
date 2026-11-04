@@ -1,4 +1,4 @@
-// AI-hint: Clipped indexed sprite widget; half-blocks preserve two colors and pattern cells preserve masks.
+// AI-hint: Signed camera projection samples only the viewport; indexed packing retains terminal color semantics.
 // AI-related: sprite.rs, capabilities.rs, ratatui::symbols::pixel::QUADRANTS
 use ratatui::{
     buffer::Buffer,
@@ -117,6 +117,349 @@ pub fn braille(pixels: [bool; 8]) -> char {
     char::from_u32(0x2800 + mask).unwrap_or(' ')
 }
 
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum CameraView {
+    Room,
+    Pet,
+    Face,
+}
+
+/// Presentation only; camera interpolation never changes pet simulation.
+#[derive(Clone, Copy, Debug)]
+pub struct Camera {
+    pub view: CameraView,
+    pub zoom_percent: u16,
+    pub from_view: CameraView,
+    pub transition_percent: u16,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            view: CameraView::Pet,
+            zoom_percent: 100,
+            from_view: CameraView::Pet,
+            transition_percent: 100,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SolidBounds {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+impl SolidBounds {
+    fn of(sprite: &Sprite) -> Option<Self> {
+        let mut bounds = Self {
+            left: f64::from(sprite.width()),
+            top: f64::from(sprite.height()),
+            right: 0.0,
+            bottom: 0.0,
+        };
+        for y in 0..sprite.height() {
+            for x in 0..sprite.width() {
+                if sprite.pixel(u32::from(x), u32::from(y), 1).is_some() {
+                    bounds.left = bounds.left.min(f64::from(x));
+                    bounds.top = bounds.top.min(f64::from(y));
+                    bounds.right = bounds.right.max(f64::from(x) + 1.0);
+                    bounds.bottom = bounds.bottom.max(f64::from(y) + 1.0);
+                }
+            }
+        }
+        (bounds.right > bounds.left && bounds.bottom > bounds.top).then_some(bounds)
+    }
+
+    fn width(self) -> f64 {
+        self.right - self.left
+    }
+
+    fn height(self) -> f64 {
+        self.bottom - self.top
+    }
+}
+
+/// Signed origin and scale in packed screen pixels. Nothing proportional to
+/// the zoomed sprite is allocated: only visible terminal samples are visited.
+#[derive(Clone, Copy, Debug)]
+struct Projection {
+    left: f64,
+    top: f64,
+    scale: f64,
+}
+
+impl Projection {
+    fn camera(
+        sprite: &Sprite,
+        bounds: SolidBounds,
+        area: Rect,
+        renderer: Renderer,
+        fixed_scale: u16,
+        position: (u16, u16),
+        camera: Camera,
+    ) -> Self {
+        let (dx, dy) = renderer.packing();
+        let width = f64::from(area.width) * f64::from(dx);
+        let height = f64::from(area.height) * f64::from(dy);
+        let zoom = f64::from(camera.zoom_percent.clamp(50, 400)) / 100.0;
+        let mode = |view| {
+            let mut frame = bounds;
+            if view == CameraView::Face {
+                let face = sprite.face_overlay();
+                let cx = face.map_or((bounds.left + bounds.right) / 2.0, |f| {
+                    f64::from(f.center_x) + 0.5
+                });
+                let cy = face.map_or(bounds.top + bounds.height() * 0.28, |f| {
+                    f64::from(f.y) + 0.5
+                });
+                // Retain the upper silhouette and ears around the actual face,
+                // while the lower body extends beyond this closer framing.
+                frame.left = cx - bounds.width() * 0.55;
+                frame.right = cx + bounds.width() * 0.55;
+                frame.top = bounds.top - bounds.height() * 0.025;
+                frame.bottom = (cy + bounds.height() * 0.18)
+                    .max(bounds.top + bounds.height() * 0.38)
+                    .min(bounds.bottom);
+            }
+            let fit = (width / frame.width()).min(height / frame.height());
+            let base = if fixed_scale == 0 {
+                fit * if view == CameraView::Room { 0.6 } else { 0.96 }
+            } else {
+                f64::from(fixed_scale)
+                    * if view == CameraView::Face {
+                        bounds.height() / frame.height()
+                    } else {
+                        1.0
+                    }
+            };
+            let mut scale = base.max(f64::EPSILON) * zoom;
+            let micro_face = sprite.face_overlay().filter(|face| {
+                view == CameraView::Face && area.height <= 3
+                    && usize::from(area.width) >= face.text.len()
+                    && printable_face(face.text)
+            });
+            if let Some(face) = micro_face {
+                let (head_left, head_right) = head_span(sprite, face.center_x, face.y);
+                let cx = f64::from(face.center_x) + 0.5;
+                let half_text = (face.text.len() as f64 / 2.0 + 1.0) * f64::from(dx);
+                // A micro close-up crops around the face itself. At two rows,
+                // whole-ear fitting would make five literal glyphs impossible.
+                let readable = (half_text / (cx - head_left).max(0.5))
+                    .max(half_text / (head_right - cx).max(0.5));
+                scale = base.max(readable) * zoom;
+                frame.left = cx - bounds.width() / 2.0;
+                frame.right = cx + bounds.width() / 2.0;
+                let cy = f64::from(face.y) + 0.5;
+                frame.top = cy - bounds.height() / 2.0;
+                frame.bottom = cy + bounds.height() / 2.0;
+            }
+            let (left, top) = if view == CameraView::Room {
+                (
+                    (width - bounds.width() * scale)
+                        * f64::from(position.0.min(1000)) / 1000.0
+                        - bounds.left * scale,
+                    (height - bounds.height() * scale)
+                        * f64::from(position.1.min(1000)) / 1000.0
+                        - bounds.top * scale,
+                )
+            } else {
+                (
+                    width / 2.0 - (frame.left + frame.right) / 2.0 * scale,
+                    height / 2.0 - (frame.top + frame.bottom) / 2.0 * scale,
+                )
+            };
+            Self {
+                left: f64::from(area.x) * f64::from(dx) + left,
+                top: f64::from(area.y) * f64::from(dy) + top,
+                scale,
+            }
+        };
+        let from = mode(camera.from_view);
+        let to = mode(camera.view);
+        let blend = f64::from(camera.transition_percent.min(100)) / 100.0;
+        Self {
+            left: from.left + (to.left - from.left) * blend,
+            top: from.top + (to.top - from.top) * blend,
+            scale: from.scale + (to.scale - from.scale) * blend,
+        }
+    }
+
+    fn sample(self, sprite: &Sprite, x: u32, y: u32) -> Option<u8> {
+        let x = ((f64::from(x) + 0.5 - self.left) / self.scale).floor();
+        let y = ((f64::from(y) + 0.5 - self.top) / self.scale).floor();
+        // Check signs before integer conversion; clipping cannot wrap into the
+        // source origin or write a cell beyond the viewport.
+        if x < 0.0 || y < 0.0
+            || x >= f64::from(sprite.width()) || y >= f64::from(sprite.height())
+        {
+            None
+        } else {
+            sprite.pixel(x as u32, y as u32, 1)
+        }
+    }
+
+    fn cell(self, x: f64, y: f64, renderer: Renderer) -> (f64, f64) {
+        let (dx, dy) = renderer.packing();
+        (
+            (self.left + x * self.scale) / f64::from(dx),
+            (self.top + y * self.scale) / f64::from(dy),
+        )
+    }
+}
+
+fn paint_pixels(
+    renderer: Renderer,
+    colors: &Colors,
+    pixels: [Option<u8>; 8],
+    cell: &mut ratatui::buffer::Cell,
+) {
+    let Some(index) = pixels.iter().flatten().next() else {
+        return;
+    };
+    let mut fg = colors.ink(usize::from(*index));
+    let mut bg = if cell.bg == Color::Reset {
+        colors.background
+    } else {
+        cell.bg
+    };
+    let symbol = match renderer {
+        Renderer::Auto | Renderer::Ascii => ['#', 'o', '@', '*'][usize::from(*index) % 4],
+        Renderer::HalfBlock if colors.palette.iter().all(|c| *c == Color::Reset) => {
+            ['#', 'o', '@', '*'][usize::from(*index) % 4]
+        }
+        Renderer::HalfBlock => match (pixels[0], pixels[1]) {
+            (Some(upper), Some(lower)) => {
+                fg = colors.ink(usize::from(upper));
+                bg = colors.ink(usize::from(lower));
+                if upper == lower { '█' } else { '▀' }
+            }
+            (Some(_), None) => '▀',
+            (None, Some(_)) => '▄',
+            _ => ' ',
+        },
+        Renderer::Quadrant => quadrant(std::array::from_fn(|i| pixels[i].is_some())),
+        Renderer::Braille => braille(std::array::from_fn(|i| pixels[i].is_some())),
+    };
+    cell.set_char(symbol).set_fg(fg).set_bg(bg);
+}
+
+fn draw_projection(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let area = area.intersection(buf.area);
+    let (dx, dy) = renderer.packing();
+    for row in area.y..area.bottom() {
+        for col in area.x..area.right() {
+            let mut pixels = [None; 8];
+            for y in 0..dy {
+                for x in 0..dx {
+                    pixels[usize::from(y * dx + x)] = projection.sample(
+                        sprite,
+                        u32::from(col) * u32::from(dx) + u32::from(x),
+                        u32::from(row) * u32::from(dy) + u32::from(y),
+                    );
+                }
+            }
+            if let Some(cell) = buf.cell_mut((col, row)) {
+                paint_pixels(renderer, colors, pixels, cell);
+            }
+        }
+    }
+}
+
+fn head_span(sprite: &Sprite, center: u16, row: u16) -> (f64, f64) {
+    let mut left = center;
+    let mut right = center;
+    while left > 0 && sprite.pixel(u32::from(left - 1), u32::from(row), 1).is_some() {
+        left -= 1;
+    }
+    while right + 1 < sprite.width()
+        && sprite.pixel(u32::from(right + 1), u32::from(row), 1).is_some()
+    {
+        right += 1;
+    }
+    (f64::from(left), f64::from(right) + 1.0)
+}
+
+fn printable_face(text: &str) -> bool {
+    !text.is_empty() && text.is_ascii() && !text.bytes().any(|c| c.is_ascii_control())
+}
+
+/// A depth-tested front anchor authorizes the face. Packed-pixel holes do not
+/// veto all five letters; inadequate head resolution uses an attached caption.
+fn draw_front_face(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+) -> bool {
+    let area = area.intersection(buf.area);
+    let Some(face) = sprite.face_overlay() else {
+        return false;
+    };
+    if !printable_face(face.text) {
+        return false;
+    }
+    let (center, row) = projection.cell(
+        f64::from(face.center_x) + 0.5,
+        f64::from(face.y) + 0.5,
+        renderer,
+    );
+    let length = face.text.len() as i32;
+    let start = center.floor() as i32 - length / 2;
+    let row = row.floor() as i32;
+    if start < i32::from(area.x) || start + length > i32::from(area.right())
+        || row < i32::from(area.y) || row >= i32::from(area.bottom())
+    {
+        return false;
+    }
+    let (left, right) = head_span(sprite, face.center_x, face.y);
+    let (head_left, _) = projection.cell(left, f64::from(face.y), renderer);
+    let (head_right, _) = projection.cell(right, f64::from(face.y), renderer);
+    if head_right - head_left < f64::from(length)
+        || f64::from(start) < head_left.floor()
+        || f64::from(start + length) > head_right.ceil()
+    {
+        return false;
+    }
+    for (offset, glyph) in face.text.chars().enumerate() {
+        if let Some(cell) = buf.cell_mut(((start + offset as i32) as u16, row as u16)) {
+            cell.set_char(glyph).set_fg(colors.ink(0)).set_bg(colors.ink(4));
+        }
+    }
+    true
+}
+
+fn draw_caption(text: &str, center: f64, row: i32, area: Rect, colors: &Colors, buf: &mut Buffer) {
+    let area = area.intersection(buf.area);
+    if !printable_face(text) || text.len() > usize::from(area.width)
+        || row < i32::from(area.y) || row >= i32::from(area.bottom())
+    {
+        return;
+    }
+    let length = text.len() as i32;
+    let start = (center.floor() as i32 - length / 2)
+        .clamp(i32::from(area.x), i32::from(area.right()) - length);
+    for (offset, glyph) in text.chars().enumerate() {
+        if let Some(cell) = buf.cell_mut(((start + offset as i32) as u16, row as u16)) {
+            cell.set_char(glyph).set_fg(colors.ink(7)).set_bg(colors.ink(6));
+        }
+    }
+}
+
 pub struct SpriteWidget<'a> {
     pub sprite: &'a Sprite,
     pub renderer: Renderer,
@@ -139,113 +482,25 @@ impl Widget for SpriteWidget<'_> {
             return;
         };
         let (columns, rows) = cell_size(
-            self.sprite.width(),
-            self.sprite.height(),
-            scale,
-            self.renderer,
+            self.sprite.width(), self.sprite.height(), scale, self.renderer,
         );
         let (dx, dy) = self.renderer.packing();
         let left = u32::from(area.x) + (u32::from(area.width) - columns) / 2;
         let top = u32::from(area.y) + (u32::from(area.height) - rows) / 2;
-        for row in 0..rows {
-            for col in 0..columns {
-                let mut pixels = [None; 8];
-                for y in 0..dy {
-                    for x in 0..dx {
-                        pixels[usize::from(y * dx + x)] = self.sprite.pixel(
-                            col * u32::from(dx) + u32::from(x),
-                            row * u32::from(dy) + u32::from(y),
-                            scale,
-                        );
-                    }
-                }
-                let Some(index) = pixels.iter().flatten().next() else {
-                    continue;
-                };
-                let mut fg = self.colors.ink(usize::from(*index));
-                let mut bg = buf.cell(((left + col) as u16, (top + row) as u16)).map_or(
-                    self.colors.background,
-                    |c| {
-                        if c.bg == Color::Reset {
-                            self.colors.background
-                        } else {
-                            c.bg
-                        }
-                    },
-                );
-                let symbol = match self.renderer {
-                    Renderer::Auto | Renderer::Ascii => {
-                        ['#', 'o', '@', '*'][usize::from(*index) % 4]
-                    }
-                    Renderer::HalfBlock
-                        if self.colors.palette.iter().all(|c| *c == Color::Reset) =>
-                    {
-                        ['#', 'o', '@', '*'][usize::from(*index) % 4]
-                    }
-                    Renderer::HalfBlock => match (pixels[0], pixels[1]) {
-                        (Some(upper), Some(lower)) => {
-                            fg = self.colors.ink(usize::from(upper));
-                            bg = self.colors.ink(usize::from(lower));
-                            // Identical pixels use foreground coverage throughout the cell;
-                            // translucent terminal backgrounds must not add scan lines.
-                            if upper == lower {
-                                '█'
-                            } else {
-                                '▀'
-                            }
-                        }
-                        (Some(_), None) => '▀',
-                        (None, Some(_)) => '▄',
-                        _ => ' ',
-                    },
-                    Renderer::Quadrant => quadrant(std::array::from_fn(|i| pixels[i].is_some())),
-                    Renderer::Braille => braille(std::array::from_fn(|i| pixels[i].is_some())),
-                };
-                if let Some(cell) = buf.cell_mut(((left + col) as u16, (top + row) as u16)) {
-                    cell.set_char(symbol).set_fg(fg).set_bg(bg);
-                }
-            }
-        }
-        // Literal ASCII faces stay on the projected head, never on a rear view
-        // or outside a clipped/tiny sprite. Small views retain the HUD face.
-        if let Some(face) = self.sprite.face_overlay() {
-            let length = face.text.len() as u32;
-            let center = u32::from(face.center_x) * u32::from(scale) / u32::from(dx);
-            let row = u32::from(face.y) * u32::from(scale) / u32::from(dy);
-            let Some(start) = center.checked_sub(length / 2) else {
-                return;
-            };
-            if length == 0
-                || !face.text.is_ascii()
-                || face.text.bytes().any(|c| c.is_ascii_control())
-                || start.saturating_add(length) > columns
-                || row >= rows
+        let projection = Projection {
+            left: f64::from(left) * f64::from(dx),
+            top: f64::from(top) * f64::from(dy),
+            scale: f64::from(scale),
+        };
+        draw_projection(self.sprite, self.renderer, self.colors, projection, area, buf);
+        if !draw_front_face(self.sprite, self.renderer, self.colors, projection, area, buf) {
+            if let (Some(face), Some(bounds)) =
+                (self.sprite.face_overlay(), SolidBounds::of(self.sprite))
             {
-                return;
-            }
-            let covered = (start..start + length).all(|col| {
-                (0..dy).any(|y| {
-                    (0..dx).any(|x| {
-                        self.sprite
-                            .pixel(
-                                col * u32::from(dx) + u32::from(x),
-                                row * u32::from(dy) + u32::from(y),
-                                scale,
-                            )
-                            .is_some()
-                    })
-                })
-            });
-            if covered {
-                for (offset, glyph) in face.text.chars().enumerate() {
-                    if let Some(cell) =
-                        buf.cell_mut(((left + start + offset as u32) as u16, (top + row) as u16))
-                    {
-                        cell.set_char(glyph)
-                            .set_fg(self.colors.ink(0))
-                            .set_bg(self.colors.ink(4));
-                    }
-                }
+                let (center, bottom) = projection.cell(
+                    (bounds.left + bounds.right) / 2.0, bounds.bottom, self.renderer,
+                );
+                draw_caption(face.text, center, bottom.ceil() as i32, area, self.colors, buf);
             }
         }
     }
@@ -291,6 +546,7 @@ pub struct RoomWidget<'a> {
     pub expression: crate::sprite::Expression,
     pub frame: usize,
     pub position: (u16, u16),
+    pub camera: Camera,
     pub habitat: Option<HabitatView<'a>>,
 }
 
@@ -444,52 +700,74 @@ impl Widget for RoomWidget<'_> {
         if let Some(view) = self.habitat {
             draw_habitat(area, buf, self.colors, view, floor);
         }
-        let margin = if area.height >= 12 { 1 } else { 0 };
-        let available_height = area.height.saturating_sub(2 * margin).max(1);
-        let available_width = (area.width / 2).max(1);
-        let (dx, dy) = self.renderer.packing();
-        let compact = self.sprite.downsample_to_fit(
-            available_width.saturating_mul(dx),
-            available_height.saturating_mul(dy),
+        // Keep a real text row beneath the drawable pet, including when zoom
+        // crops its lower body. This is an expression caption, never a rear face.
+        let caption_rows = u16::from(area.height >= 4);
+        let reaction_rows = u16::from(area.height >= 6);
+        let margin = u16::from(area.width >= 12);
+        let viewport = Rect::new(
+            area.x + margin,
+            area.y + reaction_rows,
+            area.width.saturating_sub(2 * margin),
+            area.height.saturating_sub(caption_rows + reaction_rows),
         );
-        let sprite = &compact;
-        let scale = fit_scale(
-            sprite.width(),
-            sprite.height(),
-            available_width,
-            available_height,
-            self.renderer,
-            self.scale,
-        )
-        .unwrap_or(1);
-        let (columns, rows) = cell_size(sprite.width(), sprite.height(), scale, self.renderer);
-        let columns = (columns as u16).min(area.width);
-        let rows = (rows as u16).min(available_height);
-        let left = area.x
-            + ((u32::from(area.width.saturating_sub(columns))
-                * u32::from(self.position.0.min(1000)))
-                / 1000) as u16;
-        let top = area.y
-            + margin
-            + ((u32::from(available_height.saturating_sub(rows))
-                * u32::from(self.position.1.min(1000)))
-                / 1000) as u16;
-        let body = Rect::new(left, top, columns, rows);
-        // A small floor shadow anchors the volume without needing a graphics GPU.
-        let shadow_y = body.bottom().min(area.bottom().saturating_sub(1));
-        for x in left..left.saturating_add(columns).min(area.right()) {
-            if let Some(cell) = buf.cell_mut((x, shadow_y)) {
-                cell.set_char(if ascii { '.' } else { '▄' })
-                    .set_fg(self.colors.ink(6));
+        let Some(bounds) = SolidBounds::of(self.sprite) else {
+            return;
+        };
+        let projection = Projection::camera(
+            self.sprite, bounds, viewport, self.renderer, self.scale, self.position, self.camera,
+        );
+        let (left, _) = projection.cell(bounds.left, bounds.top, self.renderer);
+        let (right, bottom) = projection.cell(bounds.right, bounds.bottom, self.renderer);
+        // A floor shadow follows the projected feet; offscreen feet cast no
+        // artificial line across a clipped viewport edge.
+        let shadow_y = bottom.ceil() as i32;
+        if shadow_y >= i32::from(viewport.y) && shadow_y < i32::from(viewport.bottom()) {
+            let start = (left.floor() as i32).max(i32::from(viewport.x));
+            let end = (right.ceil() as i32).min(i32::from(viewport.right()));
+            for x in start..end {
+                if let Some(cell) = buf.cell_mut((x as u16, shadow_y as u16)) {
+                    cell.set_char(if ascii { '.' } else { '▄' })
+                        .set_fg(self.colors.ink(6));
+                }
             }
         }
-        SpriteWidget {
-            sprite,
-            renderer: self.renderer,
-            scale,
-            colors: self.colors,
+        draw_projection(self.sprite, self.renderer, self.colors, projection, viewport, buf);
+        draw_front_face(self.sprite, self.renderer, self.colors, projection, viewport, buf);
+        if caption_rows != 0 {
+            let mood = match self.expression {
+                Expression::Idle => "curious",
+                Expression::Happy => "sunny",
+                Expression::Sad => "blue",
+                Expression::Angry => "grumpy",
+                Expression::Surprised => "wonder",
+                Expression::Sleeping => "dreaming",
+                Expression::Sick => "poorly",
+                Expression::Hungry => "peckish",
+                Expression::Playful => "playful",
+                Expression::Shy => "bashful",
+                Expression::Excited => "sparkly",
+                Expression::Eating => "munching",
+                Expression::Cleaning => "splashing",
+                Expression::Healing => "mending",
+                Expression::Celebrate => "hooray",
+                Expression::Dead => "farewell",
+            };
+            // Metadata is the authority for the animated visible front face.
+            // A rear-facing animal still has a plainly separate mood caption.
+            let face = self.sprite.face_overlay().map_or_else(
+                || self.expression.kaomoji(self.frame), |face| face.text,
+            );
+            let caption = format!("{face} {mood}");
+            let caption = if caption.len() <= usize::from(area.width) {
+                caption.as_str()
+            } else {
+                face
+            };
+            let center = (left + right) / 2.0;
+            let row = shadow_y.clamp(i32::from(viewport.y), i32::from(area.bottom()) - 1);
+            draw_caption(caption, center, row, area, self.colors, buf);
         }
-        .render(body, buf);
         let effect = match self.expression {
             Expression::Eating => {
                 if self.frame.is_multiple_of(2) {
@@ -536,6 +814,7 @@ impl Widget for RoomWidget<'_> {
             Expression::Shy => "..",
             Expression::Idle | Expression::Dead => "",
         };
+        let effect = if effect.len() <= usize::from(area.width) { effect } else { "" };
         let x = area.x + (area.width.saturating_sub(effect.len() as u16)) / 2;
         let y = area.y;
         if area.height <= 3 {
@@ -582,7 +861,7 @@ mod face_tests {
                 "shape {shape}"
             );
             let area = Rect::new(2, 2, front.width(), front.height().div_ceil(2));
-            let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 100));
+            let mut buffer = Buffer::empty(Rect::new(0, 0, area.right() + 2, area.bottom() + 2));
             SpriteWidget {
                 sprite: &front,
                 renderer: Renderer::HalfBlock,
@@ -746,6 +1025,7 @@ mod habitat_tests {
             expression: Expression::Idle,
             frame: 0,
             position: (500, 700),
+            camera: Camera::default(),
             habitat: Some(HabitatView {
                 state: &game.habitat,
                 rules: &config.habitat,
@@ -774,5 +1054,302 @@ mod habitat_tests {
         assert_eq!(baseline, room(&game, &config));
         assert_eq!(game.habitat.seed, seed);
         assert_eq!(game.visual_seed(), rng);
+    }
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::*;
+    use crate::{
+        game::{Game, Stage},
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+
+    fn padded_body() -> Sprite {
+        let mut pixels = vec![None; 64 * 64];
+        for y in 20..44 {
+            for x in 27..37 {
+                pixels[y * 64 + x] = Some(if x < 32 { 1 } else { 11 });
+            }
+        }
+        Sprite::new(64, 64, pixels).unwrap()
+    }
+
+    fn projected(sprite: &Sprite, renderer: Renderer, camera: Camera, area: Rect) -> Buffer {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut buf = Buffer::empty(area);
+        let projection = Projection::camera(
+            sprite, SolidBounds::of(sprite).unwrap(), area, renderer, 0, (500, 500), camera,
+        );
+        draw_projection(sprite, renderer, &colors, projection, area, &mut buf);
+        buf
+    }
+
+    fn occupied(buf: &Buffer) -> usize {
+        buf.content.iter().filter(|c| c.symbol() != " ").count()
+    }
+
+    fn text(buf: &Buffer, area: Rect) -> String {
+        let mut result = String::new();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                result.push_str(buf[(x, y)].symbol());
+            }
+            result.push('\n');
+        }
+        result
+    }
+
+    #[test]
+    fn content_fit_uses_the_viewport_and_zoom_changes_actual_rendered_occupancy() {
+        let sprite = padded_body();
+        let area = Rect::new(0, 0, 80, 24);
+        for renderer in [Renderer::Ascii, Renderer::HalfBlock, Renderer::Quadrant, Renderer::Braille] {
+            let frames: Vec<_> = [100, 125, 150, 200].into_iter().map(|zoom_percent| {
+                projected(&sprite, renderer, Camera { zoom_percent, ..Camera::default() }, area)
+            }).collect();
+            let counts: Vec<_> = frames.iter().map(occupied).collect();
+            assert!(counts.windows(2).all(|w| w[1] > w[0]), "{renderer:?}: {counts:?}");
+            assert!(counts[3] * 100 >= counts[0] * 120);
+            assert!(frames.windows(2).all(|w| w[0] != w[1]));
+            assert_eq!(frames[0], projected(&sprite, renderer, Camera::default(), area));
+            // At 100%, the padded source's actual body fills almost all height.
+            let rows = (0..area.height).filter(|&y| {
+                (0..area.width).any(|x| frames[0][(x, y)].symbol() != " ")
+            }).count();
+            assert!(rows >= 22, "{renderer:?}: {rows}");
+        }
+    }
+
+    #[test]
+    fn room_wanders_but_pet_tracks_and_view_blends_have_intermediate_frames() {
+        let sprite = padded_body();
+        let bounds = SolidBounds::of(&sprite).unwrap();
+        let area = Rect::new(3, 2, 80, 24);
+        let renderer = Renderer::HalfBlock;
+        let project = |view, position, transition_percent| {
+            Projection::camera(&sprite, bounds, area, renderer, 0, position, Camera {
+                view, from_view: CameraView::Room, transition_percent, ..Camera::default()
+            })
+        };
+        let room_left = project(CameraView::Room, (0, 0), 100);
+        let room_right = project(CameraView::Room, (1000, 1000), 100);
+        assert!(room_right.left > room_left.left && room_right.top > room_left.top);
+        let pet_left = project(CameraView::Pet, (0, 0), 100);
+        let pet_right = project(CameraView::Pet, (1000, 1000), 100);
+        assert_eq!((pet_left.left, pet_left.top), (pet_right.left, pet_right.top));
+        let frames: Vec<_> = [0, 25, 65, 100].into_iter().map(|transition_percent| {
+            projected(&sprite, renderer, Camera {
+                view: CameraView::Face, from_view: CameraView::Room,
+                transition_percent, ..Camera::default()
+            }, area)
+        }).collect();
+        assert!(frames.windows(2).all(|w| w[0] != w[1]));
+        let from = project(CameraView::Face, (500, 500), 0);
+        let middle = project(CameraView::Face, (500, 500), 50);
+        let to = project(CameraView::Face, (500, 500), 100);
+        assert!(from.scale < middle.scale && middle.scale < to.scale);
+        assert!((middle.top - (from.top + to.top) / 2.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn signed_offscreen_projection_and_tiny_rooms_cannot_write_outside_the_rect() {
+        let sprite = padded_body();
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let buffer_area = Rect::new(2, 3, 50, 30);
+        for renderer in [Renderer::Ascii, Renderer::HalfBlock, Renderer::Quadrant, Renderer::Braille] {
+            for (width, height) in [(0, 0), (1, 1), (3, 2), (10, 2), (12, 6), (20, 8), (40, 12)] {
+                let area = Rect::new(5, 7, width, height);
+                for view in [CameraView::Room, CameraView::Pet, CameraView::Face] {
+                    let mut buf = Buffer::empty(buffer_area);
+                    for cell in &mut buf.content {
+                        cell.set_char('!');
+                    }
+                    let baseline = buf.clone();
+                    RoomWidget {
+                        sprite: &sprite, renderer, scale: 0, colors: &colors,
+                        expression: Expression::Eating, frame: 1, position: (1000, 0),
+                        camera: Camera { view, zoom_percent: 400, ..Camera::default() },
+                        habitat: None,
+                    }.render(area, &mut buf);
+                    for y in buffer_area.y..buffer_area.bottom() {
+                        for x in buffer_area.x..buffer_area.right() {
+                            if !area.contains((x, y).into()) {
+                                assert_eq!(buf[(x, y)], baseline[(x, y)], "{renderer:?}/{view:?}");
+                            }
+                        }
+                    }
+                    assert!(buf.content.iter().all(|c| !c.symbol().contains('\u{1b}')));
+                    if renderer == Renderer::Ascii {
+                        assert!(buf.content.iter().all(|c| c.symbol().is_ascii()));
+                    }
+                }
+            }
+            for origin in [-1_000_000.0, -3.25, 1_000_000.0] {
+                let mut buf = Buffer::empty(buffer_area);
+                let area = Rect::new(8, 9, 3, 2);
+                draw_projection(&sprite, renderer, &colors, Projection {
+                    left: origin, top: origin, scale: 4.0,
+                }, area, &mut buf);
+                for y in buffer_area.y..buffer_area.bottom() {
+                    for x in buffer_area.x..buffer_area.right() {
+                        if !area.contains((x, y).into()) {
+                            assert_eq!(buf[(x, y)].symbol(), " ");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn face_camera_draws_metadata_on_front_head_and_never_on_the_rear() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let area = Rect::new(2, 2, 80, 24);
+        for shape in 0..16 {
+            for frame in [0, 1, 2, 3] {
+                let make = |yaw| Sprite::voxel_with_appearance(
+                    Stage::Adult, Expression::Eating, SpriteStyle::SixteenBit,
+                    frame, yaw, false, Appearance { shape, body: 1, accent: 11 },
+                );
+                let front = make(0);
+                let rear = make(180);
+                let front_face = front.face_overlay().expect("front head metadata");
+                let mut buf = Buffer::empty(Rect::new(0, 0, 84, 28));
+                let projection = Projection::camera(
+                    &front, SolidBounds::of(&front).unwrap(), area, Renderer::HalfBlock,
+                    0, (500, 500), Camera { view: CameraView::Face, ..Camera::default() },
+                );
+                draw_projection(&front, Renderer::HalfBlock, &colors, projection, area, &mut buf);
+                assert!(draw_front_face(
+                    &front, Renderer::HalfBlock, &colors, projection, area, &mut buf,
+                ), "shape {shape} frame {frame}");
+                assert!(text(&buf, area).contains(front_face.text));
+                let (_, face_y) = projection.cell(
+                    f64::from(front_face.center_x) + 0.5,
+                    f64::from(front_face.y) + 0.5, Renderer::HalfBlock,
+                );
+                assert!(text(&buf, Rect::new(area.x, face_y.floor() as u16, area.width, 1))
+                    .contains(front_face.text));
+                assert!(rear.face_overlay().is_none());
+                let previous = buf.clone();
+                assert!(!draw_front_face(
+                    &rear, Renderer::HalfBlock, &colors, projection, area, &mut buf,
+                ));
+                assert_eq!(buf, previous);
+            }
+        }
+    }
+
+    #[test]
+    fn caption_is_below_the_pet_in_front_and_rear_and_uses_the_actual_mood() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let area = Rect::new(1, 1, 20, 8);
+        for yaw in [0, 180] {
+            let sprite = Sprite::voxel(
+                Stage::Adult, Expression::Eating, SpriteStyle::SixteenBit, 1, yaw, false,
+            );
+            let mut buf = Buffer::empty(Rect::new(0, 0, 22, 10));
+            RoomWidget {
+                sprite: &sprite, renderer: Renderer::Ascii, scale: 0, colors: &colors,
+                expression: Expression::Eating, frame: 1, position: (500, 500),
+                camera: Camera { zoom_percent: 400, ..Camera::default() }, habitat: None,
+            }.render(area, &mut buf);
+            let caption = text(&buf, Rect::new(1, 8, 20, 1));
+            assert!(caption.contains("munching"));
+            assert!(caption.contains(sprite.face_overlay().map_or(
+                Expression::Eating.kaomoji(1), |f| f.text,
+            )));
+        }
+    }
+
+    #[test]
+    fn rendering_leaves_game_rng_and_serialized_save_state_unchanged() {
+        let config = Config::sample().unwrap();
+        let game = Game::new(&config.game, 42);
+        let before = serde_json::to_vec(&game).unwrap();
+        let visual_seed = game.visual_seed();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let sprite = Sprite::voxel(
+            Stage::Adult, Expression::Idle, SpriteStyle::SixteenBit, 2, 0, false,
+        );
+        for view in [CameraView::Room, CameraView::Pet, CameraView::Face] {
+            for zoom_percent in [50, 100, 175, 400] {
+                let area = Rect::new(0, 0, 40, 12);
+                let mut buf = Buffer::empty(area);
+                RoomWidget {
+                    sprite: &sprite, renderer: Renderer::Ascii, scale: 0, colors: &colors,
+                    expression: Expression::Idle, frame: 2, position: (350, 750),
+                    camera: Camera { view, zoom_percent, ..Camera::default() },
+                    habitat: Some(HabitatView {
+                        state: &game.habitat, rules: &config.habitat,
+                        wins: game.wins, age: game.age_ticks,
+                    }),
+                }.render(area, &mut buf);
+                assert!(text(&buf, area).is_ascii());
+            }
+        }
+        assert!(snapshot(&sprite, &config).unwrap().is_ascii());
+        assert_eq!(before, serde_json::to_vec(&game).unwrap());
+        assert_eq!(visual_seed, game.visual_seed());
+    }
+
+
+    #[test]
+    fn micro_face_uses_two_rows_for_a_real_front_head_without_a_caption() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+            for height in [2, 3] {
+                let area = Rect::new(2, 3, 10, height);
+                for shape in 0..16 {
+                    let sprite = Sprite::voxel_with_appearance(
+                        Stage::Adult, Expression::Idle, SpriteStyle::SixteenBit,
+                        2, 0, false, Appearance { shape, body: 1, accent: 11 },
+                    );
+                    let face = sprite.face_overlay().expect("front-facing head");
+                    let mut buf = Buffer::empty(Rect::new(0, 0, 14, 8));
+                    RoomWidget {
+                        sprite: &sprite, renderer, scale: 0, colors: &colors,
+                        expression: Expression::Idle, frame: 0, position: (500, 500),
+                        camera: Camera { view: CameraView::Face, ..Camera::default() },
+                        habitat: None,
+                    }.render(area, &mut buf);
+                    assert!(text(&buf, area).contains(face.text),
+                        "{renderer:?} shape {shape} height {height}");
+                    assert!(!text(&buf, area).contains("curious"));
+                    assert_eq!(buf[(1, 3)].symbol(), " ");
+                    assert_eq!(buf[(12, 3)].symbol(), " ");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packing_preserves_two_halfblock_colors_and_pattern_masks() {
+        let colors = Colors {
+            palette: (0..16).map(Color::Indexed).collect(),
+            background: Color::Indexed(15),
+        };
+        let mut cell = ratatui::buffer::Cell::default();
+        cell.set_bg(Color::Indexed(9));
+        paint_pixels(Renderer::HalfBlock, &colors,
+            [Some(1), Some(2), None, None, None, None, None, None], &mut cell);
+        assert_eq!(cell.symbol(), "▀");
+        assert_eq!(cell.fg, Color::Indexed(1));
+        assert_eq!(cell.bg, Color::Indexed(2));
+        paint_pixels(Renderer::HalfBlock, &colors,
+            [Some(3), Some(3), None, None, None, None, None, None], &mut cell);
+        assert_eq!(cell.symbol(), "█");
+        let pixels = [Some(1), None, None, Some(2), None, Some(3), None, None];
+        paint_pixels(Renderer::Quadrant, &colors, pixels, &mut cell);
+        assert_eq!(cell.symbol(), quadrant([true, false, false, true]).to_string());
+        assert_eq!(cell.fg, Color::Indexed(1));
+        paint_pixels(Renderer::Braille, &colors, pixels, &mut cell);
+        assert_eq!(cell.symbol(), braille([true, false, false, true, false, true, false, false]).to_string());
     }
 }
