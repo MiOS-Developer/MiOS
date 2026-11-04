@@ -182,7 +182,7 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
                                   messages: list, tools: list, timeout,
                                   push, allow_write: bool = False, tool_choice=None,
                                   session_id: Optional[str] = None,
-                                  terminal_response: Optional[dict] = None) -> list:
+                                  terminal_response: Optional[dict] = None, max_tokens=None) -> list:
     import sys
     import time
     msgs = list(messages)
@@ -241,6 +241,8 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
               "parallel_tool_calls": _endpoint_supports_parallel_tools(ep)}
         if tool_choice and _ == 0:
             nb["tool_choice"] = tool_choice
+        if max_tokens is not None:
+            nb["max_tokens"] = max_tokens
         try:
             r = await client.post(
                 f"{ep}/chat/completions",

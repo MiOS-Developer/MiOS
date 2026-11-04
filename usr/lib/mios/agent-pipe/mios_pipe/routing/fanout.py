@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import json
 import logging
 import re
@@ -179,10 +181,13 @@ async def _model_select(corpus: str, candidates: list, want: int) -> Optional[li
         '["name-a","name-b"], or [] for none.')
     user = f"TASK PLAN:\n{corpus.strip()[:2000]}\n\nAVAILABLE AGENTS:\n{cards}\n\nChosen (JSON array):"
     timeout = float(_DISPATCH_CFG.get("fanout_select_timeout_s", 8) or 8)
-    base = _MICRO_ENDPOINT.rstrip("/")
+    endpoint, selected_model = await _pick_inference_backend(
+        _MICRO_ENDPOINT, _MICRO_MODEL, endpoint_env=("MIOS_MICRO_ENDPOINT",),
+        model_env=("MIOS_MICRO_MODEL",))
+    base = endpoint.rstrip("/")
     url = base + ("" if base.endswith("/chat/completions") else "/chat/completions")
     body = {
-        "model": _MICRO_MODEL,
+        "model": selected_model,
         "messages": [{"role": "system", "content": sys_prompt},
                      {"role": "user", "content": user}],
         "temperature": 0,

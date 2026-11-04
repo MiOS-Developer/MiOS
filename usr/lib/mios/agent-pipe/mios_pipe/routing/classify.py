@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import json
 import os
@@ -87,7 +89,12 @@ async def classify_intent(user_text: str) -> Optional[dict]:
                     "reply": {"type": ["string", "null"]}},
                 "required": ["action", "tool", "args", "reason", "reply"]}}}
         payload["chat_template_kwargs"] = {"enable_thinking": False}
-    url = f"{ROUTER_ENDPOINT}/v1/chat/completions"
+    endpoint, selected_model = await _pick_inference_backend(
+        ROUTER_ENDPOINT, ROUTER_MODEL,
+        endpoint_env=("MIOS_AGENT_PIPE_ROUTER_ENDPOINT", "MIOS_MICRO_ENDPOINT"),
+        model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
+    payload["model"] = selected_model
+    url = f"{endpoint}/chat/completions"
     try:
         async with httpx.AsyncClient(timeout=ROUTER_TIMEOUT_S) as s:
             r = await s.post(url, json=payload,
@@ -144,7 +151,11 @@ async def _route_domain(user_text: str) -> Optional[str]:
     }
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
-            r = await s.post(f"{PLANNER_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                PLANNER_ENDPOINT, ROUTER_MODEL,
+                endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
+                model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
         if r.status_code != 200:
             return None

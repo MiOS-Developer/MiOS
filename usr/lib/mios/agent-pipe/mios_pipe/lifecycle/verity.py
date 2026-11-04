@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import logging
 import os
@@ -149,7 +151,11 @@ async def _clarify_question(user_text: str, answer: str) -> str:
     }
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
-            r = await s.post(f"{PLANNER_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                PLANNER_ENDPOINT, ROUTER_MODEL,
+                endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
+                model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
         if r.status_code != 200:
             return ""
@@ -185,8 +191,11 @@ async def _verity_factcheck(draft: str, user_q: str,
     queries: list = []
     try:
         async with httpx.AsyncClient(timeout=REFINE_TIMEOUT_S) as s:
-            r = await s.post(f"{REFINE_ENDPOINT}/v1/chat/completions", json={
-                "model": REFINE_MODEL, "stream": False,
+            endpoint, selected_model = await _pick_inference_backend(
+                REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
+                model_env=("MIOS_REFINE_MODEL",))
+            r = await s.post(f"{endpoint}/chat/completions", json={
+                "model": selected_model, "stream": False,
                 "temperature": 0.0, "max_tokens": 400,
                 "messages": [
                     {"role": "system", "content": sys_p},
@@ -348,8 +357,11 @@ async def polish_response(raw_text: str,
         user_msg_parts.append(_fc_block)
     user_msg_parts.append(f"Raw answer from sub-agent:\n{raw_text[:8000]}")
     user_msg = "\n\n".join(user_msg_parts)
+    endpoint, selected_model = await _pick_inference_backend(
+        POLISH_ENDPOINT, POLISH_MODEL, endpoint_env=("MIOS_POLISH_ENDPOINT",),
+        model_env=("MIOS_POLISH_MODEL",))
     url, payload = _polish_post(
-        POLISH_ENDPOINT, POLISH_MODEL,
+        endpoint.rstrip("/").removesuffix("/v1"), selected_model,
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         int(max_tokens) if max_tokens else POLISH_MAX_TOKENS)

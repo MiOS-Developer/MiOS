@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import collections
 import json
@@ -332,7 +334,10 @@ async def _quick_chat_reply(user_text: str, history: list = None) -> str:
     }
     try:
         async with httpx.AsyncClient(timeout=REFINE_TIMEOUT_S) as s:
-            r = await s.post(f"{REFINE_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
+                model_env=("MIOS_REFINE_MODEL",))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
             if r.status_code != 200:
                 return ""
@@ -358,7 +363,10 @@ async def _is_memory_question(user_text: str, facts: str) -> bool:
         payload = {"model": REFINE_MODEL, "messages": msgs,
                    "stream": False, "temperature": 0.1, "max_tokens": 10}
         async with httpx.AsyncClient(timeout=3.0) as s:
-            r = await s.post(f"{REFINE_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
+                model_env=("MIOS_REFINE_MODEL",))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
             if r.status_code == 200:
                 _lm = (((r.json().get("choices") or [{}])[0]).get("message") or {})
@@ -387,7 +395,10 @@ async def _ask_for_location(user_text: str) -> str:
         payload = {"model": REFINE_MODEL, "messages": msgs,
                    "stream": False, "temperature": 0.3, "max_tokens": 200}
         async with httpx.AsyncClient(timeout=REFINE_TIMEOUT_S) as s:
-            r = await s.post(f"{REFINE_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
+                model_env=("MIOS_REFINE_MODEL",))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
             if r.status_code == 200:
                 _lm = ((r.json().get("choices") or [{}])[0]).get("message") or {}
@@ -446,7 +457,11 @@ async def _needs_external_knowledge(user_text: str) -> bool:
     }
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
-            r = await s.post(f"{PLANNER_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                PLANNER_ENDPOINT, ROUTER_MODEL,
+                endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
+                model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
         if r.status_code != 200:
             return False
@@ -634,21 +649,43 @@ async def _plain_chat_complete(body: dict) -> Any:
     payload["model"] = (BACKEND_MODEL if not requested_model
                         or (agent_model and requested_model == agent_model)
                         else requested_model)
+    fallback_model = payload["model"]
     streaming = bool(payload.get("stream", False))
     payload["stream"] = streaming
-    headers = {"Content-Type": "application/json"}
-    from mios_config import _AUTH_HOSTPORTS
-    if _BACKEND_KEY and str(BACKEND).split("://")[-1].split("/")[0] in _AUTH_HOSTPORTS:
-        headers["Authorization"] = f"Bearer {_BACKEND_KEY}"
     upstream = None
     stream_owned = False
     try:
-        if not BACKEND:
+        backend, selected_model = await _pick_inference_backend(
+            BACKEND, BACKEND_MODEL,
+            endpoint_env=("MIOS_AGENT_PIPE_BACKEND",),
+            model_env=("MIOS_AGENT_PIPE_BACKEND_MODEL",),
+            explicit_model=bool(requested_model and requested_model != agent_model))
+        if not requested_model or (agent_model and requested_model == agent_model):
+            payload["model"] = selected_model
+        headers = {"Content-Type": "application/json"}
+        from mios_config import _AUTH_HOSTPORTS
+        if _BACKEND_KEY and str(backend).split("://")[-1].split("/")[0] in _AUTH_HOSTPORTS:
+            headers["Authorization"] = f"Bearer {_BACKEND_KEY}"
+        if not backend:
             raise ValueError("no inference backend is configured")
         client = await _get_client()
-        url = f"{BACKEND.rstrip('/')}/chat/completions"
+        url = f"{backend.rstrip('/')}/chat/completions"
         if not streaming:
-            reply = await client.post(url, json=payload, headers=headers)
+            try:
+                reply = await client.post(url, json=payload, headers=headers)
+            except httpx.HTTPError:
+                if backend.rstrip("/") == BACKEND.rstrip("/"):
+                    raise
+                reply = None
+            if ((reply is None or reply.status_code >= 500)
+                    and backend.rstrip("/") != BACKEND.rstrip("/")):
+                # No tools or streamed output have run: one bounded CPU-floor retry is safe.
+                fallback_payload = dict(payload, model=fallback_model)
+                fallback_headers = {"Content-Type": "application/json"}
+                if _BACKEND_KEY and str(BACKEND).split("://")[-1].split("/")[0] in _AUTH_HOSTPORTS:
+                    fallback_headers["Authorization"] = f"Bearer {_BACKEND_KEY}"
+                reply = await client.post(f"{BACKEND.rstrip('/')}/chat/completions",
+                                          json=fallback_payload, headers=fallback_headers)
             return JSONResponse(content=reply.json(), status_code=reply.status_code)
         request = client.build_request("POST", url, json=payload, headers=headers)
         upstream = await client.send(request, stream=True)
@@ -1980,4 +2017,6 @@ async def _kernel_agent_handler(decision, **ctx):
         session_id=session_id, last_user_text=last_user_text,
         persona_system=_persona_system, reply_prefix=reply_prefix,
         messages=messages, request=ctx.get("request"),
-        persist_response=ctx.get("store_response", True))
+        persist_response=ctx.get("store_response", True),
+        max_tokens=(ctx.get("body") or {}).get("max_tokens"),
+        requested_model=(ctx.get("body") or {}).get("model"))

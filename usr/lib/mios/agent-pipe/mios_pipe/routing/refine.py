@@ -1,6 +1,8 @@
 # AI-hint: REFINE intent-classifier extracted verbatim from server.py (refactor R5/mios_refine wave).
 # AI-doc: usr/share/doc/mios/manual/routing.md
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import json
 import inspect
@@ -713,7 +715,11 @@ async def _refine_intent(user_text: str,
                              "target_agent", "hint_tools", "tool", "args", "reply",
                              "tasks"]}}}
         payload["chat_template_kwargs"] = {"enable_thinking": False}
-    url = f"{REFINE_ENDPOINT}/v1/chat/completions"
+    endpoint, selected_model = await _pick_inference_backend(
+        REFINE_ENDPOINT, REFINE_MODEL, endpoint_env=("MIOS_REFINE_ENDPOINT",),
+        model_env=("MIOS_REFINE_MODEL",))
+    payload["model"] = selected_model
+    url = f"{endpoint}/chat/completions"
     t0 = time.time()
     async def _call_on_token(token_val: str, is_re: bool):
         if on_token:
@@ -859,7 +865,7 @@ async def _refine_intent(user_text: str,
              parsed.get("domain_type"), parsed.get("target_agent"))
     parsed["_elapsed_s"] = round(elapsed, 1)
     parsed["_model"] = REFINE_MODEL
-    parsed["_endpoint"] = REFINE_ENDPOINT
+    parsed["_endpoint"] = endpoint.rstrip("/").removesuffix("/v1")
     _news = parsed.get("news")
     parsed["news"] = (_news is True) or (
         isinstance(_news, str) and _news.strip().lower() in {"true", "1", "yes"})

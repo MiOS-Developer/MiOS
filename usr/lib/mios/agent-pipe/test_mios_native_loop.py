@@ -788,6 +788,63 @@ def _run_progress_and_completion_contract():
         assert '"finish_reason": "stop"' not in wire, wire
     print("web progress preserves final synthesis; tool-only and truncated streams fail explicitly: OK")
 
+
+def _run_explicit_model_and_limit_contract():
+    dispatches, loops = [], []
+    _base_configure({}, dispatches, loops)
+    seen = {}
+    async def complete(client, endpoint, model, headers, messages, *args, **kwargs):
+        seen.update(endpoint=endpoint, model=model, max_tokens=kwargs.get("max_tokens"))
+        kwargs["terminal_response"]["content"] = FINAL_ANSWER
+        return list(messages)
+    async def polish(*args, **kwargs):
+        seen["polish_max_tokens"] = kwargs.get("max_tokens")
+        return ""
+    M._v1_secondary_tool_loop = complete
+    M.polish_response = polish
+    response = asyncio.run(M._respond_native_loop_direct(
+        {}, streaming=False, chat_id="bounded", model="explicit-brain", session_id=None,
+        last_user_text="Hello", persona_system="", messages=[{"role": "user", "content": "Hello"}],
+        requested_model="explicit-brain", max_tokens=8))
+    assert _body_text(response) == FINAL_ANSWER
+    assert seen == {"endpoint": "http://x/v1", "model": "explicit-brain",
+                    "max_tokens": 8, "polish_max_tokens": 8}, seen
+    print("explicit API model and generation limit reach native tool/final/polish: OK")
+
+
+
+def _run_explicit_target_failure_does_not_substitute_another_model():
+    import os
+    from unittest import mock
+    dispatches, loops = [], []
+    _base_configure({}, dispatches, loops)
+    async def failed(client, endpoint, model, headers, messages, *args, **kwargs):
+        kwargs["terminal_response"]["_backend_failed"] = True
+        return list(messages)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("explicit target silently retried on a different registered model")
+    original_cpu = M._registered_cpu_completion
+    original_refine = M.REFINE_ENDPOINT
+    M._v1_secondary_tool_loop = failed
+    M._registered_cpu_completion = forbidden
+    M.REFINE_ENDPOINT = "http://different-fallback.invalid"
+    try:
+        for requested, environment in (
+                ("explicit-brain", {}),
+                (None, {"MIOS_AGENT_PIPE_BACKEND": "http://x/v1"})):
+            with mock.patch.dict(os.environ, environment):
+                response = asyncio.run(M._respond_native_loop_direct(
+                    {}, streaming=False, chat_id="pinned", model="m", session_id=None,
+                    last_user_text="Hello", persona_system="",
+                    messages=[{"role": "user", "content": "Hello"}], requested_model=requested))
+            assert response.status_code == 503, response.body
+            assert b"inference_unavailable" in response.body, response.body
+    finally:
+        M._registered_cpu_completion = original_cpu
+        M.REFINE_ENDPOINT = original_refine
+    print("failed explicit model or endpoint is never substituted by CPU fallback: OK")
+
+
 if __name__ == "__main__":
     _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
@@ -796,3 +853,5 @@ if __name__ == "__main__":
     _run_stream_cleanup_and_local_grounding()
     _run_terminal_completion_reuse()
     _run_registered_cpu_fallback()
+    _run_explicit_model_and_limit_contract()
+    _run_explicit_target_failure_does_not_substitute_another_model()

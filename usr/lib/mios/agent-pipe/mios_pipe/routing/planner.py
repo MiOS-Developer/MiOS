@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import json
 import logging
@@ -346,7 +348,11 @@ async def decompose_intent(user_text: str) -> Optional[dict]:
         "max_tokens": PLANNER_MAX_TOKENS,
         "stream": False,
     }
-    url = f"{PLANNER_ENDPOINT}/v1/chat/completions"
+    endpoint, payload["model"] = await _pick_inference_backend(
+        PLANNER_ENDPOINT, PLANNER_MODEL,
+        endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
+        model_env=("MIOS_AGENT_PIPE_PLANNER_MODEL",))
+    url = f"{endpoint}/chat/completions"
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
             r = await s.post(url, json=payload,

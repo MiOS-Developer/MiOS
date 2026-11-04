@@ -186,6 +186,32 @@ async def _pick_tool_backend() -> tuple:
         return _TOOL_BACKEND_HEAVY, _TOOL_BACKEND_HEAVY_MODEL
     return _TOOL_BACKEND, _TOOL_BACKEND_MODEL
 
+
+async def _pick_inference_backend(endpoint: str, model: str, *,
+                                  endpoint_env=(), model_env=(),
+                                  explicit_model: bool = False) -> tuple:
+    """Use the shared ready-lane chain for automatic primary-brain inference.
+
+    Stage-specific endpoint/model choices and raw API model IDs stay exact.
+    The light endpoint remains the fallback, rather than pinning every stage to it.
+    """
+    base = endpoint.rstrip("/").removesuffix("/chat/completions").rstrip("/").removesuffix("/v1")
+    original = (base + "/v1" if base else "", model)
+    if explicit_model or any(str(os.environ.get(key) or "").strip()
+                             for key in (*endpoint_env, *model_env)):
+        return original
+    from mios_config import _STACK_MODEL
+    floor = _TOOL_BACKEND.rstrip("/").removesuffix("/chat/completions").rstrip("/").removesuffix("/v1")
+    if (base != floor or model not in {_TOOL_BACKEND_MODEL, _STACK_MODEL}
+            or _get_client is None):
+        return original
+    try:
+        return await _pick_tool_backend()
+    except Exception as exc:
+        log.warning("automatic inference selection failed; retaining configured floor: %s",
+                    type(exc).__name__)
+        return original
+
 def _lane_resolver_current():
     """The live ``_LANE_RESOLVER`` singleton (None until first resolved). server.py's
     cluster-health route reads it through this getter because the global is REBOUND at

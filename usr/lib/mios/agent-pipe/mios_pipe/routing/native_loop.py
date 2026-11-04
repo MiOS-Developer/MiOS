@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import json
 import os
@@ -290,7 +292,7 @@ def configure(**deps) -> None:
         if _k in _INJECTED:
             g[_k] = _v
 
-async def _registered_cpu_completion(messages: list, attempted: set) -> str:
+async def _registered_cpu_completion(messages: list, attempted: set, max_tokens=None) -> str:
     """Use ready configured CPU capacity after the primary produced no answer."""
     if not all((_get_agent_registry, _live_agent_names, _agent_lane,
                 _call_agent_complete, _get_client, _endpoint_key)):
@@ -313,6 +315,8 @@ async def _registered_cpu_completion(messages: list, attempted: set) -> str:
                 attempted.add(key)
                 body = {"model": model, "messages": list(messages), "stream": False,
                         "chat_template_kwargs": {"enable_thinking": False}}
+                if max_tokens is not None:
+                    body["max_tokens"] = max_tokens
                 try:
                     _, answer = await _call_agent_complete(
                         name, cfg, body, {"Content-Type": "application/json"},
@@ -675,9 +679,25 @@ async def _respond_native_loop_direct(
     if NATIVE_LOOP_RECENCY_DEFAULTS and refined and refined.get("news"):
         _recency_ctx_var.set({"time_range": NATIVE_LOOP_RECENCY_RANGE,
                               "fanout": NATIVE_LOOP_RECENCY_FANOUT})
+    requested_model = kwargs.get("requested_model")
+    agent_alias = ""
+    if requested_model:
+        from mios_config import _toml_section
+        agent_alias = str((_toml_section("ai") or {}).get("agent_model") or "")
+    explicit_model = bool(requested_model and requested_model != agent_alias)
+    automatic_fallback = not explicit_model and not any(
+        str(os.environ.get(key) or "").strip()
+        for key in ("MIOS_AGENT_PIPE_BACKEND", "MIOS_AGENT_PIPE_BACKEND_MODEL"))
+    _backend = BACKEND
+    _backend_model = str(requested_model) if explicit_model else BACKEND_MODEL
+    if not force_delegate and not target_agents:
+        _backend, _backend_model = await _pick_inference_backend(
+            BACKEND, _backend_model,
+            endpoint_env=("MIOS_AGENT_PIPE_BACKEND",),
+            model_env=("MIOS_AGENT_PIPE_BACKEND_MODEL",), explicit_model=explicit_model)
     _hdrs: dict = {"Content-Type": "application/json"}
     if (_BACKEND_KEY
-            and BACKEND.split("://")[-1].split("/")[0] == _BACKEND_HOSTPORT):
+            and _backend.split("://")[-1].split("/")[0] == _BACKEND_HOSTPORT):
         _hdrs["Authorization"] = f"Bearer {_BACKEND_KEY}"
     _raw = ""
     _fired: list = []
@@ -799,13 +819,15 @@ async def _respond_native_loop_direct(
                         "(no '<YourUsername>' placeholders):\n" + "\n".join(_hits)})
         _terminal_response: dict = {}
         _m2 = await _v1_secondary_tool_loop(
-            _c, BACKEND, BACKEND_MODEL, _hdrs, _msgs, _tools,
+            _c, _backend, _backend_model, _hdrs, _msgs, _tools,
             NATIVE_LOOP_TIMEOUT_S, _push, allow_write=True, tool_choice=tool_choice,
-            terminal_response=_terminal_response)
+            terminal_response=_terminal_response, max_tokens=kwargs.get("max_tokens"))
         _raw = str(_terminal_response.get("content") or "")
-        _pb = {"model": BACKEND_MODEL, "messages": _m2, "stream": False,
-               "parallel_tool_calls": _endpoint_supports_parallel_tools(BACKEND),
+        _pb = {"model": _backend_model, "messages": _m2, "stream": False,
+               "parallel_tool_calls": _endpoint_supports_parallel_tools(_backend),
                "chat_template_kwargs": {"enable_thinking": False}}
+        if kwargs.get("max_tokens") is not None:
+            _pb["max_tokens"] = kwargs["max_tokens"]
         _live_streamed = False
         if emit is not None:
             _pb["stream"] = True
@@ -815,7 +837,7 @@ async def _respond_native_loop_direct(
                 if emit is not None:
                     _raw_parts = []
                     _finish_reason = None
-                    async with _c.stream("POST", f"{BACKEND}/chat/completions",
+                    async with _c.stream("POST", f"{_backend}/chat/completions",
                                          content=json.dumps(_pb).encode("utf-8"),
                                          headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S) as _r:
                         if _r.status_code != 200:
@@ -843,7 +865,7 @@ async def _respond_native_loop_direct(
                     _raw = "".join(_raw_parts)
                     _live_streamed = bool(_raw.strip())
                 else:
-                    _r = await _c.post(f"{BACKEND}/chat/completions",
+                    _r = await _c.post(f"{_backend}/chat/completions",
                                        content=json.dumps(_pb).encode("utf-8"),
                                        headers=_hdrs, timeout=NATIVE_LOOP_TIMEOUT_S)
                     _ch = (_r.json().get("choices") or [])
@@ -852,15 +874,17 @@ async def _respond_native_loop_direct(
             except Exception as _e:  # noqa: BLE001
                 log.warning("native-loop final completion failed: %s", _e)
                 _raw = ""
-        _attempted = {_endpoint_key(BACKEND)} if _endpoint_key else {BACKEND.rstrip("/").removesuffix("/v1")}
+        _attempted = {_endpoint_key(_backend)} if _endpoint_key else {_backend.rstrip("/").removesuffix("/v1")}
         _refine_key = (_endpoint_key(REFINE_ENDPOINT) if _endpoint_key
                        else REFINE_ENDPOINT.rstrip("/").removesuffix("/v1"))
-        if (not _raw.strip() and not force_delegate and not target_agents
+        if (not _raw.strip() and automatic_fallback and not force_delegate and not target_agents
                 and REFINE_ENDPOINT and _refine_key not in _attempted):
             _attempted.add(_refine_key)
             try:
                 _fb = {"model": REFINE_MODEL, "messages": _m2, "stream": False,
                        "chat_template_kwargs": {"enable_thinking": False}}
+                if kwargs.get("max_tokens") is not None:
+                    _fb["max_tokens"] = kwargs["max_tokens"]
                 _fallback_base = REFINE_ENDPOINT.rstrip("/").removesuffix("/v1")
                 _fr = await _c.post(f"{_fallback_base}/v1/chat/completions",
                                     content=json.dumps(_fb).encode("utf-8"),
@@ -872,8 +896,8 @@ async def _respond_native_loop_direct(
                     log.info("native-loop: heavy lane empty -> light-lane fallback answered")
             except Exception as _e2:  # noqa: BLE001
                 log.warning("native-loop light-lane fallback failed: %s", _e2)
-        if not _raw.strip() and not force_delegate and not target_agents:
-            _raw = await _registered_cpu_completion(_m2, _attempted)
+        if not _raw.strip() and automatic_fallback and not force_delegate and not target_agents:
+            _raw = await _registered_cpu_completion(_m2, _attempted, kwargs.get("max_tokens"))
         for _mm in _m2:
             for _tc in (_mm.get("tool_calls") or []):
                 _fn = (_tc.get("function") or {}).get("name")
@@ -889,7 +913,7 @@ async def _respond_native_loop_direct(
             _p = await polish_response(
                 _raw, refined, session_id=session_id,
                 original_user_text=last_user_text, persona_system=persona_system,
-                agent_tools=_fired)
+                agent_tools=_fired, max_tokens=kwargs.get("max_tokens"))
             if _p:
                 _ans = _p
         except Exception as _e:  # noqa: BLE001
@@ -1110,7 +1134,11 @@ async def _formulate_compute_snippet(user_text: str) -> str:
     }
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
-            r = await s.post(f"{PLANNER_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                PLANNER_ENDPOINT, ROUTER_MODEL,
+                endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
+                model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
         if r.status_code != 200:
             return ""
@@ -1163,7 +1191,11 @@ async def _formulate_web_query(user_text: str, local_grounding: str) -> str:
     }
     try:
         async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT_S) as s:
-            r = await s.post(f"{PLANNER_ENDPOINT}/v1/chat/completions", json=payload,
+            endpoint, payload["model"] = await _pick_inference_backend(
+                PLANNER_ENDPOINT, ROUTER_MODEL,
+                endpoint_env=("MIOS_AGENT_PIPE_PLANNER_ENDPOINT",),
+                model_env=("MIOS_AGENT_PIPE_ROUTER_MODEL", "MIOS_MICRO_MODEL"))
+            r = await s.post(f"{endpoint}/chat/completions", json=payload,
                              headers={"Content-Type": "application/json"})
         if r.status_code != 200:
             return user_text
@@ -1189,8 +1221,11 @@ async def _format_local_state(question: str, grounding: str,
     user_msg = (f"User question (reply in this language):\n{question}\n\n"
                 f"LIVE TOOL OUTPUT (authoritative ground truth for THIS "
                 f"machine):\n{grounding[:30000]}")
+    endpoint, selected_model = await _pick_inference_backend(
+        POLISH_ENDPOINT, POLISH_MODEL, endpoint_env=("MIOS_POLISH_ENDPOINT",),
+        model_env=("MIOS_POLISH_MODEL",))
     _url, payload = _polish_post(
-        POLISH_ENDPOINT, POLISH_MODEL,
+        endpoint.rstrip("/").removesuffix("/v1"), selected_model,
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         max(POLISH_MAX_TOKENS, 1200))

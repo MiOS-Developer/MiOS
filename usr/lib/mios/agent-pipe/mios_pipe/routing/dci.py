@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from mios_lanes_resolver import _pick_inference_backend
+
 import asyncio
 import json
 import logging
@@ -217,10 +219,13 @@ async def _dci_call_persona(
         "max_tokens": DCI_MAX_TOKENS,
         "stream": False,
     }
+    endpoint, payload["model"] = await _pick_inference_backend(
+        DCI_ENDPOINT, DCI_MODEL, endpoint_env=("MIOS_AGENT_PIPE_DCI_ENDPOINT",),
+        model_env=("MIOS_AGENT_PIPE_DCI_MODEL",))
     try:
         async with httpx.AsyncClient(timeout=DCI_FLOW_TIMEOUT_S) as s:
             r = await s.post(
-                f"{DCI_ENDPOINT}/v1/chat/completions",
+                f"{endpoint}/chat/completions",
                 json=payload,
                 headers={"Content-Type": "application/json"},
             )
@@ -453,12 +458,15 @@ async def dci_critic_pass(
         "max_tokens": DCI_MAX_TOKENS,
         "stream": False,
     }
+    endpoint, payload["model"] = await _pick_inference_backend(
+        DCI_ENDPOINT, DCI_MODEL, endpoint_env=("MIOS_AGENT_PIPE_DCI_ENDPOINT",),
+        model_env=("MIOS_AGENT_PIPE_DCI_MODEL",))
     try:
         async with httpx.AsyncClient(timeout=DCI_TIMEOUT_S) as s:
             _dci_hdrs = {"Content-Type": "application/json"}
-            _apply_outbound_auth(_dci_hdrs, DCI_ENDPOINT)
+            _apply_outbound_auth(_dci_hdrs, endpoint)
             r = await s.post(
-                f"{DCI_ENDPOINT}/v1/chat/completions",
+                f"{endpoint}/chat/completions",
                 json=payload,
                 headers=_dci_hdrs,
             )
