@@ -786,7 +786,7 @@ $script:sets
 
     def test_mirror_script_behaviour_both_sides(self):
         """Run the sign-in mirror script against a managed stand-in for user32 (monitor count, SetDisplayConfig rc)
-        and a mocked Start-Process: positive = the working-tree script, negative control = the round-1 (HEAD) one."""
+        and a mocked Start-Process: positive = the working-tree script, negative control = planted round-1 clone/fallback defects."""
         import re
         import shutil
         import subprocess
@@ -821,7 +821,11 @@ $script:sets
                 with open(out) as fh:
                     calls = [ln.strip() for ln in fh if ln.strip()]
                 log = os.path.join(tmp, "mios-display-mirror.log")
-                return calls, (open(log, encoding="utf-8-sig").read() if os.path.isfile(log) else "")
+                log_text = ""
+                if os.path.isfile(log):
+                    with open(log, encoding="utf-8-sig") as fh:
+                        log_text = fh.read()
+                return calls, log_text
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
 
@@ -838,13 +842,16 @@ $script:sets
         self.assertIn("= 87", log)
         calls, _ = run(new, 3, 5)                      # no console desktop yet: Windows' switcher applies it later
         self.assertEqual(calls, ["SDC 3202", "DISPLAYSWITCH /clone"])
-        r = subprocess.run(["git", "-C", _ROOT, "show", "HEAD:usr/share/mios/windows/mios-looking-glass-idd.ps1"],
-                           capture_output=True, text=True)
-        old = self._mirror_script(r.stdout) if r.returncode == 0 else None
-        if old is None:
-            self.skipTest("no git HEAD for the negative control")
-        # negative control: the round-1 script asked for a clone with one display and then raised the flyout
+        # Reproduce the round-1 defects in a private source fixture. HEAD is the
+        # candidate, so it cannot also stand for an obsolete negative-control script.
+        old, guards = re.subn(r'if \(\$monitors -lt 2\) \{\n.*?\n\}', '', new, count=1, flags=re.S)
+        self.assertEqual(guards, 1, "monitor guard must exist before planting its removal")
+        self.assertIn("if ($rc -eq 5)", old)
+        old = old.replace("if ($rc -eq 5)", "if ($rc -ne 0)", 1)
         calls, _ = run(old, 1, 87)
+        self.assertEqual(calls, ["SDC 3202", "DISPLAYSWITCH /clone"])
+        # Each boundary is independently observable, not merely a combined failure.
+        calls, _ = run(new.replace("if ($rc -eq 5)", "if ($rc -ne 0)", 1), 2, 87)
         self.assertEqual(calls, ["SDC 3202", "DISPLAYSWITCH /clone"])
 
 

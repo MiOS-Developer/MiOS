@@ -748,10 +748,17 @@ pub fn user_patch(
 }
 
 fn list_devices(data: &Value, rt: &Path) -> Result<Json, String> {
+    list_devices_with_host(data, rt, &devices::host())
+}
+
+fn list_devices_with_host(
+    data: &Value,
+    rt: &Path,
+    host: &devices::Host<'_>,
+) -> Result<Json, String> {
     let pol = devices::Policy::from_ssot(&data["desktop"]["nested"])?;
     let sessions = devices::live_sessions(&rt.join(&pol.registry_dir), false);
     let mut out = Vec::new();
-    let host = devices::host();
     let mut nodes: Vec<String> = fs::read_dir(host.dev)
         .into_iter()
         .flatten()
@@ -781,7 +788,7 @@ fn list_devices(data: &Value, rt: &Path) -> Result<Json, String> {
                     .any(|d| d["path"].as_str() == Some(&path.to_string_lossy()))
             })
             .map(|(_, s)| s["seat"].clone());
-        match devices::resolve_one(&host, &path.to_string_lossy(), "", &open) {
+        match devices::resolve_one(host, &path.to_string_lossy(), "", &open) {
             Ok(d) => {
                 let mut j = d.to_json();
                 j["assigned_to"] = owner.unwrap_or(Json::Null);
@@ -1383,6 +1390,212 @@ mod tests {
         )
         .unwrap()
     }
+
+    // Device-policy coverage belongs to private sysfs/filesystem fixtures. A kernel
+    // uinput device is global even when the test runs inside a build container.
+    fn multiuse_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let t = tempfile::tempdir().unwrap();
+        devices::tests::fixture(
+            t.path(),
+            3,
+            "MiOS Fixture Pad",
+            devices::tests::PAD,
+            true,
+            None,
+        );
+        devices::tests::fixture(
+            t.path(),
+            7,
+            "MiOS Nested Pad t7",
+            devices::tests::PAD,
+            true,
+            None,
+        );
+        let dev = t.path().join("dev/input");
+        let sys = t.path().join("sys/class/input");
+        (t, dev, sys)
+    }
+
+    #[test]
+    fn multiuse_devices_name_path_and_deduplication() {
+        let (_t, dev, sys) = multiuse_fixture();
+        let host = devices::Host {
+            dev: &dev,
+            sys: &sys,
+            check_node: false,
+        };
+        let p = devices::Policy::from_ssot(&ssot()["desktop"]["nested"]).unwrap();
+        let name = "name:MiOS Fixture Pad";
+        let path = dev.join("event3").to_string_lossy().into_owned();
+        let by_name = devices::resolve_one(&host, name, "", &p).unwrap();
+        let by_path = devices::resolve_one(&host, &path, "", &p).unwrap();
+        assert_eq!((&by_name.spec, &by_path.spec), (&name.to_owned(), &path));
+        let (mut a, mut b) = (by_name.to_json(), by_path.to_json());
+        a.as_object_mut().unwrap().remove("spec");
+        b.as_object_mut().unwrap().remove("spec");
+        assert_eq!(a, b, "name and path resolve the same node");
+        assert_eq!(a["path"], path);
+        assert_eq!(a["kind"], "controller");
+        assert_eq!(a["virtual"], true);
+        assert_eq!(a["name"], "MiOS Fixture Pad");
+        assert_eq!(
+            devices::resolve(&host, &[name.into(), path], "", &p)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn multiuse_devices_virtual_pad_is_seat_scoped() {
+        let (_t, dev, sys) = multiuse_fixture();
+        let host = devices::Host {
+            dev: &dev,
+            sys: &sys,
+            check_node: false,
+        };
+        let mut p = devices::Policy::from_ssot(&ssot()["desktop"]["nested"]).unwrap();
+        p.virtual_pad_wait_ms = 0;
+        let found = devices::resolve_one(&host, "virtual-pad", "t7", &p).unwrap();
+        assert_eq!(found.path, dev.join("event7"));
+        assert!(found.virtual_node);
+        assert!(devices::resolve_one(&host, "virtual-pad", "t8", &p)
+            .unwrap_err()
+            .contains("MiOS Nested Pad t8"));
+    }
+
+    #[test]
+    fn multiuse_devices_policy_and_real_node_boundary_fail_closed() {
+        let (_t, dev, sys) = multiuse_fixture();
+        let host = devices::Host {
+            dev: &dev,
+            sys: &sys,
+            check_node: false,
+        };
+        let p = devices::Policy::from_ssot(&ssot()["desktop"]["nested"]).unwrap();
+        let mut no_virtual = p.clone();
+        no_virtual.allow_virtual = false;
+        assert!(
+            devices::resolve_one(&host, "name:MiOS Fixture Pad", "", &no_virtual)
+                .unwrap_err()
+                .contains("allow_virtual is false")
+        );
+        let mut no_controller = p.clone();
+        no_controller.allow_kinds = vec!["keyboard".into(), "pointer".into()];
+        assert!(
+            devices::resolve_one(&host, "name:MiOS Fixture Pad", "", &no_controller)
+                .unwrap_err()
+                .contains("is a controller device")
+        );
+        fs::write(dev.parent().unwrap().join("null"), b"").unwrap();
+        for (spec, needle) in [
+            ("/dev/null".into(), "expected a"),
+            ("name:No Such Device 0".into(), "no input device is named"),
+            (
+                dev.join("../null").to_string_lossy().into_owned(),
+                "not an input event node",
+            ),
+        ] {
+            assert!(
+                devices::resolve_one(&host, &spec, "", &p)
+                    .unwrap_err()
+                    .contains(needle),
+                "{spec}"
+            );
+        }
+        // The fixture seam must never relax the production host's character-device check.
+        assert!(devices::host().check_node);
+        let strict = devices::Host {
+            check_node: true,
+            ..host
+        };
+        assert!(
+            devices::resolve_one(&strict, "name:MiOS Fixture Pad", "", &p)
+                .unwrap_err()
+                .contains("not an input character device")
+        );
+        fs::remove_file(dev.join("event3")).unwrap();
+        assert!(
+            devices::resolve_one(&strict, "name:MiOS Fixture Pad", "", &p).is_err(),
+            "a sysfs entry without an accessible device node is not usable"
+        );
+    }
+
+    #[test]
+    fn multiuse_devices_ssot_default_and_no_devices() {
+        let (_t, dev, sys) = multiuse_fixture();
+        let host = devices::Host {
+            dev: &dev,
+            sys: &sys,
+            check_node: false,
+        };
+        let mut data = ssot();
+        data["desktop"]["nested"]["devices"]["default"] =
+            Value::Array(vec![Value::String("name:MiOS Fixture Pad".into())]);
+        let p = devices::Policy::from_ssot(&data["desktop"]["nested"]).unwrap();
+        let default = plan(&data, &Options::default()).unwrap();
+        assert_eq!(default.specs, vec!["name:MiOS Fixture Pad"]);
+        assert_eq!(
+            devices::resolve(&host, &default.specs, &default.seat, &p).unwrap()[0].path,
+            dev.join("event3")
+        );
+        let none = plan(
+            &data,
+            &Options {
+                no_devices: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(none.specs.is_empty());
+        assert!(devices::resolve(&host, &none.specs, &none.seat, &p)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn multiuse_devices_inventory_preserves_json_and_errors() {
+        let (t, dev, sys) = multiuse_fixture();
+        std::os::unix::fs::symlink("missing", dev.join("event99")).unwrap(); // inaccessible node must remain an error row
+        let host = devices::Host {
+            dev: &dev,
+            sys: &sys,
+            check_node: false,
+        };
+        let rows = list_devices_with_host(&ssot(), t.path(), &host).unwrap();
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 3, "real fixture rows, not an empty inventory");
+        let pad = rows
+            .iter()
+            .find(|r| r["path"] == dev.join("event3").to_string_lossy().as_ref())
+            .unwrap();
+        assert_eq!(pad["kind"], "controller");
+        assert_eq!(pad["name"], "MiOS Fixture Pad");
+        assert_eq!(pad["virtual"], true);
+        assert!(pad["assigned_to"].is_null());
+        assert!(rows
+            .iter()
+            .all(|r| r.get("kind").is_some() || r.get("error").is_some()));
+        assert!(rows.iter().any(
+            |r| r["path"] == dev.join("event99").to_string_lossy().as_ref()
+                && r["error"].as_str().is_some_and(|e| !e.is_empty())
+        ));
+        let strict = devices::Host {
+            check_node: true,
+            ..host
+        };
+        let strict_rows = list_devices_with_host(&ssot(), t.path(), &strict).unwrap();
+        assert_eq!(strict_rows.as_array().unwrap().len(), 3);
+        assert!(
+            strict_rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("error").is_some()),
+            "plain fixture files never masquerade as production evdev character nodes"
+        );
+    }
+
     #[test]
     fn nested_projection_keeps_shell_and_system_manager_separate() {
         let data = ssot();

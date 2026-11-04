@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-# AI-hint: Real-binary checks of `mios-gen nested-session` launch targets, seat/user identity and device assignment (--plan, --dry-run, --list-devices) against a scratch SSOT; a private uinput joystick proves device resolution, classification and the [desktop.nested.devices] policy. No compositor is started.
+# AI-hint: Real-binary checks of `mios-gen nested-session` launch targets, seat/user identity and device assignment (--plan, --dry-run, --list-devices) against a scratch SSOT; device resolution/classification/policy and inventory JSON run in the five native nested_session::tests::multiuse_devices_* private Host fixtures. No global kernel devices or compositor are created.
 # AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/nested_devices.rs, usr/share/mios/mios.toml [desktop.nested], tests/test-nested-multiuse-live.py
-# AI-functions: Uinput, Binary, TestTargets, TestDevices
-# MIOS_GEN selects the binary under test (default /usr/bin/mios-gen); it must be the candidate that knows --plan.
-import ctypes, fcntl, json, os, re, struct, subprocess, sys, tempfile, time, tomllib, unittest
+# AI-functions: Uinput (opt-in live helper), Binary, TestTargets, TestDeviceBoundary
+# MIOS_GEN selects an explicit candidate; otherwise discover a source-built or installed generator.
+import fcntl, json, os, re, struct, subprocess, sys, tempfile, time, tomllib, unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-GEN = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
+def generator():
+    explicit = os.environ.get('MIOS_GEN')
+    if explicit:
+        return explicit
+    for path in (ROOT / 'tools/native/target/release/mios-gen', ROOT / 'tools/native/target/debug/mios-gen',
+                 ROOT / 'usr/bin/mios-gen', Path('/usr/bin/mios-gen')):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    raise RuntimeError('native mios-gen candidate missing')
+
+
+GEN = generator()
 SSOT = ROOT / 'usr/share/mios/mios.toml'
 
+# Used only by the separately opt-in live suite; the ordinary suite never instantiates Uinput.
 # linux/uinput.h, linux/input-event-codes.h
 UI_SET_EVBIT, UI_SET_KEYBIT, UI_SET_ABSBIT = 0x40045564, 0x40045565, 0x40045567
 UI_DEV_CREATE, UI_DEV_DESTROY = 0x5501, 0x5502
@@ -108,8 +120,8 @@ class Binary:
         user = Path(self.tmp.name) / 'user.toml'
         user.write_text('')
         (Path(self.tmp.name) / 'user.d').mkdir()
-        self.env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'HYPRLAND_INSTANCE_SIGNATURE', 'WAYLAND_DISPLAY')}
-        self.env.update(MIOS_VENDOR_TOML=str(ssot), MIOS_USER_TOML=str(user), MIOS_USER_TOML_D=str(Path(self.tmp.name) / 'user.d'),
+        self.env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'MIOS_VENDOR_TOML_D', 'MIOS_HOST_TOML', 'MIOS_HOST_TOML_D', 'HYPRLAND_INSTANCE_SIGNATURE', 'WAYLAND_DISPLAY')}
+        self.env.update(MIOS_VENDOR_TOML=str(ssot), MIOS_HOST_TOML=str(Path(self.tmp.name) / "absent.toml"), MIOS_USER_TOML=str(user), MIOS_USER_TOML_D=str(Path(self.tmp.name) / 'user.d'),
                         XDG_RUNTIME_DIR=self.tmp.name)
 
     def run(self, *args):
@@ -131,6 +143,11 @@ class TestTargets(unittest.TestCase):
         cls.ssot.write_text(text)
         tomllib.loads(text)
         cls.b = Binary(cls.ssot)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.b.tmp.cleanup()
+        cls.tmp.cleanup()
 
     def test_default_plan_is_the_unchanged_pip_session(self):
         p = self.b.plan()
@@ -167,65 +184,23 @@ class TestTargets(unittest.TestCase):
         self.assertFalse((Path(self.b.tmp.name) / 'mios/nested-sessions').exists() and list((Path(self.b.tmp.name) / 'mios/nested-sessions').glob('*.json')), 'no registry entry')
 
 
-@unittest.skipUnless(os.access('/dev/uinput', os.W_OK), 'needs /dev/uinput (input group)')
-class TestDevices(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix='mios-nested-multiuse-dev-')
-        cls.pad = Uinput(f'MiOS Nested Test Pad {os.getpid()}')
-        cls.seat_pad = Uinput('MiOS Nested Pad t7')  # the name virtual-pad resolves for seat t7
+class TestDeviceBoundary(unittest.TestCase):
+    """The real release CLI must fail closed without an accessible input node."""
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.pad.close()
-        cls.seat_pad.close()
-
-    def binary(self, **devices):
-        name = '-'.join(f'{k}' for k in devices) or 'default'
-        return Binary(scratch_ssot(Path(self.tmp.name) / f'{name}.toml', {'desktop.nested.devices': devices} if devices else {}))
-
-    def test_a_uinput_joystick_resolves_by_name_and_path(self):
-        b = self.binary()
-        by_name = b.plan('--device', f'name:{self.pad.name}')['devices']
-        by_path = b.plan('--device', self.pad.node)['devices']
-        self.assertEqual(len(by_name), 1)
-        strip = lambda ds: [{k: v for k, v in x.items() if k != 'spec'} for x in ds]
-        self.assertEqual(strip(by_name), strip(by_path), 'the same node either way')
-        self.assertEqual((by_name[0]['spec'], by_path[0]['spec']), (f'name:{self.pad.name}', self.pad.node), 'the spec is recorded as given')
-        d = by_name[0]
-        self.assertEqual((d['path'], d['kind'], d['virtual'], d['name']), (self.pad.node, 'controller', True, self.pad.name))
-        both = b.plan('--device', self.pad.node, '--device', f'name:{self.pad.name}')['devices']
-        self.assertEqual(len(both), 1, 'two specs for one node collapse')
-
-    def test_virtual_pad_resolves_the_seat_pad(self):
-        d = self.binary().plan('--seat', 't7', '--device', 'virtual-pad')['devices']
-        self.assertEqual([x['path'] for x in d], [self.seat_pad.node])
-        p = self.binary(virtual_pad_wait_ms=0).run('--plan', '--seat', 't8', '--device', 'virtual-pad')
-        self.assertEqual(p.returncode, 1)
-        self.assertIn('MiOS Nested Pad t8', p.stdout + p.stderr, 'another seat has no pad')
-
-    def test_policy_refuses_disallowed_devices(self):
-        for kw, needle in (({'allow_virtual': False}, 'allow_virtual is false'), ({'allow_kinds': ['keyboard', 'pointer']}, 'is a controller device')):
-            p = self.binary(**kw).run('--plan', '--device', self.pad.node)
-            self.assertEqual(p.returncode, 1, kw)
-            self.assertIn(needle, p.stdout + p.stderr, kw)
-        b = self.binary()
-        for spec, needle in (('/dev/null', 'expected a'), ('name:No Such Device 0', 'no input device is named'), ('/dev/input/../null', 'not an input event node')):
-            p = b.run('--plan', '--device', spec)
-            self.assertEqual(p.returncode, 1, spec)
-            self.assertIn(needle, p.stdout + p.stderr, spec)
-
-    def test_ssot_default_devices_and_no_devices(self):
-        b = self.binary(default=[f'name:{self.pad.name}'])
-        self.assertEqual([d['path'] for d in b.plan()['devices']], [self.pad.node], 'default devices apply when none are named')
-        self.assertEqual(b.plan('--no-devices')['devices'], [], '--no-devices overrides the default')
-
-    def test_list_devices_reports_kinds(self):
-        p = self.binary().run('--list-devices')
-        self.assertEqual(p.returncode, 0, p.stderr)
-        rows = {r['path']: r for r in json.loads(p.stdout)}
-        self.assertEqual((rows[self.pad.node]['kind'], rows[self.pad.node]['assigned_to']), ('controller', None))
-        self.assertTrue(all('kind' in r or 'error' in r for r in rows.values()))
+    def test_missing_device_is_rejected_and_no_devices_overrides_ssot_default(self):
+        with tempfile.TemporaryDirectory(prefix='mios-nested-missing-device-') as tmp:
+            ssot = scratch_ssot(Path(tmp) / 'vendor.toml',
+                                {'desktop.nested.devices': {'default': ['name:MiOS Missing Fixture Device']}})
+            b = Binary(ssot)
+            self.addCleanup(b.tmp.cleanup)
+            failed = b.run('--plan')
+            self.assertEqual(failed.returncode, 1)
+            self.assertIn('no input device is named', failed.stdout + failed.stderr)
+            self.assertEqual(b.plan('--no-devices')['devices'], [])
+            for spec in ('/dev/input/event999999999', '/dev/null', '/dev/input/../null'):
+                failed = b.run('--plan', '--device', spec)
+                self.assertEqual(failed.returncode, 1, (spec, failed.stdout, failed.stderr))
+            self.assertFalse(list(Path(b.tmp.name).glob('mios-nested-desktop-*')))
 
 
 if __name__ == '__main__':

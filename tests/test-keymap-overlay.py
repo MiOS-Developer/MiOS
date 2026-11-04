@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# AI-hint: Real-binary test of the Super+Escape overlay (mios-sync-theme -> native `mios-gen keymap-overlay` -> theme.json keymap) generated from the global tables (G1 C-25): global remaps, bypass chords, bypass_mod chords, toggle_chord labels, system layer and nav rows; negative controls: main's script (legacy tables) and a mios-gen without keymap-overlay both fail the same checks.
+# AI-hint: Real-binary test of the Super+Escape overlay (mios-sync-theme -> native `mios-gen keymap-overlay` -> theme.json keymap) generated from the global tables (G1 C-25): global remaps, bypass chords, bypass_mod chords, toggle_chord labels, system layer and nav rows; negative controls: immutable legacy keymap logic and an unsupported generator fail the same checks.
 # AI-related: usr/libexec/mios/mios-sync-theme, tools/native/mios-gen/src/global_bindings.rs, usr/share/mios/quickshell/Keymap.qml, usr/share/mios/mios.toml [keybindings.global], docs/design/mios-global-bindings-tests.md
 # Runs the worktree's mios-sync-theme against scratch layer files (never /etc/mios/theme, never the operator's tiers).
-# MIOS_GEN = the candidate mios-gen (required); MIOS_GEN_OLD = a mios-gen without keymap-overlay (default
-# /usr/bin/mios-gen). MIOS_SYNC_THEME overrides the script under test; MIOS_SYNC_THEME_OLD names the negative-control
-# script (default: the script at git main, which must FAIL the remap and toggle_chord checks).
-import json, os, re, shutil, subprocess, sys, tempfile
+# MIOS_GEN selects the candidate explicitly; otherwise use a source-built or installed native generator.
+# MIOS_SYNC_THEME overrides the script under test; MIOS_SYNC_THEME_OLD may name a genuine pre-global-bindings script.
+# Its keymap block alone is transplanted into the current bridge so unrelated geometry schema changes cannot fake a failure.
+import json, os, re, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,15 +20,26 @@ def check(name, ok, detail=''):
     return ok
 
 
-GEN = os.environ.get('MIOS_GEN', '')
-GEN_OLD = os.environ.get('MIOS_GEN_OLD', '/usr/bin/mios-gen')
+def generator():
+    explicit = os.environ.get('MIOS_GEN')
+    if explicit:
+        return explicit  # A broken explicit candidate must never fall through to an installed binary.
+    for path in (ROOT / 'tools/native/target/release/mios-gen', ROOT / 'tools/native/target/debug/mios-gen',
+                 ROOT / 'usr/bin/mios-gen', Path('/usr/bin/mios-gen')):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ''
 
 
-def keymap(script, vendor_text, tmp, tag, gen=None):
+GEN = generator()
+GEN_OLD = os.environ.get('MIOS_GEN_OLD')
+
+
+def keymap(script, vendor_text, tmp, tag, gen=None, user_text=""):
     d = Path(tmp) / tag
     d.mkdir()
     (d / 'vendor.toml').write_text(vendor_text)
-    (d / 'user.toml').write_text('')
+    (d / 'user.toml').write_text(user_text)
     env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'MIOS_VENDOR_TOML_D', 'MIOS_USER_TOML_D')}
     env.update(MIOS_VENDOR_TOML=str(d / 'vendor.toml'), MIOS_HOST_TOML=str(d / 'none.toml'),
                MIOS_USER_TOML=str(d / 'user.toml'), MIOS_THEME_OUT_DIR=str(d / 'out'),
@@ -41,23 +52,36 @@ def keymap(script, vendor_text, tmp, tag, gen=None):
 
 
 def configured_gen_runs(script, tmp, tag, as_root):
-    """Verifier observation 3: does `script` execute a [desktop.controls].mios_gen named by the merged tiers? A fake
-    generator leaves a marker. as_root runs the script with euid 0 in a user namespace (unshare -r), as
-    mios-sync-theme.service does, without real root."""
+    """Observe the merged-tier executable policy with a private marker and real effective uid."""
     d = Path(tmp) / tag
     d.mkdir()
     marker = d / 'ran'
     fake = d / 'fake-gen'
     fake.write_text(f'#!/bin/sh\ntouch {marker}\necho "[]"\n')
-    fake.chmod(0o700)
+    fake.chmod(0o755)
     (d / 'vendor.toml').write_text(VENDOR.read_text())
     (d / 'user.toml').write_text(f'[desktop.controls]\nmios_gen = "{fake}"\n')
     (d / 'out').mkdir()
     env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'MIOS_GEN', 'MIOS_VENDOR_TOML_D', 'MIOS_USER_TOML_D')}
     env.update(MIOS_VENDOR_TOML=str(d / 'vendor.toml'), MIOS_HOST_TOML=str(d / 'none.toml'), MIOS_USER_TOML=str(d / 'user.toml'),
                MIOS_THEME_OUT_DIR=str(d / 'out'), MIOS_LIB_DIR=str(ROOT / 'usr/lib/mios'))
-    cmd = (['unshare', '-r'] if as_root else []) + ['bash', str(script), '--bridge-only']
-    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
+    # A root CI container can exercise both uid boundaries without nested user namespaces.
+    # The child drops its identity and writes only the private fixture marker/output.
+    preexec = None
+    prefix = []
+    if os.geteuid() == 0 and not as_root:
+        Path(tmp).chmod(0o755)
+        os.chown(d, 65534, 65534)
+        os.chown(d / 'out', 65534, 65534)
+        def drop_identity():
+            os.setgroups([])
+            os.setgid(65534)
+            os.setuid(65534)
+        preexec = drop_identity
+    elif as_root and os.geteuid() != 0:
+        prefix = ['unshare', '-r']
+    cmd = prefix + ['bash', str(script), '--bridge-only']
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120, preexec_fn=preexec)
     return r.returncode == 0 and (d / 'out/theme.json').is_file(), marker.exists(), r.stderr[-300:]
 
 
@@ -90,8 +114,8 @@ def suite(script, tmp, tag, gen=None):
     assert t3 != text
     km3 = keymap(script, t3, tmp, f'{tag}-chord', gen)
     out.append(('toggle_chord -> [BTN_TL, BTN_TR]: the release label follows it (no hard-coded L3 + R3)', has(km3, 'Pad LB + RB', 'release') and not any('L3 + R3' in k['keys'] for k in km3), [k for k in km3 if 'Pad' in k['keys']][:2]))
-    nav = text + '\n[keybindings.global.controller.nav]\nenabled = true\n[keybindings.global.controller.nav.contexts]\ndesktop-2d = "desktop"\n[keybindings.global.controller.nav.desktop]\nBTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]\n'
-    km4 = keymap(script, nav, tmp, f'{tag}-nav', gen)
+    nav = '[keybindings.global.controller.nav]\nenabled = true\n[keybindings.global.controller.nav.contexts]\ndesktop-2d = "desktop"\n[keybindings.global.controller.nav.desktop]\nBTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]\n'
+    km4 = keymap(script, text, tmp, f'{tag}-nav', gen, user_text=nav)
     out.append(('a declared nav profile appears in the overlay (tap and hold)', has(km4, 'Pad South', 'ENTER.*hold'), ''))
     return out
 
@@ -110,33 +134,45 @@ def main():
                 old = str(Path(tmp) / 'old-sync-theme')
                 Path(old).write_text(r.stdout)
         if old:
-            neg = {n: ok for n, ok, _ in suite(old, tmp, 'old')}
+            def keymap_span(source):
+                begin = source.index('# Keybind map (Super+Escape overlay):')
+                end = source.index('resolved["search_actions"]', begin)
+                return begin, end
+            legacy_source, candidate_source = Path(old).read_text(), SCRIPT.read_text()
+            a, b = keymap_span(legacy_source)
+            c, d = keymap_span(candidate_source)
+            legacy = Path(tmp) / 'mios-legacy-keymap-control'
+            legacy.write_text(candidate_source[:c] + legacy_source[a:b] + candidate_source[d:])
+            neg = {n: ok for n, ok, _ in suite(legacy, tmp, 'old')}
             # Negative control: the pre-G1 overlay was built from legacy tables, so these must fail there.
             for n in ['remap keymap -> SUPER+F1: overlay shows SUPER+F1 and never the stale SUPER+Escape',
                       'toggle_chord -> [BTN_TL, BTN_TR]: the release label follows it (no hard-coded L3 + R3)',
                       'vendor: every bypass chord is listed and says it works over captured apps']:
-                check(f'negative control (main script fails): {n}', neg.get(n) is False)
+                check(f'negative control (immutable pre-global script fails): {n}', neg.get(n) is False)
         else:
-            check('negative-control script available', False, 'no git main and no MIOS_SYNC_THEME_OLD')
-        # Negative control: the overlay comes from the native generator. A mios-gen without keymap-overlay leaves it
-        # empty (warning on stderr), so the script holds no binding logic of its own.
-        if GEN_OLD and os.access(GEN_OLD, os.X_OK) and Path(GEN_OLD).resolve() != Path(GEN).resolve():
-            km = keymap(SCRIPT, VENDOR.read_text(), tmp, 'oldgen', GEN_OLD)
-            check('negative control (mios-gen without keymap-overlay): the overlay is empty', km == [], len(km))
-        # Observation 3: as root only the caller's environment may name the generator, never the merged tiers.
-        if shutil.which('unshare') and subprocess.run(['unshare', '-r', 'true']).returncode == 0:
-            ok, ran, err = configured_gen_runs(SCRIPT, tmp, 'cfg-user', False)
-            check('as a user: the configured mios_gen runs (the editor\'s candidate path)', ok and ran, err)
-            ok, ran, err = configured_gen_runs(SCRIPT, tmp, 'cfg-root', True)
-            check('as root (euid 0): a tier-configured mios_gen never runs', ok and not ran, err)
-            prev = subprocess.run(['git', '-C', str(ROOT), 'show', 'e9e6afba3:usr/libexec/mios/mios-sync-theme'], capture_output=True, text=True)
-            if prev.returncode == 0:
-                p = Path(tmp) / 'prev-sync-theme'
-                p.write_text(prev.stdout)
-                ok, ran, err = configured_gen_runs(p, tmp, 'cfg-root-prev', True)
-                check('negative control (previous script): as root it ran the tier-configured binary', ok and ran, err)
-        else:
-            print('info: unshare -r unavailable; the root-policy check is skipped', flush=True)
+            check('negative-control script available', False, 'no immutable pre-global script and no MIOS_SYNC_THEME_OLD')
+        # An unavailable verb is a deterministic stand-in for a pre-overlay generator.
+        # Never infer missing functionality merely from a binary's installed location.
+        unsupported = GEN_OLD
+        if not unsupported:
+            stub = Path(tmp) / 'mios-unsupported-generator'
+            stub.write_text('#!/bin/sh\necho "unknown subcommand keymap-overlay" >&2\nexit 2\n')
+            stub.chmod(0o755)
+            unsupported = str(stub)
+        km = keymap(SCRIPT, VENDOR.read_text(), tmp, 'oldgen', unsupported)
+        check('negative control (generator rejects keymap-overlay): the overlay is empty', km == [], len(km))
+        ok, ran, err = configured_gen_runs(SCRIPT, tmp, 'cfg-user', False)
+        check('as a user: the configured mios_gen runs (the editor\'s candidate path)', ok and ran, err)
+        ok, ran, err = configured_gen_runs(SCRIPT, tmp, 'cfg-root', True)
+        check('as root (euid 0): a tier-configured mios_gen never runs', ok and not ran, err)
+        # Plant only the old root-policy defect; keep the complete current bridge and tier resolver.
+        source = SCRIPT.read_text()
+        policy = 'None if os.geteuid() == 0 else merged.get'
+        assert source.count(policy) == 1, 'root executable policy missing'
+        prev = Path(tmp) / 'mios-tier-executable-negative'
+        prev.write_text(source.replace(policy, 'merged.get', 1))
+        ok, ran, err = configured_gen_runs(prev, tmp, 'cfg-root-prev', True)
+        check('negative control (root guard removed): root ran the tier-configured binary', ok and ran, err)
     print(f'{sum(res)}/{len(res)} passed')
     return 0 if all(res) else 1
 

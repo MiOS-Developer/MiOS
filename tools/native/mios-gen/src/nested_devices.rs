@@ -574,7 +574,7 @@ impl Drop for Claim {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn policy() -> Policy {
@@ -591,7 +591,7 @@ mod tests {
     }
 
     /// A fixture tree: <root>/dev/input/eventN (plain files) and <root>/sys/class/input/eventN/device/{name,capabilities}.
-    fn fixture(
+    pub(crate) fn fixture(
         root: &Path,
         n: u32,
         name: &str,
@@ -624,7 +624,7 @@ mod tests {
     }
 
     // Real capability strings (64-bit words, most significant first) of an Xbox pad, a keyboard and a mouse.
-    const PAD: [&str; 4] = ["20000b", "7cdb000000000000 0 0 0 0", "0", "3003f"];
+    pub(crate) const PAD: [&str; 4] = ["20000b", "7cdb000000000000 0 0 0 0", "0", "3003f"];
     const KBD: [&str; 4] = [
         "120013",
         "1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe",

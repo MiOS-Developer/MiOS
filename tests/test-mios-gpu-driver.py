@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# AI-hint: xb-09 / XB-3 gate for the MiOS-Xbox guest GPU driver step. Merges the live vendor SSOT with the staged lane
-# fragment through mios_toml.load_merged (read-only), checks the fragment (detect mode, comment per key, no version pins,
+# AI-hint: xb-09 / XB-3 gate for the MiOS-Xbox guest GPU driver step. Reads the canonical vendor SSOT or an explicit candidate
+# fragment through mios_toml.load_merged (read-only), checks the GPU tables (detect mode, comment per key, no version pins,
 # endpoints only in the SSOT), statically checks usr/share/mios/windows/xbox/mios-gpu-driver.ps1 (parses, PowerShell 5.1
 # compatible AST, no vendor endpoint/version literals), then runs tests/test-mios-gpu-driver.ps1 under pwsh with all
 # network, devices, signatures and installers mocked. Every static check has a planted-defect negative control.
 # AI-related: usr/share/mios/windows/xbox/mios-gpu-driver.ps1, tests/test-mios-gpu-driver.ps1, usr/lib/mios/mios_toml.py,
-#   /home/mios/mios-desktop-work-1/staged-ssot/xbox-gpu.toml, /.devloop/GOALS-mios-xbox.md (XB-3)
+#   usr/share/mios/mios.toml [windows.xbox.gpu], /.devloop/GOALS-mios-xbox.md (XB-3)
 import json
 import os
 import re
@@ -13,12 +13,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
-ROOT = os.environ.get("MIOS_ROOT", "/")
+ROOT = os.environ.get("MIOS_ROOT", str(Path(__file__).resolve().parents[1]))
 SCRIPT = os.environ.get("MIOS_GPU_SCRIPT", os.path.join(ROOT, "usr/share/mios/windows/xbox/mios-gpu-driver.ps1"))
 PS_TEST = os.environ.get("MIOS_GPU_PS_TEST", os.path.join(ROOT, "tests/test-mios-gpu-driver.ps1"))
 LIVE = os.path.join(ROOT, "usr/share/mios/mios.toml")
-FRAGMENT = os.environ.get("MIOS_GPU_FRAGMENT", "/home/mios/mios-desktop-work-1/staged-ssot/xbox-gpu.toml")
+FRAGMENT = os.environ.get("MIOS_GPU_FRAGMENT")
 sys.path.insert(0, os.path.join(ROOT, "usr/lib/mios"))
 import mios_toml  # noqa: E402
 
@@ -32,8 +33,8 @@ def check(cond, name):
 
 # ------------------------------------------------------------------ SSOT fragment
 
-def merged_spec(fragment_path):
-    merged = mios_toml.load_merged(layers=[LIVE, fragment_path])
+def merged_spec(fragment_path=None):
+    merged = mios_toml.load_merged(layers=[LIVE] + ([fragment_path] if fragment_path else []))
     xb = merged.get("windows", {}).get("xbox", {})
     return {"windows": {"xbox": {"drivers": xb.get("drivers", {}), "gpu": xb.get("gpu", {})}}}
 
@@ -79,8 +80,25 @@ def fragment_findings(text, spec):
     return out
 
 
-with open(FRAGMENT, encoding="utf-8") as fh:
-    frag_text = fh.read()
+def canonical_gpu_text(text):
+    """Audit the promoted GPU tables, preserving their real comments and array bodies."""
+    selected, active = [], False
+    for line in text.splitlines(keepends=True):
+        header = re.fullmatch(r"\[([^\[\]]+)\]\s*", line.strip())
+        if header:
+            table = header.group(1)
+            active = table == "windows.xbox.drivers" or table == "windows.xbox.gpu" or table.startswith("windows.xbox.gpu.")
+        if active:
+            selected.append(line)
+    if not selected:
+        raise AssertionError("canonical GPU tables missing")
+    return "".join(selected)
+
+
+if FRAGMENT:
+    frag_text = Path(FRAGMENT).read_text(encoding="utf-8")
+else:
+    frag_text = canonical_gpu_text(Path(LIVE).read_text(encoding="utf-8"))
 spec = merged_spec(FRAGMENT)
 check(not fragment_findings(frag_text, spec), "fragment conforms (detect mode, vendors, comment per key, no pins)")
 for f in fragment_findings(frag_text, spec):
@@ -97,7 +115,9 @@ with tempfile.TemporaryDirectory(prefix="mios-gpu-frag-") as td:
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(t)
         return fragment_findings(t, merged_spec(p))
-    check(planted('gpu = "detect"', 'gpu = "baked"'), "NEG fragment: drivers.gpu = baked is rejected")
+    gpu_assignment = re.search(r'^gpu\s*=\s*"detect"', frag_text, re.M)
+    assert gpu_assignment, "detect assignment missing"
+    check(planted(gpu_assignment.group(0), 'gpu = "baked"'), "NEG fragment: drivers.gpu = baked is rejected")
     check(planted('components = ["Display.Driver"]', 'components = ["Display.Driver", "NvApp"]'),
           "NEG fragment: NVIDIA App component is rejected")
     check(planted('channel = "latest" ', 'version = "617.42"   # pin\nchannel = "latest" '),
