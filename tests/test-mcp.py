@@ -1263,6 +1263,53 @@ class TestAgentTmuxBinding(unittest.TestCase):
 class TestManagedMcpClientStartup(unittest.TestCase):
     """The owned local tool server is ready before the first client model turn."""
 
+    def test_local_coordination_policy_preserves_mcp_and_other_provider_delegation(self):
+        import pathlib
+        import subprocess
+        import tomllib
+        vendor = pathlib.Path(_ROOT) / "usr/share/mios/mios.toml"
+        with tempfile.TemporaryDirectory(prefix="mios-coordination-policy-") as directory:
+            base = pathlib.Path(directory)
+            overlay = base / "operator.toml"
+            env = {**os.environ, "MIOS_VENDOR_TOML": str(vendor),
+                   "MIOS_VENDOR_TOML_D": "/nonexistent/vendor.d",
+                   "MIOS_HOST_TOML": str(overlay),
+                   "MIOS_HOST_TOML_D": "/nonexistent/host.d",
+                   "MIOS_USER_TOML": "/nonexistent/user.toml",
+                   "MIOS_USER_TOML_D": "/nonexistent/user.d"}
+            for provider in ("mios", "hosted"):
+                home = base / provider
+                (home / ".codex").mkdir(parents=True)
+                path = home / ".codex/config.toml"
+                path.write_text(
+                    f'model_provider = "{provider}"\n'
+                    '[agents]\nenabled = true\n'
+                    '[agents.reviewer]\ndescription = "Operator role"\n'
+                    '[mcp_servers.operator]\ncommand = "/operator/tool"\n'
+                )
+                command = ["/usr/libexec/mios/mios-gen", "render-agent-interaction",
+                           "--root", _ROOT, "--home", str(home), "--runtime"]
+                subprocess.run(command, env=env, check=True, capture_output=True, timeout=15)
+                data = tomllib.loads(path.read_text())
+                self.assertEqual(data["agents"]["enabled"], provider != "mios")
+                self.assertEqual(data["agents"]["reviewer"]["description"], "Operator role")
+                self.assertEqual(data["model_provider"], provider)
+                self.assertTrue(data["mcp_servers"]["mios-control"]["required"])
+                self.assertNotIn("enabled_tools", data["mcp_servers"]["mios-control"])
+                self.assertNotIn("disabled_tools", data["mcp_servers"]["mios-control"])
+                self.assertEqual(data["mcp_servers"]["operator"]["command"], "/operator/tool")
+                before = path.read_bytes()
+                subprocess.run(command, env=env, check=True, capture_output=True, timeout=15)
+                self.assertEqual(path.read_bytes(), before)
+            overlay.write_text(
+                "[agent_cli.interaction.clients.codex.provider_values.mios.agents]\n"
+                "enabled = true\n"
+            )
+            subprocess.run(["/usr/libexec/mios/mios-gen", "render-agent-interaction",
+                            "--root", _ROOT, "--home", str(base / "mios"), "--runtime"],
+                           env=env, check=True, capture_output=True, timeout=15)
+            self.assertTrue(tomllib.loads((base / "mios/.codex/config.toml").read_text())["agents"]["enabled"])
+
     def test_local_context_projection_uses_allocated_window_without_changing_other_providers(self):
         import pathlib
         import subprocess

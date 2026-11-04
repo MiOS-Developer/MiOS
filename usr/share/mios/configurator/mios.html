@@ -3474,6 +3474,8 @@
         <label>Responses client screen mode <input data-key="agent_cli.interaction.clients.codex.values.tui.alternate_screen" type="text"></label>
         <label>Require managed MiOS tools before startup <input data-key="agent_cli.interaction.clients.codex.values.mcp_servers.mios-control.required" type="checkbox"></label>
         <label>Managed tool server startup timeout (seconds) <input data-key="agent_cli.interaction.clients.codex.values.mcp_servers.mios-control.startup_timeout_sec" type="number" min="1" step="1"></label>
+        <label>Client built-in delegation for local provider <input data-key="agent_cli.interaction.clients.codex.provider_values.mios.agents.enabled" type="checkbox"></label>
+        <p class="hint">MiOS sessions coordinate through the native MCP relay and terminals. Other providers retain their own delegation settings.</p>
         <label>Local provider available context (tokens) <input data-key="agent_cli.interaction.clients.codex.provider_values.mios.model_context_window" type="number" min="1" step="1"></label>
         <p class="hint">Keep the client limit at or below the verified context allocated by the active local engine.</p>
         <label>Local provider hosted search <select data-key="agent_cli.interaction.clients.codex.provider_values.mios.web_search"><option value="disabled">Disabled</option><option value="cached">Cached</option><option value="indexed">Indexed</option><option value="live">Live</option></select></label>

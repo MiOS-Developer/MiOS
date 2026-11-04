@@ -4129,6 +4129,9 @@ default_provider = "mios"
 web_search = "disabled"
 # This is the available local engine allocation, not a larger model-advertised maximum.
 model_context_window = 65536
+# Local sessions coordinate through the native MiOS MCP relay and terminals.
+[agent_cli.interaction.clients.codex.provider_values.mios.agents]
+enabled = false
 [agent_cli.interaction.clients.codex.values.tui]
 alternate_screen = "always"
 # The managed local tool server must finish discovery before the first model turn.
