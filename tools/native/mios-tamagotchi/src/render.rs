@@ -1245,6 +1245,33 @@ mod camera_tests {
     }
 
     #[test]
+    fn oblique_metadata_paints_only_the_visible_expression_span() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let area = Rect::new(2, 2, 80, 24);
+        for yaw in [45, 315] {
+            let sprite = Sprite::voxel(
+                Stage::Adult, Expression::Happy, SpriteStyle::SixteenBit, 0, yaw, false,
+            );
+            let face = sprite.face_overlay().expect("visible oblique face span");
+            assert_eq!(face.text.len(), 3);
+            assert_ne!(face.text, Expression::Happy.kaomoji(0));
+            let mut buf = Buffer::empty(Rect::new(0, 0, 84, 28));
+            let projection = Projection::camera(
+                &sprite, SolidBounds::of(&sprite).unwrap(), area, Renderer::HalfBlock,
+                0, (500, 500), Camera { view: CameraView::Face, ..Camera::default() },
+            );
+            draw_projection(&sprite, Renderer::HalfBlock, &colors, projection, area, &mut buf);
+            assert!(draw_front_face(
+                &sprite, Renderer::HalfBlock, &colors, projection, area, &mut buf,
+            ), "yaw {yaw}");
+            let rendered = text(&buf, area);
+            assert!(rendered.contains(face.text), "yaw {yaw}");
+            assert!(!rendered.contains(Expression::Happy.kaomoji(0)));
+        }
+    }
+
+    #[test]
     fn caption_is_below_the_pet_in_front_and_rear_and_uses_the_actual_mood() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Mono).unwrap();
