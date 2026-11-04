@@ -20558,3 +20558,30 @@ name = "Starfold Screen"
 price = 20
 kind = 5
 slot = 12
+
+[tamagotchi.game.training]
+name_starts = ["Mi", "Yu", "Ko", "Ra", "Su", "No", "Hi", "Ta"]
+name_ends = ["mo", "ri", "na", "ku", "po", "li", "to", "ya"]
+species_colors = [4, 8, 14, 15, 14, 11, 7, 1]
+hatch_min = 8
+hatch_max = 24
+max_level = 99
+xp_base = 12
+xp_per_level = 4
+xp_gain_min = 6
+xp_gain_max = 10
+energy_cost = 6
+fullness_cost = 4
+happiness_gain = 3
+cooldown_ticks = 1
+level_coin_reward = 2
+
+[tamagotchi.game.training.personality_colors]
+cozy = 3
+athletic = 6
+grumbly = 5
+showy = 13
+neighborly = 2
+sunny = 10
+refined = 9
+protective = 12

@@ -18,6 +18,7 @@ pub enum Action {
     Talk,
     Roster,
     Habitat,
+    Training,
     Status,
     Graphics,
     ZoomIn,
@@ -66,6 +67,7 @@ pub fn action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('t') => Some(Action::Talk),
         KeyCode::Char('b') => Some(Action::Roster),
         KeyCode::Char('h') => Some(Action::Habitat),
+        KeyCode::Char('l') => Some(Action::Training),
         KeyCode::Char('v') => Some(Action::Graphics),
         KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::ZoomIn),
         KeyCode::Char('-') => Some(Action::ZoomOut),
@@ -1239,5 +1241,34 @@ mod controller_tests {
         assert!(own_seat(&id, &query).is_none());
         fs::write(&registry, "{broken").unwrap();
         assert!(own_seat(&id, &query).is_none());
+    }
+}
+
+#[cfg(test)]
+mod training_action_tests {
+    use super::{Action, action};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    #[test]
+    fn training_opens_only_on_an_unmodified_lowercase_press() {
+        let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        assert_eq!(action(key), Some(Action::Training));
+        assert_eq!(
+            action(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE)),
+            None
+        );
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let mut other = key;
+            other.kind = kind;
+            assert_eq!(action(other), None);
+        }
+        for modifier in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::HYPER,
+            KeyModifiers::META,
+        ] {
+            assert_eq!(action(KeyEvent::new(KeyCode::Char('l'), modifier)), None);
+        }
     }
 }

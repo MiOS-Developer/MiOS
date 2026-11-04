@@ -1202,52 +1202,44 @@ impl VoxelModel {
                 if detailed {
                     model.ellipsoid([0.0, -ry * 0.55, -rz - 1.4], [0.6, 0.6, 1.0], 7);
                 }
-                let raised = matches!(expression, Happy | Playful | Excited | Celebrate);
-                let hand_y = if raised { 1.5 + (p % 2.0) } else { -1.8 };
-                for sign in [-1.0, 1.0] {
-                    let front = if matches!(expression, Eating | Shy) {
-                        rz * 0.85
+                // Compact baby bodies carry stub paws. Mature paws are attached
+                // exactly once by grow_body, below the animal head.
+                if stage == Stage::Baby {
+                    let raised = matches!(expression, Happy | Playful | Excited | Celebrate);
+                    let hand_y = if raised { 1.5 + (p % 2.0) } else { -1.8 };
+                    for sign in [-1.0, 1.0] {
+                        let front = if matches!(expression, Eating | Shy) {
+                            rz * 0.85
+                        } else {
+                            0.5
+                        };
+                        let side = if expression == Shy { rx * 0.65 } else { rx };
+                        model.ellipsoid([sign * side, hand_y, front], [1.2, 1.8, 1.4], 1);
+                    }
+                    // Feet alternate in both height and depth: a genuine 3D gait.
+                    let gait: f32 = if walking && !matches!(expression, Sleeping | Sick) {
+                        [0.0, 1.0, 0.0, -1.0][phase]
                     } else {
-                        0.5
+                        0.0
                     };
-                    let side = if expression == Shy { rx * 0.65 } else { rx };
-                    model.ellipsoid([sign * side, hand_y, front], [1.2, 1.8, 1.4], 1);
-                }
-                // Feet alternate in both height and depth: a genuine 3D gait.
-                let gait: f32 = if walking && !matches!(expression, Sleeping | Sick) {
-                    [0.0, 1.0, 0.0, -1.0][phase]
-                } else {
-                    0.0
-                };
-                for sign in [-1.0, 1.0] {
-                    model.ellipsoid(
-                        [
-                            sign * rx * 0.52,
-                            -ry - 0.5 + (gait * sign).max(0.0),
-                            0.5 + gait * sign * 1.7,
-                        ],
-                        [
-                            if detailed { 1.6 } else { 1.0 },
-                            0.9,
-                            if detailed { 2.0 } else { 1.3 },
-                        ],
-                        14,
-                    );
-                }
-                if stage != Stage::Baby {
-                    // Growing leaves/ears are separate rounded volumes, not cards.
-                    model.ellipsoid([-1.0, ry + 0.8, 0.0], [0.8, 1.8, 0.8], 11);
-                    model.ellipsoid([-2.0, ry + 1.6, 0.0], [1.8, 0.9, 1.2], 11);
-                    if stage == Stage::Adult {
-                        model.ellipsoid([2.0, ry + 1.8, -0.4], [1.4, 1.8, 1.0], 11);
-                        for sign in [-1.0, 1.0] {
-                            model.ellipsoid([sign * rx * 0.75, ry * 0.8, -0.6], [1.4, 2.0, 1.5], 1);
-                        }
-                    }
-                    if detailed {
-                        model.ellipsoid([-2.0, ry + 1.8, 0.6], [1.0, 0.5, 0.6], 3);
+                    for sign in [-1.0, 1.0] {
+                        model.ellipsoid(
+                            [
+                                sign * rx * 0.52,
+                                -ry - 0.5 + (gait * sign).max(0.0),
+                                0.5 + gait * sign * 1.7,
+                            ],
+                            [
+                                if detailed { 1.6 } else { 1.0 },
+                                0.9,
+                                if detailed { 2.0 } else { 1.3 },
+                            ],
+                            14,
+                        );
                     }
                 }
+                // Species sculpting supplies each animal's ears or crest.
+                // Generic seedling horns would obscure cats, foxes and rabbits.
             } else {
                 // Ghost scallops and a horizontal 3D halo.
                 for x in [-3.0, 0.0, 3.0] {
@@ -1498,7 +1490,7 @@ impl VoxelModel {
             0.0
         };
         let raised = matches!(expression, Happy | Playful | Excited | Celebrate);
-        let arm_h = if fine { 3.0 } else { 2.1 };
+        let arm_h = if fine { 2.2 } else { 1.8 };
         for sign in [-1.0_f32, 1.0] {
             let forward = if matches!(expression, Eating | Shy) {
                 torso_z + 1.0
@@ -1526,7 +1518,7 @@ impl VoxelModel {
                 16,
             );
             let hips = torso_y - torso_h * 0.7;
-            let leg_h = if fine { 3.8 } else { 2.6 };
+            let leg_h = if fine { 2.6 } else { 1.8 };
             let knee_y = hips - leg_h + (gait * sign).max(0.0);
             let leg_z = gait * sign * if fine { 2.2 } else { 1.6 };
             self.ellipsoid(
@@ -2924,8 +2916,19 @@ mod voxel_tests {
                     .collect();
                 assert_ne!(frames[0], frames[1]);
                 assert_ne!(frames[1], frames[3]);
-                let a = VoxelModel::pet(stage, Expression::Idle, style, 0, true);
-                let b = VoxelModel::pet(stage, Expression::Idle, style, 1, true);
+                let mut a = VoxelModel::pet(stage, Expression::Idle, style, 0, true);
+                let mut b = VoxelModel::pet(stage, Expression::Idle, style, 1, true);
+                for (model, phase) in [(&mut a, 0), (&mut b, 1)] {
+                    model.animal(stage, style, Appearance::default());
+                    model.grow_body(
+                        stage,
+                        Expression::Idle,
+                        style,
+                        phase,
+                        true,
+                        Appearance::default(),
+                    );
+                }
                 assert_ne!(a.cells, b.cells);
             }
             for stage in [Stage::Egg, Stage::Dead] {

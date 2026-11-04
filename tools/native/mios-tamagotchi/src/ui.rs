@@ -49,6 +49,7 @@ pub enum Menu {
     Talk,
     Roster,
     Habitat,
+    Training,
 }
 
 #[derive(Clone, Copy)]
@@ -168,6 +169,16 @@ impl Ui {
     pub fn configured(game: Game, config: &Config) -> Self {
         let mut ui = Self::new(game);
         ui.catalogue = config.characters.clone();
+        for character in &mut ui.catalogue {
+            if let Ok((body, accent)) = config
+                .game
+                .training
+                .palette(character.shape, &character.archetype)
+            {
+                character.body = body;
+                character.accent = accent;
+            }
+        }
         ui.habitat_rules = Some(config.habitat.clone());
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
@@ -366,9 +377,13 @@ impl Ui {
     fn current_character(&self) -> Option<&Character> {
         self.catalogue.iter().find(|c| c.id == self.game.character)
     }
-    fn name(&self) -> &str {
-        self.current_character()
-            .map_or("MiOS-Mon", |c| c.name.as_str())
+    pub fn name(&self) -> &str {
+        if self.game.progress.name.is_empty() {
+            self.current_character()
+                .map_or("MiOS-Mon", |c| c.name.as_str())
+        } else {
+            self.game.progress.name.as_str()
+        }
     }
     fn appearance(&self) -> Appearance {
         self.current_character()
@@ -433,6 +448,7 @@ impl Ui {
                     Choice::Quit,
                     Choice::Back,
                     Choice::Habitat,
+                    Choice::Training,
                 ]
             } else {
                 vec![
@@ -470,6 +486,7 @@ impl Ui {
             Choice::Graphics => self.open(Menu::Graphics),
             Choice::Roster => self.open(Menu::Roster),
             Choice::Habitat => self.open(Menu::Habitat),
+            Choice::Training => self.open(Menu::Training),
             Choice::Pause => self.game.paused = !self.game.paused,
             Choice::Save => return Effect::Save,
             Choice::Quit => return Effect::Quit,
@@ -640,6 +657,10 @@ impl Ui {
                 self.open(Menu::Habitat);
                 return Effect::Continue;
             }
+            Action::Training => {
+                self.open(Menu::Training);
+                return Effect::Continue;
+            }
             Action::Status => {
                 self.open(Menu::Status);
                 return Effect::Continue;
@@ -792,7 +813,7 @@ impl Ui {
         if matches!(menu, Menu::Status | Menu::Help) {
             match action {
                 Action::Direction(Direction::Down | Direction::Right) | Action::Next => {
-                    self.menu_scroll = self.menu_scroll.saturating_add(1).min(24);
+                    self.menu_scroll = self.menu_scroll.saturating_add(1).min(512);
                     return Effect::Continue;
                 }
                 Action::Direction(Direction::Up | Direction::Left) | Action::Previous => {
@@ -803,10 +824,11 @@ impl Ui {
             }
         }
         let count = match menu {
-            Menu::Home => 11,
+            Menu::Home => 12,
             Menu::Care => 5,
             Menu::Games => 2,
             Menu::Graphics => 19,
+            Menu::Training => 6,
             Menu::Status | Menu::Help => 1,
             Menu::Gallery => 16,
             Menu::Talk => 7,
@@ -853,7 +875,8 @@ impl Ui {
                         return Effect::Save;
                     }
                     9 => return Effect::Quit,
-                    _ => self.open(Menu::Habitat),
+                    10 => self.open(Menu::Habitat),
+                    _ => self.open(Menu::Training),
                 },
                 Menu::Care => {
                     self.menu = None;
@@ -892,6 +915,22 @@ impl Ui {
                     17 => self.change_camera(self.camera_view, 100),
                     _ => self.menu = None,
                 },
+                Menu::Training => {
+                    if self.menu_selected >= 5 {
+                        self.menu = None;
+                    } else {
+                        match self.game.train(self.menu_selected, rules) {
+                            Ok(message) => {
+                                self.notice = message;
+                                self.react(Expression::Celebrate);
+                            }
+                            Err(message) => {
+                                self.notice = message;
+                                self.react(Expression::Surprised);
+                            }
+                        }
+                    }
+                }
                 Menu::Status | Menu::Help => self.menu = None,
                 Menu::Talk => {
                     if self.menu_selected == 0 {
@@ -1151,10 +1190,14 @@ impl Ui {
             .style(Style::default().fg(colors.ink(2))),
             header,
         );
-        let (room, side) = if content.width >= 88 && content.height >= 15 {
-            let [room, side] =
-                Layout::horizontal([Constraint::Min(1), Constraint::Length(28)]).areas(content);
-            (room, Some(side))
+        let proportions = crate::hud::split(
+            content,
+            config.hud_golden_ratio,
+            config.hud_landscape_columns,
+            config.hud_portrait_ratio_percent,
+        );
+        let (room, side) = if proportions.landscape {
+            (proportions.scene, Some(proportions.info))
         } else {
             (content, None)
         };
@@ -1376,6 +1419,17 @@ impl Ui {
                     .style(Style::default().fg(colors.ink(index))),
                 );
             }
+            if self.game.progress.hatched && info.height >= 19 {
+                for (index, stat) in self.game.progress.stats.iter().enumerate() {
+                    lines.push(Line::from(format!(
+                        "{} {} / Lv{} / {} XP",
+                        crate::progression::TrainingRules::label(index),
+                        stat.value,
+                        stat.level,
+                        stat.xp
+                    )));
+                }
+            }
             if let Some(theme) = config.habitat.theme(self.game.habitat.theme) {
                 lines.push(Line::from(theme.name.clone()));
             }
@@ -1420,11 +1474,11 @@ impl Ui {
             );
             let hints = if let Some(pad) = &self.controller {
                 format!(
-                    "{} {} | {} Menu\n{} select\nV Graphics +/- Z",
+                    "{} {}\n{} Menu\n{} Next / V Graphics",
                     tiny_button(&pad.accept),
                     LABELS[self.selected],
                     tiny_button(&pad.back),
-                    pad.navigate
+                    tiny_button(&pad.next)
                 )
             } else {
                 format!(
@@ -1441,32 +1495,24 @@ impl Ui {
                 self.selected,
             ));
         } else {
+            let control_rows = if self.controller.is_some() { 2 } else { 1 }.min(info.height);
             let controls = Rect::new(
                 info.x,
-                info.bottom().saturating_sub(1),
+                info.bottom().saturating_sub(control_rows),
                 info.width,
-                1.min(info.height),
+                control_rows,
             );
-            let metadata = Rect::new(info.x, info.y, info.width, 1.min(info.height));
+            let metadata_rows = info.height.saturating_sub(control_rows).min(1);
+            let metadata = Rect::new(info.x, info.y, info.width, metadata_rows);
             let thought = Rect::new(
                 info.x,
-                info.y.saturating_add(1),
+                info.y.saturating_add(metadata_rows),
                 info.width,
-                info.height.saturating_sub(2),
+                info.height.saturating_sub(control_rows + metadata_rows),
             );
             screen.render_widget(
-                Paragraph::new(if info.width < 18 {
-                    format!(
-                        "{}t${}w{}",
-                        self.game.age_ticks, self.game.coins, self.game.wins
-                    )
-                } else {
-                    format!(
-                        "t{} ${} w{} {}%",
-                        self.game.age_ticks, self.game.coins, self.game.wins, self.zoom_percent
-                    )
-                })
-                .style(Style::default().fg(colors.ink(7))),
+                Paragraph::new(self.compact_metadata(info.width, frame))
+                    .style(Style::default().fg(colors.ink(7))),
                 metadata,
             );
             if thought.height > 0 {
@@ -1474,17 +1520,15 @@ impl Ui {
             }
             let hint = if let Some(pad) = &self.controller {
                 format!(
-                    "{}:{} {}:Menu",
+                    "{}:{}\n{}:Menu",
                     tiny_button(&pad.accept),
-                    LABELS[self.selected],
+                    ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected],
                     tiny_button(&pad.back)
                 )
             } else if controls.width < 18 {
                 format!(
                     "Ent {} O",
-                    [
-                        "Feed", "Play", "Wash", "Rest", "Med", "Pause", "Save", "New"
-                    ][self.selected]
+                    ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected]
                 )
             } else {
                 format!(
@@ -1496,9 +1540,15 @@ impl Ui {
                 Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
                 controls,
             );
-            self.care_targets
-                .borrow_mut()
-                .push((controls, self.selected));
+            self.care_targets.borrow_mut().push((
+                Rect::new(
+                    controls.x,
+                    controls.y,
+                    controls.width,
+                    1.min(controls.height),
+                ),
+                self.selected,
+            ));
         }
         if let Some(challenge) = &self.game.challenge {
             let text = if challenge.reveal > 0 {
@@ -1627,6 +1677,201 @@ impl Ui {
         }
     }
 
+    fn compact_metadata(&self, width: u16, frame: usize) -> String {
+        let short = format!(
+            "{}t${}w{}",
+            crate::hud::ticks(self.game.age_ticks),
+            crate::hud::counter(self.game.coins),
+            crate::hud::counter(self.game.wins)
+        );
+        let mut pages = if short.len() <= usize::from(width) {
+            vec![short]
+        } else {
+            vec![
+                format!("t{}", crate::hud::ticks(self.game.age_ticks)),
+                format!("${}", crate::hud::counter(self.game.coins)),
+                format!("w{}", crate::hud::counter(self.game.wins)),
+            ]
+        };
+        if self.game.progress.hatched {
+            for (index, stat) in self.game.progress.stats.iter().enumerate() {
+                pages.push(format!(
+                    "{}L{}v{}",
+                    ["Sw", "Fl", "Ru", "Pw", "St"][index],
+                    stat.level,
+                    stat.value
+                ));
+            }
+        }
+        pages[frame / 28 % pages.len()].clone()
+    }
+
+    fn draw_training(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+    ) {
+        let area = if screen.area().width < 40 || screen.area().height < 14 {
+            screen.area()
+        } else {
+            center(screen.area(), 66, 20)
+        };
+        screen.render_widget(Clear, area);
+        let selected = self.menu_selected.min(5);
+        let title = if area.width < 20 {
+            format!("TRAIN {}/6", selected + 1)
+        } else {
+            format!(" TRAINING / {} / Lv/value ", self.name())
+        };
+        let block = panel(&title, colors, renderer == Renderer::Ascii);
+        let inner = block.inner(area);
+        screen.render_widget(block, area);
+        let micro = inner.height <= 5 || inner.width < 18;
+        let header_rows = if micro { 0 } else { 2 };
+        let detail_rows = if micro { 1 } else { 3 };
+        let [header, list, detail, controls] = Layout::vertical([
+            Constraint::Length(header_rows),
+            Constraint::Min(1),
+            Constraint::Length(detail_rows),
+            Constraint::Length(2),
+        ])
+        .areas(inner);
+        screen.render_widget(
+            Paragraph::new(format!(
+                "Food -{} / Energy -{} / Happy +{}\n{} coins per level / innate grades E..A",
+                config.game.training.fullness_cost,
+                config.game.training.energy_cost,
+                config.game.training.happiness_gain,
+                config.game.training.level_coin_reward
+            ))
+            .style(Style::default().fg(colors.ink(7))),
+            header,
+        );
+        let rows = usize::from(list.height);
+        let start = selected.saturating_sub(rows.saturating_sub(1));
+        let lines = (start..6)
+            .take(rows)
+            .map(|index| {
+                let text = if index == 5 {
+                    "Back".to_string()
+                } else {
+                    let stat = self.game.progress.stats[index];
+                    if micro {
+                        format!(
+                            "{}{}/{}",
+                            ["Swim", "Fly", "Run", "Pwr", "Stam"][index],
+                            stat.level,
+                            stat.value
+                        )
+                    } else {
+                        format!(
+                            "{}: level {} / value {} / aptitude {}",
+                            crate::progression::TrainingRules::label(index),
+                            stat.level,
+                            stat.value,
+                            stat.grade()
+                        )
+                    }
+                };
+                let text = if micro {
+                    text
+                } else {
+                    format!("{} {text}", if index == selected { ">" } else { " " })
+                };
+                Line::from(text).style(if index == selected {
+                    Style::default()
+                        .fg(colors.ink(0))
+                        .bg(colors.ink(7))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(colors.ink(2))
+                })
+            })
+            .collect::<Vec<_>>();
+        screen.render_widget(Paragraph::new(lines), list);
+        let r = &config.game.training;
+        let reason = if !self.game.progress.hatched {
+            Some("Egg: wait")
+        } else if self.game.health == 0 {
+            Some("Pet died")
+        } else if self.game.paused {
+            Some("Paused: P")
+        } else if self.game.sleeping {
+            Some("Rest: R")
+        } else if self.game.ill {
+            Some("Ill: M")
+        } else if self.game.challenge.is_some() {
+            Some("Memory: G")
+        } else if self.game.energy < r.energy_cost {
+            Some("Rest: R")
+        } else if self.game.fullness < r.fullness_cost {
+            Some("Feed: F")
+        } else if self
+            .game
+            .progress
+            .last_train_tick
+            .is_some_and(|last| self.game.age_ticks.saturating_sub(last) < r.cooldown_ticks)
+        {
+            Some("Wait: Esc")
+        } else if selected < 5 && self.game.progress.stats[selected].level >= r.max_level {
+            Some("Level cap")
+        } else {
+            None
+        };
+        let text = if selected >= 5 {
+            "Keep pet".to_owned()
+        } else if micro {
+            if let Some(reason) = reason {
+                reason.to_owned()
+            } else {
+                let stat = self.game.progress.stats[selected];
+                format!("{}/{}XP{}", stat.xp, r.xp_needed(stat.level), stat.grade())
+            }
+        } else {
+            let stat = self.game.progress.stats[selected];
+            format!(
+                "XP {} / {} | aptitude {}\n{}\n{}",
+                stat.xp,
+                r.xp_needed(stat.level),
+                stat.grade(),
+                reason.unwrap_or("Ready: training spends food and energy."),
+                self.notice
+            )
+        };
+        screen.render_widget(
+            Paragraph::new(text).style(Style::default().fg(colors.ink(7))),
+            detail,
+        );
+        let hints = self.controller.as_ref().map_or_else(
+            || {
+                if micro {
+                    "Ent train\nEsc Back".to_owned()
+                } else {
+                    "Enter: train selected skill / Tab: next\nEscape: return / L: training"
+                        .to_owned()
+                }
+            },
+            |pad| {
+                format!(
+                    "{} {}\n{} Back",
+                    tiny_button(&pad.accept),
+                    if micro {
+                        "train"
+                    } else {
+                        "train / D-pad select"
+                    },
+                    tiny_button(&pad.back)
+                )
+            },
+        );
+        screen.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            controls,
+        );
+    }
+
     fn draw_habitat_menu(
         &self,
         screen: &mut Frame,
@@ -1643,9 +1888,10 @@ impl Ui {
         let block = panel(" HABITAT / ITEMS ", colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
         screen.render_widget(block, area);
+        let micro = inner.width < 18 || inner.height <= 5;
         let [header, notice, list, controls] = Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Length(1),
+            Constraint::Length(if micro { 1 } else { 2 }),
+            Constraint::Length(if micro { 0 } else { 1 }),
             Constraint::Min(1),
             Constraint::Length(2),
         ])
@@ -1655,11 +1901,23 @@ impl Ui {
             .theme(self.game.habitat.theme)
             .map_or("Unknown", |t| t.name.as_str());
         screen.render_widget(
-            Paragraph::new(format!(
-                "{theme}\n{}c | {} placed",
-                self.game.coins,
-                self.game.habitat.placed.count_ones()
-            ))
+            Paragraph::new(if micro {
+                if self.frame / 14 % 2 == 0 {
+                    format!(
+                        "{}c {}p",
+                        crate::hud::counter(self.game.coins),
+                        self.game.habitat.placed.count_ones()
+                    )
+                } else {
+                    frame_label(&self.notice, inner.width, self.frame / 28)
+                }
+            } else {
+                format!(
+                    "{theme}\n{}c | {} placed",
+                    self.game.coins,
+                    self.game.habitat.placed.count_ones()
+                )
+            })
             .style(Style::default().fg(colors.ink(7))),
             header,
         );
@@ -1698,6 +1956,11 @@ impl Ui {
             .take(rows)
             .map(|(index, text)| {
                 let selected = index == self.menu_selected;
+                let text = if micro {
+                    frame_label(text, list.width.saturating_sub(2), self.frame / 14)
+                } else {
+                    text.clone()
+                };
                 Line::from(format!("{} {text}", if selected { ">" } else { " " })).style(
                     if selected {
                         Style::default()
@@ -1712,14 +1975,28 @@ impl Ui {
             .collect();
         screen.render_widget(Paragraph::new(lines), list);
         let hints = self.controller.as_ref().map_or_else(
-            || "Enter: buy/place\nEsc: Back / Tab".into(),
+            || {
+                if micro {
+                    "Ent use\nEsc Back".into()
+                } else {
+                    "Enter: buy/place\nEsc: Back / Tab".into()
+                }
+            },
             |p| {
-                format!(
-                    "{}: buy/place\n{}: Back / {}",
-                    tiny_button(&p.accept),
-                    tiny_button(&p.back),
-                    tiny_button(&p.navigate)
-                )
+                if micro {
+                    format!(
+                        "{} use\n{} Back",
+                        tiny_button(&p.accept),
+                        tiny_button(&p.back)
+                    )
+                } else {
+                    format!(
+                        "{}: buy/place\n{}: Back / {}",
+                        tiny_button(&p.accept),
+                        tiny_button(&p.back),
+                        tiny_button(&p.navigate)
+                    )
+                }
             },
         );
         screen.render_widget(
@@ -1744,18 +2021,38 @@ impl Ui {
         let ascii = renderer == Renderer::Ascii;
         let area = screen.area();
         screen.render_widget(Clear, area);
-        let title = format!(
-            " ROSTER {}/{} / PREVIEW ",
-            self.menu_selected + 1,
-            self.catalogue.len()
-        );
-        let block = panel(&title, colors, ascii);
+        let micro = area.width < 18 || area.height <= 7;
+        let title = if micro {
+            format!(
+                "{}/{} {}",
+                self.menu_selected + 1,
+                self.catalogue.len(),
+                character.name
+            )
+        } else {
+            format!(
+                " ROSTER {}/{} / PREVIEW ",
+                self.menu_selected + 1,
+                self.catalogue.len()
+            )
+        };
+        let block = panel(&title, colors, ascii).title_bottom(Line::from(frame_label(
+            &format!("{} / {}", character.species, character.archetype),
+            area.width.saturating_sub(2),
+            self.frame / 14,
+        )));
         let inner = block.inner(area);
         screen.render_widget(block, area);
         let compact = inner.width < 50 || inner.height < 16;
         let [header, info, room, controls] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(if compact { 1 } else { 3 }),
+            Constraint::Length(if micro { 0 } else { 1 }),
+            Constraint::Length(if micro {
+                0
+            } else if compact {
+                1
+            } else {
+                3
+            }),
             Constraint::Min(1),
             Constraint::Length(2),
         ])
@@ -1826,14 +2123,22 @@ impl Ui {
         );
         let hints = self.controller.as_ref().map_or_else(
             || {
-                if controls.width < 28 {
+                if controls.width < 18 {
+                    "Ent new?\nEsc keep".into()
+                } else if controls.width < 28 {
                     "Arrows Enter:new?\nEsc: keep pet".into()
                 } else {
                     "Arrows: animal  Enter: adopt?\nEsc: keep current pet".into()
                 }
             },
             |p| {
-                if controls.width < 28 {
+                if controls.width < 18 {
+                    format!(
+                        "{} new?\n{} keep",
+                        tiny_button(&p.accept),
+                        tiny_button(&p.back)
+                    )
+                } else if controls.width < 28 {
                     format!(
                         "{} {}:new?\n{}:keep",
                         p.navigate,
@@ -1969,6 +2274,10 @@ impl Ui {
         if menu == Menu::Talk {
             return;
         }
+        if menu == Menu::Training {
+            self.draw_training(screen, config, colors, renderer);
+            return;
+        }
         if menu == Menu::Habitat {
             self.draw_habitat_menu(screen, config, colors, renderer);
             return;
@@ -2007,11 +2316,25 @@ impl Ui {
             let stage = stages[self.gallery_stage % stages.len()];
             let area = screen.area();
             screen.render_widget(Clear, area);
-            let block = panel(" SPRITE STUDIO / PREVIEW ", colors, ascii);
+            let micro = area.width < 18 || area.height <= 7;
+            let title = if micro {
+                frame_label(
+                    &format!("{stage:?} {expression:?}"),
+                    area.width.saturating_sub(2),
+                    self.frame / 14,
+                )
+            } else {
+                " SPRITE STUDIO / PREVIEW ".into()
+            };
+            let block = panel(&title, colors, ascii).title_bottom(Line::from(if micro {
+                "<> mood ^v".to_string()
+            } else {
+                "PREVIEW / pet unchanged".to_string()
+            }));
             let inner = block.inner(area);
             screen.render_widget(block, area);
             let [label, room, controls] = Layout::vertical([
-                Constraint::Length(2),
+                Constraint::Length(if micro { 0 } else { 2 }),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
@@ -2058,7 +2381,18 @@ impl Ui {
                 },
                 room,
             );
-            let hint = if let Some(pad) = &self.controller {
+            let hint = if micro {
+                self.controller.as_ref().map_or_else(
+                    || "Ent 8/16\nEsc Back".into(),
+                    |pad| {
+                        format!(
+                            "{} 8/16\n{} Back",
+                            tiny_button(&pad.accept),
+                            tiny_button(&pad.back)
+                        )
+                    },
+                )
+            } else if let Some(pad) = &self.controller {
                 format!(
                     "{}: reaction / life stage\n[{}] 8-bit / 16-bit   [{}] Return",
                     pad.navigate, pad.accept, pad.back
@@ -2087,6 +2421,7 @@ impl Ui {
                     "Save",
                     "Quit",
                     "Habitat / items",
+                    "Training / stats",
                 ],
             ),
             Menu::Care => (
@@ -2126,7 +2461,7 @@ impl Ui {
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
-            Menu::Gallery | Menu::Talk | Menu::Roster | Menu::Habitat => {
+            Menu::Gallery | Menu::Talk | Menu::Roster | Menu::Habitat | Menu::Training => {
                 unreachable!("special menus draw their own view")
             }
         };
@@ -2180,6 +2515,8 @@ impl Ui {
                 "Watch three arrows, then repeat after they disappear.",
                 "F Feed  G Memory  C Clean  R Rest  M Medicine",
                 "P Pause  S Save  N New pet (asks first)",
+                "L Training: Swim / Flight / Run / Power / Stamina.",
+                "Hatch rolls name, stats and aptitude. Care funds training.",
                 "Arrows / Tab select; Enter / Space activates.",
                 "O / F1 Menu  I Status  V Graphics  ? Help",
                 "Escape closes a menu; Q saves and quits.",
@@ -2188,6 +2525,7 @@ impl Ui {
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
                 "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
                 "Room / Pet / Face cameras never steer your pet.",
+                "Compact controller H- means Hold; labels match mapped buttons.",
                 "Graphics choices affect this session only.",
                 "",
             ] {
@@ -2307,8 +2645,9 @@ impl Ui {
         );
     }
     fn summary_for_menu(&self) -> String {
-        format!(
-            "MIO\nAge {} game ticks / {} coins / {} wins\n\nFullness {}%     Happiness {}%\nHygiene  {}%     Energy    {}%\nHealth   {}%\n\n{}{}",
+        let base = format!(
+            "{}\nAge {} game ticks / {} coins / {} wins\n\nFullness {}%     Happiness {}%\nHygiene  {}%     Energy    {}%\nHealth   {}%\n\n{}{}",
+            self.name(),
             self.game.age_ticks,
             self.game.coins,
             self.game.wins,
@@ -2327,8 +2666,37 @@ impl Ui {
             } else {
                 "Healthy."
             }
-        )
+        );
+        if !self.game.progress.hatched {
+            return format!("{base}\nStats roll when the egg hatches.");
+        }
+        let stats = self
+            .game
+            .progress
+            .stats
+            .iter()
+            .enumerate()
+            .map(|(index, stat)| {
+                format!(
+                    "{}: value {} / level {} / XP {} / aptitude {}",
+                    crate::progression::TrainingRules::label(index),
+                    stat.value,
+                    stat.level,
+                    stat.xp,
+                    stat.grade()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{base}\n{stats}\nL: Training / care costs apply")
     }
+}
+fn frame_label(value: &str, width: u16, page: usize) -> String {
+    let pages = wrap_dialogue(value, usize::from(width));
+    pages
+        .get(page % pages.len().max(1))
+        .cloned()
+        .unwrap_or_default()
 }
 fn tiny_button(value: &str) -> String {
     compact_button(value)
@@ -3326,5 +3694,167 @@ mod graphics_tests {
             .map(|c| c.symbol())
             .collect();
         assert!(text.contains("MAIN MENU"));
+    }
+}
+
+#[cfg(test)]
+mod progression_ui_tests {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn pet() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 741);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        (config.clone(), Ui::configured(game, &config))
+    }
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16, frame: usize) -> String {
+        let colors = Colors::from_config(config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, config, Renderer::Ascii, &colors, frame, false))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+    #[test]
+    fn training_is_navigable_at_watch_size_and_uses_real_game_costs_and_cooldown() {
+        let (config, mut ui) = pet();
+        let before = ui.game.clone();
+        draw(&ui, &config, 12, 6, 0);
+        assert_eq!(
+            ui.handle(key(KeyCode::Char('l')), &config.game),
+            Effect::Continue
+        );
+        assert_eq!(ui.menu, Some(Menu::Training));
+        let text = draw(&ui, &config, 12, 6, 0);
+        assert!(
+            text.contains("Ent train") && text.contains("Esc Back"),
+            "{text}"
+        );
+        assert_eq!(ui.game, before);
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.game.progress.total_training, 1);
+        assert_eq!(
+            ui.game.fullness,
+            before.fullness - config.game.training.fullness_cost
+        );
+        assert_eq!(
+            ui.game.energy,
+            before.energy - config.game.training.energy_cost
+        );
+        assert!(ui.game.progress.stats[0].xp > 0 || ui.game.progress.stats[0].level > 0);
+        assert_eq!(ui.game.age_ticks, before.age_ticks);
+        let trained = ui.game.clone();
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(
+            ui.game, trained,
+            "same-tick training refusal must preserve all state/RNG"
+        );
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, None);
+    }
+    #[test]
+    fn generated_name_palette_and_stat_pages_are_stable_read_only_presentation() {
+        let (config, ui) = pet();
+        assert_eq!(ui.name(), ui.game.progress.name);
+        assert!(!ui.name().is_empty());
+        for character in &ui.catalogue {
+            assert_eq!(
+                (character.body, character.accent),
+                config
+                    .game
+                    .training
+                    .palette(character.shape, &character.archetype)
+                    .unwrap()
+            );
+        }
+        let before = ui.game.clone();
+        let pages = (0..6)
+            .map(|page| ui.compact_metadata(10, page * 28))
+            .collect::<Vec<_>>();
+        assert!(pages.iter().all(|page| page.len() <= 10));
+        for label in ["SwL", "FlL", "RuL", "PwL", "StL"] {
+            assert!(pages.iter().any(|page| page.contains(label)), "{pages:?}");
+        }
+        let status = ui.summary_for_menu();
+        for label in ["Swim", "Flight", "Run", "Power", "Stamina"] {
+            assert!(status.contains(label));
+        }
+        assert_eq!(ui.game, before);
+        let mut legacy = ui.game.clone();
+        legacy.progress = crate::progression::Progress::legacy(legacy.visual_seed());
+        legacy.prepare_progress(&config.game).unwrap();
+        let legacy_ui = Ui::configured(legacy, &config);
+        assert_eq!(
+            legacy_ui.name(),
+            legacy_ui.current_character().unwrap().name
+        );
+    }
+    #[test]
+    fn watch_roster_studio_and_habitat_keep_scene_choices_and_explicit_back() {
+        let (config, mut ui) = pet();
+        let before = ui.game.clone();
+        for menu in [Menu::Roster, Menu::Gallery, Menu::Habitat] {
+            ui.open(menu);
+            let text = draw(&ui, &config, 12, 6, 0);
+            assert!(
+                text.contains("Ent") && text.contains("Esc"),
+                "{menu:?}: {text}"
+            );
+            if menu == Menu::Habitat {
+                assert!(text.contains(">"), "{text}");
+            } else {
+                assert!(
+                    text.contains("(^_^)") || text.contains("(o_o)"),
+                    "{menu:?}: face scene missing: {text}"
+                );
+            }
+            ui.handle(key(KeyCode::Esc), &config.game);
+            assert_eq!(ui.menu, None);
+        }
+        assert_eq!(ui.game, before);
+    }
+    #[test]
+    fn held_mapped_controller_buttons_remain_legible_with_back_on_its_own_row() {
+        let (config, mut ui) = pet();
+        ui.controller = Some(ControllerPrompts {
+            family: "Test".into(),
+            navigate: "Hold D-pad Right / Tap Triangle".into(),
+            accept: "Hold D-pad Right".into(),
+            back: "Hold Triangle".into(),
+            next: "Tap Square".into(),
+            release: "Hold L3+R3".into(),
+            quit: None,
+        });
+        ui.hud_mode = HudMode::Minimal;
+        let text = draw(&ui, &config, 12, 6, 0);
+        assert!(
+            text.contains("H-DR:Feed") && text.contains("H-^:Menu"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("D-pad Right /"),
+            "the long controller map belongs in paginated Help"
+        );
+        let before = ui.game.clone();
+        ui.open(Menu::Home);
+        let text = draw(&ui, &config, 12, 6, 0);
+        assert!(
+            text.contains("H-DR: OK") && text.contains("H-^: Back"),
+            "{text}"
+        );
+        assert_eq!(ui.game, before);
     }
 }

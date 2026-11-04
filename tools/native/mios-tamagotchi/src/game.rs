@@ -23,6 +23,7 @@ pub struct Rules {
     pub medicine_cost: u32,
     pub starting_coins: u32,
     pub memory_reveal_ticks: u16,
+    pub training: crate::progression::TrainingRules,
 }
 
 impl Rules {
@@ -54,6 +55,7 @@ impl Rules {
         {
             return Err("tamagotchi.game: invalid care, memory or currency limits".into());
         }
+        self.training.validate()?;
         Ok(())
     }
 }
@@ -101,6 +103,8 @@ pub struct Game {
     pub character: u8,
     #[serde(default)]
     pub habitat: crate::habitat::Habitat,
+    #[serde(default)]
+    pub progress: crate::progression::Progress,
     pub age_ticks: u64,
     pub fullness: u8,
     pub happiness: u8,
@@ -137,6 +141,7 @@ impl Game {
             // This does not consume the memory game's saved RNG stream.
             character: ((seed % 8) + ((seed >> 8) % 2) * 8) as u8,
             habitat: crate::habitat::Habitat::new(seed),
+            progress: crate::progression::Progress::new(seed),
             age_ticks: 0,
             fullness: rules.initial_need,
             happiness: rules.initial_need,
@@ -157,6 +162,14 @@ impl Game {
     }
     pub fn validate_habitat(&self, habitat: &crate::habitat::HabitatRules) -> Result<(), String> {
         self.habitat.validate(self.wins, self.age_ticks, habitat)?;
+        self.progress.validate()?;
+        if self
+            .progress
+            .last_train_tick
+            .is_some_and(|last| last > self.age_ticks)
+        {
+            return Err("save contains a future training tick".into());
+        }
         if [
             self.fullness,
             self.happiness,
@@ -200,7 +213,14 @@ impl Game {
         if self.paused || self.health == 0 {
             return;
         }
+        // Invalid callers cannot trigger a hatch panic or advance care time.
+        if r.training.validate().is_err() || self.progress.validate().is_err() {
+            return;
+        }
         self.age_ticks = self.age_ticks.saturating_add(1);
+        if self.prepare_progress(r).is_err() {
+            return;
+        }
         if self.stage(r) == Stage::Egg {
             return;
         }

@@ -133,12 +133,13 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .or_else(|| save::default_path(&config.state_directory).ok())
     };
     if args.snapshot || !caps.interactive {
-        let game = if let Some(p) = &path {
+        let mut game = if let Some(p) = &path {
             save::load_with_rules(p, &config.habitat)?
         } else {
             None
         }
         .unwrap_or_else(|| Game::new(&config.game, 1));
+        game.prepare_progress(&config.game)?;
         if !config.characters.iter().any(|c| c.id == game.character) {
             return Err("saved character is missing from this catalogue".into());
         }
@@ -175,9 +176,23 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         writeln!(
             io::stdout().lock(),
             "MiOS Tamagotchi\n{status}\n{art}\n{} thinks: {thought}\n{} says: {speech}\nSnapshot only; no clock or save writes. Use a terminal to play.",
-            character.name,
-            character.name
+            snapshot_ui.name(),
+            snapshot_ui.name()
         )?;
+        if game.progress.hatched {
+            for (index, stat) in game.progress.stats.iter().enumerate() {
+                writeln!(
+                    io::stdout().lock(),
+                    "{}: value {} | level {} | XP {}/{} | aptitude {}",
+                    mios_tamagotchi::progression::TrainingRules::label(index),
+                    stat.value,
+                    stat.level,
+                    stat.xp,
+                    config.game.training.xp_needed(stat.level),
+                    stat.grade()
+                )?;
+            }
+        }
         return Ok(());
     }
     if !ephemeral && path.is_none() {
@@ -188,12 +203,13 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
-    let game = store
+    let mut game = store
         .as_ref()
         .map(|store| store.load_with_rules(&config.habitat))
         .transpose()?
         .flatten()
         .unwrap_or_else(|| Game::new(&config.game, seed));
+    game.prepare_progress(&config.game)?;
     // Validate before entering raw mode; an existing corrupt save is never silently replaced.
     game.validate_habitat(&config.habitat)?;
     if !config.characters.iter().any(|c| c.id == game.character) {

@@ -66,6 +66,26 @@ pub fn counter(value: u32) -> String {
     }
     value.to_string()
 }
+/// Approximate long counters with an explicit '+' for a nonzero remainder.
+pub fn ticks(value: u64) -> String {
+    for (unit, suffix) in [
+        (1_000_000_000_000_000_000, "E"),
+        (1_000_000_000_000_000, "P"),
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "G"),
+        (1_000_000, "M"),
+        (1_000, "K"),
+    ] {
+        if value >= unit {
+            return format!(
+                "{}{suffix}{}",
+                value / unit,
+                if value.is_multiple_of(unit) { "" } else { "+" }
+            );
+        }
+    }
+    value.to_string()
+}
 fn number(value: u8) -> String {
     if value == 100 {
         "*".into()

@@ -146,6 +146,12 @@ impl Config {
             return Err("tamagotchi: invalid native/inline dialogue limits".into());
         }
         crate::characters::validate_catalogue(&self.characters)?;
+        for character in &self.characters {
+            self.game
+                .training
+                .palette(character.shape, &character.archetype)
+                .map_err(|e| format!("tamagotchi.characters[{}]: {e}", character.id))?;
+        }
         if !self.hud_golden_ratio.is_finite()
             || !(1.1..=4.0).contains(&self.hud_golden_ratio)
             || !(20..=240).contains(&self.hud_landscape_columns)
@@ -222,4 +228,22 @@ pub fn parse_rgb(text: &str) -> Result<[u8; 3], String> {
     }
     let value = u32::from_str_radix(digits, 16).map_err(|e| e.to_string())?;
     Ok([(value >> 16) as u8, (value >> 8) as u8, value as u8])
+}
+
+#[cfg(test)]
+mod training_palette_validation_tests {
+    use super::Config;
+    #[test]
+    fn a_missing_actual_personality_palette_is_rejected_before_raw_mode() {
+        let mut config = Config::sample().unwrap();
+        assert!(config.validate().is_ok());
+        let archetype = config.characters[0].archetype.clone();
+        config.game.training.personality_colors.remove(&archetype);
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .contains("tamagotchi.game.training")
+        );
+    }
 }

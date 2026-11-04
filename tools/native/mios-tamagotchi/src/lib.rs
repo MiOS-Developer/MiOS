@@ -20,3 +20,5 @@ mod game_tests;
 mod tests;
 
 pub mod hud;
+
+pub mod progression;
