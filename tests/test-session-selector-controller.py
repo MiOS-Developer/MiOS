@@ -208,7 +208,7 @@ def selector(miosd, tmp, tag, keys, scenario=None, width=100, height=30):
     # The outer server has a host-private socket. Child receives only the inner private paths.
     # Resolve the isolator before replacing PATH with the fixture-only commands.
     cmd[0] = shutil.which(cmd[0])
-    cmd = ['env', 'TMUX_TMPDIR=' + paths['tmux'], 'PATH=' + paths['bin'], *cmd]
+    cmd = ['env', '-u', 'TMUX', '-u', 'TMUX_PANE', 'TMUX_TMPDIR=' + paths['tmux'], 'PATH=' + paths['bin'], *cmd]
     sock = f'mios-menu-{os.getpid()}'
     T = lambda *a: subprocess.run(['tmux', '-L', sock, *a], env=env, capture_output=True, text=True, timeout=10)
     try:
@@ -247,6 +247,128 @@ def selector(miosd, tmp, tag, keys, scenario=None, width=100, height=30):
     finally:
         T('kill-server')
         cleanup_menu()
+
+
+def native_tui_client_cases():
+    """Real selector -> shipped terminal wrapper -> native app executor on private tmux servers."""
+    import fcntl, pty, termios
+    canonical = Path(TERMINAL)
+    check('native app fixture uses the exact canonical terminal wrapper',
+          canonical.read_bytes() == (ROOT / TERMINAL.lstrip('/')).read_bytes())
+    gen = os.environ.get('MIOS_GEN', '')
+    check('native app fixture selects an explicit executable native executor',
+          bool(gen) and Path(gen).is_file() and os.access(gen, os.X_OK))
+    for case, attached, unrelated in (('single', 1, False), ('zero', 0, False),
+                                      ('ambiguous', 2, False), ('other-session', 1, True)):
+        with tempfile.TemporaryDirectory(prefix='mios-selector-client-') as tmp:
+            d = Path(tmp)
+            (d / 'bin').mkdir()
+            tail = d / 'bin/tailscale'
+            tail.write_text('#!/bin/sh\nexit 1\n')
+            tail.chmod(0o755)
+            game = d / 'mios-fixture-game'
+            marker = d / 'launched'
+            game.write_text('#!/bin/sh\nprintf "%s\\n" "$$" > ' + shlex.quote(str(marker))
+                            + '\nprintf "MIOS_PRIVATE_GAME_RUNNING\\n"\nexec sleep 120\n')
+            game.chmod(0o755)
+            user = d / 'profile.toml'
+            # Discovery deliberately names another socket. Execution must use the invoking TMUX witness.
+            user.write_text('[keybindings]\nsocket_name="mios-fixture-unrelated-discovery"\n'
+                            '[terminal]\nsocket_root=' + json.dumps(tmp) + '\n'
+                            '[[terminal.tuis]]\nid="mios-fixture-game"\nlabel="Private game fixture"\n'
+                            'section="mios"\nmode="window"\nvt_ok=true\nargv=['
+                            + json.dumps(str(game)) + ']\n')
+            env = {k: v for k, v in os.environ.items()
+                   if not k.startswith('MIOS_') and k not in ('TMUX', 'TMUX_PANE')}
+            env.update(MIOS_VENDOR_TOML=str(ROOT / 'usr/share/mios/mios.toml'),
+                       MIOS_USER_TOML=str(user), MIOS_USER_TOML_D=str(d / 'none.d'),
+                       PATH=str(d / 'bin') + ':' + os.environ['PATH'],
+                       TERM='xterm-256color', HOME=tmp, XDG_CONFIG_HOME=str(d / 'config'),
+                       MIOS_TERMINAL_TEST_SOCKET_DIR=tmp,
+                       MIOS_TERMINAL_TEST_SOCKET='mios-tmuxos-test-selector-client',
+                       MIOS_TERMINAL_TEST_GEN=gen)
+            sock = str(d / 'native.sock')
+            base = ['tmux', '-S', sock, '-f', '/dev/null']
+            def run(*args):
+                return subprocess.run([*base, *args], env=env, text=True,
+                                      capture_output=True, timeout=10)
+            clients = []
+            fds = []
+            def attach(session):
+                master, slave = pty.openpty()
+                def tty():
+                    os.setsid()
+                    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                proc = subprocess.Popen([*base, 'attach-session', '-t', '=' + session],
+                                        env=env, stdin=slave, stdout=slave, stderr=slave,
+                                        preexec_fn=tty)
+                os.close(slave)
+                os.set_blocking(master, False)
+                fds.append(master)
+                clients.append(proc)
+                return proc
+            def capture():
+                for master in fds:
+                    try:
+                        while os.read(master, 65536):
+                            pass
+                    except (BlockingIOError, OSError):
+                        pass
+                return run('capture-pane', '-p', '-t', '=owned:').stdout
+            try:
+                started = run('new-session', '-d', '-x', '110', '-y', '32', '-s', 'owned',
+                              shlex.join([CAND, 'sessions', '--root', '/']) + '; sleep 120')
+                check(f'[{case}] private native tmux server starts', started.returncode == 0, started.stderr)
+                check(f'[{case}] actual selector menu rendered',
+                      wait(lambda: 'All apps and sessions' in capture(), 15), capture()[-250:])
+                for _ in range(attached):
+                    attach('owned')
+                if unrelated:
+                    run('new-session', '-d', '-s', 'unrelated', 'sleep 120')
+                    attach('unrelated')
+                check(f'[{case}] requested private clients actually attach',
+                      wait(lambda: len(run('list-clients', '-F', '#{client_name}').stdout.splitlines())
+                           == attached + int(unrelated), 5))
+                old_foreign = run('list-clients', '-F', '#{session_name}|#{window_id}').stdout
+                run('send-keys', '-t', '=owned:', '-l', '/Private game fixture')
+                check(f'[{case}] real TUI registry row selected',
+                      wait(lambda: 'Private game fixture' in capture() and
+                           'Search editing: Private game fixture' in capture(), 5), capture()[-250:])
+                run('send-keys', '-t', '=owned:', 'Enter')
+                if attached == 1:
+                    check(f'[{case}] native wrapper and executor launch the real fixture process',
+                          wait(lambda: marker.is_file(), 6), capture()[-250:])
+                    pane = run('list-panes', '-s', '-t', '=owned:', '-F',
+                               '#{pane_pid}|#{pane_current_command}|#{window_name}').stdout
+                    check(f'[{case}] launched process is alive in its canonical game window',
+                          marker.is_file() and Path('/proc', marker.read_text().strip()).exists()
+                          and '|sleep|Private game fixture' in pane, pane)
+                    if unrelated:
+                        new_foreign = run('list-clients', '-F', '#{session_name}|#{window_id}').stdout
+                        check('other attached session keeps its existing window',
+                              [x for x in old_foreign.splitlines() if x.startswith('unrelated|')]
+                              == [x for x in new_foreign.splitlines() if x.startswith('unrelated|')])
+                else:
+                    error = 'No attached tmux client' if attached == 0 else 'Multiple attached tmux clients'
+                    check(f'[{case}] selector rejects missing or ambiguous client before execution',
+                          wait(lambda: error in capture(), 5), capture()[-300:])
+                    check(f'[{case}] no game executed and no additional window created',
+                          not marker.exists() and run('list-windows', '-t', '=owned:',
+                                                       '-F', '#{window_id}').stdout.count('\n') == 1)
+                proof = os.environ.get('MIOS_SELECTOR_PROOF_DIR')
+                if proof:
+                    Path(proof).mkdir(parents=True, exist_ok=True)
+                    (Path(proof) / f'client-{case}.txt').write_text(capture())
+            finally:
+                run('kill-server')
+                for client in clients:
+                    try:
+                        client.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        client.terminate()
+                        client.wait(timeout=3)
+                for master in fds:
+                    os.close(master)
 
 
 def main():
@@ -303,6 +425,7 @@ def main():
         got = selector(CAND, tmp, 'global-headless',
               [('/Catalogue Fixture Native', 'Catalogue Fixture Native'), 'Enter'], 'headless')
         check('headless app row cannot invent a graphical launch target', got == '', repr(got))
+    native_tui_client_cases()
     print(f'{sum(res)}/{len(res)} passed')
     return 0 if all(res) else 1
 

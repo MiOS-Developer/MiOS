@@ -1638,6 +1638,100 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     result.map(|choice| (choice, nodes))
 }
 
+/// A session window change affects every attached client of that session. Bind
+/// in-pane TUI launches to the sole attached client of the exact invoking pane;
+/// never infer an operator client from the configured discovery server.
+fn unique_pane_client(pane: &str, session: &str, rows: &str) -> Result<String, String> {
+    let mut clients = Vec::new();
+    for row in rows.lines() {
+        let columns: Vec<_> = row.split('\t').collect();
+        if columns.len() != 3 {
+            return Err("Malformed tmux client identity".into());
+        }
+        if columns[1] == session {
+            if !crate::launcher::client_ok(columns[0]) {
+                return Err("Invalid tmux client identity".into());
+            }
+            clients.push((columns[0].to_owned(), columns[2]));
+        }
+    }
+    match clients.as_slice() {
+        [(client, current)] if *current == pane => Ok(client.clone()),
+        [] => Err("No attached tmux client owns this selector pane".into()),
+        [_] => Err("The attached tmux client is viewing another pane".into()),
+        _ => Err("Multiple attached tmux clients share this selector session".into()),
+    }
+}
+
+fn current_tmux_client() -> Result<Option<String>, String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let Some(witness) = std::env::var_os("TMUX") else {
+        return Ok(None);
+    };
+    let witness = witness.to_str().ok_or("Invalid TMUX identity")?;
+    let socket = witness.split(',').next().unwrap_or_default();
+    if !socket.starts_with('/') || socket.chars().any(char::is_control) {
+        return Err("Invalid TMUX socket identity".into());
+    }
+    let metadata = std::fs::symlink_metadata(socket).map_err(|e| format!("TMUX socket: {e}"))?;
+    if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err("TMUX socket is not owned by this selector user".into());
+    }
+    let pane = std::env::var("TMUX_PANE").map_err(|_| "TMUX_PANE is required inside tmux")?;
+    if !pane.starts_with('%') || pane.len() < 2 || !pane[1..].bytes().all(|c| c.is_ascii_digit()) {
+        return Err("Invalid TMUX_PANE identity".into());
+    }
+    let deadline = Instant::now() + LOCAL_DEADLINE;
+    let query = |args: &[&str]| -> Result<String, String> {
+        let output = run_bounded(
+            Command::new("tmux").args(["-S", socket]).args(args),
+            deadline,
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "Cannot verify selector client: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        String::from_utf8(output.stdout)
+            .map(|value| value.trim_end_matches('\n').to_owned())
+            .map_err(|_| "Invalid tmux identity encoding".into())
+    };
+    let identity = query(&[
+        "display-message",
+        "-p",
+        "-t",
+        &pane,
+        "#{pane_id}\t#{session_id}",
+    ])?;
+    let Some((actual_pane, session)) = identity.split_once('\t') else {
+        return Err("Cannot verify the selector pane session".into());
+    };
+    if actual_pane != pane
+        || !session.starts_with('$')
+        || session.len() < 2
+        || !session[1..].bytes().all(|c| c.is_ascii_digit())
+    {
+        return Err("Selector pane session identity changed".into());
+    }
+    let rows = query(&[
+        "list-clients",
+        "-F",
+        "#{client_name}\t#{session_id}\t#{pane_id}",
+    ])?;
+    unique_pane_client(&pane, session, &rows).map(Some)
+}
+
+fn app_command(id: &str, console: bool) -> Result<Command, String> {
+    let mut command = Command::new(TERMINAL);
+    command.args(["--app", id, "--console", if console { "1" } else { "0" }]);
+    if let Some(client) = current_tmux_client()? {
+        command.args(["--client", &client]);
+    }
+    Ok(command)
+}
+
 fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
     let err = match choice {
         Choice::GlobalLaunch { name, session } => Command::new(&c.menu.launch_program)
@@ -1662,9 +1756,10 @@ fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
                 .exec()
         }
         Choice::Workspace => Command::new(TERMINAL).args(["--action", "ai"]).exec(),
-        Choice::App { id } => Command::new(TERMINAL)
-            .args(["--app", &id, "--console", if c.console { "1" } else { "0" }])
-            .exec(),
+        Choice::App { id } => match app_command(&id, c.console) {
+            Ok(mut command) => command.exec(),
+            Err(error) => return error,
+        },
         Choice::New { node } if nodes[node].local => Command::new(TERMINAL).arg("--new").exec(),
         Choice::NewNested { socket, tmux_root } => {
             let mut cmd = Command::new("tmux");
@@ -1713,6 +1808,21 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tui_client_requires_exact_pane_session_and_unique_attached_client() {
+        assert_eq!(
+            unique_pane_client("%7", "$2", "/dev/pts/8\t$2\t%7\n/dev/pts/9\t$3\t%8").unwrap(),
+            "/dev/pts/8"
+        );
+        assert!(unique_pane_client("%7", "$2", "").is_err());
+        assert!(unique_pane_client("%7", "$2", "/dev/pts/9\t$3\t%7").is_err());
+        assert!(unique_pane_client("%7", "$2", "/dev/pts/8\t$2\t%8").is_err());
+        assert!(unique_pane_client("%7", "$2", "/dev/pts/8\t$2\t%7\n/dev/pts/9\t$2\t%7").is_err());
+        assert!(unique_pane_client("%7", "$2", "/dev/pts/8\t$2\t%7\n/dev/pts/9\t$2\t%8").is_err());
+        assert!(unique_pane_client("%7", "$2", "untrusted\t$2\t%7").is_err());
+        assert!(unique_pane_client("%7", "$2", "/dev/pts/8\t$2").is_err());
+    }
 
     #[test]
     fn menu_inventory_gives_each_native_discovery_its_own_budget() {
