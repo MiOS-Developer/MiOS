@@ -4127,6 +4127,8 @@ provider_path = ["model_provider"]
 default_provider = "mios"
 [agent_cli.interaction.clients.codex.provider_values.mios]
 web_search = "disabled"
+# This is the available local engine allocation, not a larger model-advertised maximum.
+model_context_window = 65536
 [agent_cli.interaction.clients.codex.values.tui]
 alternate_screen = "always"
 # The managed local tool server must finish discovery before the first model turn.
@@ -7421,7 +7423,8 @@ light_threads = 1
 heavy_model_file = "granite-4.1-8b.gguf"
 heavy_gpu_resource = "dgpu-compute"
 heavy_threads = 4
-heavy_context = 32768
+# Complete native tool catalogs exceed 32K; keep this within model and GPU capacity.
+heavy_context = 65536
 heavy_batch_size = 2048
 heavy_ubatch_size = 512
 heavy_parallel = 1

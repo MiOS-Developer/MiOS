@@ -1263,6 +1263,51 @@ class TestAgentTmuxBinding(unittest.TestCase):
 class TestManagedMcpClientStartup(unittest.TestCase):
     """The owned local tool server is ready before the first client model turn."""
 
+    def test_local_context_projection_uses_allocated_window_without_changing_other_providers(self):
+        import pathlib
+        import subprocess
+        import tomllib
+        vendor = pathlib.Path(_ROOT) / "usr/share/mios/mios.toml"
+        policy = tomllib.loads(vendor.read_text())
+        allocated = policy["llamacpp"]["heavy_context"]
+        projected = policy["agent_cli"]["interaction"]["clients"]["codex"]["provider_values"]["mios"]["model_context_window"]
+        self.assertEqual(projected, allocated)
+        with tempfile.TemporaryDirectory(prefix="mios-context-policy-") as directory:
+            base = pathlib.Path(directory)
+            overlay = base / "operator.toml"
+            env = {**os.environ, "MIOS_VENDOR_TOML": str(vendor),
+                   "MIOS_VENDOR_TOML_D": "/nonexistent/vendor.d",
+                   "MIOS_HOST_TOML": str(overlay),
+                   "MIOS_HOST_TOML_D": "/nonexistent/host.d",
+                   "MIOS_USER_TOML": "/nonexistent/user.toml",
+                   "MIOS_USER_TOML_D": "/nonexistent/user.d"}
+            for provider in (None, "mios", "operator"):
+                home = base / ("fresh" if provider is None else provider)
+                (home / ".codex").mkdir(parents=True)
+                path = home / ".codex/config.toml"
+                if provider is not None:
+                    path.write_text(f'model_provider = "{provider}"\nmodel_context_window = 4096\n')
+                command = ["/usr/libexec/mios/mios-gen", "render-agent-interaction",
+                           "--root", _ROOT, "--home", str(home), "--runtime"]
+                subprocess.run(command, env=env, check=True, capture_output=True, timeout=15)
+                data = tomllib.loads(path.read_text())
+                self.assertEqual(data["model_context_window"],
+                                 4096 if provider == "operator" else allocated)
+                self.assertEqual(data.get("model_provider"), provider)
+                self.assertTrue(data["mcp_servers"]["mios-control"]["required"])
+                before = path.read_bytes()
+                subprocess.run(command, env=env, check=True, capture_output=True, timeout=15)
+                self.assertEqual(path.read_bytes(), before)
+            overlay.write_text(
+                "[agent_cli.interaction.clients.codex.provider_values.mios]\n"
+                "model_context_window = 49152\n"
+            )
+            subprocess.run(["/usr/libexec/mios/mios-gen", "render-agent-interaction",
+                            "--root", _ROOT, "--home", str(base / "mios"), "--runtime"],
+                           env=env, check=True, capture_output=True, timeout=15)
+            data = tomllib.loads((base / "mios/.codex/config.toml").read_text())
+            self.assertEqual(data["model_context_window"], 49152)
+
     def test_native_projection_preserves_managed_policy_and_external_servers(self):
         import pathlib
         import subprocess
