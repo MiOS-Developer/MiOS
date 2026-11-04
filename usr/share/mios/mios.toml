@@ -8550,6 +8550,8 @@ pkgs = [
     "tar", "gzip", "bzip2", "xz", "zstd", "unzip", "zip", "cpio",
     "jq", "yq", "qemu-img", "squashfs-tools", "attr", "just",
     # Existing self-development checks and templates, not only a compiler.
+    # Portal stage and install verification derives and checks the branded icons.
+    "python3-pillow",
     "ShellCheck", "python3-pytest", "python3-jsonschema", "python3-pyyaml",
     "python3-pyflakes", "python3-cryptography", "python3-aiohttp", "python3-pydantic",
 ]
@@ -11029,7 +11031,9 @@ core = [
   "docker.io/valkey/valkey:latest",
   "docker.io/vllm/vllm-openai:latest",
   "ghcr.io/ggml-org/whisper.cpp:main",
+  "ghcr.io/mostlygeek/llama-swap:cpu",
   "ghcr.io/mostlygeek/llama-swap:cuda",
+  "ghcr.io/mostlygeek/llama-swap:vulkan",
   "ghcr.io/mios-dev/mios-node:latest",
   "ghcr.io/mios-dev/mios-micro:latest",
   "ghcr.io/open-webui/open-webui:main",

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -148,6 +149,13 @@ class TestBakePortal(unittest.TestCase):
              "--run", source or self.f.run_dir,
              "--out", output or os.path.join(self.f.path, ".staged-portal")],
             env=self.f.env(), capture_output=True, text=True, timeout=180)
+
+    def test_image_consumer_provisions_icon_verification_dependency(self):
+        # The off-image builder having Pillow cannot satisfy the image consumer.
+        # Containerfile installs self-build before phase 67 verifies its artifact.
+        with open(os.path.join(REPO, "usr/share/mios/mios.toml"), "rb") as fh:
+            data = tomllib.load(fh)
+        self.assertIn("python3-pillow", data["packages"]["self-build"]["pkgs"])
 
     def test_ci_context_exports_only_verified_deliverable(self):
         with open(os.path.join(self.f.run_dir, "build.log"), "w") as fh:
