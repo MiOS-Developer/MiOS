@@ -179,6 +179,25 @@ fn upstream_projection_lines(root: &Path, pattern: &Regex) -> Result<HashSet<Str
     Ok(lines)
 }
 
+/// A three-part version match can overlap the tail of an IPv4 address.
+/// Validate the complete numeric token, rather than exempting a file or line:
+/// a real version beside the address must still be checked.
+fn is_ipv4_literal(line: &str, found: &regex::Match<'_>) -> bool {
+    let bytes = line.as_bytes();
+    let mut start = found.start();
+    let mut end = found.end();
+    while start > 0 && (bytes[start - 1].is_ascii_digit() || bytes[start - 1] == b'.') {
+        start -= 1;
+    }
+    while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+        end += 1;
+    }
+    line[start..end]
+        .trim_matches('.')
+        .parse::<std::net::Ipv4Addr>()
+        .is_ok()
+}
+
 pub fn check(root: &Path) -> Report {
     // Not a checkout of this repository at all: cannot run, not ok (T5 defect)
     if !root.join(".git").exists() {
@@ -231,6 +250,9 @@ pub fn check(root: &Path) -> Report {
                 continue;
             }
             for m in pat.find_iter(line) {
+                if is_ipv4_literal(line, &m) {
+                    continue;
+                }
                 let raw = m.as_str();
                 let bare = raw.strip_prefix('v').unwrap_or(raw);
                 if bare == want || EXEMPT_VALUE.contains(&bare) {
@@ -357,6 +379,31 @@ mod tests {
             !check(tmp.path()).ok,
             "the same text in authored glue must fail"
         );
+    }
+
+    #[test]
+    fn ipv4_addresses_are_not_versions_and_do_not_hide_adjacent_versions() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("usr/share/mios")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("automation")).unwrap();
+        std::fs::write(tmp.path().join(SSOT), "[meta]\nmios_version='0.3.0'\n").unwrap();
+        let source = tmp.path().join("automation/address.sh");
+        std::fs::write(&source, "curl http://127.0.0.2:19090/health\n").unwrap();
+        for args in [vec!["init", "-q"], vec!["add", "."]] {
+            assert!(Command::new("git").arg("-C").arg(tmp.path())
+                .args(args).status().unwrap().success());
+        }
+        let report = check(tmp.path());
+        assert!(report.ok, "a valid IPv4 address is not a version: {:?}", report.findings);
+        std::fs::write(&source, "curl http://127.0.0.2:19090/v0.9.9\n").unwrap();
+        let report = check(tmp.path());
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert!(report.findings[0].contains("[v0.9.9]"));
+        std::fs::write(&source, "echo 256.0.0.2 0.9.8\n").unwrap();
+        let report = check(tmp.path());
+        assert!(!report.ok, "invalid IP-like numbers are not exempt");
+        assert_eq!(report.findings.len(), 2);
     }
 
     #[test]
