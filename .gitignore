@@ -1119,3 +1119,6 @@ usr/share/mios/virtio/*.iso
 !/tools/native/mios-tamagotchi/tests/
 !/tools/native/mios-tamagotchi/tests/*.rs
 !/usr/share/doc/mios/tamagotchi-tui.md
+
+# Operator prompt for remote Blade agents and subagents.
+!/handoff.md
