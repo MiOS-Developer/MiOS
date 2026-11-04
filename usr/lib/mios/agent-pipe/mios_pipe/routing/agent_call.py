@@ -23,6 +23,8 @@ from mios_kvfork import (validate_fork as _kvfork_validate,
                          kv_filename as _kvfork_kv_filename)
 import mios_preempt
 import mios_tokenize
+from mios_pipe.routing.toolexec import _unfinished_tool_text
+from mios_pipe.lifecycle.verity import _recover_final_answer
 
 log = logging.getLogger("mios-agent-pipe")
 
@@ -595,6 +597,10 @@ async def _call_agent_complete_inner_orig(name: str, cfg: dict, body: dict,
                     return await _try_failover("tool loop backend failed")
                 if str(terminal.get("content") or "").strip():
                     content = str(terminal["content"])
+                    if _unfinished_tool_text(content, body.get("tools")):
+                        content = await _recover_final_answer(
+                            client, ep, nb.get("model"), _hdrs, nb["messages"],
+                            content, max_tokens=nb.get("max_tokens"))
                     try:
                         _harvest_sub_sources({"choices": [{"message": terminal}]}, content)
                     except Exception:  # best-effort source collection, as in final completion
@@ -622,6 +628,10 @@ async def _call_agent_complete_inner_orig(name: str, cfg: dict, body: dict,
         if msg.get("tool_calls"):
             return await _try_failover("final completion requested unexecuted tools")
         _content = str(msg.get("content") or "")
+        if _unfinished_tool_text(_content, body.get("tools")):
+            _content = await _recover_final_answer(
+                client, ep, nb.get("model"), _hdrs, nb.get("messages"),
+                _content, max_tokens=nb.get("max_tokens"))
         try:   # harvest the sub-agent's real sources into THIS (parent) turn
             _harvest_sub_sources(_rj, _content)
         except Exception:  # noqa: BLE001

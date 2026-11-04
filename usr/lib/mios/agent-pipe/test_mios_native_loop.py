@@ -1087,6 +1087,114 @@ def _run_partial_stream_never_replays_or_substitutes():
     print("after visible answer tokens, partial stream failures never replay CPU/refine/council drafts: OK")
 
 
+
+def _run_native_unfinished_final_httpx():
+    import httpx
+    from mios_pipe.routing import native_loop as native
+    from mios_pipe.lifecycle import verity
+    from unittest import mock
+    raw = '<tool_call>{"name":"arbitrary_read","arguments":{"query":"facts"}}</tool_call>'
+    async def scenario(streaming=False, terminal=False, invalid_again=False, example=False):
+        _base_configure({}, [], [])
+        requests = []
+        answer = "The verified source reports an observed result."
+        if example:
+            answer = "The literal syntax is " + chr(96) + raw + chr(96) + "."
+        async def loop(client, endpoint, model, headers, messages, tools, timeout, push, **kwargs):
+            if terminal: kwargs["terminal_response"]["content"] = raw
+            return list(messages) + [{"role": "tool", "content": "The verified source reports an observed result."}]
+        def transport(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            assert str(request.url) == "http://x/v1/chat/completions"
+            assert body["model"] == "m" and body["max_tokens"] == 8
+            assert "tools" not in body and "tool_choice" not in body
+            recovery = terminal or len(requests) > 1
+            content = answer if example or recovery and not invalid_again else raw
+            if recovery:
+                assert body["messages"][0]["content"].endswith("Canonical final synthesis fixture")
+                assert any(m.get("role") == "tool" for m in body["messages"])
+            if body.get("stream"):
+                chunks = [json.dumps({"choices": [{"delta": {"content": content[:5]}, "finish_reason": None}]}),
+                          json.dumps({"choices": [{"delta": {"content": content[5:]}, "finish_reason": None}]}),
+                          json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]}), "[DONE]"]
+                return httpx.Response(200, text="".join("data: " + row + "\n\n" for row in chunks))
+            return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
+        client = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+        M._v1_secondary_tool_loop = loop
+        M.httpx = types.SimpleNamespace(AsyncClient=lambda *a, **k: client, Timeout=httpx.Timeout)
+        with mock.patch.object(verity, "_POLISH_SYSTEM", "Canonical final synthesis fixture"):
+            response = await M._respond_native_loop_direct(
+                {}, streaming=streaming, chat_id="final", model="m", session_id=None,
+                last_user_text="Provide the measured result", persona_system="",
+                messages=[{"role": "user", "content": "Provide the measured result"}], max_tokens=8)
+            if streaming:
+                wire = b"".join([chunk async for chunk in response.body_iterator]).decode()
+                content = ""
+                for line in wire.splitlines():
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        body = json.loads(line[6:])
+                        if body.get("choices"):
+                            content += str(body["choices"][0].get("delta", {}).get("content") or "")
+                assert wire.count("data: [DONE]") == 1, wire
+                if invalid_again:
+                    assert '"code": "inference_unavailable"' in wire and '"finish_reason": "stop"' not in wire, wire
+                else:
+                    assert content == answer and '"finish_reason": "stop"' in wire, wire
+                if not example: assert "<tool_call>" not in content, wire
+            elif invalid_again:
+                assert response.status_code == 503 and b"<tool_call>" not in response.body, response.body
+            else:
+                assert _body_text(response) == answer, response.body
+        assert len(requests) == (1 if terminal or example else 2), requests
+        assert client.is_closed
+    for streaming in (False, True):
+        asyncio.run(scenario(streaming))
+        asyncio.run(scenario(streaming, terminal=True))
+        asyncio.run(scenario(streaming, invalid_again=True))
+        asyncio.run(scenario(streaming, example=True))
+    print("native HTTPX final/terminal/streaming raw tool requests recover once without leaking; quoted syntax preserved: OK")
+
+
+def _run_chat_surface_permissions_contract():
+    from mios_pipe.routing import native_loop as native
+    from unittest import mock
+    async def scenario(intent):
+        catalog = {"inspect": {"permission": "read"}, "change": {"permission": "write"},
+                   "coderun": {"permission": "execute"}}
+        executed = []
+        _base_configure(catalog, executed, [])
+        M.NATIVE_LOOP_MATH_HINT = True
+        tools = [{"type": "function", "function": {"name": name}} for name in
+                 [*catalog, "mios_recipe__inspect_state", "mios_recipe__change_state"]]
+        M._worker_tools_surface_async = _async_const(tools)
+        seen = []
+        async def loop(client, endpoint, model, headers, messages, offered, timeout, push, **kwargs):
+            seen.append(({t["function"]["name"] for t in offered}, kwargs["allow_write"]))
+            kwargs["terminal_response"]["content"] = FINAL_ANSWER
+            return list(messages)
+        M._v1_secondary_tool_loop = loop
+        with mock.patch.object(native, "_formulate_compute_snippet", _async_const("print(1)")), \
+             mock.patch.object(native._toolexec, "_resolve_verb_key", lambda name: name), \
+             mock.patch.object(native._toolexec, "_RECIPE_CATALOG",
+                               {"inspect-state": {"permission": "read"},
+                                "change-state": {"permission": "write"}}):
+            response = await M._respond_native_loop_direct(
+                {"intent": intent, "_needs_compute": True}, streaming=False, chat_id="permission", model="m",
+                session_id=None, last_user_text="A request", persona_system="", messages=[])
+        assert _body_text(response) == FINAL_ANSWER
+        names, writes = seen[0]
+        if intent == "chat":
+            assert names == {"inspect", "mios_recipe__inspect_state"} and writes is False, seen
+            assert not executed, executed
+        else:
+            assert {"inspect", "change"} <= names and writes is True, seen
+            assert [name for name, args in executed] == ["coderun"], executed
+    asyncio.run(scenario("chat"))
+    asyncio.run(scenario("dispatch"))
+    print("chat exposes and executes only configured read tools; dispatch retains write surface and approval gate: OK")
+
+
 if __name__ == "__main__":
     _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
@@ -1102,3 +1210,5 @@ if __name__ == "__main__":
     _run_council_request_cancellation_contract()
     _run_council_httpx_dispatch_contract()
     _run_partial_stream_never_replays_or_substitutes()
+    _run_native_unfinished_final_httpx()
+    _run_chat_surface_permissions_contract()

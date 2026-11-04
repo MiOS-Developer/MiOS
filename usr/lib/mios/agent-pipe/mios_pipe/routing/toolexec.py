@@ -257,6 +257,59 @@ def _rescue_tool_calls(content: str, tools: "Optional[list]" = None) -> list:
             return out
     return out
 
+def _unfinished_tool_text(content: str, tools=None) -> bool:
+    """Recognize a bare serialized tool request without executing it.
+
+    Markdown code and quotes are literal examples. Unquoted protocol blocks
+    require synthesis even when accompanied by a model's process narration.
+    """
+    tick = chr(96)
+    protected = tick * 3 + r"[\s\S]*?" + tick * 3 + r"|~~~[\s\S]*?~~~|" + tick + r"[^" + tick + r"\n]*" + tick
+    text = re.sub(protected, "", content or "")
+    text = re.sub(r"(?m)^\s*>[^\n]*", "", text)
+    text = re.sub(r"""(?s)(["'])\s*<tool_call>.*?</tool_call>\s*\1""", "", text)
+    text = text.strip()
+    if not text:
+        return False
+    matches = list(_RESCUE_TOOLCALL_RE.finditer(text))
+    matches += list(re.finditer(r"(?s)<function=[a-zA-Z0-9_.\-]+>.*?</function>", text))
+    def structural_calls(candidate):
+        try:
+            rescued = _rescue_tool_calls(candidate, tools)
+        except (AttributeError, TypeError):
+            rescued = []  # standalone parser tests may have no injected catalog
+        if rescued:
+            return rescued
+        calls = [_norm_tool_call(name, args, idx)
+                 for idx, (name, args) in enumerate(_rescue_xml_calls(candidate))]
+        if calls:
+            return calls
+        try:
+            obj = _loads_lenient(candidate)
+        except Exception:
+            return []
+        for item in obj if isinstance(obj, list) else [obj]:
+            if not isinstance(item, dict):
+                continue
+            fn = item.get("function") if isinstance(item.get("function"), dict) else item
+            name = fn.get("name") or fn.get("tool") or fn.get("tool_name")
+            args = next((fn[key] for key in ("arguments", "args", "parameters", "input")
+                         if key in fn), None)
+            if isinstance(name, str) and name.strip() and args is not None:
+                calls.append(_norm_tool_call(name, args, len(calls)))
+        return calls
+    if matches:
+        spans = []
+        for match in matches:
+            candidate = match.group(1) if match.re is _RESCUE_TOOLCALL_RE else match.group()
+            if structural_calls(candidate):
+                spans.append(match.span())
+        if not spans:
+            return False
+        return bool(spans)
+    return bool(structural_calls(text))
+
+
 def _verb_result_cap(verb: str) -> int:
     """Chars to keep from a verb's result before feeding it to the agent. A verb
     may declare a larger `max_result_chars` in mios.toml (inventory/discovery

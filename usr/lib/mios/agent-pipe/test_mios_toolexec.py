@@ -263,3 +263,23 @@ class TestMiosToolexec(unittest.TestCase):
 if __name__ == "__main__":
     asyncio.run(_run())
     print("\nALL %d ASSERTIONS PASSED" % PASS)
+
+
+def _test_unfinished_final_protocol_shapes():
+    from mios_pipe.routing.toolexec import _unfinished_tool_text
+    import json
+    raw = '<tool_call>' + json.dumps({"name": "arbitrary_read", "arguments": {"query": "current facts"}}) + '</tool_call>'
+    xml = '<function=arbitrary_read><parameter=query>current facts</parameter></function>'
+    for text in (raw, xml, 'The source was fetched.\n' + raw,
+                 json.dumps({"name": "arbitrary_read", "arguments": {}})):
+        assert _unfinished_tool_text(text), text
+    tick = chr(96)
+    for text in ("The measured result is 42.", "La réponse est vérifiée.",
+                 tick * 3 + "xml\n" + raw + "\n" + tick * 3,
+                 "> " + raw, '"' + raw + '"',
+                 "This literal syntax " + tick + raw + tick + " is an example.",
+                 json.dumps({"name": "sensor", "value": 42})):
+        assert not _unfinished_tool_text(text), text
+    print("unfinished final protocols rejected; prose and quoted/fenced/inline examples preserved: OK")
+
+_test_unfinished_final_protocol_shapes()

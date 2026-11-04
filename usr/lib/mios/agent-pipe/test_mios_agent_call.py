@@ -822,3 +822,83 @@ def _test_child_terminal_completion_contract():
     print("child terminal answer reused; bounded final synthesis has no tools; failures/truncations stay failures: OK")
 
 _test_child_terminal_completion_contract()
+
+
+def _test_node_unfinished_final_recovery_httpx():
+    import httpx
+    from mios_pipe.routing import agent_call as actual
+    from mios_pipe.lifecycle import verity
+    from unittest import mock
+    raw = '<tool_call>{"name":"arbitrary_read","arguments":{"query":"facts"}}</tool_call>'
+    async def scenario(terminal=False, invalid_again=False, example=False):
+        _configure()
+        actual.RR_ENABLE = False
+        actual.SECONDARY_TOOL_LOOP = True
+        requests = []
+        answer = "The verified source reports an observed result."
+        if example:
+            answer = "The literal syntax is " + chr(96) + raw + chr(96) + "."
+        async def loop(client, endpoint, model, headers, messages, tools, timeout, push, **kwargs):
+            if terminal: kwargs["terminal_response"]["content"] = raw
+            return list(messages) + [{"role": "tool", "content": "The verified source reports an observed result."}]
+        def transport(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            assert str(request.url) == CFG["endpoint"] + "/chat/completions"
+            assert body["model"] == CFG["model"] and body["max_tokens"] == 8
+            assert "tools" not in body and "tool_choice" not in body
+            recovery = terminal or len(requests) > 1
+            if recovery:
+                assert body["messages"][0]["content"].endswith("Canonical final synthesis fixture")
+                assert any(m.get("role") == "tool" for m in body["messages"])
+            content = answer if example or recovery and not invalid_again else raw
+            return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
+        actual._v1_secondary_tool_loop = loop
+        with mock.patch.object(verity, "_POLISH_SYSTEM", "Canonical final synthesis fixture"):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+                name, text = await actual._call_agent_complete(
+                    "child", CFG, {**BODY, "max_tokens": 8}, {}, client, prefer_cpu=False)
+        assert name == "child"
+        assert text == ("" if invalid_again else answer), (requests, text)
+        assert len(requests) == (1 if terminal or example else 2), requests
+    asyncio.run(scenario())
+    asyncio.run(scenario(terminal=True))
+    asyncio.run(scenario(invalid_again=True))
+    asyncio.run(scenario(example=True))
+    print("node HTTPX final/terminal tool text recovers once from real evidence; invalid repeat fails; inline example survives: OK")
+
+_test_node_unfinished_final_recovery_httpx()
+
+
+def _test_final_recovery_io_cleanup():
+    import httpx
+    from mios_pipe.lifecycle import verity
+    from unittest import mock
+    async def scenario(cancel):
+        entered, closed = asyncio.Event(), asyncio.Event()
+        class Pending(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                entered.set()
+                await asyncio.Event().wait()
+                yield b"unreachable"
+            async def aclose(self): closed.set()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, stream=Pending()))) as client:
+            with mock.patch.object(verity, "POLISH_TIMEOUT_S", 1 if cancel else 0.02):
+                task = asyncio.create_task(verity._recover_final_answer(
+                    client, "http://brain.invalid/v1", "chosen-model", {}, [],
+                    '<tool_call>{"name":"read","arguments":{}}</tool_call>', max_tokens=8))
+                await entered.wait()
+                if cancel:
+                    task.cancel()
+                    try: await task
+                    except asyncio.CancelledError: pass
+                    else: raise AssertionError("recovery swallowed caller cancellation")
+                else:
+                    assert await task == ""
+            assert closed.is_set() and not client.is_closed
+    asyncio.run(scenario(False))
+    asyncio.run(scenario(True))
+    print("bounded final recovery timeout/caller cancellation closes actual HTTPX response without closing caller client: OK")
+
+_test_final_recovery_io_cleanup()

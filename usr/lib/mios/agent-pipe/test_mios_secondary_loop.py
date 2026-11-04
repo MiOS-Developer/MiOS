@@ -232,3 +232,31 @@ print("TEST 8 PASS: identical failed tool call is blacklisted and intercepted")
 
 print("ALL TESTS PASSED")
 tearDownModule()
+
+
+def _test_literal_tool_examples_do_not_execute():
+    from mios_pipe.routing import secondary_loop as actual
+    from mios_pipe.routing import toolexec as executor
+    from unittest import mock
+    raw = '<tool_call>{"name":"web_search","arguments":{"query":"facts"}}</tool_call>'
+    async def scenario(literal):
+        _wire(exec_result=([], True))
+        calls, terminal = [], {}
+        async def execute(tcs, push, allow_write=False):
+            calls.extend(tcs)
+            return [{"role": "tool", "content": "verified evidence"}], True
+        text = "Literal syntax: " + chr(96) + raw + chr(96) if literal else raw
+        client = _FakeClient([_msg(text), _msg("Verified answer.")])
+        with mock.patch.object(actual, "_rescue_tool_calls", executor._rescue_tool_calls),              mock.patch.object(actual, "_exec_tool_calls", execute),              mock.patch.object(executor, "_VERB_CATALOG", {"web_search": {"permission": "read"}}):
+            await actual._v1_secondary_tool_loop(
+                client, "http://ep/v1", "m", {}, [{"role": "user", "content": "A request"}],
+                [{"function": {"name": "web_search"}}], None, lambda text: None,
+                terminal_response=terminal)
+        assert len(calls) == (0 if literal else 1), calls
+        assert terminal["content"] == (text if literal else "Verified answer."), terminal
+    asyncio.run(scenario(True))
+    asyncio.run(scenario(False))
+    tearDownModule()
+    print("actual tool loop preserves inline examples without executing them; bare request still rescues once: OK")
+
+_test_literal_tool_examples_do_not_execute()

@@ -298,6 +298,49 @@ def _strip_ungrounded_figures(answer: str, haystack: str) -> str:
     log.info("figure-guard: dropped %d ungrounded $/%% sentence(s)", dropped)
     return rebuilt if rebuilt and rebuilt.strip() else answer
 
+async def _recover_final_answer(client, endpoint, model, headers, messages,
+                                invalid_text, max_tokens=None):
+    """One no-tool synthesis on the selected brain, preserving real evidence."""
+    from mios_pipe.routing.toolexec import _unfinished_tool_text
+    original = list(messages or [])
+    policy = "\n\n".join(str(item.get("content") or "") for item in original
+                           if isinstance(item, dict) and item.get("role") == "system")
+    history = [item for item in original
+               if not isinstance(item, dict) or item.get("role") != "system"]
+    history.append({"role": "assistant", "content": str(invalid_text)})
+    history.append({"role": "user", "content":
+        "The previous completion was an unfinished tool request. No additional "
+        "action was executed. Produce only the final answer from the actual "
+        "tool evidence already provided. Do not request or replay tools. If "
+        "the evidence cannot answer the request, state what remains incomplete."})
+    history.insert(0, {"role": "system", "content":
+                       "\n\n".join(part for part in (policy, _POLISH_SYSTEM) if part)})
+    limit = int(max_tokens) if max_tokens else POLISH_MAX_TOKENS
+    if _polish_post is not None:
+        url, payload = _polish_post(
+            endpoint.rstrip("/").removesuffix("/v1"), model, history, limit)
+    else:
+        url = endpoint.rstrip("/") + "/chat/completions"
+        payload = {"model": model, "messages": history, "max_tokens": limit, "stream": False}
+    for key in ("tools", "tool_choice", "parallel_tool_calls"):
+        payload.pop(key, None)
+    try:
+        async with asyncio.timeout(POLISH_TIMEOUT_S):
+            response = await client.post(url, json=payload, headers=headers)
+        if response.status_code != 200:
+            return ""
+        choices = response.json().get("choices") or []
+        message = (choices[0].get("message") if choices else {}) or {}
+        text = str(message.get("content") or "").strip()
+        if (not choices or choices[0].get("finish_reason") != "stop"
+                or message.get("tool_calls") or _unfinished_tool_text(text)):
+            return ""
+        return text
+    except Exception as exc:
+        log.warning("final answer recovery failed: %s", type(exc).__name__)
+        return ""
+
+
 async def polish_response(raw_text: str,
                           refined: Optional[dict],
                           session_id: Optional[str] = None,
@@ -385,7 +428,8 @@ async def polish_response(raw_text: str,
     choices = body.get("choices") or []
     msg = (choices[0].get("message") if choices else {}) or {}
     polished = (msg.get("content") or "").strip()
-    if not polished:
+    from mios_pipe.routing.toolexec import _unfinished_tool_text
+    if not polished or msg.get("tool_calls") or _unfinished_tool_text(polished):
         return None
     polished = _strip_ungrounded_figures(
         polished, "\n".join([raw_text or "", _src or "", _fc_block or ""]))

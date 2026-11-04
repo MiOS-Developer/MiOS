@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Optional
 
-from mios_toolexec import _exec_tool_calls, _rescue_tool_calls
+from mios_toolexec import _exec_tool_calls, _rescue_tool_calls, _unfinished_tool_text
 from mios_jsonsalvage import loads_lenient as _loads_lenient
 
 log = logging.getLogger("mios-agent-pipe")
@@ -277,7 +277,9 @@ async def _v1_secondary_tool_loop(client, ep: str, model: str, headers: dict,
             break
         tcs = msg.get("tool_calls") or []
         if not tcs:
-            _rescued = _rescue_tool_calls(msg.get("content") or "", tools)
+            _text = msg.get("content") or ""
+            _rescued = (_rescue_tool_calls(_text, tools)
+                        if _unfinished_tool_text(_text, tools) else [])
             if _rescued:
                 push(" 🛟")
                 tcs = _rescued

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from mios_jsonsalvage import loads_lenient as _loads_lenient
 from mios_secondary_loop import _v1_secondary_tool_loop
-from mios_verity import polish_response
+from mios_verity import polish_response, _recover_final_answer
 from mios_sse import (
     _sse_chunk, _sse_done, _sse_reasoning, _sse_status, _sse_status_phase,
     _stream_answer,
@@ -735,6 +735,19 @@ async def _respond_native_loop_direct(
         if 0 <= _ncore < len(_tools) - 1:
             _disp = _tools[-1]
             _tools = _tools[:_ncore] + [_disp] + _tools[_ncore:-1]
+    _allow_write = not ((refined or {}).get("intent") == "chat" and not force_delegate)
+    if not _allow_write:
+        def read_only(tool):
+            name = str((tool.get("function") or {}).get("name") or "")
+            if name.startswith("mios_recipe__"):
+                key = name[len("mios_recipe__"):].replace("_", "-")
+                cfg = (_toolexec._RECIPE_CATALOG or {}).get(key) or {}
+            else:
+                resolver = getattr(_toolexec, "_resolve_verb_key", None)
+                key = resolver(name) if callable(resolver) else name
+                cfg = (_VERB_CATALOG or {}).get(key) or {}
+            return str(cfg.get("permission") or "").lower() == "read"
+        _tools = [tool for tool in _tools if read_only(tool)]
     _orch_ctx_var.set({
         "refined": refined, "chat_id": chat_id, "model": model,
         "session_id": session_id, "last_user_text": last_user_text,
@@ -830,7 +843,7 @@ async def _respond_native_loop_direct(
                         pass
             except Exception as _e:  # noqa: BLE001 -- degrade-open, never block the turn
                 log.debug("native-loop web prefetch skipped: %s", _e)
-        if NATIVE_LOOP_MATH_HINT and "coderun" in _VERB_CATALOG:
+        if _allow_write and NATIVE_LOOP_MATH_HINT and "coderun" in _VERB_CATALOG:
             try:
                 _nc = (refined or {}).get("_needs_compute")
                 if _nc is None:
@@ -897,7 +910,7 @@ async def _respond_native_loop_direct(
         try:
             _m2 = await _v1_secondary_tool_loop(
                 _c, _backend, _backend_model, _hdrs, _msgs, _tools,
-                NATIVE_LOOP_TIMEOUT_S, _push, allow_write=True, tool_choice=tool_choice,
+                NATIVE_LOOP_TIMEOUT_S, _push, allow_write=_allow_write, tool_choice=tool_choice,
                 terminal_response=_terminal_response, max_tokens=kwargs.get("max_tokens"))
             _notes = await _reviews
         finally:
@@ -925,6 +938,8 @@ async def _respond_native_loop_direct(
             _pb["max_tokens"] = kwargs["max_tokens"]
         _live_streamed = False
         _answer_started = False
+        _buffer_protocol = None
+        _recovered_final = False
         if emit is not None:
             _pb["stream"] = True
 
@@ -955,12 +970,20 @@ async def _respond_native_loop_direct(
                                 if _reasoning: emit({"reasoning": _reasoning})
                                 if _content:
                                     _raw_parts.append(_content)
-                                    _answer_started = True
-                                    emit({"content": _content, "answer": True})
+                                    if _buffer_protocol is None:
+                                        prefix = "".join(_raw_parts).lstrip()
+                                        if prefix:
+                                            _buffer_protocol = prefix[0] in "<{["
+                                    if _buffer_protocol is False:
+                                        _answer_started = True
+                                        emit({"content": _content, "answer": True})
                     if _finish_reason != "stop":
                         raise ValueError("final inference stream ended without a stop acknowledgment")
                     _raw = "".join(_raw_parts)
-                    _live_streamed = bool(_raw.strip())
+                    if _buffer_protocol and _raw.strip() and not _toolexec._unfinished_tool_text(_raw, _tools):
+                        _answer_started = True
+                        emit({"content": _raw, "answer": True})
+                    _live_streamed = _answer_started and bool(_raw.strip())
                 else:
                     _r = await _c.post(f"{_backend}/chat/completions",
                                        content=json.dumps(_pb).encode("utf-8"),
@@ -971,7 +994,14 @@ async def _respond_native_loop_direct(
             except Exception as _e:  # noqa: BLE001
                 log.warning("native-loop final completion failed: %s", _e)
                 _raw = ""
-        if not _raw.strip() and _council_draft and not _answer_started:
+        _invalid_final = _toolexec._unfinished_tool_text(_raw, _tools)
+        if _invalid_final:
+            automatic_fallback = False
+            _raw = await _recover_final_answer(
+                _c, _backend, _backend_model, _hdrs, _m2, _raw,
+                max_tokens=kwargs.get("max_tokens"))
+            _recovered_final = True
+        if not _raw.strip() and _council_draft and not _answer_started and not _invalid_final:
             # A failed optional synthesis must not erase a completed GPU answer.
             _raw = _council_draft
         _attempted = {_endpoint_key(_backend)} if _endpoint_key else {_backend.rstrip("/").removesuffix("/v1")}
@@ -1008,7 +1038,7 @@ async def _respond_native_loop_direct(
         _stripped = re.sub(r"(?is)</?think>", "", _raw).strip()
     _raw = _stripped
     _ans = _raw
-    if not _live_streamed:
+    if not _live_streamed and not _recovered_final:
         try:
             _p = await polish_response(
                 _raw, refined, session_id=session_id,
@@ -1018,6 +1048,8 @@ async def _respond_native_loop_direct(
                 _ans = _p
         except Exception as _e:  # noqa: BLE001
             log.debug("native-loop polish skipped: %s", _e)
+    if _toolexec._unfinished_tool_text(_ans, _tools):
+        _ans = "" if _toolexec._unfinished_tool_text(_raw, _tools) else _raw
     # Tool output is evidence, not a substitute for a completed assistant answer.
     # Missing synthesis reaches the explicit inference error below.
     if _routed_domain_var.get(None) == "web":
