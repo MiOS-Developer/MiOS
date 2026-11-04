@@ -200,7 +200,7 @@ impl Sprite {
         for color in sprite.pixels.iter_mut().flatten() {
             *color = match *color {
                 1 => body,
-                3 => voxel_shade(body, 1.0),
+                3 => pixel_highlight(body),
                 11 => accent,
                 other => other,
             };
@@ -884,6 +884,7 @@ impl Sprite {
             width: 8,
             height: 8,
             pixels,
+            face_mapping: None,
             face_overlay: Some(FaceOverlay {
                 center_x: 4,
                 y: 3,
@@ -1721,6 +1722,22 @@ impl VoxelModel {
 
 // The SSOT palette's existing ramps provide light/dark faces without inventing
 // colors or exceeding index 15. Unknown ramps retain their selected base color.
+
+/// Preserve the established pixel-art highlight ramp without shading voxel faces.
+fn pixel_highlight(color: u8) -> u8 {
+    match color {
+        1 => 3,
+        3 => 15,
+        4 | 13 | 15 => 2,
+        7 => 4,
+        8 => 7,
+        9 => 13,
+        11 => 1,
+        12 => 5,
+        14 => 4,
+        other => other,
+    }
+}
 
 pub fn cell_size(width: u16, height: u16, scale: u16, renderer: Renderer) -> (u32, u32) {
     let (dx, dy) = renderer.packing();
