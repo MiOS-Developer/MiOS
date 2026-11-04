@@ -1,6 +1,6 @@
 # MiOS Rust-Native Tamagotchi TUI App - Comprehensive Plan
 
-> A rendering/input foundation now exists as `mios-tamagotchi`. See [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md). Full gameplay, persistence and deployment validation remain tracked work; this plan is not a completion claim.
+> A playable local care/memory/save sample now exists as `mios-tamagotchi`. See [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md). The complete device feature set and live deployment validation remain tracked work; this plan is not a completion claim.
 
 ## Executive Summary
 

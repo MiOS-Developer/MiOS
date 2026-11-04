@@ -4,9 +4,14 @@
 
 pub mod capabilities;
 pub mod config;
+pub mod game;
 pub mod input;
 pub mod render;
+pub mod save;
 pub mod sprite;
+pub mod ui;
 
+#[cfg(test)]
+mod game_tests;
 #[cfg(test)]
 mod tests;

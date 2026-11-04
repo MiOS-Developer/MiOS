@@ -4598,7 +4598,7 @@ _mios_input MIOS_ROUTING_WEB_SEARCH_TRIGGER_PHRASES MIOS_WEB_SEARCH_TRIGGER_PHRA
 : "${MIOS_RUST_CATEGORIES_SHOT_BINARY:=mios-shot}"
 : "${MIOS_RUST_CATEGORIES_SHOT_DESCRIPTION:=Native Wayland screenshots (ext-image-copy-capture, frozen-frame region select on the glass shell, save/clipboard/notify)}"
 : "${MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY:=mios-tamagotchi}"
-: "${MIOS_RUST_CATEGORIES_TAMAGOTCHI_DESCRIPTION:=Terminal sprite rendering and Inputd-key preview foundation}"
+: "${MIOS_RUST_CATEGORIES_TAMAGOTCHI_DESCRIPTION:=Playable local virtual pet with care, memory game and atomic saves}"
 : "${MIOS_RUST_CATEGORIES_TASK_BINARY:=mios-task}"
 : "${MIOS_RUST_CATEGORIES_TASK_DESCRIPTION:=Dev-loop task ledger and queue management (tasks.jsonl)}"
 [ -n "${MIOS_RUST_CATEGORIES_TESTS_DESCRIPTION+x}" ] || MIOS_RUST_CATEGORIES_TESTS_DESCRIPTION='Test suites port only with the surface they guard; tools/test_*.py are the python gates'"'"' own unit tests'

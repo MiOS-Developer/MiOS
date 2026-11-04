@@ -228,11 +228,14 @@ fn quantization_and_snapshot_respect_monochrome_and_palette_limits() {
 #[test]
 fn inputd_projected_keys_navigate_without_release_or_repeat_toggles() {
     for (code, expected) in [
-        (KeyCode::Up, Action::Previous),
-        (KeyCode::Down, Action::Next),
-        (KeyCode::Enter, Action::Pause),
+        (KeyCode::Up, Action::Direction(crate::game::Direction::Up)),
+        (
+            KeyCode::Down,
+            Action::Direction(crate::game::Direction::Down),
+        ),
+        (KeyCode::Enter, Action::Accept),
         (KeyCode::Tab, Action::Next),
-        (KeyCode::Esc, Action::Quit),
+        (KeyCode::Esc, Action::Cancel),
     ] {
         let mut key = KeyEvent::new(code, KeyModifiers::NONE);
         assert_eq!(action(key), Some(expected));
@@ -243,7 +246,10 @@ fn inputd_projected_keys_navigate_without_release_or_repeat_toggles() {
     key.kind = KeyEventKind::Repeat;
     assert_eq!(action(key), None);
     key.code = KeyCode::Down;
-    assert_eq!(action(key), Some(Action::Next));
+    assert_eq!(
+        action(key),
+        Some(Action::Direction(crate::game::Direction::Down))
+    );
     assert_eq!(
         action(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Some(Action::Quit)

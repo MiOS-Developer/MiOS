@@ -2402,6 +2402,7 @@ dependencies = [
  "mios-resolver",
  "ratatui 0.30.2",
  "serde",
+ "serde_json",
  "supports-color 3.0.2",
  "supports-unicode 3.0.0",
  "tempfile",

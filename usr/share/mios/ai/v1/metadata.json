@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4141,
-  "total_metadata_entries": 3399,
-  "total_hints": 3393,
+  "total_files_scanned": 4145,
+  "total_metadata_entries": 3403,
+  "total_hints": 3397,
   "total_functions_indexed": 2105,
-  "total_related_links": 6676,
+  "total_related_links": 6693,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -13837,7 +13837,7 @@
     },
     {
       "path": "tools/native/mios-tamagotchi/Cargo.toml",
-      "hint": "Native Tamagotchi render/input foundation and terminal sprite preview.",
+      "hint": "Playable native virtual pet with deterministic care, memory game and atomic local saves.",
       "related": [
         "tools/native/Cargo.toml",
         "usr/share/mios/mios.toml",
@@ -13874,11 +13874,39 @@
       "has_shebang": false
     },
     {
-      "path": "tools/native/mios-tamagotchi/src/input.rs",
-      "hint": "Terminal keys shared by keyboard and existing Inputd key projections; no subscription IPC.",
+      "path": "tools/native/mios-tamagotchi/src/game.rs",
+      "hint": "Deterministic virtual-pet care, accelerated growth and a three-arrow memory game; no wall-clock catch-up.",
       "related": [
-        "tools/native/mios-inputd/src/nav.rs",
-        "tools/native/mios-inputd/src/sessions.rs"
+        "config.rs",
+        "save.rs",
+        "ui.rs",
+        "usr/share/mios/mios.toml [tamagotchi.game]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/game_tests.rs",
+      "hint": "Deterministic gameplay and real save-file controls, including locking, corruption and reset confirmation.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "ui.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/input.rs",
+      "hint": "Keyboard and Inputd projected-key actions; releases never act and explicit repeat events only navigate.",
+      "related": [
+        "game.rs",
+        "ui.rs",
+        "tools/native/mios-inputd/src/nav.rs"
       ],
       "functions": [],
       "doc": null,
@@ -13899,11 +13927,13 @@
     },
     {
       "path": "tools/native/mios-tamagotchi/src/main.rs",
-      "hint": "Runnable Tamagotchi sprite preview; keyboard/Inputd navigation and safe noninteractive snapshots.",
+      "hint": "Playable local virtual pet with explicit sample mode, read-only snapshots and single-writer saves.",
       "related": [
+        "ui.rs",
+        "game.rs",
+        "save.rs",
         "usr/share/mios/mios.toml [tamagotchi]",
-        "specs/tamagotchi-tui",
-        "task_3702"
+        "task_3707"
       ],
       "functions": [],
       "doc": null,
@@ -13917,6 +13947,19 @@
         "sprite.rs",
         "capabilities.rs",
         "ratatui::symbols::pixel::QUADRANTS"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/save.rs",
+      "hint": "Versioned, bounded per-user saves with an OS-held single-writer lock and atomic durable replacement.",
+      "related": [
+        "game.rs",
+        "main.rs",
+        "usr/share/doc/mios/tamagotchi-tui.md"
       ],
       "functions": [],
       "doc": null,
@@ -13944,6 +13987,20 @@
         "input.rs",
         "render.rs",
         "sprite.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/ui.rs",
+      "hint": "Playable pet menu, memory challenge and accelerated clock; save failures unwind through Ratatui restoration.",
+      "related": [
+        "game.rs",
+        "input.rs",
+        "save.rs",
+        "render.rs"
       ],
       "functions": [],
       "doc": null,
@@ -37241,12 +37298,12 @@
     },
     {
       "path": "usr/share/doc/mios/tamagotchi-tui.md",
-      "hint": "Native Tamagotchi sprite preview, implemented render/input contract and remote integration handoff.",
+      "hint": "Playable local virtual-pet sample, safe save contract and per-Blade installation handoff.",
       "related": [
         "tools/native/mios-tamagotchi",
         "usr/share/mios/mios.toml [tamagotchi]",
-        "specs/tamagotchi-tui",
-        "task_3702"
+        "task_3707",
+        "task_3708"
       ],
       "functions": [],
       "doc": null,

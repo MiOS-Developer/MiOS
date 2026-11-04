@@ -18973,7 +18973,7 @@ crates = ["mios-browser"]
 
 [rust.categories.tamagotchi]
 binary = "mios-tamagotchi"
-description = "Terminal sprite rendering and Inputd-key preview foundation"
+description = "Playable local virtual pet with care, memory game and atomic saves"
 replaces = []
 
 [rust.categories.wallpaperd]
@@ -19807,7 +19807,7 @@ Service = 'mios-agent-pipe.service'
 [units."mios-agent-pipe.socket".Install]
 WantedBy = 'sockets.target'
 
-# Native terminal sprite/input foundation. Gameplay and persistence are separate tasks.
+# Playable local virtual-pet sample; social features and full device emulation remain separate tasks.
 [tamagotchi]
 renderer = "auto"       # auto, ascii, half-block, quadrant, braille; glyphs are independent of color
 color = "auto"          # auto, mono, ansi, indexed, rgb; NO_COLOR always disables color
@@ -19815,3 +19815,24 @@ scale = 0               # 0 = largest fitting integer scale; or 1, 2, 4, 8, 16
 tick_ms = 100           # animation poll deadline, 16..60000 milliseconds
 palette = ["#202030", "#70C090", "#FFFFFF", "#B0E0B0"]
 background = "#101018"
+
+state_directory = "mios/tamagotchi" # relative to XDG_STATE_HOME, or HOME/.local/state
+autosave_seconds = 10
+
+[tamagotchi.game]
+tick_seconds = 2          # accelerated sample clock; offline time is frozen
+hatch_ticks = 3
+child_ticks = 20
+adult_ticks = 60
+need_decay = 2
+initial_need = 80
+illness_threshold = 20
+healthy_threshold = 60
+healthy_regen = 1
+health_loss = 5
+care_gain = 25
+play_reward = 5
+feed_cost = 1
+medicine_cost = 3
+starting_coins = 10
+memory_reveal_ticks = 2

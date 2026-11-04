@@ -44,7 +44,54 @@ impl Sprite {
         self.pixels[(y * u32::from(self.width) + x) as usize]
     }
 
-    /// Original preview art; gameplay and life-stage assets are a separate task.
+    pub fn pet(stage: crate::game::Stage, frame: usize) -> Self {
+        use crate::game::Stage;
+        let rows = match stage {
+            Stage::Egg => return Self::egg(),
+            Stage::Adult => return Self::preview(frame),
+            Stage::Baby => [
+                "........", "........", "...00...", "..0110..", "..0220..", "..0110..", "...00...",
+                "........",
+            ],
+            Stage::Child => [
+                "........", "..0..0..", ".011110.", ".021120.", ".011110.", "..0110..", "..0..0..",
+                "........",
+            ],
+            Stage::Dead => [
+                "........", "..0000..", ".022220.", ".020020.", ".022220.", "..0000..", "..0..0..",
+                "........",
+            ],
+        };
+        let pixels = rows
+            .iter()
+            .flat_map(|r| r.bytes())
+            .map(|c| (c != b'.').then(|| c - b'0'))
+            .collect();
+        Self {
+            width: 8,
+            height: 8,
+            pixels,
+        }
+    }
+
+    pub fn egg() -> Self {
+        let rows = [
+            "........", "...00...", "..0330..", ".031130.", ".011110.", ".011110.", "..0000..",
+            "........",
+        ];
+        let pixels = rows
+            .iter()
+            .flat_map(|r| r.bytes())
+            .map(|c| (c != b'.').then(|| c - b'0'))
+            .collect();
+        Self {
+            width: 8,
+            height: 8,
+            pixels,
+        }
+    }
+
+    /// Original local-pet art, with two animation frames.
     pub fn preview(frame: usize) -> Self {
         let rows = [
             "..0000..", ".011110.", "01133110", "01211210", "01111110", ".011110.", "..0000..",

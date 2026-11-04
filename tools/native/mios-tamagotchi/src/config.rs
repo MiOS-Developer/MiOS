@@ -4,7 +4,10 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::capabilities::{ColorMode, Renderer};
+use crate::{
+    capabilities::{ColorMode, Renderer},
+    game::Rules,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +18,9 @@ pub struct Config {
     pub tick_ms: u64,
     pub palette: Vec<String>,
     pub background: String,
+    pub state_directory: String,
+    pub autosave_seconds: u64,
+    pub game: Rules,
 }
 
 impl Config {
@@ -24,9 +30,13 @@ impl Config {
     }
 
     pub fn from_value(value: &toml::Value) -> Result<Self, String> {
-        let config: Self = value
+        let table = value
             .get("tamagotchi")
-            .ok_or("missing [tamagotchi] configuration")?
+            .ok_or("missing [tamagotchi] configuration; try --sample")?;
+        table
+            .get("game")
+            .ok_or("missing [tamagotchi.game]; try --sample or update the MiOS configuration")?;
+        let config: Self = table
             .clone()
             .try_into()
             .map_err(|e| format!("[tamagotchi]: {e}"))?;
@@ -34,7 +44,24 @@ impl Config {
         Ok(config)
     }
 
+    pub fn sample() -> Result<Self, String> {
+        Self::from_value(
+            &include_str!("../../../../usr/share/mios/mios.toml")
+                .parse::<toml::Value>()
+                .map_err(|e| e.to_string())?,
+        )
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        self.game.validate()?;
+        if !(1..=3600).contains(&self.autosave_seconds)
+            || self.state_directory.is_empty()
+            || !std::path::Path::new(&self.state_directory)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err("tamagotchi: autosave_seconds must be 1..=3600 and state_directory must be a relative path without traversal".into());
+        }
         if ![0, 1, 2, 4, 8, 16].contains(&self.scale) {
             return Err("tamagotchi.scale must be 0 (auto), 1, 2, 4, 8 or 16".into());
         }
