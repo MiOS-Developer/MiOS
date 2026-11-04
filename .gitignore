@@ -1139,3 +1139,5 @@ usr/share/mios/virtio/*.iso
 
 !/tools/native/mios-tamagotchi/src/hud.rs
 !/tools/native/mios-tamagotchi/src/progression.rs
+
+!/tools/native/mios-tamagotchi/src/geometry.rs

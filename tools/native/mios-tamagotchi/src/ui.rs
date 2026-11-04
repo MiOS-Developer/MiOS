@@ -1424,119 +1424,8 @@ impl Ui {
                 )
             };
             self.draw_dialogue(screen, config, colors, renderer, body, true);
-        } else if layout.landscape {
-            let mut lines = vec![
-                Line::from(format!(
-                    "{} / {:?}",
-                    self.name(),
-                    self.game.stage(&config.game)
-                ))
-                .style(Style::default().fg(colors.ink(7))),
-                Line::from(format!(
-                    "{:?} {} / {:?} {}%",
-                    expression,
-                    expression.kaomoji(frame),
-                    self.camera().view,
-                    self.zoom_percent
-                )),
-                Line::from(format!(
-                    "Age {} | {} coins | {} wins",
-                    self.game.age_ticks, self.game.coins, self.game.wins
-                )),
-            ];
-            for (label, value, index) in [
-                ("Food", self.game.fullness, 8),
-                ("Happy", self.game.happiness, 12),
-                ("Clean", self.game.hygiene, 9),
-                ("Energy", self.game.energy, 7),
-                ("Health", self.game.health, 15),
-            ] {
-                let width = usize::from(info.width.saturating_sub(15)).min(24);
-                let filled = width * usize::from(value) / 100;
-                lines.push(
-                    Line::from(format!(
-                        "{label:6} {value:3} [{}{}]",
-                        "#".repeat(filled),
-                        ".".repeat(width.saturating_sub(filled))
-                    ))
-                    .style(Style::default().fg(colors.ink(index))),
-                );
-            }
-            if self.game.progress.hatched && info.height >= 19 {
-                for (index, stat) in self.game.progress.stats.iter().enumerate() {
-                    lines.push(Line::from(format!(
-                        "{} {} / Lv{} / {} XP",
-                        crate::progression::TrainingRules::label(index),
-                        stat.value,
-                        stat.level,
-                        stat.xp
-                    )));
-                }
-            }
-            if let Some(theme) = config.habitat.theme(self.game.habitat.theme) {
-                lines.push(Line::from(theme.name.clone()));
-            }
-            lines.push(Line::from(format!(
-                "{} items placed | {}",
-                self.game.habitat.placed.count_ones(),
-                if self.game.paused {
-                    "PAUSED"
-                } else if self.game.sleeping {
-                    "RESTING"
-                } else {
-                    "LIVE"
-                }
-            )));
-            if let Some(pad) = &self.controller {
-                lines.push(Line::from(format!("{} / Inputd focused", pad.family)));
-                lines.push(Line::from(pad.release.clone()));
-            }
-            let footer_rows = if self.controller.is_some() { 3 } else { 2 };
-            let available = usize::from(info.height).saturating_sub(lines.len() + footer_rows);
-            lines.extend(
-                wrap_dialogue(&self.words(config, true), usize::from(info.width))
-                    .into_iter()
-                    .take(available)
-                    .map(Line::from),
-            );
-            let footer = Rect::new(
-                info.x,
-                info.bottom().saturating_sub(footer_rows as u16),
-                info.width,
-                (footer_rows as u16).min(info.height),
-            );
-            let upper = Rect::new(
-                info.x,
-                info.y,
-                info.width,
-                info.height.saturating_sub(footer.height),
-            );
-            screen.render_widget(
-                Paragraph::new(lines).style(Style::default().fg(colors.ink(2))),
-                upper,
-            );
-            let hints = if let Some(pad) = &self.controller {
-                format!(
-                    "{} {}\n{} Menu\n{} Next / V Graphics",
-                    tiny_button(&pad.accept),
-                    LABELS[self.selected],
-                    tiny_button(&pad.back),
-                    tiny_button(&pad.next)
-                )
-            } else {
-                format!(
-                    "[Enter] {} O Menu\n+/- zoom 0 reset Z view",
-                    LABELS[self.selected]
-                )
-            };
-            screen.render_widget(
-                Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
-                footer,
-            );
-            self.care_targets.borrow_mut().push((
-                Rect::new(footer.x, footer.y, footer.width, 1),
-                self.selected,
-            ));
+        } else if layout.landscape || (info.height >= 10 && info.width >= 18) {
+            self.draw_information(screen, config, colors, info, frame, layout.landscape);
         } else {
             let control_rows = if self.controller.is_some() { 2 } else { 1 }.min(info.height);
             let controls = Rect::new(
@@ -1623,6 +1512,177 @@ impl Ui {
             self.bubble(screen, area, &text, colors, renderer == Renderer::Ascii);
         }
     }
+
+    fn draw_information(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        info: Rect,
+        frame: usize,
+        landscape: bool,
+    ) {
+        let footer_rows: u16 = if self.controller.is_some() { 3 } else { 2 };
+        let footer_rows = footer_rows.min(info.height);
+        let upper = Rect::new(
+            info.x,
+            info.y,
+            info.width,
+            info.height.saturating_sub(footer_rows),
+        );
+        let footer = Rect::new(info.x, upper.bottom(), info.width, footer_rows);
+        let budget = usize::from(upper.height);
+        let mut lines = Vec::new();
+        if landscape && budget >= 10 {
+            lines.push(
+                Line::from(format!(
+                    "{} / {:?}",
+                    self.name(),
+                    self.game.stage(&config.game)
+                ))
+                .style(Style::default().fg(colors.ink(7))),
+            );
+        }
+        if landscape && budget >= 18 {
+            let expression = self.expression(&config.game, frame);
+            lines.push(Line::from(format!(
+                "{:?} {} / {:?} {}%",
+                expression,
+                expression.kaomoji(frame),
+                self.camera().view,
+                self.zoom_percent
+            )));
+        }
+        lines.push(Line::from(if info.width < 28 {
+            format!(
+                "t{} ${} W{}",
+                crate::hud::ticks(self.game.age_ticks),
+                crate::hud::counter(self.game.coins),
+                crate::hud::counter(self.game.wins)
+            )
+        } else {
+            format!(
+                "Age {} | ${} | W{}",
+                crate::hud::ticks(self.game.age_ticks),
+                crate::hud::counter(self.game.coins),
+                crate::hud::counter(self.game.wins)
+            )
+        }));
+        if budget >= 15 {
+            for (label, value, index) in [
+                ("Food", self.game.fullness, 8),
+                ("Happy", self.game.happiness, 12),
+                ("Clean", self.game.hygiene, 9),
+                ("Energy", self.game.energy, 7),
+                ("Health", self.game.health, 15),
+            ] {
+                let width = usize::from(info.width.saturating_sub(15)).min(24);
+                let filled = width * usize::from(value) / 100;
+                lines.push(
+                    Line::from(format!(
+                        "{label:6} {value:3} [{}{}]",
+                        "#".repeat(filled),
+                        ".".repeat(width.saturating_sub(filled))
+                    ))
+                    .style(Style::default().fg(colors.ink(index))),
+                );
+            }
+        } else {
+            lines.push(Line::from(crate::hud::needs(
+                &self.game,
+                info.width,
+                frame / 14,
+            )));
+        }
+        if self.game.progress.hatched {
+            let indices: Vec<usize> = if budget.saturating_sub(lines.len()) >= 6 {
+                (0..5).collect()
+            } else {
+                vec![frame / 28 % 5]
+            };
+            for index in indices {
+                let stat = self.game.progress.stats[index];
+                let label = crate::progression::TrainingRules::label(index);
+                let text = format!(
+                    "{label} {} L{} x{} {}",
+                    stat.value,
+                    stat.level,
+                    crate::hud::counter(stat.xp),
+                    stat.grade()
+                );
+                lines.push(
+                    Line::from(frame_label(&text, info.width, frame / 28))
+                        .style(Style::default().fg(colors.ink(7))),
+                );
+            }
+        } else if budget > lines.len() + 1 {
+            lines.push(Line::from("Hatch: stats pending"));
+        }
+        if budget.saturating_sub(lines.len()) >= 3 {
+            if let Some(theme) = config.habitat.theme(self.game.habitat.theme) {
+                lines.push(Line::from(theme.name.clone()));
+            }
+            lines.push(Line::from(format!(
+                "{} placed / {}",
+                self.game.habitat.placed.count_ones(),
+                if self.game.paused {
+                    "PAUSED"
+                } else if self.game.sleeping {
+                    "RESTING"
+                } else {
+                    "LIVE"
+                }
+            )));
+        }
+        if budget.saturating_sub(lines.len()) >= 3 {
+            if let Some(pad) = &self.controller {
+                lines.push(Line::from(format!("{} / focused Inputd", pad.family)));
+            }
+        }
+        lines.extend(
+            wrap_dialogue(&self.words(config, true), usize::from(info.width))
+                .into_iter()
+                .take(budget.saturating_sub(lines.len()))
+                .map(Line::from),
+        );
+        screen.render_widget(Clear, info);
+        screen.render_widget(
+            Paragraph::new(lines).style(Style::default().fg(colors.ink(2)).bg(colors.background)),
+            upper,
+        );
+        let hints = if let Some(pad) = &self.controller {
+            format!(
+                "{} {}
+{} Menu
+{} Next / V L",
+                tiny_button(&pad.accept),
+                LABELS[self.selected],
+                tiny_button(&pad.back),
+                tiny_button(&pad.next)
+            )
+        } else if info.width < 28 {
+            format!(
+                "Ent {} O Menu
++/- 0 Z L",
+                ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected]
+            )
+        } else {
+            format!(
+                "[Enter] {} O Menu
++/- zoom 0 Z / L Train",
+                LABELS[self.selected]
+            )
+        };
+        screen.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            footer,
+        );
+        self.care_targets.borrow_mut().push((
+            Rect::new(footer.x, footer.y, footer.width, 1.min(footer.height)),
+            self.selected,
+        ));
+    }
+
     fn draw_dialogue(
         &self,
         screen: &mut Frame,
@@ -4083,5 +4143,43 @@ mod memory_thought_interruption_tests {
             matches!(ui.native_request, Some(NativeKind::Thought)),
             "idle automatic thoughts still work after the round"
         );
+    }
+}
+
+#[cfg(test)]
+mod portrait_density_tests {
+    use super::*;
+    use crate::capabilities::Depth;
+    use ratatui::{Terminal, backend::TestBackend};
+    #[test]
+    fn tall_views_show_all_skills_needs_currency_and_controls_without_paging_them_away() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 913);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        game.paused = true;
+        let saved = game.clone();
+        let mut ui = Ui::configured(game, &config);
+        ui.hud_mode = HudMode::Minimal;
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        for (width, height) in [(30, 40), (40, 50), (153, 17)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            for label in ["Swim", "Flight", "Run", "Power", "Stamina", "Menu"] {
+                assert!(text.contains(label), "{width}x{height}: {label}: {text}");
+            }
+            assert!(text.contains("W0") && text.contains("$10"), "{text}");
+            assert_eq!(ui.game, saved);
+        }
     }
 }

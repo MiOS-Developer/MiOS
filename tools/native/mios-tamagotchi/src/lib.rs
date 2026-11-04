@@ -22,3 +22,5 @@ mod tests;
 pub mod hud;
 
 pub mod progression;
+
+pub mod geometry;

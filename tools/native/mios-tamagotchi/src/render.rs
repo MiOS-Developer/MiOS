@@ -288,16 +288,19 @@ impl Projection {
         }
     }
 
-    fn sample(self, sprite: &Sprite, x: u32, y: u32) -> Option<u8> {
+    fn source_pixel(self, sprite: &Sprite, x: u32, y: u32) -> Option<(u32, u32)> {
         let x = ((f64::from(x) + 0.5 - self.left) / self.scale).floor();
         let y = ((f64::from(y) + 0.5 - self.top) / self.scale).floor();
-        // Check signs before integer conversion; clipping cannot wrap into the
-        // source origin or write a cell beyond the viewport.
         if x < 0.0 || y < 0.0 || x >= f64::from(sprite.width()) || y >= f64::from(sprite.height()) {
             None
         } else {
-            sprite.pixel(x as u32, y as u32, 1)
+            Some((x as u32, y as u32))
         }
+    }
+
+    fn sample(self, sprite: &Sprite, x: u32, y: u32) -> Option<u8> {
+        let (x, y) = self.source_pixel(sprite, x, y)?;
+        sprite.pixel(x, y, 1)
     }
 
     fn cell(self, x: f64, y: f64, renderer: Renderer) -> (f64, f64) {
@@ -481,58 +484,15 @@ fn face_glyph(glyph: u8) -> Option<[u8; 5]> {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct BitmapFace {
+struct FaceTexture {
     text: &'static str,
-    left: f64,
-    top: f64,
-    scale: f64,
 }
 
-impl BitmapFace {
-    fn layout(sprite: &Sprite, projection: Projection) -> Option<Self> {
-        let face = sprite.face_overlay()?;
-        if !printable_face(face.text) || !face.text.bytes().all(|b| face_glyph(b).is_some()) {
-            return None;
-        }
-        let cx = f64::from(face.center_x) + 0.5;
-        let cy = f64::from(face.y) + 0.5;
-        let (left, right) = head_span(sprite, face.center_x, face.y);
-        let half_width = (cx - left).min(right - cx);
-        let mut top = face.y;
-        let mut bottom = face.y;
-        while top > 0
-            && sprite
-                .pixel(u32::from(face.center_x), u32::from(top - 1), 1)
-                .is_some()
-        {
-            top -= 1;
-        }
-        while bottom + 1 < sprite.height()
-            && sprite
-                .pixel(u32::from(face.center_x), u32::from(bottom + 1), 1)
-                .is_some()
-        {
-            bottom += 1;
-        }
-        let half_height = (cy - f64::from(top)).min(f64::from(bottom) + 1.0 - cy);
-        // A partial oblique expression keeps the same glyph size as a five-
-        // glyph face, rather than stretching its three visible glyphs across it.
-        // Include a one-font-pixel contrast halo and preserve the head contour.
-        let glyph_width = (face.text.len() * 4 - 1) as f64;
-        let desired = (right - left) * projection.scale * 0.78 / 21.0;
-        let scale = desired
-            .min(2.0 * half_width * projection.scale * 0.78 / (glyph_width + 2.0))
-            .min(2.0 * half_height * projection.scale * 0.70 / 7.0);
-        if scale < 0.5 {
-            return None;
-        }
-        let width = (face.text.len() * 4 - 1) as f64;
-        Some(Self {
-            text: face.text,
-            left: projection.left + cx * projection.scale - width * scale / 2.0,
-            top: projection.top + cy * projection.scale - 5.0 * scale / 2.0,
-            scale,
-        })
+impl FaceTexture {
+    fn new(sprite: &Sprite) -> Option<Self> {
+        let text = sprite.face_text()?;
+        (printable_face(text) && text.bytes().all(|b| face_glyph(b).is_some()))
+            .then_some(Self { text })
     }
 
     fn bit(self, x: i32, y: i32) -> bool {
@@ -551,50 +511,78 @@ impl BitmapFace {
             .is_some_and(|rows| rows[y as usize] & (1 << (2 - column)) != 0)
     }
 
-    fn sample(self, x: u32, y: u32) -> (bool, bool) {
-        let center_x = ((f64::from(x) + 0.5 - self.left) / self.scale).floor() as i32;
-        let center_y = ((f64::from(y) + 0.5 - self.top) / self.scale).floor() as i32;
-        let (left, right, top, bottom) = if self.scale >= 1.0 {
-            (center_x, center_x + 1, center_y, center_y + 1)
-        } else {
-            // Small Pet views still retain single-pixel punctuation and eyes:
-            // inspect this output pixel's bounded font footprint, not one point.
-            (
-                ((f64::from(x) - self.left) / self.scale).floor() as i32,
-                ((f64::from(x) + 1.0 - self.left) / self.scale).ceil() as i32,
-                ((f64::from(y) - self.top) / self.scale).floor() as i32,
-                ((f64::from(y) + 1.0 - self.top) / self.scale).ceil() as i32,
-            )
+    fn sample(self, uv: [f64; 2], footprint: [f64; 2]) -> bool {
+        let width = (self.text.len() * 4 - 1) as f64;
+        let grid = [(width + 2.0) * uv[0] - 1.0, 7.0 * uv[1] - 1.0];
+        let radius = [
+            (width + 2.0) * footprint[0].min(1.0) / 2.0,
+            7.0 * footprint[1].min(1.0) / 2.0,
+        ];
+        // The bounded atlas footprint retains thin punctuation in small Pet
+        // views. Glyph positions come only from the visible surface's UVs.
+        let left = ((grid[0] - radius[0]).floor() as i32).max(0);
+        let right = ((grid[0] + radius[0]).floor() as i32).min(width as i32 - 1);
+        let top = ((grid[1] - radius[1]).floor() as i32).max(0);
+        let bottom = ((grid[1] + radius[1]).floor() as i32).min(4);
+        (top..=bottom).any(|y| (left..=right).any(|x| self.bit(x, y)))
+    }
+
+    fn bounds(sprite: &Sprite) -> Option<SolidBounds> {
+        let mut bounds = SolidBounds {
+            left: f64::from(sprite.width()),
+            top: f64::from(sprite.height()),
+            right: 0.0,
+            bottom: 0.0,
         };
-        let mut ink = false;
-        let mut halo = false;
-        for y in top..bottom {
-            for x in left..right {
-                let stroke = self.bit(x, y);
-                ink |= stroke;
-                halo |= stroke
-                    || self.bit(x - 1, y)
-                    || self.bit(x + 1, y)
-                    || self.bit(x, y - 1)
-                    || self.bit(x, y + 1);
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                if valid_face_uv(sprite, x, y).is_some() {
+                    bounds.left = bounds.left.min(f64::from(x));
+                    bounds.top = bounds.top.min(f64::from(y));
+                    bounds.right = bounds.right.max(f64::from(x) + 1.0);
+                    bounds.bottom = bounds.bottom.max(f64::from(y) + 1.0);
+                }
             }
         }
-        (ink, halo)
+        (bounds.right > bounds.left && bounds.bottom > bounds.top).then_some(bounds)
     }
 }
 
-fn interior_pixel(sprite: &Sprite, projection: Projection, x: u32, y: u32) -> bool {
-    projection.sample(sprite, x, y).is_some()
-        && x.checked_sub(1)
-            .is_some_and(|x| projection.sample(sprite, x, y).is_some())
-        && y.checked_sub(1)
-            .is_some_and(|y| projection.sample(sprite, x, y).is_some())
-        && projection.sample(sprite, x + 1, y).is_some()
-        && projection.sample(sprite, x, y + 1).is_some()
+fn valid_face_uv(sprite: &Sprite, x: u32, y: u32) -> Option<[f64; 2]> {
+    sprite.pixel(x, y, 1)?;
+    let uv = sprite.face_uv(x, y)?;
+    if uv.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)) {
+        Some(uv.map(f64::from))
+    } else {
+        None
+    }
 }
 
-/// Camera faces scale their actual glyph strokes, not just the head behind a
-/// five-cell label. Legacy SpriteWidget and ASCII snapshots remain literal.
+/// The exact same inverse camera sample authorizes body color and face UV.
+/// No interpolation crosses a missing UV, nose, ear, or depth occluder.
+fn projected_face_uv(
+    sprite: &Sprite,
+    projection: Projection,
+    x: u32,
+    y: u32,
+) -> Option<([f64; 2], [f64; 2])> {
+    let (sx, sy) = projection.source_pixel(sprite, x, y)?;
+    let uv = valid_face_uv(sprite, sx, sy)?;
+    let neighbor = |x, y| {
+        valid_face_uv(sprite, x, y)
+            .filter(|next| (next[0] - uv[0]).abs() <= 0.25 && (next[1] - uv[1]).abs() <= 0.25)
+            .unwrap_or(uv)
+    };
+    let horizontal = neighbor(sx + 1, sy);
+    let vertical = neighbor(sx, sy + 1);
+    let footprint = std::array::from_fn(|i| {
+        ((horizontal[i] - uv[i]).abs() + (vertical[i] - uv[i]).abs()) / projection.scale
+    });
+    Some((uv, footprint))
+}
+
+/// Large expressions are textures on the actual head surface, transformed and
+/// occluded by the sprite's depth-tested UV map. Only tiny/legacy views use text.
 fn draw_camera_face(
     sprite: &Sprite,
     renderer: Renderer,
@@ -604,45 +592,52 @@ fn draw_camera_face(
     buf: &mut Buffer,
 ) -> bool {
     let area = area.intersection(buf.area);
-    let layout = (area.height >= 4)
-        .then(|| BitmapFace::layout(sprite, projection))
-        .flatten();
-    let Some(face) = layout else {
+    if area.height <= 3 {
+        return draw_front_face(sprite, renderer, colors, projection, area, buf);
+    }
+    let Some(texture) = FaceTexture::new(sprite) else {
         return draw_front_face(sprite, renderer, colors, projection, area, buf);
     };
+    let Some(bounds) = FaceTexture::bounds(sprite) else {
+        return false;
+    };
+    // Resolution gating uses the actual UV footprint, never a screen-axis face
+    // placement. Occluded surfaces cannot acquire a fabricated text label.
+    if bounds.width() * projection.scale < 10.0 || bounds.height() * projection.scale < 3.0 {
+        return draw_front_face(sprite, renderer, colors, projection, area, buf);
+    }
     let (dx, dy) = renderer.packing();
-    let width = (face.text.len() * 4 - 1) as f64;
-    let left = ((face.left - face.scale) / f64::from(dx)).floor() as i32;
-    let right = ((face.left + (width + 1.0) * face.scale) / f64::from(dx)).ceil() as i32;
-    let top = ((face.top - face.scale) / f64::from(dy)).floor() as i32;
-    let bottom = ((face.top + 6.0 * face.scale) / f64::from(dy)).ceil() as i32;
+    let (left, top) = projection.cell(bounds.left, bounds.top, renderer);
+    let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let mut painted = false;
-    for row in top.max(i32::from(area.y))..bottom.min(i32::from(area.bottom())) {
-        for col in left.max(i32::from(area.x))..right.min(i32::from(area.right())) {
+    for row in (top.floor() as i32).max(i32::from(area.y))
+        ..(bottom.ceil() as i32).min(i32::from(area.bottom()))
+    {
+        for col in (left.floor() as i32).max(i32::from(area.x))
+            ..(right.ceil() as i32).min(i32::from(area.right()))
+        {
             let mut pixels = [None; 8];
             let mut ink = [false; 8];
-            let mut halo = false;
-            let mut interior = true;
+            let mut covered = [false; 8];
             for y in 0..dy {
                 for x in 0..dx {
                     let i = usize::from(y * dx + x);
                     let px = col as u32 * u32::from(dx) + u32::from(x);
                     let py = row as u32 * u32::from(dy) + u32::from(y);
                     pixels[i] = projection.sample(sprite, px, py);
-                    let safe = interior_pixel(sprite, projection, px, py);
-                    interior &= safe;
-                    let (stroke, relief) = face.sample(px, py);
-                    if safe && relief {
-                        ink[i] = stroke;
-                        halo = true;
-                        pixels[i] = Some(if stroke { 0 } else { 4 });
+                    if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
+                        covered[i] = true;
+                        ink[i] = texture.sample(uv, footprint);
+                        pixels[i] = Some(if ink[i] { 0 } else { 4 });
                     }
                 }
             }
-            if !halo {
+            if !covered.iter().any(|v| *v) {
                 continue;
             }
+            let count = usize::from(dx * dy);
+            let full_cell = covered[..count].iter().all(|v| *v);
             let Some(cell) = buf.cell_mut((col as u16, row as u16)) else {
                 continue;
             };
@@ -653,16 +648,18 @@ fn draw_camera_face(
                         .set_bg(colors.ink(4));
                 }
                 Renderer::HalfBlock if mono => {
+                    if !full_cell {
+                        continue;
+                    }
                     cell.set_char(if ink[0] || ink[1] { '#' } else { ' ' })
                         .set_fg(Color::Reset)
                         .set_bg(Color::Reset);
                 }
                 Renderer::HalfBlock => paint_pixels(renderer, colors, pixels, cell),
                 Renderer::Quadrant | Renderer::Braille => {
-                    // Pattern cells have one foreground. Encode stroke coverage,
-                    // rather than the opaque body mask which would erase it.
-                    // A full interior cell is required before painting relief.
-                    if !interior {
+                    // A one-foreground pattern cell cannot replace a nose or
+                    // ear subpixel with neutral backing. Keep mixed cells intact.
+                    if !full_cell {
                         continue;
                     }
                     let glyph = if renderer == Renderer::Quadrant {
@@ -678,10 +675,7 @@ fn draw_camera_face(
             painted |= ink.iter().any(|on| *on);
         }
     }
-    if !painted {
-        return draw_front_face(sprite, renderer, colors, projection, area, buf);
-    }
-    true
+    painted
 }
 
 fn draw_caption(text: &str, center: f64, row: i32, area: Rect, colors: &Colors, buf: &mut Buffer) {
@@ -1925,12 +1919,14 @@ mod camera_tests {
             Renderer::Quadrant,
             Renderer::Braille,
         ] {
-            let (small_before, small_after) = facial_marks(&sprite, renderer, 16);
-            let small = mark_bounds(&small_before, &small_after);
-            assert!(
-                small.0 >= 8 && small.1 >= 2,
-                "{renderer:?}: small Pet {small:?}"
-            );
+            for columns in [12, 16] {
+                let (small_before, small_after) = facial_marks(&sprite, renderer, columns);
+                let small = mark_bounds(&small_before, &small_after);
+                assert!(
+                    small.0 >= 8 && small.1 >= 2,
+                    "{renderer:?}: Pet {columns}: {small:?}"
+                );
+            }
             let marks: Vec<_> = [28, 44, 68]
                 .into_iter()
                 .map(|columns| {
@@ -1945,14 +1941,14 @@ mod camera_tests {
             // A 44-column head must contain actual multi-row facial strokes,
             // rather than a five-cell label inside an otherwise enlarged head.
             assert!(
-                marks[1].0 >= 20 && marks[1].1 >= 3,
+                marks[1].0 >= 30 && marks[1].1 >= 3,
                 "{renderer:?}: {marks:?}"
             );
         }
     }
 
     #[test]
-    fn scaled_faces_follow_blink_chew_and_the_exact_oblique_metadata_span() {
+    fn surface_textures_follow_expression_changes_and_keep_full_text_on_oblique_heads() {
         for expression in [Expression::Idle, Expression::Eating] {
             let make = |frame| {
                 Sprite::voxel(
@@ -1992,14 +1988,11 @@ mod camera_tests {
             );
             let metadata = sprite.face_overlay().expect("authorized near-side span");
             assert_eq!(metadata.text.len(), 3);
-            let projection = Projection {
-                left: 0.0,
-                top: 0.0,
-                scale: 8.0,
-            };
-            let bitmap = BitmapFace::layout(&sprite, projection).unwrap();
-            assert_eq!(bitmap.text, metadata.text);
-            assert!(!bitmap.bit(12, 2)); // No invented fourth or fifth glyph.
+            let texture = FaceTexture::new(&sprite).unwrap();
+            assert_eq!(texture.text, sprite.face_text().unwrap());
+            assert_eq!(texture.text.len(), 5); // Actual surface occlusion clips full texture.
+            assert_ne!(texture.text, metadata.text);
+            assert!(FaceTexture::bounds(&sprite).is_some());
             for renderer in [Renderer::HalfBlock, Renderer::Quadrant, Renderer::Braille] {
                 let (before, after) = facial_marks(&sprite, renderer, 44);
                 assert!(mark_bounds(&before, &after).0 > 5);
@@ -2008,7 +2001,7 @@ mod camera_tests {
     }
 
     #[test]
-    fn bitmap_faces_preserve_rear_silhouettes_clipping_and_literal_snapshot_fallback() {
+    fn surface_textures_preserve_rear_silhouettes_clipping_and_literal_snapshot_fallback() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
         let front = Sprite::voxel(
@@ -2157,6 +2150,224 @@ mod camera_tests {
             }
         }
         assert_eq!(original, snapshot(&sprite, &config).unwrap());
+    }
+
+    #[test]
+    fn opaque_face_backing_erases_old_features_in_gaps_without_clearing_the_animal() {
+        // This point is above the mouth and farther than one font pixel from
+        // any stroke: the old halo implementation left the prior face visible.
+        let texture = FaceTexture { text: "(^_^)" };
+        assert!(!texture.sample([10.25 / 21.0, 2.25 / 7.0], [0.0, 0.0]));
+
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let sprite = Sprite::voxel(
+            Stage::Adult,
+            Expression::Happy,
+            SpriteStyle::SixteenBit,
+            0,
+            0,
+            false,
+        );
+        let metadata = sprite.face_overlay().unwrap();
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            let (dx, dy) = renderer.packing();
+            let area = Rect::new(0, 0, 160, 80);
+            let projection = Projection {
+                left: 80.0 * f64::from(dx) - (f64::from(metadata.center_x) + 0.5) * 6.0,
+                top: 40.0 * f64::from(dy) - (f64::from(metadata.y) + 0.5) * 6.0,
+                scale: 6.0,
+            };
+            let texture = FaceTexture::new(&sprite).unwrap();
+            let mut buf = Buffer::empty(area);
+            for cell in &mut buf.content {
+                cell.set_char('X')
+                    .set_fg(colors.ink(5))
+                    .set_bg(colors.ink(5));
+            }
+            let before = buf.clone();
+            assert!(draw_camera_face(
+                &sprite, renderer, &colors, projection, area, &mut buf
+            ));
+            let mut cleared_gaps = 0;
+            let mut untouched = 0;
+            for row in area.y..area.bottom() {
+                for col in area.x..area.right() {
+                    let mut clear_gap = true;
+                    let mut any_backing = false;
+                    for y in 0..dy {
+                        for x in 0..dx {
+                            let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                            let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                            let sample = projected_face_uv(&sprite, projection, px, py);
+                            clear_gap &= sample
+                                .is_some_and(|(uv, footprint)| !texture.sample(uv, footprint));
+                            any_backing |= sample.is_some();
+                        }
+                    }
+                    if clear_gap {
+                        assert_ne!(buf[(col, row)].symbol(), "X", "{renderer:?}");
+                        assert_eq!(buf[(col, row)].bg, colors.ink(4), "{renderer:?}");
+                        cleared_gaps += 1;
+                    }
+                    if !any_backing {
+                        assert_eq!(buf[(col, row)], before[(col, row)], "{renderer:?}");
+                        untouched += 1;
+                    }
+                }
+            }
+            assert!(cleared_gaps > 0 && untouched > 0, "{renderer:?}");
+        }
+    }
+
+    fn uv_axis(sprite: &Sprite) -> (f64, f64) {
+        let mut sum = [[0.0; 3]; 2];
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                let Some(uv) = valid_face_uv(sprite, x, y) else {
+                    continue;
+                };
+                if !(0.25..=0.75).contains(&uv[1]) {
+                    continue;
+                }
+                let side = if uv[0] <= 0.35 {
+                    0
+                } else if uv[0] >= 0.65 {
+                    1
+                } else {
+                    continue;
+                };
+                sum[side][0] += f64::from(x);
+                sum[side][1] += f64::from(y);
+                sum[side][2] += 1.0;
+            }
+        }
+        assert!(sum.iter().all(|s| s[2] > 0.0));
+        (
+            sum[1][0] / sum[1][2] - sum[0][0] / sum[0][2],
+            sum[1][1] / sum[1][2] - sum[0][1] / sum[0][2],
+        )
+    }
+
+    #[test]
+    fn face_uvs_foreshorten_with_yaw_and_rotate_with_the_sleeping_head() {
+        let make = |yaw, expression| {
+            Sprite::voxel(
+                Stage::Adult,
+                expression,
+                SpriteStyle::SixteenBit,
+                0,
+                yaw,
+                false,
+            )
+        };
+        let front = make(0, Expression::Happy);
+        let oblique = make(60, Expression::Happy);
+        let rear = make(180, Expression::Happy);
+        let front_bounds = FaceTexture::bounds(&front).expect("visible frontal surface");
+        let side_bounds = FaceTexture::bounds(&oblique).expect("actual oblique head surface");
+        assert!(
+            side_bounds.width() < front_bounds.width(),
+            "UV surface must foreshorten: {front_bounds:?} / {side_bounds:?}"
+        );
+        assert!(FaceTexture::bounds(&rear).is_none());
+        let awake_axis = uv_axis(&front);
+        let sleeping_axis = uv_axis(&make(0, Expression::Sleeping));
+        assert!(
+            sleeping_axis.1.abs() > awake_axis.1.abs() + 1.0,
+            "texture axis must roll with head: {awake_axis:?} / {sleeping_axis:?}"
+        );
+    }
+
+    #[test]
+    fn surface_texture_never_paints_unmapped_nose_ears_body_or_occluded_pixels() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        for yaw in [0, 35, 60] {
+            let sprite = Sprite::voxel(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                yaw,
+                false,
+            );
+            let bounds = FaceTexture::bounds(&sprite).unwrap();
+            let opaque_holes = (bounds.top as u32..bounds.bottom as u32)
+                .flat_map(|y| (bounds.left as u32..bounds.right as u32).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    sprite.pixel(x, y, 1).is_some() && valid_face_uv(&sprite, x, y).is_none()
+                })
+                .count();
+            assert!(
+                opaque_holes > 0,
+                "depth/anatomy exclusion control at yaw {yaw}"
+            );
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                let area = Rect::new(2, 3, 120, 60);
+                let projection = Projection::camera(
+                    &sprite,
+                    SolidBounds::of(&sprite).unwrap(),
+                    area,
+                    renderer,
+                    0,
+                    (500, 500),
+                    Camera {
+                        view: CameraView::Face,
+                        zoom_percent: 200,
+                        ..Camera::default()
+                    },
+                );
+                let mut buf = Buffer::empty(Rect::new(0, 0, 124, 66));
+                draw_projection(&sprite, renderer, &colors, projection, area, &mut buf);
+                let before = buf.clone();
+                assert!(draw_camera_face(
+                    &sprite, renderer, &colors, projection, area, &mut buf
+                ));
+                let (dx, dy) = renderer.packing();
+                let mut protected = 0;
+                for row in area.y..area.bottom() {
+                    for col in area.x..area.right() {
+                        let mut valid = 0;
+                        for y in 0..dy {
+                            for x in 0..dx {
+                                valid += usize::from(
+                                    projected_face_uv(
+                                        &sprite,
+                                        projection,
+                                        u32::from(col) * u32::from(dx) + u32::from(x),
+                                        u32::from(row) * u32::from(dy) + u32::from(y),
+                                    )
+                                    .is_some(),
+                                );
+                            }
+                        }
+                        let mixed_pattern =
+                            matches!(renderer, Renderer::Quadrant | Renderer::Braille)
+                                && valid < usize::from(dx * dy);
+                        if valid == 0 || mixed_pattern {
+                            assert_eq!(
+                                buf[(col, row)],
+                                before[(col, row)],
+                                "{renderer:?} yaw {yaw} unmapped surface"
+                            );
+                            protected += 1;
+                        }
+                    }
+                }
+                assert!(protected > 0);
+            }
+        }
     }
 
     #[test]
