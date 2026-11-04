@@ -17,6 +17,18 @@ that own a whole domain) for a more controlled environment. Minimize global dire
 A command finishing is not completion. Each condition below needs a positive control (the check
 passes on the real tree or system) and a negative control (a planted defect makes it fail).
 
+## Verification checkpoint (2026-11-04)
+
+The standing goal remains open. Targeted repairs do not establish a green image build or complete installation.
+
+- The canonical heavy inference service is running the local model through CUDA. CPU inference remains a separate lane.
+- The normal public CLI completed the dated-news probe in 14.348 seconds, retained the caller's calendar day and reported insufficient verified article evidence. This is honest completion, not a verified news briefing.
+- The native public-client probe now passes the hosted-tool capability boundary, but its MCP registration/list workflow still fails. Its invented session count is rejected as acceptance evidence.
+- Build phases retain all 80 logical identities and dependencies with 78 physical shell files, meeting the unchanged phase ceiling. The libexec count is 328 against the unchanged ceiling of 312; 16 native migrations remain.
+- Controller and desktop resilience families pass their targeted four-CPU development-container checks. The full canonical CI replay and a successful image build remain required.
+- The local virtual-pet preview is running in isolated views. The existing authenticated remote browser entry has verified TLS and a login boundary; play from another device remains unverified.
+- No reboot or compositor/input-daemon restart is part of this checkpoint. Operator configuration and independent live previews remain preserved.
+
 ## Stopping conditions
 
 | ID | Condition | Evidence that closes it |
