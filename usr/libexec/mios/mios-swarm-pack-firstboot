@@ -1,101 +1,189 @@
 #!/usr/bin/env bash
-# AI-hint: Parses mios.toml to arm concurrent llama-server instances in swarm mode, enforcing vram_budget_mb limits to prevent OOM on shared GPUs and generating per-worker environment files in /run/mios/swarm/.
-# AI-related: /usr/share/mios/llamacpp/models, /usr/share/mios/mios.toml, /etc/mios/mios.toml, mios-llm-worker, mios-swarm-pack
-# AI-functions: log, arm_worker
+# AI-hint: Arms declared dedicated CUDA nodes from the resolved SSOT, validates model containment and aggregate VRAM, and publishes per-instance environment only for ready OpenAI model identities. CPU/light and the heavy engine default are independent.
+# AI-related: usr/share/mios/mios.toml [dispatch], [nodes], [containers."mios-llm-worker@"], usr/lib/mios/mios_toml.py, tests/test-swarm-pack-arming.sh
+# AI-functions: log, worker_ready, arm_worker, plan_workers
 set -uo pipefail
 log(){ logger -t mios-swarm-pack "$*" 2>/dev/null; echo "[mios-swarm-pack] $*"; }
-
 RUNDIR=/run/mios/swarm
 MODELS=/usr/share/mios/llamacpp/models
 SLOTS=/var/lib/mios/llamacpp/slots
 
-# The instance's slot dir is its bind source and its .env is what satisfies the
-# unit's condition, so the dir comes first: a worker whose dir fails gets no .env.
-arm_worker(){
-  local name="$1" gguf="$2" port="$3" ngl="$4" ctx="$5"
-  if ! install -d -o "${MIOS_SERVICES_LLAMACPP_UID:-827}" -g "${MIOS_SERVICES_LLAMACPP_GID:-827}" "${SLOTS}/${name}"; then
-    log "Worker ${name}: cannot create ${SLOTS}/${name}; not armed"; return 1
-  fi
-  {
-    echo "WORKER_MODEL=${gguf}"
-    echo "WORKER_PORT=${port}"
-    echo "WORKER_NGL=${ngl}"
-    echo "WORKER_CTX=${ctx}"
-  } > "${RUNDIR}/${name}.env"
-  systemctl daemon-reload 2>/dev/null
-  if systemctl start "mios-llm-worker@${name}.service" 2>/dev/null; then
-    log "Armed worker ${name} -> ${gguf} :${port} ngl=${ngl}"
-  else
-    log "WARN: worker ${name} failed to start"
-  fi
+worker_ready(){
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys, time, urllib.request
+port, alias, timeout = sys.argv[1:]
+deadline = time.monotonic() + float(timeout)
+# Never send a loopback readiness request through an operator's HTTP proxy.
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+while time.monotonic() < deadline:
+    try:
+        with opener.open('http://127.0.0.1:' + port + '/v1/models',
+                         timeout=min(2.0, max(0.01, deadline-time.monotonic()))) as response:
+            body = json.loads(response.read(1048576))
+        if isinstance(body, dict) and any(isinstance(item, dict) and item.get('id') == alias
+                                         for item in body.get('data', [])):
+            sys.exit(0)
+    except (OSError, ValueError, TypeError):
+        pass
+    time.sleep(min(0.1, max(0, deadline-time.monotonic())))
+sys.exit(1)
+PY
 }
 
-# Sourced (by tests/test-swarm-pack-arming.sh) for arm_worker alone.
-[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+# The instance's owned cache/slot directory precedes its condition-bearing env.
+# A running instance may be reused only with identical configuration.
+arm_worker(){
+  local name="$1" gguf="$2" port="$3" ngl="$4" ctx="$5" alias="$6" timeout="$7"
+  local unit="mios-llm-worker@${name}.service" envfile="${RUNDIR}/${name}.env" candidate
+  if [[ -L "${SLOTS}/${name}" || -L "${SLOTS}/${name}/cache" ]]; then
+    log "Worker ${name}: slot/cache symlink refused; not armed"; return 1
+  fi
+  if ! install -d -m 0700 -o "${MIOS_SERVICES_LLAMACPP_UID:-827}" -g "${MIOS_SERVICES_LLAMACPP_GID:-827}" "${SLOTS}/${name}" "${SLOTS}/${name}/cache"; then
+    log "Worker ${name}: cannot create private slot/cache; not armed"; return 1
+  fi
+  candidate="$(mktemp "${RUNDIR}/.${name}.XXXXXX")" || return 1
+  if ! printf 'WORKER_MODEL=%s\nWORKER_PORT=%s\nWORKER_NGL=%s\nWORKER_CTX=%s\nWORKER_ALIAS=%s\n' \
+      "$gguf" "$port" "$ngl" "$ctx" "$alias" > "$candidate"; then
+    rm -f -- "$candidate"; return 1
+  fi
+  if systemctl is-active --quiet "$unit"; then
+    if ! cmp -s "$candidate" "$envfile"; then
+      rm -f -- "$candidate"
+      log "Worker ${name}: active configuration differs; stop the owned instance before reconfiguring"; return 1
+    fi
+    rm -f -- "$candidate"
+  else
+    chmod 0644 "$candidate" && mv -f -- "$candidate" "$envfile" || { rm -f -- "$candidate"; return 1; }
+  fi
+  if ! systemctl start "$unit"; then
+    log "Worker ${name}: start failed; not armed"; return 1
+  fi
+  if ! worker_ready "$port" "$alias" "$timeout"; then
+    log "Worker ${name}: requested OpenAI model identity is not ready; not armed"; return 1
+  fi
+  log "Armed worker ${name} -> ${gguf} as ${alias} :${port} ngl=${ngl} ctx=${ctx}"
+}
 
-PLAN="$(python3 - "$(cd "$(dirname "$0")" && pwd)/../../lib/mios" <<'PY'
-import os, sys, glob
+plan_workers(){
+  python3 - "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/mios" <<'PY'
+import os, pathlib, re, sys, urllib.parse
 sys.path.insert(0, sys.argv[1])
 import mios_toml
 
-cfg = mios_toml.load_merged()
+try:
+    cfg = mios_toml.load_merged()
+    mios_toml.overlay_inputs(cfg)
+    exports = mios_toml.emit_exports(cfg)
+    mios_toml.resolve_cross_references(exports)
 
-disp = cfg.get("dispatch", {}) if isinstance(cfg.get("dispatch"), dict) else {}
-profile = str(disp.get("gpu_profile", "orchestrator")).strip().lower()
-if profile != "swarm":
-    print("PROFILE_OFF"); sys.exit(0)
-budget = int(disp.get("vram_budget_mb", 0) or 0)
+    def value(path, default=None):
+        raw = cfg
+        for part in path.split('.'):
+            if not isinstance(raw, dict) or part not in raw:
+                return default
+            raw = raw[part]
+        result = exports.get(mios_toml.canonical_name(path), raw)
+        if isinstance(result, str) and ('${' in result or any(c.isspace() for c in result)):
+            raise ValueError('unresolved or unsafe ' + path)
+        return result
 
-nodes = cfg.get("nodes", {}) if isinstance(cfg.get("nodes"), dict) else {}
-workers, total = [], 0
-for name, n in nodes.items():
-    if not isinstance(n, dict): continue
-    if not n.get("serve"): continue
-    gguf = str(n.get("gguf", "")).strip()
-    if not gguf: continue
-    ep = str(n.get("endpoint", ""))
-    port = ""
-    for tok in ep.replace("/", " ").split(":"):
-        t = tok.split("/")[0].strip()
-        if t.isdigit(): port = t
-    port = str(n.get("port", port)).strip()
-    if not port.isdigit(): continue
-    ngl = str(n.get("ngl", 99)).strip()
-    ctx = str(n.get("ctx", 8192)).strip()
-    vram = int(n.get("vram_mb", 0) or 0)
-    total += vram
-    workers.append((name, gguf, port, ngl, ctx, vram))
+    def integer(path, default=None, minimum=1, maximum=None):
+        raw = value(path, default)
+        if isinstance(raw, bool) or not re.fullmatch(r'[0-9]+', str(raw)):
+            raise ValueError('invalid integer ' + path)
+        number = int(raw)
+        if number < minimum or (maximum is not None and number > maximum):
+            raise ValueError('out of range ' + path)
+        return number
 
-if not workers:
-    print("PROFILE_OFF"); sys.exit(0)
-if budget and total > budget:
-    print(f"REFUSE oversubscribed total={total}mb budget={budget}mb workers={len(workers)}")
-    sys.exit(0)
-print(f"OK total={total} budget={budget} count={len(workers)}")
-for (name, gguf, port, ngl, ctx, vram) in workers:
-    print(f"WORKER {name} {gguf} {port} {ngl} {ctx} {vram}")
+    if value('dispatch.gpu_profile', 'orchestrator') != 'swarm':
+        print('PROFILE_OFF'); sys.exit(0)
+    nodes = cfg.get('nodes', {})
+    if not isinstance(nodes, dict):
+        raise ValueError('nodes must be a table')
+    selected = [(name, n) for name, n in nodes.items() if isinstance(n, dict) and n.get('serve')]
+    if not selected:
+        print('PROFILE_OFF'); sys.exit(0)
+    device = str(value('gpu.cdi.nvidia.device', ''))
+    if not re.fullmatch(r'nvidia\.com/gpu=GPU-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', device):
+        raise ValueError('gpu.cdi.nvidia.device must select one physical GPU UUID')
+    budget = integer('dispatch.vram_budget_mb')
+    model_root = pathlib.Path(str(value('llamacpp.models_dir')))
+    slot_root = pathlib.Path(str(value('llamacpp.slot_dir')))
+    if not model_root.is_absolute() or not slot_root.is_absolute():
+        raise ValueError('model and slot roots must be absolute')
+    model_root = model_root.resolve(strict=True)
+    uid = integer('services.llamacpp.uid', minimum=0)
+    gid = integer('services.llamacpp.gid', minimum=0)
+    timeout = str(value('containers.mios-llm-worker@.Service.TimeoutStartSec'))
+    if not re.fullmatch(r'[1-9][0-9]*(?:s)?', timeout):
+        raise ValueError('worker TimeoutStartSec must be positive seconds')
+    timeout = int(timeout.removesuffix('s'))
+    reserved = {integer('ports.' + key) for key in ('llm_light', 'cpu_node', 'llm_igpu')}
+    workers, ports, total = [], set(), 0
+    for name, node in selected:
+        if node.get('serve') is not True or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}', name):
+            raise ValueError('unsafe worker node identifier or serve flag')
+        prefix = 'nodes.' + name + '.'
+        if value(prefix + 'lane') != 'gpu':
+            raise ValueError('served worker must use dedicated gpu lane')
+        gguf = str(value(prefix + 'gguf', ''))
+        relative = pathlib.PurePosixPath(gguf)
+        if (not gguf.endswith('.gguf') or relative.is_absolute()
+                or str(relative) != gguf
+                or any(part in ('.', '..') or not re.fullmatch(r'[A-Za-z0-9_.-]+', part)
+                       for part in relative.parts)):
+            raise ValueError('unsafe relative GGUF path')
+        model = (model_root / gguf).resolve(strict=True)
+        if not model.is_relative_to(model_root) or not model.is_file() or model.stat().st_size == 0:
+            raise ValueError('GGUF is missing or escapes model store')
+        alias = str(value(prefix + 'model', gguf))
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]*', alias):
+            raise ValueError('unsafe served model alias')
+        endpoint = urllib.parse.urlsplit(str(value(prefix + 'endpoint', '')))
+        if (endpoint.scheme != 'http' or endpoint.hostname not in ('localhost', '127.0.0.1', '::1')
+                or endpoint.username is not None or endpoint.password is not None
+                or endpoint.query or endpoint.fragment or endpoint.path.rstrip('/') != '/v1'
+                or endpoint.port is None):
+            raise ValueError('worker endpoint must be a local HTTP OpenAI /v1 base with port')
+        port = integer(prefix + 'port', endpoint.port, maximum=65535)
+        if port != endpoint.port or port in reserved or port in ports:
+            raise ValueError('conflicting worker port')
+        ports.add(port)
+        ngl = str(value(prefix + 'ngl', 99))
+        if ngl != 'all' and not re.fullmatch(r'[1-9][0-9]*', ngl):
+            raise ValueError('GPU worker ngl must be positive or all')
+        ctx = integer(prefix + 'ctx', 8192)
+        vram = integer(prefix + 'vram_mb')
+        total += vram
+        workers.append((name, gguf, port, ngl, ctx, alias, timeout))
+    if total > budget:
+        raise ValueError('oversubscribed aggregate worker VRAM budget')
+    print('SETTINGS', model_root, slot_root, uid, gid, sep='\t')
+    print('OK', total, budget, len(workers), sep='\t')
+    for worker in workers:
+        print('WORKER', *worker, sep='\t')
+except (OSError, TypeError, ValueError, KeyError) as error:
+    print('REFUSE ' + str(error), file=sys.stderr)
+    sys.exit(1)
 PY
-)"
+}
 
-head="$(printf '%s\n' "$PLAN" | head -1)"
-case "$head" in
-  PROFILE_OFF*) log "Gpu_profile != swarm"; exit 0 ;;
-  REFUSE*)      log "REFUSING to arm: ${head#REFUSE }"; exit 0 ;;
-  OK*)          log "Arming swarm pack: ${head#OK }" ;;
-  *)            log "No arming plan"; exit 0 ;;
-esac
-
-if [ ! -f "${MODELS}/.ready" ]; then
-  log "GGUF store not provisioned"; exit 0
+# Sourceable functions let offline tests exercise the actual armer and planner.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+if ! PLAN="$(plan_workers)"; then
+  log "REFUSING invalid worker plan"; exit 1
 fi
-
-mkdir -p "$RUNDIR" 2>/dev/null
-printf '%s\n' "$PLAN" | while read -r tag name gguf port ngl ctx _; do
-  [ "$tag" = "WORKER" ] || continue
-  if [ ! -s "${MODELS}/${gguf}" ]; then
-    log "Worker ${name}: GGUF ${gguf} missing under ${MODELS}"; continue
-  fi
-  arm_worker "$name" "$gguf" "$port" "$ngl" "$ctx" || true
-done
-log "Swarm pack arming complete"
-exit 0
+[[ "$PLAN" != PROFILE_OFF ]] || { log "No dedicated GPU workers requested"; exit 0; }
+IFS=$'\t' read -r tag MODELS SLOTS MIOS_SERVICES_LLAMACPP_UID MIOS_SERVICES_LLAMACPP_GID <<< "${PLAN%%$'\n'*}"
+[[ "$tag" == SETTINGS ]] || { log "Invalid worker plan settings"; exit 1; }
+export MIOS_SERVICES_LLAMACPP_UID MIOS_SERVICES_LLAMACPP_GID
+[[ -f "$MODELS/.ready" ]] || { log "GGUF store is not provisioned"; exit 1; }
+mkdir -p "$RUNDIR" || exit 1
+failed=0
+while IFS=$'\t' read -r tag name gguf port ngl ctx alias timeout; do
+  [[ "$tag" == WORKER ]] || continue
+  arm_worker "$name" "$gguf" "$port" "$ngl" "$ctx" "$alias" "$timeout" || failed=1
+done <<< "$PLAN"
+[[ "$failed" == 0 ]] || { log "Dedicated GPU worker arming failed"; exit 1; }
+log "Dedicated GPU workers are ready"

@@ -1,18 +1,15 @@
-# AI-hint: Systemd unit that executes mios-swarm-pack-firstboot to arm concurrent small-model worker units if gpu_profile is "swarm", enforcing VRAM budgets and provisioning GGUFs during the first boot sequence.
-# AI-doc: usr/share/doc/mios/manual/system.md
 [Unit]
 Description='MiOS' swarm small-model pack arming (gpu_profile=swarm only)
-After=network-online.target mios-cdi-detect.service
+After=network-online.target mios-cdi-detect.service mios-ai-firstboot.service
 Wants=network-online.target
 # Don't even try before the agent stack's prerequisites; the script is idempotent.
-After=mios-ai-firstboot.service
 
+# Each worker has its own bounded readiness deadline; allow multiple nodes to finish sequentially.
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/libexec/mios/mios-swarm-pack-firstboot
-# Never wedge boot on a pack problem.
-TimeoutStartSec=120
+TimeoutStartSec=infinity
 SuccessExitStatus=0
 
 [Install]

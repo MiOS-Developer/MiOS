@@ -15,8 +15,9 @@ ContainerName=mios-llm-worker-%i
 Entrypoint=/app/llama-server
 Environment=HOME=/var/lib/mios/llamacpp
 Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64
-EnvironmentFile=-/run/mios/swarm/%i.env
-Exec=--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers 99 --ctx-size 8192 --slot-save-path /var/lib/mios/llamacpp/slots/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_MODEL}
+Environment=XDG_CACHE_HOME=/var/lib/mios/llamacpp/slots/%i/cache
+EnvironmentFile=/run/mios/swarm/%i.env
+Exec=--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL} --ctx-size ${WORKER_CTX} --slot-save-path /var/lib/mios/llamacpp/slots/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_ALIAS}
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=827
 Image=ghcr.io/mostlygeek/llama-swap:cuda
@@ -31,6 +32,7 @@ WantedBy=multi-user.target default.target
 
 [Service]
 Delegate=yes
+EnvironmentFile=/run/mios/swarm/%i.env
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=180s

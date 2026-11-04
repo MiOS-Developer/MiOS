@@ -1091,8 +1091,8 @@ comment2 = "# Don't even try before the agent stack's prerequisites; the script 
 Type = "oneshot"
 RemainAfterExit = "yes"
 ExecStart = "/usr/libexec/mios/mios-swarm-pack-firstboot"
-comment = "# Never wedge boot on a pack problem."
-TimeoutStartSec = "120"
+comment = "# Each worker has its own bounded readiness deadline; allow multiple nodes to finish sequentially."
+TimeoutStartSec = "infinity"
 SuccessExitStatus = "0"
 
 [units."mios-swarm-pack-firstboot.service".Install]
@@ -14837,17 +14837,18 @@ ContainerName = "mios-llm-worker-%i"
 Entrypoint = "/app/llama-server"
 Environment = [
   "HOME=/var/lib/mios/llamacpp",
-  "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64"
+  "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64",
+  "XDG_CACHE_HOME=${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i/cache"
 ]
-EnvironmentFile = "-/run/mios/swarm/%i.env"
-Exec = "--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL:-99} --ctx-size ${WORKER_CTX:-8192} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_MODEL}"
+EnvironmentFile = "/run/mios/swarm/%i.env"
+Exec = "--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL} --ctx-size ${WORKER_CTX} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_ALIAS}"
 Group = "${MIOS_SERVICES_LLAMACPP_GID:-827}"
 Image = "${MIOS_CUDA_IMAGE:-ghcr.io/mostlygeek/llama-swap:cuda}"
 Label = "org.opencontainers.image.title=mios-llm-worker-%i"
 Pod = "mios-ai.pod"
 User = "${MIOS_SERVICES_LLAMACPP_UID:-827}"
 Volume = [
-  "/usr/share/mios/llamacpp/models:/models:ro",
+  "${MIOS_LLAMACPP_MODELS_DIR:-/usr/share/mios/llamacpp/models}:/models:ro",
   "${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i:${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i:Z"
 ]
 
@@ -14855,6 +14856,8 @@ Volume = [
 WantedBy = "multi-user.target default.target"
 
 [containers."mios-llm-worker@".Service]
+# systemd expands ExecStart before Podman reads the container environment file.
+EnvironmentFile = "/run/mios/swarm/%i.env"
 Delegate = "yes"
 Restart = "on-failure"
 RestartSec = "10s"
@@ -14864,7 +14867,7 @@ TimeoutStartSec = "180s"
 After = "network-online.target mios-cdi-detect.service mios-webtools-firstboot.service"
 ConditionPathExists = [
   "/run/mios/swarm/%i.env",
-  "/usr/share/mios/llamacpp/models/.ready"
+  "${MIOS_LLAMACPP_MODELS_DIR:-/usr/share/mios/llamacpp/models}/.ready"
 ]
 Description = "'MiOS' swarm worker %i (single-model llama-server, FOSS)"
 Wants = "network-online.target"

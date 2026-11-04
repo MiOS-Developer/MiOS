@@ -203,7 +203,10 @@ class FirstbootLatest(unittest.TestCase):
         for name in ("mios-cpu-node","mios-llm-light","mios-llm-worker@"):
             volumes = config["containers"][name]["Container"]["Volume"]
             model = [v for v in volumes if ":/models:" in v]
-            self.assertEqual(["/usr/share/mios/llamacpp/models:/models:ro"], model)
+            self.assertEqual(1, len(model))
+            self.assertTrue(model[0].endswith(":/models:ro"), model)
+            self.assertNotIn(":Z", model[0])
+            self.assertNotIn(":z", model[0])
         volumes = config["containers"]["mios-llm-light"]["Container"]["Volume"]
         self.assertIn("/usr/share/mios/llamacpp/mios-llm-light.yaml:/app/config.yaml:ro", volumes)
         self.assertTrue(any(v.endswith(":Z") and "/slots" in v for v in volumes))
