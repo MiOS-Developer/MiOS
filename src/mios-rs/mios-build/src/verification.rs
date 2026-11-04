@@ -320,7 +320,17 @@ fn check_linux_alias(
     binary: &str,
     alias: &str,
 ) -> Result<(), String> {
-    if alias == install_dir {
+    check_linux_named_alias(root, install_dir, binary, alias, binary)
+}
+
+fn check_linux_named_alias(
+    root: &Path,
+    install_dir: &str,
+    binary: &str,
+    alias: &str,
+    alias_name: &str,
+) -> Result<(), String> {
+    if alias == install_dir && alias_name == binary {
         return Ok(());
     }
     let prefix = root.canonicalize().map_err(|e| e.to_string())?;
@@ -333,14 +343,14 @@ fn check_linux_alias(
             "native compatibility directory {alias} escapes the image root"
         ));
     }
-    let path = directory.join(binary);
+    let path = directory.join(alias_name);
     let target = std::fs::read_link(&path).map_err(|e| {
-        format!("native compatibility {alias}/{binary} must be a canonical symlink: {e}")
+        format!("native compatibility {alias}/{alias_name} must be a canonical symlink: {e}")
     })?;
     let expected = Path::new(install_dir).join(binary);
     if target != expected {
         return Err(format!(
-            "native compatibility {alias}/{binary} diverges from {}",
+            "native compatibility {alias}/{alias_name} diverges from {}",
             expected.display()
         ));
     }
@@ -405,6 +415,23 @@ pub fn overlay_paths(
                 check_linux_alias(&prefix, &category.install_dir, binary, &alias)?;
                 paths.insert(format!(".{}/{binary}", alias.trim_start_matches("/usr")));
             }
+            let mut directories = category.compat_dirs.clone();
+            directories.push(category.install_dir.clone());
+            if category.expose_bin {
+                directories.push("/usr/bin".into());
+            }
+            for name in super::alias_names(&config, binary, "linux") {
+                for directory in &directories {
+                    check_linux_named_alias(
+                        &prefix,
+                        &category.install_dir,
+                        binary,
+                        directory,
+                        &name,
+                    )?;
+                    paths.insert(format!(".{}/{name}", directory.trim_start_matches("/usr")));
+                }
+            }
             count += 1;
         }
     }
@@ -453,6 +480,22 @@ pub fn runtime_check(
                 }
                 for alias in aliases {
                     check_linux_alias(root, &category.install_dir, binary, &alias)?;
+                }
+                let mut directories = category.compat_dirs.clone();
+                directories.push(category.install_dir.clone());
+                if category.expose_bin {
+                    directories.push("/usr/bin".into());
+                }
+                for name in super::alias_names(&config, binary, "linux") {
+                    for directory in &directories {
+                        check_linux_named_alias(
+                            root,
+                            &category.install_dir,
+                            binary,
+                            directory,
+                            &name,
+                        )?;
+                    }
                 }
             }
             count += 1;
@@ -637,6 +680,28 @@ mod tests {
                 }
             }
         }
+        for (name, alias) in &catalog.aliases {
+            let category = catalog
+                .categories
+                .values()
+                .find(|group| group.binaries.contains(&alias.binary))
+                .unwrap();
+            let mut directories = category.compat_dirs.clone();
+            directories.push(category.install_dir.clone());
+            if category.expose_bin {
+                directories.push("/usr/bin".into());
+            }
+            directories.sort();
+            directories.dedup();
+            for directory in directories {
+                let path = root
+                    .path()
+                    .join(directory.trim_start_matches('/'))
+                    .join(name);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                symlink(Path::new(&category.install_dir).join(&alias.binary), path).unwrap();
+            }
+        }
         root
     }
 
@@ -665,6 +730,21 @@ mod tests {
                 }
             }
         }
+        for (name, alias) in &catalog.aliases {
+            let category = catalog
+                .categories
+                .values()
+                .find(|group| group.binaries.contains(&alias.binary))
+                .unwrap();
+            let mut directories = category.compat_dirs.clone();
+            directories.push(category.install_dir.clone());
+            if category.expose_bin {
+                directories.push("/usr/bin".into());
+            }
+            for directory in directories {
+                expected.insert(format!(".{}/{name}", directory.trim_start_matches("/usr")));
+            }
+        }
         assert_eq!(paths, expected.into_iter().collect::<Vec<_>>());
         for binary in &catalog.windows_only {
             assert!(!paths
@@ -674,6 +754,38 @@ mod tests {
         assert!(paths
             .iter()
             .all(|p| p.starts_with("./bin/") || p.starts_with("./libexec/mios/")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn named_public_aliases_are_mandatory_and_cannot_retarget_another_artifact() {
+        use std::os::unix::fs::symlink;
+        let root = overlay_fixture();
+        let config = config(root.path()).unwrap();
+        assert!(!config.aliases.is_empty());
+        for (name, alias) in &config.aliases {
+            let category = config
+                .categories
+                .values()
+                .find(|group| group.binaries.contains(&alias.binary))
+                .unwrap();
+            for directory in std::iter::once(&category.install_dir).chain(&category.compat_dirs) {
+                let path = root
+                    .path()
+                    .join(directory.trim_start_matches('/'))
+                    .join(name);
+                let target = std::fs::read_link(&path).unwrap();
+                std::fs::remove_file(&path).unwrap();
+                assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+                assert!(runtime_check(root.path(), "linux", "x86_64", None).is_err());
+                symlink("/usr/bin/mios-gen", &path).unwrap();
+                assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+                assert!(runtime_check(root.path(), "linux", "x86_64", None).is_err());
+                std::fs::remove_file(&path).unwrap();
+                symlink(target, &path).unwrap();
+            }
+        }
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_ok());
     }
 
     #[cfg(unix)]

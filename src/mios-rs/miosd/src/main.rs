@@ -723,6 +723,18 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["sections", "list", "plan"])]
         post_list: bool,
     },
+    /// Summarize the latest build log and local image state
+    #[command(disable_help_flag = true)]
+    BuildStatus {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Print or follow the latest build log by pathname
+    #[command(disable_help_flag = true)]
+    BuildTail {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Export every typed logical phase and dependency without Cargo or a profile filter
     BuildPhaseCatalog {
         #[arg(long)]
@@ -1584,7 +1596,28 @@ async fn main() {
         }
     }
 
-    let cli = Cli::parse();
+    let route = if !matches!(prog_name, "miosd" | "miosd.exe") {
+        let root = std::env::var_os("MIOS_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "/".into());
+        match mios_build::native_alias_command(&root, prog_name) {
+            Ok(route) => route,
+            Err(error) => {
+                eprintln!("{prog_name}: {error}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+    let cli = match route {
+        Some(command) => Cli::parse_from(
+            std::iter::once(args[0].clone())
+                .chain(std::iter::once(command.argument().to_string()))
+                .chain(args.iter().skip(1).cloned()),
+        ),
+        None => Cli::parse(),
+    };
 
     match &cli.command {
         Commands::FhsSync {
@@ -2023,6 +2056,30 @@ async fn main() {
                 eprintln!("[miosd] Build error: {}", e);
                 std::process::exit(1);
             }
+        }
+        Commands::BuildStatus { args } | Commands::BuildTail { args } => {
+            let kind = if matches!(cli.command, Commands::BuildStatus { .. }) {
+                mios_resolver::native_aliases::Command::BuildStatus
+            } else {
+                mios_resolver::native_aliases::Command::BuildTail
+            };
+            let root = std::env::var_os("MIOS_ROOT")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| "/".into());
+            let program = if route.is_some() {
+                prog_name.to_owned()
+            } else {
+                format!("{prog_name} {}", kind.argument())
+            };
+            let code = mios_build::monitor::run(
+                &root,
+                kind,
+                &program,
+                args,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            );
+            std::process::exit(code);
         }
         Commands::BuildPhaseCatalog { toml } => {
             let result = mios_build::PhaseRegistry::load_from_toml(toml)

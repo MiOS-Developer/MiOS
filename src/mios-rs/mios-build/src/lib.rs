@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub mod artifacts;
+pub mod monitor;
 pub mod images {
     use serde::Serialize;
     use std::path::{Component, Path, PathBuf};
@@ -523,29 +524,34 @@ pub mod native_build {
             std::fs::rename(&temporary, &installed)
                 .map_err(|e| format!("install {}: {e}", installed.display()))?;
             let mut aliases = selected.compat_dirs.clone();
+            aliases.push(selected.install_dir.clone());
             if selected.expose_bin {
                 aliases.push("/usr/bin".into());
             }
-            for alias in aliases {
-                let directory = checked_directory(&prefix, &alias)?;
-                if directory == destination {
-                    continue;
-                }
-                let alias_path = directory.join(&selected.binary);
-                let temporary_link = directory.join(format!(
-                    ".{}.link.{}-{}",
-                    selected.binary,
-                    std::process::id(),
-                    SEQUENCE.fetch_add(1, Ordering::Relaxed)
-                ));
-                symlink(
-                    Path::new(&selected.install_dir).join(&selected.binary),
-                    &temporary_link,
-                )
-                .map_err(|e| format!("stage compatibility link: {e}"))?;
-                if let Err(error) = std::fs::rename(&temporary_link, &alias_path) {
-                    let _ = std::fs::remove_file(&temporary_link);
-                    return Err(format!("install compatibility link: {error}"));
+            aliases.sort();
+            aliases.dedup();
+            for alias_name in std::iter::once(&selected.binary).chain(&selected.named_aliases) {
+                for alias in &aliases {
+                    let directory = checked_directory(&prefix, alias)?;
+                    if directory == destination && alias_name == &selected.binary {
+                        continue;
+                    }
+                    let alias_path = directory.join(alias_name);
+                    let temporary_link = directory.join(format!(
+                        ".{}.link.{}-{}",
+                        alias_name,
+                        std::process::id(),
+                        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+                    ));
+                    symlink(
+                        Path::new(&selected.install_dir).join(&selected.binary),
+                        &temporary_link,
+                    )
+                    .map_err(|e| format!("stage compatibility link: {e}"))?;
+                    if let Err(error) = std::fs::rename(&temporary_link, &alias_path) {
+                        let _ = std::fs::remove_file(&temporary_link);
+                        return Err(format!("install compatibility link: {error}"));
+                    }
                 }
             }
             super::verification::artifact_check(root, &installed, "linux", arch)?;
@@ -604,6 +610,7 @@ pub mod native_build {
                 install_dir: "/usr/bin".into(),
                 expose_bin: false,
                 compat_dirs: vec!["/usr/libexec/mios".into()],
+                named_aliases: vec![],
                 platform: "linux".into(),
             };
             let artifact = root.path().join("fixture");
@@ -649,6 +656,8 @@ pub struct NativeTarget {
     pub install_dir: String,
     pub expose_bin: bool,
     pub compat_dirs: Vec<String>,
+    #[serde(default)]
+    pub named_aliases: Vec<String>,
     pub platform: String,
 }
 
@@ -691,6 +700,8 @@ struct NativeConfig {
     #[allow(dead_code)]
     windows: Option<NativeWindows>,
     categories: std::collections::BTreeMap<String, NativeCategory>,
+    #[serde(default)]
+    aliases: std::collections::BTreeMap<String, mios_resolver::native_aliases::Alias>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1003,7 +1014,49 @@ fn native_config_document(doc: &toml::Value) -> Result<NativeConfig, String> {
             ));
         }
     }
+    for (name, alias) in &config.aliases {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            || seen.contains(name)
+        {
+            return Err(format!("invalid or colliding native alias {name:?}"));
+        }
+        if alias.binary != "miosd"
+            || !seen.contains(&alias.binary)
+            || alias.platform != "linux"
+            || !supports_platform(&config, &alias.binary, &alias.platform)
+        {
+            return Err(format!(
+                "native alias {name}: unsupported command owner or platform"
+            ));
+        }
+    }
     Ok(config)
+}
+
+fn alias_names(config: &NativeConfig, binary: &str, platform: &str) -> Vec<String> {
+    config
+        .aliases
+        .iter()
+        .filter(|(_, alias)| alias.binary == binary && alias.platform == platform)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Runtime aliases resolve through the operator's normal layered policy; no Cargo.
+pub fn native_alias_command(
+    root: &std::path::Path,
+    name: &str,
+) -> Result<Option<mios_resolver::native_aliases::Command>, String> {
+    let document = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let config = native_config_document(&document)?;
+    Ok(config
+        .aliases
+        .get(name)
+        .filter(|alias| alias.binary == "miosd" && alias.platform == std::env::consts::OS)
+        .map(|alias| alias.command))
 }
 
 fn supports_platform(config: &NativeConfig, binary: &str, platform: &str) -> bool {
@@ -1065,6 +1118,7 @@ fn plan_native_metadata(
                     install_dir: group.install_dir.clone(),
                     expose_bin: group.expose_bin,
                     compat_dirs: group.compat_dirs.clone(),
+                    named_aliases: alias_names(config, &target.name, platform),
                     platform: platform.into(),
                 });
             }
@@ -1277,6 +1331,39 @@ compat_dirs = []
     fn all() -> Vec<(String, NativeMetadata)> {
         metadata(&["tool", "app", "seeder", "agent", "wallpaper"])
     }
+    #[test]
+    fn multicall_aliases_require_known_owners_commands_platforms_and_unique_safe_names() {
+        let source = include_str!("../../../../usr/share/mios/mios.toml");
+        let config = native_config(source).unwrap();
+        assert_eq!(
+            alias_names(&config, "miosd", "linux"),
+            vec![
+                "mios-build-status".to_string(),
+                "mios-build-tail".to_string()
+            ]
+        );
+        assert!(alias_names(&config, "miosd", "windows").is_empty());
+        for (key, value) in [
+            ("binary", "missing"),
+            ("binary", "mios-gen"),
+            ("command", "unregistered-command"),
+            ("platform", "windows"),
+        ] {
+            let mut document: toml::Value = source.parse().unwrap();
+            document["build"]["native"]["aliases"]["mios-build-status"][key] = value.into();
+            assert!(native_config_document(&document).is_err(), "{key}={value}");
+        }
+        for name in ["miosd", "../escape", "invalid/name"] {
+            let mut document: toml::Value = source.parse().unwrap();
+            let alias = document["build"]["native"]["aliases"]["mios-build-status"].clone();
+            document["build"]["native"]["aliases"]
+                .as_table_mut()
+                .unwrap()
+                .insert(name.into(), alias);
+            assert!(native_config_document(&document).is_err(), "{name}");
+        }
+    }
+
     #[test]
     fn categories_cover_roles_without_copying_libraries_or_dependencies() {
         let plan = plan_native_metadata(&native_config(CATALOG).unwrap(), &all(), "linux").unwrap();

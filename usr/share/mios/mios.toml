@@ -2215,6 +2215,17 @@ install_dir = "/usr/libexec/mios"
 expose_bin = true
 compat_dirs = []
 
+# Named routes remain one static executable, with public and FHS compatibility links.
+[build.native.aliases.mios-build-status]
+binary = "miosd"
+command = "build-status"
+platform = "linux"
+
+[build.native.aliases.mios-build-tail]
+binary = "miosd"
+command = "build-tail"
+platform = "linux"
+
 [build.tool_dispatch]
 # Bake-time tool-dispatch gates whose lookup cannot resolve. Shrink-only: task_962.
 max_unreachable = 0
@@ -11085,6 +11096,25 @@ oscap_skip_rules        = []                           # list of rule IDs (e.g. 
 rechunk_max_layers = 67   # hhd-dev/rechunk: max OCI layer count post-rechunk
 ai_ram_floor_gb    = 12   # informational; logged by postcheck
 curl_trigger_fallback = true
+
+# Search canonical driver logs and the temporary fallback without moving them.
+# Image identity and engine come from [image].local_tag and [build.images].engine.
+[build.monitor]
+log_directories = ["/var/log/mios", "/tmp"]
+user_log_directory = "mios/log"
+log_patterns = ["build-driver-*.log", "mios-build-driver-*.log"]
+process_directory = "/proc"
+process_pattern = "mios-build-driver"
+status_lines = 30
+tail_lines = 100
+failure_scan_lines = 50
+failure_pattern = 'FATAL|^Error|exit status [1-9]|\[fail\]'
+max_processes = 3
+max_images = 3
+image_command_prefix = ["sudo", "-n"]
+image_format = '  {{.Repository}}:{{.Tag}}  {{.CreatedSince}}  {{.Size}}'
+image_scope = "repository"
+poll_interval_ms = 1000
 
 [build.float]
 # How a floating ref ("latest") becomes a concrete one at bake time when its

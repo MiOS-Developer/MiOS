@@ -3309,6 +3309,39 @@
         <input type="text" id="f-build-ram-floor" data-key="build.ai_ram_floor_gb" data-type="int" placeholder="12">
       </fieldset>
       <fieldset>
+        <legend>Build status and log following</legend>
+        <label for="f-build-monitor-log-directories">Log search directories</label>
+        <input type="text" id="f-build-monitor-log-directories" data-key="build.monitor.log_directories" data-array="csv">
+        <label for="f-build-monitor-user-log-directory">Log path under the user state directory</label>
+        <input type="text" id="f-build-monitor-user-log-directory" data-key="build.monitor.user_log_directory">
+        <label for="f-build-monitor-log-patterns">Build log filename patterns</label>
+        <input type="text" id="f-build-monitor-log-patterns" data-key="build.monitor.log_patterns" data-array="csv">
+        <label for="f-build-monitor-process-directory">Process inventory directory</label>
+        <input type="text" id="f-build-monitor-process-directory" data-key="build.monitor.process_directory">
+        <label for="f-build-monitor-process-pattern">Build process pattern</label>
+        <input type="text" id="f-build-monitor-process-pattern" data-key="build.monitor.process_pattern">
+        <label for="f-build-monitor-status-lines">Lines shown in build status</label>
+        <input type="text" id="f-build-monitor-status-lines" data-key="build.monitor.status_lines" data-type="int">
+        <label for="f-build-monitor-tail-lines">Lines shown by build tail</label>
+        <input type="text" id="f-build-monitor-tail-lines" data-key="build.monitor.tail_lines" data-type="int">
+        <label for="f-build-monitor-failure-scan-lines">Recent lines checked for failures</label>
+        <input type="text" id="f-build-monitor-failure-scan-lines" data-key="build.monitor.failure_scan_lines" data-type="int">
+        <label for="f-build-monitor-failure-pattern">Build failure pattern</label>
+        <input type="text" id="f-build-monitor-failure-pattern" data-key="build.monitor.failure_pattern">
+        <label for="f-build-monitor-max-processes">Build processes shown</label>
+        <input type="text" id="f-build-monitor-max-processes" data-key="build.monitor.max_processes" data-type="int">
+        <label for="f-build-monitor-max-images">Images shown</label>
+        <input type="text" id="f-build-monitor-max-images" data-key="build.monitor.max_images" data-type="int">
+        <label for="f-build-monitor-image-command-prefix">Image command prefix arguments</label>
+        <input type="text" id="f-build-monitor-image-command-prefix" data-key="build.monitor.image_command_prefix" data-array="csv">
+        <label for="f-build-monitor-image-format">Image summary format</label>
+        <input type="text" id="f-build-monitor-image-format" data-key="build.monitor.image_format">
+        <label for="f-build-monitor-image-scope">Image scope (repository or exact tag)</label>
+        <input type="text" id="f-build-monitor-image-scope" data-key="build.monitor.image_scope">
+        <label for="f-build-monitor-poll-interval">Log follow interval in milliseconds</label>
+        <input type="text" id="f-build-monitor-poll-interval" data-key="build.monitor.poll_interval_ms" data-type="int">
+      </fieldset>
+      <fieldset>
         <legend>[compliance] — OpenSCAP scan-only build gate (default-OFF)</legend>
         <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
           When enabled, the build step runs <code>oscap xccdf eval</code> against an SSG

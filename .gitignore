@@ -1128,3 +1128,6 @@ usr/share/mios/virtio/*.iso
 !tools/native/mios-tamagotchi/src/characters.rs
 
 !tools/native/mios-tamagotchi/src/dialogs.rs
+
+# Native build observation module, scaffolded from the canonical Rust template.
+!src/mios-rs/mios-build/src/monitor.rs
