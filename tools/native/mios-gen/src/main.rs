@@ -457,6 +457,9 @@ enum Commands {
         root: Option<PathBuf>,
         #[arg(long, conflicts_with_all=["desktop","flatpak","all","portal_only"])]
         resolve: Option<String>,
+        /// Read-only installed desktop catalogue, using the same registry as --resolve
+        #[arg(long, conflicts_with_all=["resolve","sessions","desktop","flatpak","all","portal_only"])]
+        catalog: bool,
         #[arg(long, conflicts_with_all=["resolve","desktop","flatpak","all","portal_only"])]
         sessions: bool,
         #[arg(long,conflicts_with_all=["flatpak","all","portal_only"])]
@@ -2017,6 +2020,7 @@ fn main() -> ExitCode {
         Commands::AppPreflight {
             root,
             resolve,
+            catalog,
             sessions,
             desktop,
             flatpak,
@@ -2025,7 +2029,9 @@ fn main() -> ExitCode {
         } => (
             "app-preflight",
             "desktop",
-            if sessions {
+            if catalog {
+                app_preflight::catalog(&root.unwrap_or_else(|| PathBuf::from("/")))
+            } else if sessions {
                 app_preflight::sessions(&root.unwrap_or_else(|| PathBuf::from("/")))
             } else if let Some(query) = resolve {
                 app_preflight::resolve(&root.unwrap_or_else(|| PathBuf::from("/")), &query)

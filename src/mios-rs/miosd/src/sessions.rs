@@ -3,11 +3,11 @@
 //! Global tmux session selector (`miosd sessions`): the default entry of every interactive
 //! MiOS login. Lists [keybindings].socket_name sessions on this node and on tailnet MiOS
 //! nodes ([terminal.sessions]), starts new bare Tmux-OS sessions, opens the MiOS AI workspace
-//! and the TUIs of [[terminal.tuis]] in Tmux-OS, and execs the choice.
+//! and the TUIs of [[terminal.tuis]] in Tmux-OS. The complete native desktop catalogue and\n//! freshly witnessed local/registered execution targets are searchable from the first screen.
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::sync::OnceLock;
@@ -59,6 +59,53 @@ struct Config {
     apps: Vec<App>,
     /// This terminal is a Linux console: named colours, plain borders, ASCII glyphs, argv_vt TUIs.
     console: bool,
+    root: PathBuf,
+    menu: MenuConfig,
+    discovery_timeout_ms: u64,
+}
+
+#[derive(Clone, serde::Deserialize)]
+struct MenuConfig {
+    title: String,
+    apps_title: String,
+    systems_title: String,
+    inventory_program: String,
+    launch_program: String,
+    probe_program: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum MenuView {
+    All,
+    Apps,
+    Systems,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+struct GlobalApp {
+    id: String,
+    name: String,
+    kind: String,
+    available: bool,
+    #[serde(default)]
+    reason: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct DesktopSystem {
+    selector: String,
+    label: String,
+    ready: bool,
+    remote: bool,
+    operator: bool,
+    error: String,
+}
+
+#[derive(Clone, Default, serde::Serialize)]
+struct MenuDiscovery {
+    apps: Vec<GlobalApp>,
+    systems: Vec<DesktopSystem>,
+    errors: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -98,6 +145,13 @@ pub struct NestedSession {
 
 #[derive(Clone, Debug, PartialEq)]
 enum Choice {
+    View(MenuView),
+    SelectSystem(String),
+    GlobalLaunch {
+        name: String,
+        session: String,
+    },
+    Notice(String),
     Attach {
         node: usize,
         session: String,
@@ -134,13 +188,13 @@ const UNICODE: Glyphs = Glyphs {
     sep: "  \u{b7}  ",
     more: "\u{2026}",
     pick: "\u{203a} ",
-    help: "\u{2191}\u{2193} PgUp PgDn select \u{b7} Enter open \u{b7} e apps \u{b7} Tab/n new \u{b7} S-Tab section \u{b7} r refresh \u{b7} s shell",
+    help: "\u{2191}\u{2193} PgUp PgDn select \u{b7} Enter open \u{b7} / search \u{b7} e apps \u{b7} Tab/n new \u{b7} S-Tab section \u{b7} r refresh \u{b7} s shell",
 };
 const ASCII: Glyphs = Glyphs {
     sep: "  -  ",
     more: "...",
     pick: "> ",
-    help: "Up/Down PgUp/PgDn select - Enter open - e apps - Tab/n new - S-Tab section - r refresh - s shell",
+    help: "Up/Down PgUp/PgDn select - Enter open - / search - e apps - Tab/n new - S-Tab section - r refresh - s shell",
 };
 
 fn text<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
@@ -204,7 +258,28 @@ fn config(root: &Path) -> Result<Config, String> {
         .filter_map(|o| o.as_str().map(str::to_owned))
         .collect();
     let user = string(&v, "terminal.sessions.ssh_user")?;
+    let menu: MenuConfig = text(&v, "terminal.sessions.menu")?
+        .clone()
+        .try_into()
+        .map_err(|e| format!("invalid terminal.sessions.menu: {e}"))?;
+    if [
+        &menu.title,
+        &menu.apps_title,
+        &menu.systems_title,
+        &menu.inventory_program,
+        &menu.launch_program,
+        &menu.probe_program,
+    ]
+    .iter()
+    .any(|v| v.trim().is_empty() || v.chars().any(char::is_control))
+    {
+        return Err("terminal.sessions.menu fields must be nonempty printable strings".into());
+    }
     Ok(Config {
+        root: root.to_path_buf(),
+        discovery_timeout_ms: integer(&v, "desktop.launch.overall_timeout_ms")?.clamp(1000, 60000)
+            as u64,
+        menu,
         socket: string(&v, "keybindings.socket_name")?,
         socket_root: string(&v, "terminal.socket_root")?,
         default_session: string(&v, "keybindings.terminal_session")?,
@@ -619,6 +694,330 @@ fn spawn_remote(c: &Config) -> mpsc::Receiver<Vec<Node>> {
     rx
 }
 
+fn menu_text(value: &str, console: bool) -> String {
+    value
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .map(|ch| if console && !ch.is_ascii() { '?' } else { ch })
+        .collect()
+}
+
+fn target_label(value: &serde_json::Value) -> Option<String> {
+    let target = &value["execution_target"];
+    let fields: Option<Vec<&str>> = ["id", "platform", "session_id", "backend"]
+        .iter()
+        .map(|key| {
+            target[*key]
+                .as_str()
+                .filter(|v| !v.is_empty() && !v.chars().any(char::is_control))
+        })
+        .collect();
+    let fields = fields?;
+    Some(format!("{} / {} ({})", fields[1], fields[2], fields[3]))
+}
+
+fn menu_inventory(c: &Config) -> MenuDiscovery {
+    let mut discovery = MenuDiscovery::default();
+    let command = |mode: &str| {
+        let until =
+            Instant::now() + Duration::from_millis(c.discovery_timeout_ms) + PEER_DEADLINE_GRACE;
+        let mut cmd = Command::new(&c.menu.inventory_program);
+        cmd.args(["app-preflight", mode, "--root"])
+            .arg(&c.root)
+            .env_remove("MIOS_EXECUTION_SESSION");
+        run_bounded(&mut cmd, until)
+            .ok()
+            .filter(|r| r.status.success())
+            .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.stdout).ok())
+            .filter(|j| j["ok"] == true)
+    };
+    if let Some(value) = command("--catalog") {
+        if let Ok(apps) = serde_json::from_value::<Vec<GlobalApp>>(value["apps"].clone()) {
+            discovery.apps = apps
+                .into_iter()
+                .filter(|a| {
+                    !a.id.is_empty()
+                        && !a.id.starts_with('-')
+                        && !a.id.chars().any(char::is_control)
+                })
+                .collect();
+        } else {
+            discovery
+                .errors
+                .push("Application catalogue returned an invalid receipt".into());
+        }
+    } else {
+        discovery
+            .errors
+            .push("Application catalogue unavailable; refresh to retry".into());
+    }
+    if let Some(value) = command("--sessions") {
+        for row in value["sessions"].as_array().into_iter().flatten() {
+            if let Some(label) = target_label(row) {
+                discovery.systems.push(DesktopSystem {
+                    selector: row["execution_target"]["id"].as_str().unwrap().into(),
+                    label,
+                    ready: row["available"] == true && row["probed"] == true,
+                    remote: false,
+                    operator: row["scope"] == "operator",
+                    error: String::new(),
+                });
+            }
+        }
+        for row in value["registered_endpoints"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let Some(id) = row["registration_id"]
+                .as_str()
+                .filter(|id| !id.chars().any(char::is_control))
+            else {
+                continue;
+            };
+            discovery.systems.push(DesktopSystem {
+                selector: id.into(),
+                label: id.into(),
+                ready: false,
+                remote: true,
+                operator: false,
+                error: if row["endpoint"].as_str().is_some() {
+                    "probe required".into()
+                } else {
+                    "unavailable: invalid registered endpoint".into()
+                },
+            });
+        }
+        for row in value["unavailable"].as_array().into_iter().flatten() {
+            discovery.systems.push(DesktopSystem {
+                selector: String::new(),
+                label: row["session_id"].as_str().unwrap_or("Local desktop").into(),
+                ready: false,
+                remote: false,
+                operator: false,
+                error: "unavailable: native session probe failed".into(),
+            });
+        }
+        if value["truncated"] == true {
+            discovery
+                .errors
+                .push("System discovery incomplete; native safety bound reached".into());
+        }
+    } else {
+        discovery
+            .errors
+            .push("Desktop system inventory unavailable; refresh to retry".into());
+    }
+    discovery
+}
+
+fn spawn_menu(c: &Config) -> mpsc::Receiver<MenuDiscovery> {
+    let (tx, rx) = mpsc::channel();
+    let c = c.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(menu_inventory(&c));
+    });
+    rx
+}
+
+fn probe_system(c: &Config, selector: &str) -> Result<(String, String), String> {
+    let output = run_bounded(
+        Command::new(&c.menu.probe_program)
+            .args(["window-list", "--json"])
+            .env("MIOS_EXECUTION_SESSION", selector),
+        Instant::now() + peer_deadline(c),
+    )?;
+    if !output.status.success() {
+        return Err("Session unavailable; executor did not confirm the requested target".into());
+    }
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|_| "Invalid session probe receipt")?;
+    if receipt["windows"].as_array().is_none()
+        || ["ok", "success", "available"]
+            .iter()
+            .any(|k| receipt.get(*k).is_some_and(|v| v != true))
+    {
+        return Err("Session probe did not confirm availability".into());
+    }
+    let label = target_label(&receipt)
+        .ok_or_else(|| "Session probe did not identify its execution target".to_owned())?;
+    Ok((
+        label,
+        receipt["execution_target"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    ))
+}
+
+fn menu_rows(
+    c: &Config,
+    nodes: &[Node],
+    querying: bool,
+    nested: &[NestedSession],
+    discovery: &MenuDiscovery,
+    view: &MenuView,
+    query: &str,
+    selected: Option<&DesktopSystem>,
+    g: &Glyphs,
+) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let mut out = vec![
+        (
+            Some(Choice::View(MenuView::Apps)),
+            Line::from(format!(
+                "[ {} ]  {} local desktop / {} TUI",
+                c.menu.apps_title,
+                discovery.apps.len(),
+                c.apps.len()
+            )),
+            bold,
+        ),
+        (
+            Some(Choice::View(MenuView::Systems)),
+            Line::from(format!(
+                "[ {} ]  {} desktops / {} nodes",
+                c.menu.systems_title,
+                discovery.systems.len(),
+                nodes.len()
+            )),
+            bold,
+        ),
+        (
+            Some(Choice::View(MenuView::All)),
+            Line::from("[ All apps and sessions ]"),
+            bold,
+        ),
+    ];
+    let mut body = Vec::new();
+    if *view != MenuView::Apps {
+        body = rows(nodes, querying, &[], nested, Some(&c.default_session), g);
+        body.push((None, Line::from(c.menu.systems_title.clone()), bold));
+        if discovery.systems.is_empty() {
+            body.push((
+                Some(Choice::Notice("No ready desktop systems discovered".into())),
+                Line::from(
+                    "    No ready desktop systems; configured guests are not assumed running",
+                ),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        for system in &discovery.systems {
+            let status = if system.ready { "ready" } else { &system.error };
+            let action = if system.ready || (system.remote && system.error == "probe required") {
+                Choice::SelectSystem(system.selector.clone())
+            } else {
+                Choice::Notice(format!("{}: {status}", system.label))
+            };
+            body.push((
+                Some(action),
+                Line::from(format!(
+                    "    {} [{}]",
+                    menu_text(&system.label, c.console),
+                    status
+                )),
+                Style::default(),
+            ));
+        }
+    }
+    if *view != MenuView::Systems {
+        body.push((
+            None,
+            Line::from(format!("{} - local catalogue", c.menu.apps_title)),
+            bold,
+        ));
+        for app in &discovery.apps {
+            let remote_target = selected.is_some_and(|s| s.ready && s.remote);
+            let choice = if app.available || remote_target {
+                selected
+                    .filter(|s| s.ready)
+                    .map(|s| Choice::GlobalLaunch {
+                        name: if s.remote {
+                            app.name.clone()
+                        } else {
+                            app.id.clone()
+                        },
+                        session: s.selector.clone(),
+                    })
+                    .unwrap_or_else(|| {
+                        Choice::Notice(format!(
+                            "{}: select a ready desktop system to launch this app",
+                            app.id
+                        ))
+                    })
+            } else {
+                Choice::Notice(format!("{}: {}", app.id, app.reason))
+            };
+            body.push((
+                Some(choice),
+                Line::from(format!(
+                    "    {:<30} {}{}",
+                    menu_text(&app.name, c.console),
+                    app.kind,
+                    if app.available {
+                        ""
+                    } else if remote_target {
+                        " [not installed locally; resolve remotely]"
+                    } else {
+                        " [unavailable]"
+                    }
+                )),
+                Style::default(),
+            ));
+        }
+        body.push((None, Line::from("TUI apps - this terminal"), bold));
+        for app in &c.apps {
+            body.push((
+                Some(Choice::App { id: app.id.clone() }),
+                Line::from(format!(
+                    "    {:<30} {} {}",
+                    app.label, app.section, app.mode
+                )),
+                Style::default(),
+            ));
+        }
+    }
+    let query_lower = query.to_lowercase();
+    let mut matches = 0;
+    for row in body {
+        if query.is_empty() || row.1.to_string().to_lowercase().contains(&query_lower) {
+            matches += usize::from(row.0.is_some());
+            out.push(row);
+        }
+    }
+    if !query.is_empty() && *view != MenuView::Systems {
+        if matches == 0 {
+            out.push((
+                None,
+                Line::from("No catalogue match; request an app by name below"),
+                Style::default(),
+            ));
+        }
+        let choice = selected
+            .filter(|s| s.ready)
+            .map(|s| Choice::GlobalLaunch {
+                name: query.into(),
+                session: s.selector.clone(),
+            })
+            .unwrap_or_else(|| {
+                Choice::Notice("Select a ready system before requesting an app".into())
+            });
+        out.push((
+            Some(choice),
+            Line::from(format!("Launch by name: {}", menu_text(query, c.console))),
+            bold,
+        ));
+    }
+    for error in &discovery.errors {
+        out.push((
+            Some(Choice::Notice(error.clone())),
+            Line::from(error.clone()),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
+    out
+}
+
 // ---- terminal restoration on every exit path -------------------------------------------
 // ratatui::init installs a panic hook that restores the terminal; TermGuard's Drop covers
 // early `?` returns; the signal handlers cover SIGINT/SIGTERM/SIGHUP/SIGQUIT (raw mode
@@ -878,7 +1277,7 @@ fn navigate(
             .unwrap_or(cur),
         KeyCode::Char('e') => table
             .iter()
-            .position(|r| matches!(r.0, Some(Choice::App { .. })))
+            .position(|r| matches!(r.0, Some(Choice::App { .. } | Choice::GlobalLaunch { .. })))
             .unwrap_or(cur),
         _ => cur,
     }
@@ -893,6 +1292,16 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     let mut nodes = vec![local_node(c)];
     let mut nested = discover_nested(c);
     let mut pending = Some(spawn_remote(c));
+    let mut menu_pending = Some(spawn_menu(c));
+    let mut discovery = MenuDiscovery::default();
+    let mut view = MenuView::All;
+    let mut query = String::new();
+    let mut searching = false;
+    let mut focus_content = false;
+    let mut selected = std::env::var("MIOS_EXECUTION_SESSION").unwrap_or_default();
+    let mut status = "Discovering apps and running systems".to_owned();
+    let mut probe_pending: Option<(String, mpsc::Receiver<Result<(String, String), String>>)> =
+        None;
     let mut state = ListState::default();
     let mut remembered: Option<Choice> = None;
     let mut last_click: Option<(usize, Instant)> = None;
@@ -910,19 +1319,81 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        let table = rows(
+        if let Some(rx) = &menu_pending {
+            if let Ok(result) = rx.try_recv() {
+                discovery = result;
+                if selected.is_empty() {
+                    let operators: Vec<_> = discovery
+                        .systems
+                        .iter()
+                        .filter(|s| s.operator && s.ready)
+                        .collect();
+                    if operators.len() == 1 {
+                        selected = operators[0].selector.clone();
+                    }
+                }
+                status = "Select Apps or Systems; / searches the complete menu".into();
+                menu_pending = None;
+            }
+        }
+        if let Some((selector, rx)) = &probe_pending {
+            if let Ok(result) = rx.try_recv() {
+                if let Some(system) = discovery
+                    .systems
+                    .iter_mut()
+                    .find(|s| &s.selector == selector && selected == *selector)
+                {
+                    match result {
+                        Ok((label, target)) => {
+                            system.label = format!("{label} via {selector}");
+                            system.selector = target.clone();
+                            system.ready = true;
+                            system.error.clear();
+                            selected = target;
+                            view = MenuView::Apps;
+                            query.clear();
+                            focus_content = true;
+                        }
+                        Err(error) => {
+                            system.ready = false;
+                            system.error = error.clone();
+                            status = error;
+                        }
+                    }
+                }
+                probe_pending = None;
+            }
+        }
+        let target = discovery.systems.iter().find(|s| s.selector == selected);
+        let table = menu_rows(
+            c,
             &nodes,
             pending.is_some(),
-            &c.apps,
             &nested,
-            Some(&c.default_session),
+            &discovery,
+            &view,
+            &query,
+            target,
             g,
         );
-        state.select(select_index(
-            &table,
-            remembered.as_ref(),
-            &c.default_session,
-        ));
+        state.select(
+            remembered
+                .as_ref()
+                .and_then(|want| table.iter().position(|r| r.0.as_ref() == Some(want)))
+                .or_else(|| {
+                    if query.is_empty() && !focus_content {
+                        select_index(&table, None, "")
+                    } else {
+                        table
+                            .iter()
+                            .enumerate()
+                            .skip(3)
+                            .find(|(_, r)| r.0.is_some())
+                            .map(|(i, _)| i)
+                    }
+                }),
+        );
+        focus_content = false;
         let items: Vec<ListItem> = table
             .iter()
             .map(|(choice, line, style)| {
@@ -935,11 +1406,11 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
             })
             .collect();
         let mut list_area = Rect::default();
+        let mut nav_area = Rect::default();
         terminal
             .draw(|f| {
                 let [body, help] =
-                    Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
-                list_area = body;
+                    Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(f.area());
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(if c.console {
@@ -949,22 +1420,64 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                     })
                     .border_style(Style::default().fg(subtle))
                     .title(Span::styled(
-                        " MiOS sessions ",
+                        format!(" {} ", c.menu.title),
                         Style::default().fg(accent).add_modifier(Modifier::BOLD),
                     ))
                     .style(Style::default().bg(bg).fg(fg));
-                let list = List::new(items)
-                    .block(block)
-                    .highlight_style(
-                        Style::default()
-                            .bg(accent)
-                            .fg(bg)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .highlight_symbol(g.pick);
-                f.render_stateful_widget(list, body, &mut state);
+                let inner = block.inner(body);
+                f.render_widget(block, body);
+                let [navigation, content] =
+                    Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(inner);
+                nav_area = navigation;
+                list_area = content;
+                let highlight = Style::default()
+                    .bg(accent)
+                    .fg(bg)
+                    .add_modifier(Modifier::BOLD);
+                let mut nav_state = ListState::default();
+                nav_state.select(state.selected().filter(|index| *index < 3));
+                f.render_stateful_widget(
+                    List::new(items[..3].to_vec())
+                        .highlight_style(highlight)
+                        .highlight_symbol(g.pick),
+                    navigation,
+                    &mut nav_state,
+                );
+                let mut content_state = state.clone();
+                content_state.select(
+                    state
+                        .selected()
+                        .filter(|index| *index >= 3)
+                        .map(|index| index - 3),
+                );
+                f.render_stateful_widget(
+                    List::new(items[3..].to_vec())
+                        .highlight_style(highlight)
+                        .highlight_symbol(g.pick),
+                    content,
+                    &mut content_state,
+                );
+                *state.offset_mut() = content_state.offset();
                 f.render_widget(
-                    Paragraph::new(g.help).style(Style::default().fg(muted).bg(bg)),
+                    Paragraph::new(format!(
+                        "Target: {}\nSearch{}: {}\n{}\n{}",
+                        target
+                            .map(|s| format!(
+                                "{} | {}",
+                                if s.ready { "ready" } else { "unavailable" },
+                                menu_text(&s.label, c.console)
+                            ))
+                            .unwrap_or_else(|| "none ready; select Systems".into()),
+                        if searching { " editing" } else { "" },
+                        menu_text(&query, c.console),
+                        status,
+                        if f.area().width < 90 {
+                            "Arrows Enter open /search Tab/n new Esc shell"
+                        } else {
+                            g.help
+                        }
+                    ))
+                    .style(Style::default().fg(muted).bg(bg)),
                     help,
                 );
             })
@@ -973,10 +1486,43 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
             continue;
         }
         let cur = state.selected().unwrap_or(0);
-        let page = list_area.height.saturating_sub(2).max(1) as usize;
+        let page = list_area.height.max(1) as usize;
         let mut activate = false;
         let next = match event::read().map_err(|e| e.to_string())? {
+            Event::Key(key) if key.kind == KeyEventKind::Press && searching => {
+                match key.code {
+                    KeyCode::Esc => {
+                        searching = false;
+                        query.clear();
+                        remembered = None;
+                    }
+                    KeyCode::Backspace => {
+                        query.pop();
+                        remembered = None;
+                    }
+                    KeyCode::Enter => {
+                        searching = false;
+                        activate = true;
+                    }
+                    KeyCode::Char(ch) if !ch.is_control() && query.len() < 4096 => {
+                        query.push(ch);
+                        remembered = None;
+                    }
+                    code => {
+                        let next = navigate(&table, cur, code, page);
+                        remembered = table.get(next).and_then(|r| r.0.clone());
+                    }
+                }
+                if !activate {
+                    continue;
+                }
+                cur
+            }
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                KeyCode::Char('/') => {
+                    searching = true;
+                    cur
+                }
                 KeyCode::Enter => {
                     activate = true;
                     cur
@@ -985,6 +1531,9 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 KeyCode::Char('r') => {
                     nodes[0] = local_node(c);
                     nested = discover_nested(c);
+                    if menu_pending.is_none() {
+                        menu_pending = Some(spawn_menu(c));
+                    }
                     if pending.is_none() {
                         pending = Some(spawn_remote(c));
                     }
@@ -997,10 +1546,15 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 MouseEventKind::ScrollDown => navigate(&table, cur, KeyCode::Down, page),
                 MouseEventKind::ScrollUp => navigate(&table, cur, KeyCode::Up, page),
                 MouseEventKind::Down(MouseButton::Left) => {
-                    let inside = m.column > list_area.x
-                        && m.row > list_area.y
-                        && m.row + 1 < list_area.y + list_area.height;
-                    let row = state.offset() + m.row.saturating_sub(list_area.y + 1) as usize;
+                    let in_navigation =
+                        nav_area.contains(ratatui::layout::Position::new(m.column, m.row));
+                    let inside = in_navigation
+                        || list_area.contains(ratatui::layout::Position::new(m.column, m.row));
+                    let row = if in_navigation {
+                        m.row.saturating_sub(nav_area.y) as usize
+                    } else {
+                        3 + state.offset() + m.row.saturating_sub(list_area.y) as usize
+                    };
                     if inside && table.get(row).is_some_and(|r| r.0.is_some()) {
                         // A second click on the same row within half a second opens it.
                         activate = last_click.is_some_and(|(r, t)| {
@@ -1019,7 +1573,43 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
         remembered = table.get(next).and_then(|r| r.0.clone());
         if activate {
             if let Some(choice) = remembered.clone() {
-                break Ok(choice);
+                match choice {
+                    Choice::View(next) => {
+                        view = next;
+                        query.clear();
+                        focus_content = true;
+                        remembered = None;
+                    }
+                    Choice::Notice(message) => {
+                        status = message;
+                    }
+                    Choice::SelectSystem(selector) => {
+                        if discovery
+                            .systems
+                            .iter()
+                            .any(|s| s.selector == selector && s.ready)
+                        {
+                            selected = selector;
+                            view = MenuView::Apps;
+                            query.clear();
+                            focus_content = true;
+                            remembered = None;
+                        } else if probe_pending.is_none() {
+                            selected = selector.clone();
+                            let (tx, rx) = mpsc::channel();
+                            let config = c.clone();
+                            let requested = selector.clone();
+                            std::thread::spawn(move || {
+                                let _ = tx.send(probe_system(&config, &requested));
+                            });
+                            status =
+                                "Probing the selected system; no application has been launched"
+                                    .into();
+                            probe_pending = Some((selector, rx));
+                        }
+                    }
+                    other => break Ok(other),
+                }
             }
         }
     };
@@ -1029,6 +1619,13 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
 
 fn exec(choice: Choice, nodes: &[Node], c: &Config) -> String {
     let err = match choice {
+        Choice::GlobalLaunch { name, session } => Command::new(&c.menu.launch_program)
+            .arg(name)
+            .env("MIOS_EXECUTION_SESSION", session)
+            .exec(),
+        Choice::View(_) | Choice::SelectSystem(_) | Choice::Notice(_) => {
+            return "Menu selection is not an execution request".into()
+        }
         Choice::Attach { node, session } if nodes[node].local => {
             Command::new(TERMINAL).args(["--session", &session]).exec()
         }
@@ -1081,7 +1678,8 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
     let c = config(root)?;
     if list {
         let nested = discover_nested(&c);
-        let out = serde_json::json!({ "nodes": discover(&c), "nested": nested, "apps": c.apps });
+        let out = serde_json::json!({ "nodes": discover(&c), "nested": nested, "apps": c.apps,
+            "global": menu_inventory(&c) });
         println!(
             "{}",
             serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
@@ -1094,6 +1692,164 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn menu_inventory_gives_each_native_discovery_its_own_budget() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let program = temp.path().join("inventory");
+        std::fs::write(&program, "#!/bin/sh\nsleep 1.1\ncase \"$2\" in\n--catalog) echo '{\"ok\":true,\"apps\":[]}' ;;\n--sessions) echo '{\"ok\":true,\"sessions\":[],\"registered_endpoints\":[],\"unavailable\":[]}' ;;\nesac\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut c = cfg(1);
+        c.discovery_timeout_ms = 0; // private fixture uses only the shared two-second grace per child
+        c.menu.inventory_program = program.to_string_lossy().into_owned();
+        let result = menu_inventory(&c);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn global_menu_first_screen_exposes_apps_and_systems_and_preserves_targets() {
+        let mut c = cfg(3);
+        c.apps = vec![app("registry-tui")];
+        let system = DesktopSystem {
+            selector: "exact-local-target".into(),
+            label: "linux session".into(),
+            ready: true,
+            remote: false,
+            operator: true,
+            error: String::new(),
+        };
+        let discovery = MenuDiscovery {
+            apps: vec![GlobalApp {
+                id: "org.fixture.Any".into(),
+                name: "Any fixture application".into(),
+                kind: "flatpak".into(),
+                available: true,
+                reason: String::new(),
+            }],
+            systems: vec![system.clone()],
+            errors: vec![],
+        };
+        let table = menu_rows(
+            &c,
+            &[local(&["mios"])],
+            false,
+            &[],
+            &discovery,
+            &MenuView::All,
+            "",
+            Some(&system),
+            &ASCII,
+        );
+        assert_eq!(table[0].0, Some(Choice::View(MenuView::Apps)));
+        assert_eq!(table[1].0, Some(Choice::View(MenuView::Systems)));
+        assert!(table.iter().any(|r| r.0
+            == Some(Choice::GlobalLaunch {
+                name: "org.fixture.Any".into(),
+                session: "exact-local-target".into()
+            })));
+        assert!(table.iter().any(|r| r.0 == Some(Choice::New { node: 0 })));
+        assert!(table.iter().any(|r| r.0
+            == Some(Choice::App {
+                id: "registry-tui".into()
+            })));
+        let blocked = menu_rows(
+            &c,
+            &[local(&[])],
+            false,
+            &[],
+            &discovery,
+            &MenuView::Apps,
+            "",
+            None,
+            &ASCII,
+        );
+        assert!(
+            !blocked
+                .iter()
+                .any(|r| matches!(r.0, Some(Choice::GlobalLaunch { .. }))),
+            "a catalogue entry without a ready target must never dispatch"
+        );
+    }
+
+    #[test]
+    fn global_menu_search_and_registered_targets_are_explicit() {
+        let c = cfg(3);
+        let system = DesktopSystem {
+            selector: "os_control.nodes.fixture".into(),
+            label: "windows / fixture".into(),
+            ready: true,
+            remote: true,
+            operator: false,
+            error: String::new(),
+        };
+        let discovery = MenuDiscovery {
+            apps: vec![GlobalApp {
+                id: "org.fixture.Any".into(),
+                name: "Any fixture application".into(),
+                kind: "native".into(),
+                available: true,
+                reason: String::new(),
+            }],
+            systems: vec![system.clone()],
+            errors: vec![],
+        };
+        let table = menu_rows(
+            &c,
+            &[local(&[])],
+            false,
+            &[],
+            &discovery,
+            &MenuView::Apps,
+            "fixture application",
+            Some(&system),
+            &ASCII,
+        );
+        assert!(table.iter().any(|r| r.0
+            == Some(Choice::GlobalLaunch {
+                name: "Any fixture application".into(),
+                session: system.selector.clone()
+            })));
+        let requested = menu_rows(
+            &c,
+            &[local(&[])],
+            false,
+            &[],
+            &discovery,
+            &MenuView::Apps,
+            "Another requested application",
+            Some(&system),
+            &ASCII,
+        );
+        assert!(requested.iter().any(|r| r.0
+            == Some(Choice::GlobalLaunch {
+                name: "Another requested application".into(),
+                session: system.selector.clone()
+            })));
+        let mut unavailable = system.clone();
+        unavailable.ready = false;
+        unavailable.error = "unavailable".into();
+        let blocked = menu_rows(
+            &c,
+            &[local(&[])],
+            false,
+            &[],
+            &discovery,
+            &MenuView::Apps,
+            "Any",
+            Some(&unavailable),
+            &ASCII,
+        );
+        assert!(!blocked
+            .iter()
+            .any(|r| matches!(r.0, Some(Choice::GlobalLaunch { .. }))));
+        assert!(target_label(&serde_json::json!({"execution_target":{"id":"unproven"}})).is_none());
+        assert_eq!(
+            menu_text("Fixture\u{1b}[31m \u{03a9}", true),
+            "Fixture[31m ?"
+        );
+    }
+
     #[test]
     fn peer_name_uses_unique_tailnet_name() {
         assert_eq!(
@@ -1143,6 +1899,16 @@ mod tests {
             hidden: vec!["mios-float-".into(), "mios-workspace-".into()],
             apps: vec![],
             console: false,
+            root: PathBuf::from("/"),
+            discovery_timeout_ms: 15000,
+            menu: MenuConfig {
+                title: "MiOS systems and apps".into(),
+                apps_title: "Global apps".into(),
+                systems_title: "Systems and sessions".into(),
+                inventory_program: "mios-gen".into(),
+                launch_program: "/usr/libexec/mios/mios-launch".into(),
+                probe_program: "/usr/libexec/mios/mios-computer-use".into(),
+            },
         }
     }
 

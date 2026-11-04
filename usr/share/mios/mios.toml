@@ -11655,6 +11655,15 @@ ssh_timeout_s    = 3
 # [keybindings.tmux.float].session_prefix; "mios-workspace-" (agent worker parking) is always hidden as well.
 hidden_session_prefixes = ["mios-float-"]
 
+# The login selector exposes the complete native registry and fresh execution sessions.
+[terminal.sessions.menu]
+title = "MiOS systems and global apps"
+apps_title = "Global apps"
+systems_title = "Systems and sessions"
+inventory_program = "mios-gen"
+launch_program = "/usr/libexec/mios/mios-launch"
+probe_program = "/usr/libexec/mios/mios-computer-use"
+
 # Apps and TUIs launcher: one catalogue for prefix e in tmux-os and the "TUI apps" section of miosd sessions.
 [terminal.tui_launcher]
 enabled       = true

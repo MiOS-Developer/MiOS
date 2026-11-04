@@ -397,15 +397,11 @@ fn desktop_directories(policy: &Policy, home: Option<&Path>) -> Result<Vec<PathB
     Ok(directories)
 }
 
-/// Resolve only registry metadata; an Exec value is never evaluated as shell input.
-fn resolve_desktop(policy: &Policy, query: &str, home: Option<&Path>) -> Result<Value, String> {
-    let query = query.trim();
-    if !valid_id(query) {
-        return Err("Invalid application name or desktop ID".into());
-    }
-    let normalized = query.trim_end_matches(".desktop").to_lowercase();
+type DesktopEntry = (String, PathBuf, std::collections::BTreeMap<String, String>);
+
+fn desktop_entries(policy: &Policy, home: Option<&Path>) -> Result<Vec<DesktopEntry>, String> {
     let mut seen = std::collections::BTreeSet::new();
-    let mut matches = Vec::new();
+    let mut entries = Vec::new();
     for directory in desktop_directories(policy, home)? {
         for entry in walkdir::WalkDir::new(&directory)
             .max_depth(5)
@@ -444,33 +440,47 @@ fn resolve_desktop(policy: &Policy, query: &str, home: Option<&Path>) -> Result<
             {
                 continue;
             }
-            let name = fields.get("Name").cloned().unwrap_or_default();
-            let score = if id == query.trim_end_matches(".desktop") {
-                Some(0)
-            } else if id.to_lowercase() == normalized {
-                Some(1)
-            } else if fields.iter().any(|(key, value)| {
-                (key == "Name" || (key.starts_with("Name[") && key.ends_with(']')))
-                    && value.to_lowercase() == normalized
-            }) {
-                Some(2)
-            } else if fields
-                .get("StartupWMClass")
-                .is_some_and(|v| v.to_lowercase() == normalized)
-            {
-                Some(3)
-            } else if id
-                .rsplit('.')
-                .next()
-                .is_some_and(|v| v.to_lowercase() == normalized)
-            {
-                Some(4)
-            } else {
-                None
-            };
-            if let Some(score) = score {
-                matches.push((score, id, path.to_owned(), name, fields));
-            }
+            entries.push((id, path.to_owned(), fields));
+        }
+    }
+    Ok(entries)
+}
+
+/// Resolve only registry metadata; an Exec value is never evaluated as shell input.
+fn resolve_desktop(policy: &Policy, query: &str, home: Option<&Path>) -> Result<Value, String> {
+    let query = query.trim();
+    if !valid_id(query) {
+        return Err("Invalid application name or desktop ID".into());
+    }
+    let normalized = query.trim_end_matches(".desktop").to_lowercase();
+    let mut matches = Vec::new();
+    for (id, path, fields) in desktop_entries(policy, home)? {
+        let name = fields.get("Name").cloned().unwrap_or_default();
+        let score = if id == query.trim_end_matches(".desktop") {
+            Some(0)
+        } else if id.to_lowercase() == normalized {
+            Some(1)
+        } else if fields.iter().any(|(key, value)| {
+            (key == "Name" || (key.starts_with("Name[") && key.ends_with(']')))
+                && value.to_lowercase() == normalized
+        }) {
+            Some(2)
+        } else if fields
+            .get("StartupWMClass")
+            .is_some_and(|v| v.to_lowercase() == normalized)
+        {
+            Some(3)
+        } else if id
+            .rsplit('.')
+            .next()
+            .is_some_and(|v| v.to_lowercase() == normalized)
+        {
+            Some(4)
+        } else {
+            None
+        };
+        if let Some(score) = score {
+            matches.push((score, id, path, name, fields));
         }
     }
     matches.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
@@ -552,12 +562,11 @@ fn operator_lookup(ssot: &toml::Value) -> Result<String, String> {
         .ok_or_else(|| "Configured operator is unavailable".into())
 }
 
-pub fn resolve(root: &Path, query: &str) -> Result<(), String> {
-    let policy = Policy::read(root)?;
+fn operator_account(root: &Path, policy: &Policy) -> Result<(String, u32, PathBuf), String> {
     let ssot = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     let lookup = operator_lookup(&ssot)?;
     let (code, account) = bounded(
-        &policy,
+        policy,
         "getent",
         &["passwd".into(), lookup],
         Instant::now() + Duration::from_millis(policy.overall_timeout_ms),
@@ -581,6 +590,60 @@ pub fn resolve(root: &Path, query: &str) -> Result<(), String> {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .ok_or("Configured operator home is unavailable")?;
+    Ok((operator.to_owned(), uid, home))
+}
+
+/// Read-only installed desktop catalogue. Launch still goes through the generic
+/// dispatcher and its fresh per-session preflight, never through parsed Exec text.
+fn catalog_entries(policy: &Policy, home: Option<&Path>) -> Result<Vec<Value>, String> {
+    let mut apps = Vec::new();
+    for (id, path, fields) in desktop_entries(policy, home)? {
+        if fields.get("NoDisplay").is_some_and(|v| v == "true") {
+            continue;
+        }
+        let name = fields
+            .get("Name")
+            .filter(|v| !v.trim().is_empty())
+            .cloned()
+            .unwrap_or_else(|| id.clone());
+        let terminal = fields.get("Terminal").is_some_and(|v| v == "true");
+        let kind = if fields.contains_key("X-Flatpak") {
+            "flatpak"
+        } else if terminal {
+            "terminal"
+        } else {
+            "native"
+        };
+        let available = fields
+            .get("TryExec")
+            .is_none_or(|program| executable(program));
+        apps.push(json!({"id":id,"name":name,"kind":kind,"desktop_file":path,
+            "terminal":terminal,"available":available,
+            "reason":if available { "" } else { "Application executable is not installed" }}));
+    }
+    apps.sort_by_key(|a| {
+        (
+            a["name"].as_str().unwrap_or("").to_lowercase(),
+            a["id"].as_str().unwrap_or("").to_owned(),
+        )
+    });
+    Ok(apps)
+}
+
+pub fn catalog(root: &Path) -> Result<(), String> {
+    let policy = Policy::read(root)?;
+    let (_, uid, home) = operator_account(root, &policy)?;
+    let apps = catalog_entries(&policy, Some(&home))?;
+    println!(
+        "{}",
+        json!({"ok":true,"verb":"app_catalog","operator_uid":uid,"apps":apps})
+    );
+    Ok(())
+}
+
+pub fn resolve(root: &Path, query: &str) -> Result<(), String> {
+    let policy = Policy::read(root)?;
+    let (operator, uid, home) = operator_account(root, &policy)?;
     match resolve_desktop(&policy, query, Some(&home)) {
         Ok(mut value) => {
             value["operator_user"] = json!(operator);
@@ -1131,6 +1194,44 @@ mod tests {
             application_dirs: vec!["/usr/share/applications".into()],
             flatpak_launchers: Default::default(),
         }
+    }
+
+    #[test]
+    fn catalog_reuses_registry_without_executing_apps_and_hides_private_entries() {
+        let t = tempfile::tempdir().unwrap();
+        let canary = t.path().join("executed");
+        for (id, extra) in [
+            ("mios-test-native", ""),
+            ("mios-test-flatpak", "X-Flatpak=org.example.Fixture\n"),
+            ("mios-test-terminal", "Terminal=true\n"),
+            ("mios-test-hidden", "Hidden=true\n"),
+            ("mios-test-private", "NoDisplay=true\n"),
+            ("mios-test-missing", "TryExec=/mios-fixture-absent\n"),
+        ] {
+            fs::write(
+                t.path().join(format!("{id}.desktop")),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName={id}\nExec=touch {}\n{extra}",
+                    canary.display()
+                ),
+            )
+            .unwrap();
+        }
+        let mut p = policy();
+        p.application_dirs = vec![t.path().to_string_lossy().into_owned()];
+        let apps = catalog_entries(&p, None).unwrap();
+        let app = |id: &str| apps.iter().find(|r| r["id"] == id);
+        assert_eq!(app("mios-test-native").unwrap()["kind"], "native");
+        assert_eq!(app("mios-test-flatpak").unwrap()["kind"], "flatpak");
+        assert_eq!(app("mios-test-terminal").unwrap()["kind"], "terminal");
+        assert_eq!(app("mios-test-missing").unwrap()["available"], false);
+        assert!(app("mios-test-hidden").is_none() && app("mios-test-private").is_none());
+        assert!(
+            !canary.exists(),
+            "inventory must never execute desktop Exec text"
+        );
+        let found = resolve_desktop(&p, "mios-test-native", None).unwrap();
+        assert_eq!(found["desktop_id"], "mios-test-native");
     }
 
     fn inventory_listener(

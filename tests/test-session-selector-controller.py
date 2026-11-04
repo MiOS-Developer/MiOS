@@ -3,7 +3,7 @@
 # AI-related: src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions], usr/share/doc/mios/keybinds.md, docs/design/mios-global-bindings-final.md
 # Env: MIOSD = the candidate miosd (explicit, otherwise built/installed native catalog); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
 # deployed miosd already carries C-33 from main, so it is no control any more).
-import os, re, shlex, shutil, subprocess, sys, tempfile, time
+import json, os, re, shlex, shutil, socket, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +56,96 @@ def copy_executable(source, root, destination):
             shutil.copy2(path, dest)
 
 
-def selector(miosd, tmp, tag, keys):
+def global_menu_fixture(root, fixture, uid, gid, scenario):
+    """Native catalogue and owned UNIX compositor fixture; every exec stays in this root."""
+    gen = os.environ.get('MIOS_GEN')
+    if not gen or not os.access(gen, os.X_OK):
+        raise RuntimeError('MIOS_GEN must select the source-current native catalogue producer')
+    copy_executable(gen, root, '/fixture/bin/mios-gen')
+    apps = fixture / 'apps'
+    apps.mkdir()
+    for desktop_id, name, metadata in (
+        ('org.fixture.Native', 'Catalogue Fixture Native', ''),
+        ('org.fixture.Flatpak', 'Catalogue Fixture Flatpak', 'X-Flatpak=org.fixture.Flatpak\n'),
+        ('org.fixture.Console', 'Catalogue Fixture Console', 'Terminal=true\n'),
+        ('org.fixture.Hidden', 'Catalogue Fixture Hidden', 'Hidden=true\n'),
+        ('org.fixture.Private', 'Catalogue Fixture Private', 'NoDisplay=true\n'),
+        ('org.fixture.Missing', 'Catalogue Fixture Missing', 'TryExec=/fixture/absent\n'),
+    ):
+        (apps / (desktop_id + '.desktop')).write_text(
+            f'[Desktop Entry]\nType=Application\nName={name}\nExec=/fixture/bin/fixture-app %U\n{metadata}')
+    if scenario == 'narrow':
+        for index in range(40):
+            (apps / f'org.fixture.Scroll{index}.desktop').write_text(
+                f'[Desktop Entry]\nType=Application\nName=Scrollable fixture {index:02}\nExec=/fixture/bin/fixture-app\n')
+    scripts = {
+        'getent': f'#!/bin/sh\nprintf "fixture:x:{uid}:{gid}:fixture:/fixture:/bin/sh\\n"\n',
+        'fixture-app': '#!/bin/sh\nprintf unsafe > /fixture/desktop-exec-was-run\n',
+        'mios-mons': '#!/bin/sh\nexit 0\n',
+        'global-launch': '#!/bin/sh\nprintf "%s\\n" "$MIOS_EXECUTION_SESSION" "$@" > /fixture/argv\n',
+        'tmux': '#!/bin/sh\nprintf "mios\\t2\\t1\\ntmux-os\\t1\\t0\\n"\n',
+        'ssh': '#!/bin/sh\nprintf "remote-work\\t1\\t0\\n"\n',
+        'tailscale': '#!/bin/sh\nprintf \'%s\\n\' \'{"Peer":{"live":{"OS":"linux","HostName":"fixture-live","DNSName":"fixture-live.test.","Online":true},"off":{"OS":"linux","HostName":"fixture-offline","DNSName":"fixture-offline.test.","Online":false}}}\'\n',
+    }
+    receipt = {'execution_target': {'id': 'fixture-windows-session', 'platform': 'windows',
+               'session_id': 'MiOS-Xbox fixture', 'backend': 'os-control'}, 'windows': []}
+    scripts['session-probe'] = (
+        '#!/bin/sh\n[ "$MIOS_EXECUTION_SESSION" = "os_control.nodes.fixture-windows" ] || exit 1\n'
+        + ('exit 1\n' if scenario == 'negative' else "printf '%s\\n' '" + json.dumps(receipt) + "'\n"))
+    for name, content in scripts.items():
+        file = fixture / 'bin' / name
+        file.write_text(content)
+        file.chmod(0o755)
+    child = None
+    if scenario != 'headless':
+        runtime = root / f'run/user/{uid}'
+        hypr = runtime / 'hypr/mios-fixture'
+        hypr.mkdir(parents=True)
+        for directory in (runtime, runtime / 'hypr', hypr):
+            os.chown(directory, uid, gid)
+        sock = hypr / '.socket.sock'
+        child = os.fork()
+        if child == 0:
+            try:
+                os.chroot(root)
+                os.chdir('/')
+                os.setgroups([])
+                os.setgid(gid)
+                os.setuid(uid)
+                listener = socket.socket(socket.AF_UNIX)
+                listener.bind(f'/run/user/{uid}/hypr/mios-fixture/.socket.sock')
+                listener.listen()
+                while True:
+                    connection, _ = listener.accept()
+                    with connection:
+                        try:
+                            connection.recv(1024)
+                            connection.sendall(b'{"tag":"v0.56.2"}')
+                        except OSError:
+                            pass
+            finally:
+                os._exit(0)
+        if not wait(sock.exists, 3):
+            raise RuntimeError('private uid-owned compositor fixture failed to start')
+    def close():
+        if child is not None:
+            try:
+                os.kill(child, 15)
+            except ProcessLookupError:
+                pass
+            os.waitpid(child, 0)
+    config = (
+        '[desktop.launch]\napplication_dirs=["/fixture/apps"]\n'
+        '[terminal.sessions]\nssh_timeout_s=1\n'
+        '[terminal.sessions.menu]\ninventory_program="/fixture/bin/mios-gen"\n'
+        'launch_program="/fixture/bin/global-launch"\nprobe_program="/fixture/bin/session-probe"\n'
+        '[os_control.nodes.fixture-windows]\nendpoint="http://127.0.0.1:1"\n'
+        '[[terminal.tuis]]\nid="fixture-registry-app"\nlabel="MiOS-Mons"\nsection="mios"\n'
+        'mode="window"\nvt_ok=true\nargv=["/fixture/bin/mios-mons"]\n')
+    return close, config
+
+
+def selector(miosd, tmp, tag, keys, scenario=None, width=100, height=30):
     """The TUI runs on a private tmux pty and can exec only a fixture launcher."""
     d = Path(tmp) / tag
     d.mkdir()
@@ -67,8 +156,13 @@ def selector(miosd, tmp, tag, keys):
         fixture.mkdir(parents=True)
         fixture.chmod(0o700)
         os.chown(fixture, uid, gid)
-        for directory in ('dev', 'run', 'etc', 'usr/share/mios', 'fixture/bin'):
+        for directory in ('dev', 'run', 'etc', 'tmp', 'usr/share/mios', 'fixture/bin'):
             (root / directory).mkdir(parents=True, exist_ok=True)
+        # Stdio::null and bounded native probes need only an ordinary empty file
+        # and a private temporary directory. Neither is a kernel device or host bind.
+        (root / 'dev/null').write_bytes(b'')
+        (root / 'dev/null').chmod(0o666)
+        (root / 'tmp').chmod(0o1777)
         # Standard fds already refer to the private tmux pty. Leave /dev empty;
         # the TUI uses its tty stdin, with no device-node creation or passthrough.
         copy_executable(miosd, root, '/bin/miosd')
@@ -96,36 +190,63 @@ def selector(miosd, tmp, tag, keys):
                '--bind', str(fixture), str(fixture), '--ro-bind', str(fake), TERMINAL,
                '--die-with-parent', miosd, 'sessions', '--root', '/']
     fake.chmod(0o755)
+    cleanup_menu = lambda: None
+    menu_config = ""
+    if scenario:
+        if os.geteuid() != 0:
+            raise RuntimeError("private root fixture requires the CI container uid")
+        cleanup_menu, menu_config = global_menu_fixture(root, fixture, uid, gid, scenario)
     tail = fixture / 'bin/tailscale'
-    tail.write_text('#!/bin/sh\nexit 1\n')
+    if not scenario:
+        tail.write_text('#!/bin/sh\nexit 1\n')
     tail.chmod(0o755)  # No network lookup; selector lists the fixture node only.
-    user.write_text(f'[keybindings]\nsocket_name = "mios-m1-{os.getpid()}"\n[terminal]\nsocket_root = "{paths["tmux"]}"\n')
+    user.write_text(f'[keybindings]\nsocket_name = "mios-m1-{os.getpid()}"\n[terminal]\nsocket_root = "{paths["tmux"]}"\n' + menu_config)
     env = {k: v for k, v in os.environ.items() if not k.startswith('MIOS_') and k not in ('TMUX', 'TMUX_PANE')}
     env.update(MIOS_VENDOR_TOML=paths['vendor'], MIOS_USER_TOML=paths['user'],
                MIOS_USER_TOML_D=paths['tmux'] + '/none.d', HOME=paths['tmux'],
-               TMUX_TMPDIR=str(d), TERM='xterm-256color')
+               XDG_RUNTIME_DIR=f'/run/user/{uid}', TMUX_TMPDIR=str(d), TERM='xterm-256color')
     # The outer server has a host-private socket. Child receives only the inner private paths.
     # Resolve the isolator before replacing PATH with the fixture-only commands.
     cmd[0] = shutil.which(cmd[0])
     cmd = ['env', 'TMUX_TMPDIR=' + paths['tmux'], 'PATH=' + paths['bin'], *cmd]
-    sock = f'mios-m1-host-{os.getpid()}-{tag}'
+    sock = f'mios-menu-{os.getpid()}'
     T = lambda *a: subprocess.run(['tmux', '-L', sock, *a], env=env, capture_output=True, text=True, timeout=10)
     try:
-        result = T('new-session', '-d', '-x', '100', '-y', '30', '-s', 'm1', shlex.join(cmd) + '; sleep 30')
+        result = T('new-session', '-d', '-x', str(width), '-y', str(height), '-s', 'm1', shlex.join(cmd) + '; sleep 30')
         if result.returncode:
             raise RuntimeError(result.stderr)
-        shown = wait(lambda: any(h in T('capture-pane', '-p', '-t', 'm1').stdout for h in ('new here', 'n new')), 15)
-        check(f'[{tag}] selector rendered in the private pane', shown,
-              T('capture-pane', '-p', '-t', 'm1').stdout.strip()[-300:])
+        capture = lambda: T('capture-pane', '-p', '-t', 'm1').stdout
+        shown = wait(lambda: any(h in capture() for h in ('new here', 'n new')), 15)
+        if scenario:
+            shown = wait(lambda: ('44 local desktop' if scenario == 'narrow' else '4 local desktop') in capture() and 'Discovering apps' not in capture(), 10)
+        check(f'[{tag}] selector rendered in the private pane', shown, capture().strip()[-300:])
+        proof = os.environ.get('MIOS_SELECTOR_PROOF_DIR')
+        def save(suffix):
+            if proof:
+                Path(proof).mkdir(parents=True, exist_ok=True)
+                (Path(proof) / f'{tag}-{suffix}.txt').write_text(capture())
+        save('initial')
         out = ''
-        for key in keys:
+        for index, action in enumerate(keys):
+            key, expected = action if isinstance(action, tuple) else (action, None)
+            save(f'before-{index}')
             T('send-keys', '-t', 'm1', key)
-            out = wait(lambda: argv.is_file() and argv.read_text().strip(), 3) or ''
+            if expected:
+                check(f'[{tag}] {expected} visible', wait(lambda: expected in capture(), 6), capture())
+            else:
+                out = wait(lambda: argv.is_file() and argv.read_text().strip(), 1) or ''
+            save(f'after-{index}')
+            if width <= 60 and not out:
+                screen = capture()
+                check(f'[{tag}] narrow menu keeps root navigation and target visible after {key}',
+                      all(label in screen for label in ('Global apps', 'Systems and sessions', 'All apps and sessions', 'Target:', 'Search')))
             if out:
                 break
+        check(f'[{tag}] desktop inventory never executes desktop Exec', not (fixture / 'desktop-exec-was-run').exists())
         return out
     finally:
         T('kill-server')
+        cleanup_menu()
 
 
 def main():
@@ -147,6 +268,41 @@ def main():
             check('harness control (pre-C-33 miosd): n opens a new session', got == '--new', repr(got))
         else:
             check('negative-control miosd differs from the candidate', False, OLD)
+    with tempfile.TemporaryDirectory(prefix='mios-global-menu-') as tmp:
+        got = selector(CAND, tmp, 'global-root-apps', [('Enter', 'Catalogue Fixture Console'), 'Enter'], 'local')
+        check('visible Global apps root entry opens the full catalogue and a native terminal app',
+              got.endswith('\norg.fixture.Console'), repr(got))
+        got = selector(CAND, tmp, 'global-narrow',
+              [('Enter', 'Catalogue Fixture Console'), ('End', 'MiOS-Mons'), ('Home', 'Global apps'),
+               ('/Catalogue Fixture Native', 'Catalogue Fixture Native'), 'Enter'], 'narrow', width=50, height=20)
+        check('narrow menu searches and dispatches through the same target-bound generic launcher',
+              got.endswith('\norg.fixture.Native'), repr(got))
+        got = selector(CAND, tmp, 'global-local', [('/Catalogue Fixture Native', 'Catalogue Fixture Native'), 'Enter'], 'local')
+        check('global app dispatch preserves exact desktop ID and selected native session',
+              got == '/run/user/1000/hypr/mios-fixture/.socket.sock\norg.fixture.Native', repr(got))
+        got = selector(CAND, tmp, 'global-flatpak', [('/Catalogue Fixture Flatpak', 'Catalogue Fixture Flatpak'), 'Enter'], 'local')
+        check('Flatpak export is available through the same generic dispatcher',
+              got.endswith('\norg.fixture.Flatpak'), repr(got))
+        got = selector(CAND, tmp, 'global-mons', [('/MiOS-Mons', 'MiOS-Mons'), 'Enter'], 'local')
+        check('ordinary registered MiOS-Mons entry opens through the existing TUI launcher',
+              got == '--app fixture-registry-app --console 0', repr(got))
+        got = selector(CAND, tmp, 'global-remote',
+              [('/fixture-windows', 'probe required'), ('Enter', 'windows / MiOS-Xbox fixture'),
+               ('/Remote App Fixture', 'Launch by name: Remote App Fixture'), 'Enter'], 'remote')
+        check('registered Windows system uses the witnessed execution target and requested application name',
+              got == 'fixture-windows-session\nRemote App Fixture', repr(got))
+        got = selector(CAND, tmp, 'global-remote-local-missing',
+              [('/fixture-windows', 'probe required'), ('Enter', 'windows / MiOS-Xbox fixture'),
+               ('/Catalogue Fixture Missing', 'resolve remotely'), 'Enter'], 'remote')
+        check('local TryExec absence does not block resolving an app on the selected remote system',
+              got == 'fixture-windows-session\nCatalogue Fixture Missing', repr(got))
+        got = selector(CAND, tmp, 'global-unavailable',
+              [('/fixture-windows', 'probe required'), ('Enter', 'Session unavailable'),
+               'Escape', ('/Catalogue Fixture Native', 'Catalogue Fixture Native'), 'Enter'], 'negative')
+        check('failed explicit remote target never falls back to the local desktop', got == '', repr(got))
+        got = selector(CAND, tmp, 'global-headless',
+              [('/Catalogue Fixture Native', 'Catalogue Fixture Native'), 'Enter'], 'headless')
+        check('headless app row cannot invent a graphical launch target', got == '', repr(got))
     print(f'{sum(res)}/{len(res)} passed')
     return 0 if all(res) else 1
 
