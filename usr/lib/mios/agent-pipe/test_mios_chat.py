@@ -838,6 +838,33 @@ def _test_responses_api():
               and tc_output[0].get("name") == "fetch",
               f"tc_output={tc_output}")
 
+        namespace_tools = [{"type": "namespace", "name": "catalog", "description": "catalog tools",
+                            "tools": [{"type": "function", "name": "fetch", "parameters": {"type": "object"}}]}]
+        namespace_input = [{"role": "user", "content": "fetch it"},
+            {"type": "function_call", "call_id": "prior_catalog", "namespace": "catalog",
+             "name": "fetch", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "prior_catalog", "output": "prior"}]
+        _RespHttpxClient._payload["choices"][0]["message"]["tool_calls"][0]["namespace"] = "catalog"
+        r_namespace = asyncio.run(mios_chat.responses_api_logic(FakeRequest({
+            "model": "m", "input": namespace_input, "tools": namespace_tools,
+            "tool_choice": {"type": "function", "name": "catalog.fetch"}})))
+        namespace_body = r_namespace.content
+        check("responses namespace history and output retain namespace identity",
+              _RespHttpxClient.last_post_json["messages"][1]["tool_calls"][0]["namespace"] == "catalog"
+              and namespace_body["output"][0]["namespace"] == "catalog"
+              and namespace_body["output"][0]["name"] == "fetch"
+              and namespace_body["tools"] == namespace_tools
+              and _RespHttpxClient.last_post_json["tool_choice"]["function"]["name"] == "catalog.fetch")
+        r_namespace_stream = asyncio.run(mios_chat.responses_api_logic(FakeRequest({
+            "model": "m", "input": namespace_input, "tools": namespace_tools, "stream": True})))
+        async def collect_namespace():
+            return b"".join([chunk async for chunk in r_namespace_stream.body_iterator])
+        namespace_events = [json.loads(line[6:]) for line in asyncio.run(collect_namespace()).decode().splitlines()
+                            if line.startswith("data: ")]
+        check("responses namespace SSE item and terminal output retain namespace",
+              namespace_events[-1]["response"]["output"][0]["namespace"] == "catalog"
+              and any(e.get("item", {}).get("namespace") == "catalog" for e in namespace_events))
+
         # 7. Streaming (stream: true) SSE event sequence
         _RespHttpxClient._payload = {
             "choices": [{"message": {"content": "STREAMED HELLO"}}],

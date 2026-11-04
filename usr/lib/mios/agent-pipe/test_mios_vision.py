@@ -445,6 +445,153 @@ def test_client_tools_relays_tool_choice_none_and_pruning() -> None:
         mios_vision._pick_tool_backend = orig_pick
     print("ok: _client_tools_relay and _client_tools_stream_relay strip tools & prune overflow (two-sided control)")
 
+
+def test_namespace_tools_real_httpx_contract():
+    """Run the real HTTPX request/reply path; no inference, network or host tools."""
+    import copy
+    import importlib
+    import httpx
+    from mios_mcp_schema import ClientToolProjection
+    from mios_pipe.access import authn
+    vision = importlib.import_module("mios_pipe.routing.vision")
+
+    async def exercise():
+        requests = []
+        streams = []
+        mode = "normal"
+        body = {"model": "public", "stream": False, "store": False, "max_tokens": 71,
+                "parallel_tool_calls": True, "metadata": {"session_id": "fixture-session"},
+                "tool_choice": {"type": "function", "function": {"name": "search", "namespace": "beta"}},
+                "tools": [{"type": "namespace", "name": ns, "description": ns + " tools",
+                          "tools": [{"type": "function", "name": "search", "strict": False,
+                          "parameters": {"type": "object", "properties": {"q": {"type": "string"}},
+                                         "required": ["q"]}}]} for ns in ("alpha", "beta")],
+                "messages": [{"role": "user", "content": "search both"},
+                   {"role": "assistant", "content": None, "tool_calls": [{"id": "prior", "type": "function",
+                       "namespace": "alpha", "function": {"name": "search", "arguments": '{"q":"before"}'}}]},
+                   {"role": "tool", "tool_call_id": "prior", "content": "prior evidence"},
+                   {"role": "user", "content": "continue"}]}
+        saved = copy.deepcopy(body)
+
+        class Stream(httpx.AsyncByteStream):
+            def __init__(self, aliases):
+                self.aliases = aliases
+                self.closed = False
+                self.started = asyncio.Event()
+            async def __aiter__(self):
+                if mode == "cancel":
+                    self.started.set()
+                    await asyncio.Event().wait()
+                for half in (0, 1):
+                    calls = [{"index": i, **({"id": f"call_{i}", "type": "function"} if half == 0 else {}),
+                              "function": {"name": name[:19] if half == 0 else name[19:],
+                                           "arguments": "" if half == 0 else '{"q":"value"}'}}
+                             for i, name in enumerate(self.aliases)]
+                    event = {"id": "fixture", "model": "backend", "object": "chat.completion.chunk",
+                             "choices": [{"index": 0, "delta": {"tool_calls": calls}, "finish_reason": None}]}
+                    raw = ("data: " + json.dumps(event) + "\n\n").encode()
+                    yield raw[:11]
+                    yield raw[11:]
+                yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+                yield b"data: [DONE]\n\n"
+            async def aclose(self):
+                self.closed = True
+
+        def handle(request):
+            requests.append(request)
+            payload = json.loads(request.content)
+            assert all(t["type"] == "function" for t in payload["tools"]), payload
+            aliases = [t["function"]["name"] for t in payload["tools"]]
+            assert len(set(aliases)) == 2
+            assert payload["model"] == "gpu" and payload["max_tokens"] == 71
+            assert payload["store"] is False and payload["parallel_tool_calls"] is True
+            assert payload["metadata"] == body["metadata"]
+            assert request.headers.get("x-node-key") == "gpu-key"
+            assert "authorization" not in request.headers
+            assert payload["tool_choice"]["function"]["name"] == aliases[1]
+            assert payload["messages"][1]["tool_calls"][0]["function"]["name"] == aliases[0]
+            assert payload["messages"][2]["tool_call_id"] == "prior"
+            assert payload["tools"][0]["function"]["parameters"] == body["tools"][0]["tools"][0]["parameters"]
+            if mode == "http-error":
+                return httpx.Response(503, json={"error": {"type": "server_error", "message": "loading"}})
+            if mode == "unknown":
+                aliases = ["unknown"] * 2
+            if payload.get("stream"):
+                stream = Stream(aliases)
+                streams.append(stream)
+                return httpx.Response(200, stream=stream)
+            return httpx.Response(200, json={"id": "fixture", "model": "gpu", "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": None,
+                    "tool_calls": [{"id": f"call_{i}", "type": "function",
+                                    "function": {"name": name, "arguments": '{"q":"value"}'}}
+                                   for i, name in enumerate(aliases)]}, "finish_reason": "tool_calls"}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            async def get_client(): return client
+            with mock.patch.multiple(vision, _get_client=get_client,
+                     _pick_tool_backend=mock.AsyncMock(return_value=("http://gpu.invalid/v1", "gpu")),
+                     _client_tools_loop=mock.AsyncMock(side_effect=AssertionError("caller tools entered host execution")),
+                     dispatch_mios_verb=mock.AsyncMock(side_effect=AssertionError("caller tool was executed locally"))), \
+                 mock.patch.multiple(authn, _BACKEND_KEY="cpu-key", _AUTH_HOSTPORTS={"cpu.invalid"},
+                     _AGENT_AUTH_BY_HOSTPORT={"gpu.invalid": "X-Node-Key: gpu-key"}):
+                response = await vision._client_tools_complete(body, False, "fixture", "public")
+                assert response.status_code == 200, response.body
+                reply = json.loads(response.body)
+                calls = reply["choices"][0]["message"]["tool_calls"]
+                assert [(c["namespace"], c["function"]["name"]) for c in calls] == [
+                    ("alpha", "search"), ("beta", "search")]
+                assert [c["id"] for c in calls] == ["call_0", "call_1"] and reply["model"] == "public"
+                assert body == saved
+                print("ok: real HTTPX namespace completion preserves duplicate leaf names, choice, history, schema, auth and ownership")
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                data = b"".join([chunk async for chunk in response.body_iterator])
+                frames = [json.loads(line[6:]) for line in data.decode().splitlines()
+                          if line.startswith("data: ") and line[6:] != "[DONE]"]
+                calls = [call for frame in frames for choice in frame.get("choices", [])
+                         for call in choice.get("delta", {}).get("tool_calls", [])]
+                assert [(c["namespace"], c["function"]["name"]) for c in calls] == [
+                    ("alpha", "search"), ("beta", "search")], calls
+                assert data.endswith(b"data: [DONE]\n\n") and streams[-1].closed
+                print("ok: real HTTPX fragmented stream restores namespace names and closes upstream")
+                for bad in ("schema", "namespace", "duplicate"):
+                    invalid = copy.deepcopy(body)
+                    if bad == "schema":
+                        invalid["tools"][0]["tools"][0]["parameters"] = "malformed"
+                    elif bad == "namespace":
+                        invalid["tool_choice"]["function"]["namespace"] = "missing"
+                    else:
+                        invalid["tools"][1]["name"] = "alpha"
+                    before = len(requests)
+                    response = await vision._client_tools_complete(invalid, False, "fixture", "public")
+                    assert response.status_code == 400 and len(requests) == before, response.body
+                print("ok: malformed schemas and unknown/duplicate namespaces fail before inference")
+                mode = "unknown"
+                response = await vision._client_tools_complete(body, False, "fixture", "public")
+                assert response.status_code == 502, response.body
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                data = b"".join([chunk async for chunk in response.body_iterator])
+                assert b"invalid_backend_tool_call" in data and b'"namespace":' not in data
+                assert streams[-1].closed
+                print("ok: unknown engine functions fail honestly for JSON and SSE")
+                mode = "http-error"
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                assert response.status_code == 503 and b"loading" in response.body
+                mode = "cancel"
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                async def drain():
+                    return [chunk async for chunk in response.body_iterator]
+                task = asyncio.create_task(drain())
+                await asyncio.wait_for(streams[-1].started.wait(), 1)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                assert task.cancelled() and streams[-1].closed and not client.is_closed
+                print("ok: stream cancellation propagates and closes only its upstream response")
+    asyncio.run(exercise())
+
+
 if __name__ == "__main__":
     test_vision_unavailable_no_fabrication()
     test_vision_backend_failed_classifier()
@@ -457,4 +604,5 @@ if __name__ == "__main__":
     test_client_tools_deduplication_and_suppression()
     test_context_budget_pruning_overflow()
     test_client_tools_relays_tool_choice_none_and_pruning()
+    test_namespace_tools_real_httpx_contract()
     print("\nALL mios_vision tests passed")

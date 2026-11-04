@@ -1423,7 +1423,8 @@ async def responses_api_logic(request: Request) -> Any:
                     raw_args = it.get("input")
                 fn_args = raw_args if isinstance(raw_args, str) else json.dumps(raw_args or {})
                 append_call({"id": cid, "type": "function", "function": {
-                    "name": it.get("name") or "", "arguments": fn_args}})
+                    "name": it.get("name") or "", "arguments": fn_args},
+                    **({"namespace": it["namespace"]} if "namespace" in it else {})})
             elif itype in ("function_call_output", "custom_tool_call_output"):
                 cid = it.get("call_id") or it.get("id") or ""
                 out = it.get("output", "")
@@ -1472,7 +1473,10 @@ async def responses_api_logic(request: Request) -> Any:
         choice = body["tool_choice"]
         if isinstance(choice, dict) and choice.get("type") == "function":
             choice = {"type": "function", "function": {
-                "name": choice.get("name") or (choice.get("function") or {}).get("name") or ""}}
+                "name": choice.get("name") or (choice.get("function") or {}).get("name") or "",
+                **({"namespace": choice["namespace"]} if "namespace" in choice else {}),
+                **({"namespace": choice["function"]["namespace"]}
+                   if isinstance(choice.get("function"), dict) and "namespace" in choice["function"] else {})}}
         cc_payload["tool_choice"] = choice
 
     if "store" in body:
@@ -1581,6 +1585,7 @@ async def responses_api_logic(request: Request) -> Any:
                 "type": "function_call", "id": "fc_" + uuid.uuid4().hex[:24],
                 "status": status, "call_id": call.get("id") or "call_" + uuid.uuid4().hex[:12],
                 "name": function.get("name") or "", "arguments": arguments,
+                **({"namespace": call["namespace"]} if "namespace" in call else {}),
             })
         return answer, items
 
@@ -1599,7 +1604,9 @@ async def responses_api_logic(request: Request) -> Any:
     response_choice = body.get("tool_choice") or "auto"
     if (isinstance(response_choice, dict) and response_choice.get("type") == "function"
             and isinstance(response_choice.get("function"), dict)):
-        response_choice = {"type": "function", "name": response_choice["function"].get("name") or ""}
+        response_choice = {"type": "function", "name": response_choice["function"].get("name") or "",
+                           **({"namespace": response_choice["function"]["namespace"]}
+                              if "namespace" in response_choice["function"] else {})}
 
     def envelope(status, output=None, usage=None, error=None, incomplete_reason=None):
         # ResponseError has its own wire schema, distinct from an HTTP error.

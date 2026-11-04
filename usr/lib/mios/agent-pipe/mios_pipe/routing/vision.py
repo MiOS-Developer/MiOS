@@ -641,8 +641,91 @@ async def _client_tools_stream_relay(body: dict, chat_id: str, model: str) -> An
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
 
+
+def _client_tools_error(message: str, status: int, *, param=None, code=None):
+    return JSONResponse(status_code=status, content={"error": {
+        "message": message, "type": "invalid_request_error" if status == 400 else "server_error",
+        "param": param, "code": code}})
+
+
+async def _client_namespace_tools_complete(body: dict, streaming: bool, chat_id: str,
+                                           model: str) -> Any:
+    """Adapt caller-owned namespace tools without entering the host tool loop."""
+    from mios_mcp_schema import ClientToolProjection, ClientToolSchemaError, ClientToolResponseError
+    from mios_pipe.access.authn import _apply_outbound_auth
+    try:
+        projection = ClientToolProjection(body)
+    except ClientToolSchemaError as exc:
+        return _client_tools_error(str(exc), 400, param="tools", code="invalid_tool_schema")
+    request = projection.body
+    for key in ("mios_flags", "_allow_write", "num_ctx"):
+        request.pop(key, None)
+    endpoint, selected_model = await _pick_tool_backend()
+    request["model"], request["stream"] = selected_model, bool(streaming)
+    headers = {"Content-Type": "application/json"}
+    _apply_outbound_auth(headers, endpoint)
+    client = await _safe_get_client()
+    url = endpoint.rstrip("/") + "/chat/completions"
+    if not streaming:
+        try:
+            reply = await client.post(url, json=request, headers=headers)
+            content = reply.json()
+            if reply.status_code >= 400:
+                return JSONResponse(content=content, status_code=reply.status_code)
+            content = projection.restore_completion(content)
+            content["model"] = model or selected_model
+            return JSONResponse(content=content, status_code=reply.status_code)
+        except ClientToolResponseError as exc:
+            return _client_tools_error(str(exc), 502, code="invalid_backend_tool_call")
+        except Exception:
+            log.exception("namespace tool completion failed")
+            return _client_tools_error("The tool backend is unavailable", 502,
+                                       code="inference_unavailable")
+    upstream = None
+    try:
+        req = client.build_request("POST", url, json=request, headers=headers)
+        upstream = await client.send(req, stream=True)
+        if upstream.status_code >= 400:
+            await upstream.aread()
+            try:
+                content = upstream.json()
+            except Exception:
+                content = {"error": {"message": "The tool backend rejected the request",
+                                     "type": "server_error"}}
+            await upstream.aclose()
+            return JSONResponse(content=content, status_code=upstream.status_code)
+    except Exception:
+        if upstream is not None:
+            await upstream.aclose()
+        return _client_tools_error("The tool backend is unavailable", 502,
+                                   code="inference_unavailable")
+    except BaseException:
+        if upstream is not None:
+            await upstream.aclose()
+        raise
+
+    async def chunks():
+        try:
+            async for chunk in projection.restore_sse(upstream.aiter_lines(), model or selected_model):
+                yield chunk
+        except Exception as exc:
+            log.warning("namespace tool stream failed: %s", type(exc).__name__)
+            error = {"error": {"message": "The tool stream failed before completion",
+                               "type": "server_error", "code": "invalid_backend_tool_call"
+                               if isinstance(exc, ClientToolResponseError) else "inference_unavailable"}}
+            yield ("data: " + json.dumps(error) + "\n\n").encode()
+            yield b"data: [DONE]\n\n"
+        finally:
+            await upstream.aclose()
+    from starlette.background import BackgroundTask
+    return StreamingResponse(chunks(), media_type="text/event-stream",
+                             background=BackgroundTask(upstream.aclose))
+
 async def _client_tools_complete(body: dict, streaming: bool, chat_id: str,
                                  model: str) -> Any:
+    if any(isinstance(tool, dict) and tool.get("type") == "namespace"
+           for tool in body.get("tools") or []):
+        return await _client_namespace_tools_complete(body, streaming, chat_id, model)
     client_names: set = set()
     for _t in (body.get("tools") or []):
         try:
