@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
-| in_progress | 68 |
-| completed | 1852 |
+| pending | 1747 |
+| in_progress | 70 |
+| completed | 1862 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3708 |
+| total | 3719 |
 
 0 record(s) carry at least one override.
 
@@ -4438,7 +4438,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3705` Verify Tamagotchi terminal rendering and controller routing on real sessions -- pending · P2 · size M · depends_on task_3702
 - `task_3706` Implement Tamagotchi gameplay and persistence above the terminal foundation -- pending · P2 · size L · depends_on task_3702
 - `task_3707` Deliver a playable Tamagotchi sample with safe local saves -- completed · owner mios-tamagotchi-playable · P1 · size M · depends_on task_3702
-- `task_3708` Install and play the Tamagotchi sample on live MiOS Blade nodes -- pending · P1 · size M · depends_on task_3707
+- `task_3708` Install and play the Tamagotchi sample on live MiOS Blade nodes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M · depends_on task_3707
+- `task_3709` Verify visible Tamagotchi user-local trial on mios x86_64 desktop -- completed · owner mios-tamagotchi-live-install · P1 · size M
+- `task_3710` Independently verify Tamagotchi artifact and live failure controls on mios -- completed · owner mios-tamagotchi-live-verifier · P1 · size M
+- `task_3711` Implement full-viewport Tamagotchi graphics, animated pixel sprites and menus -- completed · owner mios-tamagotchi-graphics · P1 · size L
+- `task_3712` Implement distinct animated pixel sprites and care reactions -- completed · owner mios-tamagotchi-sprite-worker · P1 · size M
 
 ## test-coverage
 
@@ -4752,3 +4756,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3411` Retire MiOS-Cat and /cat/; fold all behavior into canonical MiOS-Field componentry -- completed · owner Codex
 - `task_3507` Converge MiOS-MCP and native tmux across every MiOS image and localhost -- in_progress · owner codex · P1 · size L
 - `task_3508` Global MiOS mobile SSH keybindings across terminal desktop editor and AI -- in_progress · owner codex · P1 · size L
+- `task_3713` Show focused attached-controller prompts in Tamagotchi -- completed · owner mios-tamagotchi-controller-worker
+- `task_3714` Add walking and rotating voxel MiOS-Mons with headless output -- completed · owner mios-tamagotchi-voxel-worker
+- `task_3715` Provide automatic and selectable minimal Tamagotchi HUDs -- completed · owner mios-tamagotchi-live-coordinator
+- `task_3716` Add sixteen original MiOS-Mons and personality-driven dialogue -- completed · owner mios-tamagotchi-character-worker
+- `task_3717` Integrate native tmux floating dialogue and right-click menus with inline fallback -- completed · owner mios-tamagotchi-dialog-worker
+- `task_3718` Retain a live mobile play/debug session for MiOS-Mons -- in_progress · owner mios-tamagotchi-live-coordinator
+- `task_3719` Independently verify final animal roster, dialogue and mobile HUD build -- completed · owner mios-tamagotchi-final-verifier

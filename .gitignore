@@ -1131,3 +1131,6 @@ usr/share/mios/virtio/*.iso
 
 # Native build observation module, scaffolded from the canonical Rust template.
 !src/mios-rs/mios-build/src/monitor.rs
+
+# Original MiOS-Mons character research and acceptance context.
+!/usr/share/doc/mios/research/mios-tamagotchi-villager-model.md
