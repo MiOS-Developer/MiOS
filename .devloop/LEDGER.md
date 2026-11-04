@@ -3913,4 +3913,6 @@ Runtime evidence (local receipt path, SHA256):
 - Deployment: `/var/tmp/mios-global-menu-final-deployment/deployment-receipt.json` — `c70051a413db1089aa7a3e135e0290312d3dcf3b8fd35ed3264f1798b39b6388`.
 - Publication: `/var/tmp/mios-global-menu-final-deployment/publication-receipt.json` — `6c0544d9e821807151bd1da7c3e5963a9a5aa53f5f58cbe51c7e976fe769ff8f`.
 
-The standing goal remains open: full native 8B tool selection still fails; the full 55-artifact native catalogue, fresh CI95, image builds and boot acceptance are not proved. The libexec budget remains 328/312 (16 migrations), and generic root-pull native publication remains unresolved. No reboot, service/compositor/input-daemon restart, controller certification or mobile-play certification is claimed.
+The standing goal remains open: full native 8B tool selection still fails; the complete native catalogue (37 declared binaries: 35 Linux and two Windows-only), fresh CI95, image builds and boot acceptance are not proved. The libexec budget remains 328/312 (16 migrations), and generic root-pull native publication remains unresolved. No reboot, service/compositor/input-daemon restart, controller certification or mobile-play certification is claimed.
+
+Count correction: earlier planning labels confused native build phase 55 with an artifact count. The source declares 37 binaries, of which 35 target Linux and two target Windows only. The verified five deployment binaries and their scoped receipts are unchanged.

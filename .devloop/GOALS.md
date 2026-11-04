@@ -19,7 +19,7 @@ passes on the real tree or system) and a negative control (a planted defect make
 
 ## Verification checkpoint (2026-11-04)
 
-The standing goal remains open. The published graphical-launch checkpoint is accepted; full native 8B tool selection, the full 55-artifact native catalogue, fresh CI95, image builds and boot acceptance remain unproved.
+The standing goal remains open. The published graphical-launch checkpoint is accepted; full native 8B tool selection, the complete native catalogue (37 declared binaries: 35 Linux and two Windows-only), fresh CI95, image builds and boot acceptance remain unproved.
 
 - The canonical heavy inference service runs the local model through CUDA, with 65,536 allocated context tokens verified against the engine. CPU and light inference remain separate lanes. Only the heavy service was restarted after two idle-slot checks; its generated unit changed only the context argument.
 - The normal public CLI completed the dated-news probe in 14.348 seconds, retained the caller's calendar day and reported insufficient verified article evidence. This is honest completion, not a verified news briefing.
