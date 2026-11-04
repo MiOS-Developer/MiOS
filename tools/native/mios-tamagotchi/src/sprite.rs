@@ -2106,7 +2106,7 @@ mod body_face_tests {
                         appearance,
                     );
                     let anchor = front.face_overlay().expect("front-facing head");
-                    assert_eq!(anchor.text, "(^_^)");
+                    assert_eq!(anchor.text, Expression::Happy.kaomoji(usize::MAX));
                     assert!(anchor.center_x < front.width && anchor.y < front.height);
                     for yaw in [90, 135, 180, 225, 270] {
                         assert!(
@@ -2187,8 +2187,15 @@ mod body_face_tests {
             for mood in MOODS {
                 for yaw in [0, 359, u16::MAX] {
                     let a = Sprite::voxel(Stage::Adult, mood, style, usize::MAX, yaw, true);
-                    let b =
-                        Sprite::voxel(Stage::Adult, mood, style, usize::MAX % 4, yaw % 360, true);
+                    // Eight facial poses include two complete four-phase mesh cycles.
+                    let b = Sprite::voxel(
+                        Stage::Adult,
+                        mood,
+                        style,
+                        usize::MAX % mood.kaomoji_cycle().len(),
+                        yaw % 360,
+                        true,
+                    );
                     assert_eq!(a.pixels, b.pixels);
                     assert_eq!(a.face_overlay(), b.face_overlay());
                     assert!(a.pixels.iter().flatten().all(|&c| c < 16));

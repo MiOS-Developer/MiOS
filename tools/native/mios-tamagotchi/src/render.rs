@@ -3562,9 +3562,10 @@ mod camera_tests {
     }
 
     #[test]
-    fn foreshortened_mapped_faces_never_revert_to_a_screen_axis_literal() {
+    fn minified_native_faces_follow_visible_head_uvs_and_camera_translation() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut visible_cases = 0;
         for yaw in [0, 60] {
             let sprite = Sprite::voxel(
                 Stage::Adult,
@@ -3574,7 +3575,14 @@ mod camera_tests {
                 yaw,
                 false,
             );
-            assert!(sprite.face_text().is_some());
+            let rear = Sprite::voxel(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                180,
+                false,
+            );
             let face = sprite.face_overlay().unwrap();
             for renderer in [
                 Renderer::Ascii,
@@ -3592,16 +3600,72 @@ mod camera_tests {
                     scale_y: scale * camera_pixel_aspect(renderer),
                 };
                 let area = Rect::new(0, 0, 80, 40);
-                let mut buf = Buffer::empty(area);
-                draw_projection(&sprite, renderer, &colors, projection, area, &mut buf);
-                draw_camera_face(&sprite, renderer, &colors, projection, area, &mut buf);
-                let image = text(&buf, area);
-                assert!(
-                    !image.contains('^') && !image.contains('(') && !image.contains(')'),
-                    "{renderer:?} yaw {yaw}: mapped texture became a literal label"
+                let changes = |projection: Projection| {
+                    let mut before = Buffer::empty(area);
+                    draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+                    let mut after = before.clone();
+                    let painted =
+                        draw_camera_face(&sprite, renderer, &colors, projection, area, &mut after);
+                    let mut marks = Vec::new();
+                    for row in area.y..area.bottom() {
+                        for col in area.x..area.right() {
+                            if before[(col, row)] != after[(col, row)] {
+                                for y in 0..dy {
+                                    for x in 0..dx {
+                                        assert!(
+                                            projected_face_uv(
+                                                &sprite,
+                                                projection,
+                                                u32::from(col) * u32::from(dx) + u32::from(x),
+                                                u32::from(row) * u32::from(dy) + u32::from(y)
+                                            )
+                                            .is_some(),
+                                            "{renderer:?} yaw{yaw}: minified glyph escaped visible head material"
+                                        );
+                                    }
+                                }
+                                marks.push((col, row, after[(col, row)].symbol().to_owned()));
+                            }
+                        }
+                    }
+                    assert_eq!(painted, !marks.is_empty());
+                    marks
+                };
+                let original = changes(projection);
+                visible_cases += usize::from(!original.is_empty());
+                let moved = changes(Projection {
+                    left: projection.left - 10.0 * f64::from(dx),
+                    ..projection
+                });
+                let expected: Vec<_> = original
+                    .iter()
+                    .map(|(x, y, glyph)| (x - 10, *y, glyph.clone()))
+                    .collect();
+                assert_eq!(
+                    moved, expected,
+                    "{renderer:?} yaw{yaw}: native glyphs must move with the head, never a fixed screen label"
+                );
+                let mut rear_before = Buffer::empty(area);
+                draw_projection(&rear, renderer, &colors, projection, area, &mut rear_before);
+                let mut rear_after = rear_before.clone();
+                assert!(!draw_camera_face(
+                    &rear,
+                    renderer,
+                    &colors,
+                    projection,
+                    area,
+                    &mut rear_after
+                ));
+                assert_eq!(
+                    rear_after, rear_before,
+                    "hidden rear face must remain unpainted"
                 );
             }
         }
+        assert!(
+            visible_cases > 0,
+            "the invariant must exercise actual minified native faces"
+        );
     }
 
     #[test]
