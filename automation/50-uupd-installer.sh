@@ -66,7 +66,7 @@ detect_offline_media() {
                     detected_path="$explicit_media"
                 elif [[ -f "$explicit_media" ]]; then
                     case "$explicit_media" in
-                        *.tar|*.tar.gz|*.tar.xz|*.oci.tar)
+                        *.tar|*.tar.gz|*.tar.xz)
                             detected_transport="oci-archive"
                             ;;
                         *)

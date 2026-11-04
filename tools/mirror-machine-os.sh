@@ -57,7 +57,7 @@ main() (
 
     # Own a distinct local manifest; never remove an existing participant's
     # manifest to make space for this invocation.
-    local list="localhost/mios-machine-os-mirror:${BASHPID}" created=0 status
+    local list="localhost/mios-machine-os-mirror:${BASHPID}" status
     if podman manifest exists "$list"; then
         echo "[mirror-machine-os] refusing existing local manifest $list" >&2
         exit 1
@@ -65,11 +65,8 @@ main() (
         status=$?
         [[ "$status" -eq 1 ]] || exit "$status"
     fi
-    trap 'status=$?; if (( created )); then
-        podman manifest rm "$list" >/dev/null || { (( status != 0 )) || status=1; }
-        fi; exit "$status"' EXIT
     podman manifest create "$list" >/dev/null
-    created=1
+    trap 'status=$?; podman manifest rm "$list" >/dev/null || { (( status != 0 )) || status=1; }; exit "$status"' EXIT
     local digest
     for digest in "${digests[@]}"; do
         podman manifest add "$list" "docker://$repo@$digest" >/dev/null
