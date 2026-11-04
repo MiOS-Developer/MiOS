@@ -1042,6 +1042,12 @@
         "get_gpu_arbiter_state"
       ]
     },
+    "usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py": {
+      "configure_kwargs": [],
+      "public_symbols": [
+        "read_only"
+      ]
+    },
     "usr/lib/mios/agent-pipe/mios_pipe/routing/oscontrol.py": {
       "configure_kwargs": [
         "conv_key_var",
@@ -1393,7 +1399,9 @@
         "verb_catalog",
         "web_enrich_verbs"
       ],
-      "public_symbols": []
+      "public_symbols": [
+        "structural_calls"
+      ]
     },
     "usr/lib/mios/agent-pipe/mios_pipe/routing/toolsearch.py": {
       "configure_kwargs": [

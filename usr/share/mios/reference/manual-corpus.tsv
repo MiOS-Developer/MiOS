@@ -20867,6 +20867,11 @@ usr/lib/mios/agent-pipe/mios_mcp_schema.py	18	24	7	45	11000847e472	MIGRATE	narra
 usr/lib/mios/agent-pipe/mios_mcp_schema.py	73	73	1	4	650d231e7bf4	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_mcp_schema.py	77	79	3	23	68653b5bf915	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_mcp_schema.py	107	107	1	8	7ac0362043f2	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	116	116	1	10	0a547842d0ec	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	120	120	1	12	7401fed503d2	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	124	129	6	42	18db1a1023e5	MIGRATE	narrative-rationale		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	317	317	1	10	04e0b5012385	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	366	366	1	9	506f1a1b5e95	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_mcp_transport.py	1	2	2	19	5235acedfba7	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_mcp_transport.py	3	7	4	33	6dc510f8bb03	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_mcp_transport.py	47	47	1	8	d1717ed797e5	STAY	local-scoped		0				0
@@ -21652,9 +21657,10 @@ usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	217	217	1	6	042273fdd3a8	S
 usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	234	234	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	255	255	1	8	b1dcacf5bf8f	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	267	289	23	210	ff354421da5a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/lifecycle.md	mios-src:ff354421da5a	210	1
+usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	303	303	1	10	0e4b33103b8f	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	350	367	18	133	de560e3accca	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/lifecycle.md	mios-src:de560e3accca	133	1
-usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	411	411	1	10	de4fb14d1e32	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	422	422	1	10	fa5a60f65504	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	455	455	1	10	de4fb14d1e32	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py	466	466	1	10	fa5a60f65504	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/mcp_dispatch.py	1	1	1	9	435e6e72500d	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/memory/__init__.py	1	1	1	4	678baa0bd268	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/memory/embed_backfill.py	1	2	2	16	5c496b9663bd	STAY	ai-header		0				0
@@ -21877,52 +21883,52 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/aci.py	37	37	1	6	cb8227d3f2d6	STAY	inl
 usr/lib/mios/agent-pipe/mios_pipe/routing/aci.py	40	40	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1	2	2	15	6e0f00b99a51	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	3	19	16	134	8c690553850c	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:8c690553850c	134	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	145	147	3	31	78a54fe090eb	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	276	276	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	280	282	3	38	76134d5d61e3	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	286	289	4	43	65e58443f412	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:65e58443f412	43	0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	147	149	3	31	78a54fe090eb	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	278	278	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	282	284	3	38	76134d5d61e3	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	288	291	4	43	65e58443f412	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:65e58443f412	43	0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	288	292	5	69	0e149845016e	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:0e149845016e	69	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	300	300	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	345	345	1	10	690064c29e93	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	302	302	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	347	347	1	10	690064c29e93	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	380	387	8	69	1b0606db7c89	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:1b0606db7c89	69	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	418	418	1	5	7017cdef90cd	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	422	422	1	6	62c3ffe9abad	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	446	446	1	2	8339b33faf9c	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	529	529	1	9	b6318778d881	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	420	420	1	5	7017cdef90cd	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	424	424	1	6	62c3ffe9abad	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	448	448	1	2	8339b33faf9c	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	531	531	1	9	b6318778d881	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	571	596	26	222	c61863c05f79	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:c61863c05f79	222	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	573	573	1	4	a25ab6d6833d	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	582	582	1	6	a3caa28e2f5e	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	583	583	1	8	692e0aa4684a	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	600	600	1	7	ff191ef85bcc	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	603	604	2	16	2304a9fd612f	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	625	625	1	10	0d9b577f3758	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	627	627	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	672	672	1	9	b6318778d881	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	713	713	1	4	a25ab6d6833d	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	728	728	1	5	fefa840d7156	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	755	755	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	763	763	1	10	57dd89e7012e	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	767	770	4	42	a08fea8d08c2	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	853	856	4	28	4bfce619f653	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	887	887	1	5	372807620615	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	909	909	1	3	5765662d57e5	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	920	920	1	2	23a36496426f	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	575	575	1	4	a25ab6d6833d	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	584	584	1	6	a3caa28e2f5e	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	585	585	1	8	692e0aa4684a	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	606	606	1	7	ff191ef85bcc	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	609	610	2	16	2304a9fd612f	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	635	635	1	10	0d9b577f3758	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	637	637	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	682	682	1	9	b6318778d881	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	723	723	1	4	a25ab6d6833d	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	738	738	1	5	fefa840d7156	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	765	765	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	773	773	1	10	57dd89e7012e	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	777	780	4	42	a08fea8d08c2	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	863	866	4	28	4bfce619f653	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	897	897	1	5	372807620615	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	919	919	1	3	5765662d57e5	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	930	930	1	2	23a36496426f	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	948	953	6	69	6e26c4fdaa5f	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:6e26c4fdaa5f	69	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	959	959	1	8	8790fd28d753	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	964	968	5	59	5eb5e6ad9a53	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	975	979	5	50	c4a176cc44b4	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	969	969	1	8	8790fd28d753	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	974	978	5	59	5eb5e6ad9a53	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	985	989	5	50	c4a176cc44b4	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	992	1001	10	118	249c2e53c5a1	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/routing.md	mios-src:249c2e53c5a1	118	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1004	1009	6	59	4358e2ec6536	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/routing.md	mios-src:caa0c2491dc4	59	0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1046	1046	1	4	f19ec15206d8	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1056	1056	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1066	1066	1	6	a9c1ec1743f9	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1078	1078	1	5	f7c1e6566040	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1082	1082	1	4	cdb0984cd107	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1085	1085	1	2	6a94fa7ab851	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1089	1089	1	9	1f34fef564d1	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1098	1098	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1106	1106	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1112	1112	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1014	1019	6	59	4358e2ec6536	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/routing.md	mios-src:caa0c2491dc4	59	0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1056	1056	1	4	f19ec15206d8	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1066	1066	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1076	1076	1	6	a9c1ec1743f9	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1088	1088	1	5	f7c1e6566040	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1092	1092	1	4	cdb0984cd107	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1095	1095	1	2	6a94fa7ab851	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1099	1099	1	9	1f34fef564d1	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1108	1108	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1116	1116	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/agent_call.py	1122	1122	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agentreg.py	1	2	2	13	00931f5c96cb	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agentreg.py	8	8	1	9	93259d830a55	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/agentreg.py	10	10	1	2	8fd01c634ab8	STAY	inline-scoped		0				0
@@ -21976,15 +21982,15 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1325	1325	1	2	f56ee1e18c22	STA
 usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1334	1334	1	10	ff01802d2e11	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1341	1341	1	9	4a6d07274dd6	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1403	1404	2	20	7ec251a91807	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1605	1605	1	11	a95b6b0729e7	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1674	1675	2	10	a93479fc5e5a	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1681	1685	5	31	bab173682fec	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1690	1690	1	11	eb4bccdfed20	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1720	1722	3	30	cd093e862c49	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1797	1798	2	22	46a81af28c9a	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1862	1862	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1960	1961	2	24	5f8a38650056	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1999	1999	1	10	24e89708e00a	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1612	1612	1	11	a95b6b0729e7	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1681	1682	2	10	a93479fc5e5a	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1688	1692	5	31	bab173682fec	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1697	1697	1	11	eb4bccdfed20	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1727	1729	3	30	cd093e862c49	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1804	1805	2	22	46a81af28c9a	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1869	1869	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	1967	1968	2	24	5f8a38650056	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py	2006	2006	1	10	24e89708e00a	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/chat_history.py	1	3	3	29	77edbe22d0ee	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/chat_history.py	12	12	1	3	98a2b729df62	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/chat_history.py	18	18	1	9	eb4d23de60c2	STAY	local-scoped		0				0
@@ -22157,8 +22163,9 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	179	183	5	57	812932e
 usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	186	188	3	27	041950d79080	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	196	196	1	7	1fb0561cb78e	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	206	210	5	32	05fff1804cf8	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	229	231	3	34	135282b7a632	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	235	235	1	12	63bc2c583251	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	229	229	1	10	e614b90984c2	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	240	242	3	34	135282b7a632	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/lanes_resolver.py	246	246	1	12	63bc2c583251	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1	2	2	15	697157c3cab2	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	3	13	10	73	b2a94ca96631	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:b2a94ca96631	73	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	62	64	3	27	9d94ccc00719	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:9d94ccc00719	27	0
@@ -22192,38 +22199,38 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	478	478	1	2	f56ee1e18c2
 usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	525	525	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	612	612	1	7	bf49964533b5	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	642	642	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	783	783	1	7	8a6b4c27c014	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	792	792	1	3	9d8b7100cdb0	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	809	809	1	3	98aa8ee69993	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	828	828	1	5	2c94fef32d83	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	829	829	1	5	b456859a62f7	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	831	831	1	7	c4898515f4be	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	852	852	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	866	866	1	7	c4898515f4be	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	884	884	1	3	9d8b7100cdb0	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	910	911	2	22	820b82d6c0b8	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	971	971	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	975	975	1	11	be45edb9067e	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	997	997	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1019	1019	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1021	1022	2	20	a7f77b94d5b6	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1037	1037	1	7	0a734708fc77	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1048	1048	1	6	6bdd0d0045cd	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1057	1057	1	12	5553c4fd6fb3	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1059	1059	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1079	1079	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1109	1111	3	30	087971e1eedf	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1126	1126	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1156	1156	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1182	1182	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1196	1196	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1213	1213	1	3	34fa86a48ab5	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1217	1220	4	47	b89be3241743	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:b89be3241743	47	0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1250	1250	1	6	56d78111393c	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1255	1259	5	58	8c1c0169397c	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:8c1c0169397c	58	0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1307	1307	1	5	8eee3e0e5cbb	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1313	1313	1	9	f57e7cfec8bc	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1341	1341	1	6	5303e2debc5e	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	796	796	1	7	8a6b4c27c014	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	805	805	1	3	9d8b7100cdb0	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	822	822	1	3	98aa8ee69993	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	841	841	1	5	2c94fef32d83	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	842	842	1	5	b456859a62f7	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	844	844	1	7	c4898515f4be	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	865	865	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	879	879	1	7	c4898515f4be	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	897	897	1	3	9d8b7100cdb0	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	923	924	2	22	820b82d6c0b8	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	994	994	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1005	1005	1	11	be45edb9067e	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1027	1027	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1049	1049	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1053	1054	2	20	a7f77b94d5b6	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1069	1069	1	7	0a734708fc77	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1080	1080	1	6	6bdd0d0045cd	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1089	1089	1	12	5553c4fd6fb3	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1091	1091	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1111	1111	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1141	1143	3	30	087971e1eedf	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1158	1158	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1188	1188	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1214	1214	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1228	1228	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1245	1245	1	3	34fa86a48ab5	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1249	1252	4	47	b89be3241743	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:b89be3241743	47	0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1282	1282	1	6	56d78111393c	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1287	1291	5	58	8c1c0169397c	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:8c1c0169397c	58	0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1339	1339	1	5	8eee3e0e5cbb	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1345	1345	1	9	f57e7cfec8bc	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/native_loop.py	1373	1373	1	6	5303e2debc5e	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/oscontrol.py	1	2	2	16	7e1b4dd9ba80	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/oscontrol.py	3	19	16	116	01f018fae7b9	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:01f018fae7b9	116	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/oscontrol.py	77	83	7	55	f85144cbbb20	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:f85144cbbb20	55	1
@@ -22464,8 +22471,8 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	221	221	1	5	e85e6815
 usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	222	222	1	5	94e910330a23	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	223	223	1	9	acd5683c4060	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	273	273	1	3	9d23a76185cb	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	324	325	2	17	deca351497ac	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	332	332	1	10	9b64f8e38126	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	326	327	2	17	deca351497ac	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/secondary_loop.py	334	334	1	10	9b64f8e38126	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/smartroute.py	1	2	2	17	6606cbfb11db	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/smartroute.py	3	17	14	121	5395ee0379d5	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:5395ee0379d5	121	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/smartroute.py	9	11	3	30	481e6666bb5e	STAY	midsize-why		0				0
@@ -22539,22 +22546,24 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	194	194	1	7	77b7c01f6d39	S
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	204	206	3	34	e259a983d58b	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	210	215	6	57	380929d682a0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:380929d682a0	57	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	240	240	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	261	264	4	40	825574512264	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	261	265	5	30	95a6314f4cfc	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	270	278	9	83	e4c4371acd66	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/routing.md	mios-src:e4c4371acd66	83	1
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	280	280	1	8	f34927786c89	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	314	317	4	40	825574512264	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	331	342	12	117	8e5a3bf79ceb	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:8e5a3bf79ceb	117	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	357	357	1	2	2b486624e19a	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	364	364	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	383	383	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	412	412	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	434	434	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	470	470	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	541	541	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	544	544	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	559	559	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	582	582	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	591	591	1	7	38025f3a142b	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	660	664	5	59	1658e3f4c989	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	668	668	1	5	ede4a3c648d9	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	410	410	1	2	2b486624e19a	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	417	417	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	436	436	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	465	465	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	487	487	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	523	523	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	594	594	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	597	597	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	612	612	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	635	635	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	644	644	1	7	38025f3a142b	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	713	717	5	59	1658e3f4c989	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/toolexec.py	721	721	1	5	ede4a3c648d9	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolsearch.py	1	2	2	15	6663606c611d	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolsearch.py	3	22	19	167	9775108b1e1e	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:9775108b1e1e	167	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/toolsearch.py	32	32	1	11	7829f2a889c0	STAY	local-scoped		0				0
@@ -22644,13 +22653,14 @@ usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	557	557	1	3	9d8b7100cdb0	STA
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	618	618	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	620	625	6	75	19d09ac17f1e	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:19d09ac17f1e	75	1
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	635	635	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	650	650	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	653	653	1	10	5561af7164ca	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	662	667	6	68	2428458e8e4b	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/routing.md	mios-src:2428458e8e4b	68	1
-usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	664	664	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	669	670	2	22	c62cdd0f005f	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	681	681	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	695	695	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	710	710	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	733	733	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	747	747	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	752	753	2	22	c62cdd0f005f	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	764	764	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	778	778	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py	793	793	1	2	f56ee1e18c22	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision_context.py	1	3	3	36	0ab72f5b8f10	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision_context.py	11	11	1	9	433930222fa6	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/mios_pipe/routing/vision_context.py	22	24	3	26	8b06b1414786	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/routing.md	mios-src:8b06b1414786	26	0
@@ -23829,14 +23839,14 @@ usr/lib/mios/agent-pipe/test_mios_chat.py	757	757	1	7	6eece3282b99	STAY	local-sc
 usr/lib/mios/agent-pipe/test_mios_chat.py	765	765	1	9	8752045f9249	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_chat.py	798	798	1	10	a8cbbd3ea4c8	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_chat.py	821	821	1	7	5a91266bf0e8	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_chat.py	841	841	1	7	1b22ea721cab	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_chat.py	983	983	1	11	64dc4bd4e083	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_chat.py	994	994	1	11	ed495dcea489	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_chat.py	1044	1047	4	38	f106c8012c22	STAY	midsize-why		0				0
-usr/lib/mios/agent-pipe/test_mios_chat.py	1092	1093	2	18	f9df9be177d3	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_chat.py	1110	1115	6	64	c27eef8e3ea2	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/agent-pipe.md	mios-src:c27eef8e3ea2	64	0
-usr/lib/mios/agent-pipe/test_mios_chat.py	1140	1145	6	58	183e1948a3f8	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/agent-pipe.md	mios-src:183e1948a3f8	58	0
-usr/lib/mios/agent-pipe/test_mios_chat.py	1408	1409	2	19	1f02fb3bc05d	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_chat.py	868	868	1	7	1b22ea721cab	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1010	1010	1	11	64dc4bd4e083	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1021	1021	1	11	ed495dcea489	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1071	1074	4	38	f106c8012c22	STAY	midsize-why		0				0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1119	1120	2	18	f9df9be177d3	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1137	1142	6	64	c27eef8e3ea2	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/agent-pipe.md	mios-src:c27eef8e3ea2	64	0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1167	1172	6	58	183e1948a3f8	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/agent-pipe.md	mios-src:183e1948a3f8	58	0
+usr/lib/mios/agent-pipe/test_mios_chat.py	1435	1436	2	19	1f02fb3bc05d	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_classify.py	1	2	2	12	7921e5e30356	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_classify.py	3	3	1	6	075790b5e016	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_classify.py	26	26	1	8	fc47e1e7136b	STAY	local-scoped		0				0
@@ -24689,6 +24699,7 @@ usr/lib/mios/agent-pipe/test_mios_vision.py	397	397	1	8	72a52aef35db	STAY	local-
 usr/lib/mios/agent-pipe/test_mios_vision.py	408	409	2	10	363c1ec439c1	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_vision.py	420	420	1	8	72a52aef35db	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_vision.py	427	427	1	7	623e5ab75761	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_vision.py	450	450	1	12	ce2eebe059fa	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_web_research.py	1	2	2	10	bed0b40111c9	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_web_research.py	44	44	1	4	d7363b81569b	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_web_research.py	45	45	1	1	338129598f61	STAY	inline-scoped		0				0
