@@ -753,9 +753,11 @@ fn menu_inventory(c: &Config) -> MenuDiscovery {
     }
     if let Some(value) = command("--sessions") {
         for row in value["sessions"].as_array().into_iter().flatten() {
-            if let Some(label) = target_label(row) {
+            if let (Some(label), Some(selector)) =
+                (target_label(row), row["execution_target"]["id"].as_str())
+            {
                 discovery.systems.push(DesktopSystem {
-                    selector: row["execution_target"]["id"].as_str().unwrap().into(),
+                    selector: selector.into(),
                     label,
                     ready: row["available"] == true && row["probed"] == true,
                     remote: false,
@@ -820,7 +822,13 @@ fn spawn_menu(c: &Config) -> mpsc::Receiver<MenuDiscovery> {
     rx
 }
 
-fn probe_system(c: &Config, selector: &str) -> Result<(String, String), String> {
+type SystemProbeResult = Result<(String, String), String>;
+struct PendingSystemProbe {
+    selector: String,
+    receiver: mpsc::Receiver<SystemProbeResult>,
+}
+
+fn probe_system(c: &Config, selector: &str) -> SystemProbeResult {
     let output = run_bounded(
         Command::new(&c.menu.probe_program)
             .args(["window-list", "--json"])
@@ -841,26 +849,36 @@ fn probe_system(c: &Config, selector: &str) -> Result<(String, String), String> 
     }
     let label = target_label(&receipt)
         .ok_or_else(|| "Session probe did not identify its execution target".to_owned())?;
-    Ok((
-        label,
-        receipt["execution_target"]["id"]
-            .as_str()
-            .unwrap()
-            .to_owned(),
-    ))
+    let selector = receipt["execution_target"]["id"]
+        .as_str()
+        .ok_or_else(|| "Session probe did not identify its execution target".to_owned())?;
+    Ok((label, selector.to_owned()))
 }
 
-fn menu_rows(
-    c: &Config,
-    nodes: &[Node],
+struct MenuContext<'a> {
+    c: &'a Config,
+    nodes: &'a [Node],
     querying: bool,
-    nested: &[NestedSession],
-    discovery: &MenuDiscovery,
-    view: &MenuView,
-    query: &str,
-    selected: Option<&DesktopSystem>,
-    g: &Glyphs,
-) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+    nested: &'a [NestedSession],
+    discovery: &'a MenuDiscovery,
+    view: &'a MenuView,
+    query: &'a str,
+    selected: Option<&'a DesktopSystem>,
+    g: &'a Glyphs,
+}
+
+fn menu_rows(context: MenuContext<'_>) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+    let MenuContext {
+        c,
+        nodes,
+        querying,
+        nested,
+        discovery,
+        view,
+        query,
+        selected,
+        g,
+    } = context;
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut out = vec![
         (
@@ -1300,8 +1318,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     let mut focus_content = false;
     let mut selected = std::env::var("MIOS_EXECUTION_SESSION").unwrap_or_default();
     let mut status = "Discovering apps and running systems".to_owned();
-    let mut probe_pending: Option<(String, mpsc::Receiver<Result<(String, String), String>>)> =
-        None;
+    let mut probe_pending: Option<PendingSystemProbe> = None;
     let mut state = ListState::default();
     let mut remembered: Option<Choice> = None;
     let mut last_click: Option<(usize, Instant)> = None;
@@ -1336,8 +1353,9 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 menu_pending = None;
             }
         }
-        if let Some((selector, rx)) = &probe_pending {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(probe) = &probe_pending {
+            let selector = &probe.selector;
+            if let Ok(result) = probe.receiver.try_recv() {
                 if let Some(system) = discovery
                     .systems
                     .iter_mut()
@@ -1365,17 +1383,17 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
             }
         }
         let target = discovery.systems.iter().find(|s| s.selector == selected);
-        let table = menu_rows(
+        let table = menu_rows(MenuContext {
             c,
-            &nodes,
-            pending.is_some(),
-            &nested,
-            &discovery,
-            &view,
-            &query,
-            target,
+            nodes: &nodes,
+            querying: pending.is_some(),
+            nested: &nested,
+            discovery: &discovery,
+            view: &view,
+            query: &query,
+            selected: target,
             g,
-        );
+        });
         state.select(
             remembered
                 .as_ref()
@@ -1443,7 +1461,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                     navigation,
                     &mut nav_state,
                 );
-                let mut content_state = state.clone();
+                let mut content_state = state;
                 content_state.select(
                     state
                         .selected()
@@ -1605,7 +1623,10 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                             status =
                                 "Probing the selected system; no application has been launched"
                                     .into();
-                            probe_pending = Some((selector, rx));
+                            probe_pending = Some(PendingSystemProbe {
+                                selector,
+                                receiver: rx,
+                            });
                         }
                     }
                     other => break Ok(other),
@@ -1730,17 +1751,17 @@ mod tests {
             systems: vec![system.clone()],
             errors: vec![],
         };
-        let table = menu_rows(
-            &c,
-            &[local(&["mios"])],
-            false,
-            &[],
-            &discovery,
-            &MenuView::All,
-            "",
-            Some(&system),
-            &ASCII,
-        );
+        let table = menu_rows(MenuContext {
+            c: &c,
+            nodes: &[local(&["mios"])],
+            querying: false,
+            nested: &[],
+            discovery: &discovery,
+            view: &MenuView::All,
+            query: "",
+            selected: Some(&system),
+            g: &ASCII,
+        });
         assert_eq!(table[0].0, Some(Choice::View(MenuView::Apps)));
         assert_eq!(table[1].0, Some(Choice::View(MenuView::Systems)));
         assert!(table.iter().any(|r| r.0
@@ -1753,17 +1774,17 @@ mod tests {
             == Some(Choice::App {
                 id: "registry-tui".into()
             })));
-        let blocked = menu_rows(
-            &c,
-            &[local(&[])],
-            false,
-            &[],
-            &discovery,
-            &MenuView::Apps,
-            "",
-            None,
-            &ASCII,
-        );
+        let blocked = menu_rows(MenuContext {
+            c: &c,
+            nodes: &[local(&[])],
+            querying: false,
+            nested: &[],
+            discovery: &discovery,
+            view: &MenuView::Apps,
+            query: "",
+            selected: None,
+            g: &ASCII,
+        });
         assert!(
             !blocked
                 .iter()
@@ -1794,33 +1815,33 @@ mod tests {
             systems: vec![system.clone()],
             errors: vec![],
         };
-        let table = menu_rows(
-            &c,
-            &[local(&[])],
-            false,
-            &[],
-            &discovery,
-            &MenuView::Apps,
-            "fixture application",
-            Some(&system),
-            &ASCII,
-        );
+        let table = menu_rows(MenuContext {
+            c: &c,
+            nodes: &[local(&[])],
+            querying: false,
+            nested: &[],
+            discovery: &discovery,
+            view: &MenuView::Apps,
+            query: "fixture application",
+            selected: Some(&system),
+            g: &ASCII,
+        });
         assert!(table.iter().any(|r| r.0
             == Some(Choice::GlobalLaunch {
                 name: "Any fixture application".into(),
                 session: system.selector.clone()
             })));
-        let requested = menu_rows(
-            &c,
-            &[local(&[])],
-            false,
-            &[],
-            &discovery,
-            &MenuView::Apps,
-            "Another requested application",
-            Some(&system),
-            &ASCII,
-        );
+        let requested = menu_rows(MenuContext {
+            c: &c,
+            nodes: &[local(&[])],
+            querying: false,
+            nested: &[],
+            discovery: &discovery,
+            view: &MenuView::Apps,
+            query: "Another requested application",
+            selected: Some(&system),
+            g: &ASCII,
+        });
         assert!(requested.iter().any(|r| r.0
             == Some(Choice::GlobalLaunch {
                 name: "Another requested application".into(),
@@ -1829,17 +1850,17 @@ mod tests {
         let mut unavailable = system.clone();
         unavailable.ready = false;
         unavailable.error = "unavailable".into();
-        let blocked = menu_rows(
-            &c,
-            &[local(&[])],
-            false,
-            &[],
-            &discovery,
-            &MenuView::Apps,
-            "Any",
-            Some(&unavailable),
-            &ASCII,
-        );
+        let blocked = menu_rows(MenuContext {
+            c: &c,
+            nodes: &[local(&[])],
+            querying: false,
+            nested: &[],
+            discovery: &discovery,
+            view: &MenuView::Apps,
+            query: "Any",
+            selected: Some(&unavailable),
+            g: &ASCII,
+        });
         assert!(!blocked
             .iter()
             .any(|r| matches!(r.0, Some(Choice::GlobalLaunch { .. }))));
