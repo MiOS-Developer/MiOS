@@ -16,3 +16,7 @@ websockets==15.0.1
 tomli==2.2.1
 types-requests==2.32.0.20241016
 types-PyYAML==6.0.12.20240917
+
+# Real monitor/PTY tests need these in the isolated CI venv, independently of RPMs.
+textual==8.2.8
+psutil==7.2.2

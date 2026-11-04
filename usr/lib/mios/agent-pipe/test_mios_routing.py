@@ -87,18 +87,19 @@ def t_deterministic_route():
 def main():
     # The folded route-parity suite runs next and imports server against the
     # real mios.toml, so the fixture must not outlive these checks.
-    prev = os.environ.get("MIOS_TOML")
+    saved_environment = dict(os.environ)
     path = _write_toml()
+    os.environ.update(MIOS_VENDOR_TOML=path, MIOS_VENDOR_TOML_D=path + ".vendor.d",
+        MIOS_HOST_TOML=path + ".host", MIOS_HOST_TOML_D=path + ".host.d",
+        MIOS_USER_TOML=path + ".user", MIOS_USER_TOML_D=path + ".user.d")
     try:
         t_load_phrases()
         t_load_domains()
         t_deterministic_route()
     finally:
         os.unlink(path)
-        if prev is None:
-            os.environ.pop("MIOS_TOML", None)
-        else:
-            os.environ["MIOS_TOML"] = prev
+        os.environ.clear()
+        os.environ.update(saved_environment)
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

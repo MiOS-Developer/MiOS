@@ -420,9 +420,7 @@ async def list_models_logic(request: Request) -> JSONResponse:
     _agent_id = str((_toml_section("ai") or {}).get("agent_model") or "MiOS AI")
     _ctx = int(os.environ.get("MIOS_AGENT_PIPE_CTX", "65536"))
 
-    model_ids = ["gpt-6.1-sol"]
-    if _agent_id not in model_ids:
-        model_ids.append(_agent_id)
+    model_ids = [_agent_id]
 
     models_data = []
     for mid in model_ids:

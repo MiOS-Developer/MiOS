@@ -202,6 +202,13 @@ def main():
     mo = _body(asyncio.run(M.list_models_logic(_FakeReq())))
     check("models: exactly one MiOS AI", len(mo["data"]) == 1
           and mo["data"][0]["id"] == "MiOS AI")
+    M.configure(toml_section=lambda section: {"agent_model": "Fixture Local"} if section == "ai" else {})
+    configured = _body(asyncio.run(M.list_models_logic(_FakeReq())))
+    check("models: only the configured public alias is advertised",
+          [row["id"] for row in configured["data"]] == ["Fixture Local"])
+    check("models: public aliases share the same standard model list",
+          configured["models"] == configured["data"] and configured["object"] == "list")
+
 
     emb_resp = asyncio.run(M.embeddings_logic(
         _FakeReq(body=b'{"input":"hi"}',

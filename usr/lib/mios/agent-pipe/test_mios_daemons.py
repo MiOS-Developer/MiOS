@@ -762,7 +762,7 @@ class TestMiosDaemonGateAndDedup(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, "degraded response")
 
     @patch("mios_pipe.routing.agent_call._agent_offload_engine")
-    async def test_request_dedup_collapses_inflight(self, mock_offload):
+    async def _request_dedup_case(self, shared_client, separate_auth, mock_offload):
         cfg = {"vram_mb": 0}
         body = {"messages": [{"role": "user", "content": "hello"}]}
         mock_offload.return_value = None
@@ -771,8 +771,9 @@ class TestMiosDaemonGateAndDedup(unittest.IsolatedAsyncioTestCase):
         async def mock_inner(name, cfg, body, headers, client, prefer_cpu=True):
             nonlocal inner_calls
             inner_calls += 1
+            call_number = inner_calls
             await asyncio.sleep(0.1) # yield control so concurrent task can enter
-            return name, f"response {inner_calls}"
+            return name, f"response {call_number}"
 
         with patch("mios_pipe.routing.agent_call._call_agent_complete_inner", mock_inner), \
              patch("mios_pipe.routing.agent_call._admit", dummy_async), \
@@ -782,13 +783,27 @@ class TestMiosDaemonGateAndDedup(unittest.IsolatedAsyncioTestCase):
              patch("mios_pipe.routing.agent_call._model_active", dummy_async), \
              patch("mios_pipe.routing.agent_call._record_cost", MagicMock()), \
              patch("mios_pipe.routing.agent_call._agent_binding", lambda c, e: ("http://localhost:8450/v1", "granite4.1:8b")):
-            t1 = asyncio.create_task(target_module._call_agent_complete("agent1", cfg, body, {}, MagicMock(), priority=1.0))
-            t2 = asyncio.create_task(target_module._call_agent_complete("agent1", cfg, body, {}, MagicMock(), priority=1.0))
+            client = MagicMock()
+            second_client = client if shared_client else MagicMock()
+            second_headers = {"Authorization": "fixture"} if separate_auth else {}
+            t1 = asyncio.create_task(target_module._call_agent_complete("agent1", cfg, body, {}, client, priority=1.0))
+            t2 = asyncio.create_task(target_module._call_agent_complete("agent1", cfg, body, second_headers, second_client, priority=1.0))
             res1, res2 = await t1, await t2
 
-        self.assertEqual(inner_calls, 1)
-        self.assertEqual(res1, res2)
+        joined = shared_client and not separate_auth
+        self.assertEqual(inner_calls, 1 if joined else 2)
         self.assertEqual(res1[1], "response 1")
+        self.assertEqual(res2[1], "response 1" if joined else "response 2")
+
+    async def test_request_dedup_collapses_inflight(self):
+        await self._request_dedup_case(True, False)
+
+    async def test_request_dedup_does_not_borrow_another_transport(self):
+        await self._request_dedup_case(False, False)
+
+    async def test_request_dedup_does_not_cross_authentication_contexts(self):
+        await self._request_dedup_case(True, True)
+
 
 def _run_all_folded_daemons_suites():
     for fn in (_run_extra_account_sync, _run_extra_conductor):

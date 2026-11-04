@@ -84,6 +84,7 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
     async def test_keyboard_table_selection(self):
         app = self.app()
         async with app.run_test(size=(35, 19)) as pilot:
+            await pilot.pause()  # initial after-refresh focus must be settled
             await pilot.press("down", "down", "enter")
             await pilot.pause()
         self.assertEqual(app.return_value, "codex")
@@ -123,10 +124,14 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.query_one("#client-table", DataTable).row_count, 7)
                 client_table = app.query_one("#client-table", DataTable)
-                self.assertFalse(client_table.vertical_scrollbar.display)
-                self.assertFalse(client_table.horizontal_scrollbar.display)
+                # Textual may enable an overflow widget internally while its
+                # zero-size gutter keeps it absent from the rendered layout.
+                self.assertEqual(client_table.scrollbars_space, (0, 0))
                 self.assertEqual(client_table.styles.scrollbar_size_vertical, 0)
                 self.assertEqual(client_table.styles.scrollbar_size_horizontal, 0)
+                await pilot.press(*(["down"] * len(CLIENTS)), "enter")
+                await pilot.pause()
+            self.assertEqual(app.return_value, "aider", "last client stays reachable in the short viewport")
 
     async def test_poll_preserves_cursor_and_failure_is_visible(self):
         app = self.app(mode="agents")
