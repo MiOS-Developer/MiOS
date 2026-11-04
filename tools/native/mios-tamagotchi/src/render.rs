@@ -191,6 +191,14 @@ struct Projection {
     left: f64,
     top: f64,
     scale: f64,
+    scale_y: f64,
+}
+
+/// Current terminal capability/config contracts expose cells, not physical
+/// font metrics. Match the conventional 1:2 cell geometry used by half-blocks.
+fn camera_pixel_aspect(renderer: Renderer) -> f64 {
+    let (dx, dy) = renderer.packing();
+    f64::from(dy) / (2.0 * f64::from(dx))
 }
 
 impl Projection {
@@ -204,6 +212,7 @@ impl Projection {
         camera: Camera,
     ) -> Self {
         let (dx, dy) = renderer.packing();
+        let pixel_aspect = camera_pixel_aspect(renderer);
         let width = f64::from(area.width) * f64::from(dx);
         let height = f64::from(area.height) * f64::from(dy);
         let zoom = f64::from(camera.zoom_percent.clamp(50, 400)) / 100.0;
@@ -226,7 +235,7 @@ impl Projection {
                     .max(bounds.top + bounds.height() * 0.38)
                     .min(bounds.bottom);
             }
-            let fit = (width / frame.width()).min(height / frame.height());
+            let fit = (width / frame.width()).min(height / (frame.height() * pixel_aspect));
             let base = if fixed_scale == 0 {
                 fit * if view == CameraView::Room { 0.6 } else { 0.96 }
             } else {
@@ -259,23 +268,25 @@ impl Projection {
                 frame.top = cy - bounds.height() / 2.0;
                 frame.bottom = cy + bounds.height() / 2.0;
             }
+            let scale_y = scale * pixel_aspect;
             let (left, top) = if view == CameraView::Room {
                 (
                     (width - bounds.width() * scale) * f64::from(position.0.min(1000)) / 1000.0
                         - bounds.left * scale,
-                    (height - bounds.height() * scale) * f64::from(position.1.min(1000)) / 1000.0
-                        - bounds.top * scale,
+                    (height - bounds.height() * scale_y) * f64::from(position.1.min(1000)) / 1000.0
+                        - bounds.top * scale_y,
                 )
             } else {
                 (
                     width / 2.0 - (frame.left + frame.right) / 2.0 * scale,
-                    height / 2.0 - (frame.top + frame.bottom) / 2.0 * scale,
+                    height / 2.0 - (frame.top + frame.bottom) / 2.0 * scale_y,
                 )
             };
             Self {
                 left: f64::from(area.x) * f64::from(dx) + left,
                 top: f64::from(area.y) * f64::from(dy) + top,
                 scale,
+                scale_y,
             }
         };
         let from = mode(camera.from_view);
@@ -285,12 +296,13 @@ impl Projection {
             left: from.left + (to.left - from.left) * blend,
             top: from.top + (to.top - from.top) * blend,
             scale: from.scale + (to.scale - from.scale) * blend,
+            scale_y: from.scale_y + (to.scale_y - from.scale_y) * blend,
         }
     }
 
     fn source_pixel(self, sprite: &Sprite, x: u32, y: u32) -> Option<(u32, u32)> {
         let x = ((f64::from(x) + 0.5 - self.left) / self.scale).floor();
-        let y = ((f64::from(y) + 0.5 - self.top) / self.scale).floor();
+        let y = ((f64::from(y) + 0.5 - self.top) / self.scale_y).floor();
         if x < 0.0 || y < 0.0 || x >= f64::from(sprite.width()) || y >= f64::from(sprite.height()) {
             None
         } else {
@@ -307,7 +319,7 @@ impl Projection {
         let (dx, dy) = renderer.packing();
         (
             (self.left + x * self.scale) / f64::from(dx),
-            (self.top + y * self.scale) / f64::from(dy),
+            (self.top + y * self.scale_y) / f64::from(dy),
         )
     }
 }
@@ -576,7 +588,8 @@ fn projected_face_uv(
     let horizontal = neighbor(sx + 1, sy);
     let vertical = neighbor(sx, sy + 1);
     let footprint = std::array::from_fn(|i| {
-        ((horizontal[i] - uv[i]).abs() + (vertical[i] - uv[i]).abs()) / projection.scale
+        (horizontal[i] - uv[i]).abs() / projection.scale
+            + (vertical[i] - uv[i]).abs() / projection.scale_y
     });
     Some((uv, footprint))
 }
@@ -616,6 +629,7 @@ fn draw_camera_face(
             ..(right.ceil() as i32).min(i32::from(area.right()))
         {
             let mut pixels = [None; 8];
+            let mut original = [None; 8];
             let mut ink = [false; 8];
             let mut covered = [false; 8];
             for y in 0..dy {
@@ -624,16 +638,24 @@ fn draw_camera_face(
                     let px = col as u32 * u32::from(dx) + u32::from(x);
                     let py = row as u32 * u32::from(dy) + u32::from(y);
                     pixels[i] = projection.sample(sprite, px, py);
+                    original[i] = pixels[i];
                     if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
                         covered[i] = true;
                         ink[i] = texture.sample(uv, footprint);
-                        pixels[i] = Some(if ink[i] { 0 } else { 4 });
+                        if ink[i] {
+                            pixels[i] = Some(0);
+                        }
                     }
                 }
             }
             if !covered.iter().any(|v| *v) {
                 continue;
             }
+            let Some(base) = original.iter().flatten().next().copied() else {
+                continue;
+            };
+            let backing = colors.ink(usize::from(base));
+            let base_ascii = ['#', 'o', '@', '*'][usize::from(base) % 4];
             let count = usize::from(dx * dy);
             let full_cell = covered[..count].iter().all(|v| *v);
             let Some(cell) = buf.cell_mut((col as u16, row as u16)) else {
@@ -641,33 +663,41 @@ fn draw_camera_face(
             };
             match renderer {
                 Renderer::Auto | Renderer::Ascii => {
-                    cell.set_char(if ink[0] { '#' } else { ' ' })
-                        .set_fg(colors.ink(0))
-                        .set_bg(colors.ink(4));
+                    if mono {
+                        cell.set_char(if ink[0] { '#' } else { base_ascii })
+                            .set_fg(Color::Reset)
+                            .set_bg(Color::Reset);
+                    } else {
+                        cell.set_char(if ink[0] { '#' } else { ' ' })
+                            .set_fg(colors.ink(0))
+                            .set_bg(backing);
+                    }
                 }
                 Renderer::HalfBlock if mono => {
                     if !full_cell {
                         continue;
                     }
-                    cell.set_char(if ink[0] || ink[1] { '#' } else { ' ' })
+                    cell.set_char(if ink[0] || ink[1] { '#' } else { base_ascii })
                         .set_fg(Color::Reset)
                         .set_bg(Color::Reset);
                 }
                 Renderer::HalfBlock => paint_pixels(renderer, colors, pixels, cell),
                 Renderer::Quadrant | Renderer::Braille => {
-                    // A one-foreground pattern cell cannot replace a nose or
-                    // ear subpixel with neutral backing. Keep mixed cells intact.
+                    // A one-foreground pattern cell cannot replace an excluded
+                    // nose/ear subpixel. In full cells use the actual material,
+                    // matching the base renderer's first-pixel color policy.
                     if !full_cell {
                         continue;
                     }
+                    let mask = if mono { ink.map(|v| !v) } else { ink };
                     let glyph = if renderer == Renderer::Quadrant {
-                        quadrant(std::array::from_fn(|i| ink[i]))
+                        quadrant(std::array::from_fn(|i| mask[i]))
                     } else {
-                        braille(ink)
+                        braille(mask)
                     };
                     cell.set_char(glyph)
-                        .set_fg(colors.ink(0))
-                        .set_bg(colors.ink(4));
+                        .set_fg(if mono { Color::Reset } else { colors.ink(0) })
+                        .set_bg(if mono { Color::Reset } else { backing });
                 }
             }
             painted |= ink.iter().any(|on| *on);
@@ -731,6 +761,7 @@ impl Widget for SpriteWidget<'_> {
             left: f64::from(left) * f64::from(dx),
             top: f64::from(top) * f64::from(dy),
             scale: f64::from(scale),
+            scale_y: f64::from(scale),
         };
         draw_projection(
             self.sprite,
@@ -1565,6 +1596,7 @@ mod camera_tests {
                         left: origin,
                         top: origin,
                         scale: 4.0,
+                        scale_y: 4.0 * camera_pixel_aspect(renderer),
                     },
                     area,
                     &mut buf,
@@ -1870,8 +1902,10 @@ mod camera_tests {
         let scale = f64::from(head_columns) * f64::from(dx) / (right - left);
         let projection = Projection {
             left: 80.0 * f64::from(dx) - (f64::from(face.center_x) + 0.5) * scale,
-            top: 40.0 * f64::from(dy) - (f64::from(face.y) + 0.5) * scale,
+            top: 40.0 * f64::from(dy)
+                - (f64::from(face.y) + 0.5) * scale * camera_pixel_aspect(renderer),
             scale,
+            scale_y: scale * camera_pixel_aspect(renderer),
         };
         let mut before = Buffer::empty(area);
         draw_projection(sprite, renderer, &colors, projection, area, &mut before);
@@ -2034,8 +2068,9 @@ mod camera_tests {
             let (dx, dy) = renderer.packing();
             let projection = Projection {
                 left: 10.0 * f64::from(dx) - f64::from(face.center_x) * 8.0,
-                top: 8.0 * f64::from(dy) - f64::from(face.y) * 8.0,
+                top: 8.0 * f64::from(dy) - f64::from(face.y) * 8.0 * camera_pixel_aspect(renderer),
                 scale: 8.0,
+                scale_y: 8.0 * camera_pixel_aspect(renderer),
             };
             draw_camera_face(&front, renderer, &colors, projection, area, &mut buf);
             for y in 0..20 {
@@ -2151,14 +2186,13 @@ mod camera_tests {
     }
 
     #[test]
-    fn opaque_face_backing_erases_old_features_in_gaps_without_clearing_the_animal() {
-        // This point is above the mouth and farther than one font pixel from
-        // any stroke: the old halo implementation left the prior face visible.
+    fn surface_texture_preserves_species_material_through_stroke_gaps() {
+        // This point is a transparent gap above the mouth. Underlying species
+        // material must survive; a universal cream plate would erase its mask.
         let texture = FaceTexture { text: "(^_^)" };
         assert!(!texture.sample([10.25 / 21.0, 2.25 / 7.0], [0.0, 0.0]));
 
         let config = Config::sample().unwrap();
-        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
         let sprite = Sprite::voxel(
             Stage::Adult,
             Expression::Happy,
@@ -2168,58 +2202,87 @@ mod camera_tests {
             false,
         );
         let metadata = sprite.face_overlay().unwrap();
-        for renderer in [
-            Renderer::Ascii,
-            Renderer::HalfBlock,
-            Renderer::Quadrant,
-            Renderer::Braille,
-        ] {
-            let (dx, dy) = renderer.packing();
-            let area = Rect::new(0, 0, 160, 80);
-            let projection = Projection {
-                left: 80.0 * f64::from(dx) - (f64::from(metadata.center_x) + 0.5) * 6.0,
-                top: 40.0 * f64::from(dy) - (f64::from(metadata.y) + 0.5) * 6.0,
-                scale: 6.0,
-            };
-            let texture = FaceTexture::new(&sprite).unwrap();
-            let mut buf = Buffer::empty(area);
-            for cell in &mut buf.content {
-                cell.set_char('X')
-                    .set_fg(colors.ink(5))
-                    .set_bg(colors.ink(5));
-            }
-            let before = buf.clone();
-            assert!(draw_camera_face(
-                &sprite, renderer, &colors, projection, area, &mut buf
-            ));
-            let mut cleared_gaps = 0;
-            let mut untouched = 0;
-            for row in area.y..area.bottom() {
-                for col in area.x..area.right() {
-                    let mut clear_gap = true;
-                    let mut any_backing = false;
-                    for y in 0..dy {
-                        for x in 0..dx {
-                            let px = u32::from(col) * u32::from(dx) + u32::from(x);
-                            let py = u32::from(row) * u32::from(dy) + u32::from(y);
-                            let sample = projected_face_uv(&sprite, projection, px, py);
-                            clear_gap &= sample
-                                .is_some_and(|(uv, footprint)| !texture.sample(uv, footprint));
-                            any_backing |= sample.is_some();
+        for depth in [Depth::Indexed, Depth::Mono] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                let (dx, dy) = renderer.packing();
+                let area = Rect::new(0, 0, 160, 80);
+                let projection = Projection {
+                    left: 80.0 * f64::from(dx) - (f64::from(metadata.center_x) + 0.5) * 6.0,
+                    top: 40.0 * f64::from(dy)
+                        - (f64::from(metadata.y) + 0.5) * 6.0 * camera_pixel_aspect(renderer),
+                    scale: 6.0,
+                    scale_y: 6.0 * camera_pixel_aspect(renderer),
+                };
+                let texture = FaceTexture::new(&sprite).unwrap();
+                let mut source = Buffer::empty(area);
+                draw_projection(&sprite, renderer, &colors, projection, area, &mut source);
+                let mut buf = source.clone();
+                for cell in &mut buf.content {
+                    cell.set_char('X')
+                        .set_fg(colors.ink(5))
+                        .set_bg(colors.ink(5));
+                }
+                let before = buf.clone();
+                assert!(draw_camera_face(
+                    &sprite, renderer, &colors, projection, area, &mut buf
+                ));
+                let mut cleared_gaps = 0;
+                let mut noncream_gaps = 0;
+                let mut untouched = 0;
+                for row in area.y..area.bottom() {
+                    for col in area.x..area.right() {
+                        let mut clear_gap = true;
+                        let mut any_backing = false;
+                        for y in 0..dy {
+                            for x in 0..dx {
+                                let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                                let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                                let sample = projected_face_uv(&sprite, projection, px, py);
+                                clear_gap &= sample
+                                    .is_some_and(|(uv, footprint)| !texture.sample(uv, footprint));
+                                any_backing |= sample.is_some();
+                            }
+                        }
+                        if clear_gap {
+                            assert_ne!(buf[(col, row)].symbol(), "X", "{renderer:?}");
+                            let py = u32::from(row) * u32::from(dy)
+                                + u32::from(renderer == Renderer::HalfBlock);
+                            let material = projection
+                                .sample(&sprite, u32::from(col) * u32::from(dx), py)
+                                .unwrap();
+                            if depth == Depth::Mono {
+                                assert_eq!(
+                                    buf[(col, row)],
+                                    source[(col, row)],
+                                    "{renderer:?}: monochrome gap lost original body representation"
+                                );
+                            } else {
+                                assert_eq!(
+                                    buf[(col, row)].bg,
+                                    colors.ink(usize::from(material)),
+                                    "{renderer:?}: face gap replaced actual material"
+                                );
+                            }
+                            noncream_gaps += usize::from(material != 4);
+                            cleared_gaps += 1;
+                        }
+                        if !any_backing {
+                            assert_eq!(buf[(col, row)], before[(col, row)], "{renderer:?}");
+                            untouched += 1;
                         }
                     }
-                    if clear_gap {
-                        assert_ne!(buf[(col, row)].symbol(), "X", "{renderer:?}");
-                        assert_eq!(buf[(col, row)].bg, colors.ink(4), "{renderer:?}");
-                        cleared_gaps += 1;
-                    }
-                    if !any_backing {
-                        assert_eq!(buf[(col, row)], before[(col, row)], "{renderer:?}");
-                        untouched += 1;
-                    }
                 }
+                assert!(
+                    cleared_gaps > 0 && noncream_gaps > 0 && untouched > 0,
+                    "{renderer:?}"
+                );
             }
-            assert!(cleared_gaps > 0 && untouched > 0, "{renderer:?}");
         }
     }
 
@@ -2393,8 +2456,10 @@ mod camera_tests {
                 let scale = 0.1 * f64::from(dx);
                 let projection = Projection {
                     left: 40.0 * f64::from(dx) - (f64::from(face.center_x) + 0.5) * scale,
-                    top: 20.0 * f64::from(dy) - (f64::from(face.y) + 0.5) * scale,
+                    top: 20.0 * f64::from(dy)
+                        - (f64::from(face.y) + 0.5) * scale * camera_pixel_aspect(renderer),
                     scale,
+                    scale_y: scale * camera_pixel_aspect(renderer),
                 };
                 let area = Rect::new(0, 0, 80, 40);
                 let mut buf = Buffer::empty(area);
@@ -2406,6 +2471,70 @@ mod camera_tests {
                     "{renderer:?} yaw {yaw}: mapped texture became a literal label"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn camera_physical_aspect_and_zoom_match_across_terminal_packings() {
+        let sprite = padded_body();
+        let bounds = SolidBounds::of(&sprite).unwrap();
+        let area = Rect::new(0, 0, 80, 40);
+        let mut references = Vec::new();
+        for renderer in [
+            Renderer::HalfBlock,
+            Renderer::Ascii,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            let mut occupancy = Vec::new();
+            for (index, zoom_percent) in [50, 75, 100, 150].into_iter().enumerate() {
+                let camera = Camera {
+                    zoom_percent,
+                    ..Camera::default()
+                };
+                let projection =
+                    Projection::camera(&sprite, bounds, area, renderer, 0, (500, 500), camera);
+                let (dx, dy) = renderer.packing();
+                let physical_x = projection.scale / f64::from(dx) / 2.0;
+                let physical_y = projection.scale_y / f64::from(dy);
+                assert!((physical_x - physical_y).abs() < 0.00001, "{renderer:?}");
+                let buf = projected(&sprite, renderer, camera, area);
+                let mut points = Vec::new();
+                for y in 0..area.height {
+                    for x in 0..area.width {
+                        if buf[(x, y)].symbol() != " " {
+                            points.push((x, y));
+                        }
+                    }
+                }
+                let width = points.iter().map(|p| p.0).max().unwrap()
+                    - points.iter().map(|p| p.0).min().unwrap()
+                    + 1;
+                let height = points.iter().map(|p| p.1).max().unwrap()
+                    - points.iter().map(|p| p.1).min().unwrap()
+                    + 1;
+                if renderer == Renderer::HalfBlock {
+                    references.push((width, height));
+                } else {
+                    let (expected_w, expected_h) = references[index];
+                    assert!(
+                        width.abs_diff(expected_w) <= 2 && height.abs_diff(expected_h) <= 2,
+                        "{renderer:?}/{zoom_percent}: {width}x{height} vs {expected_w}x{expected_h}"
+                    );
+                }
+                if zoom_percent <= 100 {
+                    let actual = f64::from(width) / 2.0 / f64::from(height);
+                    assert!(
+                        (actual - bounds.width() / bounds.height()).abs() < 0.05,
+                        "{renderer:?}: physically stretched body at {zoom_percent}%"
+                    );
+                }
+                occupancy.push(occupied(&buf));
+            }
+            assert!(
+                occupancy.windows(2).all(|w| w[1] > w[0]),
+                "{renderer:?}: {occupancy:?}"
+            );
         }
     }
 

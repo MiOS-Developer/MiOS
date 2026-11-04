@@ -1182,8 +1182,8 @@ impl VoxelModel {
                             color,
                             fine_only,
                         } => {
-                            for i in 0..3 {
-                                center[i] += head.center[i];
+                            for (value, lift) in center.iter_mut().zip(head.center) {
+                                *value += lift;
                             }
                             Sculpt::Ellipsoid {
                                 center,
