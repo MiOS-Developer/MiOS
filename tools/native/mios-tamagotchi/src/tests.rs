@@ -276,3 +276,98 @@ fn equal_half_pixels_use_opaque_foreground_coverage() {
     assert_eq!(buf[(0, 0)].symbol(), "█");
     assert_eq!(buf[(0, 0)].fg, colors.palette[1]);
 }
+
+#[test]
+fn sparse_and_older_profiles_inherit_only_missing_vendor_settings() {
+    let empty: toml::Value = "".parse().unwrap();
+    let defaults = Config::sample().unwrap();
+    let config = Config::from_value(&empty).unwrap();
+    assert_eq!(config.dialog_mode, defaults.dialog_mode);
+    assert_eq!(config.characters.len(), defaults.characters.len());
+
+    let sparse: toml::Value = r#"
+[tamagotchi]
+dialog_mode = "inline"
+tick_ms = 250
+floating_thoughts = false
+state_directory = "mios/private-pet"
+view_mode = ""
+[tamagotchi.game]
+starting_coins = 42
+"#
+    .parse()
+    .unwrap();
+    let config = Config::from_value(&sparse).unwrap();
+    assert_eq!(config.dialog_mode, crate::dialogs::DialogMode::Inline);
+    assert_eq!(config.tick_ms, 250);
+    assert!(!config.floating_thoughts);
+    assert_eq!(config.state_directory, "mios/private-pet");
+    assert_eq!(config.game.starting_coins, 42);
+    assert_eq!(config.view_mode, defaults.view_mode);
+    assert_eq!(config.game.hatch_ticks, defaults.game.hatch_ticks);
+
+    let mut legacy: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+        .parse()
+        .unwrap();
+    legacy["tamagotchi"]
+        .as_table_mut()
+        .unwrap()
+        .retain(|key, _| {
+            [
+                "renderer",
+                "color",
+                "scale",
+                "tick_ms",
+                "palette",
+                "background",
+                "state_directory",
+                "autosave_seconds",
+                "game",
+            ]
+            .contains(&key)
+        });
+    legacy["tamagotchi"]["tick_ms"] = 350.into();
+    let config = Config::from_value(&legacy).unwrap();
+    assert_eq!(config.tick_ms, 350);
+    assert_eq!(config.dialog_mode, defaults.dialog_mode);
+    assert_eq!(config.characters.len(), 16);
+}
+
+#[test]
+fn compatibility_defaults_never_hide_invalid_explicit_configuration() {
+    for source in [
+        "tamagotchi = false",
+        "[tamagotchi]\ndialog_mode = 'unknown'",
+        "[tamagotchi]\nunknown_setting = true",
+        "[tamagotchi]\ncharacters = []",
+        "[tamagotchi]\ntick_ms = 0",
+        "[tamagotchi]\ngame = false",
+        "[tamagotchi.game]\nunknown_rule = true",
+        "[tamagotchi.game]\nstarting_coins = -1",
+    ] {
+        let value: toml::Value = source.parse().unwrap();
+        assert!(Config::from_value(&value).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn canonical_menu_entry_is_a_portable_native_tui_not_a_preview_launcher() {
+    let value: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+        .parse()
+        .unwrap();
+    let entries = mios_resolver::terminal_tuis::catalog(&value).unwrap();
+    let game = entries
+        .iter()
+        .find(|entry| entry.id == "mios-mons")
+        .unwrap();
+    assert_eq!(game.label, "MiOS-Mons");
+    assert_eq!(game.mode, mios_resolver::terminal_tuis::Mode::Window);
+    assert!(game.vt_ok);
+    assert_eq!(game.argv, ["/usr/bin/mios-tamagotchi"]);
+    assert_eq!(game.argv_for(true), game.argv_for(false));
+    assert!(value["build"]["native"]["categories"]["apps"]["binaries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|name| name.as_str() == Some("mios-tamagotchi")));
+}

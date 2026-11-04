@@ -11685,6 +11685,14 @@ vt_ok = true
 argv = ["/usr/bin/mios-fanctl", "tui"]
 
 [[terminal.tuis]]
+id = "mios-mons"
+label = "MiOS-Mons"
+section = "mios"
+mode = "window"
+vt_ok = true
+argv = ["/usr/bin/mios-tamagotchi"]
+
+[[terminal.tuis]]
 id = "controls"
 label = "Controls and keys"
 section = "mios"

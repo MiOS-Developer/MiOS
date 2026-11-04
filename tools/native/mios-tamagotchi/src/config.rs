@@ -70,26 +70,29 @@ impl Config {
     }
 
     pub fn from_value(value: &toml::Value) -> Result<Self, String> {
-        let table = value
+        if !value.is_table() {
+            return Err("MiOS configuration must be a TOML table".into());
+        }
+        // The compiled vendor SSOT is the lowest compatibility tier. An older
+        // installed vendor or sparse user profile can omit newly added fields;
+        // explicit layered choices still win through the shared merge contract.
+        let vendor = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse::<toml::Value>()
+            .map_err(|e| e.to_string())?;
+        let mut table = vendor
             .get("tamagotchi")
-            .ok_or("missing [tamagotchi] configuration; try --sample")?;
-        table
-            .get("game")
-            .ok_or("missing [tamagotchi.game]; try --sample or update the MiOS configuration")?;
-        let config: Self = table
-            .clone()
-            .try_into()
-            .map_err(|e| format!("[tamagotchi]: {e}"))?;
+            .cloned()
+            .ok_or("embedded vendor SSOT lacks [tamagotchi]")?;
+        if let Some(layered) = value.get("tamagotchi") {
+            mios_resolver::merge::deep_merge(&mut table, layered.clone());
+        }
+        let config: Self = table.try_into().map_err(|e| format!("[tamagotchi]: {e}"))?;
         config.validate()?;
         Ok(config)
     }
 
     pub fn sample() -> Result<Self, String> {
-        Self::from_value(
-            &include_str!("../../../../usr/share/mios/mios.toml")
-                .parse::<toml::Value>()
-                .map_err(|e| e.to_string())?,
-        )
+        Self::from_value(&toml::Value::Table(toml::Table::new()))
     }
 
     pub fn validate(&self) -> Result<(), String> {

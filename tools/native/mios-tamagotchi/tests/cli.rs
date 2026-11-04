@@ -196,3 +196,109 @@ fn voxel_and_pixel_headless_dialogues_are_ascii_read_only_without_display() {
         assert!(text.contains(" says: "));
     }
 }
+
+fn normal_command(root: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"));
+    command
+        .env_clear()
+        .env("HOME", root.join("private-home"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("MIOS_VENDOR_TOML", root.join("usr/share/mios/mios.toml"))
+        .env("MIOS_VENDOR_TOML_D", root.join("vendor.d"))
+        .env("MIOS_HOST_TOML", root.join("etc/mios/mios.toml"))
+        .env("MIOS_HOST_TOML_D", root.join("host.d"))
+        .env("MIOS_USER_TOML", root.join("user.toml"))
+        .env("MIOS_USER_TOML_D", root.join("user.d"));
+    command
+}
+
+#[test]
+fn normal_default_empty_user_and_old_vendor_invocations_are_read_only() {
+    let root = root();
+    let vendor = root.path().join("usr/share/mios/mios.toml");
+    // An older OS may have no game section at all, or only the original settings.
+    for old_vendor in [
+        "[identity]\nusername='fixture'\n",
+        "[tamagotchi]\nrenderer='ascii'\ntick_ms=250\n[tamagotchi.game]\nstarting_coins=17\n",
+    ] {
+        fs::write(&vendor, old_vendor).unwrap();
+        for user in ["", "\n# no overrides\n", "[tamagotchi]\ndialog_mode=''\n"] {
+            fs::write(root.path().join("user.toml"), user).unwrap();
+            for args in [
+                vec![],
+                vec!["--snapshot"],
+                vec![
+                    "--root",
+                    root.path().to_str().unwrap(),
+                    "--ephemeral",
+                    "--snapshot",
+                ],
+            ] {
+                let result = normal_command(root.path()).args(&args).output().unwrap();
+                assert!(
+                    result.status.success(),
+                    "{args:?}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let text = String::from_utf8_lossy(&result.stdout);
+                assert!(text.contains("Snapshot only") && text.contains(" thinks: "));
+                assert!(result.stdout.is_ascii() && !result.stdout.contains(&27));
+                assert!(result.stderr.is_empty());
+                assert!(!root.path().join("state").exists());
+                assert!(!root.path().join("private-home").exists());
+                assert_eq!(fs::read_to_string(&vendor).unwrap(), old_vendor);
+                assert_eq!(
+                    fs::read_to_string(root.path().join("user.toml")).unwrap(),
+                    user
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn backward_profile_layers_preserve_operator_choices_and_reject_corruption() {
+    let root = root();
+    fs::write(
+        root.path().join("usr/share/mios/mios.toml"),
+        "[tamagotchi]\nrenderer='ascii'\n[tamagotchi.game]\nstarting_coins=17\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.path().join("etc/mios")).unwrap();
+    fs::write(
+        root.path().join("etc/mios/mios.toml"),
+        "[tamagotchi]\ndialog_mode='inline'\n[tamagotchi.game]\nstarting_coins=23\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("user.toml"),
+        "[tamagotchi]\ntick_ms=''\n[tamagotchi.game]\nstarting_coins=42\n",
+    )
+    .unwrap();
+    let output = normal_command(root.path())
+        .arg("--snapshot")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("coins 42"));
+    for corrupt in [
+        "[tamagotchi",
+        "[tamagotchi]\ndialog_mode='unknown'",
+        "[tamagotchi]\ntick_ms=0",
+        "[tamagotchi]\nunknown_setting=true",
+        "[tamagotchi]\ncharacters=[]",
+    ] {
+        fs::write(root.path().join("user.toml"), corrupt).unwrap();
+        let failed = normal_command(root.path())
+            .arg("--snapshot")
+            .output()
+            .unwrap();
+        assert!(!failed.status.success(), "{corrupt}");
+        assert!(failed.stdout.is_empty() && !failed.stderr.contains(&27));
+        assert_eq!(
+            fs::read_to_string(root.path().join("user.toml")).unwrap(),
+            corrupt
+        );
+        assert!(!root.path().join("state").exists());
+    }
+}

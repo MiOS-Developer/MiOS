@@ -76,7 +76,12 @@ not distributed nodes. `--demo` runs a deterministic hatch/care/memory round,
 prints the result and never reads or writes saves.
 
 Normal installed use omits `--sample` and resolves MiOS vendor/host/user TOML
-layers. `--root PATH` selects a source/vendor root for development. `--ephemeral`
+layers over the compiled vendor `[tamagotchi]` defaults. Missing or empty user
+profiles and older installed profiles inherit newly added settings; explicit
+valid choices still win, and malformed or invalid values remain errors. The
+Apps and TUIs catalogue exposes the canonical `/usr/bin/mios-tamagotchi` as
+**MiOS-Mons** on graphical terminals and Linux consoles.
+`--root PATH` selects a source/vendor root for development. `--ephemeral`
 uses layered configuration but never writes state. Snapshots and redirected
 input/output are read-only in every mode, including when `--save` is supplied.
 A corrupt save produces an error; it is never silently replaced with a new pet.
