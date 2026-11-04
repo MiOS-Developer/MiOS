@@ -26380,11 +26380,11 @@
     },
     {
       "path": "usr/libexec/mios/mios-desktop-launch",
-      "hint": "Dedicated desktop application launcher. Decouples GUI apps from caller stdio pipes, strips MIOS_* environment variables to prevent bubblewrap argument overflow, detaches session, and encapsulates execution in a transient systemd user scope while propagating dispatch status.",
+      "hint": "Native desktop dispatch adapter. Return the requested app's executable-start receipt; never wait for a GUI lifetime or repeat an unknown dispatch.",
       "related": [
-        "usr/share/mios/quickshell/AppLaunch.qml",
-        "usr/share/mios/mios.toml [desktop.launch]",
-        "usr/libexec/mios/mios-flatpak-run"
+        "tools/native/mios-gen/src/app_preflight.rs",
+        "usr/libexec/mios/mios-launch",
+        "usr/share/mios/mios.toml [desktop.launch]"
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch31-desktop-applications-and-flatpaks.md",
