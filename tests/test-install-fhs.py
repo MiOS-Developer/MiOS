@@ -534,24 +534,34 @@ def test_bootstrap_launchers_reach_the_installer():
             else:
                 (tree / name).write_bytes(source.read_bytes())
         (tree / "installation/mios-install.sh").write_text(
-            '#!/usr/bin/env bash\necho "INSTALLER-REACHED target=$1"\nexit 37\n')
+            '#!/usr/bin/env bash\nprintf \'INSTALLER-REACHED target=%s\\n\' "$1"\nshift\nprintf \'ARG:%s\\n\' "$@"\nexit 37\n')
         for args in (["add", "-A"], ["-c", "user.name=MiOS", "-c", "user.email=mios@example.invalid",
                                      "commit", "-q", "-m", "fixture", "--allow-empty"]):
             subprocess.run(["git", "-C", str(tree), *args], check=True)
         shims.mkdir()
         elsewhere.mkdir()
+        # Piped invocations must never adopt executable fragments from cwd.
+        (elsewhere / "field").mkdir()
+        for shadow in (elsewhere / "install.sh", elsewhere / "field/MiOS-Field.sh"):
+            shadow.write_text('#!/usr/bin/bash\necho SHADOW-EXECUTED\nexit 88\n')
+        (shims / "git").write_text(
+            '#!/usr/bin/bash\ncase "$*" in *https://*|*ssh://*) exit 23;; esac\nexec /usr/bin/git "$@"\n')
         (shims / "bash").write_text(
             "#!/usr/bin/bash\nd=$(( ${MIOS_TEST_DEPTH:-0} + 1 )); export MIOS_TEST_DEPTH=$d\n"
             '[ "$d" -le 8 ] || { echo "RECURSION depth $d" >&2; exit 99; }\n'
             'exec /usr/bin/bash "$@"\n')
-        (shims / "curl").write_text("#!/usr/bin/bash\nexit 22\n")
+        (shims / "curl").write_text(
+            '#!/usr/bin/bash\nif [[ -n "${MIOS_TEST_CURL_INSTALL_FILE:-}" && "$*" == *raw.githubusercontent.com/mios-dev/mios-bootstrap/main/install.sh* ]]; then\n'
+            'cat "$MIOS_TEST_CURL_INSTALL_FILE"\nelse exit 22; fi\n')
         (shims / "bootc").write_text("#!/usr/bin/bash\nexit 1\n")
         for shim in shims.iterdir():
             shim.chmod(0o755)
         env = dict(os.environ, PATH=f"{shims}:{os.environ['PATH']}", MIOS_NO_COLOR="1")
         env.pop("INSTALL_MODE", None)
         for launcher in ("bootstrap.sh", "install.sh"):
-            for mode, repo in (("checkout", None), ("piped", str(tree)), ("piped-unreachable", str(tmp / "missing"))):
+            for mode, repo in (("checkout", None), ("piped", str(tree)),
+                               ("piped-unreachable", str(tmp / "missing")),
+                               ("piped-fetch-failed", "https://example.invalid/mios-bootstrap.git")):
                 run_env = dict(env, MIOS_BOOTSTRAP_REPO=repo) if repo else env
                 if mode == "checkout":
                     result = subprocess.run(["bash", str(tree / launcher)], cwd=elsewhere,
@@ -560,13 +570,68 @@ def test_bootstrap_launchers_reach_the_installer():
                     result = subprocess.run(["bash"], input=(tree / launcher).read_text(), cwd=elsewhere,
                                             env=run_env, capture_output=True, text=True, timeout=60)
                 label = (launcher, mode, result.returncode, result.stdout[-400:], result.stderr[-400:])
-                if mode == "piped-unreachable":
+                assert "SHADOW-EXECUTED" not in result.stdout, label
+                if mode in ("piped-unreachable", "piped-fetch-failed"):
                     assert result.returncode not in (0, 37, 99), label
                     assert "INSTALLER-REACHED" not in result.stdout, label
                 else:
                     assert result.returncode == 37, label
                     assert "INSTALLER-REACHED target=fedora" in result.stdout, label
-    print("PASS bootstrap launchers reach the installer (checkout and piped); failed fetch fails")
+        # Exercise full-checkout acquisition/reuse offline with real Git. The
+        # bootstrap alias receives its official install resolver through curl's
+        # fixture transport; the selected repository remains the explicit URI.
+        for launcher in ("bootstrap.sh", "install.sh"):
+            clone = tmp / ("clone-" + launcher)
+            clone_env = dict(env, MIOS_BOOTSTRAP_REPO=tree.as_uri(),
+                             MIOS_BOOTSTRAP_ROOT=str(clone),
+                             MIOS_TEST_CURL_INSTALL_FILE=str(tree / "install.sh"))
+            for attempt in range(2):
+                result = subprocess.run(["bash"], input=(tree / launcher).read_text(),
+                                        cwd=elsewhere, env=clone_env, capture_output=True,
+                                        text=True, timeout=60)
+                assert result.returncode == 37, (launcher, attempt, result)
+                assert "INSTALLER-REACHED target=fedora" in result.stdout, result
+            subprocess.run(["git", "-C", str(clone), "config", "remote.origin.url",
+                            "https://example.invalid/unrelated.git"], check=True)
+            result = subprocess.run(["bash"], input=(tree / launcher).read_text(),
+                                    cwd=elsewhere, env=clone_env, capture_output=True,
+                                    text=True, timeout=60)
+            assert result.returncode not in (0, 37, 99), result
+            assert "INSTALLER-REACHED" not in result.stdout, result
+        for launcher in ("bootstrap.sh", "install.sh"):
+            result = subprocess.run(["bash", str(tree / launcher), "--fixture", "two words"],
+                                    cwd=elsewhere, env=dict(env, INSTALL_MODE="bootc"),
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode == 37, result
+            assert "INSTALLER-REACHED target=bootc" in result.stdout, result
+            assert "ARG:--fixture\nARG:two words\n" in result.stdout, result
+        # Standalone launcher files cannot borrow a sibling's backend.
+        orphan = tmp / "orphan"
+        orphan.mkdir()
+        for launcher in ("bootstrap.sh", "install.sh"):
+            entry = orphan / launcher
+            entry.write_bytes((tree / launcher).read_bytes())
+            result = subprocess.run(["bash", str(entry)], cwd=elsewhere, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode not in (0, 37, 99), result
+            assert "SHADOW-EXECUTED" not in result.stdout, result
+        installer = tree / "installation/mios-install.sh"
+        installer.unlink()
+        outside = tmp / "outside-installer"
+        outside.write_text('#!/usr/bin/bash\necho SHADOW-EXECUTED\nexit 88\n')
+        installer.symlink_to(outside)
+        for entry in (tree / "bootstrap.sh", tree / "install.sh", tree / "field/MiOS-Field.sh"):
+            args = ["install"] if entry.name == "MiOS-Field.sh" else []
+            result = subprocess.run(["bash", str(entry), *args], cwd=elsewhere, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode not in (0, 37, 88, 99), result
+            assert "SHADOW-EXECUTED" not in result.stdout, result
+        installer.unlink()
+        for launcher in ("bootstrap.sh", "install.sh"):
+            result = subprocess.run(["bash", str(tree / launcher)], cwd=elsewhere, env=env,
+                                    capture_output=True, text=True, timeout=60)
+            assert result.returncode not in (0, 37, 99), result
+    print("PASS bootstrap checkout/piped entries reach the installer; fetch/missing/escape/sibling/cwd-shadow controls fail closed")
 
 
 def test_legacy_bootstrap_failures():
