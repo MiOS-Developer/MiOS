@@ -132,6 +132,7 @@ struct Settings {
 struct Flight {
     events: Receiver<DialogEvent>,
     stop: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 pub struct NativeDialogs {
     settings: Settings,
@@ -143,7 +144,7 @@ impl NativeDialogs {
             settings: Settings {
                 mode: config.dialog_mode,
                 timeout: Duration::from_millis(config.dialog_timeout_ms.clamp(1, 86_400_000)),
-                query_ms: config.dialog_query_timeout_ms.clamp(1, 10_000),
+                query_ms: config.dialog_query_timeout_ms.clamp(1, 2000),
                 max_bytes: config.dialog_max_bytes.clamp(1, HARD_MAX_BYTES),
                 min_width: config.popup_min_width.max(20),
                 min_height: config.popup_min_height.max(8),
@@ -160,7 +161,7 @@ impl NativeDialogs {
         let stop = Arc::new(AtomicBool::new(false));
         let cancel = stop.clone();
         let settings = self.settings.clone();
-        if std::thread::Builder::new()
+        let Ok(worker) = std::thread::Builder::new()
             .name("mios-native-dialog".into())
             .spawn(move || {
                 let result = run_dialog(&settings, request, context_menu, &cancel, &sender);
@@ -168,11 +169,14 @@ impl NativeDialogs {
                     let _ = sender.send(result.unwrap_or(DialogEvent::Inline));
                 }
             })
-            .is_err()
-        {
+        else {
             return false;
-        }
-        self.flight = Some(Flight { events, stop });
+        };
+        self.flight = Some(Flight {
+            events,
+            stop,
+            worker: Some(worker),
+        });
         true
     }
     pub fn poll(&mut self) -> Option<DialogEvent> {
@@ -193,8 +197,22 @@ impl NativeDialogs {
 }
 impl Drop for NativeDialogs {
     fn drop(&mut self) {
-        if let Some(flight) = &self.flight {
+        if let Some(mut flight) = self.flight.take() {
             flight.stop.store(true, Ordering::Relaxed);
+            // Exit alone waits for cleanup: the target query has a three-query
+            // deadline plus one bounded kill utility; our child kill adds 100ms.
+            // Poll and request never join or wait. The worker removes its private
+            // files before finishing, causing a server-spawned helper to close.
+            if let Some(worker) = flight.worker.take() {
+                let deadline =
+                    Instant::now() + Duration::from_millis(self.settings.query_ms * 4 + 250);
+                while !worker.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                if worker.is_finished() {
+                    let _ = worker.join();
+                }
+            }
         }
     }
 }
@@ -332,12 +350,17 @@ fn tmux_quote(value: &str) -> String {
 }
 fn callback(exe: &Path, reply: &Path, choice: Choice) -> Result<String, String> {
     let exe = exe.to_str().ok_or("Non UTF-8 helper path")?;
+    let runtime = reply
+        .parent()
+        .and_then(Path::to_str)
+        .ok_or("Non UTF-8 runtime directory")?;
     let reply = reply.to_str().ok_or("Non UTF-8 reply path")?;
     if exe.chars().chain(reply.chars()).any(char::is_control) {
         return Err("Control in callback path".into());
     }
     let shell = format!(
-        "({} --dialog-reply {} --dialog-choice {}) >/dev/null 2>&1; :",
+        "(XDG_RUNTIME_DIR={} {} --dialog-reply {} --dialog-choice {}) >/dev/null 2>&1; :",
+        shell_quote(runtime),
         shell_quote(exe),
         shell_quote(reply),
         shell_quote(choice.argument())
@@ -420,18 +443,27 @@ fn command_args(
                 .to_string()
                 .into(),
             "-h".into(),
-            target
-                .height
-                .saturating_sub(2)
-                .clamp(8, 30)
-                .to_string()
-                .into(),
+            popup_height(target, request).to_string().into(),
             exe.as_os_str().into(),
             "--dialog".into(),
             payload.as_os_str().into(),
         ]);
     }
     Ok(args)
+}
+
+fn popup_height(target: &crate::input::DialogTarget, request: &DialogRequest) -> u16 {
+    let width = usize::from(
+        target
+            .width
+            .saturating_sub(4)
+            .clamp(20, 90)
+            .saturating_sub(2),
+    )
+    .max(1);
+    let text_rows = request.text.len().div_ceil(width).clamp(1, 8) as u16;
+    (request.choices.len() as u16 + text_rows + 5)
+        .clamp(8, target.height.saturating_sub(2).clamp(8, 30))
 }
 
 struct OwnedChild(Child);
@@ -793,6 +825,26 @@ pub fn popup_helper(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn popup_height_fits_short_dialogues_and_stays_within_client() {
+        let target = crate::input::DialogTarget {
+            socket: "/tmp/mios-test.sock".into(),
+            pane: "%0".into(),
+            client: "/dev/pts/1".into(),
+            width: 100,
+            height: 40,
+        };
+        let short = request();
+        assert!((8..=12).contains(&popup_height(&target, &short)));
+        let mut long = short.clone();
+        long.text = "thought ".repeat(200);
+        assert!(popup_height(&target, &long) <= 30);
+        let tiny = crate::input::DialogTarget {
+            height: 18,
+            ..target
+        };
+        assert!(popup_height(&tiny, &long) <= 16);
+    }
     fn request() -> DialogRequest {
         DialogRequest {
             title: "MiOS-Mon".into(),
@@ -1031,6 +1083,33 @@ mod tests {
         assert!(run_dialog(&settings, request(), true, &stop, &tx).is_err());
     }
     #[test]
+    fn drop_waits_for_worker_to_remove_owned_files() {
+        let runtime = tempfile::tempdir().unwrap();
+        let file = temporary(runtime.path()).unwrap();
+        let path = file.path().to_owned();
+        let stop = Arc::new(AtomicBool::new(false));
+        let cancel = stop.clone();
+        let (_tx, events) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            while !cancel.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            drop(file);
+        });
+        let config = crate::config::Config::sample().unwrap();
+        let mut dialogs = NativeDialogs::new(&config);
+        dialogs.flight = Some(Flight {
+            events,
+            stop: stop.clone(),
+            worker: Some(worker),
+        });
+        let started = Instant::now();
+        drop(dialogs);
+        assert!(stop.load(Ordering::Relaxed));
+        assert!(!path.exists());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+    #[test]
     fn inline_and_poll_are_nonblocking_and_no_duplicate_requests() {
         let mut config = crate::config::Config::sample().unwrap();
         config.dialog_mode = DialogMode::Inline;
@@ -1041,6 +1120,7 @@ mod tests {
         dialogs.flight = Some(Flight {
             events: rx,
             stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
         assert_eq!(dialogs.poll(), None);
         assert!(!dialogs.request(request(), false));

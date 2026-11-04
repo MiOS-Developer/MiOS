@@ -826,7 +826,7 @@ impl Ui {
                     || area.height < config.hud_minimal_height))
         {
             self.draw_minimal(screen, config, renderer, colors, frame, inner);
-            if let Some(menu) = self.menu {
+            if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
                 self.draw_menu(screen, menu, config, colors, renderer);
             }
             self.draw_reset(screen, colors, ascii);
@@ -1022,7 +1022,7 @@ impl Ui {
             self.bubble(screen, room, &text, colors, ascii);
         }
         self.draw_dialogue(screen, config, colors, renderer, dialogue, false);
-        if let Some(menu) = self.menu {
+        if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
             self.draw_menu(screen, menu, config, colors, renderer);
         }
         self.draw_reset(screen, colors, ascii);
@@ -2413,5 +2413,39 @@ mod graphics_tests {
             .map(|c| c.symbol())
             .collect();
         assert!(text.contains("R R R"), "{text}");
+    }
+    #[test]
+    fn native_dialogue_hides_duplicate_inline_menu_without_hiding_the_pet_view() {
+        let (config, mut ui) = pet();
+        ui.hud_mode = HudMode::Full;
+        ui.open(Menu::Home);
+        ui.native_modal = true;
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 36)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!text.contains("MAIN MENU"));
+        assert!(text.contains("ROOM"));
+        assert!(text.contains("thinks"));
+        ui.native_modal = false;
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("MAIN MENU"));
     }
 }

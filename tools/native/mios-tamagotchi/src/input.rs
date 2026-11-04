@@ -776,6 +776,18 @@ pub struct DialogTarget {
     pub width: u16,
     pub height: u16,
 }
+fn unique_dialog_client<'a>(text: &'a str, session: &str) -> Option<Vec<&'a str>> {
+    let mut clients = text.lines().filter_map(|line| {
+        let fields: Vec<_> = line.split('|').collect();
+        (fields.len() == 6 && fields[5] == session).then_some(fields)
+    });
+    let first = clients.next()?;
+    if clients.next().is_some() {
+        None
+    } else {
+        Some(first)
+    }
+}
 pub fn attached_dialog_target(
     timeout_ms: u64,
     max_bytes: usize,
@@ -792,6 +804,26 @@ pub fn attached_dialog_target(
         max_bytes,
         stop: &stop,
     };
+    let session = query.command(
+        "tmux",
+        &[
+            "-S",
+            socket.to_str()?,
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{session_id}",
+        ],
+        None,
+    )?;
+    let session = std::str::from_utf8(&session).ok()?.trim();
+    if session.len() < 2
+        || !session.starts_with('$')
+        || !session[1..].bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
     let bytes = query.command(
         "tmux",
         &[
@@ -799,47 +831,38 @@ pub fn attached_dialog_target(
             socket.to_str()?,
             "list-clients",
             "-F",
-            "#{client_pid}|#{client_tty}|#{pane_id}|#{client_width}|#{client_height}",
+            "#{client_pid}|#{client_tty}|#{pane_id}|#{client_width}|#{client_height}|#{session_id}",
         ],
         None,
     )?;
     let text = std::str::from_utf8(&bytes).ok()?;
-    let mut eligible = Vec::new();
-    for line in text.lines() {
-        let fields: Vec<_> = line.split('|').collect();
-        if fields.len() != 5 || fields[2] != pane {
-            continue;
-        }
-        let pid: u32 = fields[0].parse().ok()?;
-        let width: u16 = fields[3].parse().ok()?;
-        let height: u16 = fields[4].parse().ok()?;
-        if pid == 0
-            || width < min_width
-            || height < min_height
-            || !fields[1].starts_with("/dev/")
-            || !fields[1].bytes().all(|b| b.is_ascii_graphic())
-        {
-            continue;
-        }
-        eligible.push((pid, fields[1].to_owned(), width, height));
-    }
-    // Multiple attached clients share one game but not popup focus; inline
-    // dialogue keeps remote/mobile viewers in sync without choosing for them.
-    if eligible.len() != 1 {
+    let fields = unique_dialog_client(text, session)?;
+    if fields[2] != pane
+        || !fields[1].starts_with("/dev/")
+        || !fields[1].bytes().all(|b| b.is_ascii_graphic())
+    {
         return None;
     }
-    let (pid, client, width, height) = eligible.pop()?;
+    let pid: u32 = fields[0].parse().ok()?;
+    let width: u16 = fields[3].parse().ok()?;
+    let height: u16 = fields[4].parse().ok()?;
+    if pid == 0 || width < min_width || height < min_height {
+        return None;
+    }
     if id.instance.is_some() {
         let context = query.json("mios-inputd", &["context"], None)?;
         let focused: u32 = context["pid"].as_u64()?.try_into().ok()?;
         if !descendant(pid, focused) {
             return None;
         }
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some()
+    {
+        return None;
     }
     Some(DialogTarget {
         socket: socket.clone(),
         pane: pane.clone(),
-        client,
+        client: fields[1].into(),
         width,
         height,
     })
@@ -848,6 +871,15 @@ pub fn attached_dialog_target(
 #[cfg(test)]
 mod controller_tests {
     use super::*;
+    #[test]
+    fn dialogue_popup_counts_every_attached_session_client_including_tiny_foreign_panes() {
+        let one = "10|/dev/pts/1|%0|80|24|$0";
+        assert!(unique_dialog_client(one, "$0").is_some());
+        assert!(unique_dialog_client(&format!("{one}\n11|/dev/pts/2|%4|10|5|$0"), "$0").is_none());
+        assert!(unique_dialog_client(&format!("{one}\n11|/dev/pts/2|%0|10|5|$0"), "$0").is_none());
+        assert!(unique_dialog_client(&format!("{one}\n11|/dev/pts/2|%4|80|24|$1"), "$0").is_some());
+        assert!(unique_dialog_client(one, "$2").is_none());
+    }
     use serde_json::json;
 
     fn context() -> Json {
