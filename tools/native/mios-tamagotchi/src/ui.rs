@@ -1124,7 +1124,8 @@ impl Ui {
         if inner.width < 10 || inner.height < 4 {
             screen.render_widget(
                 Paragraph::new(format!(
-                    "Mio / {:?}\n{}\n{}",
+                    "{} / {:?}\n{}\n{}",
+                    self.name(),
                     self.game.stage(&config.game),
                     if self.game.paused { "PAUSED" } else { "LIVE" },
                     self.controller
