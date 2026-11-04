@@ -133,6 +133,7 @@ pub fn check(root: &Path) -> Report {
 
     let mut listed: BTreeSet<String> = BTreeSet::new();
     let mut findings: Vec<String> = Vec::new();
+    let mut native = BTreeSet::new();
     for e in entries {
         let Some(script) = e.get("script").and_then(|v| v.as_str()) else {
             findings.push("a [build.phases].list entry has no `script` key".to_string());
@@ -147,7 +148,19 @@ pub fn check(root: &Path) -> Report {
                 ));
             }
         }
-        listed.insert(script.to_string());
+        if !is_phase_name(script) {
+            findings.push(format!("{script}: invalid phase identity"));
+        }
+        if !listed.insert(script.to_string()) {
+            findings.push(format!("{script}: duplicate phase identity"));
+        }
+        match mios_resolver::phases::native_handler(e) {
+            Ok(Some(_)) => {
+                native.insert(script.to_string());
+            }
+            Ok(None) => {}
+            Err(error) => findings.push(format!("{script}: invalid native phase handler: {error}")),
+        }
     }
 
     let Some(on_disk) = phase_scripts(&dir) else {
@@ -159,9 +172,18 @@ pub fn check(root: &Path) -> Report {
 
     // A listed script that does not exist is dropped by build.sh with no else
     // branch: the pipeline runs one stage short and exits 0. Never excusable.
-    for script in listed.difference(&on_disk) {
+    for script in listed
+        .difference(&on_disk)
+        .filter(|name| !native.contains(*name))
+    {
         findings.push(format!(
             "{script}: registered in [build.phases].list but absent from automation/"
+        ));
+    }
+
+    for script in native.intersection(&on_disk) {
+        findings.push(format!(
+            "{script}: native phase has a competing shell implementation"
         ));
     }
 

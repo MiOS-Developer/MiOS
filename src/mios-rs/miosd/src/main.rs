@@ -723,6 +723,13 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["sections", "list", "plan"])]
         post_list: bool,
     },
+    /// Execute one SSOT phase identity through its typed native or shell handler.
+    BuildPhase {
+        #[arg(long)]
+        phase: String,
+        #[arg(long)]
+        root: Option<std::path::PathBuf>,
+    },
     /// Resolve configuration parameters
     Resolve {
         /// Output in shell export format
@@ -2012,6 +2019,16 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::BuildPhase { phase, root } => {
+            let root = root
+                .clone()
+                .or_else(|| std::env::var_os("MIOS_ROOT").map(Into::into))
+                .unwrap_or_else(|| ".".into());
+            if let Err((error, code)) = run_registered_phase(&root, phase) {
+                eprintln!("[miosd] Build phase {phase}: {error}");
+                std::process::exit(code);
+            }
+        }
         Commands::BuildProgress {
             root,
             state,
@@ -2818,6 +2835,69 @@ fn mtime_epoch(path: &str) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+fn run_registered_phase(root: &std::path::Path, identity: &str) -> Result<(), (String, i32)> {
+    let registry =
+        mios_build::PhaseRegistry::load_from_toml(&root.join("usr/share/mios/mios.toml"))
+            .map_err(|error| (error.to_string(), 1))?;
+    let phase = registry.phase(identity).map_err(|error| (error, 1))?;
+    let name = std::path::Path::new(&phase.script);
+    if name.components().count() != 1 || !phase.script.ends_with(".sh") {
+        return Err((
+            "phase identity must be a local .sh registry label".into(),
+            1,
+        ));
+    }
+    let script = root.join("automation").join(name);
+    if let Some(handler) = phase.native {
+        if script.exists() {
+            return Err((
+                "native phase also has a competing shell implementation".into(),
+                1,
+            ));
+        }
+        let toml = std::env::var_os("MIOS_TOML")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| root.join("usr/share/mios/mios.toml"));
+        let toml = toml.to_string_lossy();
+        match handler {
+            mios_resolver::phases::NativeHandler::Chrony => {
+                let output = std::env::var("CHRONY_CONF")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "/etc/chrony.conf".into());
+                run_render_chrony(&toml, &output).map_err(|error| (error.to_string(), 1))
+            }
+            mios_resolver::phases::NativeHandler::Nut => {
+                let output = std::env::var("UPS_CONF_DIR")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "/etc/ups".into());
+                run_render_nut(&toml, &output).map_err(|error| (error.to_string(), 1))
+            }
+        }
+    } else {
+        if !script.is_file() {
+            return Err((
+                format!("selected shell phase is missing: {}", script.display()),
+                125,
+            ));
+        }
+        let status = std::process::Command::new("bash")
+            .arg(&script)
+            .status()
+            .map_err(|error| (error.to_string(), 1))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err((
+                format!("shell handler failed: {status}"),
+                status.code().unwrap_or(1),
+            ))
+        }
+    }
+}
+
 fn run_build_if_missing(spec: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (img, ctx, cf) = match spec {
         "agents" => (
@@ -3393,12 +3473,12 @@ fn run_render_nut(toml_path: &str, conf_dir: &str) -> Result<(), Box<dyn std::er
         "standalone"
     };
     let nut_conf = format!(
-        "# AI-hint: NUT framework mode. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run automation/43-nut-render.sh\nMODE={}\n",
+        "# AI-hint: NUT framework mode. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run miosd build-phase --phase 43-nut-render.sh\nMODE={}\n",
         mode
     );
     std::fs::write(dir.join("nut.conf"), nut_conf)?;
 
-    let mut ups_conf = String::from("# AI-hint: NUT drivers configuration. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run automation/43-nut-render.sh\n");
+    let mut ups_conf = String::from("# AI-hint: NUT drivers configuration. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run miosd build-phase --phase 43-nut-render.sh\n");
     if !name.is_empty() {
         ups_conf.push_str(&format!(
             "\n[{}]\n    driver = {}\n    port = {}\n    desc = \"{}\"\n",
@@ -3407,13 +3487,13 @@ fn run_render_nut(toml_path: &str, conf_dir: &str) -> Result<(), Box<dyn std::er
     }
     std::fs::write(dir.join("ups.conf"), ups_conf)?;
 
-    let mut upsd_conf = String::from("# AI-hint: NUT daemon settings. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run automation/43-nut-render.sh\n");
+    let mut upsd_conf = String::from("# AI-hint: NUT daemon settings. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run miosd build-phase --phase 43-nut-render.sh\n");
     if !name.is_empty() {
         upsd_conf.push_str("\nLISTEN 127.0.0.1 3493\n");
     }
     std::fs::write(dir.join("upsd.conf"), upsd_conf)?;
 
-    let mut upsmon_conf = String::from("# AI-hint: NUT monitor settings. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run automation/43-nut-render.sh\n");
+    let mut upsmon_conf = String::from("# AI-hint: NUT monitor settings. Generated from mios.toml [power.ups] SSOT.\n# DO NOT EDIT -- edit mios.toml [power.ups] and run miosd build-phase --phase 43-nut-render.sh\n");
     if !name.is_empty() {
         upsmon_conf.push_str(&format!("\nMONITOR {}@localhost 1 upsmon mios-ups-secret master\nSHUTDOWNCMD \"/sbin/shutdown -h +0\"\n", name));
     }
@@ -3452,7 +3532,7 @@ fn run_render_chrony(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std:
         "# AI-hint: NTP configuration for Chrony. Generated from mios.toml [network.ntp] SSOT.\n",
     );
     body.push_str(
-        "# DO NOT EDIT -- edit mios.toml [network.ntp] and run automation/42-chrony-render.sh\n\n",
+        "# DO NOT EDIT -- edit mios.toml [network.ntp] and run miosd build-phase --phase 42-chrony-render.sh\n\n",
     );
 
     for s in &servers {

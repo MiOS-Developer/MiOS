@@ -389,6 +389,7 @@ _run_stage() {
         fi
     fi
     "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event result --name "$name" --status "$status"
+    [[ "$status" != fail && "$status" != missing ]]
 }
 
 _stage_child() {
@@ -399,8 +400,7 @@ _stage_child() {
 }
 
 _run_script() {
-    [[ -f "$1" ]] || { _finding missing "Selected phase is missing: $(basename "$1")"; return 125; }
-    bash "$1"
+    "$_miosd" build-phase --root "$_mios_root" --phase "$(basename "$1")"
 }
 
 [[ -n "$_miosd" ]] || { printf '[MISSING] Native build progress engine miosd is required\n' >&2; exit 1; }

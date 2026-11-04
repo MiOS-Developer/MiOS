@@ -3,6 +3,7 @@
 # AI-doc: usr/share/doc/mios/manual/lib.md
 
 import os
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +99,15 @@ def main():
     lines.append("execution order, with complete source and no truncation. Each section")
     lines.append("header carries the file path; each fenced block carries the verbatim")
     lines.append("file contents. Use `Ctrl-F` against a path to find a script.\n")
+    ssot = tomllib.loads((ROOT / "usr/share/mios/mios.toml").read_text())
+    native = [phase for phase in ssot["build"]["phases"]["list"] if phase.get("native")]
+    if native:
+        lines.append("\nNative phases retain their registry identities and execution order:")
+        for phase in native:
+            lines.append(f"- `{phase['script']}`: typed `{phase['native']}` handler, "
+                         f"`miosd build-phase --phase {phase['script']}`; "
+                         "source: `src/mios-rs/miosd/src/main.rs`.")
+        lines.append("")
     lines.append("---\n")
 
     total_files = 0

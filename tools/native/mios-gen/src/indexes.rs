@@ -776,6 +776,70 @@ pub mod pipeline_index {
             rows.push(format!("{nn_str}\tscript\t{name}\t{rel_path}\t{oneline}"));
         }
 
+        if ssot_path.is_file() {
+            let text = fs::read_to_string(&ssot_path).map_err(|e| (e.to_string(), 1))?;
+            let document: toml::Value = text
+                .parse()
+                .map_err(|e: toml::de::Error| (e.to_string(), 1))?;
+            if let Some(phases) = document
+                .get("build")
+                .and_then(|v| v.get("phases"))
+                .and_then(|v| v.get("list"))
+                .and_then(toml::Value::as_array)
+            {
+                for phase in phases {
+                    let identity = phase
+                        .get("script")
+                        .and_then(toml::Value::as_str)
+                        .ok_or_else(|| ("phase registry entry has no script identity".into(), 1))?;
+                    let handler = mios_resolver::phases::native_handler(phase)
+                        .map_err(|e| (format!("{identity}: {e}"), 1))?;
+                    if handler.is_none() {
+                        if !automation_dir.join(identity).is_file() {
+                            return Err((
+                                format!("registered shell phase {identity} is missing"),
+                                1,
+                            ));
+                        }
+                        continue;
+                    }
+                    if automation_dir.join(identity).exists() {
+                        return Err((
+                            format!("native phase {identity} has a competing shell implementation"),
+                            1,
+                        ));
+                    }
+                    let caps = file_re
+                        .captures(identity)
+                        .ok_or_else(|| (format!("invalid native phase identity {identity}"), 1))?;
+                    let nn_str = caps.get(1).unwrap().as_str();
+                    let name = caps.get(2).unwrap().as_str();
+                    let nn = nn_str.parse::<i64>().unwrap();
+                    if nn < nn_min
+                        || nn > nn_max
+                        || (prefix_unique && !seen_nns.insert(nn_str.to_string()))
+                    {
+                        return Err((
+                            format!("invalid or duplicate native phase prefix {nn_str}"),
+                            1,
+                        ));
+                    }
+                    let implementation = "src/mios-rs/miosd/src/main.rs";
+                    if !root.join(implementation).is_file() {
+                        return Err((
+                            format!("native phase implementation {implementation} is missing"),
+                            1,
+                        ));
+                    }
+                    rows.push(format!(
+                        "{nn_str}\tnative\t{name}\t{implementation}\t{}",
+                        name.replace('-', " ")
+                    ));
+                }
+            }
+        }
+        rows.sort();
+
         let tsv_content = format!("# NN\tkind\tname\tfile\toneline\n{}\n", rows.join("\n"));
 
         if check_mode {

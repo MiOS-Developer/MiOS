@@ -13,13 +13,24 @@ pub fn regen_and_diff_shell(
     out_env: &str,
     target: &str,
 ) -> Verdict {
+    regen_and_diff(ctx, script_relpath, out_env, target, false)
+}
+
+pub fn regen_and_diff_phase(ctx: &DriftCtx, phase: &str, out_env: &str, target: &str) -> Verdict {
+    regen_and_diff(ctx, phase, out_env, target, true)
+}
+
+fn regen_and_diff(
+    ctx: &DriftCtx,
+    script_relpath: &str,
+    out_env: &str,
+    target: &str,
+    registered: bool,
+) -> Verdict {
     let script = ctx.root.join(script_relpath);
-    if !script.exists() {
-        // Loud, not Skip: a registered check whose renderer is absent is a
-        // registry bug, not an environment quirk.
+    if !registered && !script.is_file() {
         return Verdict::Fail(format!(
-            "Renderer not found: {} (registered by a drift check)",
-            script_relpath
+            "Renderer not found: {script_relpath} (registered by a drift check)"
         ));
     }
     let committed = ctx.root.join(target);
@@ -49,8 +60,26 @@ pub fn regen_and_diff_shell(
     };
 
     let toml = ctx.root.join("usr/share/mios/mios.toml");
-    let mut cmd = Command::new("bash");
-    cmd.arg(&script);
+    let mut cmd = if registered {
+        let binary = match std::env::current_exe() {
+            Ok(binary) => binary,
+            Err(error) => {
+                return Verdict::Fail(format!("Cannot resolve native phase dispatcher: {error}"))
+            }
+        };
+        let mut command = Command::new(binary);
+        command
+            .arg("build-phase")
+            .arg("--root")
+            .arg(&ctx.root)
+            .arg("--phase")
+            .arg(script_relpath);
+        command
+    } else {
+        let mut command = Command::new("bash");
+        command.arg(&script);
+        command
+    };
     cmd.env_clear();
     if let Ok(p) = env::var("PATH") {
         cmd.env("PATH", p);

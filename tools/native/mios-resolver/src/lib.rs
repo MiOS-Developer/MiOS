@@ -1105,3 +1105,26 @@ fit_margin_px="theme.shell.edge_margin_px"
         }
     }
 }
+
+// Compiled phase operations are shared by the planner, executor and projectors.
+// Their spelling is an execution contract, not a shell command from configuration.
+pub mod phases {
+    #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum NativeHandler {
+        Chrony,
+        Nut,
+    }
+
+    pub fn native_handler(entry: &toml::Value) -> Result<Option<NativeHandler>, String> {
+        entry
+            .get("native")
+            .map(|value| {
+                value
+                    .clone()
+                    .try_into()
+                    .map_err(|error: toml::de::Error| error.to_string())
+            })
+            .transpose()
+    }
+}

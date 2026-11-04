@@ -1,7 +1,7 @@
 // AI-hint: Heavy regen-and-diff projection checks for miosd drift runner.
 // AI-related: tools/native/mios-gen/src/pod_quadlets.rs, tools/native/mios-gen/src/main.rs, automation/98-drift-checks.sh
 
-use super::regen::regen_and_diff_shell;
+use super::regen::{regen_and_diff_phase, regen_and_diff_shell};
 use super::{Check, DriftCtx, Verdict};
 
 pub struct PodQuadletsCheck;
@@ -100,12 +100,7 @@ impl Check for ChronyProjectionCheck {
         "Assert chrony config projection matches committed file"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
-        regen_and_diff_shell(
-            ctx,
-            "automation/42-chrony-render.sh",
-            "CHRONY_CONF",
-            "etc/chrony.conf",
-        )
+        regen_and_diff_phase(ctx, "42-chrony-render.sh", "CHRONY_CONF", "etc/chrony.conf")
     }
 }
 
@@ -118,12 +113,7 @@ impl Check for NutProjectionCheck {
         "Assert NUT config projection matches committed file"
     }
     fn run(&self, ctx: &DriftCtx) -> Verdict {
-        regen_and_diff_shell(
-            ctx,
-            "automation/43-nut-render.sh",
-            "UPS_CONF_DIR",
-            "etc/ups",
-        )
+        regen_and_diff_phase(ctx, "43-nut-render.sh", "UPS_CONF_DIR", "etc/ups")
     }
 }
 

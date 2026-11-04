@@ -230,10 +230,9 @@ _run_stage missing missing_gate
         let stdout = String::from_utf8(output.stdout)?;
         assert!(!output.status.success(), "{stdout}");
         assert!(!stdout.contains("SWALLOWED_FAILURE"));
-        assert!(stdout.contains("4/4 100%"));
         assert!(
-            stdout.contains("PASS 1 FAIL 1 WARN 1 SKIP 0 MISSING 1 PENDING 0"),
-            "{stdout}"
+            !stdout.contains("4/4 100%"),
+            "a stopped build must not report complete"
         );
         let state: serde_json::Value =
             serde_json::from_slice(&std::fs::read(temp.path().join("state.json"))?)?;
@@ -242,9 +241,11 @@ _run_stage missing missing_gate
                 .as_array()
                 .ok_or("outcomes omitted")?
                 .len(),
-            4
+            2
         );
-        assert_eq!(state["notes"][0][0], "missing");
+        assert_eq!(state["notes"].as_array().unwrap().len(), 0);
+        assert_eq!(state["completed"][0]["status"], "pass");
+        assert_eq!(state["completed"][1]["status"], "fail");
         Ok(())
     }
 }
@@ -649,5 +650,284 @@ mod resolver_inline_twin {
             rust_render(),
             String::from_utf8_lossy(&out.stdout).trim_end()
         );
+    }
+}
+
+mod typed_build_phases {
+    use std::{fs, path::Path, process::Command};
+
+    fn fixture(root: &Path) {
+        fs::create_dir_all(root.join("usr/share/mios")).unwrap();
+        fs::create_dir_all(root.join("automation")).unwrap();
+        fs::write(
+            root.join("usr/share/mios/mios.toml"),
+            include_str!("../../../../usr/share/mios/mios.toml"),
+        )
+        .unwrap();
+    }
+
+    fn cli(root: &Path, phase: &str, toml: &Path, output: &Path) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["build-phase", "--root"])
+            .arg(root)
+            .args(["--phase", phase])
+            .env("MIOS_TOML", toml)
+            .env("CHRONY_CONF", output)
+            .env("UPS_CONF_DIR", output)
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn typed_phases_preserve_the_full_ordered_profile_registry() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        let source: toml::Value = fs::read_to_string(temp.path().join("usr/share/mios/mios.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let phases = source["build"]["phases"]["list"].as_array().unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["build", "--list"])
+            .env("MIOS_ROOT", temp.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected = phases
+            .iter()
+            .map(|p| {
+                format!(
+                    "{}:{}",
+                    p["script"].as_str().unwrap(),
+                    p["fatal"].as_bool().unwrap()
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(phases.len(), 80);
+        assert_eq!(
+            phases.iter().filter(|p| p.get("native").is_some()).count(),
+            2
+        );
+        let registry = mios_build::PhaseRegistry::load_from_toml(
+            &temp.path().join("usr/share/mios/mios.toml"),
+        )
+        .unwrap();
+        let profiles = mios_build::Profiles::from_toml_str(
+            &fs::read_to_string(temp.path().join("usr/share/mios/mios.toml")).unwrap(),
+        )
+        .unwrap();
+        for (profile, expected_native) in [("core", 0), ("full", 2)] {
+            let selected = registry
+                .for_profile(&profiles.resolve(profile).unwrap())
+                .unwrap();
+            assert_eq!(
+                selected.iter().filter(|p| p.native.is_some()).count(),
+                expected_native
+            );
+        }
+    }
+
+    #[test]
+    fn native_dispatch_preserves_existing_renderer_bytes_and_explicit_overrides() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        for (index, text) in ["", "[network.ntp]\nservers=['operator-clock','backup-clock']\n[power.ups]\nname='operator-ups'\ndriver='custom-ups'\nport='usb'\ndesc='Configured UPS'\n"].iter().enumerate() {
+            let toml = temp.path().join(format!("operator-{index}.toml"));
+            fs::write(&toml, text).unwrap();
+            let chrony = temp.path().join(format!("chrony-{index}.conf"));
+            let direct = Command::new(env!("CARGO_BIN_EXE_miosd"))
+                .args(["render-chrony", "--toml"]).arg(&toml).arg("--out").arg(&chrony)
+                .output().unwrap();
+            assert!(direct.status.success());
+            let expected = fs::read(&chrony).unwrap();
+            fs::remove_file(&chrony).unwrap();
+            let phase = cli(temp.path(), "42-chrony-render.sh", &toml, &chrony);
+            assert!(phase.status.success(), "{}", String::from_utf8_lossy(&phase.stderr));
+            assert_eq!(fs::read(&chrony).unwrap(), expected);
+            let nut = temp.path().join(format!("ups-{index}"));
+            let direct = Command::new(env!("CARGO_BIN_EXE_miosd"))
+                .args(["render-nut", "--toml"]).arg(&toml).arg("--out-dir").arg(&nut)
+                .output().unwrap();
+            assert!(direct.status.success());
+            let names = ["nut.conf", "ups.conf", "upsd.conf", "upsmon.conf"];
+            let expected = names.iter().map(|n| fs::read(nut.join(n)).unwrap()).collect::<Vec<_>>();
+            for name in names { fs::remove_file(nut.join(name)).unwrap(); }
+            let phase = cli(temp.path(), "43-nut-render.sh", &toml, &nut);
+            assert!(phase.status.success(), "{}", String::from_utf8_lossy(&phase.stderr));
+            for (name, bytes) in names.iter().zip(expected) { assert_eq!(fs::read(nut.join(name)).unwrap(), bytes); }
+        }
+    }
+
+    #[test]
+    fn unknown_missing_or_competing_native_handlers_fail_without_writes() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        let manifest = temp.path().join("usr/share/mios/mios.toml");
+        let original = fs::read_to_string(&manifest).unwrap();
+        let output = temp.path().join("must-not-exist");
+        for (text, phase) in [
+            (
+                original.replace("native = \"chrony\"", "native = \"unknown\""),
+                "42-chrony-render.sh",
+            ),
+            (
+                original.replace("native = \"chrony\"", "native = 1"),
+                "42-chrony-render.sh",
+            ),
+            (original.clone(), "not-registered.sh"),
+            (original.clone(), "41-services.sh"),
+        ] {
+            fs::write(&manifest, text).unwrap();
+            let result = cli(temp.path(), phase, &manifest, &output);
+            assert!(!result.status.success());
+            assert!(!output.exists());
+            if phase == "41-services.sh" {
+                assert_eq!(result.status.code(), Some(125));
+            }
+        }
+        fs::write(&manifest, &original).unwrap();
+        fs::write(
+            temp.path().join("automation/42-chrony-render.sh"),
+            "exit 0\n",
+        )
+        .unwrap();
+        assert!(!cli(temp.path(), "42-chrony-render.sh", &manifest, &output)
+            .status
+            .success());
+        assert!(!output.exists());
+        fs::remove_file(temp.path().join("automation/42-chrony-render.sh")).unwrap();
+        let missing = temp.path().join("missing.toml");
+        assert!(!cli(temp.path(), "42-chrony-render.sh", &missing, &output)
+            .status
+            .success());
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn registered_shell_handler_propagates_failure_instead_of_skipping() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        let script = temp.path().join("automation/41-services.sh");
+        fs::write(script, "exit 17\n").unwrap();
+        let manifest = temp.path().join("usr/share/mios/mios.toml");
+        let result = cli(
+            temp.path(),
+            "41-services.sh",
+            &manifest,
+            &temp.path().join("output"),
+        );
+        assert_eq!(result.status.code(), Some(17));
+    }
+    fn adapter(root: &Path, calls: &str, plan: &str) -> std::process::Output {
+        let source = include_str!("../../../../automation/build.sh");
+        let start = source.find("_finding() {").unwrap();
+        let end = start + source[start..].find("\n[[ -n \"$_miosd\"").unwrap();
+        let body = &source[start..end];
+        let script = format!(
+            r#"set -euo pipefail
+_miosd=$1
+_mios_root=$2
+PROGRESS_DIR=$2
+PROGRESS_STATE="$2/progress.json"
+SCRIPT_COUNT=0
+FAIL_LOG=()
+WARN_LOG=()
+WARNED_JSON=()
+declare -A PHASE_FATAL=([warn]=false)
+{body}
+warn_gate() {{ return 7; }}
+missing_gate() {{ _finding missing 'missing dependency'; return 125; }}
+printf '%s\n' {plan} | "$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event init
+{calls}
+"$_miosd" build-progress --root "$_mios_root" --state "$PROGRESS_STATE" --event finish
+"#
+        );
+        Command::new("bash")
+            .args([
+                "-c",
+                &script,
+                "mios-native-phases",
+                env!("CARGO_BIN_EXE_miosd"),
+            ])
+            .arg(root)
+            .env("MIOS_TOML", root.join("usr/share/mios/mios.toml"))
+            .env("CHRONY_CONF", root.join("chrony.conf"))
+            .env("UPS_CONF_DIR", root.join("ups"))
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn actual_shell_adapter_executes_and_counts_both_native_phase_identities() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        let output = adapter(
+            temp.path(),
+            r#"
+_run_stage 42-chrony-render.sh _run_script "$2/automation/42-chrony-render.sh"
+_run_stage 43-nut-render.sh _run_script "$2/automation/43-nut-render.sh"
+"#,
+            "42-chrony-render.sh 43-nut-render.sh",
+        );
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("2/2 100%"));
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(temp.path().join("progress.json")).unwrap()).unwrap();
+        assert_eq!(state["completed"][0]["name"], "42-chrony-render.sh");
+        assert_eq!(state["completed"][1]["name"], "43-nut-render.sh");
+        assert!(state["completed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["status"] == "pass"));
+        assert!(temp.path().join("chrony.conf").is_file());
+        for name in ["nut.conf", "ups.conf", "upsd.conf", "upsmon.conf"] {
+            assert!(temp.path().join("ups").join(name).is_file());
+        }
+    }
+
+    #[test]
+    fn actual_shell_adapter_continues_a_warning_but_stops_on_missing_dependencies() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        let output = adapter(
+            temp.path(),
+            r#"
+_run_stage good true
+_run_stage warn warn_gate
+_run_stage missing missing_gate
+_run_stage after true
+"#,
+            "good warn missing after",
+        );
+        assert!(!output.status.success());
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(temp.path().join("progress.json")).unwrap()).unwrap();
+        assert_eq!(state["completed"].as_array().unwrap().len(), 3);
+        assert_eq!(state["completed"][1]["status"], "warn");
+        assert_eq!(state["completed"][2]["status"], "missing");
+        assert_eq!(state["notes"][0][0], "missing");
     }
 }

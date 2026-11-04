@@ -1401,11 +1401,29 @@ check_greenboot_enablement() {
     fi
 }
 
+_run_registered_native_phase() {
+    local identity="$1" candidate
+    for candidate in "${MIOS_MIOSD_BIN:-}" \
+        "$ROOT/src/mios-rs/target/release/miosd" \
+        "$ROOT/src/mios-rs/target/debug/miosd" \
+        /usr/libexec/mios/miosd /usr/bin/miosd; do
+        [[ -n "$candidate" && -x "$candidate" ]] || continue
+        "$candidate" build-phase --root "$ROOT" --phase "$identity"
+        return
+    done
+    echo "native phase dispatcher miosd is required" >&2
+    return 1
+}
+
 check_chrony_projection() {
     local tmp_file
     tmp_file="$(mktemp)"
 
-    MIOS_TOML="$ROOT/usr/share/mios/mios.toml" CHRONY_CONF="$tmp_file" bash "$ROOT/automation/42-chrony-render.sh" >/dev/null 2>&1
+    if ! MIOS_TOML="$ROOT/usr/share/mios/mios.toml" CHRONY_CONF="$tmp_file" _run_registered_native_phase "42-chrony-render.sh"; then
+        rm -f "$tmp_file"
+        _violation "native Chrony phase failed"
+        return
+    fi
 
     if [[ ! -f "$ROOT/etc/chrony.conf" ]]; then
         rm -f "$tmp_file"
@@ -1427,7 +1445,11 @@ check_nut_projection() {
     local tmp_dir
     tmp_dir="$(mktemp -d)"
 
-    MIOS_TOML="$ROOT/usr/share/mios/mios.toml" UPS_CONF_DIR="$tmp_dir" bash "$ROOT/automation/43-nut-render.sh" >/dev/null 2>&1
+    if ! MIOS_TOML="$ROOT/usr/share/mios/mios.toml" UPS_CONF_DIR="$tmp_dir" _run_registered_native_phase "43-nut-render.sh"; then
+        rm -rf "$tmp_dir"
+        _violation "native NUT phase failed"
+        return
+    fi
 
     local diffs=""
     local f base

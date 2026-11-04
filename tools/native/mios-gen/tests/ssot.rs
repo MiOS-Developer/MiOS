@@ -575,6 +575,59 @@ mod pipeline_index {
     }
 
     #[test]
+    fn test_pipeline_index_native_phases_are_visible_and_fail_closed() {
+        let _tree = super::tree_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("automation")).unwrap();
+        fs::create_dir_all(root.join("usr/share/mios")).unwrap();
+        fs::create_dir_all(root.join("src/mios-rs/miosd/src")).unwrap();
+        fs::write(
+            root.join("automation/01-first.sh"),
+            "#!/bin/bash\n# First phase\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/mios-rs/miosd/src/main.rs"),
+            "// native dispatcher\n",
+        )
+        .unwrap();
+        let manifest = root.join("usr/share/mios/mios.toml");
+        let text = "[build.phases]\nlist=[{script='01-first.sh'},{script='42-chrony-render.sh',native='chrony'}]\n";
+        let invoke = || {
+            Command::new(bin())
+                .args(["pipeline-index", "--root"])
+                .arg(root)
+                .output()
+                .unwrap()
+        };
+        fs::write(&manifest, text).unwrap();
+        let result = invoke();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let rendered =
+            fs::read_to_string(root.join("usr/share/mios/reference/pipeline-index.tsv")).unwrap();
+        assert!(rendered.contains("42\tnative\tchrony-render\tsrc/mios-rs/miosd/src/main.rs"));
+        for plant in [
+            text.replace("native='chrony'", "native='unknown'"),
+            text.replace(",native='chrony'", ""),
+            text.replace("42-chrony-render.sh", "../42-chrony-render.sh"),
+        ] {
+            fs::write(&manifest, plant).unwrap();
+            assert!(!invoke().status.success());
+        }
+        fs::write(&manifest, text).unwrap();
+        fs::write(root.join("automation/42-chrony-render.sh"), "exit 0\n").unwrap();
+        assert!(!invoke().status.success());
+        fs::remove_file(root.join("automation/42-chrony-render.sh")).unwrap();
+        fs::remove_file(root.join("src/mios-rs/miosd/src/main.rs")).unwrap();
+        assert!(!invoke().status.success());
+    }
+
+    #[test]
     fn test_duplicate_nn_prefix_fails() {
         let _tree = super::tree_lock();
         let dir = tempfile::tempdir().unwrap();

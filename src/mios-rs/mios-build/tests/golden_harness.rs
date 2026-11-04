@@ -1,5 +1,5 @@
 // AI-hint: Golden capture harness (insta + trycmd) for build phase artifacts (task_1603).
-// AI-related: src/mios-rs/mios-build/src/lib.rs, automation/34-render-quadlets.sh, automation/35-render-ports.sh, automation/42-chrony-render.sh, automation/43-nut-render.sh, automation/75-kargs-render.sh, automation/76-uki-render.sh, automation/85-bake-plan.sh
+// AI-related: src/mios-rs/mios-build/src/lib.rs, automation/34-render-quadlets.sh, automation/35-render-ports.sh, src/mios-rs/miosd/src/main.rs, automation/75-kargs-render.sh, automation/76-uki-render.sh, automation/85-bake-plan.sh
 
 use insta::assert_snapshot;
 use mios_build::PhaseRegistry;
@@ -138,7 +138,7 @@ fn test_golden_chrony_render_42() {
         "servers = config.get('network', {}).get('ntp', {}).get('servers', [])\n",
         "lines = [\n",
         "    '# AI-hint: NTP configuration for Chrony. Generated from mios.toml [network.ntp] SSOT.',\n",
-        "    '# DO NOT EDIT -- edit mios.toml [network.ntp] and run automation/42-chrony-render.sh',\n",
+        "    '# DO NOT EDIT -- edit mios.toml [network.ntp] and run miosd build-phase --phase 42-chrony-render.sh',\n",
         "    ''\n",
         "]\n",
         "for s in servers:\n",
@@ -183,7 +183,7 @@ fn test_golden_chrony_render_42() {
     let normalized = normalize_newlines(&rendered);
     assert_snapshot!(normalized, @r#"
     # AI-hint: NTP configuration for Chrony. Generated from mios.toml [network.ntp] SSOT.
-    # DO NOT EDIT -- edit mios.toml [network.ntp] and run automation/42-chrony-render.sh
+    # DO NOT EDIT -- edit mios.toml [network.ntp] and run miosd build-phase --phase 42-chrony-render.sh
 
     server time.cloudflare.com iburst
     server pool.ntp.org iburst

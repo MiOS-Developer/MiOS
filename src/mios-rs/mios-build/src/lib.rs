@@ -1478,6 +1478,8 @@ pub struct Phase {
     pub script: String,
     pub fatal: bool,
     pub apply_class: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<mios_resolver::phases::NativeHandler>,
 }
 
 impl fmt::Display for Phase {
@@ -1604,6 +1606,13 @@ impl PhaseRegistry {
 
     pub fn phases(&self) -> &[Phase] {
         &self.phases
+    }
+
+    pub fn phase(&self, identity: &str) -> Result<&Phase, String> {
+        self.phases
+            .iter()
+            .find(|phase| phase.script == identity)
+            .ok_or_else(|| format!("unregistered build phase {identity:?}"))
     }
 
     pub fn print_plan(&self) {

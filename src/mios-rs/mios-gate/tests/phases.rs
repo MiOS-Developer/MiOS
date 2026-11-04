@@ -243,3 +243,62 @@ fn the_phase_ratchet_cannot_run_without_a_ceiling_or_a_subject() {
     let (code, out) = ratchet(tempfile::tempdir().unwrap().path(), &[], Some(0));
     assert_eq!(code, 2, "{out}");
 }
+
+#[test]
+fn known_native_phases_preserve_logical_registration_without_shell_files() {
+    let d = tempfile::tempdir().unwrap();
+    tree(
+        d.path(),
+        &["01-a.sh"],
+        &[("01", "01-a.sh"), ("42", "42-chrony-render.sh")],
+        &[],
+        0,
+    );
+    let ssot = d.path().join("usr/share/mios/mios.toml");
+    let text = fs::read_to_string(&ssot).unwrap();
+    fs::write(
+        &ssot,
+        text.replace(
+            "script = \"42-chrony-render.sh\"",
+            "script = \"42-chrony-render.sh\", native = \"chrony\"",
+        ),
+    )
+    .unwrap();
+    let (code, output) = run(d.path());
+    assert_eq!(code, 0, "{output}");
+    fs::write(d.path().join("automation/42-chrony-render.sh"), "exit 0\n").unwrap();
+    let (code, output) = run(d.path());
+    assert_eq!(code, 1, "{output}");
+    assert!(
+        output.contains("competing shell implementation"),
+        "{output}"
+    );
+}
+
+#[test]
+fn unknown_native_handler_cannot_excuse_a_missing_shell_phase() {
+    for handler in ["unknown", "Chrony", ""] {
+        let d = tempfile::tempdir().unwrap();
+        tree(
+            d.path(),
+            &["01-a.sh"],
+            &[("01", "01-a.sh"), ("42", "42-chrony-render.sh")],
+            &[],
+            0,
+        );
+        let ssot = d.path().join("usr/share/mios/mios.toml");
+        let text = fs::read_to_string(&ssot).unwrap();
+        fs::write(
+            &ssot,
+            text.replace(
+                "script = \"42-chrony-render.sh\"",
+                &format!("script = \"42-chrony-render.sh\", native = {handler:?}"),
+            ),
+        )
+        .unwrap();
+        let (code, output) = run(d.path());
+        assert_eq!(code, 1, "{output}");
+        assert!(output.contains("invalid native phase handler"), "{output}");
+        assert!(output.contains("absent from automation"), "{output}");
+    }
+}
