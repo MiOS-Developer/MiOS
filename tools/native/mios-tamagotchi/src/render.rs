@@ -275,6 +275,14 @@ pub fn snapshot(sprite: &Sprite, config: &Config) -> Result<String, String> {
 
 /// A complete room canvas. All colors come from the layered sprite palette.
 /// Decorations and reactions are composed behind/around the transparent pet.
+#[derive(Clone, Copy)]
+pub struct HabitatView<'a> {
+    pub state: &'a crate::habitat::Habitat,
+    pub rules: &'a crate::habitat::HabitatRules,
+    pub wins: u32,
+    pub age: u64,
+}
+
 pub struct RoomWidget<'a> {
     pub sprite: &'a Sprite,
     pub renderer: Renderer,
@@ -283,6 +291,7 @@ pub struct RoomWidget<'a> {
     pub expression: crate::sprite::Expression,
     pub frame: usize,
     pub position: (u16, u16),
+    pub habitat: Option<HabitatView<'a>>,
 }
 
 impl Widget for RoomWidget<'_> {
@@ -294,28 +303,51 @@ impl Widget for RoomWidget<'_> {
         }
         let ascii = self.renderer == Renderer::Ascii;
         let floor = area.y + area.height.saturating_mul(3) / 4;
-        let wall = self.colors.ink(if self.expression == Expression::Sleeping {
-            6
-        } else {
-            10
-        });
+        let theme = self
+            .habitat
+            .and_then(|v| v.rules.themes.iter().find(|t| t.id == v.state.theme));
+        let wall_index = theme.map_or(
+            if self.expression == Expression::Sleeping {
+                6
+            } else {
+                10
+            },
+            |t| usize::from(t.wall),
+        );
+        let floor_index = theme.map_or(14, |t| usize::from(t.floor));
+        let accent = theme.map_or(6, |t| usize::from(t.accent));
+        let pattern = theme.map_or(0, |t| t.pattern);
+        let wall = self.colors.ink(wall_index);
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
                 let ground = y >= floor;
                 let bg = if ground {
-                    self.colors
-                        .ink(if ((x - area.x) / 8 + (y - floor)).is_multiple_of(2) {
-                            14
-                        } else {
-                            6
-                        })
+                    let tile = match pattern {
+                        1 => (x - area.x) / 5,
+                        2 => (x - area.x) / 8 + (y - floor) / 2,
+                        3 => 0,
+                        4 => (x - area.x) / 4 + (y - floor),
+                        5 => (x - area.x) / 7 + (y - floor) / 3,
+                        6 => (x - area.x) / 9 + (y - floor),
+                        7 => (x - area.x) / 6 + (y - floor) % 2,
+                        _ => 0,
+                    };
+                    self.colors.ink(if tile.is_multiple_of(2) {
+                        floor_index
+                    } else {
+                        accent
+                    })
                 } else {
                     wall
                 };
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_char(
                         if !ground && (x - area.x).is_multiple_of(7) && (y - area.y) % 3 == 1 {
-                            if ascii {
+                            if pattern == 6 {
+                                '*'
+                            } else if pattern == 5 {
+                                '\''
+                            } else if ascii {
                                 '.'
                             } else {
                                 '·'
@@ -342,7 +374,7 @@ impl Widget for RoomWidget<'_> {
                 }
             }
         };
-        if area.width >= 28 && area.height >= 10 {
+        if self.habitat.is_none() && area.width >= 28 && area.height >= 10 {
             let wx = area.x + 3;
             let wy = area.y + 2;
             paint(
@@ -408,6 +440,9 @@ impl Widget for RoomWidget<'_> {
                 4,
                 10,
             );
+        }
+        if let Some(view) = self.habitat {
+            draw_habitat(area, buf, self.colors, view, floor);
         }
         let margin = if area.height >= 12 { 1 } else { 0 };
         let available_height = area.height.saturating_sub(2 * margin).max(1);
@@ -606,5 +641,138 @@ mod face_tests {
                 assert_eq!(buffer[(99, 99)].symbol(), " ");
             }
         }
+    }
+}
+
+fn draw_habitat(area: Rect, buf: &mut Buffer, colors: &Colors, view: HabitatView<'_>, floor: u16) {
+    if area.width < 3 || area.height < 2 {
+        return;
+    }
+    let Some(theme) = view.rules.themes.iter().find(|t| t.id == view.state.theme) else {
+        return;
+    };
+    // A seeded structural window belongs to the room, never to paid inventory.
+    if area.width >= 12 && area.height >= 6 {
+        let (nx, _) = view.state.layout(15);
+        let x = area.x + ((u32::from(area.width - 5) * u32::from(nx.min(1000))) / 1000) as u16;
+        for (dy, row) in ["+---+", "| . |", "+---+"].iter().enumerate() {
+            for (dx, glyph) in row.chars().enumerate() {
+                if let Some(c) = buf.cell_mut((x + dx as u16, area.y + 1 + dy as u16)) {
+                    c.set_char(glyph)
+                        .set_fg(colors.ink(usize::from(theme.accent)))
+                        .set_bg(colors.ink(usize::from(theme.wall)));
+                }
+            }
+        }
+    }
+    let art: [&[&str]; 8] = [
+        &[" ^Y^ ", "  |  ", " [_] "],
+        &[" ___ ", " | | ", " | | "],
+        &[" ___ ", "|___|", " | | "],
+        &[" .-. ", " |o| ", "  |  "],
+        &[".....", ":===:", "....."],
+        &["[_][_]", "|___|", "|___|"],
+        &["[~~~]", "[ * ]", "[___]"],
+        &[" [_] ", "  |  ", " === "],
+    ];
+    for item in &view.rules.items {
+        let Some(bit) = 1u64.checked_shl(u32::from(item.id)) else {
+            continue;
+        };
+        if view.state.placed & bit == 0
+            || !view.state.owns(item.id, view.wins, view.age, view.rules)
+        {
+            continue;
+        }
+        let kind = usize::from(item.kind).min(7);
+        let tiny = ["Y", "b", "T", "*", "=", "#", "+", "!"];
+        let rows: &[&str] = if area.height < 5 || area.width < 8 {
+            &tiny[kind..=kind]
+        } else {
+            art[kind]
+        };
+        let height = rows.len() as u16;
+        let width = rows
+            .iter()
+            .map(|s| s.len() as u16)
+            .max()
+            .unwrap_or(1)
+            .min(area.width);
+        let (nx, ny) = view.state.layout(item.slot);
+        let x = area.x
+            + ((u32::from(area.width.saturating_sub(width)) * u32::from(nx.min(1000))) / 1000)
+                as u16;
+        let start = floor.saturating_sub(height.saturating_sub(1)).max(area.y);
+        let available = area.bottom().saturating_sub(height).saturating_sub(start);
+        let y = start + ((u32::from(available) * u32::from(ny.min(1000))) / 1000) as u16;
+        for (dy, row) in rows.iter().enumerate() {
+            for (dx, glyph) in row.chars().enumerate() {
+                let pos = (x.saturating_add(dx as u16), y.saturating_add(dy as u16));
+                if glyph != ' ' && area.contains(pos.into()) {
+                    if let Some(c) = buf.cell_mut(pos) {
+                        c.set_char(glyph)
+                            .set_fg(colors.ink(usize::from(theme.accent)));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod habitat_tests {
+    use super::*;
+    use crate::{
+        game::{Game, Stage},
+        sprite::{Expression, SpriteStyle},
+    };
+
+    fn room(game: &Game, config: &Config) -> Buffer {
+        let sprite = Sprite::voxel(
+            Stage::Baby,
+            Expression::Idle,
+            SpriteStyle::EightBit,
+            0,
+            0,
+            false,
+        );
+        let colors = Colors::from_config(config, Depth::Indexed).unwrap();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 90, 34));
+        RoomWidget {
+            sprite: &sprite,
+            renderer: Renderer::HalfBlock,
+            scale: 0,
+            colors: &colors,
+            expression: Expression::Idle,
+            frame: 0,
+            position: (500, 700),
+            habitat: Some(HabitatView {
+                state: &game.habitat,
+                rules: &config.habitat,
+                wins: game.wins,
+                age: game.age_ticks,
+            }),
+        }
+        .render(Rect::new(1, 1, 88, 32), &mut buffer);
+        buffer
+    }
+
+    #[test]
+    fn seeded_themes_are_stable_and_equipping_changes_only_cosmetic_room_state() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 7);
+        let baseline = room(&game, &config);
+        assert_eq!(baseline, room(&game, &config));
+        let other = Game::new(&config.game, 19);
+        assert_ne!(baseline, room(&other, &config));
+        let seed = game.habitat.seed;
+        let rng = game.visual_seed();
+        game.buy_item(0, &config.habitat).unwrap();
+        game.toggle_item(0, &config.habitat).unwrap();
+        assert_ne!(baseline, room(&game, &config));
+        game.toggle_item(0, &config.habitat).unwrap();
+        assert_eq!(baseline, room(&game, &config));
+        assert_eq!(game.habitat.seed, seed);
+        assert_eq!(game.visual_seed(), rng);
     }
 }

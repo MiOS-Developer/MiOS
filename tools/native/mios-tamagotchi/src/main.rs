@@ -122,7 +122,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     if args.snapshot || !caps.interactive {
         let game = if let Some(p) = &path {
-            save::load(p)?
+            save::load_with_rules(p, &config.habitat)?
         } else {
             None
         }
@@ -136,6 +136,30 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         let character = mios_tamagotchi::characters::character(&config.characters, game.character);
         let thought = mios_tamagotchi::characters::thought(character, &game, &config.game, 0);
         let speech = mios_tamagotchi::characters::speech(character, &game, &config.game, 0);
+        game.validate_habitat(&config.habitat)?;
+        let theme = config
+            .habitat
+            .theme(game.habitat.theme)
+            .ok_or("saved room theme is missing")?;
+        let placed = config
+            .habitat
+            .items
+            .iter()
+            .filter(|item| game.habitat.placed & (1u64 << item.id) != 0)
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            io::stdout().lock(),
+            "Habitat: {} | seed {} | placed: {}",
+            theme.name,
+            game.habitat.seed,
+            if placed.is_empty() {
+                "none"
+            } else {
+                placed.as_str()
+            }
+        )?;
         writeln!(io::stdout().lock(), "MiOS Tamagotchi\n{status}\n{art}\n{} thinks: {thought}\n{} says: {speech}\nSnapshot only; no clock or save writes. Use a terminal to play.",character.name,character.name)?;
         return Ok(());
     }
@@ -149,12 +173,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .as_nanos() as u64;
     let game = store
         .as_ref()
-        .map(Store::load)
+        .map(|store| store.load_with_rules(&config.habitat))
         .transpose()?
         .flatten()
         .unwrap_or_else(|| Game::new(&config.game, seed));
     // Validate before entering raw mode; an existing corrupt save is never silently replaced.
-    game.validate()?;
+    game.validate_habitat(&config.habitat)?;
     if !config.characters.iter().any(|c| c.id == game.character) {
         return Err("saved character is missing from this catalogue".into());
     }

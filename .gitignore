@@ -1134,3 +1134,5 @@ usr/share/mios/virtio/*.iso
 
 # Original MiOS-Mons character research and acceptance context.
 !/usr/share/doc/mios/research/mios-tamagotchi-villager-model.md
+
+!/tools/native/mios-tamagotchi/src/habitat.rs

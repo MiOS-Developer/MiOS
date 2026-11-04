@@ -289,7 +289,7 @@ fn schema_one_migration_keeps_state_and_schema_two_retains_identity() {
     store.save(&migrated).unwrap();
     let envelope: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(envelope["schema"], 2);
+    assert_eq!(envelope["schema"], 3);
     assert_eq!(store.load().unwrap().unwrap(), migrated);
     for seed in 0..512 {
         let pet = Game::new(&r, seed);

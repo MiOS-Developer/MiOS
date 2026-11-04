@@ -65,6 +65,7 @@ pub enum Choice {
     Save,
     Quit,
     Back,
+    Habitat,
 }
 impl Choice {
     pub fn label(&self) -> &str {
@@ -82,6 +83,7 @@ impl Choice {
             Self::Save => "Save",
             Self::Quit => "Quit",
             Self::Back => "Back",
+            Self::Habitat => "Habitat / items",
         }
     }
     fn argument(self) -> &'static str {
@@ -99,6 +101,7 @@ impl Choice {
             Self::Save => "save",
             Self::Quit => "quit",
             Self::Back => "back",
+            Self::Habitat => "habitat",
         }
     }
 }

@@ -134,7 +134,7 @@ the OS releases its lock when the process exits, including a crash. Never remove
 or rotate a lock file while a process owns it. Snapshots may read an active
 writer's last completed atomic save without taking its writer lock.
 
-Save schema 1 contains bounded, validated state. Writes use a private temporary
+Save schema 3 contains bounded, validated pet and habitat state; schemas 1 and 2 remain readable. Writes use a private temporary
 file in the same directory, fsync, atomic replacement, and parent-directory fsync
 on Unix. Existing saves survive invalid-state write attempts. Unsupported schema,
 malformed JSON, invalid needs/coins/memory progress and files over 64 KiB fail.
@@ -293,10 +293,10 @@ unattached, ambiguous/multiple-client and failed native-popup contexts use the
 inline pane. Read-more paging keeps longer conversation accessible in compact
 views. Snapshots print the full current thought and speech as plain ASCII.
 
-New saves use schema 2 to retain stable character identity. Schema-1 files load
+New saves use schema 3 to retain stable character identity and a seeded habitat. Schema-1 files load
 without modification, preserve all original gameplay state, and receive the
-default Mio identity; an explicit interactive save writes schema 2 atomically.
-Older executables cannot read schema 2, so retain the pre-upgrade binary and save
+default Mio identity; an explicit interactive save writes schema 3 atomically.
+Older executables cannot read schema 3, so retain the pre-upgrade binary and save
 backup for rollback. Unsupported versions, invalid identities and malformed
 catalogues are refused before raw mode. A read-only snapshot never upgrades a
 save.
@@ -308,3 +308,54 @@ selection. See [the research note](research/mios-tamagotchi-villager-model.md).
 [Nookipedia's villager model](https://nookipedia.com/wiki/Villager) and
 [mystery-tour selection](https://nookipedia.com/wiki/Mystery_Island) informed the
 original implementation.
+
+
+## Mature bodies, ASCII faces and themed habitats
+
+Child and adult pixel art uses double-height canvases:8x16 in the eight-bit
+style and16x32 in the detailed style. Their voxel canvases are24x48 and32x64,
+with actual separate heads, torsos, arms and legs. Egg, baby and ghost forms
+remain compact. All sixteen original animal identities retain their shapes,
+palettes, personalities, hobbies and state-aware original dialogue.
+
+ASCII kaomoji faces blink and change with care and mood. Literal facial text is
+drawn on a sufficiently resolved front-facing head; side/rear faces are hidden
+by direction and depth. Tiny views retain a short face in the stage HUD when
+the sprite cannot hold the complete expression. The same clipped renderer is
+used for half-block, quadrant, braille and plain ASCII output.
+
+Each new pet receives a cosmetic room seed and initial theme derived from its
+creation seed, independently of the saved memory-game RNG. Eight vendor themes
+provide different wall/floor palettes, patterns and seeded window/furniture
+placement. The room remains stable across redraws, pause and save/reload.
+
+Open **Habitat / items** from the menu or native right-click menu, or press
+lowercase **h**. Items show an explicit coin price, earned threshold or owned
+placement action. Enter/Space buys and places an affordable item, or toggles
+an owned/earned decoration. Arrows/Tab navigate and Escape returns. Controller
+hints use the actual focused mapping. These controls decorate the habitat;
+they never steer the pet.
+
+The vendor catalogue contains sixteen items, including affordable plants and
+seats and rewards unlocked by actual memory wins or age progression. Earned
+eligibility is separate from permanent purchases. Failed/duplicate purchases
+never consume coins, and only owned/earned items can be placed. A room slot
+holds one decoration. Theme changes are explicit and free; there is no passive
+or automatic spending.
+
+Names, prices, reward thresholds, palette indices, item kinds and theme patterns
+come from the layered [tamagotchi.habitat] SSOT. Older live settings inherit the
+embedded vendor tier, without replacing the operator's TOML. Custom catalogues
+are validated before raw mode and used by active save/load operations.
+
+Schema3 stores seed, theme, purchased inventory and placed items. Legacy1/2
+saves gain a deterministic habitat in memory while retaining their original
+pet fields, currency and gameplay RNG. A redirected snapshot reports the room
+and placed item names in plain ASCII without writing or applying offline time.
+Keep a backup before an interactive migration; older binaries cannot load3.
+
+Native focused Talk/thought popups and right-click windows keep the same
+verified-client contract. Tiny, unfocused, restricted or multiply attached
+clients use the paged inline dialogue pane below the pet. Actual phone and
+physical-controller acceptance is recorded per session; compatibility does not
+by itself certify a device.

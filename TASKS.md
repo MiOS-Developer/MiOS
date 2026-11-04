@@ -16,8 +16,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1750 |
-| in_progress | 70 |
+| pending | 1747 |
+| in_progress | 73 |
 | completed | 1862 |
 | incomplete | 19 |
 | cancelled | 21 |
@@ -4443,9 +4443,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3710` Independently verify Tamagotchi artifact and live failure controls on mios -- completed · owner mios-tamagotchi-live-verifier · P1 · size M
 - `task_3711` Implement full-viewport Tamagotchi graphics, animated pixel sprites and menus -- completed · owner mios-tamagotchi-graphics · P1 · size L
 - `task_3712` Implement distinct animated pixel sprites and care reactions -- completed · owner mios-tamagotchi-sprite-worker · P1 · size M
-- `task_3720` Mature MiOS-Mon bodies and kaomoji sprite faces -- pending · owner mios-mons-body-worker · P1
-- `task_3721` Independently verify bodied MiOS-Mons and small terminal dialogue -- pending · owner mios-mons-body-verifier · P1
-- `task_3722` Generate persistent thematic pet habitats with earned and purchased furniture -- pending · owner mios-mons-habitat-worker · P1
+- `task_3720` Mature MiOS-Mon bodies and kaomoji sprite faces -- in_progress · owner mios-mons-body-worker · P1
+- `task_3721` Independently verify bodied MiOS-Mons and small terminal dialogue -- in_progress · owner mios-mons-body-verifier · P1
+- `task_3722` Generate persistent thematic pet habitats with earned and purchased furniture -- in_progress · owner mios-mons-habitat-worker · P1
 
 ## test-coverage
 

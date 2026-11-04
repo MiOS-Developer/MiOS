@@ -1442,7 +1442,9 @@ impl VoxelModel {
             .min(1.0);
         let project = |v: [f32; 3]| {
             let [x, y, z] = transform(v);
-            [f32::from(size) * 0.5 + x * fit, origin_y - y * fit, z]
+            // Align lattice centers with pixel centers at zero yaw. Otherwise
+            // an adjacent raised eye can win depth at the head-center anchor.
+            [f32::from(size) * 0.5 + 0.5 + x * fit, origin_y - y * fit, z]
         };
         // Unit cube quads. Neighbor culling eliminates interior surfaces; depth
         // interpolation below resolves occlusion between all remaining faces.

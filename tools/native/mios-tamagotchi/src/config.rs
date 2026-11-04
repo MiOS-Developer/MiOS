@@ -61,6 +61,7 @@ pub struct Config {
     pub state_directory: String,
     pub autosave_seconds: u64,
     pub game: Rules,
+    pub habitat: crate::habitat::HabitatRules,
 }
 
 impl Config {
@@ -97,6 +98,7 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), String> {
         self.game.validate()?;
+        self.habitat.validate()?;
         if !(1000..=600_000).contains(&self.dialog_timeout_ms)
             || !(50..=2000).contains(&self.dialog_query_timeout_ms)
             || !(4096..=262_144).contains(&self.dialog_max_bytes)

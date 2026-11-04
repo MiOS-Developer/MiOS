@@ -7,7 +7,7 @@ use crate::{
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
     input::{action, Action, ControllerMonitor, ControllerPrompts},
-    render::{Colors, RoomWidget},
+    render::{Colors, HabitatView, RoomWidget},
     save::Store,
     sprite::{Appearance, Expression, Sprite, SpriteStyle},
 };
@@ -48,6 +48,7 @@ pub enum Menu {
     Gallery,
     Talk,
     Roster,
+    Habitat,
 }
 
 #[derive(Clone, Copy)]
@@ -85,6 +86,7 @@ pub struct Ui {
     wander_speed: u16,
     mobile_stage: bool,
     catalogue: Vec<Character>,
+    habitat_rules: Option<crate::habitat::HabitatRules>,
     dialog_variant: u64,
     dialog_page: usize,
     dialog_rows: Cell<usize>,
@@ -129,6 +131,7 @@ impl Ui {
             wander_speed: 1,
             mobile_stage: false,
             catalogue: Vec::new(),
+            habitat_rules: None,
             dialog_variant: 0,
             dialog_page: 0,
             dialog_rows: Cell::new(1),
@@ -145,6 +148,7 @@ impl Ui {
     pub fn configured(game: Game, config: &Config) -> Self {
         let mut ui = Self::new(game);
         ui.catalogue = config.characters.clone();
+        ui.habitat_rules = Some(config.habitat.clone());
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
         ui.sprite_style = config.sprite_style;
@@ -330,6 +334,7 @@ impl Ui {
                     Choice::Save,
                     Choice::Quit,
                     Choice::Back,
+                    Choice::Habitat,
                 ]
             } else {
                 vec![
@@ -366,6 +371,7 @@ impl Ui {
             Choice::Status => self.open(Menu::Status),
             Choice::Graphics => self.open(Menu::Graphics),
             Choice::Roster => self.open(Menu::Roster),
+            Choice::Habitat => self.open(Menu::Habitat),
             Choice::Pause => self.game.paused = !self.game.paused,
             Choice::Save => return Effect::Save,
             Choice::Quit => return Effect::Quit,
@@ -491,6 +497,10 @@ impl Ui {
             }
             Action::Roster => {
                 self.open(Menu::Roster);
+                return Effect::Continue;
+            }
+            Action::Habitat => {
+                self.open(Menu::Habitat);
                 return Effect::Continue;
             }
             Action::Status => {
@@ -656,7 +666,7 @@ impl Ui {
             }
         }
         let count = match menu {
-            Menu::Home => 10,
+            Menu::Home => 11,
             Menu::Care => 5,
             Menu::Games => 2,
             Menu::Graphics => 13,
@@ -664,6 +674,7 @@ impl Ui {
             Menu::Gallery => 16,
             Menu::Talk => 7,
             Menu::Roster => self.catalogue.len().max(1),
+            Menu::Habitat => self.habitat_rules.as_ref().map_or(2, |r| r.items.len() + 2),
         };
         match action {
             Action::Cancel => {
@@ -704,7 +715,8 @@ impl Ui {
                         self.menu = None;
                         return Effect::Save;
                     }
-                    _ => return Effect::Quit,
+                    9 => return Effect::Quit,
+                    _ => self.open(Menu::Habitat),
                 },
                 Menu::Care => {
                     self.menu = None;
@@ -761,6 +773,34 @@ impl Ui {
                                 rules,
                             );
                         }
+                    }
+                }
+                Menu::Habitat => {
+                    if let Some(habitat) = &self.habitat_rules {
+                        let outcome = if let Some(item) = habitat.items.get(self.menu_selected) {
+                            if self.game.habitat.owns(
+                                item.id,
+                                self.game.wins,
+                                self.game.age_ticks,
+                                habitat,
+                            ) {
+                                self.game.toggle_item(item.id, habitat)
+                            } else {
+                                self.game
+                                    .buy_item(item.id, habitat)
+                                    .and_then(|_| self.game.toggle_item(item.id, habitat))
+                            }
+                        } else if self.menu_selected == habitat.items.len() {
+                            let next =
+                                (usize::from(self.game.habitat.theme) + 1) % habitat.themes.len();
+                            self.game.set_theme(next as u8, habitat)
+                        } else {
+                            self.menu = None;
+                            return Effect::Continue;
+                        };
+                        self.notice = outcome.unwrap_or_else(|error| error);
+                    } else {
+                        self.notice = "Habitat catalogue unavailable.".into();
                     }
                 }
                 Menu::Gallery | Menu::Roster => {}
@@ -928,6 +968,12 @@ impl Ui {
                 expression,
                 frame,
                 position: self.position,
+                habitat: Some(HabitatView {
+                    state: &self.game.habitat,
+                    rules: &config.habitat,
+                    wins: self.game.wins,
+                    age: self.game.age_ticks,
+                }),
             },
             room_inner,
         );
@@ -992,7 +1038,7 @@ impl Ui {
                     pad.navigate, pad.accept, pad.back, pad.next
                 )
             } else {
-                " O Menu  I Status  V Graphics  ? Help  |  Arrows/Tab + Enter  |  Q Quit".into()
+                " O Menu  H Habitat  I Status  ? Help  |  Arrows/Tab + Enter  |  Q Quit".into()
             })
             .style(Style::default().fg(colors.ink(13))),
         );
@@ -1087,6 +1133,12 @@ impl Ui {
                 expression,
                 frame,
                 position: self.position,
+                habitat: Some(HabitatView {
+                    state: &self.game.habitat,
+                    rules: &config.habitat,
+                    wins: self.game.wins,
+                    age: self.game.age_ticks,
+                }),
             },
             room,
         );
@@ -1210,6 +1262,110 @@ impl Ui {
             body,
         );
     }
+    fn save_to(&self, store: &Store) -> Result<(), String> {
+        if let Some(rules) = &self.habitat_rules {
+            store.save_with_rules(&self.game, rules)
+        } else {
+            store.save(&self.game)
+        }
+    }
+
+    fn draw_habitat_menu(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+    ) {
+        let area = center(screen.area(), 66, 26);
+        screen.render_widget(Clear, area);
+        let block = panel(" HABITAT / ITEMS ", colors, renderer == Renderer::Ascii);
+        let inner = block.inner(area);
+        screen.render_widget(block, area);
+        let [header, notice, list, controls] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
+        .areas(inner);
+        let rules = &config.habitat;
+        let theme = rules
+            .theme(self.game.habitat.theme)
+            .map_or("Unknown", |t| t.name.as_str());
+        screen.render_widget(
+            Paragraph::new(format!(
+                "{theme}\n{}c | {} placed",
+                self.game.coins,
+                self.game.habitat.placed.count_ones()
+            ))
+            .style(Style::default().fg(colors.ink(7))),
+            header,
+        );
+        screen.render_widget(
+            Paragraph::new(self.notice.clone()).style(Style::default().fg(colors.ink(13))),
+            notice,
+        );
+        let mut entries = Vec::new();
+        for item in &rules.items {
+            let placed = self.game.habitat.placed & (1u64 << item.id) != 0;
+            let owns = self
+                .game
+                .habitat
+                .owns(item.id, self.game.wins, self.game.age_ticks, rules);
+            entries.push(if placed {
+                format!("HIDE {}", item.name)
+            } else if owns {
+                format!("PLACE {}", item.name)
+            } else if item.earned() {
+                format!(
+                    "EARN {}w {}t {}",
+                    item.reward_wins, item.reward_age, item.name
+                )
+            } else {
+                format!("{}c BUY {}", item.price, item.name)
+            });
+        }
+        entries.push("0c NEXT THEME".into());
+        entries.push("Back".into());
+        let rows = usize::from(list.height).max(1);
+        let start = self.menu_selected.saturating_sub(rows - 1);
+        let lines: Vec<Line> = entries
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(rows)
+            .map(|(index, text)| {
+                let selected = index == self.menu_selected;
+                Line::from(format!("{} {text}", if selected { ">" } else { " " })).style(
+                    if selected {
+                        Style::default()
+                            .fg(colors.ink(0))
+                            .bg(colors.ink(7))
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(colors.ink(2))
+                    },
+                )
+            })
+            .collect();
+        screen.render_widget(Paragraph::new(lines), list);
+        let hints = self.controller.as_ref().map_or_else(
+            || "Enter: buy/place\nEsc: Back / Tab".into(),
+            |p| {
+                format!(
+                    "{}: buy/place\n{}: Back / D-pad",
+                    tiny_button(&p.accept),
+                    tiny_button(&p.back)
+                )
+            },
+        );
+        screen.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            controls,
+        );
+    }
+
     fn draw_roster(
         &self,
         screen: &mut Frame,
@@ -1296,6 +1452,12 @@ impl Ui {
                 expression,
                 frame: self.frame,
                 position: (500, 700),
+                habitat: Some(HabitatView {
+                    state: &self.game.habitat,
+                    rules: &config.habitat,
+                    wins: self.game.wins,
+                    age: self.game.age_ticks,
+                }),
             },
             room,
         );
@@ -1441,6 +1603,10 @@ impl Ui {
         if menu == Menu::Talk {
             return;
         }
+        if menu == Menu::Habitat {
+            self.draw_habitat_menu(screen, config, colors, renderer);
+            return;
+        }
         if menu == Menu::Roster {
             self.draw_roster(screen, config, colors, renderer);
             return;
@@ -1516,6 +1682,12 @@ impl Ui {
                     expression,
                     frame: self.frame,
                     position: (500, 700),
+                    habitat: Some(HabitatView {
+                        state: &self.game.habitat,
+                        rules: &config.habitat,
+                        wins: self.game.wins,
+                        age: self.game.age_ticks,
+                    }),
                 },
                 room,
             );
@@ -1547,6 +1719,7 @@ impl Ui {
                     "Help",
                     "Save",
                     "Quit",
+                    "Habitat / items",
                 ],
             ),
             Menu::Care => (
@@ -1580,7 +1753,7 @@ impl Ui {
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
-            Menu::Gallery | Menu::Talk | Menu::Roster => {
+            Menu::Gallery | Menu::Talk | Menu::Roster | Menu::Habitat => {
                 unreachable!("special menus draw their own view")
             }
         };
@@ -1815,13 +1988,13 @@ fn apply_effect(
     match effect {
         Effect::Quit => {
             if let Some(s) = store {
-                s.save(&ui.game).map_err(io::Error::other)?;
+                ui.save_to(s).map_err(io::Error::other)?;
             }
             return Ok(true);
         }
         Effect::Save => {
             if let Some(s) = store {
-                s.save(&ui.game).map_err(io::Error::other)?;
+                ui.save_to(s).map_err(io::Error::other)?;
                 ui.notice = "Saved locally.".into();
                 *last_save = Instant::now();
             } else {
@@ -1952,7 +2125,7 @@ pub fn run(
         }
         if last_save.elapsed() >= Duration::from_secs(config.autosave_seconds) {
             if let Some(s) = store {
-                s.save(&ui.game).map_err(io::Error::other)?;
+                ui.save_to(s).map_err(io::Error::other)?;
             }
             last_save = Instant::now();
         }
@@ -2435,6 +2608,44 @@ mod graphics_tests {
             .collect();
         assert!(text.contains("R R R"), "{text}");
     }
+    #[test]
+    fn habitat_menu_buys_places_and_hides_once_without_steering_or_repeated_charges() {
+        let (config, mut ui) = pet();
+        ui.game.paused = true;
+        let before = ui.game.clone();
+        let position = ui.position;
+        let item = &config.habitat.items[0];
+        assert!(!item.earned());
+        ui.handle(key(KeyCode::Char('h')), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Habitat));
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.game.coins, before.coins - item.price);
+        assert_ne!(ui.game.habitat.placed & (1u64 << item.id), 0);
+        let after_buy = ui.game.clone();
+        let mut repeat = key(KeyCode::Enter);
+        repeat.kind = KeyEventKind::Repeat;
+        ui.handle(repeat, &config.game);
+        assert_eq!(ui.game, after_buy);
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.game.habitat.placed & (1u64 << item.id), 0);
+        assert_eq!(ui.game.coins, after_buy.coins);
+        assert_eq!(ui.position, position);
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("buy/place"), "{text}");
+        assert!(text.contains("Back / Tab"), "{text}");
+    }
+
     #[test]
     fn minimal_hud_retains_ascii_face_and_inline_dialogue_below_a_tiny_pet() {
         let (config, mut ui) = pet();

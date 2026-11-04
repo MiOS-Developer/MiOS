@@ -65,3 +65,24 @@ ASCII dialogue/thought text, remain read-only, and do not spawn interactive
 windows or controller probes. Mobile and smartwatch terminal webviews use the
 same compact layout. Actual device/browser acceptance is recorded separately
 from transport compatibility.
+
+
+## Follow-up: bodies, faces and room identity
+
+Rechecked2026-11-04. Community Villager and Mystery Tour references continue
+to distinguish personality dialogue pools, individual/hobby variation and
+species-first selection for that particular recruitment path. The Nintendo
+New Leaf interview endpoint returned502 during this recheck; retain its prior
+citation as historical evidence, rather than treating this retry as success.
+
+Nintendo's current neighbor guide supports conversation and friendly
+interaction as the relationship loop; it does not specify internal generation
+algorithms. [Nintendo: Good neighbors](https://play.nintendo.com/news-tips/tips-tricks/animal-crossing-new-horizons-neighbors-tips/)
+
+Double-height mature bodies, ASCII kaomoji, eight original themed rooms and
+sixteen earnable/purchasable decorations are our design decisions. They are not
+claims to reproduce Nintendo's rendering or economy. Each pet's stable room
+seed is independent of gameplay RNG, while actual wins/age unlock rewards.
+Explicit coin purchases and placement use the same HUD/native-menu controls;
+they do not provide direct locomotion. Faces remain terminal-safe ASCII and
+dialogue retains inline paging on constrained clients.
