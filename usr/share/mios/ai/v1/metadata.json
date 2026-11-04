@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4129,
-  "total_metadata_entries": 3387,
-  "total_hints": 3381,
+  "total_files_scanned": 4145,
+  "total_metadata_entries": 3403,
+  "total_hints": 3397,
   "total_functions_indexed": 2107,
-  "total_related_links": 6650,
+  "total_related_links": 6703,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3664,6 +3664,21 @@
       "functions": [],
       "doc": null,
       "comment_style": "semi",
+      "has_shebang": false
+    },
+    {
+      "path": "handoff.md",
+      "hint": "Operator handoff prompt for remote agents and subagents installing the playable Tamagotchi sample on real MiOS Blade environments.",
+      "related": [
+        "AGENTS.md",
+        ".agents/COORDINATION.md",
+        "tasks.jsonl",
+        "usr/share/doc/mios/tamagotchi-tui.md",
+        "task_3708"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
       "has_shebang": false
     },
     {
@@ -13834,6 +13849,190 @@
         "usr/lib/mios/mios_toml.py (walk_rules)",
         "tools/native/mios-resolver/src/emit.rs",
         "tests/test-resolver-dropin-parity.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/Cargo.toml",
+      "hint": "Playable native virtual pet with deterministic care, memory game and atomic local saves.",
+      "related": [
+        "tools/native/Cargo.toml",
+        "usr/share/mios/mios.toml",
+        "specs/tamagotchi-tui"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/capabilities.rs",
+      "hint": "Independent glyph, color and stream policies; terminal heuristics never certify font coverage.",
+      "related": [
+        "config.rs",
+        "render.rs",
+        "specs/tamagotchi-tui/tamagotchi-graphics-spec.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/config.rs",
+      "hint": "Validate layered [tamagotchi] SSOT before entering raw mode; no private configuration defaults.",
+      "related": [
+        "usr/share/mios/mios.toml [tamagotchi]",
+        "capabilities.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/game.rs",
+      "hint": "Deterministic virtual-pet care, accelerated growth and a three-arrow memory game; no wall-clock catch-up.",
+      "related": [
+        "config.rs",
+        "save.rs",
+        "ui.rs",
+        "usr/share/mios/mios.toml [tamagotchi.game]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/game_tests.rs",
+      "hint": "Deterministic gameplay and real save-file controls, including locking, corruption and reset confirmation.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "ui.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/input.rs",
+      "hint": "Keyboard and Inputd projected-key actions; releases never act and explicit repeat events only navigate.",
+      "related": [
+        "game.rs",
+        "ui.rs",
+        "tools/native/mios-inputd/src/nav.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/lib.rs",
+      "hint": "Reusable terminal capability, sprite packing and input foundation for the Tamagotchi TUI.",
+      "related": [
+        "specs/tamagotchi-tui",
+        "usr/share/mios/mios.toml [tamagotchi]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/main.rs",
+      "hint": "Playable local virtual pet with explicit sample mode, read-only snapshots and single-writer saves.",
+      "related": [
+        "ui.rs",
+        "game.rs",
+        "save.rs",
+        "usr/share/mios/mios.toml [tamagotchi]",
+        "task_3707"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/render.rs",
+      "hint": "Clipped indexed sprite widget; half-blocks preserve two colors and pattern cells preserve masks.",
+      "related": [
+        "sprite.rs",
+        "capabilities.rs",
+        "ratatui::symbols::pixel::QUADRANTS"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/save.rs",
+      "hint": "Versioned, bounded per-user saves with an OS-held single-writer lock and atomic durable replacement.",
+      "related": [
+        "game.rs",
+        "main.rs",
+        "usr/share/doc/mios/tamagotchi-tui.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/sprite.rs",
+      "hint": "Validated indexed sprite and overflow-safe viewport fitting in terminal cells.",
+      "related": [
+        "render.rs",
+        "specs/tamagotchi-tui/tamagotchi-sprites-spec.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/tests.rs",
+      "hint": "Positive/negative controls for stream policy, sprite validation, cell geometry and projected keys.",
+      "related": [
+        "capabilities.rs",
+        "config.rs",
+        "input.rs",
+        "render.rs",
+        "sprite.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/ui.rs",
+      "hint": "Playable pet menu, memory challenge and accelerated clock; save failures unwind through Ratatui restoration.",
+      "related": [
+        "game.rs",
+        "input.rs",
+        "save.rs",
+        "render.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/tests/cli.rs",
+      "hint": "Actual CLI controls with isolated layered SSOT and redirected streams.",
+      "related": [
+        "src/main.rs",
+        "usr/share/mios/mios.toml [tamagotchi]"
       ],
       "functions": [],
       "doc": null,
@@ -37105,6 +37304,20 @@
         "usr/bin/mios-shaderglass",
         "usr/share/mios/mios.toml [desktop.shaderglass]",
         "tests/test-shaderglass-state.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/tamagotchi-tui.md",
+      "hint": "Playable local virtual-pet sample, safe save contract and per-Blade installation handoff.",
+      "related": [
+        "tools/native/mios-tamagotchi",
+        "usr/share/mios/mios.toml [tamagotchi]",
+        "task_3707",
+        "task_3708"
       ],
       "functions": [],
       "doc": null,
