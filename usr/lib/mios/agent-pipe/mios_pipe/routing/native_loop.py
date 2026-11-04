@@ -631,7 +631,8 @@ async def _respond_native_loop_direct(
              bool(refined and refined.get("news")),
              bool(refined and refined.get("web")), _hint_tools[:6])
     if ((refined or {}).get("news") and (refined or {}).get("intent") == "chat"
-            and not force_delegate and not target_agents and tool_choice in (None, "auto")
+            and not kwargs.get("explicit_route", bool(force_delegate or target_agents))
+            and tool_choice in (None, "auto")
             and not (refined or {}).get("tool")
             and not (refined or {}).get("tasks") and not (refined or {}).get("local_state")
             and not (refined or {}).get("browser_action")):

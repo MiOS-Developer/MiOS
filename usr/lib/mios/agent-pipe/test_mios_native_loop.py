@@ -1241,6 +1241,111 @@ def _run_verified_news_has_no_unchecked_generation():
     print("verified news source receipt reaches JSON and SSE without unchecked model generation: OK")
 
 
+
+def _run_auto_council_news_handler_integration():
+    """The production handler's automatic three-peer council must not bypass evidence."""
+    import importlib
+    from unittest import mock
+    native = importlib.import_module("mios_pipe.routing.native_loop")
+    chat = importlib.import_module("mios_pipe.routing.chat")
+    web = importlib.import_module("mios_pipe.routing.web_research")
+    verity = importlib.import_module("mios_pipe.lifecycle.verity")
+    fanout = importlib.import_module("mios_pipe.routing.fanout")
+    names = ["node:local-heavy", "node:local-cpu", "node:local-llamaswap"]
+    registry = {"gateway": {"endpoint": "http://gateway.invalid/v1", "model": "gateway", "lane": "gpu"}}
+    registry.update({name: {"endpoint": f"http://peer-{index}.invalid/v1",
+                           "model": f"peer-{index}", "lane": "cpu" if index else "gpu"}
+                     for index, name in enumerate(names)})
+    approved = "Dated source excerpts:\n> The report describes an event on 2026-10-10."
+    record = {"title": "Fixture report", "url": "https://evidence.invalid/report",
+              "published_date": "2026-11-03", "event_dates": ["2026-10-10"], "excerpt": approved}
+    received, loops, retrievals = [], [], []
+    async def retrieved(query, refined, **kwargs):
+        retrievals.append(query)
+        refined["_news_evidence"] = [record]
+        refined["_news_answer"] = approved
+    actual_native = native._respond_native_loop_direct
+    async def spy(refined, **kwargs):
+        received.append(dict(kwargs))
+        return await actual_native(refined, **kwargs)
+    async def primary_loop(client, endpoint, model, headers, messages, *args, **kwargs):
+        loops.append((endpoint, kwargs.get("tool_choice")))
+        kwargs["terminal_response"]["content"] = "EXPLICIT ROUTE RECEIPT"
+        return list(messages)
+    async def handler(refined, *, streaming=False, delegate=None, council=False, choice=None, flags=None):
+        return await chat._kernel_agent_handler(None, refined=refined,
+            last_user_text="current reports", messages=[{"role": "user", "content": "current reports"}],
+            streaming=streaming, chat_id="news-integration", model="public", session_id=None,
+            _routed_domain_var=contextvars.ContextVar("fixture-domain", default="web"),
+            _persona_system="", _force_delegate=delegate, _force_council=council,
+            _mflags=flags or {}, body={"model": "public", "tool_choice": choice})
+    async def exercise():
+        _base_configure({}, [], [])
+        M.configure(_get_agent_registry=lambda: registry)
+        with mock.patch.multiple(chat, _AGENT_REGISTRY=registry,
+                 _live_agent_names=_async_const(set(registry)),
+                 _pick_agent=lambda role: ("gateway", registry["gateway"]),
+                 _pick_fanout_agents=fanout._pick_fanout_agents,
+                 _respond_native_loop_direct=spy), \
+             mock.patch.multiple(fanout, _AGENT_REGISTRY=registry,
+                 _DISPATCH_CFG={"enable": True, "mode": "council", "fanout_max": 4},
+                 _depth_exhausted=lambda: False, _dispatch_depth=lambda: 0,
+                 _lane_sem_key=lambda cfg: cfg.get("lane", ""),
+                 _dedup_pool_by_target=lambda peers: list(peers), ADMIT_ENABLE=False,
+                 COUNCIL_MAX_DEFAULT=4), \
+             mock.patch.object(web, "_web_research_enrich", retrieved):
+            with mock.patch.object(native, "_v1_secondary_tool_loop",
+                      side_effect=AssertionError("auto council news reached unchecked synthesis")), \
+                 mock.patch.object(native, "polish_response",
+                      side_effect=AssertionError("auto council news reached generative polish")):
+                for streaming in (False, True):
+                    refined = {"intent": "chat", "news": True}
+                    response = await handler(refined, streaming=streaming)
+                    assert set(received[-1]["target_agents"]) == set(names), received[-1]
+                    assert received[-1]["explicit_route"] is False
+                    if streaming:
+                        data = b"".join([chunk async for chunk in response.body_iterator]).decode()
+                        assert "2026-10-10" in data and '"finish_reason": "stop"' in data, data
+                    else:
+                        assert _body_text(response) == approved, response.body
+                    polished = await verity.polish_response(
+                        "UNVERIFIED MODEL NEWS", refined, original_user_text="current reports")
+                    assert polished == approved
+            assert len(retrievals) == 2
+            # A single automatic peer is also marked implicit even though the handler
+            # internally promotes that one peer into force_delegate.
+            with mock.patch.object(chat, "_pick_fanout_agents",
+                    _async_const([(names[1], registry[names[1]])])), \
+                 mock.patch.object(native, "_v1_secondary_tool_loop",
+                    side_effect=AssertionError("automatic single peer bypassed source evidence")):
+                response = await handler({"intent": "chat", "news": True})
+                assert received[-1]["force_delegate"] == names[1]
+                assert received[-1]["explicit_route"] is False
+                assert _body_text(response) == approved
+            prior_retrievals = len(retrievals)
+            with mock.patch.object(native, "_v1_secondary_tool_loop", primary_loop), \
+                 mock.patch.object(native, "_selected_council_reviews", _async_const("")), \
+                 mock.patch.object(native, "polish_response", _async_const("")):
+                cases = [
+                    ({"intent": "chat", "news": True}, {"delegate": names[1]}),
+                    ({"intent": "chat", "news": True}, {"council": True}),
+                    ({"intent": "chat", "news": True}, {"choice": "required"}),
+                    ({"intent": "chat", "news": True}, {"choice": {"type": "function", "function": {"name": "fixture_action"}}}),
+                    ({"intent": "chat", "news": True, "tool": "fixture_action"}, {}),
+                    ({"intent": "chat", "news": True}, {"flags": {"force_tool": True}}),
+                    ({"intent": "chat", "news": True, "target_agent": names[1]}, {}),
+                ]
+                for refined, controls in cases:
+                    response = await handler(refined, **controls)
+                    assert _body_text(response) == "EXPLICIT ROUTE RECEIPT", (controls, response.body)
+                    assert len(retrievals) == prior_retrievals, controls
+                assert loops[-5][1] == "required", loops
+                assert loops[-4][1] == {"type": "function", "function": {"name": "fixture_action"}}, loops
+                assert received[-1]["explicit_route"] is True
+    asyncio.run(exercise())
+    print("actual handler and fanout: three automatic peers use verified news; explicit delegation/actions/tool choices remain executable: OK")
+
+
 if __name__ == "__main__":
     _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
@@ -1259,3 +1364,4 @@ if __name__ == "__main__":
     _run_native_unfinished_final_httpx()
     _run_chat_surface_permissions_contract()
     _run_verified_news_has_no_unchecked_generation()
+    _run_auto_council_news_handler_integration()

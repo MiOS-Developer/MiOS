@@ -1942,6 +1942,8 @@ async def _kernel_agent_handler(decision, **ctx):
     _routed_domain_var = ctx.get("_routed_domain_var") or globals().get("_routed_domain_var")
     _persona_system = ctx.get("_persona_system")
     _mflags = ctx.get("_mflags")
+    explicit_route = bool(_force_council or _force_delegate or refined.get("target_agent")
+                          or ctx.get("_force_tool") or (_mflags or {}).get("force_tool"))
     reply_prefix = ctx.get("reply_prefix", "")
 
     _domain = _routed_domain_var.get(None)
@@ -2015,6 +2017,7 @@ async def _kernel_agent_handler(decision, **ctx):
 
     return await _respond_native_loop_direct(
         refined, force_delegate=_force_delegate, target_agents=_selected,
+        explicit_route=explicit_route, tool_choice=(ctx.get("body") or {}).get("tool_choice"),
         streaming=streaming, chat_id=chat_id, model=model,
         session_id=session_id, last_user_text=last_user_text,
         persona_system=_persona_system, reply_prefix=reply_prefix,
