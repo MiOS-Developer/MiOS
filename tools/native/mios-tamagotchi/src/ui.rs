@@ -1729,8 +1729,15 @@ impl Ui {
         frame: usize,
         landscape: bool,
     ) {
-        let expanded_controls = info.width >= 28 && info.height >= 8;
-        let footer_rows: u16 = if expanded_controls { 6 } else { 3 };
+        let narrow_controls = (18..28).contains(&info.width) && info.height >= 14;
+        let expanded_controls = (info.width >= 28 && info.height >= 8) || narrow_controls;
+        let footer_rows: u16 = if narrow_controls {
+            12
+        } else if expanded_controls {
+            6
+        } else {
+            3
+        };
         let footer_rows = footer_rows.min(info.height);
         let upper = Rect::new(
             info.x,
@@ -1884,7 +1891,36 @@ impl Ui {
                 |pad| format!("{} {selected}", compact_button(&pad.accept)),
             )
         };
-        let hints = if expanded_controls {
+        let hint_lines: Vec<String> = if narrow_controls {
+            let mut lines = care_rows
+                .iter()
+                .flat_map(|row| row.chunks(2).map(|pair| pair.join("  ")))
+                .collect::<Vec<_>>();
+            lines.push(if resume {
+                "P Resume / care paused".into()
+            } else {
+                selected_segment.clone()
+            });
+            lines.push(self.controller.as_ref().map_or_else(
+                || "Arrows/Tab select".into(),
+                |pad| {
+                    frame_label(
+                        &format!("{} / {} Next", pad.navigate, compact_button(&pad.next)),
+                        info.width,
+                        frame / 28,
+                    )
+                },
+            ));
+            lines.push(self.controller.as_ref().map_or_else(
+                || "O Menu / Esc Back".into(),
+                |pad| format!("{} / O Menu", compact_button(&pad.back)),
+            ));
+            lines.push("? Help / Q Quit".into());
+            lines.push("+/- 0 Z / H L V T B".into());
+            let status = wrap_dialogue(&self.controller_status, usize::from(info.width));
+            lines.extend(status.into_iter().take(3));
+            lines
+        } else if expanded_controls {
             let navigation = self.controller.as_ref().map_or_else(
                 || {
                     if resume {
@@ -1899,28 +1935,39 @@ impl Ui {
                 || "O Menu / Esc Back / ? Help".to_string(),
                 |pad| format!("{} / O Menu / ? Help", compact_button(&pad.back)),
             );
-            format!(
-                "{}\n{}\n{navigation}\n{menu}\n+/- 0 Z / T Talk B Roster H Items L Train V Graphics\n{}",
+            vec![
                 care_rows[0].join("  "),
                 care_rows[1].join("  "),
-                frame_label(&self.controller_status, info.width, frame / 28)
-            )
+                navigation,
+                menu,
+                "+/- 0 Z / T Talk B Roster H Items L Train V Graphics".into(),
+                frame_label(&self.controller_status, info.width, frame / 28),
+            ]
         } else if let Some(pad) = &self.controller {
-            format!(
-                "{} {selected}\n{} Menu / ? Help\n{} Next / +/- Z",
-                tiny_button(&pad.accept),
-                tiny_button(&pad.back),
-                tiny_button(&pad.next)
-            )
+            vec![
+                format!("{} {selected}", tiny_button(&pad.accept)),
+                format!("{} Menu / ? Help", tiny_button(&pad.back)),
+                format!("{} Next / +/- Z", tiny_button(&pad.next)),
+            ]
         } else {
-            format!("{selected} Ent\nO Menu / ? Help\n+/- 0 Z / L")
+            vec![
+                format!("{selected} Ent"),
+                "O Menu / ? Help".into(),
+                "+/- 0 Z / L".into(),
+            ]
         };
         screen.render_widget(
-            Paragraph::new(hints.clone()).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hint_lines.join("\n")).style(Style::default().fg(colors.ink(13))),
             footer,
         );
-        let action_row = if expanded_controls { 2 } else { 0 };
-        let action_line = hints.lines().nth(usize::from(action_row)).unwrap_or("");
+        let action_row = if narrow_controls {
+            4
+        } else if expanded_controls {
+            2
+        } else {
+            0
+        };
+        let action_line = hint_lines.get(action_row).map_or("", String::as_str);
         let segment = if expanded_controls {
             selected_segment.as_str()
         } else if resume {
@@ -1931,7 +1978,7 @@ impl Ui {
         if let Some(offset) = action_line.find(segment) {
             let offset = offset.min(usize::from(footer.width)) as u16;
             let width = (segment.len() as u16).min(footer.width.saturating_sub(offset));
-            let area = Rect::new(footer.x + offset, footer.y + action_row, width, 1);
+            let area = Rect::new(footer.x + offset, footer.y + action_row as u16, width, 1);
             if resume {
                 self.control_targets
                     .borrow_mut()
@@ -1940,56 +1987,58 @@ impl Ui {
                 self.care_targets.borrow_mut().push((area, self.selected));
             }
         }
-        if let Some(offset) = action_line.find("Q Quit") {
-            let offset = offset.min(usize::from(footer.width)) as u16;
-            self.control_targets.borrow_mut().push((
-                Rect::new(
-                    footer.x + offset,
-                    footer.y + action_row,
-                    6.min(footer.width.saturating_sub(offset)),
-                    1,
-                ),
-                Action::Quit,
-            ));
-        }
         if expanded_controls {
-            for (row, captions) in care_rows.iter().enumerate() {
-                let mut x = footer.x;
-                for (column, caption) in captions.iter().enumerate() {
-                    let width = (caption.len() as u16).min(footer.right().saturating_sub(x));
+            let columns = if narrow_controls { 2 } else { 4 };
+            for (index, caption) in care_rows.iter().flatten().copied().enumerate() {
+                let row = index / columns;
+                if let Some(offset) = hint_lines[row].find(caption) {
+                    let offset = (offset as u16).min(footer.width);
                     self.care_targets.borrow_mut().push((
-                        Rect::new(x, footer.y + row as u16, width, 1),
-                        row * 4 + column,
+                        Rect::new(
+                            footer.x + offset,
+                            footer.y + row as u16,
+                            (caption.len() as u16).min(footer.width.saturating_sub(offset)),
+                            1,
+                        ),
+                        index,
                     ));
-                    x = x.saturating_add(caption.len() as u16 + 2);
                 }
             }
         }
-        let menu_row = if expanded_controls { 3 } else { 1 };
-        if footer.height > menu_row {
-            let menu_width = if expanded_controls {
-                self.controller
-                    .as_ref()
-                    .map_or(19, |pad| (compact_button(&pad.back).len() + 12) as u16)
-            } else {
-                9
+        let back_caption = self
+            .controller
+            .as_ref()
+            .map(|pad| format!("{} / O Menu", compact_button(&pad.back)));
+        for (row, line) in hint_lines
+            .iter()
+            .enumerate()
+            .take(usize::from(footer.height))
+        {
+            for (caption, action) in [
+                ("O Menu", Action::Menu),
+                ("Esc Back", Action::Cancel),
+                ("? Help", Action::Help),
+                ("Q Quit", Action::Quit),
+            ]
+            .into_iter()
+            .chain(
+                back_caption
+                    .as_deref()
+                    .map(|caption| (caption, Action::Menu)),
+            ) {
+                if let Some(offset) = line.find(caption) {
+                    let offset = (offset as u16).min(footer.width);
+                    self.control_targets.borrow_mut().push((
+                        Rect::new(
+                            footer.x + offset,
+                            footer.y + row as u16,
+                            (caption.len() as u16).min(footer.width.saturating_sub(offset)),
+                            1,
+                        ),
+                        action,
+                    ));
+                }
             }
-            .min(footer.width);
-            self.control_targets.borrow_mut().extend([
-                (
-                    Rect::new(footer.x, footer.y + menu_row, menu_width, 1),
-                    Action::Menu,
-                ),
-                (
-                    Rect::new(
-                        footer.x + menu_width,
-                        footer.y + menu_row,
-                        footer.width.saturating_sub(menu_width),
-                        1,
-                    ),
-                    Action::Help,
-                ),
-            ]);
         }
     }
 
@@ -2436,7 +2485,7 @@ impl Ui {
                 if micro {
                     "Ent use\nEsc Back".into()
                 } else {
-                    "1..9 / Enter: buy/place\nEsc: Back / Tab".into()
+                    "Enter: buy/place\nEsc: Back / Tab".into()
                 }
             },
             |p| {
@@ -4731,15 +4780,26 @@ mod direct_navigation_regressions {
 
     #[test]
     fn hud_quit_and_paused_save_targets_match_the_printed_captions() {
-        for paused in [false, true] {
+        for (width, height, paused) in [
+            (61, 26, false),
+            (61, 26, true),
+            (62, 30, false),
+            (62, 30, true),
+            (61, 45, false),
+            (61, 45, true),
+        ] {
             let (config, mut ui) = pet();
             ui.hud_mode = HudMode::Minimal;
             ui.game.paused = paused;
-            let text = draw(&ui, &config, 61, 45);
+            let text = draw(&ui, &config, width, height);
             let before = ui.game.clone();
             for (caption, index) in [("S Save", 6), ("N New", 7)] {
                 let position = text.find(caption).unwrap();
-                let point = ((position % 61) as u16, (position / 61) as u16).into();
+                let point = (
+                    (position % usize::from(width)) as u16,
+                    (position / usize::from(width)) as u16,
+                )
+                    .into();
                 assert!(
                     ui.care_targets
                         .borrow()

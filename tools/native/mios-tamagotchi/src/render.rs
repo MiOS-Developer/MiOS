@@ -650,11 +650,9 @@ fn draw_surface_glyphs(
     for (index, glyph) in texture.text.bytes().enumerate() {
         let target = [
             (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0),
-            if index == texture.text.len() / 2 {
-                0.84
-            } else {
-                0.45
-            },
+            // Native glyphs already contain their own eye/mouth baselines.
+            // Keep the complete text in one upper facial band, above the nose.
+            0.35,
         ];
         let mut best = None;
         let mut best_distance = f64::INFINITY;
@@ -686,7 +684,7 @@ fn draw_surface_glyphs(
                     continue;
                 }
                 let du = (mean[0] - target[0]) / (3.0 / (texture.width() + 2.0));
-                let dv = (mean[1] - target[1]) / 0.23;
+                let dv = (mean[1] - target[1]) / 0.16;
                 let distance = du * du + dv * dv;
                 if distance <= 1.0 && distance < best_distance {
                     best = Some((col, row));
@@ -735,9 +733,12 @@ fn draw_camera_face(
     let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
     let columns = right - left;
     let rows = bottom - top;
-    if columns >= texture.text.len() as f64 * 1.6
-        && (columns < texture.text.len() as f64 * 5.0 || rows < 4.5)
-    {
+    // A whole native kaomoji needs five cells, not eight. Below that budget
+    // leave the honest literal HUD fallback; never substitute unreadable bits.
+    if columns < texture.text.len() as f64 {
+        return false;
+    }
+    if columns < texture.text.len() as f64 * 5.0 || rows < 4.5 {
         return draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     }
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
@@ -2186,6 +2187,143 @@ mod camera_tests {
     }
 
     #[test]
+    fn five_to_seven_cell_faces_choose_native_characters_and_smaller_faces_use_the_hud() {
+        let sprite = Sprite::voxel(
+            Stage::Adult,
+            Expression::Happy,
+            SpriteStyle::SixteenBit,
+            0,
+            0,
+            false,
+        );
+        let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
+        let bounds = FaceTexture::bounds(&sprite).unwrap();
+        let area = Rect::new(0, 0, 64, 30);
+        let mut complete_cases = 0;
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            let (dx, dy) = renderer.packing();
+            for columns in [5.25, 6.25, 7.25] {
+                let scale = columns * f64::from(dx) / bounds.width();
+                let projection = Projection {
+                    left: 32.0 * f64::from(dx) - (bounds.left + bounds.right) / 2.0 * scale,
+                    top: 15.0 * f64::from(dy)
+                        - (bounds.top + bounds.bottom) / 2.0
+                            * scale
+                            * camera_pixel_aspect(renderer),
+                    scale,
+                    scale_y: scale * camera_pixel_aspect(renderer),
+                };
+                let mut before = Buffer::empty(area);
+                draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+                let mut expected = before.clone();
+                draw_surface_glyphs(&sprite, renderer, &colors, projection, area, &mut expected);
+                let mut actual = before.clone();
+                draw_camera_face(&sprite, renderer, &colors, projection, area, &mut actual);
+                assert_eq!(
+                    actual, expected,
+                    "{renderer:?} {columns} cells must enter native text, never the bitmap atlas"
+                );
+                let marks: Vec<_> = before
+                    .content
+                    .iter()
+                    .zip(&actual.content)
+                    .filter(|(a, b)| a != b)
+                    .map(|(_, b)| b.symbol())
+                    .collect();
+                assert!(marks.iter().all(|s| ["(", "^", "_", ")"].contains(s)));
+                complete_cases += usize::from(marks.len() == 5);
+            }
+            let scale = 4.0 * f64::from(dx) / bounds.width();
+            let projection = Projection {
+                left: 32.0 * f64::from(dx) - (bounds.left + bounds.right) / 2.0 * scale,
+                top: 15.0 * f64::from(dy)
+                    - (bounds.top + bounds.bottom) / 2.0 * scale * camera_pixel_aspect(renderer),
+                scale,
+                scale_y: scale * camera_pixel_aspect(renderer),
+            };
+            let mut before = Buffer::empty(area);
+            draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+            let mut after = before.clone();
+            assert!(!draw_camera_face(
+                &sprite, renderer, &colors, projection, area, &mut after
+            ));
+            assert_eq!(
+                after, before,
+                "a four-cell surface must not pretend to resolve five glyphs"
+            );
+        }
+        assert!(
+            complete_cases > 0,
+            "small native text must exercise complete five-glyph faces"
+        );
+    }
+
+    #[test]
+    fn phone_room_and_pet_at_fifty_percent_zoom_show_all_five_native_characters() {
+        let sprite = Sprite::voxel(
+            Stage::Adult,
+            Expression::Happy,
+            SpriteStyle::SixteenBit,
+            0,
+            0,
+            false,
+        );
+        let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
+        for (width, height) in [(62, 30), (61, 26)] {
+            let area = Rect::new(0, 0, width, height);
+            for view in [CameraView::Pet, CameraView::Room] {
+                for renderer in [
+                    Renderer::Ascii,
+                    Renderer::HalfBlock,
+                    Renderer::Quadrant,
+                    Renderer::Braille,
+                ] {
+                    let projection = Projection::camera(
+                        &sprite,
+                        SolidBounds::of(&sprite).unwrap(),
+                        area,
+                        renderer,
+                        0,
+                        (500, 500),
+                        Camera {
+                            view,
+                            from_view: view,
+                            zoom_percent: 50,
+                            transition_percent: 100,
+                        },
+                    );
+                    let mut before = Buffer::empty(area);
+                    draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+                    let mut after = before.clone();
+                    assert!(draw_camera_face(
+                        &sprite, renderer, &colors, projection, area, &mut after
+                    ));
+                    let mut chars = Vec::new();
+                    for y in 0..height {
+                        for x in 0..width {
+                            assert_eq!(before[(x, y)].bg, after[(x, y)].bg);
+                            if before[(x, y)] != after[(x, y)] {
+                                chars.push((x, after[(x, y)].symbol().to_owned()));
+                            }
+                        }
+                    }
+                    chars.sort_by_key(|p| p.0);
+                    let literal: String = chars.iter().map(|p| p.1.as_str()).collect();
+                    assert_eq!(
+                        literal, "(^_^)",
+                        "{width}x{height} {renderer:?} {view:?} zoom50 must display canonical native text"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn camera_glyph_strokes_grow_with_the_head_in_every_packing() {
         let sprite = Sprite::voxel(
             Stage::Adult,
@@ -2234,16 +2372,19 @@ mod camera_tests {
                     left.0 < eyes[0].0 && eyes[0].0 + 1 < eyes[1].0 && eyes[1].0 < right.0,
                     "{renderer:?}: Pet {columns}: merged or reordered features {visible:?}"
                 );
-                let mouth = visible
-                    .iter()
-                    .find(|p| p.2 == '_')
-                    .expect("frontal small head must retain its mouth below the real nose");
+                let mouth = visible.iter().find(|p| p.2 == '_').expect(
+                    "frontal small head must retain its literal mouth in the upper face band",
+                );
                 assert_eq!(visible.len(), 5, "{renderer:?}: Pet {columns}: {visible:?}");
                 assert!(
-                    eyes[0].0 < mouth.0
-                        && mouth.0 < eyes[1].0
-                        && mouth.1 > eyes[0].1.max(eyes[1].1),
-                    "{renderer:?}: Pet {columns}: mouth must sit below/between the eyes {visible:?}"
+                    eyes[0].0 < mouth.0 && mouth.0 < eyes[1].0,
+                    "{renderer:?}: Pet {columns}: mouth must sit between the eyes {visible:?}"
+                );
+                let top = visible.iter().map(|p| p.1).min().unwrap();
+                let bottom = visible.iter().map(|p| p.1).max().unwrap();
+                assert!(
+                    bottom - top <= 1,
+                    "{renderer:?}: Pet {columns}: canonical native text broke across bands {visible:?}"
                 );
             }
             let marks: Vec<_> = [28, 44, 68]
