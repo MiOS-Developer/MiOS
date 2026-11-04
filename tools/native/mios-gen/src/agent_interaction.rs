@@ -1,12 +1,12 @@
-// AI-hint: mios-gen render-agent-interaction. Projects [agent_cli.interaction.clients.<name>] from the SSOT into
-// each agent CLI's own settings file under a home directory (agy: .gemini/antigravity-cli/settings.json, gemini:
-// .gemini/settings.json, codex: .codex/config.toml), so the clients run full-screen on the desktop and over SSH.
+// AI-hint: Projects declared terminal-client interaction settings and provider capabilities from the SSOT
+// into owned client settings under a home directory. Provider-specific values apply only to the selected
+// provider, or to the declared fresh-home default, preserving other providers and MCP configuration.
 // Only the declared keys are merged; everything else in the file (operator preferences, credentials, key order,
 // TOML comments) is kept, and a file is rewritten only when a declared value differs. Without --home the verb
 // validates the SSOT table (the generation.sync step); --runtime reads the layered SSOT (vendor < host < user)
 // as an agent launch does (mios-mcp-server --launch-agent).
 // AI-related: usr/share/mios/mios.toml [agent_cli.interaction], usr/libexec/mios/mios-mcp-server
-// (_project_agent_clients), tools/native/mios-gen/src/main.rs, tools/native/mios-gen/tests/agent_interaction.rs
+// (_project_agent_clients), tools/native/mios-gen/src/main.rs, inline projection tests
 //! Agent CLI interaction-settings projection.
 
 use std::fs;
@@ -26,6 +26,9 @@ pub struct Client {
     pub path: PathBuf,
     pub format: Format,
     pub values: toml::value::Table,
+    pub provider_path: Vec<String>,
+    pub default_provider: Option<String>,
+    pub provider_values: toml::value::Table,
 }
 
 #[derive(Debug, Default)]
@@ -83,14 +86,105 @@ pub fn clients(ssot: &toml::Value) -> Result<Vec<Client>, String> {
             .and_then(toml::Value::as_table)
             .ok_or(format!("{at}.values must be a table"))?
             .clone();
+        let provider_path = match row.get("provider_path") {
+            None => Vec::new(),
+            Some(value) => value
+                .as_array()
+                .ok_or(format!(
+                    "{at}.provider_path must be an array of nonempty strings"
+                ))?
+                .iter()
+                .map(|part| {
+                    part.as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .ok_or(format!(
+                            "{at}.provider_path must be an array of nonempty strings"
+                        ))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        let default_provider = match row.get("default_provider") {
+            None => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or(format!("{at}.default_provider must be a nonempty string"))?
+                    .to_owned(),
+            ),
+        };
+        let provider_values = match row.get("provider_values") {
+            None => toml::value::Table::new(),
+            Some(value) => value
+                .as_table()
+                .ok_or(format!("{at}.provider_values must be a table"))?
+                .clone(),
+        };
+        if provider_values
+            .iter()
+            .any(|(name, value)| name.is_empty() || !value.is_table())
+        {
+            return Err(format!("{at}.provider_values entries must be named tables"));
+        }
+        if provider_path.is_empty() && (!provider_values.is_empty() || default_provider.is_some()) {
+            return Err(format!(
+                "{at}.provider_path is required for provider settings"
+            ));
+        }
         out.push(Client {
             name: name.clone(),
             path,
             format,
             values,
+            provider_path,
+            default_provider,
+            provider_values,
         });
     }
     Ok(out)
+}
+
+/// Select scoped settings using the client's existing provider, without changing its identity.
+fn effective_values(client: &Client, current: &str) -> Result<toml::value::Table, String> {
+    let mut values = client.values.clone();
+    if client.provider_values.is_empty() {
+        return Ok(values);
+    }
+    let document = if current.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        match client.format {
+            Format::Json => {
+                serde_json::from_str(current).map_err(|e| format!("invalid JSON: {e}"))?
+            }
+            Format::Toml => {
+                let document: toml::Value =
+                    current.parse().map_err(|e| format!("invalid TOML: {e}"))?;
+                serde_json::to_value(document).map_err(|e| e.to_string())?
+            }
+        }
+    };
+    let mut selected = Some(&document);
+    for key in &client.provider_path {
+        selected = selected.and_then(|value| value.get(key));
+    }
+    let provider = match selected {
+        None => client.default_provider.as_deref(),
+        Some(value) => Some(
+            value
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or("the client provider selector must be a nonempty string")?,
+        ),
+    };
+    if let Some(overrides) = provider
+        .and_then(|name| client.provider_values.get(name))
+        .and_then(toml::Value::as_table)
+    {
+        mios_resolver::merge::deep_merge_table(&mut values, overrides.clone());
+    }
+    Ok(values)
 }
 
 fn merge_json(dst: &mut serde_json::Value, src: &toml::Value) -> Result<(), String> {
@@ -240,7 +334,9 @@ pub fn project(clients: &[Client], home: Option<&Path>, check: bool) -> Result<O
                 continue;
             }
         };
-        match merged_text(c.format, &current, &c.values) {
+        match effective_values(c, &current)
+            .and_then(|values| merged_text(c.format, &current, &values))
+        {
             Ok(None) => out.unchanged.push(target),
             Ok(Some(text)) => {
                 if !check {
@@ -447,6 +543,138 @@ alternate_screen = "always"
             .is_empty());
         let off = DECL.replace("enabled = true", "enabled = false");
         assert!(clients(&ssot(&off)).unwrap().is_empty());
+    }
+
+    const SCOPED: &str = r#"
+[agent_cli.interaction.clients.terminal]
+path = ".agent/config.toml"
+format = "toml"
+provider_path = ["model_provider"]
+default_provider = "local"
+[agent_cli.interaction.clients.terminal.values.tui]
+alternate_screen = "always"
+[agent_cli.interaction.clients.terminal.provider_values.local]
+web_search = "disabled"
+"#;
+
+    #[test]
+    fn provider_capabilities_preserve_identity_mcp_and_other_providers() {
+        let home = tempfile::tempdir().unwrap();
+        let cs = clients(&ssot(SCOPED)).unwrap();
+        project(&cs, Some(home.path()), false).unwrap();
+        let path = home.path().join(".agent/config.toml");
+        let fresh: toml::Value = fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(fresh["web_search"].as_str(), Some("disabled"));
+        assert!(fresh.get("model_provider").is_none());
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        for provider in ["local", "other"] {
+            fs::write(&path, format!(
+                "# keep operator preferences\nmodel_provider = \"{provider}\"\nmodel = \"selected\"\nweb_search = \"live\"\n[mcp_servers.control]\ncommand = \"/usr/libexec/mios/mios-mcp-server\"\nenabled = true\n[profiles.explicit]\nweb_search = \"live\"\n"
+            )).unwrap();
+            let out = project(&cs, Some(home.path()), false).unwrap();
+            assert!(out.skipped.is_empty());
+            let text = fs::read_to_string(&path).unwrap();
+            let value: toml::Value = text.parse().unwrap();
+            assert!(text.contains("# keep operator preferences"));
+            assert_eq!(value["model_provider"].as_str(), Some(provider));
+            assert_eq!(value["model"].as_str(), Some("selected"));
+            assert_eq!(
+                value["web_search"].as_str(),
+                Some(if provider == "local" {
+                    "disabled"
+                } else {
+                    "live"
+                })
+            );
+            assert_eq!(
+                value["mcp_servers"]["control"]["enabled"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                value["profiles"]["explicit"]["web_search"].as_str(),
+                Some("live")
+            );
+            assert_eq!(value["tui"]["alternate_screen"].as_str(), Some("always"));
+            assert!(project(&cs, Some(home.path()), false)
+                .unwrap()
+                .changed
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn layered_operator_provider_opt_in_is_preserved() {
+        let mut config = ssot(SCOPED);
+        mios_resolver::merge::deep_merge(&mut config, ssot(
+            "[agent_cli.interaction.clients.terminal.provider_values.local]\nweb_search = \"live\"\n"
+        ));
+        let home = tempfile::tempdir().unwrap();
+        project(&clients(&config).unwrap(), Some(home.path()), false).unwrap();
+        let value: toml::Value = fs::read_to_string(home.path().join(".agent/config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(value["web_search"].as_str(), Some("live"));
+    }
+
+    #[test]
+    fn nested_json_provider_selector_is_generic() {
+        let config = SCOPED
+            .replace(".agent/config.toml", ".agent/settings.json")
+            .replace("format = \"toml\"", "format = \"json\"")
+            .replace("[\"model_provider\"]", "[\"connection\", \"provider\"]");
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(".agent/settings.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"{"connection":{"provider":"other"},"web_search":"live","mcpServers":{"control":{"command":"kept"}}}"#).unwrap();
+        let cs = clients(&ssot(&config)).unwrap();
+        project(&cs, Some(home.path()), false).unwrap();
+        let other: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(other["web_search"], "live");
+        assert_eq!(other["mcpServers"]["control"]["command"], "kept");
+        let mut local = other;
+        local["connection"]["provider"] = serde_json::json!("local");
+        fs::write(&path, serde_json::to_string(&local).unwrap()).unwrap();
+        project(&cs, Some(home.path()), false).unwrap();
+        let local: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(local["web_search"], "disabled");
+        assert_eq!(local["connection"]["provider"], "local");
+    }
+
+    #[test]
+    fn invalid_provider_declarations_and_selector_fail_closed() {
+        for replacement in [
+            "provider_path = []",
+            "provider_path = [1]",
+            "provider_path = [\"\"]",
+            "provider_path = \"provider\"",
+        ] {
+            assert!(clients(&ssot(
+                &SCOPED.replace("provider_path = [\"model_provider\"]", replacement)
+            ))
+            .is_err());
+        }
+        assert!(clients(&ssot(
+            &SCOPED.replace("default_provider = \"local\"", "default_provider = 1")
+        ))
+        .is_err());
+        assert!(clients(&ssot(&SCOPED.replace(
+            "[agent_cli.interaction.clients.terminal.provider_values.local]\nweb_search = \"disabled\"",
+            "[agent_cli.interaction.clients.terminal.provider_values]\nlocal = 1"
+        ))).is_err());
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(".agent/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "model_provider = 42\n").unwrap();
+        let out = project(&clients(&ssot(SCOPED)).unwrap(), Some(home.path()), false).unwrap();
+        assert_eq!(out.skipped.len(), 1);
+        assert!(out.skipped[0].1.contains("provider selector"));
+        assert_eq!(fs::read_to_string(path).unwrap(), "model_provider = 42\n");
     }
 
     #[test]

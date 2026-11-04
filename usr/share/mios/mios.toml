@@ -4111,6 +4111,11 @@ useAlternateBuffer = true
 [agent_cli.interaction.clients.codex]
 path = ".codex/config.toml"
 format = "toml"
+# Hosted tools require provider support; MCP tools remain available independently.
+provider_path = ["model_provider"]
+default_provider = "mios"
+[agent_cli.interaction.clients.codex.provider_values.mios]
+web_search = "disabled"
 [agent_cli.interaction.clients.codex.values.tui]
 alternate_screen = "always"
 

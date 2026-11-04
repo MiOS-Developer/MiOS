@@ -3439,6 +3439,8 @@
         <label>Native client screen mode <input data-key="agent_cli.interaction.clients.agy.values.altScreenMode" type="text"></label>
         <label>Alternate terminal buffer <input data-key="agent_cli.interaction.clients.gemini.values.ui.useAlternateBuffer" data-type="bool" type="text"></label>
         <label>Responses client screen mode <input data-key="agent_cli.interaction.clients.codex.values.tui.alternate_screen" type="text"></label>
+        <label>Local provider hosted search <select data-key="agent_cli.interaction.clients.codex.provider_values.mios.web_search"><option value="disabled">Disabled</option><option value="cached">Cached</option><option value="indexed">Indexed</option><option value="live">Live</option></select></label>
+        <p class="hint">Hosted search requires provider support. MiOS MCP search remains available when hosted search is disabled. This setting applies only to the local provider.</p>
         <label>Global input policy <input data-key="keybindings.global.enabled" type="checkbox"></label>
         <label>Host escape modifier <input data-key="keybindings.global.bypass_mod" type="text"></label>
         <label>Actions available globally during capture <textarea data-key="keybindings.global.always_active_actions" data-type="json-array"></textarea></label>
