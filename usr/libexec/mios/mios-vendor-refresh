@@ -91,6 +91,18 @@ main() {
     resolve_fonts
     resolve_hermes
 
+    # Wheel resolution is owned by the shared runtime requirements manifest.
+    # Preserve its independently verified URL/hash records when refreshing the
+    # unrelated assets above; never execute or reinterpret manifest values.
+    if [[ -f "${VERSIONS_FILE}" ]]; then
+        local wheel_record
+        while IFS= read -r wheel_record || [[ -n "${wheel_record}" ]]; do
+            case "${wheel_record}" in
+                python_wheel_*=*) printf '%s\n' "${wheel_record}" >> "${VERSIONS_FILE}.tmp" ;;
+            esac
+        done < "${VERSIONS_FILE}"
+    fi
+
     mv "${VERSIONS_FILE}.tmp" "${VERSIONS_FILE}"
     log "Successfully updated ${VERSIONS_FILE}"
 }

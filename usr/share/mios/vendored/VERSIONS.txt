@@ -7,3 +7,15 @@ nerd_fonts=v3.4.0
 geist_font=v1.3.0
 hermes_agent=daa1befaf61f2e2f3f0643818cfd6b32e2b51b10
 tmux_mcp=v2.0.0@d9e45cfe72cff75f7ba923c32ac35a19f424effb
+
+# Locked Python wheel provenance; runtime selections live in the shared requirements manifest.
+python_wheel_llguidance_version=1.9.1
+python_wheel_llguidance_filename=llguidance-1.9.1-cp39-abi3-manylinux_2_31_x86_64.whl
+python_wheel_llguidance_pypi=https://pypi.org/pypi/llguidance/1.9.1/json
+python_wheel_llguidance_url=https://files.pythonhosted.org/packages/46/c3/b50a05a16af0a84f5a9a6fb4707006d3fc377d1b446599d23ac78f3e144c/llguidance-1.9.1-cp39-abi3-manylinux_2_31_x86_64.whl
+python_wheel_llguidance_sha256=dfac6021d9c4c5ef16b3a1d336c05ca5e8208ff30dec29d1c63ebcafbee3a346
+python_wheel_openai_version=2.24.0
+python_wheel_openai_filename=openai-2.24.0-py3-none-any.whl
+python_wheel_openai_pypi=https://pypi.org/pypi/openai/2.24.0/json
+python_wheel_openai_url=https://files.pythonhosted.org/packages/c9/30/844dc675ee6902579b8eef01ed23917cc9319a1c9c0c14ec6e39340c96d0/openai-2.24.0-py3-none-any.whl
+python_wheel_openai_sha256=fed30480d7d6c884303287bde864980a4b137b60553ffbcf9ab4a233b7a73d94
