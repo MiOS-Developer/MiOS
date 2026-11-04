@@ -3691,3 +3691,199 @@ remain outside this lane. Native configuration and unit projection tests, real
 offline preset enablement, provisioning controls, MCP tests, and SDK event
 validation provide the verification evidence. Full OCI build/boot validation and
 live activation are separate pending checks; no deployment or push performed.
+
+## 2026-11-04 · task_3708 / 3711–3717 · status: live intermediate, final validation active
+
+Operator scope: real visible nested Tamagotchi install, ALL owned sessions PiP;
+full viewport graphics, 8/16-bit animated art; controller prompts when attached
+and focused; autonomous RNG/stage/needs walking, 3D voxel rotation and faces
+(controller is menus/HUD ONLY); minimal remote/console/smartwatch-terminal HUD;
+at least16 original Japanese-inspired animal characters, personality voices and
+thoughts; native tmux popup/rightclick with inline-below-pet fallback; then actual
+mobile remote playing/testing.
+
+Actual target only mios, MiOS0.3.0 Fedora44 x86_64. No ARM64/other Blade execution
+certified. Baseline source518d4c70 was rebuilt in real4CPU rootless MiOS-DEV;
+24tests/Clippy/static passed, SHA91b3b3a... installed then superseded. Pixel room
+source06f64554 passed32unit+6CLI, artifacte2f2bab9..., independently10groupsPASS
+incl160Studio variants, malformed/writer/restore/snapshot/tiny. Current RUNNING
+intermediate source801fd4c269db7e7cb865aeeaf9e91cede184a326, SHA
+8f4f43a3c9d762caf954254e248665a2663568d4aeb9cdaab88835dd577e031b:
+55unit+6CLI/Clippy/release/static all0 in MiOS-DEV. Genuine independent UI fixture
+walked/turned NO directional inputs, Baby18->Child28 naturally, paused motion
+stable and Game RNG unchanged. Installed ~/.local/bin/mios-tamagotchi-sample.
+Old binaries preserved by purpose-named backups.
+
+Final source lane /.worktrees/mios-tamagotchi-dialogue branch same, commit
+935ba96f1ebd9e5d29e06dc47acf870f829f3429 now building in DEV. Root graphics lane
+/.worktrees/mios-tamagotchi-graphics fixed at801 intermediate. Final adds16
+cat/fox/tanuki/rabbit/bear/frog/bird/turtle models, original catalogue, schema2
+stable character with read-only schema1 migration, talk/roster adoption, native
+dialogs/rightclick and inline compact paging. Do not claim final build/runtime
+until raw receipts pass. One discovered actual native-tmux bug: literal TAB in
+list-clients format is stripped; final input.rs uses printable | for focus proof.
+Compact memory now U/D/L/R and reset clears old motion caches (review defects).
+
+Development source participants: mios-tamagotchi-sprite-worker delivered sprites
+(ended); mios-tamagotchi-controller-worker delivered bounded read-only Inputd
+probe (released/ended); mios-tamagotchi-voxel-worker owns only sprite.rs in
+/.worktrees/mios-tamagotchi-voxels latesthash7c62c22b..., waiting DEV feedback;
+mios-tamagotchi-character-worker owns characters.rs in separatecharacters lane
++external TOML, hashese497ba82/2bf38330, merged; mios-tamagotchi-dialog-worker owns
+dialogs.rs separatepopups lane, latesta31d0f03..., merged. Each registered itself
+in desktop relay, owns token0600, receives/ACKs own messages. Root is only
+canonical tasks.jsonl/TASKS.md owner in live lane. Existing CI coordinator
+mios-ci-headscale-continuation owns shared lease and publication, no root push.
+
+Live nested runtimes: live799091, verify907578, build957794, pad1469446 under
+/run/user/1000/mios-nested-desktop-*. All actual descriptors session.json and
+registry /run/user/1000/mios/nested-sessions/. Parent HDMI-A-1, signature
+release-v0.56.2_1793752540_1282098293. Original persistent game panes%0 in
+their own tmux-os socket; launchers stay open independent of MCP helper lifetime.
+Live Adult78wins6 paused saved /home/mios/.local/state/mios/tamagotchi-blade-sample/mios-pet.json;
+verify original Baby12 paused distinct save; pad Egg0 paused mios-controller-pet.json.
+Pad owns ONLY virtualevent6 via nativevpad mios-tamagotchi-pad, bridge1485747;
+West/Dpad/South projection actually played HUD. Physical DualSense remains parent.
+Parent PiPs pinned; runtime-only Alacritty opacity1 fixes halfblock scan-line
+transparency. Font/fit can resettle after PiP changes; final readable captures
+must be inspected. Game sessions original%0 remain after tool helpers reclaimed.
+
+Proof root /home/mios/.local/state/mios/mios-tamagotchi-graphics-dev:
+mios-proof-lint pixel, mios-proof-voxel intermediate, mios-proof-characters final.
+All use serialized /var/lib/mios-build/heavy.lock, fresh SSOT mem-admit>=12288MB,
+rootless Podman API unix:///run/user/1000/podman/podman.sock, image e9ce37c...,
+host/usr read-only/toolchain /rust-toolchain, 4CPU/4GB/no network, Rust1.99.1,
+locked offline musl static PIE. Cached target shared sequentially; immutable
+copies mios-artifacts/mios-pixel-room and mios-voxel-hud preserved. Never hostbuild.
+Use existing reviewed host/container scripts for retries/new proof directories.
+
+Independent verifier mios-tamagotchi-live-verifier released after preserving
+receipts in /home/mios/.local/state/mios/mios-tamagotchi-verification:
+graphics/mios-task3710-graphics-receipt.json SHA25e1ad0f...,
+voxel/mios-task3710-intermediate-voxel-receipt.json SHAce16a4ae...,
+mios-mobile-route-receipt.json SHA1920a223....
+Fresh final verifier can be launched natively in verify seat after source
+workers released. Root native input helper outside repo:
+.../mios-tamagotchi-live/mios-graphics-driver.py verifies actual terminal/window
+PID and stableId before hl.send_key_state. Use for live/verify/pad. Capture via
+grim inside correct runtime WAYLAND-1; parent capture HDMI-A-1. No manufactured
+age/needs/coins; previews and fixtures labelled.
+
+Mobile route: actual parent ONLYHDMI output, no attached remote/nonzero RDP
+output. Existing https://fedora-3.taildd86d0.ts.net/ serves authenticated Cockpit
+9090 only. No game webterminal/RDP stream; SSOT8310/8320 inactive, portal8700
+requireslogin. Async user request pending to open Cockpit Terminal on phone (or
+choose existingSSH). Continue implementation, do not infer connection/approval.
+Need concrete final attach command plus actual mobile input/frame proof; do not
+claim phone certification from local screenshot.
+
+Remaining: inspect final DEV compile/tests, fix failures in owned lane; review
+popup Drop lifecycle cancellation and actual native menu/helper behavior; deploy
+verified final artifact with schema1 backups and exact hashes; exercise16roster,
+dialogs/native/rightclick/inline and minimal20x8; verify real controller prompts
+with final | focus fix/detach/foreign focus, independent final acceptance,
+gates comparison (prior35/1/1 and template6 unchanged), update canonical evidence,
+commit tasks/research/ledger and send reviewable commits to CI owner. Keep all
+PiPs open, games paused for handoff. No new services, global inputd/compositor,
+boot or live TOML changes, no own push. Remote mobile remains explicit if no user
+client arrives.
+
+## MiOS-Mon final live deployment and mobile handoff
+
+- Actual target: mios, MiOS0.3.0/Fedora44, x86_64, normal desktop user mios.
+  No other authorized live node or ARM64 execution was established.
+- Final source: 9b803f6c5e1c1bc3e518c83c8a3c731c4ce3b2e0, isolated clean
+  mios-tamagotchi-dialogue branch. Source contains reviewed playable ancestry.
+- Real rootless MiOS-DEV proof:
+  /home/mios/.local/state/mios/mios-tamagotchi-graphics-dev/mios-proof-dialog-ambient.
+  Four CPUs, 4GiB, heavy-build lock and fresh SSOT memory admission; pinned
+  lockfile, Rust1.99.1, x86_64-unknown-linux-musl. 84 unit +7 CLI tests,
+  all-targets warning-fatal Clippy, release and native static validation pass.
+- Final SHA256: 6aca3f055bb38aee5a7e0714b24e31b5216a6bd2ca59e4ef602c33ce7f8005fc.
+  Installed normal-user /home/mios/.local/bin/mios-tamagotchi-sample. Existing
+  sample versions preserved; OS binary, live settings and services unchanged.
+- Sixteen original animal identities: Mio/Yuzu/Mugi/Tofu/Kumo/Nori/Sora/Raku/
+  Suzu/Aki/Hinoki/Haru/Mochi/Puku/Kiri/Iwa. Eight body families, distinct
+  secondary geometry/palettes, personality/hobby/voice, state-aware original
+  speech/thoughts. All sixteen actual UI roster previews were captured without
+  changing the active pet. Research distinguishes Nintendo primary evidence,
+  community documentation and original implementation decisions.
+- CPU solid voxel rasterization with yaw/pitch, expressions and autonomous
+  stage/needs/RNG wandering; controller input operates menus/HUD only.
+  Independent actual walking and growth used no directional steering or save
+  edits; core gameplay RNG was unchanged by presentation.
+- Native Talk popup and native right-click menu/Save callback verified using
+  automated terminal SGR events. Physical pointer behavior remains unverified:
+  installed computer-use mouse_action returned success without wlrctl, so its
+  reported success was excluded from acceptance.
+- Independent verifier found duplicate underlying Talk controls. Root fixed
+  the full/compact guards, extended regression coverage, rebuilt in DEV and
+  deployed final9b803/6aca. Independent actual final popup now leaves ambient
+  thoughts, without duplicated speech/controls. Two real attached PTY clients
+  correctly select inline fallback.
+- Owned virtual controller event6: West/Dpad/South menu actions, North capture,
+  L3+R3 release and neutral final state verified. Final real pane-focus-away
+  switches prompts to Enter/Arrows; focus-return restores South/East. Parent
+  physical DualSense remained untouched. No physical/multiple-pad claim.
+- Four continuing pinned PiPs: mios-tamagotchi-live (original adult78,
+  health100, six memory wins), mios-tamagotchi-verify (original baby12),
+  mios-tamagotchi-pad (original egg), and mios-tamagotchi-build (separate mobile
+  baby). Pets paused for protection; launchers persist independently of helpers.
+  Exact descriptors, sockets, processes, executable hashes, saves, migration
+  comparisons and captures are in:
+  /home/mios/.local/state/mios/mios-tamagotchi-live/mios-consolidated-receipt.json.
+- All three schema1 backups retained; schema2 migration adds identity without
+  changing any original simulation fields. Snapshot reads never migrate/write.
+- Actual mobile pet: build-seat original pane0, minimal voxel HUD, inline
+  dialogue, separate mios-mobile-pet.json. Existing authenticated Cockpit at
+  https://mios.taildd86d0.ts.net/ repaired by local integration agent; normal
+  mios user can attach the exact live tmux namespace from Cockpit Terminal.
+  No real phone/watch client has attached, so device visual/input/gesture
+  acceptance remains explicitly unverified in task3718.
+- Native participants separately registered, consumed/ACKed their own inbox,
+  delivered actual work and replied: mios-tamagotchi-live-install,
+  mios-tamagotchi-dev-builder, mios-tamagotchi-live-verifier,
+  mios-tamagotchi-sprite-worker, mios-tamagotchi-controller-worker,
+  mios-tamagotchi-voxel-worker, mios-tamagotchi-character-worker,
+  mios-tamagotchi-dialog-worker and mios-tamagotchi-final-verifier.
+  Private tokens are excluded from receipts and commits.
+- Broader checks retain baseline diagnostics: rust-categories35,
+  module-test-coverage1, no-inert-ssot-tables1/dashboard, template-conformance6.
+  Three gate logs match pinned baseline byte-for-byte; same six template files.
+  No global clean-CI claim or gate weakening.
+- Source/local task/research commits are handed to the existing local
+  integration owner for serialized publication. This lane does not push or
+  merge another participant's branches. Native OS-image/launcher integration,
+  configurator, physical terminal/Inputd cases and broader device features
+  remain tasks3703..3706. Continuous pet pinch scaling is not implemented:
+  current Graphics scaling is discrete, with separate native terminal/PiP zoom.
+
+
+### Final compact roster correction
+
+Source6062afb15f9b0ed84c5426c4a77c746739022835 supersedes9b803 checkpoint.
+Static SHA2569469229bb8dc98681ada4125a60f9c796b84e5a65edcc38e8b2d322377b446d3
+is the current installed normal-user sample. Real MiOS-DEV85unit+7CLI92PASS,
+all-target Clippy/release/native static artifact checks all0; proof
+mios-tamagotchi-graphics-dev/mios-proof-roster-prompts. Actual20x8 roster
+clipped the Enter adoption hint; compact prompts now fit. Source review also
+corrected identity lookup by id for a valid reordered catalogue's adoption
+confirmation. Combined regression preserves current pet when canceled.
+Earlier6aca receipts remain exact historical evidence; final focused native
+UI delta is delegated to the continuing independent verifier.
+
+
+Final independent task3719 accepted:28PASS/0FAIL/6UNVERIFIED in aggregate.
+Receipt SHA2e16a0c3786716381cb5517f9a9a354fb52722e89309923b6fdeb9fb05611a91,
+delta SHAccd6d42c1346fdf544a43809736163e6bdde534555ce06a2e8a4a35ae849943b.
+All referenced case proof paths exist. Original verification pet remained
+Baby12PAUSED, bytes unchanged, final946PID2660230. All four retained process
+exe hashes match final946 and launchers remain independently alive.
+Coordinator accepted the focused20x8 roster/correct-identity/cancel evidence,
+released the final worker and retains all launcher/session ownership.
+Primary3708 and mobile3718 remain open for explicitly unverified device cases.
+Final human handoff and full per-node receipt:
+  /home/mios/.local/state/mios/mios-tamagotchi-live/mios-live-handoff.md
+  /home/mios/.local/state/mios/mios-tamagotchi-live/mios-consolidated-receipt.json
+Existing mobile frontdoor independently verified HTTPS200/TLS0 and protected
+login401/TLS0; only desktop client attached, no real phone certification.
