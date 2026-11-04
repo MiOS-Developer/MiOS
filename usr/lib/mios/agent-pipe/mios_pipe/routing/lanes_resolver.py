@@ -74,7 +74,7 @@ def get_gpu_arbiter_state() -> str:
 _heavy_probe = {"ok": False, "ts": -1e9}
 
 async def _heavy_lane_up() -> bool:
-    """Is the SGLang heavy lane serving right now? Cached for _HEAVY_PROBE_TTL s so we
+    """Is the selected canonical heavy engine serving the expected model right now? Cached for _HEAVY_PROBE_TTL s so we
     probe at most once per window, never per request."""
     if get_gpu_arbiter_state() != "AI_EXCLUSIVE":
         # Proactive gaming failover: heavy GPU is detached/sleeping
@@ -87,7 +87,7 @@ async def _heavy_lane_up() -> bool:
     try:
         client = await _get_client()
         r = await client.get(f"{_TOOL_BACKEND_HEAVY}/models", timeout=2.0)
-        ok = (r.status_code == 200)
+        ok = mios_lanes.serves_model(r, _TOOL_BACKEND_HEAVY_MODEL)
     except Exception:  # noqa: BLE001 -- any failure => heavy is down, use light
         ok = False
     _heavy_probe["ok"] = ok
@@ -146,6 +146,10 @@ def _lane_resolver():
             return False
         client = await _get_client()
         r = await client.get(f"{url}/models", timeout=2.0)
+        if url.rstrip("/") in heavy_endpoints:
+            expected = (_TOOL_BACKEND_HEAVY_MODEL if url.rstrip("/") == _TOOL_BACKEND_HEAVY.rstrip("/")
+                        else _vllm_model)
+            return mios_lanes.serves_model(r, expected)
         return r.status_code == 200
 
     _LANE_RESOLVER = mios_lanes.LaneResolver(

@@ -47,6 +47,17 @@ def build_chain(heavy_engine, available) -> list:
         chain = [x for x in chain if x != "light"] + ["light"]
     return chain
 
+def serves_model(response, model: str) -> bool:
+    """OpenAI model identity proves readiness; a listening unrelated service does not."""
+    try:
+        payload = response.json()
+        return (response.status_code == 200 and isinstance(payload, dict)
+                and isinstance(payload.get("data"), list)
+                and any(isinstance(item, dict) and item.get("id") == model
+                        for item in payload["data"]))
+    except Exception:
+        return False
+
 class LaneResolver:
 
     def __init__(self, lanes, chains, probe, *, ttl: float = 30.0,

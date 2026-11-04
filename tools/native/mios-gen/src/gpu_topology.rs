@@ -1603,6 +1603,141 @@ pub fn reconcile_light_backend(root: &Path, apply: bool, reload: bool) -> Result
     Ok(plan.to_json(changed))
 }
 
+/// Read-only admission for the canonical heavy llama.cpp engine. Reuse the
+/// kernel-bound CUDA validator, without writing or activating the light lane.
+pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
+    if data
+        .get("ai")
+        .and_then(|v| v.get("heavy_engine"))
+        .and_then(Value::as_str)
+        != Some("llamacpp")
+    {
+        return Err("heavy-backend requires ai.heavy_engine=llamacpp".into());
+    }
+    let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
+    for key in [
+        "heavy_threads",
+        "heavy_context",
+        "heavy_batch_size",
+        "heavy_ubatch_size",
+        "heavy_parallel",
+    ] {
+        light_batch_size(llama, key)?;
+    }
+    if light_batch_size(llama, "heavy_ubatch_size")? > light_batch_size(llama, "heavy_batch_size")?
+    {
+        return Err("heavy_ubatch_size must not exceed heavy_batch_size".into());
+    }
+    if light_batch_size(llama, "heavy_parallel")? > light_batch_size(llama, "heavy_context")? {
+        return Err("heavy_parallel must not exceed heavy_context".into());
+    }
+    let resource = light_string(llama, "heavy_gpu_resource")?;
+    let model = light_string(llama, "heavy_model_file")?;
+    if !model.ends_with(".gguf")
+        || !model
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        || model == ".gguf"
+        || model.starts_with('.')
+    {
+        return Err(
+            "heavy_model_file must name one GGUF file without traversal or arguments".into(),
+        );
+    }
+    let cache = light_string(llama, "heavy_cache_type")?;
+    if !matches!(
+        cache,
+        "f16" | "q8_0" | "q4_0" | "q4_1" | "q5_0" | "q5_1" | "iq4_nl"
+    ) {
+        return Err("heavy_cache_type must name a supported symmetric K/V type".into());
+    }
+    let alias = data
+        .get("nodes")
+        .and_then(|n| n.get("local-heavy"))
+        .and_then(|n| n.get("model"))
+        .and_then(Value::as_str)
+        .ok_or("nodes.local-heavy.model is missing")?;
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._:/-".contains(&c))
+    {
+        return Err("nodes.local-heavy.model must be a single served alias".into());
+    }
+    let absolute = |key| -> Result<PathBuf, String> {
+        let value = light_string(llama, key)?;
+        let path = Path::new(value);
+        if !path.is_absolute()
+            || path == Path::new("/")
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!("llamacpp.{key} must be one absolute rooted path"));
+        }
+        Ok(root.join(path.strip_prefix("/").map_err(|e| e.to_string())?))
+    };
+    let models = absolute("models_dir")?;
+    let slots = absolute("heavy_slot_dir")?;
+    let weights = models.join(model);
+    let mut stream =
+        fs::File::open(&weights).map_err(|e| format!("heavy GGUF unavailable: {e}"))?;
+    let mut magic = [0u8; 4];
+    stream
+        .read_exact(&mut magic)
+        .map_err(|e| format!("heavy GGUF header unavailable: {e}"))?;
+    if &magic != b"GGUF" || !stream.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("heavy model is not a GGUF regular file".into());
+    }
+    for directory in [&slots, &slots.join("cache"), &slots.join("slots")] {
+        if !directory.is_dir() {
+            return Err(format!("heavy cache/slot directory {} is missing; apply the declared tmpfiles configuration", directory.display()));
+        }
+    }
+    let mut projected = data.clone();
+    for (target, source) in [
+        ("light_threads", "heavy_threads"),
+        ("light_batch_size", "heavy_batch_size"),
+        ("light_ubatch_size", "heavy_ubatch_size"),
+        ("slot_dir", "heavy_slot_dir"),
+        ("light_gpu_resource", "heavy_gpu_resource"),
+    ] {
+        projected["llamacpp"][target] = llama[source].clone();
+    }
+    projected["llamacpp"]["light_backend"] = Value::String("cuda".into());
+    projected["llamacpp"]["light_backends"]["cuda"]["image_key"] =
+        Value::String("llm_heavy_llamacpp".into());
+    projected["llamacpp"]["light_backends"]["cuda"]["device"] = Value::String("CUDA0".into());
+    projected["llamacpp"]["light_backends"]["cuda"]["gpu_layers"] = Value::String("all".into());
+    let cfg = light_settings(&projected)?;
+    let pci = resource_pci(root, data, resource)?;
+    let gpu = pci_inventory(root)?
+        .into_iter()
+        .find(|gpu| gpu.pci == pci)
+        .ok_or("heavy CUDA resource is not a discovered PCI GPU")?;
+    let (cdi, gid) = light_cuda_device(root, data, &cfg, &gpu)?;
+    let selection = data["gpu"]["cdi"]["nvidia"]["device"]
+        .as_str()
+        .ok_or("NVIDIA CDI device missing")?;
+    if selection != cdi {
+        return Err("heavy CUDA requires the exact selected GPU UUID CDI device; all/index selectors are not accepted".into());
+    }
+    Ok(
+        json!({"engine":"llamacpp","unit":"mios-llm-heavy.service","backend":"cuda",
+        "device":"CUDA0","gpu_layers":"all","image":cfg.image,"resource":resource,"pci":pci,
+        "cdi_device":cdi,"device_gid":gid,"model":alias,"weights":weights,"slots":slots,
+        "context":llama["heavy_context"],"threads":llama["heavy_threads"],"changed":false}),
+    )
+}
+
+pub fn report_heavy_backend(root: &Path) -> Result<Json, String> {
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    heavy_backend_plan(root, &data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2052,6 +2187,99 @@ mod tests {
         symlink("/dev/null", root.path().join(format!("dev/nvidia{minor}"))).unwrap();
         fs::write(root.path().join("proc/devices"), format!("Character devices:\n{major} nvidia\n{major} nvidiactl\n{major} nvidia-modeset\n\nBlock devices:\n")).unwrap();
         (root, data)
+    }
+
+    fn heavy_cuda_fixture() -> (tempfile::TempDir, Value) {
+        let (root, mut data) = cuda_headless_fixture();
+        data["ai"]["heavy_engine"] = Value::String("llamacpp".into());
+        data["llamacpp"]["heavy_gpu_resource"] = Value::String("accelerator".into());
+        data["gpu"]["cdi"]["nvidia"]["device"] =
+            Value::String("nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555".into());
+        let llama = &data["llamacpp"];
+        let models = root.path().join(
+            llama["models_dir"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches('/'),
+        );
+        fs::create_dir_all(&models).unwrap();
+        fs::write(
+            models.join(llama["heavy_model_file"].as_str().unwrap()),
+            b"GGUF\x03\0\0\0fixture",
+        )
+        .unwrap();
+        let slots = root.path().join(
+            llama["heavy_slot_dir"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches('/'),
+        );
+        fs::create_dir_all(slots.join("cache")).unwrap();
+        fs::create_dir_all(slots.join("slots")).unwrap();
+        (root, data)
+    }
+
+    #[test]
+    fn canonical_heavy_cuda_reuses_kernel_proof_without_mutating_light() {
+        let (root, data) = heavy_cuda_fixture();
+        let prior = data.clone();
+        let result = heavy_backend_plan(root.path(), &data).unwrap();
+        assert_eq!(result["unit"], "mios-llm-heavy.service");
+        assert_eq!(result["engine"], "llamacpp");
+        assert_eq!(result["device"], "CUDA0");
+        assert_eq!(
+            result["model"],
+            data["nodes"]["local-heavy"]["model"].as_str().unwrap()
+        );
+        assert_eq!(result["changed"], false);
+        assert_eq!(data, prior);
+        assert!(!root.path().join("etc/containers").exists());
+    }
+
+    #[test]
+    fn canonical_heavy_rejects_cpu_vfio_wrong_cdi_missing_weights_and_bad_budgets() {
+        let (root, data) = heavy_cuda_fixture();
+        for selection in [
+            "nvidia.com/gpu=all",
+            "nvidia.com/gpu=0",
+            "nvidia.com/gpu=GPU-22222222-2222-3333-4444-555555555555",
+        ] {
+            let mut invalid = data.clone();
+            invalid["gpu"]["cdi"]["nvidia"]["device"] = Value::String(selection.into());
+            assert!(
+                heavy_backend_plan(root.path(), &invalid).is_err(),
+                "{selection}"
+            );
+        }
+        for (key, value) in [
+            ("heavy_threads", 0),
+            ("heavy_context", -1),
+            ("heavy_batch_size", 1),
+            ("heavy_parallel", i64::MAX),
+        ] {
+            let mut invalid = data.clone();
+            invalid["llamacpp"][key] = Value::Integer(value);
+            assert!(heavy_backend_plan(root.path(), &invalid).is_err(), "{key}");
+        }
+        for model in ["../model.gguf", "model.gguf --device none", "missing.gguf"] {
+            let mut invalid = data.clone();
+            invalid["llamacpp"]["heavy_model_file"] = Value::String(model.into());
+            assert!(
+                heavy_backend_plan(root.path(), &invalid).is_err(),
+                "{model}"
+            );
+        }
+        let mut invalid = data.clone();
+        invalid["ai"]["heavy_engine"] = Value::String("vllm".into());
+        assert!(heavy_backend_plan(root.path(), &invalid).is_err());
+        let pci = root.path().join("sys/bus/pci/devices/0000:09:00.0/driver");
+        fs::remove_file(&pci).unwrap();
+        let vfio = root.path().join("sys/bus/pci/drivers/vfio-pci");
+        fs::create_dir_all(&vfio).unwrap();
+        symlink(vfio, pci).unwrap();
+        assert!(heavy_backend_plan(root.path(), &data)
+            .unwrap_err()
+            .contains("driver"));
     }
 
     fn cuda_fixture_plan(root: &Path, data: &Value) -> Result<LightBackendPlan, String> {

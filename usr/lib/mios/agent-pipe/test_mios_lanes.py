@@ -59,7 +59,7 @@ def _resolver(up, clock, **kw):
 
 async def t_build_chain():
     ids = ["light", "heavy"]
-    for engine in ("vllm", "sglang", ""):
+    for engine in ("vllm", "sglang", "llamacpp", ""):
         _check("chain %r -> heavy first" % engine, build_chain(engine, ids) == ["heavy", "light"],
                str(build_chain(engine, ids)))
     _check("chain explicit comma", build_chain("heavy,light", ids) == ["heavy", "light"],
@@ -82,6 +82,20 @@ async def t_pick_prefers_heavy():
     _check("prefers heavy when up", lane.id == "heavy", lane.id)
     r2, _ = _resolver({"8520": True, "8500": True}, clk, heavy_engine="sglang")
     _check("engine choice does not change the lane", (await r2.pick("tool")).id == "heavy")
+
+async def t_heavy_model_identity():
+    from mios_lanes import serves_model
+    class Reply:
+        status_code = 200
+        def __init__(self, data): self.data = data
+        def json(self): return self.data
+    _check("heavy exact model is ready", serves_model(Reply({"data":[{"id":"mios-heavy"}]}), "mios-heavy"))
+    for payload in ({"data":[]}, {"data":[{"id":"other"}]}, {}, [], {"data":["mios-heavy"]}):
+        _check("wrong/missing heavy model is not readiness: %r" % payload,
+               not serves_model(Reply(payload), "mios-heavy"))
+    clock = _Clock()
+    resolver, _ = _resolver({"8520":True,"8500":True}, clock, heavy_engine="llamacpp")
+    _check("llamacpp uses the canonical heavy endpoint", (await resolver.pick("tool")).url.endswith("8520/v1"))
 
 async def t_failover_to_light():
     clk = _Clock()
@@ -133,7 +147,7 @@ async def t_mark_down():
 
 async def main():
     print("test_mios_lanes (WS-1 lane resolver)")
-    for fn in (t_build_chain, t_pick_prefers_heavy, t_failover_to_light,
+    for fn in (t_build_chain, t_pick_prefers_heavy, t_heavy_model_identity, t_failover_to_light,
                t_cooldown_skips_reprobe, t_ttl_caches, t_recovery_after_cooldown,
                t_terminal_floor, t_mark_down):
         await fn()

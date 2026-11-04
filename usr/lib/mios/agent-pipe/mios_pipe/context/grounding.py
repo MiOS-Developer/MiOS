@@ -342,7 +342,7 @@ def _arch_grounding() -> str:
         "refines, routes, "
         "fans out across a council/DAG, and polishes. LOCAL inference lanes behind it: "
         f"mios-llm-light (:{_p_light} — everyday models + embeddings + a vision VLM) + the "
-        f"ONE heavy lane mios-llm-heavy (:{_p_heavy}, vLLM or SGLang per [ai].heavy_engine). MiOS-Hermes (:{_p_hermes}) is a tool-loop "
+        f"ONE heavy lane mios-llm-heavy (:{_p_heavy}, vLLM, SGLang or llama.cpp CUDA per [ai].heavy_engine). MiOS-Hermes (:{_p_hermes}) is a tool-loop "
         "WORKER the pipe fronts, NOT the orchestrator. Memory = pgvector; web_search = "
         "local SearXNG. Hardware: AMD Ryzen 9 9950X3D + NVIDIA RTX 4090. "
         "You have FULL read access to THIS machine's filesystem AND the authoritative "

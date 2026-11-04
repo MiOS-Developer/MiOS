@@ -89,6 +89,11 @@ fi
 # AI-related: /usr/share/mios/vllm/model, mios-llm-heavy, mios-grounding, mios-llm-heavy.container
 
 MODEL="${MIOS_VLLM_BAKE_MODEL:-}"
+# The GGUF fleet above also owns the canonical llama.cpp CUDA heavy engine.
+# Its engine selection must not trigger the alternative HF snapshot download.
+if [[ "${MIOS_AI_HEAVY_ENGINE:-}" == llamacpp ]]; then
+    MODEL=""
+fi
 SEED_DIR="/usr/share/mios/vllm/model"
 install -d -m 0755 "$(dirname "$SEED_DIR")"
 

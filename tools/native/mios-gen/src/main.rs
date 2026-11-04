@@ -66,6 +66,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Validate canonical heavy GGUF CUDA admission without mutating runtime.
+    HeavyBackend {
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
     /// Discover an SSOT compute GPU resource without acquiring or activating it.
     GpuResource {
         #[arg(long)]
@@ -2535,6 +2540,10 @@ fn main() -> ExitCode {
                     .map(|report| println!("{report}"))
                     .map_err(|message| (message, 1)),
             )
+        }
+        Commands::HeavyBackend { root } => {
+            let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            ("heavy-backend", "read-only canonical CUDA admission", gpu_topology::report_heavy_backend(&root).map(|report| println!("{report}")).map_err(|message| (message, 1)))
         }
         Commands::LightBackend {
             root,

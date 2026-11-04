@@ -1028,11 +1028,31 @@
       <label for="f-ai-heavy-engine">engine ([ai].heavy_engine)</label>
       <!-- Options are re-listed from the loaded SSOT: every [containers.*.engine]
            table whose select names ai.heavy_engine contributes its overlay names.
-           The static two mirror the vendor overlays for file:// use. -->
+           The static choices mirror the vendor overlays for file:// use. -->
       <select id="f-ai-heavy-engine" data-key="ai.heavy_engine" data-engine-select>
         <option value="vllm">vllm (PagedAttention + prefix caching, runtime LoRA)</option>
         <option value="sglang">sglang (HiCache CPU KV offload, native 256k context)</option>
+        <option value="llamacpp">llamacpp (local GGUF, CUDA, canonical heavy lane)</option>
       </select>
+      <p>llamacpp requires the selected GPU resource bound to NVIDIA and an exact UUID CDI device; it never substitutes CPU execution.</p>
+      <label for="f-llamacpp-heavy-model-file">Existing GGUF filename</label>
+      <input id="f-llamacpp-heavy-model-file" type="text" data-key="llamacpp.heavy_model_file">
+      <label for="f-llamacpp-heavy-gpu-resource">Exact compute GPU resource ID</label>
+      <input id="f-llamacpp-heavy-gpu-resource" type="text" data-key="llamacpp.heavy_gpu_resource">
+      <label for="f-llamacpp-heavy-threads">CPU threads</label>
+      <input id="f-llamacpp-heavy-threads" type="number" data-key="llamacpp.heavy_threads" data-type="int" min="1" step="1">
+      <label for="f-llamacpp-heavy-context">Context tokens</label>
+      <input id="f-llamacpp-heavy-context" type="number" data-key="llamacpp.heavy_context" data-type="int" min="1" step="1">
+      <label for="f-llamacpp-heavy-batch-size">Logical token batch</label>
+      <input id="f-llamacpp-heavy-batch-size" type="number" data-key="llamacpp.heavy_batch_size" data-type="int" min="1" step="1">
+      <label for="f-llamacpp-heavy-ubatch-size">Physical token batch</label>
+      <input id="f-llamacpp-heavy-ubatch-size" type="number" data-key="llamacpp.heavy_ubatch_size" data-type="int" min="1" step="1">
+      <label for="f-llamacpp-heavy-parallel">Parallel slots</label>
+      <input id="f-llamacpp-heavy-parallel" type="number" data-key="llamacpp.heavy_parallel" data-type="int" min="1" step="1">
+      <label for="f-llamacpp-heavy-cache-type">Symmetric K/V cache type</label>
+      <input id="f-llamacpp-heavy-cache-type" type="text" data-key="llamacpp.heavy_cache_type">
+      <label for="f-llamacpp-heavy-slot-dir">Private heavy cache and slots directory</label>
+      <input id="f-llamacpp-heavy-slot-dir" type="text" data-key="llamacpp.heavy_slot_dir">
     </div>
 
     <div class="card">
@@ -1430,8 +1450,8 @@
           <fieldset>
             <legend>[nodes.local-heavy] — discrete GPU node: the ONE heavy lane</legend>
             <p style="color: var(--muted); font-size: 11px; margin: 4px 0 8px;">
-              Whichever engine <code>[ai].heavy_engine</code> selects (vLLM or
-              SGLang) serves this node on the same port and model name.
+              Whichever engine <code>[ai].heavy_engine</code> selects (vLLM, SGLang or
+              llama.cpp CUDA) serves this node on the same port and model name.
             </p>
             <label for="f-node-heavy-endpoint">endpoint (where this node's engine serves /v1)</label>
             <input type="text" id="f-node-heavy-endpoint" data-key="nodes.local-heavy.endpoint" placeholder="http://localhost:${MIOS_PORTS_LLM_HEAVY}/v1">

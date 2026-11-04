@@ -82,7 +82,16 @@ if [ "$PULLS" != false ] && [ ! -f "${MODELS}/.ready" ]; then
     fi
 fi
 
+_heavy_engine="${MIOS_AI_HEAVY_ENGINE:-}"
+if [ -x "$MIOS_TOML_GET" ]; then
+    _heavy_engine="$("$MIOS_TOML_GET" ai heavy_engine "$_heavy_engine" 2>/dev/null)"
+fi
 VLLM_MODEL="${MIOS_VLLM_BAKE_MODEL:-}"
+# The canonical GGUF heavy engine uses the already verified local fleet. It
+# must never pull an unrelated safetensors repository, even from a stale env.
+if [ "$_heavy_engine" = llamacpp ]; then
+    VLLM_MODEL=""
+fi
 if [ -z "$VLLM_MODEL" ] && [ -x "$MIOS_TOML_GET" ]; then
     # Heavy inference is opt-in. A host-size alias is not a weights repository,
     # and must never trigger a multi-GB download while the heavy lane is off.

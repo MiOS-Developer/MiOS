@@ -3196,6 +3196,12 @@ tool_call_parser = "qwen25"
 reasoning_parser = "qwen3"
 constrained_tools = true
 
+[lanes.llamacpp]
+stream_thinking = true
+tool_call_parser = "hermes"
+reasoning_parser = ""
+constrained_tools = true
+
 [lanes.vllm]
 stream_thinking  = true
 tool_call_parser = "hermes"
@@ -7352,6 +7358,16 @@ cpu_node_threads = 14
 # leaves headroom within the minimum four-CPU system allocation.
 # This is an explicit budget, not an automatic affinity clamp.
 light_threads = 1
+# Canonical heavy-lane llama.cpp CUDA engine. It reuses the verified local GGUF fleet.
+heavy_model_file = "granite-4.1-8b.gguf"
+heavy_gpu_resource = "dgpu-compute"
+heavy_threads = 4
+heavy_context = 32768
+heavy_batch_size = 2048
+heavy_ubatch_size = 512
+heavy_parallel = 1
+heavy_cache_type = "q8_0"
+heavy_slot_dir = "/var/lib/mios/llamacpp/heavy"
 # Logical and physical token batch limits inherited by every light server child.
 # Keep the physical batch no larger than the logical batch. Server integer bounds apply.
 light_batch_size = 2048
@@ -7702,7 +7718,7 @@ effort              = "max"
 smartroute_enable   = false
 smartroute_budget   = 0.0       # per-day cost cap for paid remote escalation (0 = unlimited)
 package_registry    = false
-# THE engine of the ONE heavy dGPU lane, mios-llm-heavy: "vllm" | "sglang".
+# THE engine of the ONE heavy dGPU lane, mios-llm-heavy: "vllm" | "sglang" | "llamacpp".
 # mios-gen renders [containers.mios-llm-heavy.engine.<this>] (and the .image
 # twin) into the lane's Quadlet; the engine tunables are [ai.vllm] / [ai.sglang]
 # and the per-engine surface settings [lanes.<this>]. Runtime LoRA
@@ -10547,6 +10563,7 @@ pgvector           = "docker.io/pgvector/pgvector:pg18"   # pgvector floats per 
 # llama-server + on-demand model swap. Tag carries the CUDA build; verify version.
 llm_light          = "ghcr.io/mostlygeek/llama-swap:cuda"
 llm_light_cpu      = "ghcr.io/mostlygeek/llama-swap:cpu"
+llm_heavy_llamacpp = "ghcr.io/mostlygeek/llama-swap:cuda"
 llm_light_vulkan   = "ghcr.io/mostlygeek/llama-swap:vulkan"
 # AdGuard Home -- open-source (GPLv3) DNS sinkhole + recursive resolver. Single
 # Go binary container; serves DNS on :53 and the web UI/API on :3053.
@@ -14203,6 +14220,9 @@ TimeoutStartSec = 3600
 [images.mios-llm-heavy.engine]
 select = "ai.heavy_engine"
 
+[images.mios-llm-heavy.engine.llamacpp.Image]
+Image = "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}"
+
 [images.mios-llm-heavy.engine.vllm.Image]
 Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
 
@@ -14688,7 +14708,7 @@ ConditionVirtualization = [
 Description = "'MiOS' K3s Service (Podman-native)"
 Wants = "network-online.target"
 
-# THE heavy dGPU lane. ONE spec, two engines: the base below is engine-neutral, and
+# THE heavy dGPU lane. ONE spec, three declared engines: the base below is engine-neutral, and
 # mios-gen merges [containers.mios-llm-heavy.engine.<[ai].heavy_engine>] onto it
 # (a list adds, a scalar sets) to render the vLLM or the SGLang Quadlet. Either
 # engine binds ${MIOS_PORTS_LLM_HEAVY}, serves "mios-heavy" from the same
@@ -14714,7 +14734,6 @@ Label = [
 ]
 Pod = "mios-ai.pod"
 User = "${MIOS_LLM_HEAVY_UID:-0}"
-Volume = "/var/lib/mios/vllm/model:/models:ro,Z"
 
 [containers.mios-llm-heavy.Install]
 WantedBy = "multi-user.target default.target"
@@ -14731,7 +14750,6 @@ TimeoutStartSec = "600s"
 
 [containers.mios-llm-heavy.Unit]
 After = "network-online.target mios-cdi-detect.service mios-webtools-firstboot.service"
-ConditionPathExists = "/var/lib/mios/vllm/model/config.json"
 Wants = "network-online.target"
 
 [containers.mios-llm-heavy.engine]
@@ -14739,6 +14757,7 @@ select = "ai.heavy_engine"
 
 # vLLM: PagedAttention + automatic prefix caching, multi-LoRA; options [ai.vllm].
 [containers.mios-llm-heavy.engine.vllm.Container]
+Volume = "/var/lib/mios/vllm/model:/models:ro,Z"
 Environment = [
   "VLLM_NO_USAGE_STATS=1",
   "VLLM_WSL2_ENABLE_PIN_MEMORY=1",
@@ -14752,15 +14771,49 @@ Exec = "--model /models --served-model-name ${MIOS_VLLM_SERVED_NAME:-mios-heavy}
 Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
 
 [containers.mios-llm-heavy.engine.vllm.Unit]
+ConditionPathExists = "/var/lib/mios/vllm/model/config.json"
 Description = "'MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated)"
 
 # SGLang: HiCache spills inactive KV to CPU RAM for the native 256k context; options [ai.sglang].
 [containers.mios-llm-heavy.engine.sglang.Container]
+Volume = "/var/lib/mios/vllm/model:/models:ro,Z"
 Exec = "python3 -m sglang.launch_server --model /models --served-model-name ${MIOS_SGLANG_SERVED_NAME:-mios-heavy} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY:-8520} --mem-fraction-static ${MIOS_SGLANG_MEM_FRACTION:-0.85} --context-length ${MIOS_SGLANG_MAX_MODEL_LEN:-262144} --load-format ${MIOS_SGLANG_LOAD_FORMAT:-auto} --kv-cache-dtype ${MIOS_SGLANG_KV_CACHE_DTYPE:-fp8_e5m2} --tool-call-parser ${MIOS_SGLANG_TOOL_PARSER:-qwen25} --enable-hierarchical-cache --trust-remote-code"
 Image = "${MIOS_SGLANG_IMAGE:-docker.io/lmsysorg/sglang:latest}"
 
 [containers.mios-llm-heavy.engine.sglang.Unit]
+ConditionPathExists = "/var/lib/mios/vllm/model/config.json"
 Description = "'MiOS' heavy lane, SGLang engine (OpenAI /v1, HiCache CPU KV-offload; native 256k context)"
+
+# CUDA llama.cpp serves the existing GGUF through the same canonical heavy unit.
+[containers.mios-llm-heavy.engine.llamacpp.Container]
+AddDevice = "${MIOS_GPU_CDI_NVIDIA_DEVICE}"
+Entrypoint = "/app/llama-server"
+Exec = "--model /models/${MIOS_LLAMACPP_HEAVY_MODEL_FILE} --alias ${MIOS_NODES_LOCAL_HEAVY_MODEL} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY} --device CUDA0 --n-gpu-layers all --ctx-size ${MIOS_LLAMACPP_HEAVY_CONTEXT} --threads ${MIOS_LLAMACPP_HEAVY_THREADS} --batch-size ${MIOS_LLAMACPP_HEAVY_BATCH_SIZE} --ubatch-size ${MIOS_LLAMACPP_HEAVY_UBATCH_SIZE} --parallel ${MIOS_LLAMACPP_HEAVY_PARALLEL} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --slot-save-path ${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/slots --jinja"
+Image = "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}"
+User = "${MIOS_LLAMACPP_UID}"
+Group = "${MIOS_LLAMACPP_GID}"
+Environment = [
+ "HOME=${MIOS_LLAMACPP_HEAVY_SLOT_DIR}",
+ "XDG_CACHE_HOME=${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/cache"
+]
+Volume = [
+ "${MIOS_LLAMACPP_MODELS_DIR}:/models:ro",
+ "${MIOS_LLAMACPP_HEAVY_SLOT_DIR}:${MIOS_LLAMACPP_HEAVY_SLOT_DIR}:Z"
+]
+HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_LLM_HEAVY}/health || exit 1"
+HealthInterval = "30s"
+HealthRetries = 3
+HealthStartPeriod = "300s"
+DropCapability = "ALL"
+NoNewPrivileges = true
+ReadOnly = true
+
+[containers.mios-llm-heavy.engine.llamacpp.Service]
+ExecStartPre = "/usr/bin/mios-gen heavy-backend"
+
+[containers.mios-llm-heavy.engine.llamacpp.Unit]
+Description = "'MiOS' heavy lane, llama.cpp CUDA engine (local GGUF, OpenAI /v1)"
+ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/${MIOS_LLAMACPP_HEAVY_MODEL_FILE}"
 
 [containers.mios-llm-light.Container]
 # Static /usr data stays at its image label. Firstboot labels verified mutable

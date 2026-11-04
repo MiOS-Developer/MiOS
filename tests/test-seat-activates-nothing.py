@@ -116,11 +116,23 @@ class TestSeatActivatesNothing(unittest.TestCase):
     def test_the_heavy_engine_is_a_choice_inside_one_lane(self):
         # The second heavy lane was folded in: an engine is an overlay of the one
         # spec, selected by [ai].heavy_engine, so no archetype starts two.
-        lanes = {c for c, spec in self.d["containers"].items() if "engine" in spec}
+        lanes = {c for c, spec in self.d["containers"].items()
+                 if spec.get("engine", {}).get("select") == "ai.heavy_engine"}
         self.assertEqual(lanes, {"mios-llm-heavy"})
         engine = self.d["containers"]["mios-llm-heavy"]["engine"]
         self.assertEqual(engine["select"], "ai.heavy_engine")
         self.assertIn(self.d["ai"]["heavy_engine"], engine)
+
+    def test_canonical_heavy_cuda_is_an_engine_of_the_existing_unit(self):
+        heavy = self.d["containers"]["mios-llm-heavy"]
+        engine = heavy["engine"]["llamacpp"]
+        self.assertEqual(engine["Container"]["Entrypoint"], "/app/llama-server")
+        self.assertIn("--device CUDA0 --n-gpu-layers all", engine["Container"]["Exec"])
+        self.assertIn("${MIOS_NODES_LOCAL_HEAVY_MODEL}", engine["Container"]["Exec"])
+        self.assertEqual(engine["Service"]["ExecStartPre"], "/usr/bin/mios-gen heavy-backend")
+        self.assertEqual(heavy["Container"]["ContainerName"], "mios-llm-heavy")
+        self.assertIn("gpu-serving", _caps(self.d["blade"]["requires"]["mios-llm-heavy"]))
+        self.assertEqual(set(heavy["engine"]), set(self.d["images"]["mios-llm-heavy"]["engine"]))
 
     def test_every_required_capability_is_grantable(self):
         granted = set()

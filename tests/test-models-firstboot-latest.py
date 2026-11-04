@@ -426,23 +426,26 @@ class FirstbootLatest(unittest.TestCase):
 
     def test_heavy_weights_are_opt_in_and_use_a_repository_from_ssot(self):
         script = (ROOT / "usr/libexec/mios/mios-ai-firstboot").read_text()
-        selection = script[script.index('VLLM_MODEL="${MIOS_VLLM_BAKE_MODEL:-}"'):script.index('VLLM_DIR=')]
+        selection = script[script.index('_heavy_engine="${MIOS_AI_HEAVY_ENGINE:-}"'):script.index('VLLM_DIR=')]
         getter = self.t / "toml-get"
         getter.write_text("""#!/bin/sh
 case "$1.$2" in
-ai.heavy_engine) printf vllm ;;
+ai.heavy_engine) printf '%s' "${MIOS_TEST_HEAVY_ENGINE:-vllm}" ;;
 ai.vllm.enable) printf '%s' "$MIOS_TEST_HEAVY_ENABLED" ;;
 ai.sglang.bake_model) printf synthetic/weights ;;
 *) exit 1 ;;
 esac
 """)
         getter.chmod(0o755)
-        for enabled, explicit, expected in [
-                ("false", "", ""), ("true", "", "synthetic/weights"),
-                ("false", "operator/selected", "operator/selected")]:
+        for engine, enabled, explicit, expected in [
+                ("vllm", "false", "", ""), ("vllm", "true", "", "synthetic/weights"),
+                ("vllm", "false", "operator/selected", "operator/selected"),
+                ("llamacpp", "true", "", ""),
+                ("llamacpp", "true", "operator/stale-hf-repository", "")]:
             result = subprocess.run(["bash", "-c", selection + '\nprintf "%s" "$VLLM_MODEL"'],
                 env={**os.environ, "MIOS_TOML_GET": str(getter),
-                     "MIOS_VLLM_BAKE_MODEL": explicit, "MIOS_TEST_HEAVY_ENABLED": enabled},
+                     "MIOS_VLLM_BAKE_MODEL": explicit, "MIOS_TEST_HEAVY_ENABLED": enabled,
+                     "MIOS_TEST_HEAVY_ENGINE": engine},
                 capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, expected)

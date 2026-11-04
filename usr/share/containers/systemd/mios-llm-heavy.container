@@ -1,7 +1,7 @@
 # AI-hint: MiOS mios-llm-heavy container. (WS-7 pods-as-SSOT).
 # DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [containers.mios-llm-heavy] in mios.toml.
 # /usr/share/containers/systemd/mios-llm-heavy.container
-# Engine: vllm (selected by [ai].heavy_engine; declared engines: sglang, vllm).
+# Engine: vllm (selected by [ai].heavy_engine; declared engines: llamacpp, sglang, vllm).
 
 [Unit]
 After=network-online.target mios-cdi-detect.service mios-webtools-firstboot.service
