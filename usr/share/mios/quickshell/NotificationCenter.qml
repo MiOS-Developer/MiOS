@@ -39,12 +39,12 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
             }
 
-            Rectangle {
+            GlassSurface {
                 visible: root.count > 0
-                radius: height / 2
+                radius: Glass.corner(height)
                 color: root.theme.withAlpha(root.theme.accent, root.theme.selectionOpacity)
                 implicitWidth: badgeText.implicitWidth + Glass.inset * 2
-                implicitHeight: badgeText.implicitHeight + 4
+                implicitHeight: badgeText.implicitHeight + Glass.gap / 2
                 Layout.alignment: Qt.AlignVCenter
 
                 Text {
@@ -92,7 +92,7 @@ Item {
         Item {
             visible: root.count === 0
             Layout.fillWidth: true
-            implicitHeight: 80
+            implicitHeight: 2 * Glass.bar
 
             Text {
                 anchors.centerIn: parent
@@ -108,7 +108,7 @@ Item {
             id: listView
             visible: root.count > 0
             Layout.fillWidth: true
-            implicitHeight: Math.min(480, contentHeight)
+            implicitHeight: Math.min(MiOS.NotifModel.historyMaxHeight, contentHeight)
             clip: true
             spacing: Glass.gap / 2
             model: root.items
@@ -127,11 +127,11 @@ Item {
                     id: cardCol
                     anchors.fill: parent
                     anchors.margins: Glass.inset
-                    spacing: 4
+                    spacing: Glass.gap / 2
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Glass.inset
 
                         Text {
                             text: cardDelegate.modelData.appName || "System"
@@ -160,7 +160,7 @@ Item {
                             MouseArea {
                                 id: dismissMa
                                 anchors.fill: parent
-                                anchors.margins: -4
+                                anchors.margins: -Glass.gap / 2
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: MiOS.NotifModel.removeHistory(cardDelegate.modelData.id)

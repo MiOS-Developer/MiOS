@@ -42,9 +42,16 @@ CODEX_PROTECTED = [
 
 SHELL_TEST_QML = """import QtQuick
 import Quickshell
+import Quickshell.Io
 
 ShellRoot {
     id: root
+    property IpcHandler fixtureIpc: IpcHandler {
+        target: "fixture"
+        function agePending(ms: int): void {
+            DockLamp.pendingLaunches = DockLamp.pendingLaunches.map(p => Object.assign({}, p, {time_ms: Date.now() - ms}))
+        }
+    }
     Component.onCompleted: {
         const deskTiles = [
             { kind: "drawer", scale: 1 },
@@ -66,12 +73,11 @@ class TestScreencopyAndHeadlessFallback(unittest.TestCase):
 
     def test_qmllint_dockpopup_and_targets_clean(self):
         """Verify qmllint validates DockPopup.qml, DockLamp.qml, Sidebar.qml, and Config.qml."""
-        if not os.path.exists(QMLLINT):
-            self.skipTest(f"{QMLLINT} not found")
+        self.assertTrue(os.path.exists(QMLLINT), "qmllint is a declared CI dependency")
         cmd = [
             QMLLINT,
             "-I", "/usr/lib64/qt6/qml",
-            "DockLamp.qml", "DockPopup.qml", "Sidebar.qml", "Config.qml"
+            "DockLamp.qml", "DockPopup.qml", "Sidebar.qml", "Config.qml", "NotificationCenter.qml", "NotifModel.qml"
         ]
         r = subprocess.run(cmd, cwd=QS_DIR, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, f"qmllint returned {r.returncode}:\n{r.stderr}\n{r.stdout}")
@@ -80,11 +86,16 @@ class TestScreencopyAndHeadlessFallback(unittest.TestCase):
         """Verify DockPopup.qml ScreencopyView has explicit null captureSource fallback."""
         with open(DOCKPOPUP_QML, encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("ScreencopyView", content)
-        self.assertIn("captureSource: winCard.modelData.toplevel ? winCard.modelData.toplevel : null", content)
-        self.assertIn("visible: captureSource !== null && hasContent", content)
-        self.assertIn("visible: !liveView.visible", content)
-        self.assertIn('text: winCard.modelData.minimized ? "Minimized Window" : "Live Window"', content)
+        self.assertIn("DockPreview {", content)
+        self.assertIn("win: winCard.modelData", content)
+        with open(os.path.join(QS_DIR, "DockPreview.qml"), encoding="utf-8") as source:
+            preview = source.read()
+        self.assertIn("captureSource: preview.capturable ? preview.win.toplevel : null", preview)
+        self.assertIn("!!win.toplevel", preview)
+        self.assertIn("info.mapped !== false", preview)
+        self.assertIn("info.monitor >= 0", preview)
+        self.assertIn("visible: preview.hasFrame", preview)
+        self.assertIn("visible: !preview.hasFrame", preview)
 
     def test_popup_context_menu_coordinate_clamping_logic(self):
         """Verify DockPopup.qml openContextMenu bounds clamping under extreme coordinates."""
@@ -94,76 +105,11 @@ class TestScreencopyAndHeadlessFallback(unittest.TestCase):
         self.assertIn("menuY = Math.max(Math.round((theme.topHeight + 2 * theme.edgeMargin) * ui)", content)
 
 
-class TestRapidIpcDispatchStress(unittest.TestCase):
-    """Stress-test rapid IPC dispatch against the live mios-shell quickshell instance."""
-
-    def test_live_service_active(self):
-        r = subprocess.run(["systemctl", "--user", "is-active", "mios-shell.service"], capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0)
-        self.assertEqual(r.stdout.strip(), "active")
-
-    def test_rapid_concurrent_ipc_calls(self):
-        """Call quickshell ipc repeatedly and concurrently (50 calls across 5 workers); verify 100% success and no stalls."""
-        if not QS:
-            self.skipTest("quickshell not found")
-
-        # Get initial memory usage
-        mem_before_proc = subprocess.run(["systemctl", "--user", "show", "mios-shell.service", "-p", "MemoryCurrent"],
-                                         capture_output=True, text=True)
-        mem_before = 0
-        if mem_before_proc.returncode == 0 and "MemoryCurrent=" in mem_before_proc.stdout:
-            try:
-                mem_before = int(mem_before_proc.stdout.strip().split("=")[1])
-            except ValueError:
-                pass
-
-        def call_ipc_state(idx: int) -> tuple[int, bool, dict]:
-            cmd = [QS, "ipc", "--path", CONFIG_QML, "call", "docklamp", "state"]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if res.returncode != 0:
-                return (idx, False, {})
-            try:
-                parsed = json.loads(res.stdout)
-                return (idx, True, parsed)
-            except Exception:
-                return (idx, False, {})
-
-        total_calls = 50
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(call_ipc_state, i) for i in range(total_calls)]
-            results = [f.result() for f in concurrent.futures.as_completed(futures)]
-
-        failures = [r for r in results if not r[1]]
-        self.assertEqual(len(failures), 0, f"{len(failures)} out of {total_calls} IPC calls failed!")
-
-        # Verify all parsed outputs contain valid version 1 and active outputs
-        for idx, ok, data in results:
-            self.assertEqual(data.get("version"), 1)
-            self.assertIn("outputs", data)
-
-        # Check memory usage after stress
-        mem_after_proc = subprocess.run(["systemctl", "--user", "show", "mios-shell.service", "-p", "MemoryCurrent"],
-                                        capture_output=True, text=True)
-        if mem_after_proc.returncode == 0 and "MemoryCurrent=" in mem_after_proc.stdout and mem_before > 0:
-            try:
-                mem_after = int(mem_after_proc.stdout.strip().split("=")[1])
-                # Ensure no runaway leak: memory increase should not exceed 100 MB
-                growth = mem_after - mem_before
-                self.assertLess(growth, 100 * 1024 * 1024, f"Suspicious memory growth: {growth} bytes")
-            except ValueError:
-                pass
-
-        # Service still active
-        status = subprocess.run(["systemctl", "--user", "is-active", "mios-shell.service"], capture_output=True, text=True)
-        self.assertEqual(status.stdout.strip(), "active")
-
-
-@unittest.skipUnless(QS, "quickshell missing")
-class TestIsolatedDockLampHarness(unittest.TestCase):
-    """Adversarial stress-testing of DockLamp state, preferences, throttling, and boundary conditions."""
-
+class DockLampHarness:
+    """One offscreen source-backed shell in a private runtime, with no desktop connection."""
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="mios-challenger-r8-")
+        self.assertIsNotNone(QS, "quickshell is a declared CI dependency")
+        self.tmp = tempfile.mkdtemp(prefix="mios-dock-resilience-")
         self.qs_path = os.path.join(self.tmp, "qs")
         os.makedirs(self.qs_path, exist_ok=True)
         shutil.copy(DOCKLAMP_QML, self.qs_path)
@@ -190,7 +136,8 @@ class TestIsolatedDockLampHarness(unittest.TestCase):
             MIOS_DOCK_FIXTURE_JSON=self.fixture_json,
             MIOS_DOCK_PREFS_JSON=self.prefs_json,
         )
-        for key in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY"):
+        self.env.update(HOME=self.tmp, XDG_CONFIG_HOME=os.path.join(self.tmp, "config"))
+        for key in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
             self.env.pop(key, None)
 
     def tearDown(self):
@@ -205,6 +152,7 @@ class TestIsolatedDockLampHarness(unittest.TestCase):
                 p.wait(5)
             except subprocess.TimeoutExpired:
                 p.kill()
+                p.wait(5)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def start_harness(self, fixture_dict: dict | None = None, prefs_dict: dict | None = None) -> None:
@@ -224,6 +172,24 @@ class TestIsolatedDockLampHarness(unittest.TestCase):
             text=True,
         )
         self.procs.append(p)
+        # The process is not ready merely because fork succeeded. Probe this
+        # owned instance until its IPC endpoint and singleton are both ready.
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if p.poll() is not None:
+                with open(self.log_path, encoding="utf-8") as log:
+                    self.fail("Dock fixture failed to start:\n" + log.read())
+            probe = subprocess.run(
+                [QS, "ipc", "--path", self.shell_qml, "call", "docklamp", "state"],
+                env=self.env, capture_output=True, text=True, timeout=5)
+            if probe.returncode == 0:
+                try:
+                    if json.loads(probe.stdout).get("version") == 1:
+                        return
+                except ValueError:
+                    pass
+            time.sleep(0.02)
+        self.fail("Private dock IPC endpoint did not become ready")
 
     def call_ipc(self, *args: str) -> str:
         if self.procs and self.procs[-1].poll() is not None:
@@ -236,6 +202,7 @@ class TestIsolatedDockLampHarness(unittest.TestCase):
             text=True,
             timeout=15,
         )
+        self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout.strip()
 
     def get_state(self) -> dict:
@@ -254,6 +221,44 @@ class TestIsolatedDockLampHarness(unittest.TestCase):
             last = s
             time.sleep(0.08)
         self.fail(f"Condition not met within {timeout}s; last={last}")
+
+class TestRapidIpcDispatchStress(DockLampHarness, unittest.TestCase):
+    """Stress the actual dock singleton through its private offscreen IPC server."""
+
+    def test_private_shell_process_active(self):
+        self.start_harness()
+        self.wait_state(lambda state: state.get("version") == 1)
+        self.assertIsNone(self.procs[-1].poll())
+        with open(os.path.join(ROOT, "usr/lib/systemd/user/mios-shell.service"), encoding="utf-8") as source:
+            unit = source.read()
+        self.assertIn("Type=exec", unit)
+        self.assertIn("ExecStart=/usr/bin/quickshell --no-duplicate --path /usr/share/mios/quickshell/Config.qml", unit)
+
+    def test_rapid_concurrent_ipc_calls(self):
+        self.start_harness()
+        self.wait_state(lambda state: state.get("version") == 1)
+        process = self.procs[-1]
+        def rss_bytes():
+            with open(f"/proc/{process.pid}/status", encoding="utf-8") as status:
+                for line in status:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) * 1024
+            raise AssertionError("owned shell process has no RSS record")
+        before = rss_bytes()
+        def call_state(index):
+            return index, json.loads(self.call_ipc("state"))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+            results = list(pool.map(call_state, range(50)))
+        self.assertEqual(len(results), 50)
+        for index, state in results:
+            self.assertEqual(state.get("version"), 1, index)
+            self.assertIn("outputs", state, index)
+        self.assertLess(rss_bytes() - before, 100 * 1024 * 1024)
+        self.assertIsNone(process.poll())
+
+
+class TestIsolatedDockLampHarness(DockLampHarness, unittest.TestCase):
+    """Adversarial stress-testing of DockLamp state, preferences, throttling, and boundary conditions."""
 
     def test_preferences_malformed_json_resilience_and_atomic_replace(self):
         """Malformed JSON in dock-prefs.json must be caught gracefully and not crash or corrupt state."""
@@ -335,13 +340,24 @@ class TestIsolatedDockLampHarness(unittest.TestCase):
         with open(self.launch_json, "r", encoding="utf-8") as f:
             disk_launch = json.load(f)
         self.assertEqual(len(disk_launch.get("pending", [])), 1)
+        aged = subprocess.run([QS, "ipc", "--path", self.shell_qml, "call", "fixture", "agePending", "10001"],
+                              env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(aged.returncode, 0, aged.stderr)
+        self.call_ipc("launch", "test-app2", "HDMI-A-1")
+        current = self.wait_state(lambda state: len(state.get("pending", [])) == 1
+                                  and state["pending"][0]["id"] != launch1_id)
+        self.assertEqual(current["pending"][0]["app_id"], "test-app2")
+        self.call_ipc("launch", "test-app3", "HDMI-A-1")
+        fresh = self.wait_state(lambda state: len(state.get("pending", [])) == 2)
+        self.assertEqual([item["app_id"] for item in fresh["pending"]], ["test-app2", "test-app3"])
 
-        # Verify launchWriter process command uses atomic temp+mv
+        # Launch writes use the source's synchronous, atomic in-process FileView.
         with open(DOCKLAMP_QML, encoding="utf-8") as f:
             lamp_qml = f.read()
         self.assertIn("now - p.time_ms < 10000", lamp_qml)
-        self.assertIn(".tmp.$$", lamp_qml)
-        self.assertIn("mv -f", lamp_qml)
+        self.assertRegex(lamp_qml, r"property FileView launchWriter: FileView \{[^}]*atomicWrites: true")
+        self.assertRegex(lamp_qml, r"property FileView launchWriter: FileView \{[^}]*blockWrites: true")
+        self.assertNotIn("property Process launchWriter:", lamp_qml, "launch writes stay in-process")
 
     def test_throttled_geometry_publisher_frequency(self):
         """Verify dock icons geometry publisher write frequency is throttled (<= 30 writes/s)."""

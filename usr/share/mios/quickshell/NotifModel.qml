@@ -66,6 +66,7 @@ Singleton {
         return bar.popup_ms !== undefined ? bar.popup_ms : 200
     }
     readonly property int imageMaxHeight: Math.max(0, Math.round(num("image_max_height_px", 120)))
+    readonly property int historyMaxHeight: Math.max(1, Math.round(num("history_max_height_px", 480)))
     readonly property int bodyMaxLines: Math.max(1, Math.round(num("body_max_lines", 6)))
     readonly property int actionsMax: Math.max(0, Math.round(num("actions_max", 6)))
     // Do not disturb: only critical notifications show (runtime toggle over IPC; the SSOT key is the default).

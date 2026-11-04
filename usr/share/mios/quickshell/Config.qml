@@ -544,7 +544,7 @@ QS.ShellRoot {
                                 centerY: ring.height / 2
                                 angle: captureGlow.phase
                                 GradientStop { position: 0; color: captureGlow.glowColor }
-                                GradientStop { position: 0.12; color: Qt.rgba(captureGlow.glowColor.r, captureGlow.glowColor.g, captureGlow.glowColor.b, 0.6) }
+                                GradientStop { position: 0.12; color: MiOS.Glass.theme.withAlpha(captureGlow.glowColor, MiOS.Glass.theme.scrimOpacity) }
                                 GradientStop { position: 0.4; color: "transparent" }
                                 GradientStop { position: 0.9; color: "transparent" }
                                 GradientStop { position: 1; color: captureGlow.glowColor }

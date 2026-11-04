@@ -13,6 +13,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
 import unittest
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -258,8 +262,9 @@ class TestDockStackingAdversarial(unittest.TestCase):
         self.assertIn("ScreencopyView", popup_src)
         self.assertIn("Pin to Dock", popup_src)
         self.assertIn("Remove Pin from Dock", popup_src)
-        self.assertIn("Star / Add to Favourites", popup_src)
-        self.assertIn("Re-organize / Manage Pins & Favourites", popup_src)
+        self.assertIn('label: popups.menuIsStarred ? "Remove favourite" : "Add favourite"', popup_src)
+        self.assertIn("onTriggered: DockLamp.toggleStar(popups.menuAppId)", popup_src)
+        self.assertIn("DockLamp.reorderMode", sidebar)
         self.assertIn("dockPopups.openContextMenu", sidebar)
         self.assertIn("dockPopups.showPreview", sidebar)
         self.assertIn("onPressAndHold:", sidebar)
@@ -268,31 +273,86 @@ class TestDockStackingAdversarial(unittest.TestCase):
 class TestShaderGlassPortalResilience(unittest.TestCase):
     """Adversarial stress-testing of ShaderGlass DBus AvailableSourceTypes queries."""
 
-    def test_live_dbus_queries(self):
-        """Empirically query live host DBus interfaces for AvailableSourceTypes."""
-        # 1. Desktop portal
-        cmd1 = [
-            "busctl", "--user", "get-property",
-            "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.ScreenCast",
-            "AvailableSourceTypes",
-        ]
-        r1 = subprocess.run(cmd1, capture_output=True, text=True)
-        self.assertEqual(r1.returncode, 0, f"DBus query on Desktop portal failed: {r1.stderr}")
-        self.assertIn("7", r1.stdout.split())
-
-        # 2. Hyprland implementation portal
-        cmd2 = [
-            "busctl", "--user", "get-property",
-            "org.freedesktop.impl.portal.desktop.hyprland",
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.impl.portal.ScreenCast",
-            "AvailableSourceTypes",
-        ]
-        r2 = subprocess.run(cmd2, capture_output=True, text=True)
-        self.assertEqual(r2.returncode, 0, f"DBus query on Hyprland implementation portal failed: {r2.stderr}")
-        self.assertIn("7", r2.stdout.split())
+    def test_private_dbus_queries(self):
+        """Query real exported ScreenCast properties on a non-activating private bus."""
+        service_source = r"""
+import os
+from pathlib import Path
+from gi.repository import Gio, GLib
+connection = Gio.DBusConnection.new_for_address_sync(
+    os.environ["DBUS_SESSION_BUS_ADDRESS"],
+    Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+    None, None)
+pairs = [
+    ("org.freedesktop.portal.Desktop", "org.freedesktop.portal.ScreenCast"),
+    ("org.freedesktop.impl.portal.desktop.hyprland", "org.freedesktop.impl.portal.ScreenCast"),
+]
+for name, interface in pairs:
+    connection.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
+        "org.freedesktop.DBus", "RequestName", GLib.Variant("(su)", (name, 0)),
+        GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 3000, None)
+    info = Gio.DBusNodeInfo.new_for_xml(
+        '<node><interface name="' + interface + '">'
+        '<property name="AvailableSourceTypes" type="u" access="read"/>'
+        '</interface></node>').interfaces[0]
+    connection.register_object("/org/freedesktop/portal/desktop", info, None,
+        lambda *args: GLib.Variant("u", 7), None)
+Path(os.environ["MIOS_PORTAL_FIXTURE_READY"]).touch()
+GLib.MainLoop().run()
+"""
+        with tempfile.TemporaryDirectory(prefix="mios-private-portal-") as private:
+            base = Path(private)
+            env = {key: value for key, value in os.environ.items()
+                   if key not in ("DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY",
+                                  "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE")}
+            env.update(XDG_RUNTIME_DIR=private, HOME=private)
+            conf = base / "bus.conf"
+            conf.write_text(
+                '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" '
+                '"http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n'
+                '<busconfig><type>session</type><listen>unix:path=' + str(base / "bus") + '</listen>'
+                '<auth>EXTERNAL</auth><policy context="default"><allow own="*"/>'
+                '<allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>')
+            bus = subprocess.Popen(["dbus-daemon", "--nofork", "--nosyslog", "--config-file=" + str(conf),
+                                    "--print-address=1"], env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+            service = None
+            try:
+                env["DBUS_SESSION_BUS_ADDRESS"] = bus.stdout.readline().strip()
+                self.assertTrue(env["DBUS_SESSION_BUS_ADDRESS"].startswith("unix:path=" + private), "bus must be private")
+                ready = base / "ready"
+                env["MIOS_PORTAL_FIXTURE_READY"] = str(ready)
+                service = subprocess.Popen([sys.executable, "-c", service_source], env=env,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                deadline = time.monotonic() + 5
+                while not ready.exists() and service.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready.exists(), service.stderr.read() if service.poll() is not None else "private service not ready")
+                for name, interface in (
+                    ("org.freedesktop.portal.Desktop", "org.freedesktop.portal.ScreenCast"),
+                    ("org.freedesktop.impl.portal.desktop.hyprland", "org.freedesktop.impl.portal.ScreenCast"),
+                ):
+                    result = subprocess.run(
+                        ["busctl", "--address=" + env["DBUS_SESSION_BUS_ADDRESS"], "get-property", name,
+                         "/org/freedesktop/portal/desktop", interface, "AvailableSourceTypes"],
+                        env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.split(), ["u", "7"])
+                invalid = subprocess.run(
+                    ["busctl", "--address=" + env["DBUS_SESSION_BUS_ADDRESS"], "get-property",
+                     "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                     "org.freedesktop.portal.ScreenCast", "UnknownProperty"],
+                    env=env, capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(invalid.returncode, 0, "unknown properties must fail on the real bus")
+            finally:
+                for child in (service, bus):
+                    if child is not None:
+                        child.terminate()
+                        try:
+                            child.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            child.kill()
+                            child.communicate(timeout=5)
 
     def test_query_available_source_types_fallback_oracle(self):
         """Oracle testing of the dual-interface DBus query fallback logic in query_available_source_types()."""

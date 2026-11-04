@@ -12035,6 +12035,7 @@ timeout_ms          = 5000       # expiry when the app leaves it to the server (
 max_visible         = 4          # cards in the stack; a new one past this expires the oldest
 width_px            = 0          # card width (logical px); 0 = [theme.shell] notification_width_px; clamped to the output minus the edge margins
 morph_ms            = 0          # island -> card morph; 0 = [desktop.topbar] popup_ms (the island menus' morph)
+history_max_height_px = 480      # notification history list height cap in logical pixels
 image_max_height_px = 120        # thumbnail height cap (image-data / image-path; decoded at no more than twice the card size)
 body_max_lines      = 6          # body lines before the text elides
 actions_max         = 6          # action buttons per card (the "default" action is a click on the card)
@@ -18189,8 +18190,10 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # image's own kernel is the input), and the real OVMF firmware/descriptor
 # package used by the Xbox firmware regression. A suite that cannot run its live
 # tier exits 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
+# Desktop resilience runs real offscreen QML/lint and a non-activating GObject D-Bus fixture.
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
-            "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf"]
+            "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
+            "quickshell", "qt6-qtdeclarative-devel", "python3-gobject"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.
