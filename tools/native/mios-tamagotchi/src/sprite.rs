@@ -31,32 +31,65 @@ pub enum Expression {
 }
 
 impl Expression {
-    /// Printable five-character ASCII with a pure four-pose cycle per state:
-    /// blinks, glances, chews, sobs and cheers. Only death holds one pose.
+    /// Printable five-character ASCII with eight poses per state.
+    /// Blinks, glances, chews, tears and cheers are presentation-only.
     pub fn kaomoji(self, frame: usize) -> &'static str {
-        self.kaomoji_cycle()[frame % 4]
+        let cycle = self.kaomoji_cycle();
+        cycle[frame % cycle.len()]
     }
 
-    /// The complete four-pose cycle for this state, in frame order.
-    pub fn kaomoji_cycle(self) -> [&'static str; 4] {
+    /// Eight expression poses; death alone holds still.
+    pub fn kaomoji_cycle(self) -> [&'static str; 8] {
         use Expression::*;
         match self {
-            Idle => ["(o_o)", "(o.o)", "(-_-)", "(o_o)"],
-            Happy => ["(^_^)", "(^o^)", "(^_~)", "(^_^)"],
-            Sad => ["(T_T)", "(;_;)", "(T_T)", "(;_;)"],
-            Angry => ["(>_<)", "(>.<)", "(>_<)", "(`_')"],
-            Surprised => ["(O_O)", "(O.O)", "(o_O)", "(O_O)"],
-            Sleeping => ["(-_-)", "(-.-)", "(=_=)", "(-_-)"],
-            Sick => ["(+_+)", "(@_@)", "(+_+)", "(+.+)"],
-            Hungry => ["(u_u)", "(u~u)", "(u_u)", "(-~-)"],
-            Playful => ["(o_<)", "(^_<)", "(>_o)", "(>_^)"],
-            Shy => ["(._.)", "(.,.)", "(-_-)", "(._.)"],
-            Excited => ["(*_*)", "(*o*)", "(*_*)", "(*O*)"],
-            Eating => ["(o_O)", "(o~o)", "(O_o)", "(o~o)"],
-            Cleaning => ["(o.o)", "(-.o)", "(o.o)", "(o.-)"],
-            Healing => ["(u_u)", "(^_u)", "(u_u)", "(u_^)"],
-            Celebrate => ["(^o^)", "(^O^)", "(^o^)", "(^v^)"],
-            Dead => ["(x_x)"; 4],
+            Idle => [
+                "(o_o)", "(o.o)", "(-_-)", "(o_o)", "(o_O)", "(o.o)", "(O_o)", "(-.-)",
+            ],
+            Happy => [
+                "(^_^)", "(^o^)", "(^_~)", "(^_^)", "(^w^)", "(^v^)", "(~_^)", "(^.^)",
+            ],
+            Sad => [
+                "(T_T)", "(;_;)", "(T_T)", "(;_;)", "(Q_Q)", "(;.;)", "(T.T)", "(u_u)",
+            ],
+            Angry => [
+                "(>_<)", "(>.<)", "(>_<)", "(`_')", "(>o<)", "(=_=)", "(>_<)", "(`.')",
+            ],
+            Surprised => [
+                "(O_O)", "(O.O)", "(o_O)", "(O_O)", "(O_o)", "(o.o)", "(O.O)", "(O_O)",
+            ],
+            Sleeping => [
+                "(-_-)", "(-.-)", "(=_=)", "(-_-)", "(u_u)", "(=_=)", "(-.-)", "(-_-)",
+            ],
+            Sick => [
+                "(+_+)", "(@_@)", "(+_+)", "(+.+)", "(@.@)", "(+o+)", "(u_u)", "(+_+)",
+            ],
+            Hungry => [
+                "(u_u)", "(u~u)", "(u_u)", "(-~-)", "(u.u)", "(o~o)", "(u_u)", "(-~-)",
+            ],
+            Playful => [
+                "(o_<)", "(^_<)", "(>_o)", "(>_^)", "(^3^)", "(o_^)", "(^_o)", "(^.~)",
+            ],
+            Shy => [
+                "(._.)", "(.,.)", "(-_-)", "(._.)", "(u.u)", "('o')", "(._.)", "(-_-)",
+            ],
+            Excited => [
+                "(*_*)", "(*o*)", "(*_*)", "(*O*)", "(*.*)", "(^O^)", "(*v*)", "(^_^)",
+            ],
+            Eating => [
+                "(o_O)", "(o~o)", "(O_o)", "(o~o)", "(o3o)", "(o.o)", "(o~o)", "(u_u)",
+            ],
+            Cleaning => [
+                "(o.o)", "(-.o)", "(o.o)", "(o.-)", "(^.^)", "(o.o)", "(u.u)", "(^_^)",
+            ],
+            Healing => [
+                "(u_u)", "(^_u)", "(u_u)", "(u_^)", "(^_^)", "(u_u)", "(^.^)", "(u_^)",
+            ],
+            Celebrate => [
+                "(^o^)", "(^O^)", "(^o^)", "(^v^)", "(^w^)", "(*o*)", "(^O^)", "(^_^)",
+            ],
+            Dead => [
+                "(x_x)", "(x_x)", "(x_x)", "(x_x)", "(x_x)", "(x_x)", "(x_x)", "(x_x)",
+            ],
         }
     }
 }
@@ -120,6 +153,7 @@ pub struct Sprite {
     pixels: Vec<Option<u8>>,
     face_overlay: Option<FaceOverlay>,
     face_mapping: Option<FaceMapping>,
+    surface_shading: Option<Vec<[i8; 4]>>,
 }
 
 impl Sprite {
@@ -142,6 +176,23 @@ impl Sprite {
             .copied()
             .flatten()?;
         Some(uv.map(|value| f32::from(value) / f32::from(u16::MAX)))
+    }
+
+    /// Winning visible surface normal in view space and contact occlusion0..100.
+    /// Pixel sprites have no 3D light sample. Transparent pixels never shade.
+    pub fn surface_shading(&self, x: u32, y: u32) -> Option<([f32; 3], u8)> {
+        self.pixel(x, y, 1)?;
+        let sample = *self
+            .surface_shading
+            .as_ref()?
+            .get(y as usize * usize::from(self.width) + x as usize)?;
+        if sample[..3].iter().all(|v| *v == 0) {
+            return None;
+        }
+        Some((
+            [sample[0], sample[1], sample[2]].map(|v| f32::from(v) / 127.0),
+            sample[3].clamp(0, 100) as u8,
+        ))
     }
 
     /// CPU-only solid voxel seedling. Yaw is periodic; movement is supplied by
@@ -219,6 +270,7 @@ impl Sprite {
                 pixels: vec![None],
                 face_overlay: None,
                 face_mapping: None,
+                surface_shading: None,
             };
         }
         if self.width <= max_width && self.height <= max_height {
@@ -256,6 +308,17 @@ impl Sprite {
                 texels,
             }
         });
+        let surface_shading = self.surface_shading.as_ref().map(|samples| {
+            let mut mapped = Vec::with_capacity(usize::from(width) * usize::from(height));
+            for y in 0..u32::from(height) {
+                let sy = ((2 * y + 1) * sh / (2 * u32::from(height))).min(sh - 1);
+                for x in 0..u32::from(width) {
+                    let sx = ((2 * x + 1) * sw / (2 * u32::from(width))).min(sw - 1);
+                    mapped.push(samples[sy as usize * usize::from(self.width) + sx as usize]);
+                }
+            }
+            mapped
+        });
         let face_overlay = self.face_overlay.map(|face| FaceOverlay {
             center_x: (u32::from(face.center_x) * u32::from(width) / sw).min(u32::from(width) - 1)
                 as u16,
@@ -268,6 +331,7 @@ impl Sprite {
             pixels,
             face_overlay,
             face_mapping,
+            surface_shading,
         }
     }
 
@@ -412,6 +476,7 @@ impl Sprite {
             height: if grown { size * 2 } else { size },
             face_overlay: None,
             face_mapping: None,
+            surface_shading: None,
             pixels: rows
                 .iter()
                 .flat_map(|row| row.bytes())
@@ -843,6 +908,7 @@ impl Sprite {
             pixels,
             face_overlay: None,
             face_mapping: None,
+            surface_shading: None,
         })
     }
 
@@ -885,6 +951,7 @@ impl Sprite {
             height: 8,
             pixels,
             face_mapping: None,
+            surface_shading: None,
             face_overlay: Some(FaceOverlay {
                 center_x: 4,
                 y: 3,
@@ -913,6 +980,7 @@ impl Sprite {
             pixels,
             face_overlay: None,
             face_mapping: None,
+            surface_shading: None,
         }
     }
 
@@ -941,6 +1009,7 @@ impl Sprite {
                 text: Expression::Idle.kaomoji(frame),
             }),
             face_mapping: None,
+            surface_shading: None,
         }
     }
 }
@@ -1395,7 +1464,9 @@ impl VoxelModel {
             ],
             face_overlay: None,
             face_mapping: None,
+            surface_shading: None,
         };
+        sprite.surface_shading = Some(vec![[0; 4]; sprite.pixels.len()]);
         let mut depth = vec![f32::NEG_INFINITY; sprite.pixels.len()];
         let mut face_layer = vec![false; sprite.pixels.len()];
         let angle = f32::from(yaw % 360).to_radians();
@@ -1520,18 +1591,32 @@ impl VoxelModel {
                 if n[2] <= 0.0 {
                     continue;
                 }
-                let light = -0.45 * n[0] + 0.65 * n[1] + 0.45 * n[2];
+                // Keep species and personality material indices intact. The
+                // renderer applies the configured light to these actual hues.
                 let color = match material {
                     16 | 18 => self.appearance.unwrap_or_default().body,
                     17 | 20 => self.appearance.unwrap_or_default().accent,
                     19 => 4,
-                    1 if light < 0.15 => 11,
-                    1 if light > 0.65 => 3,
-                    4 if light < 0.15 => 14,
-                    4 if light > 0.65 => 2,
-                    11 if light > 0.65 => 1,
-                    15 if light < 0.15 => 13,
                     _ => material,
+                };
+                // Four outward tangent neighbors detect real contacts around
+                // noses, limbs and overlapping volumes, without clock or RNG.
+                let center = [x + normal[0], y + normal[1], z + normal[2]];
+                let mut contacts = 0u8;
+                for axis in 0..3 {
+                    if normal[axis] != 0 {
+                        continue;
+                    }
+                    for direction in [-1, 1] {
+                        let mut probe = center;
+                        probe[axis] += direction;
+                        contacts += u8::from(cells.contains_key(&(probe[0], probe[1], probe[2])));
+                    }
+                }
+                let surface = SurfaceTag {
+                    is_face: matches!(material, 18..=20),
+                    normal: n.map(|value| (value.clamp(-1.0, 1.0) * 127.0).round() as i8),
+                    occlusion: contacts * 25,
                 };
                 let vertices = corners.map(|[dx, dy, dz]| {
                     project([
@@ -1545,7 +1630,7 @@ impl VoxelModel {
                         &mut sprite,
                         &mut depth,
                         Some(&mut face_layer),
-                        matches!(material, 18..=20),
+                        Some(surface),
                         indices.map(|i| vertices[i]),
                         color,
                     );
@@ -1648,14 +1733,21 @@ impl VoxelModel {
 
 #[cfg(test)]
 fn raster_triangle(sprite: &mut Sprite, depth: &mut [f32], v: [[f32; 3]; 3], color: u8) {
-    raster_triangle_tagged(sprite, depth, None, false, v, color);
+    raster_triangle_tagged(sprite, depth, None, None, v, color);
+}
+
+#[derive(Clone, Copy)]
+struct SurfaceTag {
+    is_face: bool,
+    normal: [i8; 3],
+    occlusion: u8,
 }
 
 fn raster_triangle_tagged(
     sprite: &mut Sprite,
     depth: &mut [f32],
     mut face_layer: Option<&mut [bool]>,
-    is_face: bool,
+    surface: Option<SurfaceTag>,
     v: [[f32; 3]; 3],
     color: u8,
 ) {
@@ -1704,8 +1796,16 @@ fn raster_triangle_tagged(
             if z > depth[i] {
                 depth[i] = z;
                 sprite.pixels[i] = Some(color);
+                if let (Some(samples), Some(tag)) = (sprite.surface_shading.as_mut(), surface) {
+                    samples[i] = [
+                        tag.normal[0],
+                        tag.normal[1],
+                        tag.normal[2],
+                        tag.occlusion as i8,
+                    ];
+                }
                 if let Some(layer) = face_layer.as_deref_mut() {
-                    layer[i] = is_face;
+                    layer[i] = surface.is_some_and(|s| s.is_face);
                 }
             }
         }
@@ -1795,11 +1895,11 @@ mod body_face_tests {
     #[test]
     fn ascii_faces_are_bounded_printable_periodic_and_state_specific() {
         for mood in MOODS {
-            for frame in [0, 1, 2, 3, 4, usize::MAX] {
+            for frame in [0, 1, 2, 3, 4, 5, 6, 7, 8, usize::MAX] {
                 let text = mood.kaomoji(frame);
                 assert_eq!(text.len(), 5);
                 assert!(text.bytes().all(|b| (32..=126).contains(&b)));
-                assert_eq!(text, mood.kaomoji(frame % 4));
+                assert_eq!(text, mood.kaomoji(frame % mood.kaomoji_cycle().len()));
                 for style in STYLES {
                     let pixel = Sprite::animated(Stage::Adult, mood, style, frame);
                     assert_eq!(pixel.face_overlay().unwrap().text, text);
@@ -3122,7 +3222,10 @@ mod species_detail_tests {
             if mood == Expression::Dead {
                 assert_eq!(distinct.len(), 1);
             } else {
-                assert!(distinct.len() >= 2, "{mood:?} face never changes");
+                assert!(
+                    distinct.len() >= 4,
+                    "{mood:?} needs four distinct expressive poses"
+                );
             }
         }
         // Face metadata animates; a neutral voxel surface prevents a second
@@ -3334,5 +3437,133 @@ mod authoritative_voxel_face_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod surface_lighting_tests {
+    use super::*;
+    use crate::game::Stage;
+
+    #[test]
+    fn visible_voxel_surfaces_have_finite_rotating_normals_and_real_contacts() {
+        let mut contacts = 0usize;
+        let mut directions = std::collections::BTreeSet::new();
+        for shape in 0..16 {
+            let sprite = Sprite::voxel_with_appearance(
+                Stage::Adult,
+                Expression::Idle,
+                SpriteStyle::SixteenBit,
+                0,
+                45,
+                false,
+                Appearance {
+                    shape,
+                    body: 7,
+                    accent: 5,
+                },
+            );
+            for y in 0..u32::from(sprite.height()) {
+                for x in 0..u32::from(sprite.width()) {
+                    match sprite.pixel(x, y, 1) {
+                        None => assert!(sprite.surface_shading(x, y).is_none()),
+                        Some(color) => {
+                            assert!(color < 16, "lighting must not replace material families");
+                            let (normal, occlusion) = sprite.surface_shading(x, y).unwrap();
+                            let length = normal.iter().map(|v| v * v).sum::<f32>().sqrt();
+                            assert!(normal.iter().all(|v| v.is_finite()));
+                            assert!((0.98..=1.02).contains(&length), "{normal:?}");
+                            assert!(occlusion <= 100);
+                            contacts += usize::from(occlusion > 0);
+                            directions.insert(normal.map(|v| (v * 127.0).round() as i8));
+                        }
+                    }
+                }
+            }
+            assert!(sprite.surface_shading(u32::MAX, u32::MAX).is_none());
+        }
+        assert!(
+            directions.len() >= 3,
+            "front, upward and side surfaces must differ"
+        );
+        assert!(
+            contacts > 0,
+            "overlapping animal volumes need genuine contact shade"
+        );
+
+        let normals = |yaw, mood| {
+            let sprite = Sprite::voxel(Stage::Adult, mood, SpriteStyle::SixteenBit, 0, yaw, false);
+            sprite
+                .surface_shading
+                .unwrap()
+                .into_iter()
+                .filter(|v| v[..3].iter().any(|n| *n != 0))
+                .map(|v| [v[0], v[1], v[2]])
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert_ne!(normals(0, Expression::Idle), normals(45, Expression::Idle));
+        assert_ne!(
+            normals(0, Expression::Idle),
+            normals(0, Expression::Sleeping)
+        );
+        assert!(Sprite::egg().surface_shading.is_none());
+    }
+
+    #[test]
+    fn normal_and_contact_metadata_follow_the_exact_downsampled_surface() {
+        let sprite = Sprite::voxel(
+            Stage::Adult,
+            Expression::Happy,
+            SpriteStyle::SixteenBit,
+            0,
+            45,
+            false,
+        );
+        let reduced = sprite.downsample_to_fit(17, 25);
+        for y in 0..u32::from(reduced.height()) {
+            for x in 0..u32::from(reduced.width()) {
+                let sx = ((2 * x + 1) * u32::from(sprite.width())
+                    / (2 * u32::from(reduced.width())))
+                .min(u32::from(sprite.width()) - 1);
+                let sy = ((2 * y + 1) * u32::from(sprite.height())
+                    / (2 * u32::from(reduced.height())))
+                .min(u32::from(sprite.height()) - 1);
+                assert_eq!(reduced.pixel(x, y, 1), sprite.pixel(sx, sy, 1));
+                assert_eq!(
+                    reduced.surface_shading(x, y),
+                    sprite.surface_shading(sx, sy)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_triangles_cannot_replace_the_winning_surface_light() {
+        let mut sprite = Sprite::new(4, 4, vec![None; 16]).unwrap();
+        sprite.surface_shading = Some(vec![[0; 4]; 16]);
+        let mut depth = vec![f32::NEG_INFINITY; 16];
+        let triangle = |z| [[0.0, 0.0, z], [4.0, 0.0, z], [0.0, 4.0, z]];
+        let front = SurfaceTag {
+            is_face: true,
+            normal: [0, 0, 127],
+            occlusion: 25,
+        };
+        let hidden = SurfaceTag {
+            is_face: false,
+            normal: [127, 0, 0],
+            occlusion: 100,
+        };
+        raster_triangle_tagged(&mut sprite, &mut depth, None, Some(front), triangle(2.0), 7);
+        raster_triangle_tagged(
+            &mut sprite,
+            &mut depth,
+            None,
+            Some(hidden),
+            triangle(1.0),
+            11,
+        );
+        assert_eq!(sprite.pixel(0, 0, 1), Some(7));
+        assert_eq!(sprite.surface_shading(0, 0), Some(([0.0, 0.0, 1.0], 25)));
+        assert!(sprite.surface_shading(3, 3).is_none());
     }
 }

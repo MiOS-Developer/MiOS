@@ -3413,6 +3413,24 @@
         <input type="number" id="f-mon-tamagotchi-hud-minimal-height" data-inherit="true" data-key="tamagotchi.hud_minimal_height" placeholder="Inherit vendor" data-type="int" min="8" max="80" step="1">
         <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
         <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
+      </fieldset><fieldset><legend>Voxel shading</legend>
+        <p>Lighting keeps the species palette and adds shape to ears, muzzles, limbs and tails. ASCII views use a tonal character ramp.</p>
+        <label for="f-mon-light-enabled">Directional shading</label>
+        <select id="f-mon-light-enabled" data-inherit="true" data-key="tamagotchi.voxel_lighting.enabled" data-type="bool">
+          <option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Disabled</option>
+        </select>
+        <label for="f-mon-light-ambient-percent">Ambient light (%)</label>
+        <input type="number" id="f-mon-light-ambient-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.ambient_percent" placeholder="Inherit vendor" data-type="int" min="20" max="100" step="1">
+        <label for="f-mon-light-diffuse-percent">Directional light (%)</label>
+        <input type="number" id="f-mon-light-diffuse-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.diffuse_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-light-occlusion-percent">Contact shadow strength (%)</label>
+        <input type="number" id="f-mon-light-occlusion-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.occlusion_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-light-outline-percent">Silhouette edge shade (%)</label>
+        <input type="number" id="f-mon-light-outline-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.outline_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-light-direction">Light direction: right, up, viewer (three comma-separated values)</label>
+        <input type="text" id="f-mon-light-direction" data-inherit="true" data-key="tamagotchi.voxel_lighting.light_direction" data-array="csv-int" placeholder="Inherit vendor">
+        <label for="f-mon-light-ascii-ramp">ASCII shading: dim to bright</label>
+        <input type="text" id="f-mon-light-ascii-ramp" data-inherit="true" data-key="tamagotchi.voxel_lighting.ascii_ramp" placeholder="Inherit vendor">
       </fieldset><fieldset><legend>Hatch identity and training</legend>
         <label for="f-mon-tamagotchi-game-training-name-starts">Name first syllables (comma separated)</label>
         <input type="text" id="f-mon-tamagotchi-game-training-name-starts" data-inherit="true" data-key="tamagotchi.game.training.name_starts" placeholder="Inherit vendor" data-array="csv">

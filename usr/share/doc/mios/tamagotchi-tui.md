@@ -5,8 +5,10 @@
 The native `mios-tamagotchi` sample now supports feeding, cleaning, rest,
 medicine, illness, death, accelerated growth, a three-arrow memory game,
 coin rewards, pause, confirmed pet reset, and versioned local saves.
-The goal is a healthy, happy adult. Social play, breeding, shops, multiple
-mini-games and full device emulation remain future work under task_3706.
+The goal is a healthy, happy adult. The sample includes original character
+profiles, dialogue, seeded habitats, decoration purchases and training. Social
+play, breeding, multiple mini-games and full device emulation remain future
+work under task_3706.
 
 ## Graphical room and menus
 
@@ -36,7 +38,7 @@ corresponding persistent moods. Animation uses elapsed time independently of
 input traffic and the simulation clock. The animation_frame_ms, reaction_frames,
 sprite_style and indexed four- or sixteen-color palette belong to [tamagotchi].
 In-menu visual choices last for the current process; they do not replace live
-TOML or change schema-1 saved game data.
+TOML or change saved pet state.
 
     mios-tamagotchi --sample --sprite-style eight-bit
     mios-tamagotchi --sample --sprite-style sixteen-bit --renderer half-block --color indexed
@@ -46,9 +48,9 @@ color trial in a session that inherited it, remove it only for this process:
 
     env -u NO_COLOR mios-tamagotchi --sample --color indexed
 
-These graphics do not claim the draft's future catalogue of 50+ characters,
-additional locations, shops, social systems or multiple mini-games. Those remain
-separate gameplay work. Real Linux VT/font and Inputd/controller certification
+The sample includes sixteen original character profiles and eight seeded room
+themes. The draft's larger catalogue, additional locations, social systems and
+multiple mini-games remain separate gameplay work. Real Linux VT/font and Inputd/controller certification
 still require the corresponding device/session checks.
 
 ## Try it without changing a live MiOS installation
@@ -134,7 +136,7 @@ the OS releases its lock when the process exits, including a crash. Never remove
 or rotate a lock file while a process owns it. Snapshots may read an active
 writer's last completed atomic save without taking its writer lock.
 
-Save schema 3 contains bounded, validated pet and habitat state; schemas 1 and 2 remain readable. Writes use a private temporary
+Save schema 4 contains bounded, validated pet, habitat and hatch/training state; schemas 1 through 3 remain readable. Writes use a private temporary
 file in the same directory, fsync, atomic replacement, and parent-directory fsync
 on Unix. Existing saves survive invalid-state write attempts. Unsupported schema,
 malformed JSON, invalid needs/coins/memory progress and files over 64 KiB fail.
@@ -319,11 +321,18 @@ with actual separate heads, torsos, arms and legs. Egg, baby and ghost forms
 remain compact. All sixteen original animal identities retain their shapes,
 palettes, personalities, hobbies and state-aware original dialogue.
 
-ASCII kaomoji faces blink and change with care and mood. Code-native kaomoji strokes grow with the projected head and zoom. Tiny heads
-and read-only snapshots retain literal facial text. Oblique heads show only the
-near expression half, and rear faces are hidden by direction and depth. Tiny views retain a short face in the stage HUD when
-the sprite cannot hold the complete expression. The same clipped renderer is
-used for half-block, quadrant, braille and plain ASCII output.
+ASCII kaomoji faces blink and change with care and mood. A code-native stroke
+atlas is sampled through the actual visible head surface: the expression scales,
+foreshortens and rotates with the model. Species noses, ears and props remain
+solid geometry and occlude the texture through the same depth buffer. Atlas
+gaps preserve the actual species/head material. No second
+set of voxel eyes or mouth competes with the expression. Side/rear views cannot
+paint a floating frontal badge. A thin, spaced atlas supplies larger heads. Underresolved heads use individual
+terminal glyphs anchored to visible head-local UVs; each complete glyph cell must
+still pass the actual material/depth mask. Tiny scenes, legacy pixel sprites and
+read-only snapshots retain literal facial text. Compact HUDs keep a separate
+mood caption. The same clipped projection is used for
+half-block, quadrant, braille and plain ASCII output.
 
 Each new pet receives a cosmetic room seed and initial theme derived from its
 creation seed, independently of the saved memory-game RNG. Eight vendor themes
@@ -386,8 +395,10 @@ resize that hides it.
 
 All living moods have pure ASCII expression cycles. Detailed voxel rendering
 re-samples the model at a finer lattice rather than enlarging block pixels.
-Frontal kaomoji appears on the head; oblique views show only the nearer half,
-and rear views do not receive face text. The HUD can still report mood.
+Kaomoji is mapped to head-local coordinates on the visible front surface.
+Oblique views reveal the geometrically visible portion through foreshortening
+and depth occlusion; rear views receive no face texture. The HUD can still
+report mood.
 
 Inputd-projected arrows, Enter, Tab and Back follow the same menu/care actions
 in every terminal transport. Pad-specific hints require native focus and device
@@ -445,3 +456,87 @@ camera choices, while the pet's locomotion remains autonomous.
 Smartwatch and mobile acceptance requires a real attached device. Testing
 terminal cell dimensions establishes layout behavior; it does not certify an
 unattached phone/watch, unavailable font, VT renderer or physical controller.
+
+## Doll anatomy and surface expressions
+
+The animal model uses a broad head, one short torso, small attached paws and
+stub limbs. Child/adult canvases remain double height; the anatomy is not
+stretched to fill them. Species identity comes from ears, muzzle, actual nose
+or beak and relevant tail or shell. Sixteen original variants cover cats, foxes,
+tanuki, rabbits, bears, frogs, birds and turtles. Baby scaling preserves the
+compact proportions. Eggs remain closed neutral shells before hatching.
+
+The doll geometry and face atlas are code-native CPU rendering data. Head UVs
+are recovered from the winning depth-tested surface, rather than a screen-space
+label. Pure ASCII eyes and mouth animate as a single expression; the nose is
+species geometry. Readable portrait information panels use their available
+height for needs, currency and all five training skills before paging thoughts.
+Camera projection corrects standard 1:2 terminal-cell proportions for ASCII
+and quadrant packing; half-block and Braille retain square packed pixels.
+Fonts with other metrics still require actual terminal review. Actual PiP, font,
+console and mobile results remain separately evidenced.
+
+
+## Controller ownership across nested sessions
+
+Controller routing uses the native per-seat Inputd contract. A labelled nested
+session receives only the devices declared by its launcher; another live seat
+cannot claim an exclusively assigned node. Each seat has its own compositor,
+Tmux-OS namespace and room packet. A host-side `mios-inputd bridge --nested SEAT`
+follows that live registry entry and routes its assigned controllers. The parent
+bridge excludes assigned nodes. Multiple seats can therefore use different
+controllers concurrently; controller count is not a global game setting.
+
+A session launched with `--no-devices` has no controller assignment. A physical
+pad detected on the parent desktop does not establish input ownership in that
+session. Existing launcher device namespaces cannot be expanded merely by editing
+a descriptor. Preserve a running operator session and use the documented launch
+and assignment workflow for a future device-enabled session.
+
+ServerBox SSH forwards terminal input. A controller connected to a phone must
+actually produce forwarded terminal events before its controls can be verified;
+server-side device discovery alone cannot identify that phone controller.
+Controller actions remain menu, care and HUD navigation. Pet locomotion is driven
+by the simulation. Per-seat routing, physical devices, remote terminals and
+concurrent player acceptance are recorded separately.
+
+
+## Direct navigation and compact control legends
+
+Letter shortcuts accept the displayed capital or its lowercase equivalent.
+Arrows/Tab choose care actions; Enter/Space activates the selected action.
+F/G/C/R/M address feed, memory, clean, rest and medicine. P pauses or resumes,
+S saves, O opens the menu and ? opens paginated controls. Q remains the explicit
+quit shortcut. Escape backs out of nested menus, cancels memory or opens the
+home menu from ordinary play. It does not quit ordinary play.
+
+Numbered visible menu rows accept 1 through 9; 0 retains camera zoom reset.
+Mouse menu rows are clickable, and wheel events navigate an open menu instead
+of zooming the room beneath it. Small views expose resume/menu/help controls;
+larger compact views show direct care and camera bindings. Inputd diagnostics
+explain missing assignment, unavailable context, stale evidence or focus loss
+separately from verified controller prompts. A diagnostic never grants ownership.
+
+
+## Expressive faces and voxel lighting
+
+The sixteen existing mood and care-reaction states each have eight animation
+poses. Living states have at least four distinct faces; death remains still.
+The catalogue contains 59 distinct five-character ASCII expressions, including
+chewing, glances, closed eyes, tears, pouts and excited faces. W-shaped mouths,
+3-shaped pouts and Q-shaped tears have native-text and voxel-atlas glyph support.
+Compact heads may omit both outer parentheses when only the eye-mouth-eye core
+fits. A lone parenthesis or missing mouth is not a complete compact expression.
+
+Voxel lighting reads the normal and contact occlusion of the winning visible
+surface. Hidden faces cannot replace its lighting, and camera/portrait resampling
+uses the same source pixel for material, face mapping and shading. Species and
+personality palette indices remain unchanged. The renderer shades their actual
+colors, and ASCII views use a tonal character ramp; monochrome retains its
+uncolored output. Facial ink stays separate from body illumination.
+
+The layered [tamagotchi.voxel_lighting] table and MiOS configurator control the
+ambient and directional light, contact shade, silhouette edge shade, view-space
+light direction and ASCII ramp. These are local application rendering settings;
+changing a preview does not replace the running host's configuration or mutate
+pet needs, age, coins, progression or RNG.

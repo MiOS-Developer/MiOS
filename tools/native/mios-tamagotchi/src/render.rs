@@ -17,6 +17,7 @@ use crate::{
 pub struct Colors {
     pub palette: Vec<Color>,
     pub background: Color,
+    pub lighting: Option<crate::lighting::VoxelLighting>,
 }
 
 impl Colors {
@@ -36,6 +37,7 @@ impl Colors {
         Ok(Self {
             palette,
             background: quantize(parse_rgb(&config.background)?, depth),
+            lighting: Some(config.voxel_lighting.clone()),
         })
     }
 }
@@ -360,6 +362,175 @@ fn paint_pixels(
     cell.set_char(symbol).set_fg(fg).set_bg(bg);
 }
 
+/// Shading belongs to the exact winning surface sampled by the camera.
+#[derive(Clone, Copy, Debug)]
+struct SurfaceLight {
+    normal: [f32; 3],
+    occlusion: u8,
+    edge: bool,
+}
+
+fn projected_surface_light(
+    sprite: &Sprite,
+    projection: Projection,
+    x: u32,
+    y: u32,
+) -> Option<SurfaceLight> {
+    let (sx, sy) = projection.source_pixel(sprite, x, y)?;
+    let (normal, occlusion) = sprite.surface_shading(sx, sy)?;
+    let edge = sx
+        .checked_sub(1)
+        .and_then(|x| sprite.pixel(x, sy, 1))
+        .is_none()
+        || sprite.pixel(sx + 1, sy, 1).is_none()
+        || sy
+            .checked_sub(1)
+            .and_then(|y| sprite.pixel(sx, y, 1))
+            .is_none()
+        || sprite.pixel(sx, sy + 1, 1).is_none();
+    Some(SurfaceLight {
+        normal,
+        occlusion,
+        edge,
+    })
+}
+
+/// Canonical terminal palette decoding; shade RGB without swapping skin hues.
+fn terminal_rgb(color: Color) -> Option<[u8; 3]> {
+    let ansi = [
+        [0, 0, 0],
+        [128, 0, 0],
+        [0, 128, 0],
+        [128, 128, 0],
+        [0, 0, 128],
+        [128, 0, 128],
+        [0, 128, 128],
+        [192, 192, 192],
+        [128, 128, 128],
+        [255, 0, 0],
+        [0, 255, 0],
+        [255, 255, 0],
+        [0, 0, 255],
+        [255, 0, 255],
+        [0, 255, 255],
+        [255, 255, 255],
+    ];
+    Some(match color {
+        Color::Reset => return None,
+        Color::Rgb(r, g, b) => [r, g, b],
+        Color::Indexed(index) => match index {
+            0..=15 => ansi[usize::from(index)],
+            16..=231 => {
+                let n = index - 16;
+                let levels = [0, 95, 135, 175, 215, 255];
+                [
+                    levels[usize::from(n / 36)],
+                    levels[usize::from(n / 6 % 6)],
+                    levels[usize::from(n % 6)],
+                ]
+            }
+            _ => [8 + 10 * (index - 232); 3],
+        },
+        _ => match color {
+            Color::Black => ansi[0],
+            Color::Red => ansi[1],
+            Color::Green => ansi[2],
+            Color::Yellow => ansi[3],
+            Color::Blue => ansi[4],
+            Color::Magenta => ansi[5],
+            Color::Cyan => ansi[6],
+            Color::Gray => ansi[7],
+            Color::DarkGray => ansi[8],
+            Color::LightRed => ansi[9],
+            Color::LightGreen => ansi[10],
+            Color::LightYellow => ansi[11],
+            Color::LightBlue => ansi[12],
+            Color::LightMagenta => ansi[13],
+            Color::LightCyan => ansi[14],
+            Color::White => ansi[15],
+            _ => return None,
+        },
+    })
+}
+
+fn shade_terminal_color(
+    lighting: &crate::lighting::VoxelLighting,
+    color: Color,
+    brightness: u16,
+) -> Color {
+    let Some(rgb) = terminal_rgb(color) else {
+        return color;
+    };
+    let rgb = lighting.shade_rgb(rgb, brightness);
+    match color {
+        Color::Rgb(..) => Color::Rgb(rgb[0], rgb[1], rgb[2]),
+        Color::Indexed(_) => quantize(rgb, Depth::Indexed),
+        _ => quantize(rgb, Depth::Ansi),
+    }
+}
+
+/// Preserve the unlit packer contract; only voxels with surface metadata light.
+fn paint_lit_pixels(
+    renderer: Renderer,
+    colors: &Colors,
+    pixels: [Option<u8>; 8],
+    surface: [Option<SurfaceLight>; 8],
+    flat_ink: [bool; 8],
+    cell: &mut ratatui::buffer::Cell,
+) {
+    paint_pixels(renderer, colors, pixels, cell);
+    let Some(lighting) = colors.lighting.as_ref().filter(|light| light.enabled) else {
+        return;
+    };
+    let Some(first) = pixels.iter().position(Option::is_some) else {
+        return;
+    };
+    let brightness: [Option<u16>; 8] = std::array::from_fn(|i| {
+        surface[i].map(|s| lighting.brightness(s.normal, s.occlusion, s.edge))
+    });
+    let shaded: [Option<Color>; 8] = std::array::from_fn(|i| {
+        pixels[i].map(|index| {
+            let base = colors.ink(usize::from(index));
+            if flat_ink[i] {
+                base
+            } else {
+                brightness[i].map_or(base, |value| shade_terminal_color(lighting, base, value))
+            }
+        })
+    });
+    let mono = colors.palette.iter().all(|c| *c == Color::Reset);
+    match renderer {
+        Renderer::Ascii | Renderer::Auto => {
+            if let Some(value) = brightness[first].filter(|_| !flat_ink[first]) {
+                cell.set_char(lighting.glyph(value));
+            }
+            cell.set_fg(shaded[first].unwrap());
+        }
+        Renderer::HalfBlock if mono => {
+            if let Some(value) = brightness[first].filter(|_| !flat_ink[first]) {
+                cell.set_char(lighting.glyph(value));
+            }
+        }
+        Renderer::HalfBlock => match (shaded[0], shaded[1]) {
+            (Some(upper), Some(lower)) => {
+                cell.set_char(if upper == lower { '█' } else { '▀' })
+                    .set_fg(upper)
+                    .set_bg(lower);
+            }
+            (Some(upper), None) => {
+                cell.set_char('▀').set_fg(upper);
+            }
+            (None, Some(lower)) => {
+                cell.set_char('▄').set_fg(lower);
+            }
+            _ => {}
+        },
+        Renderer::Quadrant | Renderer::Braille => {
+            cell.set_fg(shaded[first].unwrap());
+        }
+    }
+}
+
 fn draw_projection(
     sprite: &Sprite,
     renderer: Renderer,
@@ -373,17 +544,18 @@ fn draw_projection(
     for row in area.y..area.bottom() {
         for col in area.x..area.right() {
             let mut pixels = [None; 8];
+            let mut surface = [None; 8];
             for y in 0..dy {
                 for x in 0..dx {
-                    pixels[usize::from(y * dx + x)] = projection.sample(
-                        sprite,
-                        u32::from(col) * u32::from(dx) + u32::from(x),
-                        u32::from(row) * u32::from(dy) + u32::from(y),
-                    );
+                    let i = usize::from(y * dx + x);
+                    let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                    let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                    pixels[i] = projection.sample(sprite, px, py);
+                    surface[i] = projected_surface_light(sprite, projection, px, py);
                 }
             }
             if let Some(cell) = buf.cell_mut((col, row)) {
-                paint_pixels(renderer, colors, pixels, cell);
+                paint_lit_pixels(renderer, colors, pixels, surface, [false; 8], cell);
             }
         }
     }
@@ -411,6 +583,17 @@ fn head_span(sprite: &Sprite, center: u16, row: u16) -> (f64, f64) {
 
 fn printable_face(text: &str) -> bool {
     !text.is_empty() && text.is_ascii() && !text.bytes().any(|c| c.is_ascii_control())
+}
+
+fn paint_face_character(cell: &mut ratatui::buffer::Cell, colors: &Colors, glyph: char) {
+    cell.set_char(glyph).set_fg(colors.ink(0));
+    if colors.palette.iter().all(|color| *color == Color::Reset) {
+        // Native characters must remain distinct even when the body tone uses
+        // that same ASCII character and the terminal has no color channels.
+        cell.set_style(
+            ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+        );
+    }
 }
 
 /// A depth-tested front anchor authorizes the face. Packed-pixel holes do not
@@ -456,7 +639,7 @@ fn draw_front_face(
     }
     for (offset, glyph) in face.text.chars().enumerate() {
         if let Some(cell) = buf.cell_mut(((start + offset as i32) as u16, row as u16)) {
-            cell.set_char(glyph).set_fg(colors.ink(0));
+            paint_face_character(cell, colors, glyph);
         }
     }
     true
@@ -490,6 +673,9 @@ fn face_glyph(glyph: u8) -> Option<[u8; 9]> {
         b'*' => [0, 0, 4, 21, 14, 21, 4, 0, 0],
         b'v' => [0, 0, 17, 17, 10, 10, 4, 0, 0],
         b'x' => [0, 0, 17, 10, 4, 10, 17, 0, 0],
+        b'w' => [0, 0, 17, 17, 21, 21, 10, 0, 0],
+        b'3' => [14, 17, 1, 2, 6, 1, 17, 14, 0],
+        b'Q' => [14, 17, 17, 17, 21, 18, 13, 1, 0],
         _ => return None,
     })
 }
@@ -645,82 +831,111 @@ fn draw_surface_glyphs(
         return false;
     };
     let (dx, dy) = renderer.packing();
-    let mut used = Vec::new();
-    let mut candidates = Vec::new();
-    for (index, glyph) in texture.text.bytes().enumerate() {
-        let target = [
-            (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0),
-            // Native glyphs already contain their own eye/mouth baselines.
-            // Keep the complete text in one upper facial band, above the nose.
-            0.35,
-        ];
-        let mut best = None;
-        let mut best_distance = f64::INFINITY;
-        for row in area.y..area.bottom() {
-            for col in area.x..area.right() {
-                if used.contains(&(col, row)) {
-                    continue;
-                }
-                let mut mean = [0.0; 2];
-                let mut complete = true;
-                for y in 0..dy {
-                    for x in 0..dx {
-                        let sample = projected_face_uv(
-                            sprite,
-                            projection,
-                            u32::from(col) * u32::from(dx) + u32::from(x),
-                            u32::from(row) * u32::from(dy) + u32::from(y),
-                        );
-                        if let Some((uv, _)) = sample {
-                            for i in 0..2 {
-                                mean[i] += uv[i] / f64::from(dx * dy);
-                            }
-                        } else {
-                            complete = false;
+    let mut visible = Vec::new();
+    for row in area.y..area.bottom() {
+        for col in area.x..area.right() {
+            let mut mean = [0.0; 2];
+            let mut cell_width = 0.0;
+            let mut complete = true;
+            for y in 0..dy {
+                for x in 0..dx {
+                    if let Some((uv, footprint)) = projected_face_uv(
+                        sprite,
+                        projection,
+                        u32::from(col) * u32::from(dx) + u32::from(x),
+                        u32::from(row) * u32::from(dy) + u32::from(y),
+                    ) {
+                        cell_width += footprint[0] * f64::from(dx) / f64::from(dx * dy);
+                        for (dest, value) in mean.iter_mut().zip(uv) {
+                            *dest += value / f64::from(dx * dy);
                         }
+                    } else {
+                        complete = false;
                     }
                 }
-                if !complete {
+            }
+            if complete {
+                visible.push(((col, row), mean, cell_width));
+            }
+        }
+    }
+    let horizontal_tolerance = 3.0 / (texture.width() + 2.0);
+    // Start with the upper face. A broad beak can consume a whole terminal
+    // cell there, so derive alternate rows from actual legal mouth cells.
+    // Every fallback row still belongs to the nearest visible mapped head.
+    let mut bands = vec![0.35];
+    bands.extend(
+        visible
+            .iter()
+            .filter(|(_, uv, width)| (uv[0] - 0.5).abs() <= horizontal_tolerance.max(width * 0.55))
+            .map(|(_, uv, _)| uv[1]),
+    );
+    bands.sort_by(|a, b| (a - 0.35).abs().total_cmp(&(b - 0.35).abs()));
+    bands.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+    let mut compact = None;
+    for band in bands {
+        let mut used = Vec::new();
+        let mut candidates = Vec::new();
+        for (index, glyph) in texture.text.bytes().enumerate() {
+            let target_u = (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0);
+            let mut best = None;
+            let mut best_distance = f64::INFINITY;
+            for &(pos, uv, width) in &visible {
+                if used.contains(&pos) {
                     continue;
                 }
-                let du = (mean[0] - target[0]) / (3.0 / (texture.width() + 2.0));
-                let dv = (mean[1] - target[1]) / 0.16;
+                // Native cells round anchor positions. At five columns half
+                // a cell exceeds an atlas glyph's UV radius; include that
+                // measured footprint without expanding visibility authority.
+                let du = (uv[0] - target_u) / horizontal_tolerance.max(width * 0.55);
+                let dv = (uv[1] - band) / 0.16;
                 let distance = du * du + dv * dv;
-                if distance <= 1.0 && distance < best_distance {
-                    best = Some((col, row));
+                if du.abs() <= 1.0 && dv.abs() <= 1.0 && distance < best_distance {
+                    best = Some(pos);
                     best_distance = distance;
                 }
             }
+            if let Some(pos) = best {
+                used.push(pos);
+            }
+            candidates.push(best.map(|pos| (pos, glyph)));
         }
-        if let Some(pos) = best {
-            used.push(pos);
+        // Collect first: never paint a missing-mouth or single-eye fragment.
+        if candidates.len() < 3
+            || candidates[1..candidates.len() - 1]
+                .iter()
+                .any(Option::is_none)
+        {
+            continue;
         }
-        candidates.push(best.map(|pos| (pos, glyph)));
-    }
-    // A literal expression needs both eyes and its mouth. Collect first so a
-    // failed anchor never leaves a misleading fragment on the actual head.
-    if candidates.len() < 3
-        || candidates[1..candidates.len() - 1]
-            .iter()
-            .any(Option::is_none)
-    {
-        return false;
-    }
-    let last = candidates.len() - 1;
-    if candidates[0].is_none() || candidates[last].is_none() {
-        candidates[0] = None;
-        candidates[last] = None;
-    }
-    let mut painted = false;
-    for (pos, glyph) in candidates.into_iter().flatten() {
-        if let Some(cell) = buf.cell_mut(pos) {
-            // Foreground only: terminal backgrounds may have separate tint or
-            // opacity. Gaps retain the species' original head material.
-            cell.set_char(char::from(glyph)).set_fg(colors.ink(0));
-            painted = true;
+        let last = candidates.len() - 1;
+        if candidates[0].is_none() || candidates[last].is_none() {
+            candidates[0] = None;
+            candidates[last] = None;
+            if compact.is_none() {
+                compact = Some(candidates);
+            }
+            continue;
         }
+        let mut painted = false;
+        for (pos, glyph) in candidates.into_iter().flatten() {
+            if let Some(cell) = buf.cell_mut(pos) {
+                // Preserve the room plane, including terminal tint/opacity.
+                paint_face_character(cell, colors, char::from(glyph));
+                painted = true;
+            }
+        }
+        return painted;
     }
-    painted
+    if let Some(candidates) = compact {
+        for (pos, glyph) in candidates.into_iter().flatten() {
+            if let Some(cell) = buf.cell_mut(pos) {
+                paint_face_character(cell, colors, char::from(glyph));
+            }
+        }
+        return true;
+    }
+    false
 }
 
 /// Large expressions are textures on the actual head surface, transformed and
@@ -769,6 +984,7 @@ fn draw_camera_face(
         {
             let mut pixels = [None; 8];
             let mut original = [None; 8];
+            let mut surface = [None; 8];
             let mut ink = [false; 8];
             let mut covered = [false; 8];
             for y in 0..dy {
@@ -778,6 +994,7 @@ fn draw_camera_face(
                     let py = row as u32 * u32::from(dy) + u32::from(y);
                     pixels[i] = projection.sample(sprite, px, py);
                     original[i] = pixels[i];
+                    surface[i] = projected_surface_light(sprite, projection, px, py);
                     if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
                         covered[i] = true;
                         ink[i] = texture.sample(uv, footprint);
@@ -790,11 +1007,6 @@ fn draw_camera_face(
             if !covered.iter().any(|v| *v) {
                 continue;
             }
-            let Some(base) = original.iter().flatten().next().copied() else {
-                continue;
-            };
-            let backing = colors.ink(usize::from(base));
-            let base_ascii = ['#', 'o', '@', '*'][usize::from(base) % 4];
             let count = usize::from(dx * dy);
             let full_cell = covered[..count].iter().all(|v| *v);
             let Some(cell) = buf.cell_mut((col as u16, row as u16)) else {
@@ -806,11 +1018,11 @@ fn draw_camera_face(
                     // glyph, then draw strokes without changing the room's
                     // background (terminals may tint that plane independently).
                     let background = cell.bg;
-                    paint_pixels(renderer, colors, original, cell);
+                    paint_lit_pixels(renderer, colors, original, surface, [false; 8], cell);
                     cell.set_bg(background);
                     if ink[0] {
                         let mark = if mono {
-                            if base_ascii == '@' { '#' } else { '@' }
+                            if cell.symbol() == "@" { '#' } else { '@' }
                         } else {
                             '#'
                         };
@@ -822,13 +1034,15 @@ fn draw_camera_face(
                         continue;
                     }
                     let background = cell.bg;
-                    paint_pixels(renderer, colors, original, cell);
+                    paint_lit_pixels(renderer, colors, original, surface, [false; 8], cell);
                     cell.set_bg(background);
                     if ink[0] || ink[1] {
-                        cell.set_char(if base_ascii == '@' { '#' } else { '@' });
+                        cell.set_char(if cell.symbol() == "@" { '#' } else { '@' });
                     }
                 }
-                Renderer::HalfBlock => paint_pixels(renderer, colors, pixels, cell),
+                Renderer::HalfBlock => {
+                    paint_lit_pixels(renderer, colors, pixels, surface, ink, cell)
+                }
                 Renderer::Quadrant | Renderer::Braille => {
                     // One-foreground pattern cells carve expression strokes
                     // from the actual head color. Never paint a face rectangle
@@ -837,6 +1051,10 @@ fn draw_camera_face(
                     if !full_cell {
                         continue;
                     }
+                    let background = cell.bg;
+                    paint_lit_pixels(renderer, colors, original, surface, [false; 8], cell);
+                    cell.set_bg(background);
+                    let backing = cell.fg;
                     let mask = ink.map(|v| !v);
                     let glyph = if renderer == Renderer::Quadrant {
                         quadrant(std::array::from_fn(|i| mask[i]))
@@ -1288,6 +1506,254 @@ impl Widget for RoomWidget<'_> {
         for (offset, ch) in effect.chars().enumerate() {
             if let Some(cell) = buf.cell_mut((x + offset as u16, y)) {
                 cell.set_char(ch).set_fg(self.colors.ink(7)).set_bg(wall);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod voxel_lighting_tests {
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+
+    fn light() -> crate::lighting::VoxelLighting {
+        let mut light = Config::sample().unwrap().voxel_lighting;
+        light.enabled = true;
+        light
+    }
+
+    fn surface(normal: [f32; 3], occlusion: u8, edge: bool) -> Option<SurfaceLight> {
+        Some(SurfaceLight {
+            normal,
+            occlusion,
+            edge,
+        })
+    }
+
+    #[test]
+    fn halfblock_uses_independent_directional_contact_and_outline_shading() {
+        let light = light();
+        let base = [120, 80, 40];
+        let colors = Colors {
+            palette: vec![
+                Color::Rgb(12, 16, 24),
+                Color::Rgb(base[0], base[1], base[2]),
+            ],
+            background: Color::Rgb(1, 2, 3),
+            lighting: Some(light.clone()),
+        };
+        let up = surface([0.0, 1.0, 0.0], 0, false);
+        let down = surface([0.0, -1.0, 0.0], 100, true);
+        let bright = light.brightness([0.0, 1.0, 0.0], 0, false);
+        let dark = light.brightness([0.0, -1.0, 0.0], 100, true);
+        assert!(
+            bright > dark,
+            "direction, contact and edge must produce distinct illumination"
+        );
+        let mut cell = ratatui::buffer::Cell::default();
+        paint_lit_pixels(
+            Renderer::HalfBlock,
+            &colors,
+            [Some(1), Some(1), None, None, None, None, None, None],
+            [up, down, None, None, None, None, None, None],
+            [false; 8],
+            &mut cell,
+        );
+        let upper = light.shade_rgb(base, bright);
+        let lower = light.shade_rgb(base, dark);
+        assert_eq!(cell.fg, Color::Rgb(upper[0], upper[1], upper[2]));
+        assert_eq!(cell.bg, Color::Rgb(lower[0], lower[1], lower[2]));
+        assert_eq!(cell.symbol(), "▀");
+        assert!(
+            upper[0] >= upper[1] && upper[1] >= upper[2],
+            "skin channel order must survive"
+        );
+        assert!(light.brightness([0.0, 1.0, 0.0], 100, false) < bright);
+        assert!(light.brightness([0.0, 1.0, 0.0], 0, true) < bright);
+    }
+
+    #[test]
+    fn indexed_ansi_and_mono_keep_their_color_contract_and_ascii_tones() {
+        let light = light();
+        let normal = [0.0, -1.0, 0.0];
+        let brightness = light.brightness(normal, 50, false);
+        for base in [Color::Indexed(208), Color::Yellow, Color::Reset] {
+            let colors = Colors {
+                palette: vec![base],
+                background: Color::Reset,
+                lighting: Some(light.clone()),
+            };
+            let mut cell = ratatui::buffer::Cell::default();
+            paint_lit_pixels(
+                Renderer::Ascii,
+                &colors,
+                [Some(0), None, None, None, None, None, None, None],
+                [
+                    surface(normal, 50, false),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+                [false; 8],
+                &mut cell,
+            );
+            assert_eq!(cell.symbol(), light.glyph(brightness).to_string());
+            assert!(cell.symbol().is_ascii());
+            let expected = match base {
+                Color::Reset => Color::Reset,
+                Color::Indexed(_) => quantize(
+                    light.shade_rgb(terminal_rgb(base).unwrap(), brightness),
+                    Depth::Indexed,
+                ),
+                _ => quantize(
+                    light.shade_rgb(terminal_rgb(base).unwrap(), brightness),
+                    Depth::Ansi,
+                ),
+            };
+            assert_eq!(cell.fg, expected);
+        }
+        assert_eq!(terminal_rgb(Color::Indexed(16)), Some([0, 0, 0]));
+        assert_eq!(terminal_rgb(Color::Indexed(196)), Some([255, 0, 0]));
+        assert_eq!(terminal_rgb(Color::Indexed(232)), Some([8; 3]));
+        assert_eq!(terminal_rgb(Color::Indexed(255)), Some([238; 3]));
+    }
+
+    #[test]
+    fn lit_patterns_keep_occupancy_and_background_and_face_ink_stays_flat() {
+        let colors = Colors {
+            palette: vec![Color::Rgb(12, 16, 24), Color::Rgb(120, 80, 40)],
+            background: Color::Rgb(1, 2, 3),
+            lighting: Some(light()),
+        };
+        let pixels = [Some(1), None, None, Some(1), None, Some(1), None, None];
+        for renderer in [Renderer::Quadrant, Renderer::Braille] {
+            let mut plain = ratatui::buffer::Cell::default();
+            plain.set_bg(Color::Rgb(9, 8, 7));
+            let mut lit = plain.clone();
+            paint_pixels(renderer, &colors, pixels, &mut plain);
+            paint_lit_pixels(
+                renderer,
+                &colors,
+                pixels,
+                [surface([0.0, -1.0, 0.0], 100, true); 8],
+                [false; 8],
+                &mut lit,
+            );
+            assert_eq!(
+                lit.symbol(),
+                plain.symbol(),
+                "lighting cannot fill transparent subpixels"
+            );
+            assert_eq!(
+                lit.bg, plain.bg,
+                "lighting cannot create a terminal background badge"
+            );
+            assert_ne!(lit.fg, plain.fg);
+        }
+        let mut cell = ratatui::buffer::Cell::default();
+        let pixels = [Some(0), Some(1), None, None, None, None, None, None];
+        let surface = [surface([0.0, 1.0, 0.0], 0, false); 8];
+        let mut ink = [false; 8];
+        ink[0] = true;
+        paint_lit_pixels(
+            Renderer::HalfBlock,
+            &colors,
+            pixels,
+            surface,
+            ink,
+            &mut cell,
+        );
+        assert_eq!(
+            cell.fg,
+            colors.ink(0),
+            "head shading must never dim or brighten expression ink"
+        );
+        let mut unlit = colors.clone();
+        unlit.lighting = None;
+        let mut expected = ratatui::buffer::Cell::default();
+        let mut actual = expected.clone();
+        paint_pixels(Renderer::HalfBlock, &unlit, pixels, &mut expected);
+        paint_lit_pixels(
+            Renderer::HalfBlock,
+            &unlit,
+            pixels,
+            surface,
+            ink,
+            &mut actual,
+        );
+        assert_eq!(
+            actual, expected,
+            "synthetic and legacy unlit packing must remain exact"
+        );
+    }
+
+    #[test]
+    fn actual_lit_voxel_projection_is_clipped_and_native_face_keeps_dark_contrast() {
+        let sprite = Sprite::voxel_with_appearance(
+            Stage::Child,
+            Expression::Sick,
+            SpriteStyle::SixteenBit,
+            1,
+            0,
+            false,
+            Appearance {
+                shape: 14,
+                body: 9,
+                accent: 6,
+            },
+        );
+        let config = Config::sample().unwrap();
+        for depth in [Depth::Rgb, Depth::Indexed, Depth::Mono] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                let area = Rect::new(3, 4, 30, 12);
+                let projection = Projection::camera(
+                    &sprite,
+                    SolidBounds::of(&sprite).unwrap(),
+                    area,
+                    renderer,
+                    0,
+                    (500, 500),
+                    Camera::default(),
+                );
+                let mut before = Buffer::empty(Rect::new(0, 0, 40, 24));
+                for cell in &mut before.content {
+                    cell.set_char('X')
+                        .set_fg(Color::Rgb(1, 2, 3))
+                        .set_bg(Color::Rgb(9, 8, 7));
+                }
+                let outside = before.clone();
+                draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+                let mut after = before.clone();
+                draw_camera_face(&sprite, renderer, &colors, projection, area, &mut after);
+                let mut face_cells = 0;
+                for y in after.area.y..after.area.bottom() {
+                    for x in after.area.x..after.area.right() {
+                        if !area.contains((x, y).into()) {
+                            assert_eq!(after[(x, y)], outside[(x, y)]);
+                        } else if after[(x, y)] != before[(x, y)] {
+                            assert_eq!(after[(x, y)].fg, colors.ink(0));
+                            assert_eq!(after[(x, y)].bg, before[(x, y)].bg);
+                            face_cells += 1;
+                        }
+                    }
+                }
+                assert!(
+                    face_cells >= 3,
+                    "{depth:?} {renderer:?}: actual bird needs native eyes and mouth"
+                );
             }
         }
     }
@@ -2117,6 +2583,39 @@ mod camera_tests {
     }
 
     #[test]
+    fn expanded_expression_glyphs_keep_w_valleys_three_counters_and_q_tail() {
+        let w = face_glyph(b'w').unwrap();
+        let three = face_glyph(b'3').unwrap();
+        let q = face_glyph(b'Q').unwrap();
+        assert_eq!(w[6], 0b01010, "w needs two distinct lower valleys");
+        assert_ne!(w, face_glyph(b'u').unwrap());
+        assert_eq!(three[3], 0b00010, "3 keeps its upper counter open");
+        assert_eq!(three[5], 0b00001, "3 keeps its lower counter open");
+        assert_eq!(q[7], 0b00001, "Q needs a descending tail");
+        assert_ne!(q, face_glyph(b'O').unwrap());
+        for text in ["(^w^)", "(o3o)", "(Q_Q)"] {
+            let texture = FaceTexture { text };
+            for (index, glyph) in text.bytes().enumerate() {
+                let rows =
+                    face_glyph(glyph).expect("every new expression character needs a font glyph");
+                for (y, row) in rows.into_iter().enumerate() {
+                    for x in 0..5 {
+                        let uv = [
+                            (index as f64 * 8.0 + f64::from(x) + 1.5) / 39.0,
+                            (y as f64 + 1.5) / 11.0,
+                        ];
+                        assert_eq!(
+                            texture.sample(uv, [0.0; 2]),
+                            row & (1 << (4 - x)) != 0,
+                            "{text} character{index} pixel{x},{y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn coverage_rejects_a_grazed_stroke_instead_of_dilating_it() {
         let texture = FaceTexture { text: "(^_^)" };
         let uv = |x: f64, y: f64| [(x + 1.0) / 39.0, (y + 1.0) / 11.0];
@@ -2350,6 +2849,128 @@ mod camera_tests {
     }
 
     #[test]
+    fn bird_child_sick_frames_keep_native_eyes_and_mouth_at_small_head_scales() {
+        for frame in 0..Expression::Sick.kaomoji_cycle().len() {
+            let sprite = Sprite::voxel_with_appearance(
+                Stage::Child,
+                Expression::Sick,
+                SpriteStyle::SixteenBit,
+                frame,
+                0,
+                false,
+                Appearance {
+                    shape: 14,
+                    body: 9,
+                    accent: 6,
+                },
+            );
+            let canonical = Expression::Sick.kaomoji(frame);
+            let core = &canonical[1..4];
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                for columns in [8, 12, 16] {
+                    let (before, after) = facial_marks(&sprite, renderer, columns);
+                    let mut marks = Vec::new();
+                    for y in after.area.y..after.area.bottom() {
+                        for x in after.area.x..after.area.right() {
+                            assert_eq!(before[(x, y)].bg, after[(x, y)].bg);
+                            if before[(x, y)] != after[(x, y)] {
+                                marks.push((x, after[(x, y)].symbol().to_owned()));
+                            }
+                        }
+                    }
+                    marks.sort_by_key(|p| p.0);
+                    let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
+                    assert!(
+                        literal == canonical || literal == core,
+                        "actual bird child Sick frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bird_child_sick_phone_camera_zoom_keeps_complete_literal_expression_cores() {
+        let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
+        for frame in 0..Expression::Sick.kaomoji_cycle().len() {
+            let sprite = Sprite::voxel_with_appearance(
+                Stage::Child,
+                Expression::Sick,
+                SpriteStyle::SixteenBit,
+                frame,
+                0,
+                false,
+                Appearance {
+                    shape: 14,
+                    body: 9,
+                    accent: 6,
+                },
+            );
+            let canonical = Expression::Sick.kaomoji(frame);
+            let core = &canonical[1..4];
+            for width in [54, 62] {
+                let area = Rect::new(0, 0, width, 18);
+                for view in [CameraView::Pet, CameraView::Room] {
+                    for zoom in [50, 75] {
+                        for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                            let projection = Projection::camera(
+                                &sprite,
+                                SolidBounds::of(&sprite).unwrap(),
+                                area,
+                                renderer,
+                                0,
+                                (500, 500),
+                                Camera {
+                                    view,
+                                    from_view: view,
+                                    zoom_percent: zoom,
+                                    transition_percent: 100,
+                                },
+                            );
+                            let mut before = Buffer::empty(area);
+                            draw_projection(
+                                &sprite,
+                                renderer,
+                                &colors,
+                                projection,
+                                area,
+                                &mut before,
+                            );
+                            let mut after = before.clone();
+                            assert!(
+                                draw_camera_face(
+                                    &sprite, renderer, &colors, projection, area, &mut after
+                                ),
+                                "bird child Sick frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core"
+                            );
+                            let mut marks = Vec::new();
+                            for y in 0..area.height {
+                                for x in 0..area.width {
+                                    assert_eq!(before[(x, y)].bg, after[(x, y)].bg);
+                                    if before[(x, y)] != after[(x, y)] {
+                                        marks.push((x, after[(x, y)].symbol().to_owned()));
+                                    }
+                                }
+                            }
+                            marks.sort_by_key(|p| p.0);
+                            let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
+                            assert!(
+                                literal == canonical || literal == core,
+                                "bird child Sick frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn camera_glyph_strokes_grow_with_the_head_in_every_packing() {
         let sprite = Sprite::voxel(
             Stage::Adult,
@@ -2561,12 +3182,10 @@ mod camera_tests {
             Expression::Celebrate,
             Expression::Dead,
         ] {
-            for frame in 0..4 {
+            for text in expression.kaomoji_cycle() {
                 assert!(
-                    expression
-                        .kaomoji(frame)
-                        .bytes()
-                        .all(|b| face_glyph(b).is_some())
+                    text.bytes().all(|b| face_glyph(b).is_some()),
+                    "{expression:?} expression has an unsupported atlas character: {text}"
                 );
             }
         }
@@ -3054,6 +3673,7 @@ mod camera_tests {
         let colors = Colors {
             palette: (0..16).map(Color::Indexed).collect(),
             background: Color::Indexed(15),
+            lighting: None,
         };
         let mut cell = ratatui::buffer::Cell::default();
         cell.set_bg(Color::Indexed(9));

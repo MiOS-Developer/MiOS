@@ -20058,6 +20058,16 @@ controller_max_bytes = 262144 # bounded native query output
 state_directory = "mios/tamagotchi" # relative to XDG_STATE_HOME, or HOME/.local/state
 autosave_seconds = 10
 
+# Original voxel materials keep their species/personality hues under lighting.
+[tamagotchi.voxel_lighting]
+enabled = true
+ambient_percent = 55       # base surface illumination,20..100
+diffuse_percent = 65       # directional contribution,0..100; sum with ambient<=180
+occlusion_percent = 30     # darkening at actual volume contacts,0..100
+outline_percent = 20       # silhouette-edge darkening,0..100
+light_direction = [-45, 65, 45] # view-space X/right Y/up Z/viewer, each-100..100; nonzero
+ascii_ramp = ".:-=+*#%@"    # low-to-high density, printable ASCII; occupied surfaces remain visible
+
 [tamagotchi.game]
 tick_seconds = 2          # accelerated sample clock; offline time is frozen
 hatch_ticks = 3

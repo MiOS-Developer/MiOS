@@ -102,11 +102,39 @@ personality palettes are original design decisions. The manual supports the
 care/development inspiration; it does not establish these formulas or a claim
 to reproduce another game's internal genetics.
 
-The operator requested chibi proportions: a large animal head with one compact
-torso and short round paws/legs. Mature heads therefore drop the baby body's
-duplicate limbs and generic seedling horns before species-specific ears and
-the independent body are rendered. A small code-native stroke atlas scales
-kaomoji with head projection and zoom; directional visibility still comes from
-the actual depth-tested front or nearer oblique surface. Portrait/landscape
-layouts use native workspace golden proportions with explicit minimum control
-budgets for the smallest clients.
+The operator rejected the previous tall body and ambiguous face in a real
+live screenshot. The replacement uses a broad head, a short common torso,
+stub limbs and species-specific ears, nose/muzzle and relevant tail. The face
+is a code-native ASCII stroke texture sampled from the head's visible
+depth-tested surface; it is not a screen-aligned label. This preserves actual
+rotation, foreshortening, sleep roll and occlusion. Portrait/landscape layouts
+use native workspace golden proportions with minimum control budgets.
+
+## Reference review for the doll redesign
+
+Nintendo's official Rover figure provides a primary visual reference for the
+cat's broad head, pointed ears, compact torso and short limbs. These are our
+visual observations and design inspiration, not Nintendo's stated modeling
+rules. The original MiOS-Mon has its own geometry, palette and expression atlas.
+[Nintendo: Rover](https://www.nintendo.com/us/amiibo/detail/rover-amiibo-animal-crossing-series/)
+
+Nintendo-authored CEDEC 2020 development slides, reproduced by an independent
+publication, also show cat silhouette and face variations. They were inspected
+as visual references; none of their assets are included in the executable.
+[Cat design slide](https://images.p-nintendo.com/o/2020/09/5f54a8559d3cc2.jpg),
+[Variant design slide](https://images.p-nintendo.com/o/2020/09/5f54a8552fb1c2.jpg)
+
+The Met describes the broad face, triangular nose and simple openings of a
+sixth-century haniwa warrior head. This supports an independent Japanese clay
+doll design reference. It does not establish that every Animal Crossing
+villager descends from haniwa or that all villager proportions follow one
+historical doll type. Folklore motifs and readable animal anatomy are separate
+influences; the prototype's quantitative head/body proportions are our design
+calibration.
+[The Met: Head of a Warrior Clay Tomb Sculpture](https://www.metmuseum.org/art/collection/search/44833)
+
+Rechecked 2026-11-04: Nintendo's Rover and The Met pages were available; the
+New Leaf developer interview again returned 502. Prior citations remain
+historical evidence. Actual live cat front/oblique/side/rear appearance is a
+separate acceptance gate; unit coverage or roster screenshots alone do not
+override the operator's rejected graphics.

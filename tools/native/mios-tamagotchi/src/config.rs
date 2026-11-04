@@ -39,6 +39,7 @@ pub struct Config {
     pub characters: Vec<crate::characters::Character>,
     pub renderer: Renderer,
     pub view_mode: ViewMode,
+    pub voxel_lighting: crate::lighting::VoxelLighting,
     pub camera_view: crate::render::CameraView,
     pub zoom_percent: u16,
     pub zoom_step_percent: u16,
@@ -134,6 +135,7 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), String> {
         self.game.validate()?;
+        self.voxel_lighting.validate()?;
         self.habitat.validate()?;
         if !(1000..=600_000).contains(&self.dialog_timeout_ms)
             || !(50..=2000).contains(&self.dialog_query_timeout_ms)
@@ -245,5 +247,57 @@ mod training_palette_validation_tests {
                 .unwrap_err()
                 .contains("tamagotchi.game.training")
         );
+    }
+}
+
+#[cfg(test)]
+mod voxel_lighting_validation_tests {
+    use super::Config;
+
+    #[test]
+    fn sparse_overlay_inherits_the_vendor_light_without_overriding_other_choices() {
+        let vendor = Config::sample().unwrap();
+        let overlay = "[tamagotchi]\nzoom_percent = 125\n"
+            .parse::<toml::Value>()
+            .unwrap();
+        let config = Config::from_value(&overlay).unwrap();
+        assert_eq!(config.zoom_percent, 125);
+        assert_eq!(
+            config.voxel_lighting.ambient_percent,
+            vendor.voxel_lighting.ambient_percent
+        );
+        assert_eq!(
+            config.voxel_lighting.light_direction,
+            vendor.voxel_lighting.light_direction
+        );
+        assert_eq!(
+            config.voxel_lighting.ascii_ramp,
+            vendor.voxel_lighting.ascii_ramp
+        );
+        let changed = "[tamagotchi.voxel_lighting]\nenabled = false\nambient_percent = 40\n"
+            .parse::<toml::Value>()
+            .unwrap();
+        let config = Config::from_value(&changed).unwrap();
+        assert!(!config.voxel_lighting.enabled);
+        assert_eq!(config.voxel_lighting.ambient_percent, 40);
+        assert_eq!(
+            config.voxel_lighting.diffuse_percent,
+            vendor.voxel_lighting.diffuse_percent
+        );
+    }
+
+    #[test]
+    fn malformed_layered_lighting_fails_before_entering_the_terminal() {
+        for setting in [
+            "ambient_percent = 19",
+            "light_direction = [0, 0, 0]",
+            "ascii_ramp = '...'",
+            "unknown = 1",
+        ] {
+            let overlay = format!("[tamagotchi.voxel_lighting]\n{setting}\n")
+                .parse::<toml::Value>()
+                .unwrap();
+            assert!(Config::from_value(&overlay).is_err(), "{setting}");
+        }
     }
 }

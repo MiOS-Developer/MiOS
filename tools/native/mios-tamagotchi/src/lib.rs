@@ -24,3 +24,5 @@ pub mod hud;
 pub mod progression;
 
 pub mod geometry;
+
+pub mod lighting;
