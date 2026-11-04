@@ -3369,6 +3369,103 @@
   </div>
 </details>
 
+<details class="section" id="sec-mios-mon">
+  <summary>MiOS-Mon appearance and training <span class="phase-badge">virtual pet</span></summary>
+  <div class="section-body">
+    <p>Species sets the primary color; personality sets the accent. New names and innate stats roll at hatching. Training uses food and energy. Landscape and portrait HUDs inherit the native workspace golden ratio.</p>
+    <div class="grid">
+      <fieldset><legend>Camera and responsive HUD</legend>
+        <label for="f-mon-tamagotchi-view-mode">Sprite view</label>
+        <select id="f-mon-tamagotchi-view-mode" data-inherit="true" data-key="tamagotchi.view_mode">
+          <option value="">Inherit vendor</option>
+          <option value="voxel">Voxel 3D</option>
+          <option value="pixel">Classic pixel</option>
+        </select>
+        <label for="f-mon-tamagotchi-sprite-style">Sprite detail</label>
+        <select id="f-mon-tamagotchi-sprite-style" data-inherit="true" data-key="tamagotchi.sprite_style">
+          <option value="">Inherit vendor</option>
+          <option value="eight-bit">8-bit</option>
+          <option value="sixteen-bit">16-bit</option>
+        </select>
+        <label for="f-mon-tamagotchi-camera-view">Starting camera</label>
+        <select id="f-mon-tamagotchi-camera-view" data-inherit="true" data-key="tamagotchi.camera_view">
+          <option value="">Inherit vendor</option>
+          <option value="room">Room</option>
+          <option value="pet">Pet body</option>
+          <option value="face">Face close-up</option>
+        </select>
+        <label for="f-mon-tamagotchi-hud-mode">HUD layout</label>
+        <select id="f-mon-tamagotchi-hud-mode" data-inherit="true" data-key="tamagotchi.hud_mode">
+          <option value="">Inherit vendor</option>
+          <option value="auto">Automatic</option>
+          <option value="minimal">Minimal</option>
+          <option value="full">Full</option>
+        </select>
+        <label for="f-mon-tamagotchi-zoom-percent">Starting zoom (%)</label>
+        <input type="number" id="f-mon-tamagotchi-zoom-percent" data-inherit="true" data-key="tamagotchi.zoom_percent" placeholder="Inherit vendor" data-type="int" min="50" max="400" step="1">
+        <label for="f-mon-tamagotchi-zoom-step-percent">Zoom step (%)</label>
+        <input type="number" id="f-mon-tamagotchi-zoom-step-percent" data-inherit="true" data-key="tamagotchi.zoom_step_percent" placeholder="Inherit vendor" data-type="int" min="5" max="100" step="1">
+        <label for="f-mon-tamagotchi-zoom-transition-frames">Transition length (animation frames)</label>
+        <input type="number" id="f-mon-tamagotchi-zoom-transition-frames" data-inherit="true" data-key="tamagotchi.zoom_transition_frames" placeholder="Inherit vendor" data-type="int" min="1" max="60" step="1">
+        <label for="f-mon-tamagotchi-hud-minimal-width">Automatic minimal HUD below this width (cells)</label>
+        <input type="number" id="f-mon-tamagotchi-hud-minimal-width" data-inherit="true" data-key="tamagotchi.hud_minimal_width" placeholder="Inherit vendor" data-type="int" min="20" max="200" step="1">
+        <label for="f-mon-tamagotchi-hud-minimal-height">Automatic minimal HUD below this height (cells)</label>
+        <input type="number" id="f-mon-tamagotchi-hud-minimal-height" data-inherit="true" data-key="tamagotchi.hud_minimal_height" placeholder="Inherit vendor" data-type="int" min="8" max="80" step="1">
+        <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
+        <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
+      </fieldset><fieldset><legend>Hatch identity and training</legend>
+        <label for="f-mon-tamagotchi-game-training-name-starts">Name first syllables (comma separated)</label>
+        <input type="text" id="f-mon-tamagotchi-game-training-name-starts" data-inherit="true" data-key="tamagotchi.game.training.name_starts" placeholder="Inherit vendor" data-array="csv">
+        <label for="f-mon-tamagotchi-game-training-name-ends">Name final syllables (comma separated)</label>
+        <input type="text" id="f-mon-tamagotchi-game-training-name-ends" data-inherit="true" data-key="tamagotchi.game.training.name_ends" placeholder="Inherit vendor" data-array="csv">
+        <label for="f-mon-tamagotchi-game-training-species-colors">Species palette indices: cat, fox, tanuki, rabbit, bear, frog, bird, turtle</label>
+        <input type="text" id="f-mon-tamagotchi-game-training-species-colors" data-inherit="true" data-key="tamagotchi.game.training.species_colors" placeholder="Inherit vendor" data-array="csv-int">
+        <label for="f-mon-tamagotchi-game-training-hatch-min">Minimum innate hatch stat</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-hatch-min" data-inherit="true" data-key="tamagotchi.game.training.hatch_min" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-hatch-max">Maximum innate hatch stat</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-hatch-max" data-inherit="true" data-key="tamagotchi.game.training.hatch_max" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-max-level">Maximum trained level</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-max-level" data-inherit="true" data-key="tamagotchi.game.training.max_level" placeholder="Inherit vendor" data-type="int" min="1" max="99" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-base">Base XP threshold</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-base" data-inherit="true" data-key="tamagotchi.game.training.xp_base" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-per-level">Additional threshold XP per level</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-per-level" data-inherit="true" data-key="tamagotchi.game.training.xp_per_level" placeholder="Inherit vendor" data-type="int" min="0" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-gain-min">Minimum training XP gain</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-gain-min" data-inherit="true" data-key="tamagotchi.game.training.xp_gain_min" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-gain-max">Maximum training XP gain</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-gain-max" data-inherit="true" data-key="tamagotchi.game.training.xp_gain_max" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-energy-cost">Energy cost per session</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-energy-cost" data-inherit="true" data-key="tamagotchi.game.training.energy_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-fullness-cost">Food cost per session</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-fullness-cost" data-inherit="true" data-key="tamagotchi.game.training.fullness_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-happiness-gain">Happiness gain per session</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-happiness-gain" data-inherit="true" data-key="tamagotchi.game.training.happiness_gain" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-cooldown-ticks">Active ticks between sessions</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-cooldown-ticks" data-inherit="true" data-key="tamagotchi.game.training.cooldown_ticks" placeholder="Inherit vendor" data-type="int" min="1" max="1000000" step="1">
+        <label for="f-mon-tamagotchi-game-training-level-coin-reward">Coins per earned level</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-level-coin-reward" data-inherit="true" data-key="tamagotchi.game.training.level_coin_reward" placeholder="Inherit vendor" data-type="int" min="0" max="1000" step="1">
+      </fieldset><fieldset><legend>Distinct personality accent indices (0..15)</legend>
+        <label for="f-mon-tamagotchi-game-training-personality-colors-cozy">Cozy</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-cozy" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.cozy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-athletic">Athletic</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-athletic" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.athletic" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-grumbly">Grumbly</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-grumbly" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.grumbly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-showy">Showy</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-showy" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.showy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-neighborly">Neighborly</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-neighborly" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.neighborly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-sunny">Sunny</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-sunny" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.sunny" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-refined">Refined</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-refined" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.refined" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-protective">Protective</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-protective" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.protective" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+      </fieldset>
+    </div>
+  </div>
+</details>
+
 <details class="section">
   <summary>Terminal · MiOS terminal dimensions and theming <span class="phase-badge">every spawned shell</span></summary>
   <div class="section-body">
@@ -5486,7 +5583,10 @@ function refreshFromData() {
   document.querySelectorAll("[data-key]").forEach(el => {
     const [sec, key] = splitDataKey(el.dataset.key);
     const v = DATA[sec]?.[key];
-    if (v === undefined) return;
+    if (v === undefined) {
+      if (el.dataset.inherit === "true") el.value = "";
+      return;
+    }
     if (el.dataset.key === "autounattend.accounts") {
       if (Array.isArray(v)) {
         el.value = v.map(a => `${a.name || ""},${a.password || ""},${a.display_name || ""},${a.group || "Users"}`).join("\n");
@@ -6041,6 +6141,12 @@ function gatherFromForm() {
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el.dataset.customOf) return;
     const [sec, key] = splitDataKey(el.dataset.key);
+    // Empty inheritable controls omit the overlay key; runtime resolves the
+    // canonical vendor tier rather than a second set of HTML default values.
+    if (el.dataset.inherit === "true" && !el.value.trim()) {
+      if (DATA[sec]) delete DATA[sec][key];
+      return;
+    }
     DATA[sec] = DATA[sec] || {};
     if (el.dataset.key === "autounattend.accounts") {
       const accounts = [];

@@ -1953,7 +1953,7 @@ impl Ui {
             .map_or("Unknown", |t| t.name.as_str());
         screen.render_widget(
             Paragraph::new(if micro {
-                if self.frame / 14 % 2 == 0 {
+                if (self.frame / 14).is_multiple_of(2) {
                     format!(
                         "{}c {}p",
                         crate::hud::counter(self.game.coins),

@@ -293,10 +293,11 @@ unattached, ambiguous/multiple-client and failed native-popup contexts use the
 inline pane. Read-more paging keeps longer conversation accessible in compact
 views. Snapshots print the full current thought and speech as plain ASCII.
 
-New saves use schema 3 to retain stable character identity and a seeded habitat. Schema-1 files load
-without modification, preserve all original gameplay state, and receive the
-default Mio identity; an explicit interactive save writes schema 3 atomically.
-Older executables cannot read schema 3, so retain the pre-upgrade binary and save
+New saves use schema 4 to retain identity, habitat and hatch/training progression.
+Schemas 1..3 load without modification and preserve original gameplay fields;
+schema 1 retains the default Mio identity. An explicit interactive save writes
+schema 4 atomically. Older executables cannot read schema 4, so retain the
+pre-upgrade binary and save
 backup for rollback. Unsupported versions, invalid identities and malformed
 catalogues are refused before raw mode. A read-only snapshot never upgrades a
 save.
@@ -313,14 +314,14 @@ original implementation.
 ## Mature bodies, ASCII faces and themed habitats
 
 Child and adult pixel art uses double-height canvases: 8x16 in the eight-bit
-style and 16x32 in the detailed style. Their voxel canvases are 24x48 and 32x64,
+style and 16x32 in the detailed style. Their voxel canvases are 24x48 and 64x128,
 with actual separate heads, torsos, arms and legs. Egg, baby and ghost forms
 remain compact. All sixteen original animal identities retain their shapes,
 palettes, personalities, hobbies and state-aware original dialogue.
 
-ASCII kaomoji faces blink and change with care and mood. Literal facial text is
-drawn on a sufficiently resolved front-facing head; side/rear faces are hidden
-by direction and depth. Tiny views retain a short face in the stage HUD when
+ASCII kaomoji faces blink and change with care and mood. Code-native kaomoji strokes grow with the projected head and zoom. Tiny heads
+and read-only snapshots retain literal facial text. Oblique heads show only the
+near expression half, and rear faces are hidden by direction and depth. Tiny views retain a short face in the stage HUD when
 the sprite cannot hold the complete expression. The same clipped renderer is
 used for half-block, quadrant, braille and plain ASCII output.
 
@@ -352,7 +353,7 @@ Schema 3 stores seed, theme, purchased inventory and placed items. Legacy 1/2
 saves gain a deterministic habitat in memory while retaining their original
 pet fields, currency and gameplay RNG. A redirected snapshot reports the room
 and placed item names in plain ASCII without writing or applying offline time.
-Keep a backup before an interactive migration; older binaries cannot load schema 3.
+Keep a backup before an interactive migration; current interactive saves use schema 4.
 
 Native focused Talk/thought popups and right-click windows keep the same
 verified-client contract. Tiny, unfocused, restricted or multiply attached
@@ -367,7 +368,7 @@ Pet framing removes transparent padding; Face focuses on the head. Zoom crops
 rather than silently fitting the pet back down. Press + or = to zoom in, - to
 zoom out,0 to reset and lowercase z to cycle views. The mouse wheel and focused
 controller Graphics menu provide the same presentation actions; none steers the
-pet. --camera room|pet|face and --zoom50..400 select initial framing.
+pet. --camera room|pet|face and --zoom 50..400 select initial framing.
 
 Zoom and camera changes use bounded smooth interpolation. The layered
 [tamagotchi] zoom_percent, zoom_step_percent and zoom_transition_frames settings
@@ -392,3 +393,55 @@ Inputd-projected arrows, Enter, Tab and Back follow the same menu/care actions
 in every terminal transport. Pad-specific hints require native focus and device
 ownership proof; absent graphical context cannot certify console or remote
 controller ownership. Physical device acceptance remains separate.
+
+
+## Hatch identity and training
+
+New pets roll an original generated name, five initial stat values and innate
+aptitudes when the egg actually hatches. Species selects the primary palette;
+the current personality archetype selects a distinct secondary palette.
+The sixteen catalogue entries remain original species/voice profiles and
+adoption previews; a generated pet name is separate from its profile name.
+Legacy pets retain their existing names, needs, age, coins, wins and memory RNG.
+Their added stats are initialized deterministically in memory without offline
+progress or an automatic save rewrite.
+
+Press lowercase **l**, choose **Training / stats** in the main menu, or choose
+the focused native context action. Swim, Flight, Run, Power and Stamina have
+separate values, levels, XP and innate grades E..A. A successful session spends
+food and energy and gains XP based on the configured range plus aptitude.
+Earned levels increase actual stat values and grant the configured coin reward.
+XP leftovers are preserved. Exit the menu for active game time before another
+session; menus and pause freeze the cooldown. Egg/dead/paused/sleeping/ill pets,
+active memory games, insufficient needs, level caps and cooldowns refuse
+without changing either RNG or charging resources.
+
+The layered [tamagotchi.game.training] table owns name syllables, family and
+personality palette indices, hatch rolls, XP thresholds/range, level cap, care
+costs, cooldown and rewards. The MiOS configurator exposes these controls and
+the camera/HUD options; saving an overlay does not replace live system settings.
+Schema 4 strictly stores progression seeds, name, stats and counters. Supplied
+malformed/future counters are rejected in legacy and current envelopes. A
+redirected snapshot reports all five skills as plain ASCII, remains read-only
+and can run while an interactive writer holds the pet lock.
+
+## Landscape, portrait and smallest views
+
+Landscape viewports use the inherited golden-ratio scene/sidebar split;
+portrait viewports stack information and dialogue below the pet. Resizing keeps
+the chosen zoom and view settings. Automatic Pet/Face changes blend through
+intermediate camera frames using the same transition budget as explicit zoom.
+Frame titles and paged compact status keep needs, age, coins, wins and skill
+levels available. Status and Help wrap before paging so all content remains
+reachable. Full HUD also inherits the workspace proportions.
+
+At 12x6 terminal cells, Roster and Sprite Studio reserve an actual face scene,
+and Training/Habitat keep a selected choice plus explicit accept/back prompts.
+Dialogue clears its own opaque area below the pet and pages long thoughts.
+H- in a compact controller label means Hold; full mapped controls and release
+chords are available in paginated Help. Controllers operate menus, care and
+camera choices, while the pet's locomotion remains autonomous.
+
+Smartwatch and mobile acceptance requires a real attached device. Testing
+terminal cell dimensions establishes layout behavior; it does not certify an
+unattached phone/watch, unavailable font, VT renderer or physical controller.

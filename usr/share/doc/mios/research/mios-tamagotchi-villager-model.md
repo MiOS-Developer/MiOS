@@ -86,3 +86,27 @@ seed is independent of gameplay RNG, while actual wins/age unlock rewards.
 Explicit coin purchases and placement use the same HUD/native-menu controls;
 they do not provide direct locomotion. Faces remain terminal-safe ASCII and
 dialogue retains inline paging on constrained clients.
+
+
+## Care-funded skill growth and chibi rendering
+
+The SEGA-authored Sonic Adventure 2 instruction manual describes egg-to-maturity
+growth, care affecting a creature's behavior, items used in development,
+kindergarten activities and time passing while the garden is visited. This is
+primary manual content available through a third-party reprint, checked
+2026-11-04. [SEGA, Sonic Adventure 2 manual, pages 26..29](https://manualzz.com/doc/1393870/sega-sonic-adventure-2-video-game-instruction-manual)
+
+MiOS-Mon's generated syllable names, independent hatch RNG, five innate stat
+rolls, E..A aptitudes, XP/level formulas, care costs, bounded rewards and species/
+personality palettes are original design decisions. The manual supports the
+care/development inspiration; it does not establish these formulas or a claim
+to reproduce another game's internal genetics.
+
+The operator requested chibi proportions: a large animal head with one compact
+torso and short round paws/legs. Mature heads therefore drop the baby body's
+duplicate limbs and generic seedling horns before species-specific ears and
+the independent body are rendered. A small code-native stroke atlas scales
+kaomoji with head projection and zoom; directional visibility still comes from
+the actual depth-tested front or nearer oblique surface. Portrait/landscape
+layouts use native workspace golden proportions with explicit minimum control
+budgets for the smallest clients.

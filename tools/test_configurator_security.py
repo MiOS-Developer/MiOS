@@ -46,7 +46,77 @@ const reparsed = vm.runInContext('parseToml(toml)', ctx);
 process.stdout.write(JSON.stringify({toml, reparsed}));
 '''
 
+
+MON_FORM_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(input.path, 'utf8');
+const ctx = {DATA: input.initial, controls: input.controls, storeGpuResourceTables:()=>{},
+ document:{getElementById:()=>({value:'[]'}),querySelectorAll:()=>input.controls}};
+vm.createContext(ctx);
+for (const name of ['splitDataKey','gatherFromForm','emitToml','emitTomlValue']) {
+ const match=html.match(new RegExp('^function '+name+'\\([^\\n]*\\n[\\s\\S]*?^}', 'm'));
+ if(!match)throw new Error('Missing function '+name);
+ vm.runInContext(match[0],ctx);
+}
+vm.runInContext('gatherFromForm()',ctx);
+const toml=vm.runInContext('emitToml(DATA)',ctx);
+process.stdout.write(JSON.stringify({data:ctx.DATA,toml}));
+'''
+
 class TestConfiguratorSecurity(unittest.TestCase):
+
+    def test_mon_controls_preserve_vendor_inheritance_and_typed_nested_overrides(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.controls = []
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                key = a.get("data-key", "")
+                if tag in ("input", "select") and a.get("data-inherit") == "true":
+                    self.controls.append({"tagName": tag.upper(), "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": key, "inherit": "true",
+                            **({"type": a["data-type"]} if "data-type" in a else {}),
+                            **({"array": a["data-array"]} if "data-array" in a else {})}})
+        parser = Controls()
+        parser.feed(html.read_text())
+        by_key = {control["dataset"]["key"]: control for control in parser.controls}
+        self.assertEqual(len(by_key), len(parser.controls), "no duplicate inheritance controls")
+        for key in ["tamagotchi.camera_view", "tamagotchi.zoom_percent",
+                    "tamagotchi.game.training.name_starts", "tamagotchi.game.training.species_colors",
+                    "tamagotchi.game.training.personality_colors.cozy"]:
+            self.assertIn(key, by_key)
+        def gather(initial):
+            result = subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": parser.controls, "initial": initial}),
+                capture_output=True, text=True, check=True, timeout=15)
+            return json.loads(result.stdout)
+        # Empty fields inherit the canonical runtime tier, without an HTML copy
+        # of vendor numeric values or an invalid empty-string override.
+        output = gather({"identity": {"hostname": "mios-test"}})
+        self.assertEqual(output["data"], {"identity": {"hostname": "mios-test"}})
+        self.assertNotIn("tamagotchi", tomllib.loads(output["toml"]))
+        changes = {"tamagotchi.camera_view": "face", "tamagotchi.zoom_percent": "175",
+            "tamagotchi.game.training.name_starts": "Yu, Ko",
+            "tamagotchi.game.training.species_colors": "4,8,14,15,14,11,7,1",
+            "tamagotchi.game.training.personality_colors.cozy": "3"}
+        for key, value in changes.items():
+            by_key[key]["value"] = value
+        output = gather({})
+        parsed = tomllib.loads(output["toml"])["tamagotchi"]
+        self.assertEqual(parsed["camera_view"], "face")
+        self.assertEqual(parsed["zoom_percent"], 175)
+        self.assertEqual(parsed["game"]["training"]["name_starts"], ["Yu", "Ko"])
+        self.assertEqual(parsed["game"]["training"]["species_colors"], [4,8,14,15,14,11,7,1])
+        self.assertEqual(parsed["game"]["training"]["personality_colors"]["cozy"], 3)
+        # Choosing Inherit for an existing key removes that override only.
+        for control in parser.controls:
+            control["value"] = ""
+        output = gather({"tamagotchi": {"camera_view": "room", "unrelated": "kept"}})
+        self.assertEqual(output["data"]["tamagotchi"], {"unrelated": "kept"})
+
     def test_nvidia_runtime_and_signed_repo_roundtrip(self):
         sections = {
             "repos.external.nvidia-container-toolkit": {
