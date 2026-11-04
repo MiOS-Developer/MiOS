@@ -28,6 +28,9 @@ struct Cfg {
     fullscreen_release: Duration,
     stiffness: f64,
     damping: f64,
+    throw_min_speed: f64,
+    throw_max_speed: f64,
+    throw_deceleration: f64,
     settle_ms: u128,
     idle_ms: u64,
     config_poll_ms: u64,
@@ -83,7 +86,14 @@ fn matchers_from(acc: &toml::Value) -> Result<Vec<Matcher>, String> {
 /// the SSOT that introduced them) turns that one feature off -- exactly the behaviour before the key existed -- instead of
 /// refusing the whole table (which failed `ExecStartPre=check` and every nested PiP launch). A present but invalid value
 /// is still rejected.
-const OPTIONAL_KEYS: &[&str] = &["min_width_px", "size_snap_px", "fullscreen_release_ms"];
+const OPTIONAL_KEYS: &[&str] = &[
+    "min_width_px",
+    "size_snap_px",
+    "fullscreen_release_ms",
+    "throw_min_speed_px_s",
+    "throw_max_speed_px_s",
+    "throw_deceleration_px_s2",
+];
 fn load_cfg() -> Result<Cfg, String> {
     let doc = mios_resolver::resolve_merged(None, false).map_err(|e| e.to_string())?;
     cfg_from(&doc)
@@ -131,6 +141,12 @@ fn cfg_from(doc: &toml::Value) -> Result<Cfg, String> {
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
     let matchers = matchers_from(acc)?;
+    let throw_min = f("throw_min_speed_px_s")?;
+    let throw_max = f("throw_max_speed_px_s")?;
+    let throw_deceleration = f("throw_deceleration_px_s2")?;
+    if throw_min > 0.0 && (throw_max < throw_min || throw_deceleration <= 0.0) {
+        return Err("PiP throw requires maximum >= minimum speed and positive deceleration".into());
+    }
     Ok(Cfg {
         enabled: acc
             .get("enabled")
@@ -180,6 +196,9 @@ fn cfg_from(doc: &toml::Value) -> Result<Cfg, String> {
         fullscreen_release: Duration::from_millis(f("fullscreen_release_ms")? as u64),
         stiffness: f("spring_stiffness")?,
         damping: f("spring_damping")?,
+        throw_min_speed: throw_min,
+        throw_max_speed: throw_max,
+        throw_deceleration,
         settle_ms: f("settle_ms")? as u128,
         idle_ms: f("idle_poll_ms")? as u64,
         config_poll_ms: f("config_poll_ms")? as u64,
@@ -238,7 +257,13 @@ fn monitor_at(mons: &Value, x: f64, y: f64) -> Option<i64> {
     mons.as_array()?.iter().find_map(|m| {
         let g = |k: &str| m.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
         let sc = g("scale").max(0.1);
-        let (mx, my, mw, mh) = (g("x"), g("y"), g("width") / sc, g("height") / sc);
+        let (mx, my) = (g("x"), g("y"));
+        let rotated = m.get("transform").and_then(Value::as_i64).unwrap_or(0) % 2 != 0;
+        let (mw, mh) = if rotated {
+            (g("height") / sc, g("width") / sc)
+        } else {
+            (g("width") / sc, g("height") / sc)
+        };
         (x >= mx && x < mx + mw && y >= my && y < my + mh)
             .then(|| m.get("id").and_then(|i| i.as_i64()))
             .flatten()
@@ -248,6 +273,17 @@ fn monitor_at(mons: &Value, x: f64, y: f64) -> Option<i64> {
 #[cfg(test)]
 mod monitor_tests {
     use super::monitor_at;
+    #[test]
+    fn scaled_rotated_and_negative_origin_outputs_keep_logical_bounds() {
+        let mons = serde_json::json!([
+            {"id": 3, "x": -960, "y": 100, "width": 1920, "height": 1080, "scale": 2.0, "transform": 0},
+            {"id": 4, "x": 0, "y": 100, "width": 1920, "height": 1080, "scale": 1.0, "transform": 1}
+        ]);
+        assert_eq!(monitor_at(&mons, -1.0, 200.0), Some(3));
+        assert_eq!(monitor_at(&mons, 1000.0, 1900.0), Some(4));
+        assert_eq!(monitor_at(&mons, 1200.0, 200.0), None);
+        assert_eq!(monitor_at(&mons, -961.0, 200.0), None);
+    }
     #[test]
     fn centre_picks_owning_monitor_and_misses_outside() {
         let m: serde_json::Value = serde_json::json!([
@@ -281,6 +317,9 @@ mod monitor_tests {
 
 struct Track {
     last: Rect,
+    observed_at: Instant,
+    release_velocity: [f64; 2],
+    throw_goal: Option<Rect>,
     /// The size the operator (or the client) chose: planning input for clamping, size magnets and the squeeze. Only a
     /// resize that is not ours updates it, so a squeezed size never feeds back into the plan (see gravity::plan).
     natural: (f64, f64),
@@ -321,6 +360,9 @@ impl Track {
     fn new(cur: Rect, now: Instant) -> Self {
         Track {
             last: cur,
+            observed_at: now,
+            release_velocity: [0.0; 2],
+            throw_goal: None,
             natural: (cur.w, cur.h),
             expected: Vec::new(),
             dispatched_at: None,
@@ -334,6 +376,8 @@ impl Track {
     /// The room took over placement this tick. The kept slot is the last flat geometry; re-entering the room before a
     /// release finished keeps the original slot (the window is still where the room left it).
     fn enter_room(&mut self) {
+        self.release_velocity = [0.0; 2];
+        self.throw_goal = None;
         let slot = self.room.map_or(self.last, |h| h.slot);
         self.room = Some(RoomHold {
             slot,
@@ -352,8 +396,49 @@ impl Track {
     }
     /// Planning input: the kept flat slot while the room owns it, else the current position; always the natural size.
     fn plan_input(&self, cur: Rect) -> Rect {
-        let at = if self.held() { self.kept() } else { cur };
+        let at = if self.held() {
+            self.kept()
+        } else {
+            self.throw_goal.unwrap_or(cur)
+        };
         Rect::new(at.x, at.y, self.natural.0, self.natural.1)
+    }
+    /// After the existing stillness/release interval, freeze the inertial endpoint until the spring settles.
+    /// Own animation frames, resizes and room geometry never seed a throw.
+    fn project_throw(&mut self, cur: Rect, now: Instant, cfg: &Cfg, mon: Rect) {
+        if self.held()
+            || self.settled
+            || self.anim.is_some()
+            || self.throw_goal.is_some()
+            || now.duration_since(self.stable_since).as_millis() < cfg.settle_ms
+        {
+            return;
+        }
+        let params = rail_params(cfg, mon);
+        let width = if params.snap_width > 0.0 {
+            params.snap_width
+        } else {
+            mon.w * cfg.initial_width_frac
+        };
+        let projected = gravity::throw_projection(
+            cur,
+            self.release_velocity,
+            width,
+            cfg.throw_min_speed,
+            cfg.throw_max_speed,
+            cfg.throw_deceleration,
+        );
+        if projected.x != cur.x || projected.y != cur.y {
+            // Throw within the output where the operator released it. Dragging across outputs selects the new
+            // output before release; inertia must never teleport a window onto another user's or remote output.
+            self.throw_goal = Some(gravity::bound_frame(projected, mon, &[], &params));
+            let speed = self.release_velocity[0].hypot(self.release_velocity[1]);
+            if speed > cfg.throw_max_speed {
+                for v in &mut self.release_velocity {
+                    *v *= cfg.throw_max_speed / speed;
+                }
+            }
+        }
     }
     /// The window shows frames of ours. Position and size are matched independently: a move applies at once while a
     /// resize lands only when the client commits a buffer of the new size, so under load the position can come from a
@@ -397,7 +482,11 @@ impl Track {
             self.expected.clear();
             self.dispatched_at = None;
         }
+        let observed_dt = now.duration_since(self.observed_at).as_secs_f64();
+        self.observed_at = now;
         if let Some(hold) = self.room.as_mut() {
+            self.release_velocity = [0.0; 2];
+            self.throw_goal = None;
             // Leaving the room: whatever moves or resizes the window now is the room's close, not the operator.
             self.expected.clear();
             self.dispatched_at = None;
@@ -433,6 +522,17 @@ impl Track {
                 ));
                 self.natural = (cur.w, cur.h);
             }
+            let resized = (cur.w - self.last.w).abs() >= gravity::SETTLE_PX
+                || (cur.h - self.last.h).abs() >= gravity::SETTLE_PX;
+            self.release_velocity = if !resized && observed_dt > 0.0 {
+                [
+                    (cur.x - self.last.x) / observed_dt,
+                    (cur.y - self.last.y) / observed_dt,
+                ]
+            } else {
+                [0.0; 2]
+            };
+            self.throw_goal = None;
             self.anim = None;
             self.settled = false;
             self.stable_since = now;
@@ -463,7 +563,12 @@ impl Track {
                 self.settled = true;
                 self.exact = false;
             } else {
-                self.anim = Some(([cur.x, cur.y, cur.w, cur.h], [0.0; 4], tgt));
+                let velocity = if self.throw_goal.is_some() {
+                    [self.release_velocity[0], self.release_velocity[1], 0.0, 0.0]
+                } else {
+                    [0.0; 4]
+                };
+                self.anim = Some(([cur.x, cur.y, cur.w, cur.h], velocity, tgt));
             }
         }
     }
@@ -894,14 +999,33 @@ fn main() {
             // The monitor owning the window's centre wins: Hyprland keeps a pinned window's old
             // monitor id after it is moved across outputs, which would plan it on the wrong one.
             let field = c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(0);
-            let mid = monitor_at(&mons, rect.cx(), rect.cy()).unwrap_or(field);
-            if mid != field {
+            let actual_mid = monitor_at(&mons, rect.cx(), rect.cy()).unwrap_or(field);
+            let t = tracks
+                .entry(s("address").to_string())
+                .or_insert_with(|| Track::new(rect, now));
+            t.observe(rect, now, Duration::from_millis(cfg.settle_ms as u64));
+            if let Some(m) = mons
+                .as_array()
+                .and_then(|all| all.iter().find(|m| m["id"].as_i64() == Some(actual_mid)))
+            {
+                let g = |k: &str| m.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+                let scale = g("scale").max(0.1);
+                let rotated = m.get("transform").and_then(Value::as_i64).unwrap_or(0) % 2 != 0;
+                let (w, h) = if rotated {
+                    (g("height") / scale, g("width") / scale)
+                } else {
+                    (g("width") / scale, g("height") / scale)
+                };
+                t.project_throw(rect, now, &cfg, Rect::new(g("x"), g("y"), w, h));
+            }
+            let mid = actual_mid;
+            if actual_mid != field {
                 // Re-home it so the compositor renders it on the output it now sits on (pin is kept).
                 if let Some(name) = mons
                     .as_array()
                     .and_then(|a| {
                         a.iter()
-                            .find(|m| m.get("id").and_then(|i| i.as_i64()) == Some(mid))
+                            .find(|m| m.get("id").and_then(|i| i.as_i64()) == Some(actual_mid))
                     })
                     .and_then(|m| m.get("name"))
                     .and_then(|n| n.as_str())
@@ -969,10 +1093,15 @@ fn main() {
                 m.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0),
                 m.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0),
             );
-            let (mw, mh) = (
-                m.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0) / sc,
-                m.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0) / sc,
+            let (w, h) = (
+                m["width"].as_f64().unwrap_or(0.0),
+                m["height"].as_f64().unwrap_or(0.0),
             );
+            let (mw, mh) = if m["transform"].as_i64().unwrap_or(0) % 2 != 0 {
+                (h / sc, w / sc)
+            } else {
+                (w / sc, h / sc)
+            };
             let fresh = matrix::Bounds {
                 output: Rect::new(mx, my, mw, mh),
                 area: Rect::new(
@@ -1025,9 +1154,7 @@ fn main() {
                 let t = tracks
                     .entry(addr.clone())
                     .or_insert_with(|| Track::new(*cur, now));
-                let natural = t.natural;
-                t.observe(*cur, now, Duration::from_millis(cfg.settle_ms as u64));
-                if t.natural != natural {
+                if t.natural != (cur.w, cur.h) {
                     trace(&format!(
                         "  ^ {addr} fullscreen={} anim={}",
                         clients
@@ -1063,6 +1190,14 @@ fn main() {
                         p[2].round().max(1.0),
                         p[3].round().max(1.0),
                     );
+                    let r = gravity::bound_frame(r, mon, &mon_huds, &rail_params(&cfg, mon));
+                    for i in 0..4 {
+                        let bounded = [r.x, r.y, r.w, r.h][i];
+                        if p[i].round() != bounded.round() {
+                            p[i] = bounded;
+                            v[i] = 0.0;
+                        }
+                    }
                     let Some(native) = clients
                         .as_array()
                         .and_then(|v| v.iter().find(|w| w["address"].as_str() == Some(addr)))
@@ -1082,6 +1217,8 @@ fn main() {
                         t.anim = None;
                         t.settled = true;
                         t.exact = false;
+                        t.throw_goal = None;
+                        t.release_velocity = [0.0; 2];
                     }
                 }
             }
@@ -1093,6 +1230,49 @@ fn main() {
 mod track_tests {
     use super::*;
     const SETTLE: Duration = Duration::from_millis(350);
+    #[test]
+    fn release_velocity_is_latched_once_and_own_frames_resizes_and_room_never_throw() {
+        let doc: toml::Value =
+            toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let cfg = cfg_from(&doc).unwrap();
+        let mon = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+        let t0 = Instant::now();
+        let start = Rect::new(100.0, 300.0, 400.0, 225.0);
+        let moved = Rect::new(260.0, 300.0, 400.0, 225.0);
+        let mut t = Track::new(start, t0);
+        let moved_at = t0 + Duration::from_millis(40);
+        t.observe(moved, moved_at, SETTLE);
+        t.project_throw(moved, moved_at, &cfg, mon);
+        assert!(
+            t.throw_goal.is_none(),
+            "never throw before release/stillness"
+        );
+        let released = moved_at + SETTLE;
+        t.observe(moved, released, SETTLE);
+        t.project_throw(moved, released, &cfg, mon);
+        let goal = t
+            .throw_goal
+            .expect("a fast release must project across the monitor");
+        assert!(goal.cx() > mon.cx());
+        assert!(goal.x >= mon.x && goal.right() <= mon.right());
+        t.step_toward(moved, goal, released, SETTLE);
+        let frame = Rect::new(700.0, 300.0, 400.0, 225.0);
+        t.dispatched(frame, released);
+        t.observe(frame, released + Duration::from_millis(16), SETTLE);
+        assert_eq!(
+            t.throw_goal,
+            Some(goal),
+            "own spring frames never reseed the throw"
+        );
+        let resized = Rect::new(frame.x, frame.y, 500.0, 281.25);
+        t.observe(resized, released + Duration::from_millis(32), SETTLE);
+        assert_eq!(t.release_velocity, [0.0; 2]);
+        assert!(t.throw_goal.is_none(), "resize is never a throw");
+        t.enter_room();
+        assert_eq!(t.release_velocity, [0.0; 2]);
+        assert!(t.throw_goal.is_none());
+    }
+
     /// Settled in a squeezed slot (our own plan) with the natural size the operator chose, then the room ran.
     fn roomed(t0: Instant) -> (Track, Rect) {
         let slot = Rect::new(1172.0, 140.0, 212.0, 100.0);
@@ -1556,6 +1736,21 @@ mod cfg_tests {
             "/../../../usr/share/mios/mios.toml"
         );
         toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+    #[test]
+    fn throw_policy_requires_positive_force_and_consistent_speed_bounds() {
+        for (key, value) in [
+            ("throw_deceleration_px_s2", 0.0),
+            ("throw_max_speed_px_s", 100.0),
+            ("throw_min_speed_px_s", -1.0),
+        ] {
+            let mut doc = shipped();
+            doc["desktop"]["pip_gravity"]
+                .as_table_mut()
+                .unwrap()
+                .insert(key.into(), toml::Value::Float(value));
+            assert!(cfg_from(&doc).is_err(), "{key}");
+        }
     }
     #[test]
     fn the_shipped_ssot_sets_every_key() {

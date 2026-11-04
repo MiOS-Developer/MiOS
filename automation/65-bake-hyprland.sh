@@ -9,7 +9,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/packages.sh"
 
 mios_log "Installing Hyprland compositor & tools"
-install_packages_strict "hyprland"
+# Select the compositor before installation using the same ABI hold as its native rebuild/plugins.
+_hl_package="$(/usr/libexec/mios/mios-gen build-hyprland --root / --package-spec)"
+install_packages_strict "hyprland" "hyprland" "$_hl_package"
 # MiOS compositor patch series ([desktop.hyprland.compositor]): rebuild the installed release with it and replace the
 # stock package (Release tagged, e.g. 2.mios1) before any plugin is built against it.
 # The build's own dependencies (rpm-build, builddep) leave the layer again: only the patched package stays.
@@ -20,7 +22,9 @@ rpm -qa --qf '%{NAME}\n' | sort -u > "$_hl_before"
 dnf -y install "$_hl_rpms"/hyprland-[0-9]*.rpm
 mapfile -t _hl_added < <(rpm -qa --qf '%{NAME}\n' | sort -u | comm -13 "$_hl_before" - | grep -vx 'hyprland')
 if ((${#_hl_added[@]})); then dnf -y remove --noautoremove "${_hl_added[@]}"; fi
-rm -rf -- "$_hl_rpms" "$_hl_before"
+rm -f -- "$_hl_before"
+_hl_sources=("$_hl_rpms"/source/*.src.rpm)
+[[ ${#_hl_sources[@]} -eq 1 && -f "${_hl_sources[0]}" ]] || { mios_err "Matching compositor SDK source is missing or ambiguous"; exit 1; }
 install_packages_strict "console-pointer"
 # ShaderGlass overlay pane ([desktop.shaderglass]): Wine + DXVK only. The GPL-3 release itself is fetched and
 # verified on the host by `miosd shaderglass install`, never baked into the image.
@@ -31,10 +35,11 @@ systemctl enable gpm.service mios-console-theme.service mios-boot-display-report
 for _gen in ux/wm_config_gen.py desktop/gpu_terminal.py win/wt_profile_inject.py; do
     python3 "/usr/libexec/mios/${_gen}" --write-fixture /
 done
-/usr/libexec/mios/mios-gen build-hyprglass --root /
-/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name hypr3d
-/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-pacing
-/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-appmenu
+/usr/libexec/mios/mios-gen build-hyprglass --root / --srpm "${_hl_sources[0]}"
+/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name hypr3d --srpm "${_hl_sources[0]}"
+/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-pacing --srpm "${_hl_sources[0]}"
+/usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-appmenu --srpm "${_hl_sources[0]}"
+rm -rf -- "$_hl_rpms"
 /usr/libexec/mios/mios-gen render-hyprland --root /
 # Project the user session from the same SSOT before registering the login entry.
 while IFS= read -r _unit; do

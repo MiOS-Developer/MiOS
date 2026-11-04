@@ -76,6 +76,60 @@ pub fn clamp_size(cur: Rect, mon: Rect, p: &Params) -> (f64, f64) {
     (w, w / aspect)
 }
 
+/// Released drag velocity projected through size-dependent inertia. A launch-width pane has unit mass;
+/// area (same aspect) scales the stopping distance, so small panes are lighter and large panes carry farther.
+pub fn throw_projection(
+    cur: Rect,
+    velocity: [f64; 2],
+    reference_width: f64,
+    min_speed: f64,
+    max_speed: f64,
+    deceleration: f64,
+) -> Rect {
+    let speed = velocity[0].hypot(velocity[1]);
+    if !speed.is_finite()
+        || speed < min_speed
+        || speed == 0.0
+        || min_speed <= 0.0
+        || max_speed <= 0.0
+        || deceleration <= 0.0
+        || reference_width <= 0.0
+    {
+        return cur;
+    }
+    let mass = (cur.w / reference_width).powi(2);
+    let distance = speed.min(max_speed).powi(2) * mass / (2.0 * deceleration);
+    Rect::new(
+        cur.x + velocity[0] / speed * distance,
+        cur.y + velocity[1] / speed * distance,
+        cur.w,
+        cur.h,
+    )
+}
+
+/// Bound every animation frame to real usable output geometry and the HUDs intersecting that frame.
+/// Inertia may overshoot a rail, but never carries the pane off-screen or behind the bars.
+pub fn bound_frame(cur: Rect, mon: Rect, huds: &[Rect], p: &Params) -> Rect {
+    let scale = (mon.w / cur.w.max(1.0))
+        .min(mon.h / cur.h.max(1.0))
+        .min(1.0);
+    let (mut w, mut h) = (cur.w * scale, cur.h * scale);
+    let mut x = cur.x.clamp(mon.x, (mon.right() - w).max(mon.x));
+    let (top, bottom) = column_bounds(x, w, h, mon, huds, p);
+    if h > bottom - top {
+        let scale = ((bottom - top) / h).clamp(0.0, 1.0);
+        w *= scale;
+        h *= scale;
+        x = x.clamp(mon.x, (mon.right() - w).max(mon.x));
+    }
+    Rect::new(
+        x,
+        cur.y.clamp(top, (bottom - h).max(top)),
+        w.max(1.0),
+        h.max(1.0),
+    )
+}
+
 fn pick_rail_right(cur: Rect, mon: Rect, p: &Params) -> bool {
     match (p.left, p.right) {
         (true, false) => false,
@@ -385,6 +439,46 @@ mod tests {
         h: 1080.0,
     };
 
+    #[test]
+    fn fast_throw_crosses_rail_but_gentle_drag_and_small_pane_keep_their_side() {
+        let mon = Rect::new(-1920.0, 100.0, 1920.0, 1080.0);
+        let cur = Rect::new(-1800.0, 400.0, 400.0, 225.0);
+        let thrown = throw_projection(cur, [2500.0, 0.0], 400.0, 400.0, 6000.0, 3200.0);
+        assert!(thrown.cx() > mon.cx());
+        assert!(plan(&[thrown], mon, &[], &p())[0].cx() > mon.cx());
+        let gentle = throw_projection(cur, [200.0, 0.0], 400.0, 400.0, 6000.0, 3200.0);
+        assert_eq!(gentle, cur);
+        assert!(plan(&[gentle], mon, &[], &p())[0].cx() < mon.cx());
+        let small = Rect::new(cur.x, cur.y, 200.0, 112.5);
+        let light = throw_projection(small, [2500.0, 0.0], 400.0, 400.0, 6000.0, 3200.0);
+        assert!(light.cx() < mon.cx(), "less area carries less momentum");
+        let reverse = throw_projection(
+            Rect::new(-500.0, 400.0, 400.0, 225.0),
+            [-2500.0, 0.0],
+            400.0,
+            400.0,
+            6000.0,
+            3200.0,
+        );
+        assert!(reverse.cx() < mon.cx(), "both throw directions work");
+        assert!(
+            cur.cx() < mon.cx(),
+            "position-only mutant cannot cross from this release"
+        );
+    }
+    #[test]
+    fn thrown_animation_is_bounded_by_offset_output_and_hud_geometry() {
+        let mon = Rect::new(-1920.0, 100.0, 1920.0, 1080.0);
+        let hud = Rect::new(-1920.0, 100.0, 1920.0, 60.0);
+        for cur in [
+            Rect::new(-3000.0, -500.0, 400.0, 225.0),
+            Rect::new(8000.0, 9000.0, 400.0, 225.0),
+        ] {
+            let frame = bound_frame(cur, mon, &[hud], &p());
+            assert!(frame.x >= mon.x && frame.right() <= mon.right());
+            assert!(frame.y >= hud.bottom() + p().hud_gap && frame.bottom() <= mon.bottom());
+        }
+    }
     #[test]
     fn snaps_to_right_rail_and_keeps_free_y() {
         let t = plan(&[Rect::new(3000.0, 400.0, 453.0, 255.0)], MON, &[], &p());

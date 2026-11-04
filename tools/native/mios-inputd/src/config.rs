@@ -67,7 +67,14 @@ pub struct ControllerConfig {
     pub mode_override_chord: Vec<String>,
     pub pointer_hz: u32,
     pub stick_deadzone: f64,
+    /// Legacy pixels per poll, read only when the per-second policy is absent.
     pub pointer_max_speed_px: f64,
+    #[serde(default)]
+    pub pointer_max_speed_px_s: Option<f64>,
+    #[serde(default)]
+    pub pointer_response_exponent: Option<f64>,
+    #[serde(default)]
+    pub pointer_smoothing_ms: f64,
     pub scroll_sensitivity: f64,
     #[serde(default)]
     pub system_layer: BTreeMap<String, String>,
@@ -904,6 +911,12 @@ impl GlobalConfig {
             || !(0.0..1.0).contains(&c.stick_deadzone)
             || !c.pointer_max_speed_px.is_finite()
             || c.pointer_max_speed_px <= 0.0
+            || c.pointer_max_speed_px_s
+                .is_some_and(|v| !v.is_finite() || v <= 0.0)
+            || c.pointer_response_exponent
+                .is_some_and(|v| !v.is_finite() || v < 1.0)
+            || !c.pointer_smoothing_ms.is_finite()
+            || c.pointer_smoothing_ms < 0.0
             || !c.scroll_sensitivity.is_finite()
             || c.scroll_sensitivity < 0.0
         {
@@ -1351,6 +1364,22 @@ BTN_TR="hypr:workspace e+1"
                 .is_empty(),
             "enabled = false turns the vendor quirk off"
         );
+    }
+    #[test]
+    fn pointer_velocity_curve_and_smoothing_require_valid_policy() {
+        for (name, value) in [
+            ("pointer_max_speed_px_s", -1.0),
+            ("pointer_response_exponent", 0.5),
+            ("pointer_smoothing_ms", -1.0),
+        ] {
+            assert!(
+                vendor_with(|doc| {
+                    controller(doc).insert(name.into(), toml::Value::Float(value));
+                })
+                .is_err(),
+                "{name}"
+            );
+        }
     }
     #[test]
     fn quirks_stick_pseudo_keys_and_the_agent_pad_are_validated() {

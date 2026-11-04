@@ -79,6 +79,22 @@ class Base(unittest.TestCase):
 class Ownership(Base):
     HALF = [key(GUIDE), key(SELECT), key(SELECT, 0), key(GUIDE, 0)]
 
+    def test_held_return_chord_drains_before_both_physical_releases(self):
+        for first, last in ((L3, R3), (R3, L3)):
+            held = [key(EAST), key(L3), key(R3), {"tick_ms": 600}]
+            for release, expected in (([], []), ([key(first, 0)], []),
+                                      ([key(first, 0), key(last, 0)], ["input:window off"])):
+                with self.subTest(first=first, released=len(release)):
+                    result = self.run_bin('replay', data=json.dumps(dict(
+                        context='app-capture', script=held + release)))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    output = json.loads(result.stdout)['output']
+                    self.assertEqual(output['actions'], expected)
+                    app = [(e['code'], e['value']) for e in output['app'] if e['kind'] == 1]
+                    for code in (EAST, L3, R3):
+                        self.assertIn((code, 0), app, 'qualifying hold must drain the app before returning')
+                    self.assertEqual(app[-3:], [(EAST, 0), (L3, 0), (R3, 0)])
+
     def test_c01_half_capture_keeps_rb_guide_and_north_with_the_app(self):
         actions, app = self.replay('app-capture', self.HALF + tap(RB))
         self.assertEqual(actions, ['input:cursor on'])

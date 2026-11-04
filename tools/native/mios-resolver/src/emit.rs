@@ -816,7 +816,35 @@ pub mod emit_repos {
                     ));
                 }
             };
-            result.push_str(&format!("\n[mios-{id}]\nname={name}\nbaseurl={baseurl}\ngpgkey={gpgkey}\nenabled=1\ngpgcheck=1\n{metadata_policy}skip_if_unavailable=False\n"));
+            let mut package_policy = String::new();
+            for key in ["includepkgs", "excludepkgs"] {
+                if let Some(raw) = data.get(key) {
+                    let packages = raw.as_array().ok_or_else(|| {
+                        format!("repos.external.{id}.{key} must be a package list")
+                    })?;
+                    let packages = packages
+                        .iter()
+                        .map(|entry| {
+                            entry
+                                .as_str()
+                                .filter(|name| {
+                                    !name.is_empty()
+                                        && name.bytes().all(|byte| {
+                                            byte.is_ascii_alphanumeric()
+                                                || b"_+.-*?:".contains(&byte)
+                                        })
+                                })
+                                .ok_or_else(|| {
+                                    format!("Invalid repos.external.{id}.{key} package pattern")
+                                })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if !packages.is_empty() {
+                        package_policy.push_str(&format!("{key}={}\n", packages.join(" ")));
+                    }
+                }
+            }
+            result.push_str(&format!("\n[mios-{id}]\nname={name}\nbaseurl={baseurl}\ngpgkey={gpgkey}\nenabled=1\ngpgcheck=1\n{metadata_policy}{package_policy}skip_if_unavailable=False\n"));
         }
         Ok(result)
     }
@@ -824,6 +852,24 @@ pub mod emit_repos {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[test]
+        fn repository_package_scope_is_explicit_and_injection_safe() {
+            let data: Value = "[repos.external.compositor]\nenabled=true\nname='Compositor'\nbaseurl='https://example.test/rpm/'\ngpgkey='https://example.test/key'\nincludepkgs=['hyprland']\n[repos.external.dependencies]\nenabled=true\nname='Dependencies'\nbaseurl='https://example.test/deps/'\ngpgkey='https://example.test/deps-key'\nexcludepkgs=['hyprland', 'hyprland-devel']\n".parse().unwrap();
+            let output = emit_repos(&data).unwrap();
+            assert!(output.contains("includepkgs=hyprland\n"));
+            assert!(output.contains("excludepkgs=hyprland hyprland-devel\n"));
+            for raw in [
+                Value::String("hyprland".into()),
+                Value::Array(vec![Value::Integer(1)]),
+                Value::Array(vec![Value::String("hyprland\n[evil]".into())]),
+                Value::Array(vec![Value::String("".into())]),
+            ] {
+                let mut broken = data.clone();
+                broken["repos"]["external"]["compositor"]["includepkgs"] = raw;
+                assert!(emit_repos(&broken).is_err());
+            }
+        }
+
         #[test]
         fn projects_operator_url_and_rejects_injected_ini_sections() {
             let mut data: Value = "[repos.external.hyprland]\nenabled=true\nname='Hyprland'\nbaseurl='https://example.test/fedora-$releasever-$basearch/'\ngpgkey='https://example.test/pubkey.gpg'".parse().unwrap();

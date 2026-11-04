@@ -135,7 +135,7 @@ Deliverables in this directory:
 | Start | cursor mode (the sticks and triggers become a mouse; buttons keep their meaning) | | |
 | Guide | tap = app drawer / menu; hold = system layer modifier | | |
 | L3 / R3 | new / reset view | | |
-| L3+R3 | tap = switch view (room / VT); hold = release capture | | |
+| L3+R3 | tap = switch view (room / VT); hold drains captured input, both physical releases return ownership | | |
 
 3. **Value grammar** (patch §nav): `"ns:action"` fires on press. `["tap","hold"]` resolves on release or at the threshold. `"none"` unbinds. A hold fires once.
 
@@ -203,7 +203,7 @@ A login prompt (getty or greeter) is deliberately **no function**. No user manag
 | L3 | app [K] | app [F I1] | lock [K] | tmux new window [N I3] | none |
 | R3 | app [K] | app [F I1] | VM passthrough latch [K] | compact view (`C-b f`) [N I3] | none |
 | L3+R3 tap | app (both presses forwarded) [K] | app [K] | suppressed: no lock+latch double fire [F I2] | switch to this user's graphical VT [N I3] | same [N I3] |
-| L3+R3 hold | **release capture** (contract); also unsets a fullscreen the bridge set [K/F I1] | release capture [K] | suppressed [F I2] | nothing more | nothing more |
+| L3+R3 hold | **drain captured input**, retain ownership until both physical buttons are up, then release capture; also unsets a fullscreen the bridge set [K/F I1] | same release order [K] | suppressed [F I2] | nothing more | nothing more |
 | Touchpad | host pointer into the focused app [K] | host pointer [K] | host pointer [K] | gpm pointer; reports reach tmux through the console bridge (C-18) [N I3] | gpm pointer (selection) |
 | Motion sensors | none [K] | none | none | none | none |
 

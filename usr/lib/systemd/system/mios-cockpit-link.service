@@ -2,8 +2,8 @@
 # AI-related: usr/lib/systemd/system/mios-cockpit-link.socket
 [Unit]
 Description='MiOS' Cockpit Link Proxy Service
-After=network.target cockpit.socket mios-cockpit-link.socket
-Requires=cockpit.socket mios-cockpit-link.socket
+After=network.target cockpit.socket mios-cockpit-link.socket mios-selinux-init.service
+Requires=cockpit.socket mios-cockpit-link.socket mios-selinux-init.service
 ConditionVirtualization=!container
 
 [Service]

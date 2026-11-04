@@ -1,12 +1,10 @@
-# AI-hint: Initializes the MiOS SELinux policy by executing /usr/libexec/mios/selinux-init during the sysinit stage to load security policies before system initialization.
-# AI-related: /usr/libexec/mios/selinux-init, local-fs.target, sysinit.target
+# AI-hint: Reconciles upgrade-sensitive Cockpit SELinux policy before the legacy first-boot policy initialization.
 [Unit]
 Description='MiOS' SELinux Policy Loader
 ConditionVirtualization=!container
 DefaultDependencies=no
-After=local-fs.target
+After=local-fs.target systemd-tmpfiles-setup.service
 Before=sysinit.target
-ConditionPathExists=!/var/lib/mios/.selinux-init-done
 ConditionPathExists=/usr/share/selinux/packages/mios
 
 [Service]

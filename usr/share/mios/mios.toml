@@ -108,7 +108,7 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 55
-max_undeclared = 162
+max_undeclared = 161
 max_undeclared_user = 19
 strict_no_write = [
   "mios-boot-display-report.service",
@@ -428,11 +428,28 @@ Wants = "k3s-agent.service"
 [units."mios-k3s-worker.target".Install]
 WantedBy = "multi-user.target"
 
+[units."mios-selinux-init.service".Unit]
+comment = "# AI-hint: Reconciles upgrade-sensitive Cockpit SELinux policy before the legacy first-boot policy initialization."
+Description = "'MiOS' SELinux Policy Loader"
+ConditionVirtualization = "!container"
+DefaultDependencies = false
+After = "local-fs.target systemd-tmpfiles-setup.service"
+Before = "sysinit.target"
+ConditionPathExists = "/usr/share/selinux/packages/mios"
+
+[units."mios-selinux-init.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/libexec/mios/selinux-init"
+RemainAfterExit = true
+
+[units."mios-selinux-init.service".Install]
+WantedBy = "sysinit.target"
+
 [units."mios-cockpit-link.service".Unit]
 comment = "# AI-hint: Native Cockpit proxy for the configured public and discovery listeners; the socket owns both bindings.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.socket"
 Description = "'MiOS' Cockpit Link Proxy Service"
-After = "network.target cockpit.socket mios-cockpit-link.socket"
-Requires = "cockpit.socket mios-cockpit-link.socket"
+After = "network.target cockpit.socket mios-cockpit-link.socket mios-selinux-init.service"
+Requires = "cockpit.socket mios-cockpit-link.socket mios-selinux-init.service"
 ConditionVirtualization = "!container"
 
 [units."mios-cockpit-link.service".Service]
@@ -451,6 +468,8 @@ WantedBy = "multi-user.target"
 comment = "# AI-hint: Native Cockpit public and discovery listeners projected from the canonical ports.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.service"
 Description = "'MiOS' Cockpit Link Proxy Socket"
 ConditionVirtualization = "!container"
+After = "mios-selinux-init.service"
+Requires = "mios-selinux-init.service"
 
 [units."mios-cockpit-link.socket".Socket]
 ListenStream = ["0.0.0.0:${MIOS_PORTS_COCKPIT}", "0.0.0.0:${MIOS_PORTS_COCKPIT_LINK}"]
@@ -1929,11 +1948,22 @@ source_exempt = []
 # tools/sign-powershell.ps1 takes -CertPassword as a SecureString, or prompts.
 signing_cert = ""
 
+# The compositor SDK uses the vendored source bundle of this signed provider.
+# Its stable release is selected by desktop.hyprland.hyprglass.hyprland_version.
 [repos.external.hyprland]
+enabled = true
+name = "MiOS compositor and matching vendored SDK (ashbuk COPR)"
+baseurl = "https://download.copr.fedorainfracloud.org/results/ashbuk/Hyprland-Fedora/fedora-$releasever-$basearch/"
+gpgkey = "https://download.copr.fedorainfracloud.org/results/ashbuk/Hyprland-Fedora/pubkey.gpg"
+includepkgs = ["hyprland"]
+
+# Keep current shell dependencies without replacing the held compositor/SDK provider.
+[repos.external.hyprland-dependencies]
 enabled = true
 name = "MiOS Hyprland and Quickshell dependencies (nett00n COPR)"
 baseurl = "https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/fedora-$releasever-$basearch/"
 gpgkey = "https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/pubkey.gpg"
+excludepkgs = ["hyprland", "hyprland-devel"]
 
 [repos.external.nvidia-container-toolkit]
 enabled = true
@@ -4806,10 +4836,10 @@ looking_glass_escape_key = "Scroll_Lock"
 x11_rdp_escape_key = "Control_R"
 
 # Tier 4: the controller. One physical bridge (mios-inputd) owns every pad. Captured: the app gets everything through
-# the virtual pad except a held toggle_chord (release, capture_hold_ms) and mode_override_chord (half-capture: the
+# the virtual pad except a held toggle_chord (drain at capture_hold_ms, release capture after both buttons are up) and mode_override_chord (half-capture: the
 # sticks and triggers drive the host mouse; every button still goes to the app; Start or the chord again returns).
 # Capture is per window, never per class: North press = capture (in the room the aimed window, staying in 3D), North
-# hold = fullscreen + capture, held toggle_chord = release to the desktop. Ownership is per session (every pad).
+# hold = fullscreen + capture; held toggle_chord drains the app, then returns only after BOTH physical buttons are up. Ownership is per session (every pad).
 # Uncaptured: unmodified buttons follow the nav profile of the context (I2) and the room map ([desktop.hyprland.hypr3d.
 # controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
 [keybindings.global.controller]
@@ -4851,7 +4881,10 @@ debounce_ms = 250                     # toggle_chord: both sticks within this wi
 scan_ms = 2000                        # device scan; also how often serve re-checks seat/device access while idle
 pointer_hz = 250
 stick_deadzone = 0.12                 # THE deadzone for pointer, scroll and nav flicks
-pointer_max_speed_px = 18.0
+pointer_max_speed_px = 18.0          # compatibility for older binaries; new pointer policy uses px/s below
+pointer_max_speed_px_s = 1200.0     # full-stick logical pixels per second, independent of pointer_hz
+pointer_response_exponent = 2.0     # radial response: 1 linear, >1 gives fine control near the deadzone
+pointer_smoothing_ms = 60.0         # velocity response time; center stops immediately (no drift)
 scroll_sensitivity = 45.0
 
 # Guide held + button (uncaptured contexts with a compositor; none on a VT). One action per press, never repeated.
@@ -9784,7 +9817,7 @@ pixel_snap = true                          # the texel grid lands on the output 
 # /usr/libexec/mios/mios-gamepad-hypr3d is no longer a recovery path; it keeps its own defaults when run by hand.
 [desktop.hyprland.hypr3d.controller]
 enabled = true
-# Simultaneous thumbstick chord: tap toggles the room (uncaptured); a hold of capture_hold_ms releases a capture.
+# Simultaneous thumbstick chord: tap toggles the room (uncaptured); a capture_hold_ms hold drains captured input, then both physical releases return ownership.
 toggle_chord = ["BTN_THUMBL", "BTN_THUMBR"]
 # Radial/axis deadzone threshold [0.0..1.0] for room movement and look.
 deadzone = 0.15
@@ -14896,7 +14929,7 @@ Environment = [
   "XDG_CACHE_HOME=${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i/cache"
 ]
 EnvironmentFile = "/run/mios/swarm/%i.env"
-Exec = "--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL} --ctx-size ${WORKER_CTX} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_ALIAS}"
+Exec = "--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL} --device CUDA0 --ctx-size ${WORKER_CTX} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_ALIAS}"
 Group = "${MIOS_SERVICES_LLAMACPP_GID:-827}"
 Image = "${MIOS_CUDA_IMAGE:-ghcr.io/mostlygeek/llama-swap:cuda}"
 Label = "org.opencontainers.image.title=mios-llm-worker-%i"
@@ -19678,6 +19711,9 @@ keep_above = true                    # native stay-on-top: keep PiPs pinned (Hyp
 fullscreen_release_ms = 600          # after a maximize/fullscreen ends, keep the pre-fullscreen PiP bounds this long while the HUDs return
 spring_stiffness = 260.0             # springy settle (k); damping c ~ 2*sqrt(k)*zeta
 spring_damping = 22.0
+throw_min_speed_px_s = 400.0       # gentle drags keep the nearest-rail gravity; 0 disables throwing
+throw_max_speed_px_s = 6000.0      # cap release velocity (logical pixels/s), including delayed/jumped frames
+throw_deceleration_px_s2 = 3200.0 # unit-area stopping force; larger panes carry more inertia than small panes
 settle_ms = 350                      # operator must hold still this long before gravity pulls
 idle_poll_ms = 120
 active_poll_ms = 16

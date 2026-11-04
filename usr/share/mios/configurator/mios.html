@@ -2692,6 +2692,19 @@
         producing an incomplete development environment.
       </p>
       <fieldset>
+        <legend>Compositor and matching SDK repositories</legend>
+        <label>Enable the compositor provider <input data-key="repos.external.hyprland.enabled" data-type="bool" type="checkbox"></label>
+        <label>Compositor repository name <input data-key="repos.external.hyprland.name" type="text"></label>
+        <label>Compositor repository URL <input data-key="repos.external.hyprland.baseurl" type="text"></label>
+        <label>Compositor signing key URL <input data-key="repos.external.hyprland.gpgkey" type="text"></label>
+        <label>Packages supplied by this provider <input data-key="repos.external.hyprland.includepkgs" data-array="csv" type="text"></label>
+        <label>Enable current shell dependencies <input data-key="repos.external.hyprland-dependencies.enabled" data-type="bool" type="checkbox"></label>
+        <label>Dependency repository name <input data-key="repos.external.hyprland-dependencies.name" type="text"></label>
+        <label>Dependency repository URL <input data-key="repos.external.hyprland-dependencies.baseurl" type="text"></label>
+        <label>Dependency signing key URL <input data-key="repos.external.hyprland-dependencies.gpgkey" type="text"></label>
+        <label>Packages kept with the compositor provider <input data-key="repos.external.hyprland-dependencies.excludepkgs" data-array="csv" type="text"></label>
+      </fieldset>
+      <fieldset>
         <legend>NVIDIA container runtime repository</legend>
         <label for="f-nvidia-repo-enabled">Enable the official stable repository</label>
         <input id="f-nvidia-repo-enabled" data-key="repos.external.nvidia-container-toolkit.enabled" data-type="bool" type="checkbox">
@@ -3443,11 +3456,17 @@
         <p class="hint">Choose unique configured window navigation contexts: terminal, desktop-2d, game or vm-passthrough. An empty array keeps raw gamepad delivery for captured windows. Console and app-capture are not window navigation contexts.</p>
         <label>Capture hold time (ms) <input data-key="keybindings.global.controller.capture_hold_ms" data-type="int" type="number" min="100" max="3000" value="500"></label>
         <label>Captured-window tag (North capture) <input data-key="keybindings.global.controller.capture_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
-        <label>Released-window tag (held L3+R3 release) <input data-key="keybindings.global.controller.release_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
+        <label>Released-window tag (hold L3+R3, then release both) <input data-key="keybindings.global.controller.release_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
         <label>Bridge-fullscreen tag (North hold; a release unsets only this fullscreen) <input data-key="keybindings.global.controller.capture_fullscreen_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
         <label>Unconfirmed capture/release timeout (ms) <input data-key="keybindings.global.controller.context_stale_ms" data-type="int" type="number" min="1" max="10000"></label>
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
-        <label>Capture notice (Controller -> app; hold L3+R3 to release) <input data-key="keybindings.global.controller.capture_osd" type="checkbox"></label>
+        <label>PiP throw minimum speed (pixels/second) <input data-key="desktop.pip_gravity.throw_min_speed_px_s" data-type="float" type="number" min="0" step="50"></label>
+        <label>PiP throw maximum speed (pixels/second) <input data-key="desktop.pip_gravity.throw_max_speed_px_s" data-type="float" type="number" min="1" step="100"></label>
+        <label>PiP throw deceleration (pixels/second squared) <input data-key="desktop.pip_gravity.throw_deceleration_px_s2" data-type="float" type="number" min="1" step="100"></label>
+        <label>Controller pointer speed (pixels/second) <input data-key="keybindings.global.controller.pointer_max_speed_px_s" data-type="float" type="number" min="1" step="50"></label>
+        <label>Controller pointer response exponent <input data-key="keybindings.global.controller.pointer_response_exponent" data-type="float" type="number" min="1" step="0.1"></label>
+        <label>Controller pointer smoothing (ms) <input data-key="keybindings.global.controller.pointer_smoothing_ms" data-type="float" type="number" min="0" step="5"></label>
+        <label>Capture notice (Controller -> app; hold L3+R3, then release both) <input data-key="keybindings.global.controller.capture_osd" type="checkbox"></label>
         <label>Capture notice command (argv; {message} is replaced) <textarea data-key="keybindings.global.controller.capture_osd_argv" data-type="json-array"></textarea></label>
         <label>Controller terminal session assignments <textarea data-key="keybindings.global.controller.sessions" data-type="json-array" rows="7" placeholder='[{"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},{"name":"player-two","controllers":["/dev/input/event2"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}]'></textarea></label>
         <p class="hint">Each named assignment owns explicit controller paths and one terminal pane. Names must be unique and at most 64 bytes. Use absolute /dev/input paths (stable by-id paths survive reconnection), an absolute socket path, the exact session name, and a stable pane ID such as %1. A controller may belong to only one assignment. Optional ssh_host is a host alias or user@host; it cannot contain options, whitespace or shell syntax. Actions requiring an attached terminal client are rejected rather than sent to another session.</p>
@@ -3838,6 +3857,7 @@
         <label>Search result limit <input data-key="theme.search.result_limit" data-type="int" type="number" min="1"></label>
         <label>Search debounce (ms) <input data-key="theme.search.debounce_ms" data-type="int" type="number" min="0"></label>
         <label>File search minimum characters <input data-key="theme.search.file_min_chars" data-type="int" type="number" min="1"></label>
+        <label>Compositor and plugin ABI release <input data-key="desktop.hyprland.hyprglass.hyprland_version" type="text" pattern="[0-9]+\.[0-9]+\.[0-9]+"></label>
         <label>Hyprglass build jobs <input data-key="desktop.hyprland.hyprglass.build_jobs" data-type="int" type="number" min="1"></label>
         <label>Hyprglass source <input data-key="desktop.hyprland.hyprglass.source_repository" type="text"></label>
         <label>Hyprglass source revision <input data-key="desktop.hyprland.hyprglass.source_revision" type="text"></label>

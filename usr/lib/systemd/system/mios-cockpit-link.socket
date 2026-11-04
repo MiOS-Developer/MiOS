@@ -3,6 +3,8 @@
 [Unit]
 Description='MiOS' Cockpit Link Proxy Socket
 ConditionVirtualization=!container
+After=mios-selinux-init.service
+Requires=mios-selinux-init.service
 
 [Socket]
 ListenStream=0.0.0.0:8110

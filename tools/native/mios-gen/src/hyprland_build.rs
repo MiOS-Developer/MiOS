@@ -90,6 +90,32 @@ pub fn series(data: &Value) -> Result<Series, String> {
     })
 }
 
+/// Select the compositor package from the same stable ABI hold used by every plugin build.
+pub fn held_version(data: &Value) -> Result<&str, String> {
+    let version = data
+        .get("desktop")
+        .and_then(|d| d.get("hyprland"))
+        .and_then(|h| h.get("hyprglass"))
+        .and_then(|h| h.get("hyprland_version"))
+        .and_then(Value::as_str)
+        .ok_or("hyprglass.hyprland_version missing")?;
+    let parts: Vec<_> = version.split('.').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(
+            "hyprglass.hyprland_version must be a stable numeric major.minor.patch release".into(),
+        );
+    }
+    Ok(version)
+}
+
+pub fn package_spec(data: &Value) -> Result<String, String> {
+    Ok(format!("hyprland-{}", held_version(data)?))
+}
+
 pub const FIRST_PATCH: usize = 1000;
 
 /// Adds the series to the SRPM spec: PatchN tags after the spec's last Patch tag, `%patch -P N -p1` after the spec's
@@ -163,10 +189,7 @@ pub fn run(
         .and_then(|d| d.get("hyprland"))
         .and_then(|h| h.get("hyprglass"))
         .ok_or("No [desktop.hyprland.hyprglass]")?;
-    let held = h
-        .get("hyprland_version")
-        .and_then(Value::as_str)
-        .ok_or("hyprglass.hyprland_version missing")?;
+    let held = held_version(&data)?;
     let jobs = h
         .get("build_jobs")
         .and_then(Value::as_integer)
@@ -276,17 +299,17 @@ pub fn run(
         fs::copy(&path, top.join("SOURCES").join(&name)).map_err(|e| e.to_string())?;
         names.push(name);
     }
-    if check_only {
-        return Ok(format!(
-            "{} MiOS compositor patch(es) apply to Hyprland {version}\n",
-            names.len()
-        ));
-    }
     let spec = rewrite_spec(
         &fs::read_to_string(&spec_src).map_err(|e| e.to_string())?,
         &names,
         &s.release_tag,
     )?;
+    if check_only {
+        return Ok(format!(
+            "{} MiOS compositor patch(es) and the RPM spec apply to Hyprland {version}\n",
+            names.len()
+        ));
+    }
     let spec_path = top.join("SPECS").join("hyprland-mios.spec");
     fs::write(&spec_path, spec).map_err(|e| e.to_string())?;
     let release = output("rpm", &["-E", "%fedora"], top)?;
@@ -325,6 +348,15 @@ pub fn run(
         top,
     )?;
     fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
+    // Plugin SDKs must reuse the original provider's source bundle. The patched
+    // installed NEVRA has a local release tag and cannot be downloaded upstream.
+    let source_dir = out_dir.join("source");
+    fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
+    fs::copy(
+        &source,
+        source_dir.join(source.file_name().ok_or("SRPM filename")?),
+    )
+    .map_err(|e| e.to_string())?;
     let mut built = Vec::new();
     for e in walkdir::WalkDir::new(top.join("RPMS"))
         .into_iter()
@@ -353,6 +385,39 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn package_selection_uses_the_plugin_abi_hold() {
+        let data: Value = "[desktop.hyprland.hyprglass]\nhyprland_version='0.56.2'\n"
+            .parse()
+            .unwrap();
+        assert_eq!(package_spec(&data).unwrap(), "hyprland-0.56.2");
+        let changed: Value = "[desktop.hyprland.hyprglass]\nhyprland_version='0.57.0'\n"
+            .parse()
+            .unwrap();
+        assert_eq!(package_spec(&changed).unwrap(), "hyprland-0.57.0");
+    }
+
+    #[test]
+    fn package_selection_rejects_missing_or_unsafe_holds() {
+        for version in [
+            "",
+            "0.56",
+            "v0.56.2",
+            "0.56.*",
+            "0.56.2 --nogpgcheck",
+            "0.56.2\nother",
+            "0.56.2-rc1",
+        ] {
+            let mut data: Value = "[desktop.hyprland.hyprglass]\nhyprland_version='0.56.2'\n"
+                .parse()
+                .unwrap();
+            data["desktop"]["hyprland"]["hyprglass"]["hyprland_version"] =
+                Value::String(version.into());
+            assert!(package_spec(&data).is_err(), "{version:?}");
+        }
+        assert!(package_spec(&Value::Table(Default::default())).is_err());
+    }
 
     const SPEC: &str = "Name: hyprland\nRelease:        2%{?dist}\nPatch0:         https://x/fix.patch\n\n%package -n hyprlock\nRelease:        1%{?dist}\n%prep\n%autosetup -N -n Hyprland-0.56.2\n%if 0%{?fedora} <= 43\n%patch -P 0 -p1\n%endif\n\n# Unpack\ntar -xzf x\n";
 

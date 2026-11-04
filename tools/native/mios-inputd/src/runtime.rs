@@ -155,7 +155,7 @@ fn captured_client_argv(client: &TmuxClient) -> Vec<String> {
         client.tty.clone(),
         "-t".into(),
         client.tty.clone(),
-        "#{pid}\t#{session_name}\t#{window_id}\t#{pane_id}".into(),
+        crate::sessions::IDENTITY_FORMAT.into(),
     ]
 }
 fn captured_tmux(cfg: &GlobalConfig, pid: u32) -> Result<Option<CapturedTmux>, String> {
@@ -175,31 +175,16 @@ fn captured_tmux(cfg: &GlobalConfig, pid: u32) -> Result<Option<CapturedTmux>, S
         &captured_client_argv(&client),
         Duration::from_millis(cfg.controller.context_stale_ms),
     )?;
-    let parts: Vec<_> = reply.trim_end_matches(['\r', '\n']).split('\t').collect();
-    if parts.len() != 4 || parts[1].is_empty() || parts[1].chars().any(char::is_control) {
-        return Err("captured terminal did not report an exact session/pane".into());
-    }
-    let server = parts[0]
-        .parse::<u32>()
-        .ok()
-        .filter(|p| *p > 0)
-        .ok_or("invalid captured server identity")?;
-    if !parts[2].starts_with('@')
-        || !parts[3]
-            .strip_prefix('%')
-            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-    {
-        return Err("invalid captured terminal pane identity".into());
-    }
+    let observed = crate::sessions::parse_identity(&reply)?;
     if proc_start(Path::new("/proc"), client.pid).map(|v| v.1) != Some(start) {
         return Err("captured client was replaced".into());
     }
     Ok(Some(CapturedTmux {
         client,
         start,
-        session: parts[1].into(),
-        pane: parts[3].into(),
-        identity: (server, parts[2].into()),
+        session: observed.session.into(),
+        pane: observed.pane.into(),
+        identity: (observed.pid, observed.window.into()),
     }))
 }
 fn capture_binding(
@@ -296,9 +281,8 @@ impl SessionWorker {
                         let reply=run(tmux_argv(&cfg,client,verb)?)?;
                         if switching {
                             let selected=run(captured_client_argv(client))?;
-                            let parts:Vec<_>=selected.trim_end_matches(['\r','\n']).split('\t').collect();
-                            if parts.len()!=4 {return Err("captured client did not report its selected session".into());}
-                            let mut next=route.clone();next.session=parts[1].into();next.pane=parts[3].into();
+                            let observed=crate::sessions::parse_identity(&selected)?;
+                            let mut next=route.clone();next.session=observed.session.into();next.pane=observed.pane.into();
                             let next_identity=session_identity(&next,&selected)?;
                             if next_identity.0!=current.0 {return Err("captured client server changed during session switch".into());}
                             identity=Some(next_identity);route=next;
@@ -348,22 +332,11 @@ fn session_identity(
     route: &crate::sessions::SessionRoute,
     reply: &str,
 ) -> Result<(u32, String), String> {
-    let parts: Vec<_> = reply.trim_end_matches(['\r', '\n']).split('\t').collect();
-    if parts.len() != 4 || parts[1] != route.session || parts[3] != route.pane {
+    let observed = crate::sessions::parse_identity(reply)?;
+    if observed.session != route.session || observed.pane != route.pane {
         return Err("tmux target does not match assigned session/pane".into());
     }
-    let pid = parts[0]
-        .parse::<u32>()
-        .ok()
-        .filter(|p| *p > 0)
-        .ok_or("invalid tmux server identity")?;
-    if !parts[2]
-        .strip_prefix('@')
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
-    {
-        return Err("invalid tmux window identity".into());
-    }
-    Ok((pid, parts[2].to_owned()))
+    Ok((observed.pid, observed.window.to_owned()))
 }
 /// Explicit headless assignments may run without a seated login, but never override a foreign active seat.
 fn session_focus(focus: &ContextSnapshot, assigned: bool, error: Option<&str>) -> ContextSnapshot {
