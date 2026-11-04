@@ -1122,3 +1122,6 @@ usr/share/mios/virtio/*.iso
 
 # Operator prompt for remote Blade agents and subagents.
 !/handoff.md
+
+!/usr/share/mios/vendored/wheels/llguidance-1.9.1-cp39-abi3-manylinux_2_31_x86_64.whl
+!/usr/share/mios/vendored/wheels/openai-2.24.0-py3-none-any.whl

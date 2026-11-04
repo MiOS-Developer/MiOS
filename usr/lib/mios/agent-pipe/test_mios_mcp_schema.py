@@ -3,6 +3,7 @@
 # AI-doc: usr/share/doc/mios/manual/agent-pipe.md
 """Unit tests for mios_mcp_schema: the strict OpenAI function-schema contract."""
 import os
+import json
 import sys
 import unittest
 
@@ -225,6 +226,144 @@ class NamespaceProjectionTests(unittest.TestCase):
         self.assertEqual([c["namespace"] for c in calls], ["alpha", "beta"])
         self.assertEqual([c["function"]["name"] for c in calls], ["search", "search"])
         self.assertEqual([c["id"] for c in calls], ["call_0", "call_1"])
+
+
+
+class CustomProjectionTests(unittest.TestCase):
+    def body(self, custom_format=None):
+        child = {"type": "custom", "name": "transform", "description": "Transform caller text"}
+        if custom_format is not None:
+            child["format"] = custom_format
+        return {"tools": [
+            {"type": "namespace", "name": "alpha", "tools": [
+                {"type": "function", "name": "transform", "parameters": {"type": "object", "properties": {}}}]},
+            {"type": "namespace", "name": "beta", "tools": [child]}],
+            "tool_choice": {"type": "custom", "name": "transform", "namespace": "beta"},
+            "messages": [{"role": "user", "content": "Transform the text"}]}
+
+    def restore(self, projection, value):
+        return projection.restore_call({"id": "caller-owned", "type": "function", "function": {
+            "name": projection.reverse[("beta", "transform")],
+            "arguments": json.dumps({"input": value}, ensure_ascii=False)}})
+
+    def test_mixed_types_preserve_choice_history_and_raw_unicode(self):
+        import copy
+        body = self.body()
+        value = 'line one\n雪 "quoted" \\ text'
+        prior = {"id": "previous", "type": "custom", "namespace": "beta",
+                 "custom": {"name": "transform", "input": value}}
+        body["messages"] += [{"role": "assistant", "tool_calls": [prior]},
+                             {"role": "tool", "tool_call_id": "previous", "content": "caller result"}]
+        saved = copy.deepcopy(body)
+        p = S.ClientToolProjection(body)
+        self.assertEqual(body, saved)
+        self.assertNotEqual(p.reverse[("alpha", "transform")], p.reverse[("beta", "transform")])
+        self.assertEqual(p.body["tool_choice"]["function"]["name"], p.reverse[("beta", "transform")])
+        history = p.body["messages"][1]["tool_calls"][0]
+        self.assertEqual(json.loads(history["function"]["arguments"]), {"input": value})
+        self.assertEqual(p.restore_call(history), prior)
+        self.assertEqual(p.body["messages"][2], body["messages"][2])
+        self.assertEqual(self.restore(p, value)["custom"], {"name": "transform", "input": value})
+
+    def test_flat_chat_custom_and_allowed_choice_are_supported(self):
+        body = {"tools": [{"type": "custom", "custom": {"name": "transform", "format": {"type": "text"}}}],
+                "tool_choice": {"type": "allowed_tools", "mode": "required",
+                                "tools": [{"type": "custom", "name": "transform"}]}, "messages": []}
+        p = S.ClientToolProjection(body)
+        self.assertEqual(p.kinds[p.reverse[(None, "transform")]], "custom")
+        self.assertEqual(p.body["tool_choice"]["allowed_tools"]["tools"][0]["type"], "function")
+        self.assertEqual(p.body["tools"][0]["function"]["parameters"]["required"], ["input"])
+
+    def test_actual_rust_lark_and_regex_accept_only_matching_input(self):
+        formats = [
+            {"type": "grammar", "syntax": "lark", "definition": 'start: "hello" /[0-9]+/'},
+            {"type": "grammar", "syntax": "regex", "definition": r"hello[0-9]+"},
+            {"type": "grammar", "grammar": {"syntax": "regex", "definition": r"hello[0-9]+"}},
+        ]
+        for value in formats:
+            with self.subTest(format=value):
+                p = S.ClientToolProjection(self.body(value))
+                self.assertEqual(self.restore(p, "hello17")["custom"]["input"], "hello17")
+                for bad in ("hello", "hello17!", "nope"):
+                    with self.assertRaises(S.ClientToolResponseError):
+                        self.restore(p, bad)
+
+    def test_invalid_or_unsupported_formats_fail_before_inference(self):
+        invalid = ["bad", {}, {"type": "text", "definition": "ignored"},
+            {"type": "grammar", "syntax": "unknown", "definition": "start: x"},
+            {"type": "grammar", "syntax": "regex", "definition": "["},
+            {"type": "grammar", "syntax": "lark", "definition": "start: missing"},
+            {"type": "grammar", "syntax": "regex", "definition": "(?=x)x"},
+            {"type": "grammar", "syntax": "regex", "definition": "x", "ignored": True}]
+        for value in invalid:
+            with self.subTest(format=value), self.assertRaises(S.ClientToolSchemaError):
+                S.ClientToolProjection(self.body(value))
+
+    def test_invalid_custom_wrapper_never_becomes_a_call(self):
+        p = S.ClientToolProjection(self.body())
+        with self.assertRaises(S.ClientToolResponseError):
+            self.restore(p, "\ud800")
+        for arguments in ('{"input":"one","input":"two"}', '{"input":3}', "{}",
+                          '{"input":"value","other":true}', '{"input":'):
+            with self.subTest(arguments=arguments), self.assertRaises(S.ClientToolResponseError):
+                p.restore_call({"id": "bad", "type": "function", "function": {
+                    "name": p.reverse[("beta", "transform")], "arguments": arguments}})
+
+    def test_duplicate_names_and_mismatched_choices_are_rejected(self):
+        body = self.body()
+        body["tools"][1]["tools"].append({"type": "function", "name": "transform", "parameters": {}})
+        with self.assertRaises(S.ClientToolSchemaError):
+            S.ClientToolProjection(body)
+        for choice in ({"type": "custom", "name": "transform"},
+                       {"type": "custom", "name": "transform", "namespace": "alpha"},
+                       {"type": "function", "name": "transform", "namespace": "beta"}):
+            body = self.body()
+            body["tool_choice"] = choice
+            with self.assertRaises(S.ClientToolSchemaError):
+                S.ClientToolProjection(body)
+
+    def test_fragmented_custom_input_is_validated_before_emission(self):
+        p = S.ClientToolProjection(self.body())
+        alias = p.reverse[("beta", "transform")]
+        value = 'line\n雪 "quote" \\ suffix'
+        wire = json.dumps({"input": value}, ensure_ascii=False)
+        for i, part in enumerate((wire[:5], wire[5:12], wire[12:])):
+            call = {"index": 0, "function": {"arguments": part}}
+            if i == 0:
+                call.update(id="fragmented", type="function")
+                call["function"]["name"] = alias[:17]
+            elif i == 1:
+                call["function"]["name"] = alias[17:]
+            out = p.restore_chunk({"choices": [{"index": 0, "delta": {"tool_calls": [call]},
+                                                  "finish_reason": None}]})
+            self.assertNotIn("tool_calls", out["choices"][0]["delta"])
+        out = p.restore_chunk({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+        call = out["choices"][0]["delta"]["tool_calls"][0]
+        self.assertEqual(call, {"index": 0, "id": "fragmented", "type": "custom",
+                               "namespace": "beta", "custom": {"name": "transform", "input": value}})
+        p.validate_stream_end()
+
+
+    def test_invalid_history_and_unfinished_calls_are_never_returned(self):
+        body = self.body({"type": "grammar", "syntax": "regex", "definition": "hello[0-9]+"})
+        body["messages"].append({"role": "assistant", "tool_calls": [{
+            "id": "previous", "type": "custom", "namespace": "beta",
+            "custom": {"name": "transform", "input": "invalid"}}]})
+        with self.assertRaises(S.ClientToolSchemaError):
+            S.ClientToolProjection(body)
+        p = S.ClientToolProjection(self.body())
+        alias = p.reverse[("beta", "transform")]
+        partial = {"choices": [{"index": 0, "delta": {"tool_calls": [{
+            "index": 0, "id": "partial", "type": "function",
+            "function": {"name": alias, "arguments": '{"input":'}}]}, "finish_reason": None}]}
+        self.assertNotIn("tool_calls", p.restore_chunk(partial)["choices"][0]["delta"])
+        with self.assertRaises(S.ClientToolResponseError):
+            p.restore_chunk({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+        with self.assertRaises(S.ClientToolResponseError):
+            p.restore_completion({"choices": [{"finish_reason": "length", "message": {
+                "tool_calls": [{"id": "truncated", "type": "function", "function": {
+                    "name": alias, "arguments": '{"input":"hello"}'}}]}}]})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

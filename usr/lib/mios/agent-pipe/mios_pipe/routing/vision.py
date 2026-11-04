@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import os
 import re
@@ -655,7 +656,7 @@ async def _client_namespace_tools_complete(body: dict, streaming: bool, chat_id:
     from mios_pipe.access.authn import _apply_outbound_auth
     from mios_lanes_resolver import _pick_client_inference_backend
     try:
-        projection = ClientToolProjection(body)
+        projection = await asyncio.to_thread(ClientToolProjection, body)
     except ClientToolSchemaError as exc:
         return _client_tools_error(str(exc), 400, param="tools", code="invalid_tool_schema")
     request = {k: v for k, v in projection.body.items()
@@ -672,7 +673,7 @@ async def _client_namespace_tools_complete(body: dict, streaming: bool, chat_id:
             content = reply.json()
             if reply.status_code >= 400:
                 return JSONResponse(content=content, status_code=reply.status_code)
-            content = projection.restore_completion(content)
+            content = await asyncio.to_thread(projection.restore_completion, content)
             content["model"] = model or selected_model
             return JSONResponse(content=content, status_code=reply.status_code)
         except ClientToolResponseError as exc:
@@ -723,7 +724,7 @@ async def _client_namespace_tools_complete(body: dict, streaming: bool, chat_id:
 
 async def _client_tools_complete(body: dict, streaming: bool, chat_id: str,
                                  model: str) -> Any:
-    if any(isinstance(tool, dict) and tool.get("type") == "namespace"
+    if any(isinstance(tool, dict) and tool.get("type") in ("namespace", "custom")
            for tool in body.get("tools") or []):
         return await _client_namespace_tools_complete(body, streaming, chat_id, model)
     client_names: set = set()

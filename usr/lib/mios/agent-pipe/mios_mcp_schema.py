@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Strict OpenAI function-schema conversion for MCP tool definitions.
+# AI-hint: Strict OpenAI tool schemas and caller-owned function/custom namespace projection.
 # AI-related: mios_mcp, mios_mcp_transport
 """Pure schema translation, split out of mios_mcp.py.
 
@@ -120,12 +120,74 @@ class ClientToolResponseError(ValueError):
     """An engine returned a tool outside the caller's declared tool set."""
 
 
+class _CustomToolFormat:
+    """Validate official custom formats with the upstream Rust CFG engine."""
+
+    def __init__(self, value):
+        self.matcher = None
+        if value is None:
+            return
+        if not isinstance(value, dict):
+            raise ClientToolSchemaError("custom format must be an object")
+        if value.get("type") == "text" and set(value) == {"type"}:
+            return
+        if value.get("type") != "grammar":
+            raise ClientToolSchemaError("unsupported custom input format")
+        nested = "grammar" in value
+        grammar = value.get("grammar", value)
+        expected = {"syntax", "definition"} if nested else {"type", "syntax", "definition"}
+        if nested and set(value) != {"type", "grammar"}:
+            raise ClientToolSchemaError("invalid custom grammar format fields")
+        if (not isinstance(grammar, dict) or set(grammar) != expected
+                or grammar.get("syntax") not in ("lark", "regex")
+                or not isinstance(grammar.get("definition"), str)
+                or not grammar["definition"].strip() or "\x00" in grammar["definition"]):
+            raise ClientToolSchemaError("custom grammar requires a supported syntax and nonempty definition")
+        try:
+            from llguidance import LLMatcher, LLParserLimits, LLTokenizer, TokenizerWrapper
+        except ImportError:
+            raise ClientToolSchemaError("the declared grammar validator dependency is unavailable") from None
+
+        class ByteTokenizer:
+            # Grammar acceptance uses bytes, independent of the inference vocabulary.
+            eos_token_id = 256
+            bos_token_id = None
+            tokens = [bytes([i]) for i in range(256)] + [b"<eos>"]
+            special_token_ids = [256]
+
+            def __call__(self, value):
+                return list(value.encode("utf-8") if isinstance(value, str) else value)
+
+        try:
+            compiled = getattr(LLMatcher, "grammar_from_" + grammar["syntax"])(grammar["definition"])
+            tokenizer = LLTokenizer(TokenizerWrapper(ByteTokenizer()), slices=[])
+            self.matcher = LLMatcher(tokenizer, compiled, log_level=0,
+                                     limits=LLParserLimits(verbose_errors=False))
+            if self.matcher.is_error():
+                raise ValueError("invalid grammar")
+        except Exception:
+            raise ClientToolSchemaError("custom grammar is invalid, unsupported or exceeds parser limits") from None
+
+    def accepts(self, value):
+        if not isinstance(value, str):
+            return False
+        try:
+            data = value.encode("utf-8")
+        except UnicodeError:
+            return False
+        if self.matcher is None:
+            return True
+        matcher = self.matcher.deep_copy()
+        return matcher.consume_tokens(list(data)) and matcher.is_accepting()
+
+
 class ClientToolProjection:
     """Request-local namespace projection for engines accepting flat functions.
 
     No tools are executed here. Caller schemas remain untouched; engine names are
     stable over the namespace/name pair and cannot collide with host-side verbs.
-    Namespace is preserved on Chat bridge calls and Responses function_call items.
+    Tool type, namespace and raw custom input survive both API surfaces.
+    Custom grammars use the upstream Rust CFG engine; tools are never executed.
     """
 
     def __init__(self, body: dict):
@@ -134,21 +196,17 @@ class ClientToolProjection:
         import json
         import re
         self.body = copy.deepcopy(body)
-        self.names = {}
-        self.reverse = {}
+        self.names, self.reverse, self.kinds, self.formats = {}, {}, {}, {}
         self.stream_calls = {}
-        self.stream_choices = set()
-        self.stream_finished = set()
-        groups = set()
-        flat = []
+        self.stream_choices, self.stream_finished = set(), set()
+        groups, flat = set(), []
         tools = body.get("tools")
         if not isinstance(tools, list) or not tools:
             raise ClientToolSchemaError("tools must be a non-empty array")
         for tool in tools:
             if not isinstance(tool, dict):
                 raise ClientToolSchemaError("each tool must be an object")
-            namespace = None
-            children = [tool]
+            namespace, children = None, [tool]
             if tool.get("type") == "namespace":
                 namespace = tool.get("name")
                 if (not isinstance(namespace, str) or not namespace.strip()
@@ -157,35 +215,49 @@ class ClientToolProjection:
                 groups.add(namespace)
                 children = tool.get("tools")
                 if not isinstance(children, list) or not children:
-                    raise ClientToolSchemaError("a namespace must contain function tools")
+                    raise ClientToolSchemaError("a namespace must contain function or custom tools")
             for child in children:
-                if not isinstance(child, dict) or child.get("type") != "function":
-                    raise ClientToolSchemaError("this engine supports only function tools inside namespaces")
-                fn = child.get("function", child)
-                if not isinstance(fn, dict):
-                    raise ClientToolSchemaError("function definition must be an object")
-                name = fn.get("name")
+                kind = child.get("type") if isinstance(child, dict) else None
+                if kind not in ("function", "custom"):
+                    raise ClientToolSchemaError("only function and custom tools can be projected")
+                definition = child.get(kind, child)
+                if not isinstance(definition, dict):
+                    raise ClientToolSchemaError("tool definition must be an object")
+                if definition.get("description") is not None and not isinstance(definition["description"], str):
+                    raise ClientToolSchemaError("tool description must be a string")
+                name = definition.get("name")
                 if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", name):
-                    raise ClientToolSchemaError("function names must be valid OpenAI identifiers")
+                    raise ClientToolSchemaError("tool names must be valid OpenAI identifiers")
                 key = (namespace, name)
                 if key in self.reverse:
-                    raise ClientToolSchemaError("duplicate function in the same namespace")
-                if fn.get("defer_loading") or fn.get("async") or fn.get("allowed_callers") not in (None, ["direct"]):
+                    raise ClientToolSchemaError("duplicate tool in the same namespace")
+                if (definition.get("defer_loading") or definition.get("async")
+                        or definition.get("allowed_callers") not in (None, ["direct"])):
                     raise ClientToolSchemaError("this engine cannot preserve deferred, asynchronous or programmatic tools")
-                parameters = fn.get("parameters", {"type": "object", "properties": {}})
-                self._validate_schema(parameters, root=True)
                 alias = "mios_tool_" + hashlib.sha256(json.dumps(key).encode()).hexdigest()[:54]
                 if alias in self.names:
                     raise ClientToolSchemaError("tool projection identity collision")
-                self.names[alias] = key
-                self.reverse[key] = alias
-                projected = {k: copy.deepcopy(v) for k, v in fn.items()
-                             if k in ("description", "parameters", "strict")}
-                projected["name"] = alias
-                projected.setdefault("parameters", copy.deepcopy(parameters))
+                self.names[alias], self.reverse[key], self.kinds[alias] = key, alias, kind
+                if kind == "custom":
+                    self.formats[alias] = _CustomToolFormat(definition.get("format"))
+                    projected = {
+                        "name": alias, "description": definition.get("description") or name,
+                        "strict": True, "parameters": {"type": "object",
+                            "properties": {"input": {"type": "string"}},
+                            "required": ["input"], "additionalProperties": False}}
+                    if definition.get("format"):
+                        projected["description"] += "\nThe input must satisfy this custom format: " + json.dumps(
+                            definition["format"], ensure_ascii=False)
+                else:
+                    parameters = definition.get("parameters", {"type": "object", "properties": {}})
+                    self._validate_schema(parameters, root=True)
+                    projected = {k: copy.deepcopy(v) for k, v in definition.items()
+                                 if k in ("description", "parameters", "strict")}
+                    projected["name"] = alias
+                    projected.setdefault("parameters", copy.deepcopy(parameters))
                 if namespace:
                     context = tool.get("description") or namespace
-                    projected["description"] = f"{namespace}: {context}\n{fn.get('description') or name}"
+                    projected["description"] = f"{namespace}: {context}\n{projected.get('description') or name}"
                 flat.append({"type": "function", "function": projected})
         self.body["tools"] = flat
         if "tool_choice" in self.body:
@@ -194,15 +266,29 @@ class ClientToolProjection:
             if not isinstance(msg, dict):
                 raise ClientToolSchemaError("messages must contain objects")
             for call in msg.get("tool_calls") or []:
-                if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
-                    raise ClientToolSchemaError("history contains an invalid function call")
-                fn = call["function"]
-                if ("namespace" in call and "namespace" in fn
-                        and call["namespace"] != fn["namespace"]):
+                if not isinstance(call, dict) or call.get("type", "function") not in ("function", "custom"):
+                    raise ClientToolSchemaError("history contains an invalid tool call")
+                kind = call.get("type", "function")
+                payload = call.get(kind)
+                if not isinstance(payload, dict):
+                    raise ClientToolSchemaError("history contains an invalid tool call")
+                if ("namespace" in call and "namespace" in payload
+                        and call["namespace"] != payload["namespace"]):
                     raise ClientToolSchemaError("history contains conflicting namespaces")
-                ns = call.pop("namespace", fn.get("namespace"))
-                fn.pop("namespace", None)
-                fn["name"] = self._alias(fn.get("name"), ns)
+                ns = call.pop("namespace", payload.get("namespace"))
+                payload.pop("namespace", None)
+                alias = self._alias(payload.get("name"), ns)
+                if self.kinds[alias] != kind:
+                    raise ClientToolSchemaError("history tool type does not match its declaration")
+                if kind == "custom":
+                    value = payload.get("input")
+                    if not self.formats[alias].accepts(value):
+                        raise ClientToolSchemaError("history custom input does not satisfy its declared format")
+                    call.pop("custom")
+                    call.update(type="function", function={"name": alias,
+                        "arguments": json.dumps({"input": value}, ensure_ascii=False)})
+                else:
+                    payload["name"] = alias
 
     @staticmethod
     def _validate_schema(schema, *, root=False):
@@ -250,10 +336,10 @@ class ClientToolProjection:
 
     def _alias(self, name, namespace=None):
         if not isinstance(name, str) or not name:
-            raise ClientToolSchemaError("function name is required")
+            raise ClientToolSchemaError("tool name is required")
         if namespace is not None:
             if not isinstance(namespace, str) or (namespace, name) not in self.reverse:
-                raise ClientToolSchemaError("unknown namespace or function")
+                raise ClientToolSchemaError("unknown namespace or tool")
             return self.reverse[(namespace, name)]
         if (None, name) in self.reverse:
             return self.reverse[(None, name)]
@@ -261,7 +347,7 @@ class ClientToolProjection:
                      if ns and f"{ns}.{leaf}" == name]
         if len(qualified) == 1:
             return qualified[0]
-        raise ClientToolSchemaError("function must identify its declared namespace")
+        raise ClientToolSchemaError("tool must identify its declared namespace")
 
     def _choice(self, choice):
         if isinstance(choice, str) and choice in ("none", "auto", "required"):
@@ -269,31 +355,65 @@ class ClientToolProjection:
         if not isinstance(choice, dict):
             raise ClientToolSchemaError("unsupported tool_choice")
         if choice.get("type") == "allowed_tools":
-            allowed = choice.get("allowed_tools")
+            allowed = choice.get("allowed_tools", choice)
             if not isinstance(allowed, dict) or allowed.get("mode") not in ("auto", "required"):
                 raise ClientToolSchemaError("invalid allowed_tools choice")
             tools = allowed.get("tools")
             if not isinstance(tools, list) or not tools:
-                raise ClientToolSchemaError("allowed_tools must contain declared functions")
+                raise ClientToolSchemaError("allowed_tools must contain declared tools")
             return {"type": "allowed_tools", "allowed_tools": {
                 "mode": allowed["mode"], "tools": [self._choice(t) for t in tools]}}
-        if choice.get("type") != "function":
-            raise ClientToolSchemaError("tool_choice must target a function, not a namespace")
-        fn = choice.get("function", choice)
-        if not isinstance(fn, dict):
-            raise ClientToolSchemaError("invalid function choice")
-        namespace = fn.get("namespace", choice.get("namespace"))
-        return {"type": "function", "function": {"name": self._alias(fn.get("name"), namespace)}}
+        kind = choice.get("type")
+        if kind not in ("function", "custom"):
+            raise ClientToolSchemaError("tool_choice must target a function or custom tool")
+        payload = choice.get(kind, choice)
+        if not isinstance(payload, dict):
+            raise ClientToolSchemaError("invalid tool choice")
+        if ("namespace" in payload and "namespace" in choice
+                and payload["namespace"] != choice["namespace"]):
+            raise ClientToolSchemaError("tool_choice contains conflicting namespaces")
+        namespace = payload.get("namespace", choice.get("namespace"))
+        alias = self._alias(payload.get("name"), namespace)
+        if self.kinds[alias] != kind:
+            raise ClientToolSchemaError("tool_choice type does not match its declaration")
+        return {"type": "function", "function": {"name": alias}}
+
+    def _custom_input(self, alias, arguments):
+        import json
+        def pairs(items):
+            result = {}
+            for name, value in items:
+                if name in result:
+                    raise ValueError("duplicate custom input field")
+                result[name] = value
+            return result
+        try:
+            value = json.loads(arguments, object_pairs_hook=pairs)
+            if not isinstance(value, dict) or set(value) != {"input"}:
+                raise ValueError("invalid custom input wrapper")
+            value = value["input"]
+            if not self.formats[alias].accepts(value):
+                raise ValueError("custom input violates its declared format")
+            return value
+        except Exception:
+            raise ClientToolResponseError("engine custom input does not satisfy its declared format") from None
 
     def restore_call(self, call):
         import copy
         result = copy.deepcopy(call)
         fn = result.get("function")
-        if not isinstance(fn, dict) or fn.get("name") not in self.names:
+        if (result.get("type", "function") != "function" or not isinstance(fn, dict)
+                or fn.get("name") not in self.names):
             raise ClientToolResponseError("engine returned an undeclared function")
-        namespace, name = self.names[fn["name"]]
-        fn["name"] = name
-        fn.pop("namespace", None)
+        alias = fn["name"]
+        namespace, name = self.names[alias]
+        if self.kinds[alias] == "custom":
+            value = self._custom_input(alias, fn.get("arguments"))
+            result.pop("function")
+            result.update(type="custom", custom={"name": name, "input": value})
+        else:
+            fn["name"] = name
+            fn.pop("namespace", None)
         result.pop("namespace", None)
         if namespace is not None:
             result["namespace"] = namespace
@@ -310,21 +430,28 @@ class ClientToolProjection:
                     or isinstance(message.get("content"), str) and message["content"].strip()):
                 raise ClientToolResponseError("engine returned no assistant output")
             if "tool_calls" in message:
-                message["tool_calls"] = [self.restore_call(c) for c in message["tool_calls"]]
+                calls = [self.restore_call(c) for c in message["tool_calls"]]
+                if any(c.get("type") == "custom" for c in calls) and choice.get("finish_reason") != "tool_calls":
+                    raise ClientToolResponseError("engine did not acknowledge completion of its custom tool call")
+                message["tool_calls"] = calls
         return result
 
     def restore_chunk(self, chunk):
-        """Buffer fragmented engine names until a declared alias is identified."""
+        """Function deltas pass through; custom inputs wait for complete validated JSON."""
         import copy
         result = copy.deepcopy(chunk)
         for choice in result.get("choices") or []:
-            self.stream_choices.add(choice.get("index", 0))
-            if choice.get("finish_reason") is not None:
-                self.stream_finished.add(choice.get("index", 0))
+            choice_index = choice.get("index", 0)
+            if choice_index in self.stream_finished:
+                raise ClientToolResponseError("engine emitted tool data after completion")
+            self.stream_choices.add(choice_index)
+            finished = choice.get("finish_reason") is not None
+            if finished:
+                self.stream_finished.add(choice_index)
             delta = choice.get("delta") or {}
             calls = []
             for call in delta.get("tool_calls") or []:
-                key = (choice.get("index", 0), call.get("index", 0))
+                key = (choice_index, call.get("index", 0))
                 state = self.stream_calls.setdefault(key, {"name": "", "sent": False, "call": {}})
                 fn = call.get("function") or {}
                 if state["sent"]:
@@ -337,37 +464,46 @@ class ClientToolProjection:
                 pending_fn = pending.setdefault("function", {})
                 state["name"] += fn.get("name") or ""
                 if "arguments" in fn:
+                    if not isinstance(fn["arguments"], str):
+                        raise ClientToolResponseError("engine streamed malformed tool arguments")
                     pending_fn["arguments"] = pending_fn.get("arguments", "") + fn["arguments"]
                 if state["name"] in self.names:
                     pending_fn["name"] = state["name"]
-                    calls.append(self.restore_call(pending))
-                    state["sent"] = True
+                    if self.kinds[state["name"]] == "function":
+                        calls.append(self.restore_call(pending))
+                        state["sent"] = True
                 elif not any(name.startswith(state["name"]) for name in self.names):
                     raise ClientToolResponseError("engine streamed an undeclared function")
-            if "tool_calls" in delta:
+            if finished:
+                for key, state in self.stream_calls.items():
+                    if key[0] != choice_index or state["sent"]:
+                        continue
+                    alias = state["name"]
+                    if alias not in self.names:
+                        raise ClientToolResponseError("engine ended before identifying a declared tool")
+                    if self.kinds[alias] != "custom" or choice["finish_reason"] != "tool_calls":
+                        raise ClientToolResponseError("engine did not complete its custom tool call")
+                    calls.append(self.restore_call(state["call"]))
+                    state["sent"] = True
+            if "tool_calls" in delta or calls:
                 if calls:
                     delta["tool_calls"] = calls
+                    choice["delta"] = delta
                 else:
-                    delta.pop("tool_calls")
-            if choice.get("finish_reason") is not None and any(
-                    not state["sent"] for key, state in self.stream_calls.items()
-                    if key[0] == choice.get("index", 0)):
-                raise ClientToolResponseError("engine ended before identifying a declared function")
+                    delta.pop("tool_calls", None)
         return result
-
 
     def validate_stream_end(self):
         if (not self.stream_choices or self.stream_choices != self.stream_finished
                 or any(not state["sent"] for state in self.stream_calls.values())):
             raise ClientToolResponseError("tool stream ended without a completion acknowledgment")
 
-
     async def restore_sse(self, lines, model):
-        """Translate decoded SSE lines without owning the HTTP connection."""
+        """Translate SSE while validating custom formats off the event loop."""
+        import asyncio
         import json
-        data = []
-        done = False
-        def frame():
+        data, done = [], False
+        async def frame():
             nonlocal done
             value = "\n".join(data)
             data.clear()
@@ -380,20 +516,20 @@ class ClientToolProjection:
             chunk = json.loads(value)
             if "error" in chunk:
                 raise ClientToolResponseError("engine returned a stream error")
-            mapped = self.restore_chunk(chunk)
+            mapped = await asyncio.to_thread(self.restore_chunk, chunk)
             mapped["model"] = model
             return ("data: " + json.dumps(mapped) + "\n\n").encode()
         async for line in lines:
             if line.startswith("data:"):
                 data.append(line[5:].lstrip(" "))
             elif line == "":
-                value = frame()
+                value = await frame()
                 if value:
                     yield value
                 if done:
                     return
         if data:
-            value = frame()
+            value = await frame()
             if value:
                 yield value
         self.validate_stream_end()

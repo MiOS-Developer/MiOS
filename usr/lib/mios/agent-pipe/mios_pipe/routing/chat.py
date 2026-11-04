@@ -1418,13 +1418,22 @@ async def responses_api_logic(request: Request) -> Any:
             itype = it.get("type")
             if itype in ("function_call", "custom_tool_call"):
                 cid = it.get("call_id") or it.get("id") or f"call_{uuid.uuid4().hex[:12]}"
-                raw_args = it.get("arguments")
-                if raw_args is None and itype == "custom_tool_call":
-                    raw_args = it.get("input")
-                fn_args = raw_args if isinstance(raw_args, str) else json.dumps(raw_args or {})
-                append_call({"id": cid, "type": "function", "function": {
-                    "name": it.get("name") or "", "arguments": fn_args},
-                    **({"namespace": it["namespace"]} if "namespace" in it else {})})
+                if itype == "custom_tool_call":
+                    value = it.get("input")
+                    if not isinstance(value, str):
+                        return JSONResponse(status_code=400, content={"error": {
+                            "message": "custom tool history input must be a string",
+                            "type": "invalid_request_error", "param": "input"}})
+                    call = {"id": cid, "type": "custom", "custom": {
+                        "name": it.get("name") or "", "input": value}}
+                else:
+                    raw_args = it.get("arguments")
+                    fn_args = raw_args if isinstance(raw_args, str) else json.dumps(raw_args or {})
+                    call = {"id": cid, "type": "function", "function": {
+                        "name": it.get("name") or "", "arguments": fn_args}}
+                if "namespace" in it:
+                    call["namespace"] = it["namespace"]
+                append_call(call)
             elif itype in ("function_call_output", "custom_tool_call_output"):
                 cid = it.get("call_id") or it.get("id") or ""
                 out = it.get("output", "")
@@ -1544,9 +1553,11 @@ async def responses_api_logic(request: Request) -> Any:
             if not isinstance(calls, list) or any(
                 not isinstance(call, dict)
                 or (call.get("id") is not None and not isinstance(call["id"], str))
-                or not isinstance(call.get("function"), dict)
-                or not isinstance(call["function"].get("name"), str)
-                or not call["function"]["name"].strip()
+                or call.get("type", "function") not in ("function", "custom")
+                or not isinstance(call.get(call.get("type", "function")), dict)
+                or not isinstance(call[call.get("type", "function")].get("name"), str)
+                or not call[call.get("type", "function")]["name"].strip()
+                or (call.get("type") == "custom" and not isinstance(call["custom"].get("input"), str))
                 for call in calls
             ):
                 return 502, {"message": "The inference backend returned malformed tool calls",
@@ -1577,14 +1588,16 @@ async def responses_api_logic(request: Request) -> Any:
                 "content": [{"type": "output_text", "text": answer, "annotations": []}],
             })
         for call in message.get("tool_calls") or []:
-            function = call.get("function") or {}
-            arguments = function.get("arguments") or "{}"
-            if not isinstance(arguments, str):
-                arguments = json.dumps(arguments)
+            custom = call.get("type") == "custom"
+            payload = call["custom"] if custom else call["function"]
+            value = payload["input"] if custom else payload.get("arguments") or "{}"
+            if not isinstance(value, str):
+                value = json.dumps(value)
             items.append({
-                "type": "function_call", "id": "fc_" + uuid.uuid4().hex[:24],
+                "type": "custom_tool_call" if custom else "function_call",
+                "id": ("ctc_" if custom else "fc_") + uuid.uuid4().hex[:24],
                 "status": status, "call_id": call.get("id") or "call_" + uuid.uuid4().hex[:12],
-                "name": function.get("name") or "", "arguments": arguments,
+                "name": payload["name"], "input" if custom else "arguments": value,
                 **({"namespace": call["namespace"]} if "namespace" in call else {}),
             })
         return answer, items
@@ -1649,6 +1662,8 @@ async def responses_api_logic(request: Request) -> Any:
             initial = {**item, "status": "in_progress"}
             if item["type"] == "message":
                 initial["content"] = []
+            elif item["type"] == "custom_tool_call":
+                initial["input"] = ""
             else:
                 initial["arguments"] = ""
             yield event("response.output_item.added", output_index=index, item=initial)
@@ -1660,6 +1675,10 @@ async def responses_api_logic(request: Request) -> Any:
                 yield event("response.output_text.delta", **location, delta=part["text"], logprobs=[])
                 yield event("response.output_text.done", **location, text=part["text"], logprobs=[])
                 yield event("response.content_part.done", **location, part=part)
+            elif item["type"] == "custom_tool_call":
+                location = {"item_id": item["id"], "output_index": index}
+                yield event("response.custom_tool_call_input.delta", **location, delta=item["input"])
+                yield event("response.custom_tool_call_input.done", **location, input=item["input"])
             else:
                 location = {"item_id": item["id"], "output_index": index}
                 yield event("response.function_call_arguments.delta", **location, delta=item["arguments"])

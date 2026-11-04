@@ -767,7 +767,7 @@ def _test_responses_api():
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "start task"}]},
             {"type": "function_call", "call_id": "call_fn_1", "name": "read_doc", "arguments": "{\"path\": \"/etc/hosts\"}"},
             {"type": "function_call_output", "call_id": "call_fn_1", "output": "127.0.0.1 localhost"},
-            {"type": "custom_tool_call", "call_id": "call_cust_1", "name": "run_custom", "arguments": {"flag": True}},
+            {"type": "custom_tool_call", "call_id": "call_cust_1", "name": "run_custom", "input": "flag true"},
             {"type": "custom_tool_call_output", "call_id": "call_cust_1", "output": {"status": "ok"}}
         ]
         r_items = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": input_items})))
@@ -777,9 +777,16 @@ def _test_responses_api():
               and posted_msgs[0] == {"role": "user", "content": "start task"}
               and posted_msgs[1]["role"] == "assistant" and posted_msgs[1]["tool_calls"][0]["function"]["name"] == "read_doc"
               and posted_msgs[2] == {"role": "tool", "tool_call_id": "call_fn_1", "content": "127.0.0.1 localhost"}
-              and posted_msgs[3]["role"] == "assistant" and posted_msgs[3]["tool_calls"][0]["function"]["name"] == "run_custom"
+              and posted_msgs[3]["role"] == "assistant" and posted_msgs[3]["tool_calls"][0]["custom"] == {"name": "run_custom", "input": "flag true"}
               and posted_msgs[4] == {"role": "tool", "tool_call_id": "call_cust_1", "content": json.dumps({"status": "ok"})},
               f"posted_msgs={posted_msgs}")
+
+        previous_post = _RespHttpxClient.last_post_json
+        invalid_custom = asyncio.run(mios_chat.responses_api_logic(FakeRequest({
+            "model": "m", "input": [{"type": "custom_tool_call", "call_id": "invalid",
+                                    "name": "run_custom", "input": {"flag": True}}]})))
+        check("responses custom history rejects nonstring input before inference",
+              invalid_custom.status_code == 400 and _RespHttpxClient.last_post_json is previous_post)
 
         parallel_items = [
             {"role": "user", "content": "inspect in parallel"},

@@ -2073,6 +2073,8 @@
           <input type="text" id="f-ai-endpoint" data-key="ai.endpoint" placeholder="http://localhost:8640/v1">
           <label for="f-ai-agent-model">agent_model (served model id the orchestrator advertises)</label>
           <input type="text" id="f-ai-agent-model" data-key="ai.agent_model" placeholder="MiOS AI">
+          <label for="f-ai-runtime-manifests">Agent runtime dependency manifests (comma-separated paths)</label>
+          <input id="f-ai-runtime-manifests" data-key="packages.ai.python_requirements" data-array="csv" type="text">
           <label for="f-ai-cli-retries">Interactive HTTP retries (0 avoids replaying a request that may run tools)</label>
           <input id="f-ai-cli-retries" data-key="ai.cli.max_retries" data-type="int" type="number" min="0" step="1">
           <label for="f-ai-cli-timeout">Interactive request inactivity timeout (seconds)</label>

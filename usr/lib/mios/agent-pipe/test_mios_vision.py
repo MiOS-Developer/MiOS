@@ -632,6 +632,195 @@ def test_namespace_tools_real_httpx_contract():
     asyncio.run(exercise())
 
 
+
+
+def test_custom_namespace_real_httpx_contract():
+    """Actual HTTPX JSON/SSE/Responses bridges keep custom execution caller-owned."""
+    import copy
+    import importlib
+    import httpx
+    vision = importlib.import_module("mios_pipe.routing.vision")
+    lanes = importlib.import_module("mios_pipe.routing.lanes_resolver")
+    chat = importlib.import_module("mios_pipe.routing.chat")
+
+    async def exercise():
+        requests, streams = [], []
+        mode = "normal"
+        value = 'hello\n雪 "quoted" \\ suffix'
+        body = {"model": "public", "tools": [
+            {"type": "namespace", "name": "alpha", "tools": [
+                {"type": "function", "name": "transform", "parameters": {"type": "object"}}]},
+            {"type": "namespace", "name": "beta", "tools": [
+                {"type": "custom", "name": "transform", "format": {
+                    "type": "grammar", "syntax": "regex", "definition": "(?s)hello.*"}}]},
+            {"type": "namespace", "name": "gamma", "tools": [
+                {"type": "custom", "name": "transform", "format": {
+                    "type": "grammar", "syntax": "lark", "definition": 'start: "hello" /[0-9]+/'}}]}],
+            "tool_choice": {"type": "custom", "name": "transform", "namespace": "beta"},
+            "messages": [{"role": "user", "content": "transform"},
+                {"role": "assistant", "tool_calls": [{"id": "previous", "type": "custom",
+                    "namespace": "beta", "custom": {"name": "transform", "input": value}}]},
+                {"role": "tool", "tool_call_id": "previous", "content": "caller evidence"}]}
+        saved = copy.deepcopy(body)
+
+        class Stream(httpx.AsyncByteStream):
+            def __init__(self, calls):
+                self.calls, self.closed = calls, False
+                self.started = asyncio.Event()
+            async def __aiter__(self):
+                if mode == "cancel":
+                    self.started.set()
+                    await asyncio.Event().wait()
+                for part in range(3):
+                    calls = []
+                    for index, call in enumerate(self.calls):
+                        name, arguments = call["function"]["name"], call["function"]["arguments"]
+                        cuts = [0, 4, 11, len(arguments)]
+                        fn = {"arguments": arguments[cuts[part]:cuts[part + 1]]}
+                        if part < 2:
+                            fn["name"] = name[:17] if part == 0 else name[17:]
+                        calls.append({"index": index, "function": fn,
+                                      **({"id": call["id"], "type": "function"} if part == 0 else {})})
+                    event = {"choices": [{"index": 0, "delta": {"tool_calls": calls}, "finish_reason": None}]}
+                    raw = ("data: " + json.dumps(event) + "\n\n").encode()
+                    yield raw[:9]
+                    yield raw[9:]
+                yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+                yield b"data: [DONE]\n\n"
+            async def aclose(self):
+                self.closed = True
+
+        def backend(request):
+            requests.append(request)
+            payload = json.loads(request.content)
+            aliases = [tool["function"]["name"] for tool in payload["tools"]]
+            if mode == "flat":
+                assert len(aliases) == 1 and payload["tool_choice"]["function"]["name"] == aliases[0]
+                return httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls",
+                    "message": {"role": "assistant", "content": None, "tool_calls": [{
+                        "id": "flat", "type": "function", "function": {
+                            "name": aliases[0], "arguments": json.dumps({"input": value})}}]}}]})
+            assert len(set(aliases)) == 3 and all(t["type"] == "function" for t in payload["tools"])
+            assert payload["tool_choice"] == {"type": "function", "function": {"name": aliases[1]}}
+            assert json.loads(payload["messages"][1]["tool_calls"][0]["function"]["arguments"]) == {"input": value}
+            assert payload["messages"][2]["tool_call_id"] == "previous"
+            calls = [{"id": f"call_{i}", "type": "function", "function": {
+                "name": name, "arguments": json.dumps({} if i == 0 else {
+                    "input": ("wrong" if mode == "invalid" else value) if i == 1 else "hello17"})}}
+                     for i, name in enumerate(aliases)]
+            if payload.get("stream"):
+                stream = Stream(calls)
+                streams.append(stream)
+                return httpx.Response(200, stream=stream)
+            return httpx.Response(200, json={"model": "backend", "choices": [{
+                "index": 0, "finish_reason": "tool_calls", "message": {
+                    "role": "assistant", "content": None, "tool_calls": calls}}]})
+
+        real_client = httpx.AsyncClient
+        async with real_client(transport=httpx.MockTransport(backend)) as client:
+            async def get_client():
+                return client
+            with mock.patch.multiple(vision, _get_client=get_client,
+                    _client_tools_loop=mock.AsyncMock(side_effect=AssertionError("entered host loop")),
+                    dispatch_mios_verb=mock.AsyncMock(side_effect=AssertionError("executed caller tool"))), \
+                 mock.patch.object(lanes, "_pick_client_inference_backend",
+                                   mock.AsyncMock(return_value=("http://backend.invalid/v1", "backend"))):
+                response = await vision._client_tools_complete(body, False, "fixture", "public")
+                assert response.status_code == 200, response.body
+                calls = json.loads(response.body)["choices"][0]["message"]["tool_calls"]
+                assert [c["type"] for c in calls] == ["function", "custom", "custom"]
+                assert [(c["namespace"], c.get("custom", c.get("function"))["name"]) for c in calls] == [
+                    ("alpha", "transform"), ("beta", "transform"), ("gamma", "transform")]
+                assert calls[1]["custom"]["input"] == value and calls[2]["custom"]["input"] == "hello17"
+                assert body == saved
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                wire = b"".join([chunk async for chunk in response.body_iterator])
+                events = [json.loads(line[6:]) for line in wire.decode().splitlines()
+                          if line.startswith("data: ") and line[6:] != "[DONE]"]
+                custom = [c for e in events for ch in e.get("choices", [])
+                          for c in ch.get("delta", {}).get("tool_calls", []) if c.get("type") == "custom"]
+                assert [c["custom"]["input"] for c in custom] == [value, "hello17"] and streams[-1].closed
+                invalid = copy.deepcopy(body)
+                invalid["tools"][1]["tools"][0]["format"]["definition"] = "["
+                before = len(requests)
+                response = await vision._client_tools_complete(invalid, False, "fixture", "public")
+                assert response.status_code == 400 and len(requests) == before
+                mode = "invalid"
+                response = await vision._client_tools_complete(body, False, "fixture", "public")
+                assert response.status_code == 502 and b"invalid_backend_tool_call" in response.body
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                wire = b"".join([chunk async for chunk in response.body_iterator])
+                assert b"invalid_backend_tool_call" in wire and streams[-1].closed
+                mode = "normal"
+
+                class Request:
+                    headers = {}
+                    def __init__(self, payload):
+                        self.payload = payload
+                    async def body(self):
+                        return json.dumps(self.payload).encode()
+
+                async def gateway(request):
+                    payload = json.loads(request.content)
+                    result = await vision._client_tools_complete(payload, False, "bridge", "public")
+                    return httpx.Response(result.status_code, content=result.body)
+
+                def bridge_client(**kwargs):
+                    return real_client(transport=httpx.MockTransport(gateway), **kwargs)
+
+                response_body = {"model": "public", "tools": body["tools"],
+                    "tool_choice": body["tool_choice"], "input": [
+                        {"role": "user", "content": "transform"},
+                        {"type": "custom_tool_call", "call_id": "previous", "namespace": "beta",
+                         "name": "transform", "input": value},
+                        {"type": "custom_tool_call_output", "call_id": "previous", "output": "caller evidence"}]}
+                with mock.patch.object(chat, "_loads_lenient", json.loads), \
+                     mock.patch.object(chat.httpx, "AsyncClient", side_effect=bridge_client):
+                    response = await chat.responses_api_logic(Request(response_body))
+                    output = json.loads(response.body)["output"]
+                    assert [i["type"] for i in output] == ["function_call", "custom_tool_call", "custom_tool_call"]
+                    assert output[1]["input"] == value and output[1]["namespace"] == "beta"
+                    response = await chat.responses_api_logic(Request(dict(response_body, stream=True)))
+                    wire = b"".join([chunk async for chunk in response.body_iterator])
+                    events = [json.loads(line[6:]) for line in wire.decode().splitlines() if line.startswith("data: ")]
+                    deltas = [e["delta"] for e in events if e["type"] == "response.custom_tool_call_input.delta"]
+                    assert deltas == [value, "hello17"]
+                    from openai.types.responses import (
+                        ResponseCustomToolCallInputDeltaEvent, ResponseCustomToolCallInputDoneEvent)
+                    from pydantic import TypeAdapter
+                    for event in events:
+                        if event["type"] == "response.custom_tool_call_input.delta":
+                            TypeAdapter(ResponseCustomToolCallInputDeltaEvent).validate_python(event)
+                        elif event["type"] == "response.custom_tool_call_input.done":
+                            TypeAdapter(ResponseCustomToolCallInputDoneEvent).validate_python(event)
+                    assert events[-1]["response"]["output"][1]["type"] == "custom_tool_call"
+                    assert events[-1]["response"]["output"][1]["input"] == value
+                mode = "flat"
+                flat = {"model": "public", "messages": [body["messages"][0]],
+                        "tools": [{"type": "custom", "custom": {
+                            "name": "transform", "format": {"type": "text"}}}],
+                        "tool_choice": {"type": "custom", "custom": {"name": "transform"}}}
+                response = await vision._client_tools_complete(flat, False, "fixture", "public")
+                assert response.status_code == 200, response.body
+                call = json.loads(response.body)["choices"][0]["message"]["tool_calls"][0]
+                assert call == {"id": "flat", "type": "custom",
+                                "custom": {"name": "transform", "input": value}}
+                mode = "cancel"
+                response = await vision._client_tools_complete(body, True, "fixture", "public")
+                async def drain():
+                    return [chunk async for chunk in response.body_iterator]
+                task = asyncio.create_task(drain())
+                await asyncio.wait_for(streams[-1].started.wait(), 1)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                assert task.cancelled() and streams[-1].closed and not client.is_closed
+        print("ok: real HTTPX mixed custom/function namespaces preserve grammar, JSON/SSE/Responses, history, choice and caller ownership")
+    asyncio.run(exercise())
+
+
 if __name__ == "__main__":
     test_vision_unavailable_no_fabrication()
     test_vision_backend_failed_classifier()
@@ -645,4 +834,5 @@ if __name__ == "__main__":
     test_context_budget_pruning_overflow()
     test_client_tools_relays_tool_choice_none_and_pruning()
     test_namespace_tools_real_httpx_contract()
+    test_custom_namespace_real_httpx_contract()
     print("\nALL mios_vision tests passed")

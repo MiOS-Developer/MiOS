@@ -10260,6 +10260,8 @@ pkgs = [
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
 # Shared agent runtime packages are resolved by pip in phase 72. Keep SDK-only
 # dependencies here through this canonical manifest, not mismatched distro RPMs.
+# It includes the public OpenAI SDK and the Rust-backed custom-tool CFG validator;
+# CI consumes the identical manifest through [ci.python].requirements.
 python_requirements = ["usr/lib/mios/agent-pipe/requirements.txt"]
 pkgs = [
     "python3-openai",
