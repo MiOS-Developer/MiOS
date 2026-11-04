@@ -261,3 +261,45 @@ safe quit. This cell-based layout works through console and remote-terminal
 transports, including terminal-based smartwatch webviews; it does not add a new
 browser server. Headless snapshots remain plain ASCII and do not require a GPU,
 display server, controller, writable save or animation clock.
+
+### Sixteen animal MiOS-Mons and dialogue
+
+The embedded catalogue contains Mio, Yuzu, Mugi, Tofu, Kumo, Nori, Sora, Raku,
+Suzu, Aki, Hinoki, Haru, Mochi, Puku, Kiri and Iwa. They are original cat, fox,
+tanuki, rabbit, bear, frog, bird and turtle characters with distinct volumetric
+variants, palettes, hobbies and voices. Eight gender-neutral personality
+archetypes each have two individuals. These are Japanese-inspired original
+characters, not Animal Crossing character assets or copied dialogue.
+
+The main menu includes Talk and Roster. T opens Talk; B opens Roster. Roster is a
+read-only preview until adoption is confirmed. Arrows/controller navigation
+select menus and HUD actions; they never steer or rotate the pet. A confirmed
+adoption creates a new egg and resets presentation position and animation state.
+
+Thoughts and dialogue appear in a pane below the pet. In a focused, uniquely
+attached native tmux client, Talk can open a floating popup; right-click opens a
+native tmux context menu. The game enables mouse reporting only for its own
+terminal lifetime and restores it on normal/error exits. Native callbacks return
+only a bounded private choice; the main process retains the single save writer.
+There is no broadcast to another pane or default/headless tmux server.
+
+Use --dialogs inline to keep all conversation inline. Small, restricted,
+unattached, ambiguous/multiple-client and failed native-popup contexts use the
+inline pane. Read-more paging keeps longer conversation accessible in compact
+views. Snapshots print the full current thought and speech as plain ASCII.
+
+New saves use schema 2 to retain stable character identity. Schema-1 files load
+without modification, preserve all original gameplay state, and receive the
+default Mio identity; an explicit interactive save writes schema 2 atomically.
+Older executables cannot read schema 2, so retain the pre-upgrade binary and save
+backup for rollback. Unsupported versions, invalid identities and malformed
+catalogues are refused before raw mode. A read-only snapshot never upgrades a
+save.
+
+Research separates Nintendo's animal-role design discussion from community
+documentation of personality pools, hobbies/subtypes and species-first
+selection. See [the research note](research/mios-tamagotchi-villager-model.md).
+[Nintendo's developer interview](https://iwataasks.nintendo.com/interviews/3ds/animalcrossing-newleaf/0/2/),
+[Nookipedia's villager model](https://nookipedia.com/wiki/Villager) and
+[mystery-tour selection](https://nookipedia.com/wiki/Mystery_Island) informed the
+original implementation.

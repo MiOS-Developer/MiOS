@@ -19817,6 +19817,15 @@ tick_ms = 100           # animation poll deadline, 16..60000 milliseconds
 # mouth, gold, food, water, wall, leaves, hearts, sky, wood and mint.
 palette = ["#171C38", "#75D8A6", "#FFF5DE", "#A9F0C9", "#FFE5AF", "#EE9ABC", "#283150", "#FFCF66", "#EF8F5F", "#62A7CD", "#49436D", "#4B8D75", "#F06586", "#9FD9E1", "#816A6B", "#CCE8C7"]
 background = "#111827"
+dialog_mode = "auto"         # auto, inline, native; native requires the verified owning attached client
+dialog_timeout_ms = 120000   # bounded native popup lifetime; failure stays inline
+dialog_query_timeout_ms = 500
+dialog_max_bytes = 32768
+popup_min_width = 60
+popup_min_height = 18
+floating_thoughts = true     # spontaneous thoughts float only for an eligible focused/attached native client
+thought_interval_ticks = 20  # active simulation ticks; paused/offline pets do not generate new events
+inline_dialog_rows = 6       # dialogue/thought pane below the pet; compact HUD adapts independently
 hud_mode = "auto"            # auto, full, minimal; also selectable in Graphics
 hud_minimal_width = 88       # automatic compact HUD below this terminal width
 hud_minimal_height = 26      # automatic compact HUD below this terminal height
@@ -19853,3 +19862,297 @@ feed_cost = 1
 medicine_cost = 3
 starting_coins = 10
 memory_reveal_ticks = 2
+
+# AI-hint: Original Japanese-inspired animal identities and voices for task_3716; merge into the canonical SSOT.
+# AI-related: tools/native/mios-tamagotchi/src/characters.rs, usr/share/mios/mios.toml [tamagotchi]
+# Shape families repeat modulo eight: cat, fox, tanuki, rabbit, bear, frog, bird, turtle.
+# Palette indices use the existing sixteen-color palette; every body and accent index occurs once.
+# Each archetype has two gender-neutral voices; these characters and lines are original.
+
+[[tamagotchi.characters]]
+id = 0
+name = "Mio"
+species = "cat / neko"
+archetype = "cozy"
+hobby = "patchwork quilting"
+shape = 0
+body = 4
+accent = 5
+dialogue = ["Purr-patch! This sunbeam needs a tiny quilt.","Come sit; I saved the softest corner."]
+thoughts = ["A square of sunshine would finish my quilt.","Small stitches make a snug afternoon."]
+hungry = "My tummy needs a little warm nibble."
+sleepy = "Purr-patch... folding myself into a nap."
+ill = "My paws feel wobbly; may I have some care?"
+hatch = "New paws, new patch! Stay close while I grow."
+adult = "My paws grew; now I can stitch a bigger quilt."
+dead = "Keep our little quilt in a sunny place."
+
+[[tamagotchi.characters]]
+id = 1
+name = "Yuzu"
+species = "fox / kitsune"
+archetype = "athletic"
+hobby = "woodland trail sprinting"
+shape = 1
+body = 8
+accent = 7
+dialogue = ["Zip-zest! Race you to that friendly hill.","I found a trail shaped like a curly tail!"]
+thoughts = ["One more hill, then a very good stretch.","My next trail needs a snack stop."]
+hungry = "Trail fuel, please! My tummy is slowing down."
+sleepy = "Zip... yawn. Even quick paws need a rest."
+ill = "My bounce is missing; a little care would help."
+hatch = "Tiny paws on the starting line. Zip-zest!"
+adult = "Longer legs, bigger trails! I will pace myself."
+dead = "Remember our trails when the wind feels warm."
+
+[[tamagotchi.characters]]
+id = 2
+name = "Mugi"
+species = "tanuki / raccoon dog"
+archetype = "grumbly"
+hobby = "sorting river pebbles"
+shape = 2
+body = 14
+accent = 4
+dialogue = ["Hmph-soft. This pebble is almost round enough.","The river moved my stones. I shall move them back."]
+thoughts = ["That lumpy pebble has a certain charm.","My pebble shelf is full. One more could fit."]
+hungry = "Can't sort stones on an empty tummy. A bite?"
+sleepy = "Hmph-soft... the pebbles can wait until tomorrow."
+ill = "Even my best pebble feels heavy. Some care, please."
+hatch = "New paws. New stones. Well, that is promising."
+adult = "Grown paws sort faster. Do not rush the river."
+dead = "Leave one round pebble beside our quiet river."
+
+[[tamagotchi.characters]]
+id = 3
+name = "Tofu"
+species = "rabbit / usagi"
+archetype = "showy"
+hobby = "ribbon dancing"
+shape = 3
+body = 2
+accent = 12
+dialogue = ["Ta-da-hop! My ribbon drew a smile in the air.","Today's grand dance has one very tiny bow."]
+thoughts = ["A twirl, a hop, and a ribbon cloud!","Every practice deserves a splendid bow."]
+hungry = "The star of this twirl needs a little snack!"
+sleepy = "Curtain down; these ears need a pillow."
+ill = "My twirl feels wobbly. Could you help me recover?"
+hatch = "Ta-da-hop! A tiny dancer enters the room."
+adult = "My ears grew into the grand finale!"
+dead = "Let my ribbon flutter in your happiest memories."
+
+[[tamagotchi.characters]]
+id = 4
+name = "Kumo"
+species = "bear / kuma"
+archetype = "neighborly"
+hobby = "blending garden tea"
+shape = 4
+body = 10
+accent = 15
+dialogue = ["Cup-cuddle! I made enough garden tea to share.","Tell me your news while the kettle settles."]
+thoughts = ["A mint leaf would welcome our next visitor.","A spare cup makes a room feel bigger."]
+hungry = "Tea smells lovely, but my tummy needs food too."
+sleepy = "The kettle can rest, and so can I."
+ill = "I feel under the weather; may I have some care?"
+hatch = "A little cub, a little cup. Hello, neighbor!"
+adult = "My paws grew big enough to carry two cups."
+dead = "May our shared cup keep your afternoons warm."
+
+[[tamagotchi.characters]]
+id = 5
+name = "Nori"
+species = "frog / kaeru, kappa-inspired"
+archetype = "sunny"
+hobby = "puddle percussion"
+shape = 5
+body = 11
+accent = 9
+dialogue = ["Plip-plop-hooray! The puddle learned a new beat.","A raindrop landed right on my drum leaf!"]
+thoughts = ["Three small drips could start a whole parade.","Even a cloudy puddle can sparkle."]
+hungry = "Plip-plop... my tummy wants a snack beat!"
+sleepy = "My drum leaf needs a quiet little nap."
+ill = "My plops feel droopy. A little care, please?"
+hatch = "Plip! A tiny ripple says hello to the world."
+adult = "Bigger feet, brighter puddle beats!"
+dead = "Listen for my happy plips in the gentle rain."
+
+[[tamagotchi.characters]]
+id = 6
+name = "Sora"
+species = "bird / tsuru-inspired"
+archetype = "refined"
+hobby = "folding paper lanterns"
+shape = 6
+body = 13
+accent = 8
+dialogue = ["Fold-softly. A careful crease catches the light.","Shall we hang a paper lantern by the window?"]
+thoughts = ["A small fold can hold a wide sky.","There is grace in leaving room for light."]
+hungry = "Might we pause for a small, nourishing bite?"
+sleepy = "I shall fold my wings and rest a while."
+ill = "My wings feel unsteady; some gentle care, please."
+hatch = "A small wing unfolds. How lovely to meet you."
+adult = "My wings grew; my lanterns can hang a little higher."
+dead = "Keep a lantern glowing for our quiet evenings."
+
+[[tamagotchi.characters]]
+id = 7
+name = "Raku"
+species = "turtle / kame"
+archetype = "protective"
+hobby = "tending seedling gardens"
+shape = 7
+body = 6
+accent = 3
+dialogue = ["Shell-steady! The seedlings are safe with me.","I checked the path; every small sprout has room."]
+thoughts = ["A sturdy leaf can shelter a smaller one.","Slow rounds keep the whole garden safe."]
+hungry = "Garden watch needs a snack break, please."
+sleepy = "Shell-steady... I need a sheltered nap."
+ill = "My shell feels heavy; I need a little care."
+hatch = "Small shell, big promise: I will tend this garden."
+adult = "My shell grew; there is shade for one more sprout."
+dead = "Let the little garden grow where we once rested."
+
+[[tamagotchi.characters]]
+id = 8
+name = "Suzu"
+species = "cat / neko"
+archetype = "refined"
+hobby = "tuning tiny wind bells"
+shape = 8
+body = 0
+accent = 13
+dialogue = ["Ting-hush. This bell is nearly as soft as rain.","A clear little note can brighten the whole room."]
+thoughts = ["The breeze could use a gentler melody.","One patient tap will find the sweetest note."]
+hungry = "A small meal would help me hear the bells clearly."
+sleepy = "Ting... hush. Let the bells watch over my nap."
+ill = "My ears feel fuzzy; may I have gentle care?"
+hatch = "A tiny note, a new beginning. Ting-hush."
+adult = "My paws grew steady enough to tune the softest bell."
+dead = "May a soft bell bring our afternoons to mind."
+
+[[tamagotchi.characters]]
+id = 9
+name = "Aki"
+species = "fox / kitsune"
+archetype = "cozy"
+hobby = "pressing autumn leaves"
+shape = 9
+body = 12
+accent = 10
+dialogue = ["Leaf-snug! This little leaf fits my favorite book.","I kept a warm-colored leaf just for you."]
+thoughts = ["A book of leaves is a blanket for memories.","That curled leaf looks ready for a nap."]
+hungry = "My leaf book can wait; my tummy needs a bite."
+sleepy = "Leaf-snug... one soft nap between the pages."
+ill = "My tail feels chilly. Some cozy care, please?"
+hatch = "Tiny paws, first leaf! There is room beside me."
+adult = "My tail grew fluffy enough for bigger leaf piles."
+dead = "Keep our warmest leaf between your favorite pages."
+
+[[tamagotchi.characters]]
+id = 10
+name = "Hinoki"
+species = "tanuki / raccoon dog"
+archetype = "protective"
+hobby = "carving small wooden shelters"
+shape = 10
+body = 7
+accent = 0
+dialogue = ["Knock-kind! A strong little roof keeps friends dry.","I sanded every edge so small paws can feel safe."]
+thoughts = ["A shelter needs room for the last friend home.","Measure twice, leave a welcoming doorway."]
+hungry = "A builder needs a bite before the next careful cut."
+sleepy = "Tools tucked away; time for a safe, snug rest."
+ill = "My paws are shaky. I need care before more carving."
+hatch = "Tiny paws, sturdy plans. Knock-kind!"
+adult = "My paws grew stronger; I can build a wider doorway."
+dead = "May our little roof keep sheltering new friends."
+
+[[tamagotchi.characters]]
+id = 11
+name = "Haru"
+species = "rabbit / usagi"
+archetype = "sunny"
+hobby = "making meadow kites"
+shape = 11
+body = 5
+accent = 11
+dialogue = ["Kite-kip! The breeze is waving hello again.","I gave my kite a tail as curly as a giggle."]
+thoughts = ["A small breeze can carry a very bright idea.","Maybe clouds like watching our kites too."]
+hungry = "My kite is full of wind; my tummy could use food!"
+sleepy = "Kite down, ears down. A little nap sounds bright."
+ill = "My ears lost their spring. A little care, please?"
+hatch = "Kite-kip! Tiny ears are ready for a new breeze."
+adult = "Bigger hops, longer kite string! Hello up there!"
+dead = "Look for a cheerful kite when a kind breeze visits."
+
+[[tamagotchi.characters]]
+id = 12
+name = "Mochi"
+species = "bear / kuma"
+archetype = "athletic"
+hobby = "climbing gentle hills"
+shape = 12
+body = 15
+accent = 14
+dialogue = ["Stomp-puff! That hill has a very friendly summit.","Strong paws, steady breath, one more little climb!"]
+thoughts = ["The best hill has a view and a snack rock.","Practice makes the steep bits feel smaller."]
+hungry = "Climbing paws need a hearty little bite."
+sleepy = "Stomp... puff. A rest will make tomorrow's climb better."
+ill = "My paws feel weak; I need care before another hill."
+hatch = "Tiny cub, first foothold. Stomp-puff!"
+adult = "My paws grew sturdy; I can climb with a friend."
+dead = "Remember our brave little climbs and wide views."
+
+[[tamagotchi.characters]]
+id = 13
+name = "Puku"
+species = "frog / kaeru"
+archetype = "showy"
+hobby = "singing bubble melodies"
+shape = 13
+body = 1
+accent = 2
+dialogue = ["Bloop-bravo! Did you hear my bubble high note?","One leaf, one spotlight, one spectacular ribbit!"]
+thoughts = ["My next bubble solo needs a dramatic pause.","A perfectly round bubble deserves applause."]
+hungry = "The singer needs a snack before the next bloop!"
+sleepy = "Bloop... the encore will have to wait for a nap."
+ill = "My notes sound scratchy; could I have some care?"
+hatch = "Bloop-bravo! A little voice joins the pond."
+adult = "My voice grew round enough for a grand pond solo!"
+dead = "Let a drifting bubble carry our sweetest song."
+
+[[tamagotchi.characters]]
+id = 14
+name = "Kiri"
+species = "bird / tsuru-inspired"
+archetype = "grumbly"
+hobby = "mapping cloud shapes"
+shape = 14
+body = 9
+accent = 6
+dialogue = ["Cloud-hmph. That cloud refuses to hold still.","A cloud shaped like a sock. Very dignified."]
+thoughts = ["The messy cloud might make a decent map.","I prefer quiet skies. That pink cloud can stay."]
+hungry = "Can't chart clouds with a rumbling tummy. A bite?"
+sleepy = "Cloud-hmph... the sky can manage without me awhile."
+ill = "My feathers feel rumpled; some care would help."
+hatch = "New wings. Same unruly sky. I suppose it is lovely."
+adult = "My wings grew; the clouds still refuse my directions."
+dead = "Save one odd little cloud on our map of the sky."
+
+[[tamagotchi.characters]]
+id = 15
+name = "Iwa"
+species = "turtle / kame"
+archetype = "neighborly"
+hobby = "painting welcome stones"
+shape = 15
+body = 3
+accent = 1
+dialogue = ["Pebble-hello! I painted a welcome stone for you.","Come share a brush; there is room at my table."]
+thoughts = ["Every doorstep could use a friendly little stone.","Two brushes make the paint water extra cheerful."]
+hungry = "Shall we share a snack before painting the next stone?"
+sleepy = "Brushes washed, shell tucked. Time for a little rest."
+ill = "My brush feels heavy; could I have a little care?"
+hatch = "Small shell, first hello! Let us paint a welcome."
+adult = "My paws grew; I can paint a welcome for the whole lane."
+dead = "Keep our welcome stone where new friends can find it."

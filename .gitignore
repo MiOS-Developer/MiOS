@@ -1122,3 +1122,7 @@ usr/share/mios/virtio/*.iso
 
 # Operator prompt for remote Blade agents and subagents.
 !/handoff.md
+
+!tools/native/mios-tamagotchi/src/characters.rs
+
+!tools/native/mios-tamagotchi/src/dialogs.rs

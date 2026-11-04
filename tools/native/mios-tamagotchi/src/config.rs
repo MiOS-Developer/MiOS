@@ -27,6 +27,16 @@ pub enum HudMode {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub dialog_mode: crate::dialogs::DialogMode,
+    pub dialog_timeout_ms: u64,
+    pub dialog_query_timeout_ms: u64,
+    pub dialog_max_bytes: usize,
+    pub popup_min_width: u16,
+    pub popup_min_height: u16,
+    pub floating_thoughts: bool,
+    pub thought_interval_ticks: u64,
+    pub inline_dialog_rows: u16,
+    pub characters: Vec<crate::characters::Character>,
     pub renderer: Renderer,
     pub view_mode: ViewMode,
     pub hud_mode: HudMode,
@@ -84,6 +94,17 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), String> {
         self.game.validate()?;
+        if !(1000..=600_000).contains(&self.dialog_timeout_ms)
+            || !(50..=2000).contains(&self.dialog_query_timeout_ms)
+            || !(4096..=262_144).contains(&self.dialog_max_bytes)
+            || !(30..=200).contains(&self.popup_min_width)
+            || !(10..=80).contains(&self.popup_min_height)
+            || !(5..=3600).contains(&self.thought_interval_ticks)
+            || !(4..=12).contains(&self.inline_dialog_rows)
+        {
+            return Err("tamagotchi: invalid native/inline dialogue limits".into());
+        }
+        crate::characters::validate_catalogue(&self.characters)?;
         if !(20..=200).contains(&self.hud_minimal_width)
             || !(8..=80).contains(&self.hud_minimal_height)
         {

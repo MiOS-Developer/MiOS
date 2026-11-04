@@ -266,3 +266,34 @@ fn insufficient_funds_and_energy_do_not_spend_or_start_games() {
     assert_eq!(game.hygiene, 100);
     assert_eq!(game.coins, 0);
 }
+
+#[test]
+fn schema_one_migration_keeps_state_and_schema_two_retains_identity() {
+    let r = rules();
+    let mut game = Game::new(&r, 515);
+    for _ in 0..r.hatch_ticks {
+        game.tick(&r);
+    }
+    game.paused = true;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pet.json");
+    let mut legacy_game = serde_json::to_value(&game).unwrap();
+    legacy_game.as_object_mut().unwrap().remove("character");
+    let original = serde_json::to_vec(&serde_json::json!({"schema":1,"game":legacy_game})).unwrap();
+    std::fs::write(&path, &original).unwrap();
+    let migrated = crate::save::load(&path).unwrap().unwrap();
+    assert_eq!(migrated.character, 0);
+    assert_eq!(migrated.age_ticks, game.age_ticks);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let store = crate::save::Store::open(&path).unwrap();
+    store.save(&migrated).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(envelope["schema"], 2);
+    assert_eq!(store.load().unwrap().unwrap(), migrated);
+    for seed in 0..512 {
+        let pet = Game::new(&r, seed);
+        assert!(pet.character < 16);
+        assert_eq!(pet, Game::new(&r, seed));
+    }
+}

@@ -2,14 +2,19 @@
 // AI-related: sprite.rs, render.rs, input.rs, config.rs, specs/tamagotchi-tui
 use crate::{
     capabilities::Renderer,
+    characters::{self, Character},
     config::{Config, HudMode, ViewMode},
+    dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
     input::{action, Action, ControllerMonitor, ControllerPrompts},
     render::{Colors, RoomWidget},
     save::Store,
-    sprite::{Expression, Sprite, SpriteStyle},
+    sprite::{Appearance, Expression, Sprite, SpriteStyle},
 };
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind, MouseButton,
+    MouseEventKind,
+};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -18,7 +23,7 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     io,
     time::{Duration, Instant},
 };
@@ -41,8 +46,16 @@ pub enum Menu {
     Graphics,
     Help,
     Gallery,
+    Talk,
+    Roster,
 }
 
+#[derive(Clone, Copy)]
+enum NativeKind {
+    Talk,
+    Thought,
+    Context,
+}
 pub struct Ui {
     pub game: Game,
     pub selected: usize,
@@ -71,6 +84,18 @@ pub struct Ui {
     wander_ticks: u64,
     wander_speed: u16,
     mobile_stage: bool,
+    catalogue: Vec<Character>,
+    dialog_variant: u64,
+    dialog_page: usize,
+    dialog_rows: Cell<usize>,
+    dialog_line_count: Cell<usize>,
+    native_request: Option<NativeKind>,
+    native_modal: bool,
+    thought_ticks: u64,
+    adopt_character: Option<u8>,
+    pet_area: Cell<Rect>,
+    dialog_area: Cell<Rect>,
+    care_targets: RefCell<Vec<(Rect, usize)>>,
 }
 impl Ui {
     pub fn new(game: Game) -> Self {
@@ -103,10 +128,23 @@ impl Ui {
             wander_ticks: 0,
             wander_speed: 1,
             mobile_stage: false,
+            catalogue: Vec::new(),
+            dialog_variant: 0,
+            dialog_page: 0,
+            dialog_rows: Cell::new(1),
+            dialog_line_count: Cell::new(1),
+            native_request: None,
+            native_modal: false,
+            thought_ticks: 0,
+            adopt_character: None,
+            pet_area: Cell::new(Rect::default()),
+            dialog_area: Cell::new(Rect::default()),
+            care_targets: RefCell::new(Vec::new()),
         }
     }
     pub fn configured(game: Game, config: &Config) -> Self {
         let mut ui = Self::new(game);
+        ui.catalogue = config.characters.clone();
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
         ui.sprite_style = config.sprite_style;
@@ -168,6 +206,16 @@ impl Ui {
     fn simulate_behavior(&mut self, config: &Config) {
         use crate::game::Stage;
         self.mobile_stage = !matches!(self.game.stage(&config.game), Stage::Egg | Stage::Dead);
+        if !self.game.paused && !self.overlay_open() {
+            self.thought_ticks = self.thought_ticks.saturating_add(1);
+            if config.floating_thoughts
+                && self
+                    .thought_ticks
+                    .is_multiple_of(config.thought_interval_ticks)
+            {
+                self.native_request = Some(NativeKind::Thought);
+            }
+        }
         if !self.can_move() || self.game.energy < config.game.illness_threshold {
             return;
         }
@@ -200,19 +248,133 @@ impl Ui {
         match self.view_mode {
             ViewMode::Pixel => {
                 Sprite::animated(self.game.stage(rules), expression, self.sprite_style, pose)
+                    .recolored(self.appearance().body, self.appearance().accent)
             }
-            ViewMode::Voxel => Sprite::voxel(
+            ViewMode::Voxel => Sprite::voxel_with_appearance(
                 self.game.stage(rules),
                 expression,
                 self.sprite_style,
                 pose,
                 self.yaw,
                 self.walking(),
+                self.appearance(),
             ),
         }
     }
+    fn current_character(&self) -> Option<&Character> {
+        self.catalogue.iter().find(|c| c.id == self.game.character)
+    }
+    fn name(&self) -> &str {
+        self.current_character()
+            .map_or("MiOS-Mon", |c| c.name.as_str())
+    }
+    fn appearance(&self) -> Appearance {
+        self.current_character()
+            .map_or_else(Appearance::default, |c| Appearance {
+                shape: c.shape,
+                body: c.body,
+                accent: c.accent,
+            })
+    }
+    fn words(&self, config: &Config, thought: bool) -> String {
+        self.current_character().map_or_else(
+            || self.notice.clone(),
+            |c| {
+                if thought {
+                    characters::thought(
+                        c,
+                        &self.game,
+                        &config.game,
+                        self.dialog_variant
+                            .wrapping_add(self.visual_rng)
+                            .wrapping_add(self.game.age_ticks / config.thought_interval_ticks),
+                    )
+                } else {
+                    characters::speech(c, &self.game, &config.game, self.dialog_variant)
+                }
+            },
+        )
+    }
+    fn open_talk(&mut self) {
+        self.open(Menu::Talk);
+        self.dialog_page = 0;
+        self.native_request = Some(NativeKind::Talk);
+    }
+    fn dialog_request(&self, config: &Config, kind: NativeKind) -> DialogRequest {
+        DialogRequest {
+            title: format!(
+                "{} {}",
+                self.name(),
+                if matches!(kind, NativeKind::Thought) {
+                    "thinks"
+                } else {
+                    "says"
+                }
+            ),
+            text: self.words(
+                config,
+                matches!(kind, NativeKind::Thought | NativeKind::Context),
+            ),
+            choices: if matches!(kind, NativeKind::Context) {
+                vec![
+                    Choice::Listen,
+                    Choice::Feed,
+                    Choice::Play,
+                    Choice::Clean,
+                    Choice::Rest,
+                    Choice::Medicine,
+                    Choice::Status,
+                    Choice::Graphics,
+                    Choice::Roster,
+                    Choice::Pause,
+                    Choice::Save,
+                    Choice::Quit,
+                    Choice::Back,
+                ]
+            } else {
+                vec![
+                    Choice::Listen,
+                    Choice::Feed,
+                    Choice::Play,
+                    Choice::Rest,
+                    Choice::Back,
+                ]
+            },
+            accept_hint: self
+                .controller
+                .as_ref()
+                .map_or_else(|| "Enter".into(), |p| p.accept.clone()),
+            back_hint: self
+                .controller
+                .as_ref()
+                .map_or_else(|| "Escape".into(), |p| p.back.clone()),
+            ascii: self.renderer == Some(Renderer::Ascii),
+        }
+    }
+    fn apply_dialog_choice(&mut self, choice: Choice, rules: &Rules) -> Effect {
+        self.menu = None;
+        match choice {
+            Choice::Listen => {
+                self.dialog_variant = self.dialog_variant.wrapping_add(1);
+                self.open_talk();
+            }
+            Choice::Feed => self.care(Care::Feed, rules),
+            Choice::Play => self.care(Care::Play, rules),
+            Choice::Clean => self.care(Care::Clean, rules),
+            Choice::Rest => self.care(Care::Rest, rules),
+            Choice::Medicine => self.care(Care::Medicine, rules),
+            Choice::Status => self.open(Menu::Status),
+            Choice::Graphics => self.open(Menu::Graphics),
+            Choice::Roster => self.open(Menu::Roster),
+            Choice::Pause => self.game.paused = !self.game.paused,
+            Choice::Save => return Effect::Save,
+            Choice::Quit => return Effect::Quit,
+            Choice::Back => {}
+        }
+        Effect::Continue
+    }
     pub fn overlay_open(&self) -> bool {
-        self.menu.is_some() || self.confirm_reset
+        self.menu.is_some() || self.confirm_reset || self.native_modal
     }
     fn react(&mut self, expression: Expression) {
         self.reaction = Some(expression);
@@ -289,16 +451,25 @@ impl Ui {
         if self.confirm_reset {
             match a {
                 Action::Accept | Action::Confirm => {
-                    self.game = Game::new(
-                        rules,
-                        self.game.age_ticks.wrapping_add(u64::from(self.game.wins)),
-                    );
+                    let seed = self.next_visual_random();
+                    self.game = Game::new(rules, seed);
+                    if let Some(character) = self.adopt_character.take() {
+                        self.game.character = character;
+                    }
+                    self.mobile_stage = false;
+                    self.position = (500, 700);
+                    self.destination = self.position;
+                    self.yaw = 0;
+                    self.target_yaw = 0;
+                    self.visual_rng = self.game.visual_seed().wrapping_add(1).max(1);
+                    self.wander_ticks = 0;
                     self.confirm_reset = false;
                     self.notice = "A new egg! The next save replaces the previous pet.".into();
                     self.react(Expression::Surprised);
                 }
                 Action::Cancel => {
                     self.confirm_reset = false;
+                    self.adopt_character = None;
                     self.notice = "Kept your current pet.".into();
                 }
                 _ => {}
@@ -312,6 +483,14 @@ impl Ui {
                 } else {
                     self.open(Menu::Home);
                 }
+                return Effect::Continue;
+            }
+            Action::Talk => {
+                self.open_talk();
+                return Effect::Continue;
+            }
+            Action::Roster => {
+                self.open(Menu::Roster);
                 return Effect::Continue;
             }
             Action::Status => {
@@ -407,6 +586,26 @@ impl Ui {
         let Some(menu) = self.menu else {
             return Effect::Continue;
         };
+        if menu == Menu::Roster {
+            let count = self.catalogue.len().max(1);
+            match action {
+                Action::Cancel => self.menu = None,
+                Action::Previous | Action::Direction(Direction::Up | Direction::Left) => {
+                    self.menu_selected = (self.menu_selected + count - 1) % count
+                }
+                Action::Next | Action::Direction(Direction::Down | Direction::Right) => {
+                    self.menu_selected = (self.menu_selected + 1) % count
+                }
+                Action::Accept => {
+                    self.adopt_character = self.catalogue.get(self.menu_selected).map(|c| c.id);
+                    self.menu = None;
+                    self.ask_reset();
+                }
+                Action::Save => return Effect::Save,
+                _ => {}
+            }
+            return Effect::Continue;
+        }
         if menu == Menu::Gallery {
             match action {
                 Action::Save => {
@@ -457,12 +656,14 @@ impl Ui {
             }
         }
         let count = match menu {
-            Menu::Home => 8,
+            Menu::Home => 10,
             Menu::Care => 5,
             Menu::Games => 2,
             Menu::Graphics => 13,
             Menu::Status | Menu::Help => 1,
             Menu::Gallery => 16,
+            Menu::Talk => 7,
+            Menu::Roster => self.catalogue.len().max(1),
         };
         match action {
             Action::Cancel => {
@@ -493,11 +694,13 @@ impl Ui {
                 Menu::Home => match self.menu_selected {
                     0 => self.open(Menu::Care),
                     1 => self.open(Menu::Games),
-                    2 => self.open(Menu::Status),
-                    3 => self.open(Menu::Graphics),
-                    4 => self.open(Menu::Help),
-                    5 => self.open(Menu::Gallery),
-                    6 => {
+                    2 => self.open_talk(),
+                    3 => self.open(Menu::Roster),
+                    4 => self.open(Menu::Status),
+                    5 => self.open(Menu::Graphics),
+                    6 => self.open(Menu::Gallery),
+                    7 => self.open(Menu::Help),
+                    8 => {
                         self.menu = None;
                         return Effect::Save;
                     }
@@ -535,7 +738,32 @@ impl Ui {
                     _ => self.menu = None,
                 },
                 Menu::Status | Menu::Help => self.menu = None,
-                Menu::Gallery => {}
+                Menu::Talk => {
+                    if self.menu_selected == 0 {
+                        let rows = self.dialog_rows.get().max(1);
+                        if self.dialog_page + rows < self.dialog_line_count.get() {
+                            self.dialog_page += rows;
+                        } else {
+                            self.dialog_page = 0;
+                            self.dialog_variant = self.dialog_variant.wrapping_add(1);
+                        }
+                    } else {
+                        self.menu = None;
+                        if self.menu_selected < 6 {
+                            self.care(
+                                [
+                                    Care::Feed,
+                                    Care::Play,
+                                    Care::Clean,
+                                    Care::Rest,
+                                    Care::Medicine,
+                                ][self.menu_selected - 1],
+                                rules,
+                            );
+                        }
+                    }
+                }
+                Menu::Gallery | Menu::Roster => {}
             },
             _ => {}
         }
@@ -546,8 +774,8 @@ impl Ui {
         self.notice = "Replace this pet? Enter/Y confirms; Escape keeps it.".into();
     }
     pub fn summary(&self, rules: &Rules) -> String {
-        format!("Mio - {:?} | age {} ticks | coins {} | memory wins {}\nFull {}  Happy {}  Clean {}  Energy {}  Health {}\n{}{}{}",
-            self.game.stage(rules), self.game.age_ticks, self.game.coins, self.game.wins,
+        format!("{} - {:?} | age {} ticks | coins {} | memory wins {}\nFull {}  Happy {}  Clean {}  Energy {}  Health {}\n{}{}{}",
+            self.name(), self.game.stage(rules), self.game.age_ticks, self.game.coins, self.game.wins,
             self.game.fullness, self.game.happiness, self.game.hygiene, self.game.energy, self.game.health,
             if self.game.paused { "PAUSED " } else { "" }, if self.game.sleeping { "RESTING " } else { "" },
             if self.game.ill { "ILL - clean, then give medicine" } else { "" })
@@ -564,6 +792,9 @@ impl Ui {
         let renderer = self.renderer.unwrap_or(renderer);
         let ascii = renderer == Renderer::Ascii;
         let area = screen.area();
+        self.pet_area.set(Rect::default());
+        self.dialog_area.set(Rect::default());
+        self.care_targets.borrow_mut().clear();
         let outer = panel(" MIOS / PET ROOM ", colors, ascii);
         let inner = outer.inner(area);
         self.viewport.set((inner.width, inner.height));
@@ -596,14 +827,15 @@ impl Ui {
         {
             self.draw_minimal(screen, config, renderer, colors, frame, inner);
             if let Some(menu) = self.menu {
-                self.draw_menu(screen, menu, colors, renderer);
+                self.draw_menu(screen, menu, config, colors, renderer);
             }
             self.draw_reset(screen, colors, ascii);
             return;
         }
-        let [header, content, dock] = Layout::vertical([
+        let [header, content, dialogue, dock] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(1),
+            Constraint::Length(config.inline_dialog_rows),
             Constraint::Length(5),
         ])
         .areas(inner);
@@ -631,7 +863,7 @@ impl Ui {
             Paragraph::new(vec![
                 Line::from(vec![
                     Span::styled(
-                        " MIO ",
+                        format!(" {} ", self.name()),
                         Style::default()
                             .fg(colors.ink(0))
                             .bg(colors.ink(3))
@@ -685,6 +917,7 @@ impl Ui {
         let border = panel(&room_title, colors, ascii);
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
+        self.pet_area.set(room_inner);
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
@@ -712,6 +945,7 @@ impl Ui {
         let shortcuts = ["F", "G", "C", "R", "M", "P", "S", "N"];
         for row in 0..2 {
             let mut spans = Vec::new();
+            let mut offset = 0u16;
             for i in row * 4..row * 4 + 4 {
                 let label = if i == 3 && self.game.sleeping {
                     "Wake"
@@ -735,7 +969,18 @@ impl Ui {
                 } else {
                     format!("[{}] {label}", shortcuts[i])
                 };
-                spans.push(Span::styled(format!(" {caption:<14} "), style));
+                let printed = format!(" {caption:<14} ");
+                let width = printed.len().min(usize::from(u16::MAX)) as u16;
+                let rect = Rect::new(
+                    actions.x.saturating_add(offset),
+                    actions.y.saturating_add(row as u16),
+                    width,
+                    1,
+                )
+                .intersection(actions);
+                self.care_targets.borrow_mut().push((rect, i));
+                offset = offset.saturating_add(width + 1);
+                spans.push(Span::styled(printed, style));
                 spans.push(Span::raw(" "));
             }
             lines.push(Line::from(spans));
@@ -775,22 +1020,10 @@ impl Ui {
                 )
             };
             self.bubble(screen, room, &text, colors, ascii);
-        } else if !self.notice.is_empty() && room_inner.height >= 10 {
-            let text = self.notice.clone();
-            let strip = Rect::new(
-                room_inner.x,
-                room_inner.bottom().saturating_sub(1),
-                room_inner.width,
-                1,
-            );
-            screen.render_widget(
-                Paragraph::new(text)
-                    .style(Style::default().fg(colors.ink(2)).bg(colors.background)),
-                strip,
-            );
         }
+        self.draw_dialogue(screen, config, colors, renderer, dialogue, false);
         if let Some(menu) = self.menu {
-            self.draw_menu(screen, menu, colors, renderer);
+            self.draw_menu(screen, menu, config, colors, renderer);
         }
         self.draw_reset(screen, colors, ascii);
     }
@@ -803,11 +1036,13 @@ impl Ui {
         frame: usize,
         area: Rect,
     ) {
-        let [title, needs, room, actions] = Layout::vertical([
+        let talking = self.menu == Some(Menu::Talk);
+        let [title, needs, room, dialogue, actions] = Layout::vertical([
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(if talking { 0 } else { 1 }),
             Constraint::Min(1),
-            Constraint::Length(2),
+            Constraint::Length(if talking { 3 } else { 1 }),
+            Constraint::Length(if talking { 0 } else { 2 }),
         ])
         .areas(area);
         let state = if self.game.paused {
@@ -834,6 +1069,7 @@ impl Ui {
             .style(Style::default().fg(colors.ink(2))),
             needs,
         );
+        self.pet_area.set(room);
         let sprite = self.pet_sprite(&config.game, frame);
         let expression = self.expression(&config.game, frame);
         screen.render_widget(
@@ -864,6 +1100,7 @@ impl Ui {
             Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
             actions,
         );
+        self.draw_dialogue(screen, config, colors, renderer, dialogue, true);
         if let Some(challenge) = &self.game.challenge {
             let text = if challenge.reveal > 0 {
                 format!(
@@ -872,7 +1109,12 @@ impl Ui {
                     challenge
                         .pattern
                         .iter()
-                        .map(|d| d.label())
+                        .map(|d| match d {
+                            Direction::Up => "U",
+                            Direction::Down => "D",
+                            Direction::Left => "L",
+                            Direction::Right => "R",
+                        })
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -889,16 +1131,205 @@ impl Ui {
             self.bubble(screen, area, &text, colors, renderer == Renderer::Ascii);
         }
     }
+    fn draw_dialogue(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+        area: Rect,
+        compact: bool,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        self.dialog_area.set(area);
+        let talking = self.menu == Some(Menu::Talk);
+        let text = self.words(config, !talking);
+        let title = format!(
+            " {} {} ",
+            self.name(),
+            if talking { "says" } else { "thinks" }
+        );
+        let body = if compact {
+            area
+        } else {
+            let block = panel(&title, colors, renderer == Renderer::Ascii);
+            let inner = block.inner(area);
+            screen.render_widget(block, area);
+            inner
+        };
+        let reserved = if talking { 2 } else { 0 };
+        let rows = usize::from(body.height.saturating_sub(reserved)).max(1);
+        let words = wrap_dialogue(&text, usize::from(body.width));
+        self.dialog_rows.set(rows);
+        self.dialog_line_count.set(words.len());
+        let start = if talking {
+            self.dialog_page.min(words.len().saturating_sub(1))
+        } else {
+            0
+        };
+        let mut lines: Vec<Line> = words
+            .into_iter()
+            .skip(start)
+            .take(rows)
+            .map(Line::from)
+            .collect();
+        if talking {
+            let label = [
+                "Read more",
+                "Feed",
+                "Memory",
+                "Clean",
+                "Rest",
+                "Medicine",
+                "Back",
+            ][self.menu_selected.min(6)];
+            let (accept, back) = self.controller.as_ref().map_or_else(
+                || ("Enter".into(), "Esc".into()),
+                |pad| (tiny_button(&pad.accept), tiny_button(&pad.back)),
+            );
+            lines.push(
+                Line::from(format!("[{accept}] {label}")).style(Style::default().fg(colors.ink(7))),
+            );
+            lines.push(
+                Line::from(format!("[{back}] Back / Tab"))
+                    .style(Style::default().fg(colors.ink(13))),
+            );
+        } else if !compact && lines.len() < usize::from(body.height) {
+            lines.push(Line::from(self.notice.clone()).style(Style::default().fg(colors.ink(13))));
+        }
+        screen.render_widget(
+            Paragraph::new(lines).style(Style::default().fg(colors.ink(2)).bg(colors.background)),
+            body,
+        );
+    }
+    fn draw_roster(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+    ) {
+        let Some(character) = self
+            .catalogue
+            .get(self.menu_selected % self.catalogue.len().max(1))
+        else {
+            return;
+        };
+        let ascii = renderer == Renderer::Ascii;
+        let area = screen.area();
+        screen.render_widget(Clear, area);
+        let title = format!(
+            " ROSTER {}/{} / PREVIEW ",
+            self.menu_selected + 1,
+            self.catalogue.len()
+        );
+        let block = panel(&title, colors, ascii);
+        let inner = block.inner(area);
+        screen.render_widget(block, area);
+        let compact = inner.width < 50 || inner.height < 16;
+        let [header, info, room, controls] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(if compact { 1 } else { 3 }),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ])
+        .areas(inner);
+        screen.render_widget(
+            Paragraph::new(format!("{} / {}", character.name, character.species))
+                .style(Style::default().fg(colors.ink(7))),
+            header,
+        );
+        let detail = if compact {
+            format!("{} / {}", character.archetype, character.hobby)
+        } else {
+            format!(
+                "{} / {}\n{}\nYour current pet is unchanged.",
+                character.archetype,
+                character.hobby,
+                characters::thought(character, &self.game, &config.game, self.dialog_variant)
+            )
+        };
+        screen.render_widget(
+            Paragraph::new(detail)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(colors.ink(2))),
+            info,
+        );
+        let expression = Expression::Happy;
+        let appearance = Appearance {
+            shape: character.shape,
+            body: character.body,
+            accent: character.accent,
+        };
+        let sprite = match self.view_mode {
+            ViewMode::Pixel => Sprite::animated(
+                crate::game::Stage::Adult,
+                expression,
+                self.sprite_style,
+                self.frame,
+            )
+            .recolored(character.body, character.accent),
+            ViewMode::Voxel => Sprite::voxel_with_appearance(
+                crate::game::Stage::Adult,
+                expression,
+                self.sprite_style,
+                self.frame,
+                ((self.frame / 2 * 15) % 360) as u16,
+                false,
+                appearance,
+            ),
+        };
+        screen.render_widget(
+            RoomWidget {
+                sprite: &sprite,
+                renderer,
+                scale: 0,
+                colors,
+                expression,
+                frame: self.frame,
+                position: (500, 700),
+            },
+            room,
+        );
+        let hints = self.controller.as_ref().map_or_else(
+            || "Arrows: animal  Enter: adopt?\nEsc: keep current pet".into(),
+            |p| {
+                format!(
+                    "{}: animal [{}] adopt?\n[{}] keep current",
+                    p.navigate,
+                    tiny_button(&p.accept),
+                    tiny_button(&p.back)
+                )
+            },
+        );
+        screen.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            controls,
+        );
+    }
     fn draw_reset(&self, screen: &mut Frame, colors: &Colors, ascii: bool) {
         let area = screen.area();
         if self.confirm_reset {
             let modal = center(area, 62, 7);
             screen.render_widget(Clear, modal);
+            let question = self
+                .adopt_character
+                .and_then(|id| self.catalogue.get(usize::from(id)))
+                .map_or_else(
+                    || "Replace pet?".to_owned(),
+                    |c| format!("Adopt {}?", c.name),
+                );
             let prompt = if area.width < 40 || area.height < 14 {
                 if let Some(pad) = &self.controller {
-                    format!("Replace pet?\n{}: New\n{}: Keep", pad.accept, pad.back)
+                    format!(
+                        "{question}\n{}: New\n{}: Keep",
+                        compact_button(&pad.accept),
+                        compact_button(&pad.back)
+                    )
                 } else {
-                    "Replace pet?\nEnter/Y: New\nEsc: Keep".into()
+                    format!("{question}\nEnter/Y: New\nEsc: Keep")
                 }
             } else if let Some(pad) = &self.controller {
                 format!("Replace this pet with a new egg?\nYour current save changes only after confirmation.\n\n[{}] New pet    [{}] Keep current pet", pad.accept,pad.back)
@@ -977,8 +1408,22 @@ impl Ui {
             area,
         );
     }
-    fn draw_menu(&self, screen: &mut Frame, menu: Menu, colors: &Colors, renderer: Renderer) {
+    fn draw_menu(
+        &self,
+        screen: &mut Frame,
+        menu: Menu,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+    ) {
         let ascii = renderer == Renderer::Ascii;
+        if menu == Menu::Talk {
+            return;
+        }
+        if menu == Menu::Roster {
+            self.draw_roster(screen, config, colors, renderer);
+            return;
+        }
         if menu == Menu::Gallery {
             let expressions = [
                 Expression::Idle,
@@ -1029,14 +1474,16 @@ impl Ui {
             let sprite = match self.view_mode {
                 ViewMode::Pixel => {
                     Sprite::animated(stage, expression, self.sprite_style, self.frame)
+                        .recolored(self.appearance().body, self.appearance().accent)
                 }
-                ViewMode::Voxel => Sprite::voxel(
+                ViewMode::Voxel => Sprite::voxel_with_appearance(
                     stage,
                     expression,
                     self.sprite_style,
                     self.frame,
                     ((self.frame / 2 * 15) % 360) as u16,
                     false,
+                    self.appearance(),
                 ),
             };
             screen.render_widget(
@@ -1071,10 +1518,12 @@ impl Ui {
                 vec![
                     "Care",
                     "Games",
+                    "Talk",
+                    "Roster",
                     "Status",
                     "Graphics",
-                    "Help",
                     "Sprite studio",
+                    "Help",
                     "Save",
                     "Quit",
                 ],
@@ -1110,7 +1559,9 @@ impl Ui {
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
-            Menu::Gallery => unreachable!("gallery draws its own full viewport"),
+            Menu::Gallery | Menu::Talk | Menu::Roster => {
+                unreachable!("special menus draw their own view")
+            }
         };
         let extra = if matches!(menu, Menu::Status | Menu::Help) {
             if self.controller.is_some() && menu == Menu::Help {
@@ -1243,6 +1694,44 @@ impl Ui {
             if self.game.paused {"Clock paused. "} else {""},if self.game.ill {"Needs medicine."} else {"Healthy."})
     }
 }
+fn tiny_button(value: &str) -> String {
+    compact_button(value)
+        .replace("Cross", "X")
+        .replace("Circle", "O")
+        .replace("South", "S")
+        .replace("East", "E")
+        .replace("West", "W")
+        .replace("North", "N")
+}
+fn wrap_dialogue(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.len() + 1 + word.len() > width {
+            out.push(std::mem::take(&mut line));
+        }
+        for chunk in word.as_bytes().chunks(width) {
+            let part = String::from_utf8_lossy(chunk);
+            if !line.is_empty() && line.len() + 1 + part.len() > width {
+                out.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(&part);
+        }
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
 fn compact_button(value: &str) -> String {
     value
         .strip_prefix("Tap ")
@@ -1284,6 +1773,44 @@ fn panel<'a>(title: &'a str, colors: &Colors, ascii: bool) -> Block<'a> {
     }
     block
 }
+struct MouseCapture;
+impl MouseCapture {
+    fn enable() -> io::Result<Self> {
+        crossterm::execute!(io::stdout(), EnableMouseCapture)?;
+        Ok(Self)
+    }
+}
+impl Drop for MouseCapture {
+    fn drop(&mut self) {
+        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+    }
+}
+fn apply_effect(
+    effect: Effect,
+    ui: &mut Ui,
+    store: Option<&Store>,
+    last_save: &mut Instant,
+) -> io::Result<bool> {
+    match effect {
+        Effect::Quit => {
+            if let Some(s) = store {
+                s.save(&ui.game).map_err(io::Error::other)?;
+            }
+            return Ok(true);
+        }
+        Effect::Save => {
+            if let Some(s) = store {
+                s.save(&ui.game).map_err(io::Error::other)?;
+                ui.notice = "Saved locally.".into();
+                *last_save = Instant::now();
+            } else {
+                ui.notice = "Sample mode: no save file is written.".into();
+            }
+        }
+        Effect::Continue => {}
+    }
+    Ok(false)
+}
 pub fn run(
     terminal: &mut DefaultTerminal,
     config: &Config,
@@ -1294,10 +1821,39 @@ pub fn run(
 ) -> io::Result<()> {
     let mut ui = Ui::configured(game, config);
     let mut controller = ControllerMonitor::new(config);
+    let mut native = NativeDialogs::new(config);
+    let _mouse = MouseCapture::enable()?;
     let mut last_tick = Instant::now();
     let mut last_save = Instant::now();
     let animation = Instant::now();
     loop {
+        while let Some(reply) = native.poll() {
+            match reply {
+                DialogEvent::Opened => ui.native_modal = true,
+                DialogEvent::Selected(choice) => {
+                    ui.native_modal = false;
+                    let effect = ui.apply_dialog_choice(choice, &config.game);
+                    if apply_effect(effect, &mut ui, store, &mut last_save)? {
+                        return Ok(());
+                    }
+                }
+                DialogEvent::Closed => {
+                    ui.native_modal = false;
+                    ui.menu = None;
+                }
+                DialogEvent::Inline => ui.native_modal = false,
+            }
+            last_tick = Instant::now();
+        }
+        if let Some(kind) = ui.native_request.take() {
+            let context = matches!(kind, NativeKind::Context);
+            let mut request = ui.dialog_request(config, kind);
+            request.ascii = ui.renderer.unwrap_or(renderer) == Renderer::Ascii;
+            if native.request(request, context) {
+                ui.native_modal = true;
+                last_tick = Instant::now();
+            }
+        }
         let frame =
             (animation.elapsed().as_millis() / u128::from(config.animation_frame_ms)) as usize;
         ui.animate(frame);
@@ -1307,35 +1863,59 @@ pub fn run(
         if event::poll(Duration::from_millis(
             config.tick_ms.min(config.animation_frame_ms),
         ))? {
-            if let Event::Key(key) = event::read()? {
-                let was_paused = ui.game.paused;
-                let was_overlay = ui.overlay_open();
-                let old_age = ui.game.age_ticks;
-                let effect = ui.handle(key, &config.game);
-                if ui.game.paused != was_paused
-                    || ui.overlay_open() != was_overlay
-                    || ui.game.age_ticks < old_age
-                {
-                    last_tick = Instant::now();
+            let incoming = event::read()?;
+            let was_paused = ui.game.paused;
+            let was_overlay = ui.overlay_open();
+            let old_age = ui.game.age_ticks;
+            let effect = match incoming {
+                Event::Key(key) => ui.handle(key, &config.game),
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Right) => {
+                    ui.open(Menu::Home);
+                    ui.native_request = Some(NativeKind::Context);
+                    Effect::Continue
                 }
-                match effect {
-                    Effect::Quit => {
-                        if let Some(s) = store {
-                            s.save(&ui.game).map_err(io::Error::other)?;
-                        }
-                        return Ok(());
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                    let point = (mouse.column, mouse.row).into();
+                    let selected = ui
+                        .care_targets
+                        .borrow()
+                        .iter()
+                        .find(|(r, _)| r.contains(point))
+                        .map(|(_, i)| *i);
+                    if let Some(index) = selected {
+                        ui.selected = index;
+                        ui.handle(
+                            KeyEvent::new(
+                                crossterm::event::KeyCode::Enter,
+                                crossterm::event::KeyModifiers::NONE,
+                            ),
+                            &config.game,
+                        )
+                    } else if ui.dialog_area.get().contains(point) && ui.menu == Some(Menu::Talk) {
+                        ui.handle(
+                            KeyEvent::new(
+                                crossterm::event::KeyCode::Enter,
+                                crossterm::event::KeyModifiers::NONE,
+                            ),
+                            &config.game,
+                        )
+                    } else if ui.pet_area.get().contains(point) {
+                        ui.open_talk();
+                        Effect::Continue
+                    } else {
+                        Effect::Continue
                     }
-                    Effect::Save => {
-                        if let Some(s) = store {
-                            s.save(&ui.game).map_err(io::Error::other)?;
-                            ui.notice = "Saved locally.".into();
-                            last_save = Instant::now();
-                        } else {
-                            ui.notice = "Sample mode: no save file is written.".into();
-                        }
-                    }
-                    Effect::Continue => {}
                 }
+                _ => Effect::Continue,
+            };
+            if ui.game.paused != was_paused
+                || ui.overlay_open() != was_overlay
+                || ui.game.age_ticks < old_age
+            {
+                last_tick = Instant::now();
+            }
+            if apply_effect(effect, &mut ui, store, &mut last_save)? {
+                return Ok(());
             }
         }
         if ui.overlay_open() {
@@ -1492,7 +2072,7 @@ mod graphics_tests {
     fn visible_save_quit_and_sprite_studio_match_their_menu_actions() {
         let (config, mut ui) = pet();
         ui.open(Menu::Home);
-        ui.menu_selected = 5;
+        ui.menu_selected = 6;
         assert_eq!(
             ui.handle(key(KeyCode::Enter), &config.game),
             Effect::Continue
@@ -1509,10 +2089,10 @@ mod graphics_tests {
         }
         assert_eq!(ui.game, saved);
         ui.open(Menu::Home);
-        ui.menu_selected = 6;
+        ui.menu_selected = 8;
         assert_eq!(ui.handle(key(KeyCode::Enter), &config.game), Effect::Save);
         ui.open(Menu::Home);
-        ui.menu_selected = 7;
+        ui.menu_selected = 9;
         let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal
@@ -1674,7 +2254,7 @@ mod graphics_tests {
                 .collect();
             assert!(text.contains("[Enter]"));
             assert!(!text.contains("Terminal too small"));
-            for index in 0..8 {
+            for index in 0..10 {
                 ui.open(Menu::Home);
                 ui.menu_selected = index;
                 terminal
@@ -1690,10 +2270,12 @@ mod graphics_tests {
                 let label = [
                     "Care",
                     "Games",
+                    "Talk",
+                    "Roster",
                     "Status",
                     "Graphics",
-                    "Help",
                     "Sprite studio",
+                    "Help",
                     "Save",
                     "Quit",
                 ][index];
@@ -1741,7 +2323,7 @@ mod graphics_tests {
             for (width, height) in [(20, 8), (28, 10)] {
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                 ui.open(Menu::Home);
-                ui.menu_selected = 7;
+                ui.menu_selected = 9;
                 terminal
                     .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
                     .unwrap();
@@ -1757,5 +2339,79 @@ mod graphics_tests {
                 assert!(text.contains(&format!("{}: Back", compact_button(back))));
             }
         }
+    }
+    #[test]
+    fn roster_is_read_only_until_adoption_is_confirmed_and_resets_presentation() {
+        let (config, mut ui) = pet();
+        let saved = ui.game.clone();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        for index in 0..16 {
+            ui.open(Menu::Roster);
+            ui.menu_selected = index;
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, index, false))
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(text.contains(&config.characters[index].name));
+            assert_eq!(ui.game, saved);
+        }
+        ui.destination = (900, 900);
+        ui.mobile_stage = true;
+        ui.open(Menu::Roster);
+        ui.menu_selected = 15;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(ui.confirm_reset);
+        assert_eq!(ui.game, saved);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.game, saved);
+        ui.open(Menu::Roster);
+        ui.menu_selected = 15;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.game.character, 15);
+        assert_eq!(ui.game.age_ticks, 0);
+        let position = ui.position;
+        ui.animate(100);
+        assert_eq!(ui.position, position);
+        assert_eq!(ui.destination, position);
+        assert!(!ui.mobile_stage);
+    }
+    #[test]
+    fn inline_dialogue_pages_without_mutating_pet_and_compact_memory_shows_all_tokens() {
+        let (config, mut ui) = pet();
+        ui.hud_mode = HudMode::Minimal;
+        ui.open(Menu::Talk);
+        ui.native_request = None;
+        let saved = ui.game.clone();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.game, saved);
+        ui.menu = None;
+        ui.game.care(Care::Play, &config.game);
+        let challenge = ui.game.challenge.as_mut().unwrap();
+        challenge.pattern = [Direction::Right; 3];
+        challenge.reveal = 2;
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("R R R"), "{text}");
     }
 }

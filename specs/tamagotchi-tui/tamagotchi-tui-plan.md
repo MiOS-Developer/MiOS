@@ -975,3 +975,15 @@ ASCII headless output remain available. Compact menus scroll; the smallest
 interactive layout is 20x8. These concrete features do not certify the broader
 future character catalogue, additional economy/social games, physical controller
 coverage, smartwatch browser integration or performance targets in this design.
+
+### Original animal catalogue and dialogue transport (tasks 3716–3717)
+
+The implementation now includes sixteen original Japanese-inspired animal
+MiOS-Mons, stable schema-2 identity with read-only schema-1 migration, eight
+personality archetypes, individual hobbies, state-aware voices and thoughts.
+Native tmux popups and right-click context menus target only a verified owning
+client; inline below-view dialogue and compact paging remain available in
+restricted/remote transports. These characters and dialogue are original; the
+research note distinguishes primary Nintendo design statements, community
+documentation and our implementation choices. Physical mobile-browser and
+controller acceptance remains a per-session runtime receipt.

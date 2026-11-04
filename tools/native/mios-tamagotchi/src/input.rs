@@ -15,6 +15,8 @@ pub enum Action {
     Reset,
     Confirm,
     Menu,
+    Talk,
+    Roster,
     Status,
     Graphics,
     Help,
@@ -56,6 +58,8 @@ pub fn action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('y') => Some(Action::Confirm),
         KeyCode::Char('o') | KeyCode::F(1) => Some(Action::Menu),
         KeyCode::Char('i') => Some(Action::Status),
+        KeyCode::Char('t') => Some(Action::Talk),
+        KeyCode::Char('b') => Some(Action::Roster),
         KeyCode::Char('v') => Some(Action::Graphics),
         KeyCode::Char('?') => Some(Action::Help),
         KeyCode::Char('f') => Some(Action::Care(Care::Feed)),
@@ -423,7 +427,7 @@ fn focused_client(
     mut is_descendant: impl FnMut(u32, u32) -> bool,
 ) -> bool {
     clients.lines().any(|line| {
-        let Some((pid, active_pane)) = line.split_once('\t') else {
+        let Some((pid, active_pane)) = line.split_once('|') else {
             return false;
         };
         active_pane == pane
@@ -447,7 +451,7 @@ fn focus(id: &Identity, context: &Json, query: &Query<'_>) -> Option<bool> {
                 socket.to_str()?,
                 "list-clients",
                 "-F",
-                "#{client_pid}\t#{pane_id}",
+                "#{client_pid}|#{pane_id}",
             ],
             None,
         )?;
@@ -761,6 +765,86 @@ fn resolve_prompts(
     })
 }
 
+/// An explicitly inherited, uniquely attached human client for native dialogues.
+/// A compositor session also proves the selected pane's client under the focused
+/// terminal. Console/SSH clients have no compositor and require one attached owner.
+#[derive(Clone, Debug)]
+pub struct DialogTarget {
+    pub socket: PathBuf,
+    pub pane: String,
+    pub client: String,
+    pub width: u16,
+    pub height: u16,
+}
+pub fn attached_dialog_target(
+    timeout_ms: u64,
+    max_bytes: usize,
+    min_width: u16,
+    min_height: u16,
+) -> Option<DialogTarget> {
+    let id = Identity::from_env()?;
+    let (socket, pane) = id.tmux.as_ref()?;
+    let stop = AtomicBool::new(false);
+    let timeout = Duration::from_millis(timeout_ms);
+    let query = Query {
+        deadline: Instant::now() + timeout * 3,
+        timeout,
+        max_bytes,
+        stop: &stop,
+    };
+    let bytes = query.command(
+        "tmux",
+        &[
+            "-S",
+            socket.to_str()?,
+            "list-clients",
+            "-F",
+            "#{client_pid}|#{client_tty}|#{pane_id}|#{client_width}|#{client_height}",
+        ],
+        None,
+    )?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    let mut eligible = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<_> = line.split('|').collect();
+        if fields.len() != 5 || fields[2] != pane {
+            continue;
+        }
+        let pid: u32 = fields[0].parse().ok()?;
+        let width: u16 = fields[3].parse().ok()?;
+        let height: u16 = fields[4].parse().ok()?;
+        if pid == 0
+            || width < min_width
+            || height < min_height
+            || !fields[1].starts_with("/dev/")
+            || !fields[1].bytes().all(|b| b.is_ascii_graphic())
+        {
+            continue;
+        }
+        eligible.push((pid, fields[1].to_owned(), width, height));
+    }
+    // Multiple attached clients share one game but not popup focus; inline
+    // dialogue keeps remote/mobile viewers in sync without choosing for them.
+    if eligible.len() != 1 {
+        return None;
+    }
+    let (pid, client, width, height) = eligible.pop()?;
+    if id.instance.is_some() {
+        let context = query.json("mios-inputd", &["context"], None)?;
+        let focused: u32 = context["pid"].as_u64()?.try_into().ok()?;
+        if !descendant(pid, focused) {
+            return None;
+        }
+    }
+    Some(DialogTarget {
+        socket: socket.clone(),
+        pane: pane.clone(),
+        client,
+        width,
+        height,
+    })
+}
+
 #[cfg(test)]
 mod controller_tests {
     use super::*;
@@ -960,11 +1044,11 @@ mod controller_tests {
             assert!(parse_tmux(tmux, pane).is_none());
         }
         let ancestry = |pid, focused| pid == 11 && focused == 42;
-        assert!(focused_client("11\t%7\n22\t%8", "%7", 42, ancestry));
-        assert!(!focused_client("11\t%8", "%7", 42, ancestry));
-        assert!(!focused_client("22\t%7", "%7", 42, ancestry));
-        assert!(!focused_client("11\t%7", "%7", 99, ancestry));
-        assert!(!focused_client("invalid\t%7", "%7", 42, ancestry));
+        assert!(focused_client("11|%7\n22|%8", "%7", 42, ancestry));
+        assert!(!focused_client("11|%8", "%7", 42, ancestry));
+        assert!(!focused_client("22|%7", "%7", 42, ancestry));
+        assert!(!focused_client("11|%7", "%7", 99, ancestry));
+        assert!(!focused_client("invalid|%7", "%7", 42, ancestry));
         assert!(descendant(std::process::id(), std::process::id()));
         assert!(!descendant(std::process::id(), u32::MAX));
     }

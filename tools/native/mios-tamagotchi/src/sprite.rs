@@ -30,6 +30,35 @@ pub enum Expression {
     Dead,
 }
 
+/// Original animal geometry and indexed colors supplied by the character roster.
+/// Untrusted indices are reduced to the sixteen supported shapes/colors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Appearance {
+    pub shape: u8,
+    pub body: u8,
+    pub accent: u8,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            shape: 0,
+            body: 1,
+            accent: 11,
+        }
+    }
+}
+
+impl Appearance {
+    fn bounded(self) -> Self {
+        Self {
+            shape: self.shape % 16,
+            body: self.body % 16,
+            accent: self.accent % 16,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Sprite {
     width: u16,
@@ -48,12 +77,51 @@ impl Sprite {
         yaw_degrees: u16,
         walking: bool,
     ) -> Self {
+        Self::voxel_with_appearance(
+            stage,
+            expression,
+            style,
+            frame,
+            yaw_degrees,
+            walking,
+            Appearance::default(),
+        )
+    }
+
+    /// Render one of eight original animal families, with two volume variants
+    /// each. Family is shape % 8; shapes 8..15 change geometry as well as color.
+    pub fn voxel_with_appearance(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+        yaw_degrees: u16,
+        walking: bool,
+        appearance: Appearance,
+    ) -> Self {
         use crate::game::Stage;
         let dead = stage == Stage::Dead || expression == Expression::Dead;
         let stage = if dead { Stage::Dead } else { stage };
         let expression = if dead { Expression::Dead } else { expression };
-        let model = VoxelModel::pet(stage, expression, style, frame % 4, walking);
+        let mut model = VoxelModel::pet(stage, expression, style, frame % 4, walking);
+        model.animal(stage, style, appearance.bounded());
         model.rasterize(style, yaw_degrees, expression == Expression::Sleeping)
+    }
+
+    /// Palette-only fallback for the existing pixel artwork. Preserve eyes,
+    /// blush, mouth and props; body highlights use the selected body's ramp.
+    pub fn recolored(&self, body: u8, accent: u8) -> Self {
+        let (body, accent) = (body % 16, accent % 16);
+        let mut sprite = self.clone();
+        for color in sprite.pixels.iter_mut().flatten() {
+            *color = match *color {
+                1 => body,
+                3 => voxel_shade(body, 1.0),
+                11 => accent,
+                other => other,
+            };
+        }
+        sprite
     }
 
     /// Fit using one rational scale and nearest-neighbor pixel centers. Integer
@@ -661,6 +729,7 @@ impl Sprite {
 // rear seed seam therefore disappear naturally behind the body when it turns.
 #[derive(Default)]
 struct VoxelModel {
+    appearance: Option<Appearance>,
     cells: std::collections::BTreeMap<(i32, i32, i32), u8>,
 }
 
@@ -761,7 +830,7 @@ impl VoxelModel {
                     model.ellipsoid([sign * side, hand_y, front], [1.2, 1.8, 1.4], 1);
                 }
                 // Feet alternate in both height and depth: a genuine 3D gait.
-                let gait = if walking && !matches!(expression, Sleeping | Sick) {
+                let gait: f32 = if walking && !matches!(expression, Sleeping | Sick) {
                     [0.0, 1.0, 0.0, -1.0][phase]
                 } else {
                     0.0
@@ -1065,6 +1134,8 @@ impl VoxelModel {
                 }
                 let light = -0.45 * n[0] + 0.65 * n[1] + 0.45 * n[2];
                 let color = match material {
+                    16 => voxel_shade(self.appearance.unwrap_or_default().body, light),
+                    17 => voxel_shade(self.appearance.unwrap_or_default().accent, light),
                     1 if light < 0.15 => 11,
                     1 if light > 0.65 => 3,
                     4 if light < 0.15 => 14,
@@ -1132,6 +1203,278 @@ fn raster_triangle(sprite: &mut Sprite, depth: &mut [f32], v: [[f32; 3]; 3], col
                 sprite.pixels[i] = Some(color);
             }
         }
+    }
+}
+
+impl VoxelModel {
+    fn animal(&mut self, stage: crate::game::Stage, style: SpriteStyle, appearance: Appearance) {
+        use crate::game::Stage;
+        let fine = style == SpriteStyle::SixteenBit;
+        let (rx, ry, rz) = match (fine, stage) {
+            (false, Stage::Egg) => (4.0, 5.0, 3.0),
+            (false, Stage::Baby) => (3.0, 2.8, 2.5),
+            (false, Stage::Child) => (4.0, 3.8, 3.0),
+            (false, _) => (4.4, 4.5, 3.5),
+            (true, Stage::Egg) => (5.5, 7.0, 4.5),
+            (true, Stage::Baby) => (4.5, 4.0, 3.5),
+            (true, Stage::Child) => (5.5, 5.5, 4.0),
+            (true, _) => (6.2, 6.5, 4.8),
+        };
+        let variant = appearance.shape >= 8;
+        // Retain the existing emotion's highest relief sample per face column,
+        // then move it onto the new muzzle after adding the animal volumes.
+        let eye_y = if stage == Stage::Egg {
+            0
+        } else {
+            (ry * 0.24) as i32
+        };
+        let mut face = std::collections::BTreeMap::new();
+        for (&(x, y, z), &color) in &self.cells {
+            if x.abs() <= if fine { 4 } else { 3 }
+                && (eye_y - 4..=eye_y + 3).contains(&y)
+                && z > 0
+                && matches!(color, 0 | 2 | 5 | 6)
+            {
+                let old = face.entry((x, y)).or_insert((z, color));
+                if z > old.0 {
+                    *old = (z, color);
+                }
+            }
+        }
+        if !matches!(stage, Stage::Egg | Stage::Dead) {
+            // Remove the generic sprout above the rounded crown; families grow
+            // their own ears/crest. Keep all care props below this crown.
+            self.cells.retain(|&(_, y, _), _| y as f32 <= ry + 0.5);
+        }
+        for color in self.cells.values_mut() {
+            *color = match *color {
+                1 => 16,
+                11 => 17,
+                4 if stage == Stage::Egg => 16,
+                15 if stage == Stage::Dead => 16,
+                other => other,
+            };
+        }
+        self.appearance = Some(appearance);
+        match appearance.shape % 8 {
+            0 => {
+                // Neko: tapering cat ears, paired muzzle and a curled tail.
+                for sign in [-1.0, 1.0] {
+                    for level in 0..3 {
+                        let h = level as f32;
+                        let folded = variant && sign < 0.0;
+                        self.ellipsoid(
+                            [
+                                sign * (rx * 0.65 + if folded { h * 0.35 } else { 0.0 }),
+                                ry * 0.82 + h * if folded { 0.45 } else { 0.9 },
+                                -0.3,
+                            ],
+                            [1.5 - h * 0.4, 1.0, 1.1 - h * 0.2],
+                            16,
+                        );
+                    }
+                    self.ellipsoid([sign * 1.0, -0.8, rz], [1.2, 0.9, 1.0], 17);
+                }
+                for step in 0..4 {
+                    let t = step as f32;
+                    self.ellipsoid(
+                        [
+                            rx * 0.7 + t * 0.5,
+                            -ry * 0.65 + if variant { t * 1.1 } else { t * 0.35 },
+                            -rz - 0.6,
+                        ],
+                        [0.8, 0.9, 0.9],
+                        if step == 3 { 17 } else { 16 },
+                    );
+                }
+            }
+            1 => {
+                // Kitsune: tall narrow ears, a pointed snout and a bushy tail.
+                for sign in [-1.0, 1.0] {
+                    self.ellipsoid([sign * rx * 0.55, ry + 0.4, -0.7], [1.1, 2.6, 1.1], 16);
+                    self.ellipsoid([sign * rx * 0.55, ry + 0.5, 0.0], [0.6, 1.6, 0.6], 17);
+                }
+                self.ellipsoid([0.0, -0.8, rz + 0.6], [1.9, 1.2, 1.8], 17);
+                self.ellipsoid([0.0, -0.8, rz + 2.0], [0.8, 0.7, 0.8], 0);
+                let tail_y = if variant { 1.0 } else { -ry * 0.4 };
+                self.ellipsoid(
+                    [rx * 0.5, tail_y, -rz - 1.6],
+                    [2.0, if variant { 3.0 } else { 1.6 }, 2.2],
+                    16,
+                );
+                self.ellipsoid(
+                    [
+                        rx * 0.5,
+                        tail_y + if variant { 2.0 } else { 0.0 },
+                        -rz - 2.6,
+                    ],
+                    [1.4, 1.2, 1.3],
+                    17,
+                );
+                if variant {
+                    self.ellipsoid([0.0, ry + 0.5, 1.0], [1.0, 1.6, 0.8], 17);
+                }
+            }
+            2 => {
+                // Tanuki: small round ears, cheek mask and a ringed barrel tail.
+                for sign in [-1.0, 1.0] {
+                    self.ellipsoid([sign * rx * 0.65, ry * 0.8, -0.6], [1.6, 1.6, 1.3], 17);
+                    self.ellipsoid([sign * 1.8, eye_y as f32, rz * 0.65], [1.7, 1.3, 1.1], 17);
+                }
+                self.ellipsoid([0.0, -1.0, rz], [1.7, 1.0, 1.2], 16);
+                self.ellipsoid([rx * 0.6, -ry * 0.5, -rz - 1.5], [1.7, 1.7, 2.3], 17);
+                self.ellipsoid([rx * 0.6, -ry * 0.5, -rz - 2.8], [1.8, 1.7, 0.6], 16);
+                if variant {
+                    // Original little leaf cap, with a solid stem.
+                    self.ellipsoid([0.0, ry + 0.4, 0.0], [2.4, 0.8, 1.8], 17);
+                    self.ellipsoid([0.5, ry + 1.4, 0.0], [0.7, 1.0, 0.7], 16);
+                }
+            }
+            3 => {
+                // Usagi: long upright ears or one floppy ear, plus a puff tail.
+                for sign in [-1.0, 1.0] {
+                    let flop = variant && sign > 0.0;
+                    let center = [
+                        sign * if flop { rx * 0.7 + 1.0 } else { rx * 0.45 },
+                        ry + if flop { 0.8 } else { 2.0 },
+                        0.0,
+                    ];
+                    self.ellipsoid(
+                        center,
+                        [
+                            if flop { 2.6 } else { 1.0 },
+                            if flop { 1.0 } else { 3.0 },
+                            1.0,
+                        ],
+                        16,
+                    );
+                    self.ellipsoid(
+                        [center[0], center[1], 0.6],
+                        [
+                            if flop { 1.8 } else { 0.5 },
+                            if flop { 0.5 } else { 2.0 },
+                            0.6,
+                        ],
+                        17,
+                    );
+                }
+                self.ellipsoid([0.0, -ry * 0.6, -rz - 1.0], [1.8, 1.8, 1.8], 17);
+                if variant {
+                    self.ellipsoid([-rx, 0.0, 0.0], [1.7, 2.0, 1.2], 17);
+                }
+            }
+            4 => {
+                // Kuma: round ears, broad muzzle and a little round rear tail.
+                for sign in [-1.0, 1.0] {
+                    self.ellipsoid([sign * rx * 0.7, ry * 0.8, -0.3], [2.0, 2.0, 1.7], 16);
+                    self.ellipsoid([sign * rx * 0.7, ry * 0.8, 1.0], [1.1, 1.1, 0.7], 17);
+                }
+                self.ellipsoid([0.0, -1.0, rz], [2.5, 1.7, 1.4], 17);
+                self.ellipsoid([0.0, -ry * 0.6, -rz - 0.8], [1.3, 1.3, 1.3], 16);
+                if variant {
+                    self.ellipsoid([0.0, ry + 0.8, 0.0], [1.0, 1.7, 1.0], 17);
+                    for sign in [-1.0, 1.0] {
+                        self.ellipsoid([sign * 1.6, -ry * 0.5, rz], [1.5, 1.0, 1.0], 17);
+                    }
+                }
+            }
+            5 => {
+                // Kaeru: broad haunches and rounded brow lobes. The second
+                // original pond creature grows a kappa-like dish and duck bill.
+                self.ellipsoid([0.0, -1.0, 0.0], [rx + 0.8, ry * 0.7, rz], 16);
+                for sign in [-1.0, 1.0] {
+                    self.ellipsoid([sign * rx * 0.6, ry * 0.55, 0.3], [1.8, 2.0, 1.7], 16);
+                    self.ellipsoid([sign * rx, -ry * 0.7, -0.4], [1.8, 1.2, 1.6], 17);
+                }
+                if variant {
+                    for x in -2..=2 {
+                        for z in -2..=2 {
+                            if (3..=6).contains(&(x * x + z * z)) {
+                                self.cells.insert((x, ry as i32 + 1, z), 17);
+                            }
+                        }
+                    }
+                    self.ellipsoid([0.0, -0.5, rz + 0.6], [2.7, 0.8, 1.7], 17);
+                } else {
+                    self.ellipsoid([0.0, -1.5, rz + 0.4], [2.8, 0.8, 0.9], 17);
+                }
+            }
+            6 => {
+                // Garden bird: thick wings, a beak, a tail fan and a crest.
+                for sign in [-1.0, 1.0] {
+                    self.ellipsoid(
+                        [sign * rx, -0.5, -0.5],
+                        [1.5, if variant { 3.5 } else { 2.3 }, 2.1],
+                        17,
+                    );
+                    self.ellipsoid([sign * 1.7, -ry * 0.2, -rz - 0.8], [1.2, 1.5, 2.0], 17);
+                }
+                self.ellipsoid(
+                    [0.0, -0.6, rz + 0.4],
+                    [
+                        if variant { 0.8 } else { 1.6 },
+                        0.9,
+                        if variant { 2.3 } else { 1.3 },
+                    ],
+                    17,
+                );
+                self.ellipsoid(
+                    [0.0, ry + 0.4, -0.3],
+                    [1.0, if variant { 2.0 } else { 1.0 }, 1.4],
+                    17,
+                );
+                if variant {
+                    self.ellipsoid([1.0, ry + 1.6, -0.8], [0.8, 1.2, 1.0], 16);
+                }
+            }
+            _ => {
+                // Kame: domed rear shell, raised shell ribs and four flippers.
+                self.ellipsoid([0.0, 0.0, -rz * 0.45], [rx + 0.7, ry * 0.85, rz + 0.6], 17);
+                for sign in [-1.0, 1.0] {
+                    for up in [-1.0, 1.0] {
+                        self.ellipsoid([sign * rx, up * ry * 0.55, -0.7], [1.7, 1.0, 1.8], 16);
+                    }
+                    self.ellipsoid([sign * 2.0, 0.0, -rz - 1.2], [0.7, ry * 0.55, 1.0], 16);
+                }
+                self.ellipsoid([0.0, 0.0, rz * 0.8], [rx * 0.65, ry * 0.55, rz * 0.7], 16);
+                if variant {
+                    for x in [-2.0, 0.0, 2.0] {
+                        self.ellipsoid([x, ry * 0.7, -rz * 0.6], [0.8, 2.0, 1.0], 16);
+                    }
+                } else {
+                    self.ellipsoid([0.0, -ry * 0.5, -rz - 1.2], [1.1, 0.7, 1.8], 16);
+                }
+            }
+        }
+        for ((x, y), (_, color)) in face {
+            self.dot(x, y, color);
+        }
+    }
+}
+
+// The SSOT palette's existing ramps provide light/dark faces without inventing
+// colors or exceeding index 15. Unknown ramps retain their selected base color.
+fn voxel_shade(color: u8, light: f32) -> u8 {
+    let (dark, bright) = match color {
+        1 => (11, 3),
+        3 => (1, 15),
+        4 => (14, 2),
+        7 => (8, 4),
+        8 => (14, 7),
+        9 => (10, 13),
+        11 => (0, 1),
+        12 => (6, 5),
+        13 => (9, 2),
+        14 => (0, 4),
+        15 => (11, 2),
+        other => (other, other),
+    };
+    if light < 0.15 {
+        dark
+    } else if light > 0.65 {
+        bright
+    } else {
+        color
     }
 }
 
@@ -1629,6 +1972,250 @@ mod voxel_tests {
                     assert!(small.width <= w && small.height <= h);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+    use crate::game::Stage;
+    const STYLES: [SpriteStyle; 2] = [SpriteStyle::EightBit, SpriteStyle::SixteenBit];
+    const STAGES: [Stage; 5] = [
+        Stage::Egg,
+        Stage::Baby,
+        Stage::Child,
+        Stage::Adult,
+        Stage::Dead,
+    ];
+    const MOODS: [Expression; 16] = [
+        Expression::Idle,
+        Expression::Happy,
+        Expression::Sad,
+        Expression::Angry,
+        Expression::Surprised,
+        Expression::Sleeping,
+        Expression::Sick,
+        Expression::Hungry,
+        Expression::Playful,
+        Expression::Shy,
+        Expression::Excited,
+        Expression::Eating,
+        Expression::Cleaning,
+        Expression::Healing,
+        Expression::Celebrate,
+        Expression::Dead,
+    ];
+
+    #[test]
+    fn animal_families_and_both_variants_have_distinct_silhouettes_at_every_stage() {
+        for style in STYLES {
+            for stage in STAGES {
+                let mut silhouettes = std::collections::BTreeSet::new();
+                for shape in 0..16 {
+                    let appearance = Appearance {
+                        shape,
+                        body: 1,
+                        accent: 11,
+                    };
+                    let mut silhouette = Vec::new();
+                    for yaw in [0, 90, 180] {
+                        let s = Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Idle,
+                            style,
+                            0,
+                            yaw,
+                            false,
+                            appearance,
+                        );
+                        silhouette.extend(s.pixels.iter().map(Option::is_some));
+                    }
+                    assert!(
+                        silhouettes.insert(silhouette),
+                        "geometry duplicate {style:?} {stage:?} shape={shape}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn animal_appearance_palette_rotations_and_moods_are_valid() {
+        for style in STYLES {
+            for stage in STAGES {
+                for shape in 0..16 {
+                    let appearance = Appearance {
+                        shape,
+                        body: shape,
+                        accent: 15 - shape,
+                    };
+                    // Every mood is exercised at every stage in both styles,
+                    // across the roster, including non-cardinal headings.
+                    for yaw in [0, 73, 180, 287] {
+                        let s = Sprite::voxel_with_appearance(
+                            stage,
+                            MOODS[shape as usize],
+                            style,
+                            3,
+                            yaw,
+                            true,
+                            appearance,
+                        );
+                        assert!(s.width <= 32 && s.height <= 32);
+                        assert!(s.pixels.iter().flatten().count() > 10);
+                        assert!(s.pixels.contains(&None));
+                        assert!(s.pixels.iter().flatten().all(|&c| c < 16));
+                        assert!(Sprite::new(s.width, s.height, s.pixels).is_ok());
+                    }
+                }
+            }
+            for shape in 0..16 {
+                let appearance = Appearance {
+                    shape,
+                    body: 1,
+                    accent: 8,
+                };
+                for mood in MOODS {
+                    let s = Sprite::voxel_with_appearance(
+                        Stage::Adult,
+                        mood,
+                        style,
+                        0,
+                        41,
+                        false,
+                        appearance,
+                    );
+                    assert_eq!(
+                        s.pixels,
+                        Sprite::voxel_with_appearance(
+                            Stage::Adult,
+                            mood,
+                            style,
+                            4,
+                            401,
+                            false,
+                            appearance
+                        )
+                        .pixels
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn animal_default_wrapper_and_dead_normalization_remain_consistent() {
+        for style in STYLES {
+            for stage in STAGES {
+                for mood in MOODS {
+                    assert_eq!(
+                        Sprite::voxel(stage, mood, style, 3, 315, true).pixels,
+                        Sprite::voxel_with_appearance(
+                            stage,
+                            mood,
+                            style,
+                            3,
+                            315,
+                            true,
+                            Appearance::default()
+                        )
+                        .pixels,
+                    );
+                }
+            }
+            for shape in 0..16 {
+                let appearance = Appearance {
+                    shape,
+                    body: 3,
+                    accent: 7,
+                };
+                for mood in MOODS {
+                    assert_eq!(
+                        Sprite::voxel_with_appearance(
+                            Stage::Dead,
+                            mood,
+                            style,
+                            0,
+                            45,
+                            true,
+                            appearance
+                        )
+                        .pixels,
+                        Sprite::voxel_with_appearance(
+                            Stage::Adult,
+                            Expression::Dead,
+                            style,
+                            0,
+                            45,
+                            false,
+                            appearance
+                        )
+                        .pixels,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn animal_indices_and_pixel_recoloring_are_bounded_without_changing_legacy_art() {
+        let invalid = Appearance {
+            shape: u8::MAX,
+            body: 254,
+            accent: 253,
+        };
+        let bounded = Appearance {
+            shape: 15,
+            body: 14,
+            accent: 13,
+        };
+        for style in STYLES {
+            assert_eq!(
+                Sprite::voxel_with_appearance(
+                    Stage::Adult,
+                    Expression::Happy,
+                    style,
+                    0,
+                    0,
+                    false,
+                    invalid
+                )
+                .pixels,
+                Sprite::voxel_with_appearance(
+                    Stage::Adult,
+                    Expression::Happy,
+                    style,
+                    0,
+                    0,
+                    false,
+                    bounded
+                )
+                .pixels,
+            );
+            let s = Sprite::animated(Stage::Adult, Expression::Idle, style, 0);
+            let before = s.pixels.clone();
+            assert_eq!(s.recolored(1, 11).pixels, before);
+            for body in 0..16 {
+                let recolored = s.recolored(body, 15 - body);
+                assert_eq!((recolored.width, recolored.height), (s.width, s.height));
+                for (old, new) in before.iter().zip(&recolored.pixels) {
+                    assert_eq!(old.is_some(), new.is_some());
+                    if let Some(c) = new {
+                        assert!(*c < 16);
+                    }
+                    if matches!(old, Some(0 | 2 | 5 | 6)) {
+                        assert_eq!(old, new);
+                    }
+                }
+            }
+            assert!(s
+                .recolored(255, 254)
+                .pixels
+                .iter()
+                .flatten()
+                .all(|&c| c < 16));
+            assert_eq!(s.pixels, before);
         }
     }
 }

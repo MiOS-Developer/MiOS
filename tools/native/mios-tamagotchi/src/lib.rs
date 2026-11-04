@@ -3,7 +3,9 @@
 #![forbid(unsafe_code)]
 
 pub mod capabilities;
+pub mod characters;
 pub mod config;
+pub mod dialogs;
 pub mod game;
 pub mod input;
 pub mod render;

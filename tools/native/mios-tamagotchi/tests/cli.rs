@@ -167,3 +167,32 @@ fn redirected_sample_does_not_create_an_explicit_save() {
     );
     assert!(!path.exists());
 }
+
+#[test]
+fn voxel_and_pixel_headless_dialogues_are_ascii_read_only_without_display() {
+    for view in ["voxel", "pixel"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"))
+            .args([
+                "--sample",
+                "--snapshot",
+                "--view",
+                view,
+                "--hud",
+                "minimal",
+                "--dialogs",
+                "native",
+            ])
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("TMUX")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        assert!(output.stdout.is_ascii());
+        assert!(!output.stdout.contains(&27));
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains(" thinks: "));
+        assert!(text.contains(" says: "));
+    }
+}

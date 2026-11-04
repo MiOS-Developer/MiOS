@@ -97,6 +97,8 @@ pub struct Challenge {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Game {
+    #[serde(default)]
+    pub character: u8,
     pub age_ticks: u64,
     pub fullness: u8,
     pub happiness: u8,
@@ -129,6 +131,9 @@ impl Game {
     }
     pub fn new(rules: &Rules, seed: u64) -> Self {
         Self {
+            // Select an animal family, then one of its two original individuals.
+            // This does not consume the memory game's saved RNG stream.
+            character: ((seed % 8) + ((seed >> 8) % 2) * 8) as u8,
             age_ticks: 0,
             fullness: rules.initial_need,
             happiness: rules.initial_need,
@@ -154,6 +159,7 @@ impl Game {
         ]
         .iter()
         .any(|n| *n > 100)
+            || self.character >= 64
             || self.coins > MAX_COINS
             || ((self.health == 0 || self.sleeping) && self.challenge.is_some())
             || self.challenge.as_ref().is_some_and(|c| {
