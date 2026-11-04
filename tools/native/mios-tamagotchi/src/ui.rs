@@ -5088,7 +5088,7 @@ mod global_detail_regressions {
                     "{width}x{height} zoom{zoom} {menu:?}"
                 );
                 assert_eq!(
-                    ui.pet_sprite(&config.game, 0).width,
+                    ui.pet_sprite(&config.game, 0).width(),
                     if expected == SpriteStyle::EightBit {
                         24
                     } else {
