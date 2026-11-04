@@ -11699,6 +11699,15 @@ mode = "popup"
 vt_ok = true
 argv = ["/usr/bin/mios-fanctl", "tui"]
 
+# The same full application/system selector is available from every TUI launcher.
+[[terminal.tuis]]
+id = "mios-global-menu"
+label = "Global apps and systems"
+section = "mios"
+mode = "popup"
+vt_ok = true
+argv = ["/usr/bin/miosd", "sessions", "--root", "/"]
+
 [[terminal.tuis]]
 id = "mios-mons"
 label = "MiOS-Mons"
