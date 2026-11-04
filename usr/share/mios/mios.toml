@@ -19813,8 +19813,13 @@ renderer = "auto"       # auto, ascii, half-block, quadrant, braille; glyphs are
 color = "auto"          # auto, mono, ansi, indexed, rgb; NO_COLOR always disables color
 scale = 0               # 0 = largest fitting integer scale; or 1, 2, 4, 8, 16
 tick_ms = 100           # animation poll deadline, 16..60000 milliseconds
-palette = ["#202030", "#70C090", "#FFFFFF", "#B0E0B0"]
-background = "#101018"
+# Indexed original pixel-art colors: outline, body, eyes, highlight, cream, blush,
+# mouth, gold, food, water, wall, leaves, hearts, sky, wood and mint.
+palette = ["#171C38", "#75D8A6", "#FFF5DE", "#A9F0C9", "#FFE5AF", "#EE9ABC", "#283150", "#FFCF66", "#EF8F5F", "#62A7CD", "#49436D", "#4B8D75", "#F06586", "#9FD9E1", "#816A6B", "#CCE8C7"]
+background = "#111827"
+sprite_style = "sixteen-bit" # eight-bit or sixteen-bit; also selectable in the Graphics menu
+animation_frame_ms = 140     # animation cadence independent of care/game ticks
+reaction_frames = 18         # visible care reaction duration; no saved-game clock changes
 
 state_directory = "mios/tamagotchi" # relative to XDG_STATE_HOME, or HOME/.local/state
 autosave_seconds = 10

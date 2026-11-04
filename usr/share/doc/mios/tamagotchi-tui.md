@@ -8,6 +8,49 @@ coin rewards, pause, confirmed pet reset, and versioned local saves.
 The goal is a healthy, happy adult. Social play, breeding, shops, multiple
 mini-games and full device emulation remain future work under task_3706.
 
+## Graphical room and menus
+
+The interactive view composes the whole terminal viewport: a framed pet room,
+window and curtains, floor, furniture, plant, animated pet, care effects, needs
+meters, quick actions and modal menus. Wide terminals show a status sidebar;
+compact windows keep the scene and care controls readable. Tiny panes retain
+Quit. ASCII uses plain borders and characters, while supported Unicode terminals
+can use indexed or RGB half-block, quadrant and Braille rendering.
+
+Use **O or F1** for the main menu, **I** for Status, **V** for Graphics and **?**
+for Help. Arrows/Tab navigate, Enter/Space chooses, and Escape closes the menu.
+Care, Games, Status, Graphics, Help, Save and Quit are working menu entries.
+The existing care shortcuts remain unchanged. A menu freezes care time without
+adding offline catch-up; ambient animation continues.
+
+Graphics offers separate original **8-bit** and detailed **16-bit-style** sprite
+sets, plus renderer choices. Sprite Studio fills the viewport with a preview:
+Left/Right changes the reaction, Up/Down changes life stage, and Enter/Space
+switches art style. Previewing illness, sadness or death does not alter the pet
+or its save. The studio covers the implemented Egg, Baby, Child, Adult and Dead
+stages and all implemented expression/reaction clips.
+
+Real care and memory outcomes select bounded eating, cleaning, sleep, medicine,
+play and celebration reactions. Hunger, low happiness and illness select their
+corresponding persistent moods. Animation uses elapsed time independently of
+input traffic and the simulation clock. The animation_frame_ms, reaction_frames,
+sprite_style and indexed four- or sixteen-color palette belong to [tamagotchi].
+In-menu visual choices last for the current process; they do not replace live
+TOML or change schema-1 saved game data.
+
+    mios-tamagotchi --sample --sprite-style eight-bit
+    mios-tamagotchi --sample --sprite-style sixteen-bit --renderer half-block --color indexed
+
+A nonempty NO_COLOR remains an explicit request for monochrome output. For a
+color trial in a session that inherited it, remove it only for this process:
+
+    env -u NO_COLOR mios-tamagotchi --sample --color indexed
+
+These graphics do not claim the draft's future catalogue of 50+ characters,
+additional locations, shops, social systems or multiple mini-games. Those remain
+separate gameplay work. Real Linux VT/font and Inputd/controller certification
+still require the corresponding device/session checks.
+
 ## Try it without changing a live MiOS installation
 
 ```sh
@@ -103,7 +146,7 @@ cleanup; use the terminal's normal reset procedure if needed.
 ## Configuration and rendering
 
 `[tamagotchi]` owns renderer, color, scale, UI tick interval, palette/background,
-state_directory and autosave_seconds. `[tamagotchi.game]` owns growth thresholds,
+state_directory, autosave_seconds, sprite_style, animation_frame_ms and reaction_frames. `[tamagotchi.game]` owns growth thresholds,
 game tick interval, decay/care amounts, costs/rewards and memory reveal time.
 The bootstrap configurator follow-up is task_3704. Unknown fields or invalid
 values fail before entering raw mode. `--sample` deliberately bypasses live

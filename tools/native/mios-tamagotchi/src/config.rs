@@ -13,6 +13,9 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub renderer: Renderer,
+    pub sprite_style: crate::sprite::SpriteStyle,
+    pub animation_frame_ms: u64,
+    pub reaction_frames: usize,
     pub color: ColorMode,
     pub scale: u16,
     pub tick_ms: u64,
@@ -68,8 +71,16 @@ impl Config {
         if !(16..=60_000).contains(&self.tick_ms) {
             return Err("tamagotchi.tick_ms must be in 16..=60000".into());
         }
-        if self.palette.len() != 4 {
-            return Err("tamagotchi.palette must contain exactly four #RRGGBB colors".into());
+        if ![4, 16].contains(&self.palette.len()) {
+            return Err("tamagotchi.palette must contain four or sixteen #RRGGBB colors".into());
+        }
+        if !(40..=2000).contains(&self.animation_frame_ms)
+            || !(1..=120).contains(&self.reaction_frames)
+        {
+            return Err(
+                "tamagotchi: animation_frame_ms must be 40..=2000 and reaction_frames 1..=120"
+                    .into(),
+            );
         }
         for color in self.palette.iter().chain(std::iter::once(&self.background)) {
             parse_rgb(color)?;

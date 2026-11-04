@@ -1,5 +1,19 @@
 # Tamagotchi TUI - 8-Bit & Pseudo-16-Bit Sprite Specification
 
+## Implemented graphics scope (task_3711)
+
+The native sample now has a full-viewport room, framed care/game/status/graphics/help
+menus, needs meters, an elapsed-time animation clock, separate original 8-bit and
+16-bit-style stage sprites, care/mood reactions and a read-only full-screen Sprite
+Studio. The implementation contract and current keys are documented in
+[the sample guide](../../usr/share/doc/mios/tamagotchi-tui.md).
+Saved game schema 1, the existing care rules and read-only redirected output remain
+the compatibility floor. The larger catalogues, additional characters/locations,
+social/economic systems and illustrative APIs below remain roadmap material.
+Do not infer those future counts or APIs from the implemented graphics increment.
+
+
+
 > The implemented sprite/widget foundation is in `tools/native/mios-tamagotchi`. See [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md); later features remain planned.
 
 ## Document Information

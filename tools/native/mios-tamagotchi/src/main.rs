@@ -47,6 +47,9 @@ struct Args {
     color: Option<ColorMode>,
     #[arg(long)]
     scale: Option<u16>,
+    /// Original low-resolution or detailed pixel-art sprite set.
+    #[arg(long, value_enum)]
+    sprite_style: Option<mios_tamagotchi::sprite::SpriteStyle>,
 }
 fn main() -> ExitCode {
     match run(Args::parse()) {
@@ -72,6 +75,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(v) = args.scale {
         config.scale = v;
     }
+    if let Some(style) = args.sprite_style {
+        config.sprite_style = style;
+    }
     config.validate()?;
     if args.demo {
         return demo(&config);
@@ -92,7 +98,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
         .unwrap_or_else(|| Game::new(&config.game, 1));
         let status = Ui::new(game.clone()).summary(&config.game);
-        let art = snapshot(&Sprite::pet(game.stage(&config.game), 0), &config)?;
+        let snapshot_ui = Ui::configured(game.clone(), &config);
+        let art = snapshot(
+            &Sprite::animated(
+                game.stage(&config.game),
+                snapshot_ui.expression(&config.game, 0),
+                config.sprite_style,
+                0,
+            ),
+            &config,
+        )?;
         writeln!(io::stdout().lock(), "MiOS Tamagotchi\n{status}\n{art}\nSnapshot only; no clock or save writes. Use a terminal to play.")?;
         return Ok(());
     }
