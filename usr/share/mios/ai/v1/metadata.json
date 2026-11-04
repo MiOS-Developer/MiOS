@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4146,
-  "total_metadata_entries": 3403,
-  "total_hints": 3397,
-  "total_functions_indexed": 2107,
-  "total_related_links": 6705,
+  "total_files_scanned": 4143,
+  "total_metadata_entries": 3400,
+  "total_hints": 3394,
+  "total_functions_indexed": 2100,
+  "total_related_links": 6693,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -1096,32 +1096,6 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "automation/42-chrony-render.sh",
-      "hint": "Projects NTP servers from mios.toml [network.ntp] SSOT to the chrony config via miosd, resolved by absolute path.",
-      "related": [
-        "usr/share/mios/mios.toml",
-        "src/mios-rs/miosd/src/main.rs",
-        "usr/lib/mios/log.sh"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "automation/43-nut-render.sh",
-      "hint": "Projects UPS settings from mios.toml [power.ups] SSOT into the NUT config directory via miosd, resolved by absolute path.",
-      "related": [
-        "usr/share/mios/mios.toml",
-        "src/mios-rs/miosd/src/main.rs",
-        "usr/lib/mios/log.sh"
-      ],
-      "functions": [],
-      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -4173,8 +4147,7 @@
         "src/mios-rs/mios-build/src/lib.rs",
         "automation/34-render-quadlets.sh",
         "automation/35-render-ports.sh",
-        "automation/42-chrony-render.sh",
-        "automation/43-nut-render.sh",
+        "src/mios-rs/miosd/src/main.rs",
         "automation/75-kargs-render.sh",
         "automation/76-uki-render.sh",
         "automation/85-bake-plan.sh"
@@ -10007,7 +9980,7 @@
     },
     {
       "path": "tests/test-session-selector-controller.py",
-      "hint": "Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server under bwrap with a fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.",
+      "hint": "Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server with an isolated filesystem and fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.",
       "related": [
         "src/mios-rs/miosd/src/sessions.rs",
         "usr/share/mios/mios.toml [terminal.sessions]",
@@ -12389,7 +12362,7 @@
     },
     {
       "path": "tools/native/mios-gen/src/agent_interaction.rs",
-      "hint": "mios-gen render-agent-interaction. Projects [agent_cli.interaction.clients.<name>] from the SSOT into",
+      "hint": "Projects declared terminal-client interaction settings and provider capabilities from the SSOT",
       "related": [
         "usr/share/mios/mios.toml [agent_cli.interaction]",
         "usr/libexec/mios/mios-mcp-server"
@@ -27038,29 +27011,6 @@
       "has_shebang": true
     },
     {
-      "path": "usr/libexec/mios/mios-hardcode-lint",
-      "hint": "Read-only enforcement gate for the NO-HARDCODE law (Law 7): fails on a date or dated attribution in comments, docstrings or .py string prose, and on AI-hint header crash-risks (a BOM not at byte 0, a header above a shebang).",
-      "related": [
-        "../../../automation/98-drift-checks.sh",
-        "../../share/mios/mios.toml",
-        "./mios-ai-tag",
-        "../../../CLAUDE.md",
-        "tools/native/mios-hardcode-lint/"
-      ],
-      "functions": [
-        "_try_native_bin",
-        "_date_in_comment_py",
-        "_date_in_string_py",
-        "_date_in_comment_generic",
-        "_header_risk",
-        "scan",
-        "main"
-      ],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
       "path": "usr/libexec/mios/mios-hardware-fallback",
       "hint": "Automated network and audio fallback manager with operator desktop alert daemon (task_476, task_2709).",
       "related": [],
@@ -29520,7 +29470,7 @@
       "hint": "PTP IEEE 1588 hardware timestamping and Chrony NTS smooth clock synchronization daemon.",
       "related": [
         "tests/test-ptp-time.py",
-        "automation/42-chrony-render.sh"
+        "src/mios-rs/miosd/src/main.rs"
       ],
       "functions": [
         "PTPCapabilityProbe",

@@ -31,8 +31,8 @@
 39	script	moby-engine	automation/39-moby-engine.sh	MIOS_APPLY_CLASS=universal
 40	script	fapolicyd-trust	automation/40-fapolicyd-trust.sh	MIOS_APPLY_CLASS=universal
 41	script	services	automation/41-services.sh	MIOS_APPLY_CLASS=universal
-42	script	chrony-render	automation/42-chrony-render.sh	MIOS_APPLY_CLASS=universal
-43	script	nut-render	automation/43-nut-render.sh	MIOS_APPLY_CLASS=universal
+42	native	chrony-render	src/mios-rs/miosd/src/main.rs	chrony render
+43	native	nut-render	src/mios-rs/miosd/src/main.rs	nut render
 44	script	firewall-ports	automation/44-firewall-ports.sh	MIOS_APPLY_CLASS=universal
 45	script	firewall	automation/45-firewall.sh	MIOS_APPLY_CLASS=universal
 46	script	sshd-port	automation/46-sshd-port.sh	MIOS_APPLY_CLASS=universal
