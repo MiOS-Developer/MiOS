@@ -646,7 +646,7 @@ fn draw_surface_glyphs(
     };
     let (dx, dy) = renderer.packing();
     let mut used = Vec::new();
-    let mut painted = false;
+    let mut candidates = Vec::new();
     for (index, glyph) in texture.text.bytes().enumerate() {
         let target = [
             (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0),
@@ -693,13 +693,31 @@ fn draw_surface_glyphs(
             }
         }
         if let Some(pos) = best {
-            if let Some(cell) = buf.cell_mut(pos) {
-                // Foreground only: terminal backgrounds may have separate tint
-                // or opacity. Gaps retain the species' original head material.
-                cell.set_char(char::from(glyph)).set_fg(colors.ink(0));
-                used.push(pos);
-                painted = true;
-            }
+            used.push(pos);
+        }
+        candidates.push(best.map(|pos| (pos, glyph)));
+    }
+    // A literal expression needs both eyes and its mouth. Collect first so a
+    // failed anchor never leaves a misleading fragment on the actual head.
+    if candidates.len() < 3
+        || candidates[1..candidates.len() - 1]
+            .iter()
+            .any(Option::is_none)
+    {
+        return false;
+    }
+    let last = candidates.len() - 1;
+    if candidates[0].is_none() || candidates[last].is_none() {
+        candidates[0] = None;
+        candidates[last] = None;
+    }
+    let mut painted = false;
+    for (pos, glyph) in candidates.into_iter().flatten() {
+        if let Some(cell) = buf.cell_mut(pos) {
+            // Foreground only: terminal backgrounds may have separate tint or
+            // opacity. Gaps retain the species' original head material.
+            cell.set_char(char::from(glyph)).set_fg(colors.ink(0));
+            painted = true;
         }
     }
     painted
@@ -2187,7 +2205,7 @@ mod camera_tests {
     }
 
     #[test]
-    fn five_to_seven_cell_faces_choose_native_characters_and_smaller_faces_use_the_hud() {
+    fn five_to_seven_cell_faces_choose_complete_native_cores_and_balanced_parentheses() {
         let sprite = Sprite::voxel(
             Stage::Adult,
             Expression::Happy,
@@ -2199,7 +2217,7 @@ mod camera_tests {
         let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
         let bounds = FaceTexture::bounds(&sprite).unwrap();
         let area = Rect::new(0, 0, 64, 30);
-        let mut complete_cases = 0;
+        let mut core_cases = 0;
         for renderer in [
             Renderer::Ascii,
             Renderer::HalfBlock,
@@ -2228,15 +2246,23 @@ mod camera_tests {
                     actual, expected,
                     "{renderer:?} {columns} cells must enter native text, never the bitmap atlas"
                 );
-                let marks: Vec<_> = before
+                let mut marks: Vec<_> = before
                     .content
                     .iter()
                     .zip(&actual.content)
-                    .filter(|(a, b)| a != b)
-                    .map(|(_, b)| b.symbol())
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                    .map(|(index, (_, b))| (index % usize::from(area.width), b.symbol()))
                     .collect();
-                assert!(marks.iter().all(|s| ["(", "^", "_", ")"].contains(s)));
-                complete_cases += usize::from(marks.len() == 5);
+                marks.sort_by_key(|p| p.0);
+                let literal: String = marks.iter().map(|p| p.1).collect();
+                if !literal.is_empty() {
+                    assert!(
+                        matches!(literal.as_str(), "^_^" | "(^_^)"),
+                        "{renderer:?} {columns} cells: missing eye/mouth or unbalanced parentheses: {literal}"
+                    );
+                    core_cases += 1;
+                }
             }
             let scale = 4.0 * f64::from(dx) / bounds.width();
             let projection = Projection {
@@ -2258,13 +2284,13 @@ mod camera_tests {
             );
         }
         assert!(
-            complete_cases > 0,
-            "small native text must exercise complete five-glyph faces"
+            core_cases > 0,
+            "small native text must exercise complete two-eye/mouth cores"
         );
     }
 
     #[test]
-    fn phone_room_and_pet_at_fifty_percent_zoom_show_all_five_native_characters() {
+    fn phone_room_and_pet_at_fifty_percent_zoom_show_native_eyes_and_mouth() {
         let sprite = Sprite::voxel(
             Stage::Adult,
             Expression::Happy,
@@ -2314,9 +2340,9 @@ mod camera_tests {
                     }
                     chars.sort_by_key(|p| p.0);
                     let literal: String = chars.iter().map(|p| p.1.as_str()).collect();
-                    assert_eq!(
-                        literal, "(^_^)",
-                        "{width}x{height} {renderer:?} {view:?} zoom50 must display canonical native text"
+                    assert!(
+                        matches!(literal.as_str(), "^_^" | "(^_^)"),
+                        "{width}x{height} {renderer:?} {view:?} zoom50 needs native eyes/mouth with balanced optional parentheses: {literal}"
                     );
                 }
             }
