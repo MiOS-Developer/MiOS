@@ -1036,7 +1036,7 @@ impl Ui {
         frame: usize,
         area: Rect,
     ) {
-        let talking = self.menu == Some(Menu::Talk);
+        let talking = self.menu == Some(Menu::Talk) && !self.native_modal;
         let [title, needs, room, dialogue, actions] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(if talking { 0 } else { 1 }),
@@ -1144,7 +1144,7 @@ impl Ui {
             return;
         }
         self.dialog_area.set(area);
-        let talking = self.menu == Some(Menu::Talk);
+        let talking = self.menu == Some(Menu::Talk) && !self.native_modal;
         let text = self.words(config, !talking);
         let title = format!(
             " {} {} ",
@@ -2435,6 +2435,21 @@ mod graphics_tests {
         assert!(!text.contains("MAIN MENU"));
         assert!(text.contains("ROOM"));
         assert!(text.contains("thinks"));
+        ui.open(Menu::Talk);
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("thinks"));
+        assert!(!text.contains(" says "));
+        assert!(!text.contains("Back / Tab"));
+        ui.menu = Some(Menu::Home);
         ui.native_modal = false;
         terminal
             .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
