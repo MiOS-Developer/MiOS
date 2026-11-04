@@ -246,7 +246,10 @@ class ClientToolProjection:
                 if (definition.get("defer_loading") or definition.get("async")
                         or definition.get("allowed_callers") not in (None, ["direct"])):
                     raise ClientToolSchemaError("this engine cannot preserve deferred, asynchronous or programmatic tools")
-                alias = "mios_tool_" + hashlib.sha256(json.dumps(key).encode()).hexdigest()[:54]
+                # Keep the caller verb recognizable to the engine while a
+                # 128-bit identity suffix separates namespaces and truncated names.
+                stem = re.sub(r"[^a-zA-Z0-9_-]", "_", name)[:21]
+                alias = "mios_tool_" + stem + "_" + hashlib.sha256(json.dumps(key).encode()).hexdigest()[:32]
                 if alias in self.names:
                     raise ClientToolSchemaError("tool projection identity collision")
                 self.names[alias], self.reverse[key], self.kinds[alias] = key, alias, kind
@@ -270,6 +273,8 @@ class ClientToolProjection:
                 if namespace:
                     context = tool.get("description") or namespace
                     projected["description"] = f"{namespace}: {context}\n{projected.get('description') or name}"
+                identity = json.dumps({"namespace": namespace, "name": name}, ensure_ascii=False)
+                projected["description"] = f"Caller tool {identity}\n{projected.get('description') or name}"
                 flat.append({"type": "function", "function": projected})
         self.body["tools"] = flat
         if "tool_choice" in self.body:

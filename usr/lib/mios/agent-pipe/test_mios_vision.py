@@ -506,6 +506,10 @@ def test_namespace_tools_real_httpx_contract():
             assert all(t["type"] == "function" for t in payload["tools"]), payload
             aliases = [t["function"]["name"] for t in payload["tools"]]
             assert len(set(aliases)) == 2
+            assert all(alias.startswith("mios_tool_search_") and len(alias) <= 64 for alias in aliases)
+            for namespace, tool in zip(("alpha", "beta"), payload["tools"]):
+                identity = tool["function"]["description"].splitlines()[0].removeprefix("Caller tool ")
+                assert json.loads(identity) == {"namespace": namespace, "name": "search"}
             assert request.url.host == expected_host and payload["model"] == expected_model, payload
             assert payload["max_tokens"] == 71
             assert payload["store"] is False and payload["parallel_tool_calls"] is True

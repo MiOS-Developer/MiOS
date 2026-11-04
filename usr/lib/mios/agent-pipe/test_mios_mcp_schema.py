@@ -160,6 +160,48 @@ class NamespaceProjectionTests(unittest.TestCase):
                          body["tools"][0]["tools"][0]["parameters"])
         self.assertIs(projection.body["tools"][0]["function"]["strict"], False)
 
+    def test_semantic_aliases_retain_original_identity_with_bounded_safe_names(self):
+        import json
+        import re
+        names = ["register_session", "lookup.item", "lookup_item", "x" * 127 + "a", "x" * 127 + "b"]
+        body = {"tools": [{"type": "namespace", "name": 'remote "quoted"',
+                           "description": "Scoped caller operations",
+                           "tools": [{"type": "function", "name": name,
+                                      "description": "Perform the declared operation",
+                                      "parameters": {"type": "object", "properties": {}}}
+                                     for name in names]}]}
+        projection = S.ClientToolProjection(body)
+        self.assertEqual(len(set(projection.names)), len(names))
+        for original, tool in zip(names, projection.body["tools"]):
+            function = tool["function"]
+            alias = function["name"]
+            self.assertLessEqual(len(alias), 64)
+            self.assertRegex(alias, r"^[a-zA-Z0-9_-]+$")
+            self.assertIn(re.sub(r"[^a-zA-Z0-9_-]", "_", original)[:21], alias)
+            identity = function["description"].splitlines()[0].removeprefix("Caller tool ")
+            self.assertEqual(json.loads(identity), {"namespace": 'remote "quoted"', "name": original})
+            restored = projection.restore_call({"id": "actual-call", "type": "function",
+                "function": {"name": alias, "arguments": "{}"}})
+            self.assertEqual(restored["function"]["name"], original)
+            self.assertEqual(restored["namespace"], 'remote "quoted"')
+            self.assertEqual(restored["id"], "actual-call")
+        self.assertEqual(projection.reverse, S.ClientToolProjection(body).reverse)
+
+    def test_invalid_names_cannot_enter_engine_alias_or_identity_description(self):
+        for name in ["line\nbreak", "semi;colon", "space name", "x" * 129, "nonascii-é"]:
+            with self.subTest(name=repr(name)), self.assertRaises(S.ClientToolSchemaError):
+                S.ClientToolProjection({"tools": [{"type": "function", "name": name}]})
+
+    def test_truncated_identity_hash_collision_fails_instead_of_crossing_calls(self):
+        from unittest import mock
+        digest = mock.Mock()
+        digest.hexdigest.return_value = "0" * 64
+        body = {"tools": [{"type": "function", "name": "x" * 127 + suffix}
+                          for suffix in ("a", "b")]}
+        with mock.patch("hashlib.sha256", return_value=digest):
+            with self.assertRaisesRegex(S.ClientToolSchemaError, "identity collision"):
+                S.ClientToolProjection(body)
+
     def test_explicit_choice_and_history_preserve_namespace_and_call_id(self):
         body = self.body()
         body["tool_choice"] = {"type": "function", "function": {"name": "search", "namespace": "beta"}}
