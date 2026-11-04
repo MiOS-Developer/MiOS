@@ -634,6 +634,76 @@ def test_bootstrap_launchers_reach_the_installer():
     print("PASS bootstrap checkout/piped entries reach the installer; fetch/missing/escape/sibling/cwd-shadow controls fail closed")
 
 
+
+def test_offline_upgrade_runtime_producer():
+    """The real phase publishes the canonical executable and compatibility alias."""
+    source = pathlib.Path(_ROOT, "automation/50-uupd-installer.sh")
+    harness = r"""
+set -euo pipefail
+source "$MIOS_TEST_PRODUCER_SOURCE"
+install_packages() { :; }
+systemctl() { :; }
+_stage_args() {
+    _stage=()
+    for item in "$@"; do
+        case "$item" in /usr|/usr/*) item="$MIOS_TEST_STAGE$item";; esac
+        _stage+=("$item")
+    done
+}
+install() {
+    [[ "$MIOS_TEST_FAIL" != directories ]] || return 61
+    _stage_args "$@"; command install "${_stage[@]}"
+}
+cp() {
+    [[ "$MIOS_TEST_FAIL" != copy ]] || return 62
+    _stage_args "$@"; command cp "${_stage[@]}"
+    if [[ "$MIOS_TEST_FAIL" == corrupt ]]; then printf '\ncorrupt\n' >> "${_stage[-1]}"; fi
+}
+chmod() {
+    [[ "$MIOS_TEST_FAIL" != permissions ]] || return 63
+    _stage_args "$@"; command chmod "${_stage[@]}"
+}
+ln() {
+    [[ "$MIOS_TEST_FAIL" != link ]] || return 64
+    local -a args=("$@")
+    local last=$(("${#args[@]}" - 1))
+    args[$last]="$MIOS_TEST_STAGE${args[$last]}"
+    if [[ "$MIOS_TEST_FAIL" == wrong-link ]]; then
+        command ln -sf /not-the-updater "${args[$last]}"
+    else
+        command ln "${args[@]}"
+    fi
+}
+cmp() { _stage_args "$@"; command cmp "${_stage[@]}"; }
+readlink() { _stage_args "$@"; command readlink "${_stage[@]}"; }
+install_uupd_subsystem
+"""
+    with tempfile.TemporaryDirectory(prefix="mios-offline-producer-") as tmp:
+        stage = pathlib.Path(tmp)
+        for failure in ("", "directories", "copy", "permissions", "link", "corrupt", "wrong-link"):
+            root = stage / (failure or "good")
+            root.mkdir()
+            env = dict(os.environ, MIOS_TEST_STAGE=str(root), MIOS_TEST_FAIL=failure,
+                       MIOS_TEST_PRODUCER_SOURCE=str(source))
+            result = subprocess.run(["bash", "-c", harness], env=env, capture_output=True,
+                                    text=True, timeout=60)
+            if failure:
+                assert result.returncode != 0, (failure, result)
+                assert "Installed /usr/bin/mios-offline-upgrade and" not in result.stdout, (failure, result)
+                continue
+            assert result.returncode == 0, result
+            binary = root / "usr/bin/mios-offline-upgrade"
+            alias = root / "usr/libexec/mios/mios-offline-upgrade"
+            assert binary.read_bytes() == source.read_bytes()
+            assert binary.stat().st_mode & 0o777 == 0o755
+            assert alias.readlink() == pathlib.PurePosixPath("/usr/bin/mios-offline-upgrade")
+            help_result = subprocess.run(["bash", str(binary), "--help"],
+                                         capture_output=True, text=True, timeout=60)
+            assert help_result.returncode == 0 and "mios-offline-upgrade" in help_result.stdout, help_result
+        unit = pathlib.Path(_ROOT, "usr/lib/systemd/system/mios-offline-upgrade.service").read_text()
+        assert "ExecStart=/usr/bin/mios-offline-upgrade --reboot-mode auto" in unit
+    print("PASS offline updater producer: exact canonical bytes/mode/link/help; six failed/corrupt publication controls reject success")
+
 def test_legacy_bootstrap_failures():
     source = pathlib.Path(_ROOT, "automation/install-bootstrap.sh").read_text()
     assert source.endswith('main "$@"\n')
@@ -701,6 +771,7 @@ def main() -> int:
     test_native_runtime_check_rejects_dynamic_or_missing()
     test_target_prerequisite_failures_stop_the_target()
     test_bootstrap_launchers_reach_the_installer()
+    test_offline_upgrade_runtime_producer()
     test_legacy_bootstrap_failures()
     print("[test-install-fhs] PASS: overlay refusal, four substrate plans, fail-closed apply, Linux core dispatch, failure propagation and host rejection.")
     return 0

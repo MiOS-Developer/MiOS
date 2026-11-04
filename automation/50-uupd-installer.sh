@@ -605,13 +605,30 @@ EOF
     local libexec_dest="/usr/libexec/mios/mios-offline-upgrade"
     local service_dest="/usr/lib/systemd/system/mios-offline-upgrade.service"
 
-    if [[ -w "/usr/bin" && -w "/usr/libexec/mios" ]]; then
-        install -d -m 0755 /usr/bin /usr/libexec/mios 2>/dev/null || true
-        cp -f "${BASH_SOURCE[0]}" "$bin_dest" 2>/dev/null || true
-        chmod 0755 "$bin_dest" 2>/dev/null || true
-        ln -sf "$bin_dest" "$libexec_dest" 2>/dev/null || true
-        mios_ok "Installed ${bin_dest} and ${libexec_dest}"
+    # These are the runtime producer's mandatory artifacts. Never report an
+    # installed updater when copying, permissions or its compatibility link failed.
+    install -d -m 0755 /usr/bin /usr/libexec/mios || {
+        mios_err "Cannot prepare offline updater runtime directories"
+        return 1
+    }
+    cp -f "${BASH_SOURCE[0]}" "$bin_dest" || {
+        mios_err "Cannot install offline updater executable"
+        return 1
+    }
+    chmod 0755 "$bin_dest" || {
+        mios_err "Cannot make offline updater executable"
+        return 1
+    }
+    ln -sf "$bin_dest" "$libexec_dest" || {
+        mios_err "Cannot install offline updater compatibility link"
+        return 1
+    }
+    if ! cmp -s "${BASH_SOURCE[0]}" "$bin_dest" ||
+       [[ "$(readlink "$libexec_dest")" != "$bin_dest" ]]; then
+        mios_err "Offline updater runtime artifact verification failed"
+        return 1
     fi
+    mios_ok "Installed ${bin_dest} and ${libexec_dest}"
 
     # Install systemd service unit for offline upgrade automation
     if [[ -w "/usr/lib/systemd/system" ]]; then
