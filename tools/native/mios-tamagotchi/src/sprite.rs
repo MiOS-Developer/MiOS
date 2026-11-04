@@ -1687,7 +1687,9 @@ impl VoxelModel {
         let fit = ((f32::from(size) * 0.5 - 2.0) / bounds[0].abs().max(bounds[1].abs()).max(1.0))
             .min((origin_y - 2.0) / bounds[3].max(1.0))
             .min((f32::from(height) - origin_y - 2.0) / (-bounds[2]).max(1.0))
-            .min(kf);
+            // Resolve detailed contours across the actual canvas; do not leave
+            // half of a high-resolution sprite unused after chibi limb changes.
+            .min(if k > 1 { f32::MAX } else { kf });
         let project = |v: [f32; 3]| {
             let [x, y, z] = transform(v);
             // Align lattice centers with pixel centers at zero yaw. Otherwise

@@ -85,7 +85,7 @@ pub fn load_with_rules(
         // Refuse malformed supplied progression even in an older envelope.
         // Actual legacy saves have no progression; seed only from saved state.
         if has_progress {
-            game.progress.validate()?;
+            game.validate_habitat(rules)?;
         }
         game.progress = crate::progression::Progress::legacy(game.visual_seed());
     }
@@ -483,5 +483,43 @@ mod progression_tests {
         assert!(store.save(&invalid).is_err());
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert!(Store::open(&path).is_err());
+    }
+}
+
+// Complete test module for tools/native/mios-tamagotchi/src/save.rs.
+// Run only in real MiOS-DEV. Guards validation before legacy progression replacement.
+#[cfg(test)]
+mod supplied_legacy_progression_review {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn supplied_future_training_counter_is_refused_in_every_schema_without_rewrites() {
+        let config = Config::sample().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pet.json");
+        let mut game = Game::new(&config.game, 441);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        game.train(0, &config.game).unwrap();
+        game.progress.last_train_tick = Some(game.age_ticks + 1);
+        assert!(
+            game.validate_habitat(&config.habitat)
+                .unwrap_err()
+                .contains("future training tick")
+        );
+        for schema in 1..=4 {
+            let bytes =
+                serde_json::to_vec(&serde_json::json!({"schema":schema,"game":game})).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let error = load_with_rules(&path, &config.habitat).unwrap_err();
+            assert!(
+                error.contains("future training tick"),
+                "schema{schema}: {error}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
     }
 }

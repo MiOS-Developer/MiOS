@@ -302,3 +302,102 @@ fn backward_profile_layers_preserve_operator_choices_and_reject_corruption() {
         assert!(!root.path().join("state").exists());
     }
 }
+
+// Complete test module for tools/native/mios-tamagotchi/tests/cli.rs.
+// Run only in real MiOS-DEV alongside the integration's existing root() helper.
+#[cfg(test)]
+mod progression_legacy_snapshot_review {
+    use super::*;
+    use mios_tamagotchi::{
+        config::Config,
+        game::{Challenge, Direction, Game},
+        save::Store,
+    };
+
+    fn entries(path: &std::path::Path) -> Vec<std::ffi::OsString> {
+        let mut names = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn every_legacy_schema_snapshot_keeps_name_bytes_and_files_with_or_without_active_writer() {
+        let config = Config::sample().unwrap();
+        for schema in 1..=3 {
+            let fixture = root();
+            let path = fixture.path().join("pet.json");
+            let mut game = Game::new(&config.game, 727);
+            game.age_ticks = config.game.adult_ticks + 3;
+            game.character = 11;
+            game.fullness = 31;
+            game.happiness = 49;
+            game.hygiene = 52;
+            game.energy = 63;
+            game.health = 88;
+            game.coins = 42;
+            game.wins = 3;
+            game.paused = true;
+            game.ill = true;
+            game.challenge = Some(Challenge {
+                pattern: [Direction::Left, Direction::Down, Direction::Right],
+                entered: 1,
+                reveal: 0,
+            });
+            let mut legacy = serde_json::to_value(&game).unwrap();
+            legacy.as_object_mut().unwrap().remove("progress");
+            if schema < 3 {
+                legacy.as_object_mut().unwrap().remove("habitat");
+            }
+            if schema == 1 {
+                legacy.as_object_mut().unwrap().remove("character");
+            }
+            let original =
+                serde_json::to_vec(&serde_json::json!({"schema":schema,"game":legacy})).unwrap();
+            fs::write(&path, &original).unwrap();
+            let character_id = if schema == 1 { 0 } else { game.character };
+            let expected_name = &config
+                .characters
+                .iter()
+                .find(|c| c.id == character_id)
+                .unwrap()
+                .name;
+            for active_writer in [false, true] {
+                let _writer = active_writer.then(|| Store::open(&path).unwrap());
+                let original_entries = entries(fixture.path());
+                for explicit_snapshot in [false, true] {
+                    let mut command = Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"));
+                    command.env_clear().args([
+                        "--root",
+                        fixture.path().to_str().unwrap(),
+                        "--save",
+                        path.to_str().unwrap(),
+                        "--dialogs",
+                        "native",
+                    ]);
+                    if explicit_snapshot {
+                        command.arg("--snapshot");
+                    }
+                    let result = command.output().unwrap();
+                    assert!(
+                        result.status.success(),
+                        "schema{schema}, writer{active_writer}: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    assert!(result.stdout.is_ascii());
+                    assert!(!result.stdout.contains(&27));
+                    let text = String::from_utf8(result.stdout).unwrap();
+                    assert!(text.contains(&format!("{expected_name} thinks:")), "{text}");
+                    assert!(text.contains("coins 42"), "{text}");
+                    for stat in ["Swim:", "Flight:", "Run:", "Power:", "Stamina:"] {
+                        assert!(text.contains(stat), "{text}");
+                    }
+                    assert_eq!(fs::read(&path).unwrap(), original);
+                    assert_eq!(entries(fixture.path()), original_entries);
+                }
+            }
+        }
+    }
+}

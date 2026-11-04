@@ -89,6 +89,7 @@ pub struct Ui {
     reaction_frames: usize,
     viewport: Cell<(u16, u16)>,
     camera_viewport: Cell<(u16, u16)>,
+    camera_resize: Cell<Option<(CameraView, CameraView, usize)>>,
     position: (u16, u16),
     destination: (u16, u16),
     yaw: u16,
@@ -145,6 +146,7 @@ impl Ui {
             reaction_frames: 0,
             viewport: Cell::new((u16::MAX, u16::MAX)),
             camera_viewport: Cell::new((u16::MAX, u16::MAX)),
+            camera_resize: Cell::new(None),
             position: (500, 700),
             destination: (500, 700),
             yaw: 0,
@@ -230,19 +232,45 @@ impl Ui {
             .clamp(50, 400) as u16;
         self.frame = frame;
     }
+    fn effective_view(&self, view: CameraView, dimensions: (u16, u16)) -> CameraView {
+        if (dimensions.0 < 28 || dimensions.1 < 10) && view == CameraView::Pet {
+            CameraView::Face
+        } else {
+            view
+        }
+    }
     fn set_scene(&self, area: Rect) {
         self.pet_area.set(area);
-        self.camera_viewport.set((area.width, area.height));
+        let dimensions = (area.width, area.height);
+        let previous = self.camera_viewport.replace(dimensions);
+        if previous != (u16::MAX, u16::MAX) {
+            let from = self.effective_view(self.camera_view, previous);
+            let to = self.effective_view(self.camera_view, dimensions);
+            if from != to {
+                self.camera_resize.set(Some((from, to, self.frame)));
+            }
+        }
     }
     fn camera(&self) -> Camera {
         let (w, h) = self.camera_viewport.get();
-        let effective = |view| {
-            if (w < 28 || h < 10) && view == CameraView::Pet {
-                CameraView::Face
-            } else {
-                view
+        let effective = |view| self.effective_view(view, (w, h));
+        if let Some((from, to, started)) = self.camera_resize.get() {
+            let t = self
+                .frame
+                .saturating_sub(started)
+                .saturating_mul(100)
+                .checked_div(self.camera_transition_frames.max(1))
+                .unwrap_or(100)
+                .min(100) as u32;
+            if t < 100 {
+                return Camera {
+                    from_view: from,
+                    view: to,
+                    zoom_percent: self.zoom_percent,
+                    transition_percent: (t * t * (300 - 2 * t) / 10000) as u16,
+                };
             }
-        };
+        }
         Camera {
             view: effective(self.camera_view),
             zoom_percent: self.zoom_percent,
@@ -251,6 +279,9 @@ impl Ui {
         }
     }
     fn change_camera(&mut self, view: CameraView, zoom: u16) {
+        if view != self.camera_view {
+            self.camera_resize.set(None);
+        }
         self.camera_from_view = self.camera_view;
         self.camera_view = view;
         self.zoom_origin = self.zoom_percent;
@@ -292,7 +323,7 @@ impl Ui {
             i32::from(yaw)
         };
         let turn = (to - from + 540) % 360 - 180;
-        (from + turn * i32::from(self.camera_blend) / 100).rem_euclid(360) as u16
+        (from + turn * i32::from(camera.transition_percent) / 100).rem_euclid(360) as u16
     }
     fn can_move(&self) -> bool {
         self.mobile_stage
@@ -1746,7 +1777,7 @@ impl Ui {
         let block = panel(&title, colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
         screen.render_widget(block, area);
-        let micro = inner.height <= 5 || inner.width < 18;
+        let micro = inner.height < 10 || inner.width < 28;
         let header_rows = if micro { 0 } else { 2 };
         let detail_rows = if micro { 1 } else { 3 };
         let [header, list, detail, controls] = Layout::vertical([
@@ -1810,10 +1841,12 @@ impl Ui {
             .collect::<Vec<_>>();
         screen.render_widget(Paragraph::new(lines), list);
         let r = &config.game.training;
-        let reason = if !self.game.progress.hatched {
+        let reason = if self.game.stage(&config.game) == crate::game::Stage::Egg {
             Some("Egg: wait")
         } else if self.game.health == 0 {
             Some("Pet died")
+        } else if !self.game.progress.hatched {
+            Some("Stats: wait")
         } else if self.game.paused {
             Some("Paused: P")
         } else if self.game.sleeping {
@@ -2455,7 +2488,7 @@ impl Ui {
                 ],
             ),
             Menu::Games => (" GAMES ", vec!["Three-arrow memory", "Back"]),
-            Menu::Status => (" MIO / STATUS ", vec!["Back"]),
+            Menu::Status => (" STATUS ", vec!["Back"]),
             Menu::Graphics => (
                 " GRAPHICS ",
                 vec![
@@ -3919,5 +3952,101 @@ mod progression_ui_tests {
             "{text}"
         );
         assert_eq!(ui.game, saved);
+    }
+    #[test]
+    fn landscape_portrait_resize_blends_camera_without_resetting_zoom_or_game() {
+        let (config, mut ui) = pet();
+        ui.hud_mode = HudMode::Minimal;
+        ui.game.paused = true;
+        let saved = ui.game.clone();
+        draw(&ui, &config, 80, 24, 0);
+        assert_eq!(ui.camera().view, CameraView::Pet);
+        ui.zoom_by(true);
+        ui.zoom_by(true);
+        ui.animate(config.zoom_transition_frames);
+        assert_eq!(ui.zoom_percent, 150);
+        let start = ui.frame;
+        draw(&ui, &config, 40, 12, start);
+        assert_eq!(ui.camera().view, CameraView::Face);
+        assert_eq!(ui.camera().from_view, CameraView::Pet);
+        assert_eq!(ui.camera().transition_percent, 0);
+        ui.animate(start + config.zoom_transition_frames / 2);
+        assert!((1..100).contains(&ui.camera().transition_percent));
+        ui.animate(start + config.zoom_transition_frames);
+        assert_eq!(ui.camera().transition_percent, 100);
+        let start = ui.frame;
+        draw(&ui, &config, 30, 40, start);
+        assert_eq!(ui.camera().view, CameraView::Pet);
+        assert_eq!(ui.camera().from_view, CameraView::Face);
+        assert_eq!(ui.camera().transition_percent, 0);
+        ui.animate(start + config.zoom_transition_frames / 2);
+        assert!((1..100).contains(&ui.camera().transition_percent));
+        ui.animate(start + config.zoom_transition_frames);
+        draw(&ui, &config, 80, 24, ui.frame);
+        assert_eq!(ui.zoom_percent, 150);
+        assert_eq!(ui.game, saved);
+    }
+}
+
+// Complete test module for tools/native/mios-tamagotchi/src/ui.rs.
+// Run only in real MiOS-DEV. This tests navigation without training or altering the pet.
+#[cfg(test)]
+mod progression_training_navigation_review {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn every_training_choice_is_visible_and_back_preserves_pet_on_compact_screens() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 711);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        for (width, height) in [(12, 6), (20, 8), (40, 14), (80, 24)] {
+            let mut ui = Ui::configured(game.clone(), &config);
+            let before = ui.game.clone();
+            let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            ui.handle(key(KeyCode::Char('l')), &config.game);
+            for selected in 0..6 {
+                assert_eq!(ui.menu_selected, selected);
+                terminal
+                    .draw(|frame| ui.draw(frame, &config, Renderer::Ascii, &colors, 0, false))
+                    .unwrap();
+                let text = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                let labels = [
+                    ("Swim", "Swim"),
+                    ("Fly", "Flight"),
+                    ("Run", "Run"),
+                    ("Pwr", "Power"),
+                    ("Stam", "Stamina"),
+                    ("Back", "Back"),
+                ];
+                let (short, long) = labels[selected];
+                assert!(
+                    text.contains(short) || text.contains(long),
+                    "{width}x{height}, choice{selected}: {text}"
+                );
+                assert_eq!(ui.game, before);
+                if selected < 5 {
+                    ui.handle(key(KeyCode::Down), &config.game);
+                }
+            }
+            ui.handle(key(KeyCode::Enter), &config.game);
+            assert_eq!(ui.menu, None);
+            assert_eq!(ui.game, before);
+        }
     }
 }
