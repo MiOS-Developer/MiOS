@@ -10,6 +10,7 @@ Idempotent + non-destructive: if the config file already exists it does NOTHING
 (Headscale state/sqlite remains preserved across runs). Pass --force to regenerate.
 """
 from __future__ import annotations
+import glob
 import os
 import pwd
 import sys
@@ -33,7 +34,11 @@ def _log(msg: str) -> None:
 
 def _load_layered_toml() -> dict:
     """Overlay vendor < host (host wins) via the shared resolver -- no per-user layer."""
-    return mios_toml.load_merged(layers=[VENDOR_TOML, HOST_TOML])
+    layers = [VENDOR_TOML]
+    layers.extend(sorted(glob.glob("/usr/lib/mios/mios.d/*.toml")))
+    layers.append(HOST_TOML)
+    layers.extend(sorted(glob.glob("/etc/mios/mios.d/*.toml")))
+    return mios_toml.load_merged(layers=layers)
 
 
 def _ensure_dirs(uid: int, gid: int) -> None:
@@ -54,7 +59,7 @@ def _build_config_yaml(data: dict) -> str:
     port = int(ports_sec.get("headscale", 8085))
     base_domain = str(mesh_sec.get("headscale_domain", "mesh.mios.local"))
     vnet_cidr = str(mesh_sec.get("vnet_cidr", "100.64.0.0/10"))
-    server_url = str(hs_sec.get("server_url", f"http://{base_domain}:{port}"))
+    server_url = str(hs_sec.get("server_url", f"http://control.{base_domain}:{port}"))
     listen_addr = str(hs_sec.get("listen_addr", f"0.0.0.0:{port}"))
     metrics_listen = str(hs_sec.get("metrics_listen_addr", "127.0.0.1:9090"))
     grpc_listen = str(hs_sec.get("grpc_listen_addr", "127.0.0.1:50443"))
@@ -85,7 +90,9 @@ derp:
   update_frequency: 24h
 
 disable_check_updates: true
-ephemeral_node_inactivity_timeout: 30m
+node:
+  ephemeral:
+    inactivity_timeout: 30m
 
 database:
   type: sqlite3
@@ -111,6 +118,13 @@ policy:
 
 
 def main() -> int:
+    data = _load_layered_toml()
+    enabled = data.get("headscale", {}).get("enabled") is True
+    if "--enabled-check" in sys.argv:
+        return 0 if enabled else 1
+    if not enabled:
+        _log("Headscale is disabled by the system configuration; skipping initialization")
+        return 0
     force = "--force" in sys.argv
 
     uid = -1
@@ -128,7 +142,6 @@ def main() -> int:
         _log(f"{CONF_PATH} already exists; leaving untouched (use --force to overwrite)")
         return 0
 
-    data = _load_layered_toml()
     yaml_content = _build_config_yaml(data)
 
     tmp_path = CONF_PATH + ".tmp"

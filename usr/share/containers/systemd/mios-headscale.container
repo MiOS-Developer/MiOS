@@ -10,7 +10,7 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-headscale
-Exec=headscale serve
+Exec=serve
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=833
 Image=docker.io/headscale/headscale:latest
@@ -22,12 +22,14 @@ User=833
 Volume=/etc/headscale:/etc/headscale:Z
 Volume=/var/lib/headscale:/var/lib/headscale:Z
 Volume=/run/headscale:/var/run/headscale:Z
+Volume=/usr/share/mios/mini/headscale-policy.hujson:/usr/share/mios/mini/headscale-policy.hujson:ro
 
 [Install]
 WantedBy=multi-user.target default.target
 
 [Service]
 Delegate=yes
+ExecCondition=/usr/libexec/mios/mios-headscale-firstboot --enabled-check
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=300s

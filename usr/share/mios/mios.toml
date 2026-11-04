@@ -11155,7 +11155,7 @@ swtpm_vtpm = true
 # Port: [ports].headscale. MagicDNS base domain and tailnet prefix: [metal.mesh]
 # headscale_domain / vnet_cidr (mios-headscale-firstboot reads them there).
 enabled = false
-server_url = "http://mesh.mios.local:8085"
+server_url = "http://control.mios.local:8085"
 listen_addr = "0.0.0.0:8085"
 metrics_listen_addr = "127.0.0.1:9090"
 config_path = "/etc/headscale/config.yaml"
@@ -14227,7 +14227,7 @@ Wants = "network-online.target"
 
 [containers.mios-headscale.Container]
 ContainerName = "mios-headscale"
-Exec = "headscale serve"
+Exec = "serve"
 Group = "${MIOS_SERVICES_HEADSCALE_GID:-833}"
 Image = "${MIOS_HEADSCALE_IMAGE:-docker.io/headscale/headscale:latest}"
 Label = [
@@ -14240,13 +14240,15 @@ User = "${MIOS_SERVICES_HEADSCALE_UID:-833}"
 Volume = [
   "/etc/headscale:/etc/headscale:Z",
   "/var/lib/headscale:/var/lib/headscale:Z",
-  "/run/headscale:/var/run/headscale:Z"
+  "/run/headscale:/var/run/headscale:Z",
+  "${MIOS_HEADSCALE_POLICY_PATH:-/usr/share/mios/mini/headscale-policy.hujson}:${MIOS_HEADSCALE_POLICY_PATH:-/usr/share/mios/mini/headscale-policy.hujson}:ro"
 ]
 
 [containers.mios-headscale.Install]
 WantedBy = "multi-user.target default.target"
 
 [containers.mios-headscale.Service]
+ExecCondition = "/usr/libexec/mios/mios-headscale-firstboot --enabled-check"
 Delegate = "yes"
 Restart = "on-failure"
 RestartSec = "10s"

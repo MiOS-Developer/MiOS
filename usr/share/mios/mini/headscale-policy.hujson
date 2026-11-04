@@ -5,11 +5,13 @@
   "hosts": {
     "coordinator": "100.64.0.1"
   },
+  // Empty owners reserve infrastructure tags for explicit coordinator-admin assignment.
+  // Tailnet members cannot self-assign Blade or router authority.
   "tagOwners": {
-    "tag:router": ["autogroup:admin"],
-    "tag:blade": ["autogroup:admin"],
-    "tag:guest": ["autogroup:admin"],
-    "tag:workstation": ["autogroup:admin"]
+    "tag:router": [],
+    "tag:blade": [],
+    "tag:guest": [],
+    "tag:workstation": []
   },
   "acls": [
     // Permit routers and blades unrestricted mesh communication
