@@ -2557,7 +2557,13 @@ fn main() -> ExitCode {
         }
         Commands::HeavyBackend { root } => {
             let root = root.unwrap_or_else(|| PathBuf::from("/"));
-            ("heavy-backend", "read-only canonical CUDA admission", gpu_topology::report_heavy_backend(&root).map(|report| println!("{report}")).map_err(|message| (message, 1)))
+            (
+                "heavy-backend",
+                "read-only canonical CUDA admission",
+                gpu_topology::report_heavy_backend(&root)
+                    .map(|report| println!("{report}"))
+                    .map_err(|message| (message, 1)),
+            )
         }
         Commands::LightBackend {
             root,
