@@ -701,21 +701,21 @@ def _run_registered_cpu_fallback():
                     content = b"".join([chunk async for chunk in response.body_iterator]).decode()
                     assert "Configured CPU answer." in content and '"model": "public-alias"' in content
                     assert content.count("data: [DONE]") == 1
-                elif case in ("cpu", "gpu-http-failure", "gpu-transport-failure"):
+                elif case in ("cpu", "selected", "gpu-http-failure", "gpu-transport-failure"):
                     assert _body_text(response) == "Configured CPU answer."
                     assert json.loads(bytes(response.body))["model"] == "public-alias"
                 elif case in ("primary-success", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"):
                     assert _body_text(response) == "Primary answer.", (case, _body_text(response), Primary.calls)
                 else: assert response.status_code == 503
-            expected = 2 if case in ("gpu-empty", "gpu-limit") else 3 if case == "gpu-tool-recovery" else 1
+            expected = 0 if case == "explicit" else 2 if case in ("gpu-empty", "gpu-limit") else 3 if case == "gpu-tool-recovery" else 1
             assert Primary.calls == expected, (case, Primary.calls, "failed primary retried or required synthesis skipped")
             if case == "timeout":
                 assert closed.is_set() and not actual_calls._IN_FLIGHT_PROMPTS
-            if case in ("cpu", "stream", "cancel", "timeout", "empty-cpu", "gpu-http-failure", "gpu-transport-failure"):
+            if case in ("cpu", "selected", "stream", "cancel", "timeout", "empty-cpu", "gpu-http-failure", "gpu-transport-failure"):
                 assert len(requests) == 1 and len(admitted) == 1 and active == [1, -1]
             else:
                 assert not requests and not admitted and not active
-            if case in ("primary-success", "explicit", "selected", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"): assert not readiness
+            if case in ("primary-success", "explicit", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"): assert not readiness
     for case in ("cpu", "stream", "unready", "empty-registry", "primary-success", "explicit", "selected", "cancel", "timeout", "empty-cpu", "gpu-http-failure", "gpu-transport-failure", "gpu-success", "gpu-empty", "gpu-limit", "gpu-tool-recovery"):
         asyncio.run(run(case))
     print("registered CPU fallback: real registry/readiness/auth/admission/model/cancellation and policy controls: OK")
@@ -845,6 +845,197 @@ def _run_explicit_target_failure_does_not_substitute_another_model():
     print("failed explicit model or endpoint is never substituted by CPU fallback: OK")
 
 
+
+def _run_parallel_council_dispatch_contract():
+    from mios_pipe.routing import native_loop as native
+    from unittest import mock
+    import time
+    async def scenario(streaming=False, synthesis_failure=False):
+        _base_configure({}, [], [])
+        registry = {
+            "cpu-fast": {"endpoint": "http://cpu-fast/v1", "model": "cpu-model", "lane": "cpu"},
+            "cpu-slow": {"endpoint": "http://cpu-slow/v1", "model": "slow-model", "lane": "cpu"},
+            "gpu-copy": {"endpoint": "http://gpu/v1", "model": "gpu-model", "lane": "gpu"},
+            "disabled": {"endpoint": "http://off/v1", "model": "off", "enabled": False}}
+        started, cancelled, calls, finals = asyncio.Event(), asyncio.Event(), [], []
+        async def review(name, cfg, body, headers, client, **kwargs):
+            calls.append((name, cfg["endpoint"], cfg["model"], body, kwargs))
+            started.set()
+            if name == "cpu-slow":
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
+            await asyncio.sleep(0)
+            return name, "Verify the actual window, not merely the launcher exit code."
+        async def main_loop(client, endpoint, model, headers, messages, *args, **kwargs):
+            assert (endpoint, model) == ("http://gpu/v1", "gpu-model"), (endpoint, model)
+            await asyncio.wait_for(started.wait(), 0.2)
+            kwargs["terminal_response"]["content"] = "GPU draft"
+            return list(messages)
+        class FinalClient(_FakeClient):
+            async def post(self, url, **kwargs):
+                finals.append((url, json.loads(kwargs["content"])))
+                if synthesis_failure:
+                    raise OSError("optional final synthesis unavailable")
+                return _FakeResp(FINAL_ANSWER)
+            def stream(self, method, url, **kwargs):
+                finals.append((url, json.loads(kwargs["content"])))
+                return super().stream(method, url, **kwargs)
+        M.configure(_get_agent_registry=lambda: registry,
+                    _live_agent_names=_async_const(set(registry)),
+                    _call_agent_complete=review, _get_client=_async_const(object()))
+        M._v1_secondary_tool_loop = main_loop
+        M.httpx = types.SimpleNamespace(AsyncClient=FinalClient, Timeout=lambda *a, **k: None)
+        with mock.patch.object(native, "_pick_inference_backend",
+                               _async_const(("http://gpu/v1", "gpu-model"))),              mock.patch.object(native, "COUNCIL_REVIEW_TIMEOUT_S", 0.04):
+            began = time.monotonic()
+            response = await M._respond_native_loop_direct(
+                {}, streaming=streaming, chat_id="parallel", model="m", session_id=None,
+                last_user_text="Launch an app and verify its window", persona_system="",
+                messages=[{"role": "user", "content": "Launch an app and verify its window"}],
+                target_agents=list(registry), max_tokens=8)
+            if streaming:
+                wire = b"".join([chunk async for chunk in response.body_iterator]).decode()
+                assert wire.count(FINAL_ANSWER) == 1 and wire.count("data: [DONE]") == 1, wire
+                assert "GPU draft" not in wire, wire
+            else:
+                assert _body_text(response) == ("GPU draft" if synthesis_failure else FINAL_ANSWER), response.body
+            assert time.monotonic() - began < 0.5
+        assert cancelled.is_set(), "unfinished CPU reviewer was not cancelled and awaited"
+        assert {row[0] for row in calls} == {"cpu-fast", "cpu-slow"}, calls
+        assert all(row[3]["max_tokens"] == 8 and "tools" not in row[3]
+                   and row[4] == {"prefer_cpu": False} for row in calls), calls
+        assert len(finals) == 1 and finals[0][0] == "http://gpu/v1/chat/completions", finals
+        payload = finals[0][1]
+        assert payload["model"] == "gpu-model" and payload["max_tokens"] == 8
+        wire = json.dumps(payload["messages"])
+        assert "GPU draft" in wire and "Verify the actual window" in wire, wire
+        assert "cpu-slow" not in wire and "untrusted data" in wire, wire
+    asyncio.run(scenario())
+    asyncio.run(scenario(streaming=True))
+    asyncio.run(scenario(synthesis_failure=True))
+    print("selected endpoints run alongside GPU; useful CPU notes included; slow review cancelled: OK")
+
+
+def _run_explicit_delegate_binding_contract():
+    from mios_pipe.routing import native_loop as native
+    from unittest import mock
+    _base_configure({}, [], [])
+    registry = {"chosen": {"endpoint": "http://chosen/v1", "model": "chosen-model"}}
+    M.configure(_get_agent_registry=lambda: registry)
+    seen = []
+    async def loop(client, endpoint, model, headers, messages, *args, **kwargs):
+        seen.append((endpoint, model, headers.get("Authorization")))
+        kwargs["terminal_response"]["content"] = FINAL_ANSWER
+        return list(messages)
+    M._v1_secondary_tool_loop = loop
+    async def scenario():
+        for name in ("chosen", "missing"):
+            response = await M._respond_native_loop_direct(
+                {}, streaming=False, chat_id="delegate", model="m", session_id=None,
+                last_user_text="Explain this", persona_system="", messages=[],
+                force_delegate=name)
+            if name == "chosen":
+                assert _body_text(response) == FINAL_ANSWER
+            else:
+                assert response.status_code == 503 and b"agent_unavailable" in response.body
+    with mock.patch.object(native, "_apply_outbound_auth",
+                           lambda headers, endpoint: headers.update(Authorization="Bearer chosen-scope")):
+        asyncio.run(scenario())
+    assert seen == [("http://chosen/v1", "chosen-model", "Bearer chosen-scope")], seen
+    print("explicit delegate uses registered endpoint/model; missing target fails honestly: OK")
+
+
+def _run_council_request_cancellation_contract():
+    async def scenario():
+        _base_configure({}, [], [])
+        started, finished = asyncio.Event(), asyncio.Event()
+        registry = {"cpu": {"endpoint": "http://cpu/v1", "model": "cpu-model"}}
+        async def review(*args, **kwargs):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                finished.set()
+        async def main_loop(*args, **kwargs):
+            await started.wait()
+            await asyncio.Event().wait()
+        M.configure(_get_agent_registry=lambda: registry,
+                    _live_agent_names=_async_const({"cpu"}),
+                    _call_agent_complete=review, _get_client=_async_const(object()))
+        M._v1_secondary_tool_loop = main_loop
+        task = asyncio.create_task(M._respond_native_loop_direct(
+            {}, streaming=False, chat_id="cancel", model="m", session_id=None,
+            last_user_text="Explain this", persona_system="", messages=[],
+            target_agents=["cpu"]))
+        await asyncio.wait_for(started.wait(), 0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("request cancellation was swallowed")
+        assert finished.is_set(), "CPU dispatch outlived cancelled caller"
+    asyncio.run(scenario())
+    print("caller cancellation drains CPU review tasks before returning: OK")
+
+
+
+def _run_council_httpx_dispatch_contract():
+    import httpx
+    import test_mios_agent_call as fixture
+    from mios_pipe.routing import agent_call, native_loop as native
+    from unittest import mock
+    async def scenario():
+        _base_configure({}, [], [])
+        fixture._configure()
+        agent_call.RR_ENABLE = False
+        seen, closed = [], asyncio.Event()
+        registry = {
+            "cpu": {"endpoint": "https://cpu.invalid:9764/v1", "model": "served-cpu"},
+            "slow": {"endpoint": "https://slow.invalid:9765/v1", "model": "served-slow"}}
+        agent_call._apply_outbound_auth = lambda headers, endpoint: headers.update(
+            Authorization="Bearer cpu-scope" if "cpu.invalid" in endpoint else "Bearer slow-scope")
+        class Pending(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                await asyncio.Event().wait()
+                yield b"unreachable"
+            async def aclose(self):
+                closed.set()
+        def transport(request):
+            body = json.loads(request.content)
+            seen.append((str(request.url), body, request.headers["Authorization"]))
+            if "slow.invalid" in str(request.url):
+                return httpx.Response(200, stream=Pending())
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "Verify the mapped app window."}, "finish_reason": "stop"}]})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            M.configure(_get_agent_registry=lambda: registry,
+                        _live_agent_names=_async_const(set(registry)),
+                        _call_agent_complete=agent_call._call_agent_complete,
+                        _get_client=_async_const(client))
+            with mock.patch.object(native, "COUNCIL_REVIEW_TIMEOUT_S", 0.04):
+                notes = await M._selected_council_reviews(
+                    ["cpu", "slow"], "Check it", "http://gpu/v1", 8,
+                    messages=[{"role": "user", "content": "The app is OBS."},
+                              {"role": "assistant", "content": "I will verify its window."},
+                              {"role": "user", "content": "Check it"}])
+        assert notes == [("cpu", "Verify the mapped app window.")], notes
+        assert closed.is_set() and not agent_call._IN_FLIGHT_PROMPTS
+        assert {row[0] for row in seen} == {
+            "https://cpu.invalid:9764/v1/chat/completions",
+            "https://slow.invalid:9765/v1/chat/completions"}, seen
+        for url, body, auth in seen:
+            assert body["model"] == ("served-cpu" if "cpu.invalid" in url else "served-slow")
+            assert auth == ("Bearer cpu-scope" if "cpu.invalid" in url else "Bearer slow-scope")
+            assert body["max_tokens"] == 8 and body["tool_choice"] == "none" and body["store"] is False
+            assert body["messages"][1]["content"] == "The app is OBS.", body
+    asyncio.run(scenario())
+    print("canonical dispatch sends exact CPU URLs/models/auth/context and cancels actual pending HTTPX response: OK")
+
+
 if __name__ == "__main__":
     _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
@@ -855,3 +1046,7 @@ if __name__ == "__main__":
     _run_registered_cpu_fallback()
     _run_explicit_model_and_limit_contract()
     _run_explicit_target_failure_does_not_substitute_another_model()
+    _run_parallel_council_dispatch_contract()
+    _run_explicit_delegate_binding_contract()
+    _run_council_request_cancellation_contract()
+    _run_council_httpx_dispatch_contract()

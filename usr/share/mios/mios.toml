@@ -3475,6 +3475,10 @@ fanout_min = 1
 fanout_max = 3
 fanout_select_mode      = "model"
 fanout_select_timeout_s = 8       # micro-model relevance-pick timeout (degrade-open)
+# Independent council perspectives run beside the main answer, with one shared
+# wall-clock deadline. Unfinished reviews are cancelled and awaited.
+council_review_timeout_s = 8.0
+council_review_max_tokens = 96
 max_sources          = 8
 sources_registry_cap = 64
 dag_empty_native_fallback = true

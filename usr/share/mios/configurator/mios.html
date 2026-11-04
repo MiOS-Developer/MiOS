@@ -4147,6 +4147,10 @@
         <input type="text" id="f-disp-fmin" data-key="dispatch.fanout_min" data-type="int" placeholder="1">
         <label for="f-disp-fmax">fanout_max (total concurrent agents = primary + secondaries)</label>
         <input type="text" id="f-disp-fmax" data-key="dispatch.fanout_max" data-type="int" placeholder="3">
+        <label for="f-disp-review-time">council_review_timeout_s (shared deadline for parallel second opinions)</label>
+        <input type="text" id="f-disp-review-time" data-key="dispatch.council_review_timeout_s" data-type="float" placeholder="8.0">
+        <label for="f-disp-review-tokens">council_review_max_tokens (concise reasoning per reviewer)</label>
+        <input type="text" id="f-disp-review-tokens" data-key="dispatch.council_review_max_tokens" data-type="int" placeholder="96">
         <label for="f-disp-cmax">council_max (max council secondaries/turn; 0 = all)</label>
         <input type="text" id="f-disp-cmax" data-key="dispatch.council_max" data-type="int" placeholder="4">
         <label for="f-disp-swmax">swarm_max_width (distinct swarm/DAG targets; 0 = uncapped)</label>
