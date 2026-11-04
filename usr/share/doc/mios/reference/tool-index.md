@@ -59,8 +59,6 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-blade-enroll` | Declarative SSOT blade pre-enrollment registry and TPM EK fingerprint parser (task_473, task_2706). |
 | `usr/libexec/mios/mios-bound-images-firstboot` | First-boot bound-image provisioner. Resolve the layered fleet and pull only missing images; publish completion only when every configured image is available. Incomplete runs leave the next boot or... |
 | `usr/libexec/mios/mios-build-driver` | Entry point for the MiOS-DEV build pipeline; executes the full multi-format build process (OCI, WSL, QEMU, etc.) and renders the interactive dashboard within a Windows-hosted terminal session. |
-| `usr/libexec/mios/mios-build-status` | Provides a summary of the most recent build's status, log location, and success state by analyzing /var/log/mios/build-driver-*.log files and active build-driver processes. |
-| `usr/libexec/mios/mios-build-tail` | Retrieves and streams the most recent raw build log from /var/log/mios or /tmp, used by agents to inspect real-time or historical build output from the mios-build-driver. |
 | `usr/libexec/mios/mios-cache-clear` | Executes a safe, selective purge of non-essential OWUI, Hermes, and system cache data while preserving critical auth, config, and model assets to reset state without causing user lockouts or data... |
 | `usr/libexec/mios/mios-cdi-detect` | Detects GPU hardware (NVIDIA, AMD, Intel) and generates corresponding CDI specification files in /run/cdi/ to enable containerized GPU access before the nvidia-cdi-refresh service. |
 | `usr/libexec/mios/mios-cdi-gen` | Generate CDI only for currently host-bound character devices; NVIDIA specs come intact from its official toolkit. |
@@ -302,7 +300,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 272 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 270 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)
@@ -761,7 +759,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/test_mios_sse.py` | Standalone assert-script unit test for mios_sse (refactor WS R2 leaf extraction). Pure stdlib, no server.py/DB/pytest/FastAPI. |
 | `usr/lib/mios/agent-pipe/test_mios_stress.py` | Standalone unit test for mios_stress logic to verify percentile calculations, request aggregation, throttling logic, and concurrency ramping algori... |
 | `usr/lib/mios/agent-pipe/test_mios_subagent_sandbox.py` | Unit test for mios_subagent_sandbox.py |
-| `usr/lib/mios/agent-pipe/test_mios_surface.py` | Standalone assert-script unit test for mios_surface (refactor WS R0 parity gate + R13 Step 2a whole-package projection). Pur... |
+| `usr/lib/mios/agent-pipe/test_mios_surface.py` | Canonical AST surface, atomic projector CLI and declared native generation tests, plus real FastAPI route parity without application lifespan. |
 | `usr/lib/mios/agent-pipe/test_mios_swarm.py` | stdlib assert-script gate for mios_swarm (the SWARM brain). Drives the |
 | `usr/lib/mios/agent-pipe/test_mios_template.py` | stdlib unit test for mios_template. |
 | `usr/lib/mios/agent-pipe/test_mios_temporal_decay.py` | Standalone unit test for mios_temporal_decay sibling module. |

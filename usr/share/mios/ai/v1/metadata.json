@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4143,
-  "total_metadata_entries": 3400,
-  "total_hints": 3394,
-  "total_functions_indexed": 2100,
-  "total_related_links": 6693,
+  "total_files_scanned": 4145,
+  "total_metadata_entries": 3402,
+  "total_hints": 3396,
+  "total_functions_indexed": 2108,
+  "total_related_links": 6703,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -4101,6 +4101,24 @@
         "miosd native-build"
       ],
       "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/mios-build/src/monitor.rs",
+      "hint": "Native build log discovery, status and byte-preserving follow-by-name monitor.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/libexec/mios/mios-build-driver",
+        "src/mios-rs/miosd/src/main.rs"
+      ],
+      "functions": [
+        "run",
+        "latest",
+        "tail_start",
+        "follow"
+      ],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false
@@ -8298,7 +8316,7 @@
     },
     {
       "path": "tests/test-keymap-overlay.py",
-      "hint": "Real-binary test of the Super+Escape overlay (mios-sync-theme -> native `mios-gen keymap-overlay` -> theme.json keymap) generated from the global tables (G1 C-25): global remaps, bypass chords, bypass_mod chords, toggle_chord labels, system layer and nav rows; negative controls: main's script (legacy tables) and a mios-gen without keymap-overlay both fail the same checks.",
+      "hint": "Real-binary test of the Super+Escape overlay (mios-sync-theme -> native `mios-gen keymap-overlay` -> theme.json keymap) generated from the global tables (G1 C-25): global remaps, bypass chords, bypass_mod chords, toggle_chord labels, system layer and nav rows; negative controls: immutable legacy keymap logic and an unsupported generator fail the same checks.",
       "related": [
         "usr/libexec/mios/mios-sync-theme",
         "tools/native/mios-gen/src/global_bindings.rs",
@@ -8694,7 +8712,7 @@
     },
     {
       "path": "tests/test-mios-gpu-driver.py",
-      "hint": "xb-09 / XB-3 gate for the MiOS-Xbox guest GPU driver step. Merges the live vendor SSOT with the staged lane",
+      "hint": "xb-09 / XB-3 gate for the MiOS-Xbox guest GPU driver step. Reads the canonical vendor SSOT or an explicit candidate",
       "related": [
         "usr/share/mios/windows/xbox/mios-gpu-driver.ps1",
         "tests/test-mios-gpu-driver.ps1",
@@ -9188,7 +9206,7 @@
     },
     {
       "path": "tests/test-nested-multiuse.py",
-      "hint": "Real-binary checks of `mios-gen nested-session` launch targets, seat/user identity and device assignment (--plan, --dry-run, --list-devices) against a scratch SSOT; a private uinput joystick proves device resolution, classification and the [desktop.nested.devices] policy. No compositor is started.",
+      "hint": "Real-binary checks of `mios-gen nested-session` launch targets, seat/user identity and device assignment (--plan, --dry-run, --list-devices) against a scratch SSOT; device resolution/classification/policy and inventory JSON run in the five native nested_session::tests::multiuse_devices_* private Host fixtures. No global kernel devices or compositor are created.",
       "related": [
         "tools/native/mios-gen/src/nested_session.rs",
         "tools/native/mios-gen/src/nested_devices.rs",
@@ -9196,10 +9214,10 @@
         "tests/test-nested-multiuse-live.py"
       ],
       "functions": [
-        "Uinput",
+        "Uinput (opt-in live helper)",
         "Binary",
         "TestTargets",
-        "TestDevices"
+        "TestDeviceBoundary"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -13855,11 +13873,43 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-tamagotchi/src/characters.rs",
+      "hint": "Validated original animal catalogue and pure state-aware speech; presentation never advances gameplay RNG.",
+      "related": [
+        "game.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [tamagotchi.characters]"
+      ],
+      "functions": [
+        "validate_catalogue",
+        "character",
+        "speech",
+        "thought"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-tamagotchi/src/config.rs",
       "hint": "Validate layered [tamagotchi] SSOT before entering raw mode; no private configuration defaults.",
       "related": [
         "usr/share/mios/mios.toml [tamagotchi]",
         "capabilities.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/dialogs.rs",
+      "hint": "Bounded native tmux dialogues with private replies and explicit inline fallback.",
+      "related": [
+        "input.rs",
+        "config.rs",
+        "ui.rs",
+        "task_3717"
       ],
       "functions": [],
       "doc": null,
@@ -13961,7 +14011,7 @@
     },
     {
       "path": "tools/native/mios-tamagotchi/src/sprite.rs",
-      "hint": "Validated indexed sprite and overflow-safe viewport fitting in terminal cells.",
+      "hint": "Indexed legacy sprites, solid CPU voxel rasterization and safe viewport fitting.",
       "related": [
         "render.rs",
         "specs/tamagotchi-tui/tamagotchi-sprites-spec.md"
@@ -13988,12 +14038,13 @@
     },
     {
       "path": "tools/native/mios-tamagotchi/src/ui.rs",
-      "hint": "Playable pet menu, memory challenge and accelerated clock; save failures unwind through Ratatui restoration.",
+      "hint": "Full-viewport pet room, responsive framed menus and animated care reactions; schema-1 game state stays independent of presentation.",
       "related": [
-        "game.rs",
+        "sprite.rs",
+        "render.rs",
         "input.rs",
-        "save.rs",
-        "render.rs"
+        "config.rs",
+        "specs/tamagotchi-tui"
       ],
       "functions": [],
       "doc": null,
@@ -19738,7 +19789,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_surface.py",
-      "hint": "Standalone assert-script unit test for mios_surface (refactor WS R0 parity gate + R13 Step 2a whole-package projection). Pur...",
+      "hint": "Canonical AST surface, atomic projector CLI and declared native generation tests, plus real FastAPI route parity without application lifespan.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -25757,31 +25808,6 @@
         "_fail",
         "_hash_password"
       ],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "usr/libexec/mios/mios-build-status",
-      "hint": "Provides a summary of the most recent build's status, log location, and success state by analyzing /var/log/mios/build-driver-*.log files and active build-driver processes.",
-      "related": [
-        "/usr/libexec/mios/mios-build-status",
-        "mios-build-driver"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "usr/libexec/mios/mios-build-tail",
-      "hint": "Retrieves and streams the most recent raw build log from /var/log/mios or /tmp, used by agents to inspect real-time or historical build output from the mios-build-driver.",
-      "related": [
-        "/usr/libexec/mios/mios-build-tail",
-        "mios-build-driver",
-        "mios-build-status"
-      ],
-      "functions": [],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
@@ -37231,6 +37257,20 @@
         "usr/share/mios/mios.toml",
         "usr/lib/systemd/system/mios-rdp-usb.socket",
         "tests/test-device-forwarding.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/research/mios-tamagotchi-villager-model.md",
+      "hint": "Evidence-backed design notes for original personality-driven MiOS-Mons; distinguish Nintendo statements, community reverse engineering and our implementation decisions.",
+      "related": [
+        "tools/native/mios-tamagotchi",
+        "specs/tamagotchi-tui",
+        "task_3716",
+        "task_3717"
       ],
       "functions": [],
       "doc": null,
