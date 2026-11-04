@@ -1373,9 +1373,10 @@ impl Ui {
             || "Enter: buy/place\nEsc: Back / Tab".into(),
             |p| {
                 format!(
-                    "{}: buy/place\n{}: Back / D-pad",
+                    "{}: buy/place\n{}: Back / {}",
                     tiny_button(&p.accept),
-                    tiny_button(&p.back)
+                    tiny_button(&p.back),
+                    tiny_button(&p.navigate)
                 )
             },
         );
@@ -2417,6 +2418,12 @@ mod graphics_tests {
         let text = render(&ui, &mut terminal);
         assert!(text.contains("[Cross] Choose"));
         assert!(text.contains("[Circle] Back"));
+        ui.controller.as_mut().unwrap().navigate = "Shoulders".into();
+        ui.open(Menu::Habitat);
+        let text = render(&ui, &mut terminal);
+        assert!(text.contains("X: buy/place"));
+        assert!(text.contains("O: Back / Shoulders"));
+        assert!(!text.contains("D-pad"));
         ui.menu = None;
         ui.ask_reset();
         let text = render(&ui, &mut terminal);

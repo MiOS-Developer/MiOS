@@ -312,8 +312,8 @@ original implementation.
 
 ## Mature bodies, ASCII faces and themed habitats
 
-Child and adult pixel art uses double-height canvases:8x16 in the eight-bit
-style and16x32 in the detailed style. Their voxel canvases are24x48 and32x64,
+Child and adult pixel art uses double-height canvases: 8x16 in the eight-bit
+style and 16x32 in the detailed style. Their voxel canvases are 24x48 and 32x64,
 with actual separate heads, torsos, arms and legs. Egg, baby and ghost forms
 remain compact. All sixteen original animal identities retain their shapes,
 palettes, personalities, hobbies and state-aware original dialogue.
@@ -348,11 +348,11 @@ come from the layered [tamagotchi.habitat] SSOT. Older live settings inherit the
 embedded vendor tier, without replacing the operator's TOML. Custom catalogues
 are validated before raw mode and used by active save/load operations.
 
-Schema3 stores seed, theme, purchased inventory and placed items. Legacy1/2
+Schema 3 stores seed, theme, purchased inventory and placed items. Legacy 1/2
 saves gain a deterministic habitat in memory while retaining their original
 pet fields, currency and gameplay RNG. A redirected snapshot reports the room
 and placed item names in plain ASCII without writing or applying offline time.
-Keep a backup before an interactive migration; older binaries cannot load3.
+Keep a backup before an interactive migration; older binaries cannot load schema 3.
 
 Native focused Talk/thought popups and right-click windows keep the same
 verified-client contract. Tiny, unfocused, restricted or multiply attached
