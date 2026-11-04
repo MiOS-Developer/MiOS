@@ -723,6 +723,11 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["sections", "list", "plan"])]
         post_list: bool,
     },
+    /// Export every typed logical phase and dependency without Cargo or a profile filter
+    BuildPhaseCatalog {
+        #[arg(long)]
+        toml: std::path::PathBuf,
+    },
     /// Execute one SSOT phase identity through its typed native or shell handler.
     BuildPhase {
         #[arg(long)]
@@ -2017,6 +2022,21 @@ async fn main() {
             {
                 eprintln!("[miosd] Build error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::BuildPhaseCatalog { toml } => {
+            let result = mios_build::PhaseRegistry::load_from_toml(toml)
+                .map_err(|e| e.to_string())
+                .and_then(|registry| registry.catalog());
+            match result {
+                Ok(rows) => println!(
+                    "{}",
+                    serde_json::to_string(&rows).expect("phase catalog serialization")
+                ),
+                Err(error) => {
+                    eprintln!("[miosd] Build phase catalog: {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Commands::BuildPhase { phase, root } => {

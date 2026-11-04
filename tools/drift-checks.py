@@ -1512,8 +1512,11 @@ def check_drift_build_catalog() -> int:
             mat_phases = json.load(f)
 
         automation_dir = os.path.join(root, "automation")
-        import re
-        scripts = sorted([f for f in os.listdir(automation_dir) if re.match(r"^\d{2}-.*\.sh$", f)])
+        scripts = [phase["script"] for phase in toml_data["build"]["phases"]["list"]]
+        actual = [phase["script"] for phase in mat_phases if phase["stage"] == "container"]
+        if set(actual) != set(scripts) or len(actual) != len(scripts):
+            print("Drift: materialized logical phase membership differs from the SSOT registry")
+            sys.exit(1)
 
         prev_script = None
         for s in scripts:

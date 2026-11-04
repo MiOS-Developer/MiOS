@@ -1471,6 +1471,16 @@ compat_dirs = []
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct PhaseCatalogRow {
+    pub ordinal: u32,
+    pub script: String,
+    pub stage: &'static str,
+    pub deps: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native: Option<mios_resolver::phases::NativeHandler>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Phase {
     pub ordinal: String,
@@ -1613,6 +1623,39 @@ impl PhaseRegistry {
             .iter()
             .find(|phase| phase.script == identity)
             .ok_or_else(|| format!("unregistered build phase {identity:?}"))
+    }
+
+    /// Publish all logical phases in dependency order, including native handlers.
+    /// This catalog never scans physical scripts and never selects a profile.
+    pub fn catalog(&self) -> Result<Vec<PhaseCatalogRow>, String> {
+        let mut rows = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut previous: Option<String> = None;
+        for phase in &self.phases {
+            let identity = &phase.script;
+            if phase.ordinal.len() != 2
+                || !phase.ordinal.bytes().all(|b| b.is_ascii_digit())
+                || !identity.starts_with(&format!("{}-", phase.ordinal))
+                || !identity.ends_with(".sh")
+                || !identity
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+                || !seen.insert(identity)
+            {
+                return Err(format!(
+                    "invalid or duplicate build phase identity {identity:?}"
+                ));
+            }
+            rows.push(PhaseCatalogRow {
+                ordinal: phase.ordinal.parse().map_err(|e| format!("{e}"))?,
+                script: identity.clone(),
+                stage: "container",
+                deps: previous.iter().cloned().collect(),
+                native: phase.native,
+            });
+            previous = Some(identity.clone());
+        }
+        Ok(rows)
     }
 
     pub fn print_plan(&self) {

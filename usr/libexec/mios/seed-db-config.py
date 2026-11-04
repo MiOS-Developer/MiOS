@@ -7,6 +7,7 @@ import os
 import json
 import logging
 import sys
+import subprocess
 
 logging.basicConfig(level=logging.INFO, format="[seed-db-config] %(levelname)s: %(message)s")
 log = logging.getLogger("seed-db-config")
@@ -30,6 +31,27 @@ def get_pg_config():
         "dbname": e.get("MIOS_PGVECTOR_DB", "mios"),
     }
 
+def get_build_phases(toml_path):
+    """Read the Rust phase registry; unavailable native policy fails before SQL."""
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    override = os.environ.get("MIOS_MIOSD_BIN")
+    candidates = [override] if override is not None else [
+        os.path.join(root, "src/mios-rs/target/release/miosd"),
+        os.path.join(root, "src/mios-rs/target/debug/miosd"),
+        "/usr/libexec/mios/miosd", "/usr/bin/miosd",
+    ]
+    binary = next((path for path in candidates if path and os.path.isfile(path) and os.access(path, os.X_OK)), None)
+    if not binary:
+        raise RuntimeError("native miosd is required for the logical build phase catalog")
+    result = subprocess.run(
+        [binary, "build-phase-catalog", "--toml", toml_path],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    rows = json.loads(result.stdout)
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("native build phase catalog returned no logical phases")
+    return rows
+
 def main():
     try:
         import psycopg
@@ -51,6 +73,12 @@ def main():
             data = tomllib.load(fh)
     except Exception as e:
         log.error("Failed to parse mios.toml: %s", e)
+        return 1
+
+    try:
+        build_phases = get_build_phases(toml_path)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        log.error("Build phase catalog unavailable: %s", error)
         return 1
 
     cfg = get_pg_config()
@@ -218,7 +246,6 @@ def main():
                         )
                 log.info("package_set seeded.")
 
-                import re
                 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
                 automation_dir = os.path.join(repo_root, "automation")
                 if not os.path.isdir(automation_dir):
@@ -226,32 +253,21 @@ def main():
                 if not os.path.isdir(automation_dir):
                     automation_dir = "/usr/share/mios/automation"
 
-                log.info("Scanning automation directory: %s", automation_dir)
+                log.info("Scanning first-boot automation directory: %s", automation_dir)
+                for phase in build_phases:
+                    cur.execute(
+                        """
+                        INSERT INTO build_phase (ordinal, script, stage, deps)
+                        VALUES (%s, %s, 'container', %s)
+                        ON CONFLICT (script) DO UPDATE SET
+                            ordinal = EXCLUDED.ordinal,
+                            stage = EXCLUDED.stage,
+                            deps = EXCLUDED.deps;
+                        """,
+                        (phase["ordinal"], phase["script"], json.dumps(phase["deps"]))
+                    )
+
                 if os.path.isdir(automation_dir):
-                    scripts = []
-                    for f in os.listdir(automation_dir):
-                        if re.match(r"^\d{2}-.*\.sh$", f):
-                            scripts.append(f)
-                    scripts.sort()
-
-                    prev_script = None
-                    for idx, s in enumerate(scripts):
-                        ordinal = int(s.split("-", 1)[0])
-                        deps = [prev_script] if prev_script else []
-
-                        cur.execute(
-                            """
-                            INSERT INTO build_phase (ordinal, script, stage, deps)
-                            VALUES (%s, %s, 'container', %s)
-                            ON CONFLICT (script) DO UPDATE SET
-                                ordinal = EXCLUDED.ordinal,
-                                stage = EXCLUDED.stage,
-                                deps = EXCLUDED.deps;
-                            """,
-                            (ordinal, s, json.dumps(deps))
-                        )
-                        prev_script = s
-
                     fb_dir = os.path.join(automation_dir, "firstboot")
                     if os.path.isdir(fb_dir):
                         for f in os.listdir(fb_dir):

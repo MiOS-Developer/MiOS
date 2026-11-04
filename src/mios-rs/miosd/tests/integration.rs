@@ -930,4 +930,70 @@ _run_stage after true
         assert_eq!(state["completed"][2]["status"], "missing");
         assert_eq!(state["notes"][0][0], "missing");
     }
+    #[test]
+    fn native_phase_catalog_exports_every_logical_id_without_profile_filtering() {
+        let _tree = super::tree_lock();
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        let manifest = temp.path().join("usr/share/mios/mios.toml");
+        let source = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            &manifest,
+            source.replace(
+                "[profiles]\ndefault = \"full\"",
+                "[profiles]\ndefault = \"core\"",
+            ),
+        )
+        .unwrap();
+        let invoke = || {
+            Command::new(env!("CARGO_BIN_EXE_miosd"))
+                .args(["build-phase-catalog", "--toml"])
+                .arg(&manifest)
+                .output()
+                .unwrap()
+        };
+        let result = invoke();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let rows: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 80);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.get("native").is_some())
+                .count(),
+            2
+        );
+        for (index, row) in rows.iter().enumerate() {
+            let expected = if index == 0 {
+                vec![]
+            } else {
+                vec![rows[index - 1]["script"].as_str().unwrap()]
+            };
+            assert_eq!(row["deps"], serde_json::json!(expected));
+        }
+        let positions = [
+            "55-native-build.sh",
+            "56-fonts.sh",
+            "54-bake-coderun-sandbox.sh",
+        ]
+        .map(|name| rows.iter().position(|row| row["script"] == name).unwrap());
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        for plant in [
+            source.replace("native = \"chrony\"", "native = \"unknown\""),
+            source.replace("43-nut-render.sh", "42-chrony-render.sh"),
+            source.replace("42-chrony-render.sh", "../42-chrony-render.sh"),
+        ] {
+            fs::write(&manifest, plant).unwrap();
+            let result = invoke();
+            assert!(!result.status.success());
+            assert!(
+                result.stdout.is_empty(),
+                "failed metadata must not emit a partial catalog"
+            );
+        }
+    }
 }

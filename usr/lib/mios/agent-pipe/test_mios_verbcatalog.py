@@ -223,7 +223,12 @@ class TestMiosBuildCatalog(unittest.TestCase):
         import importlib
         seed = importlib.import_module("seed-db-config")
 
-        with patch("psycopg.connect") as mock_connect, \
+        phases = [
+            {"ordinal": 1, "script": "01-repos.sh", "deps": []},
+            {"ordinal": 42, "script": "42-chrony-render.sh", "deps": ["01-repos.sh"], "native": "chrony"},
+        ]
+        with patch.object(seed, "get_build_phases", return_value=phases), \
+             patch("psycopg.connect") as mock_connect, \
              patch("builtins.open", mock_open()), \
              patch("os.path.isfile", return_value=True), \
              patch("os.path.isdir", return_value=True), \
