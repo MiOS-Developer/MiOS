@@ -9,10 +9,50 @@ use crate::{
     game::Rules,
 };
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum ViewMode {
+    Pixel,
+    Voxel,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum HudMode {
+    Auto,
+    Full,
+    Minimal,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub dialog_mode: crate::dialogs::DialogMode,
+    pub dialog_timeout_ms: u64,
+    pub dialog_query_timeout_ms: u64,
+    pub dialog_max_bytes: usize,
+    pub popup_min_width: u16,
+    pub popup_min_height: u16,
+    pub floating_thoughts: bool,
+    pub thought_interval_ticks: u64,
+    pub inline_dialog_rows: u16,
+    pub characters: Vec<crate::characters::Character>,
     pub renderer: Renderer,
+    pub view_mode: ViewMode,
+    pub hud_mode: HudMode,
+    pub hud_minimal_width: u16,
+    pub hud_minimal_height: u16,
+    pub wander_chance: u8,
+    pub wander_interval_ticks: u64,
+    pub wander_speed: u16,
+    pub sprite_style: crate::sprite::SpriteStyle,
+    pub animation_frame_ms: u64,
+    pub reaction_frames: usize,
+    pub controller_prompts: bool,
+    pub controller_poll_ms: u64,
+    pub controller_timeout_ms: u64,
+    pub controller_stale_ms: u64,
+    pub controller_max_bytes: usize,
     pub color: ColorMode,
     pub scale: u16,
     pub tick_ms: u64,
@@ -54,6 +94,28 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), String> {
         self.game.validate()?;
+        if !(1000..=600_000).contains(&self.dialog_timeout_ms)
+            || !(50..=2000).contains(&self.dialog_query_timeout_ms)
+            || !(4096..=262_144).contains(&self.dialog_max_bytes)
+            || !(30..=200).contains(&self.popup_min_width)
+            || !(10..=80).contains(&self.popup_min_height)
+            || !(5..=3600).contains(&self.thought_interval_ticks)
+            || !(4..=12).contains(&self.inline_dialog_rows)
+        {
+            return Err("tamagotchi: invalid native/inline dialogue limits".into());
+        }
+        crate::characters::validate_catalogue(&self.characters)?;
+        if !(20..=200).contains(&self.hud_minimal_width)
+            || !(8..=80).contains(&self.hud_minimal_height)
+        {
+            return Err("tamagotchi: invalid automatic minimal HUD threshold".into());
+        }
+        if self.wander_chance > 100
+            || !(1..=60).contains(&self.wander_interval_ticks)
+            || !(1..=100).contains(&self.wander_speed)
+        {
+            return Err("tamagotchi: invalid autonomous wandering settings".into());
+        }
         if !(1..=3600).contains(&self.autosave_seconds)
             || self.state_directory.is_empty()
             || !std::path::Path::new(&self.state_directory)
@@ -68,8 +130,24 @@ impl Config {
         if !(16..=60_000).contains(&self.tick_ms) {
             return Err("tamagotchi.tick_ms must be in 16..=60000".into());
         }
-        if self.palette.len() != 4 {
-            return Err("tamagotchi.palette must contain exactly four #RRGGBB colors".into());
+        if ![4, 16].contains(&self.palette.len()) {
+            return Err("tamagotchi.palette must contain four or sixteen #RRGGBB colors".into());
+        }
+        if !(40..=2000).contains(&self.animation_frame_ms)
+            || !(1..=120).contains(&self.reaction_frames)
+        {
+            return Err(
+                "tamagotchi: animation_frame_ms must be 40..=2000 and reaction_frames 1..=120"
+                    .into(),
+            );
+        }
+        if !(250..=10_000).contains(&self.controller_poll_ms)
+            || !(50..=1000).contains(&self.controller_timeout_ms)
+            || self.controller_stale_ms < self.controller_poll_ms
+            || self.controller_stale_ms > 30_000
+            || !(4096..=1_048_576).contains(&self.controller_max_bytes)
+        {
+            return Err("tamagotchi: invalid controller probe timing or size limits".into());
         }
         for color in self.palette.iter().chain(std::iter::once(&self.background)) {
             parse_rgb(color)?;

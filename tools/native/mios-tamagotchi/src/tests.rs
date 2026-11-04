@@ -109,7 +109,7 @@ fn sprite_validation_preserves_safe_indexing() {
     assert!(Sprite::new(0, 1, vec![]).is_err());
     assert!(Sprite::new(257, 1, vec![None; 257]).is_err());
     assert!(Sprite::new(2, 2, vec![Some(0)]).is_err());
-    assert!(Sprite::new(1, 1, vec![Some(4)]).is_err());
+    assert!(Sprite::new(1, 1, vec![Some(16)]).is_err());
     let s = Sprite::new(1, 1, vec![Some(3)]).unwrap();
     assert_eq!(s.pixel(1, 1, 2), Some(3));
     assert_eq!(s.pixel(2, 0, 2), None);
@@ -166,7 +166,7 @@ fn fitting_uses_both_dimensions_packing_and_requested_scale() {
 fn half_block_keeps_independent_colors_and_odd_height_padding() {
     let sprite = Sprite::new(1, 3, vec![Some(0), Some(1), Some(2)]).unwrap();
     let colors = Colors {
-        palette: [Color::Red, Color::Blue, Color::Green, Color::White],
+        palette: vec![Color::Red, Color::Blue, Color::Green, Color::White],
         background: Color::Black,
     };
     let area = Rect::new(0, 0, 1, 2);
@@ -258,4 +258,21 @@ fn inputd_projected_keys_navigate_without_release_or_repeat_toggles() {
         action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT)),
         None
     );
+}
+
+#[test]
+fn equal_half_pixels_use_opaque_foreground_coverage() {
+    let sprite = Sprite::new(1, 2, vec![Some(1), Some(1)]).unwrap();
+    let colors = Colors::from_config(&config(), Depth::Rgb).unwrap();
+    let area = Rect::new(0, 0, 1, 1);
+    let mut buf = Buffer::empty(area);
+    SpriteWidget {
+        sprite: &sprite,
+        renderer: Renderer::HalfBlock,
+        scale: 1,
+        colors: &colors,
+    }
+    .render(area, &mut buf);
+    assert_eq!(buf[(0, 0)].symbol(), "█");
+    assert_eq!(buf[(0, 0)].fg, colors.palette[1]);
 }

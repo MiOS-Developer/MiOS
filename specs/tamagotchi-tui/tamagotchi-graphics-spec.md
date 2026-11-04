@@ -1,5 +1,19 @@
 # Tamagotchi TUI - Graphics & Rendering Specification
 
+## Implemented graphics scope (task_3711)
+
+The native sample now has a full-viewport room, framed care/game/status/graphics/help
+menus, needs meters, an elapsed-time animation clock, separate original 8-bit and
+16-bit-style stage sprites, care/mood reactions and a read-only full-screen Sprite
+Studio. The implementation contract and current keys are documented in
+[the sample guide](../../usr/share/doc/mios/tamagotchi-tui.md).
+Saved game schema 1, the existing care rules and read-only redirected output remain
+the compatibility floor. The larger catalogues, additional characters/locations,
+social/economic systems and illustrative APIs below remain roadmap material.
+Do not infer those future counts or APIs from the implemented graphics increment.
+
+
+
 > The implemented rendering/input foundation is documented in [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md). Remaining examples describe future design, not available APIs.
 
 ## Overview
@@ -993,3 +1007,26 @@ The Tamagotchi TUI will provide a **visually appealing experience** across all t
 ---
 
 *This document is part of the Tamagotchi TUI Comprehensive Plan.*
+
+### Voxel and compact-view implementation scope (tasks 3713–3715)
+
+The playable implementation adds CPU voxel geometry with depth-tested yaw,
+autonomous stage/needs/seeded-RNG wandering and facial reactions, plus selectable
+Auto/Full/Minimal terminal HUDs. Controllers navigate menus/HUD only, with
+connected/focused native Inputd prompts. Existing pixel-art views and read-only
+ASCII headless output remain available. Compact menus scroll; the smallest
+interactive layout is 20x8. These concrete features do not certify the broader
+future character catalogue, additional economy/social games, physical controller
+coverage, smartwatch browser integration or performance targets in this design.
+
+### Original animal catalogue and dialogue transport (tasks 3716–3717)
+
+The implementation now includes sixteen original Japanese-inspired animal
+MiOS-Mons, stable schema-2 identity with read-only schema-1 migration, eight
+personality archetypes, individual hobbies, state-aware voices and thoughts.
+Native tmux popups and right-click context menus target only a verified owning
+client; inline below-view dialogue and compact paging remain available in
+restricted/remote transports. These characters and dialogue are original; the
+research note distinguishes primary Nintendo design statements, community
+documentation and our implementation choices. Physical mobile-browser and
+controller acceptance remains a per-session runtime receipt.

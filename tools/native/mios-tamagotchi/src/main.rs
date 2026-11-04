@@ -4,11 +4,11 @@
 use clap::Parser;
 use mios_tamagotchi::{
     capabilities::{self, ColorMode, Renderer},
-    config::Config,
+    config::{Config, HudMode, ViewMode},
+    dialogs::{self, Choice, DialogMode},
     game::{Care, Game},
     render::{snapshot, Colors},
     save::{self, Store},
-    sprite::Sprite,
     ui::{self, Ui},
 };
 use std::{
@@ -47,6 +47,24 @@ struct Args {
     color: Option<ColorMode>,
     #[arg(long)]
     scale: Option<u16>,
+    /// Original low-resolution or detailed pixel-art sprite set.
+    #[arg(long, value_enum)]
+    sprite_style: Option<mios_tamagotchi::sprite::SpriteStyle>,
+    /// CPU voxel 3D or classic pixel sprites; headless output remains ASCII.
+    #[arg(long, value_enum)]
+    view: Option<ViewMode>,
+    /// Automatic, full, or minimal HUD for consoles and remote terminal views.
+    #[arg(long, value_enum)]
+    hud: Option<HudMode>,
+    /// Native floating dialogues when eligible, or inline only.
+    #[arg(long, value_enum)]
+    dialogs: Option<DialogMode>,
+    #[arg(long, hide=true, conflicts_with_all=["sample","demo","snapshot","save","root","dialog_reply"])]
+    dialog: Option<PathBuf>,
+    #[arg(long, hide=true, requires="dialog_choice", conflicts_with_all=["sample","demo","snapshot","save","root","dialog"])]
+    dialog_reply: Option<PathBuf>,
+    #[arg(long, hide = true, value_enum, requires = "dialog_reply")]
+    dialog_choice: Option<Choice>,
 }
 fn main() -> ExitCode {
     match run(Args::parse()) {
@@ -58,6 +76,12 @@ fn main() -> ExitCode {
     }
 }
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(path) = &args.dialog {
+        return dialogs::popup_helper(path).map_err(Into::into);
+    }
+    if let (Some(path), Some(choice)) = (&args.dialog_reply, args.dialog_choice) {
+        return dialogs::reply_helper(path, choice).map_err(Into::into);
+    }
     let mut config = if args.sample || args.demo {
         Config::sample()?
     } else {
@@ -71,6 +95,18 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(v) = args.scale {
         config.scale = v;
+    }
+    if let Some(style) = args.sprite_style {
+        config.sprite_style = style;
+    }
+    if let Some(view) = args.view {
+        config.view_mode = view;
+    }
+    if let Some(hud) = args.hud {
+        config.hud_mode = hud;
+    }
+    if let Some(mode) = args.dialogs {
+        config.dialog_mode = mode;
     }
     config.validate()?;
     if args.demo {
@@ -91,9 +127,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             None
         }
         .unwrap_or_else(|| Game::new(&config.game, 1));
-        let status = Ui::new(game.clone()).summary(&config.game);
-        let art = snapshot(&Sprite::pet(game.stage(&config.game), 0), &config)?;
-        writeln!(io::stdout().lock(), "MiOS Tamagotchi\n{status}\n{art}\nSnapshot only; no clock or save writes. Use a terminal to play.")?;
+        if !config.characters.iter().any(|c| c.id == game.character) {
+            return Err("saved character is missing from this catalogue".into());
+        }
+        let snapshot_ui = Ui::configured(game.clone(), &config);
+        let status = snapshot_ui.summary(&config.game);
+        let art = snapshot(&snapshot_ui.pet_sprite(&config.game, 0), &config)?;
+        let character = mios_tamagotchi::characters::character(&config.characters, game.character);
+        let thought = mios_tamagotchi::characters::thought(character, &game, &config.game, 0);
+        let speech = mios_tamagotchi::characters::speech(character, &game, &config.game, 0);
+        writeln!(io::stdout().lock(), "MiOS Tamagotchi\n{status}\n{art}\n{} thinks: {thought}\n{} says: {speech}\nSnapshot only; no clock or save writes. Use a terminal to play.",character.name,character.name)?;
         return Ok(());
     }
     if !ephemeral && path.is_none() {
@@ -112,6 +155,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| Game::new(&config.game, seed));
     // Validate before entering raw mode; an existing corrupt save is never silently replaced.
     game.validate()?;
+    if !config.characters.iter().any(|c| c.id == game.character) {
+        return Err("saved character is missing from this catalogue".into());
+    }
     let colors = Colors::from_config(&config, caps.depth)?;
     ratatui::run(|terminal| {
         ui::run(
@@ -154,7 +200,7 @@ fn demo(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(
         output,
         "{}\nDemo complete: no save or live configuration was changed.",
-        Ui::new(game).summary(r)
+        Ui::configured(game, config).summary(r)
     )?;
     Ok(())
 }

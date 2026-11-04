@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const SCHEMA: u32 = 1;
+const SCHEMA: u32 = 2;
 const MAX_SAVE_BYTES: u64 = 65_536;
 
 #[derive(Deserialize, Serialize)]
@@ -51,7 +51,7 @@ pub fn load(path: &Path) -> Result<Option<Game>, String> {
     }
     let envelope: Envelope = serde_json::from_slice(&bytes)
         .map_err(|e| format!("invalid save {}: {e}", path.display()))?;
-    if envelope.schema != SCHEMA {
+    if envelope.schema != SCHEMA && envelope.schema != 1 {
         return Err(format!("unsupported save schema {}", envelope.schema));
     }
     envelope.game.validate()?;

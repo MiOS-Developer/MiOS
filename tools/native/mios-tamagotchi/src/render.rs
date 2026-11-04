@@ -15,14 +15,21 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct Colors {
-    pub palette: [Color; 4],
+    pub palette: Vec<Color>,
     pub background: Color,
 }
 
 impl Colors {
+    pub fn ink(&self, index: usize) -> Color {
+        self.palette
+            .get(index)
+            .copied()
+            .or_else(|| self.palette.get(index % self.palette.len().max(1)).copied())
+            .unwrap_or(Color::Reset)
+    }
     pub fn from_config(config: &Config, depth: Depth) -> Result<Self, String> {
         config.validate()?;
-        let mut palette = [Color::Reset; 4];
+        let mut palette = vec![Color::Reset; config.palette.len()];
         for (dest, text) in palette.iter_mut().zip(&config.palette) {
             *dest = quantize(parse_rgb(text)?, depth);
         }
@@ -155,15 +162,37 @@ impl Widget for SpriteWidget<'_> {
                 let Some(index) = pixels.iter().flatten().next() else {
                     continue;
                 };
-                let mut fg = self.colors.palette[usize::from(*index)];
-                let mut bg = self.colors.background;
+                let mut fg = self.colors.ink(usize::from(*index));
+                let mut bg = buf.cell(((left + col) as u16, (top + row) as u16)).map_or(
+                    self.colors.background,
+                    |c| {
+                        if c.bg == Color::Reset {
+                            self.colors.background
+                        } else {
+                            c.bg
+                        }
+                    },
+                );
                 let symbol = match self.renderer {
-                    Renderer::Auto | Renderer::Ascii => ['#', 'o', '@', '*'][usize::from(*index)],
+                    Renderer::Auto | Renderer::Ascii => {
+                        ['#', 'o', '@', '*'][usize::from(*index) % 4]
+                    }
+                    Renderer::HalfBlock
+                        if self.colors.palette.iter().all(|c| *c == Color::Reset) =>
+                    {
+                        ['#', 'o', '@', '*'][usize::from(*index) % 4]
+                    }
                     Renderer::HalfBlock => match (pixels[0], pixels[1]) {
                         (Some(upper), Some(lower)) => {
-                            fg = self.colors.palette[usize::from(upper)];
-                            bg = self.colors.palette[usize::from(lower)];
-                            '▀'
+                            fg = self.colors.ink(usize::from(upper));
+                            bg = self.colors.ink(usize::from(lower));
+                            // Identical pixels use foreground coverage throughout the cell;
+                            // translucent terminal backgrounds must not add scan lines.
+                            if upper == lower {
+                                '█'
+                            } else {
+                                '▀'
+                            }
                         }
                         (Some(_), None) => '▀',
                         (None, Some(_)) => '▄',
@@ -200,4 +229,245 @@ pub fn snapshot(sprite: &Sprite, config: &Config) -> Result<String, String> {
         text.push('\n');
     }
     Ok(text)
+}
+
+/// A complete room canvas. All colors come from the layered sprite palette.
+/// Decorations and reactions are composed behind/around the transparent pet.
+pub struct RoomWidget<'a> {
+    pub sprite: &'a Sprite,
+    pub renderer: Renderer,
+    pub scale: u16,
+    pub colors: &'a Colors,
+    pub expression: crate::sprite::Expression,
+    pub frame: usize,
+    pub position: (u16, u16),
+}
+
+impl Widget for RoomWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::sprite::Expression;
+        let area = area.intersection(buf.area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let ascii = self.renderer == Renderer::Ascii;
+        let floor = area.y + area.height.saturating_mul(3) / 4;
+        let wall = self.colors.ink(if self.expression == Expression::Sleeping {
+            6
+        } else {
+            10
+        });
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                let ground = y >= floor;
+                let bg = if ground {
+                    self.colors
+                        .ink(if ((x - area.x) / 8 + (y - floor)).is_multiple_of(2) {
+                            14
+                        } else {
+                            6
+                        })
+                } else {
+                    wall
+                };
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(
+                        if !ground && (x - area.x).is_multiple_of(7) && (y - area.y) % 3 == 1 {
+                            if ascii {
+                                '.'
+                            } else {
+                                '·'
+                            }
+                        } else {
+                            ' '
+                        },
+                    )
+                    .set_bg(bg)
+                    .set_fg(self.colors.ink(14));
+                }
+            }
+        }
+        let mut paint = |rect: Rect, symbol: char, fg: usize, bg: usize| {
+            for y in rect.y..rect.bottom() {
+                for x in rect.x..rect.right() {
+                    if area.contains((x, y).into()) {
+                        if let Some(c) = buf.cell_mut((x, y)) {
+                            c.set_char(symbol)
+                                .set_fg(self.colors.ink(fg))
+                                .set_bg(self.colors.ink(bg));
+                        }
+                    }
+                }
+            }
+        };
+        if area.width >= 28 && area.height >= 10 {
+            let wx = area.x + 3;
+            let wy = area.y + 2;
+            paint(
+                Rect::new(wx, wy, 12, 6),
+                if ascii { '#' } else { '▌' },
+                7,
+                14,
+            );
+            paint(
+                Rect::new(wx + 1, wy + 1, 10, 4),
+                ' ',
+                13,
+                if self.expression == Expression::Sleeping {
+                    6
+                } else {
+                    9
+                },
+            );
+            paint(
+                Rect::new(wx + 2, wy + 1, 2, 2),
+                if ascii { '*' } else { '▀' },
+                4,
+                9,
+            );
+            paint(Rect::new(wx + 6, wy + 2, 3, 1), ' ', 2, 13);
+            paint(Rect::new(wx + 5, wy + 1, 1, 4), '|', 7, 14);
+            paint(
+                Rect::new(wx, wy, 2, 6),
+                if ascii { '|' } else { '▒' },
+                5,
+                10,
+            );
+            paint(
+                Rect::new(wx + 10, wy, 2, 6),
+                if ascii { '|' } else { '▒' },
+                5,
+                10,
+            );
+            let px = area.right().saturating_sub(10);
+            let py = floor.saturating_sub(3);
+            paint(
+                Rect::new(px + 2, py, 2, 2),
+                if ascii { '^' } else { '▄' },
+                11,
+                10,
+            );
+            paint(
+                Rect::new(px, py + 1, 6, 1),
+                if ascii { '^' } else { '▀' },
+                15,
+                10,
+            );
+            paint(
+                Rect::new(px + 1, py + 2, 4, 2),
+                if ascii { '#' } else { '▀' },
+                8,
+                14,
+            );
+            paint(Rect::new(area.x + 2, floor + 1, 12, 2), ' ', 5, 5);
+            paint(
+                Rect::new(area.x + 3, floor, 10, 1),
+                if ascii { '_' } else { '▄' },
+                4,
+                10,
+            );
+        }
+        let margin = if area.height >= 12 { 1 } else { 0 };
+        let available_height = area.height.saturating_sub(2 * margin).max(1);
+        let available_width = (area.width / 2).max(1);
+        let (dx, dy) = self.renderer.packing();
+        let compact = self.sprite.downsample_to_fit(
+            available_width.saturating_mul(dx),
+            available_height.saturating_mul(dy),
+        );
+        let sprite = &compact;
+        let scale = fit_scale(
+            sprite.width(),
+            sprite.height(),
+            available_width,
+            available_height,
+            self.renderer,
+            self.scale,
+        )
+        .unwrap_or(1);
+        let (columns, rows) = cell_size(sprite.width(), sprite.height(), scale, self.renderer);
+        let columns = (columns as u16).min(area.width);
+        let rows = (rows as u16).min(available_height);
+        let left = area.x
+            + ((u32::from(area.width.saturating_sub(columns))
+                * u32::from(self.position.0.min(1000)))
+                / 1000) as u16;
+        let top = area.y
+            + margin
+            + ((u32::from(available_height.saturating_sub(rows))
+                * u32::from(self.position.1.min(1000)))
+                / 1000) as u16;
+        let body = Rect::new(left, top, columns, rows);
+        // A small floor shadow anchors the volume without needing a graphics GPU.
+        let shadow_y = body.bottom().min(area.bottom().saturating_sub(1));
+        for x in left..left.saturating_add(columns).min(area.right()) {
+            if let Some(cell) = buf.cell_mut((x, shadow_y)) {
+                cell.set_char(if ascii { '.' } else { '▄' })
+                    .set_fg(self.colors.ink(6));
+            }
+        }
+        SpriteWidget {
+            sprite,
+            renderer: self.renderer,
+            scale,
+            colors: self.colors,
+        }
+        .render(body, buf);
+        let effect = match self.expression {
+            Expression::Eating => {
+                if self.frame.is_multiple_of(2) {
+                    "nom"
+                } else {
+                    "munch"
+                }
+            }
+            Expression::Sleeping => {
+                if self.frame.is_multiple_of(2) {
+                    "z Z"
+                } else {
+                    "Z z"
+                }
+            }
+            Expression::Cleaning => {
+                if self.frame.is_multiple_of(2) {
+                    "o . o"
+                } else {
+                    ". o ."
+                }
+            }
+            Expression::Healing => "+ + +",
+            Expression::Celebrate | Expression::Excited => {
+                if self.frame.is_multiple_of(2) {
+                    "* <3 *"
+                } else {
+                    "<3 * <3"
+                }
+            }
+            Expression::Happy => "<3",
+            Expression::Sick => "+ rest +",
+            Expression::Hungry => "snack?",
+            Expression::Sad => ". . .",
+            Expression::Angry => "! !",
+            Expression::Surprised => "!",
+            Expression::Playful => {
+                if self.frame.is_multiple_of(2) {
+                    "*  *"
+                } else {
+                    " * "
+                }
+            }
+            Expression::Shy => "..",
+            Expression::Idle | Expression::Dead => "",
+        };
+        let x = area.x + (area.width.saturating_sub(effect.len() as u16)) / 2;
+        let y = area.y;
+        if area.height <= 3 {
+            return;
+        }
+        for (offset, ch) in effect.chars().enumerate() {
+            if let Some(cell) = buf.cell_mut((x + offset as u16, y)) {
+                cell.set_char(ch).set_fg(self.colors.ink(7)).set_bg(wall);
+            }
+        }
+    }
 }

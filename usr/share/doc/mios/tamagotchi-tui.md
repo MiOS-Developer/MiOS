@@ -8,6 +8,49 @@ coin rewards, pause, confirmed pet reset, and versioned local saves.
 The goal is a healthy, happy adult. Social play, breeding, shops, multiple
 mini-games and full device emulation remain future work under task_3706.
 
+## Graphical room and menus
+
+The interactive view composes the whole terminal viewport: a framed pet room,
+window and curtains, floor, furniture, plant, animated pet, care effects, needs
+meters, quick actions and modal menus. Wide terminals show a status sidebar;
+compact windows keep the scene and care controls readable. Tiny panes retain
+Quit. ASCII uses plain borders and characters, while supported Unicode terminals
+can use indexed or RGB half-block, quadrant and Braille rendering.
+
+Use **O or F1** for the main menu, **I** for Status, **V** for Graphics and **?**
+for Help. Arrows/Tab navigate, Enter/Space chooses, and Escape closes the menu.
+Care, Games, Status, Graphics, Help, Save and Quit are working menu entries.
+The existing care shortcuts remain unchanged. A menu freezes care time without
+adding offline catch-up; ambient animation continues.
+
+Graphics offers separate original **8-bit** and detailed **16-bit-style** sprite
+sets, plus renderer choices. Sprite Studio fills the viewport with a preview:
+Left/Right changes the reaction, Up/Down changes life stage, and Enter/Space
+switches art style. Previewing illness, sadness or death does not alter the pet
+or its save. The studio covers the implemented Egg, Baby, Child, Adult and Dead
+stages and all implemented expression/reaction clips.
+
+Real care and memory outcomes select bounded eating, cleaning, sleep, medicine,
+play and celebration reactions. Hunger, low happiness and illness select their
+corresponding persistent moods. Animation uses elapsed time independently of
+input traffic and the simulation clock. The animation_frame_ms, reaction_frames,
+sprite_style and indexed four- or sixteen-color palette belong to [tamagotchi].
+In-menu visual choices last for the current process; they do not replace live
+TOML or change schema-1 saved game data.
+
+    mios-tamagotchi --sample --sprite-style eight-bit
+    mios-tamagotchi --sample --sprite-style sixteen-bit --renderer half-block --color indexed
+
+A nonempty NO_COLOR remains an explicit request for monochrome output. For a
+color trial in a session that inherited it, remove it only for this process:
+
+    env -u NO_COLOR mios-tamagotchi --sample --color indexed
+
+These graphics do not claim the draft's future catalogue of 50+ characters,
+additional locations, shops, social systems or multiple mini-games. Those remain
+separate gameplay work. Real Linux VT/font and Inputd/controller certification
+still require the corresponding device/session checks.
+
 ## Try it without changing a live MiOS installation
 
 ```sh
@@ -103,7 +146,7 @@ cleanup; use the terminal's normal reset procedure if needed.
 ## Configuration and rendering
 
 `[tamagotchi]` owns renderer, color, scale, UI tick interval, palette/background,
-state_directory and autosave_seconds. `[tamagotchi.game]` owns growth thresholds,
+state_directory, autosave_seconds, sprite_style, animation_frame_ms and reaction_frames. `[tamagotchi.game]` owns growth thresholds,
 game tick interval, decay/care amounts, costs/rewards and memory reveal time.
 The bootstrap configurator follow-up is task_3704. Unknown fields or invalid
 values fail before entering raw mode. `--sample` deliberately bypasses live
@@ -174,3 +217,89 @@ Run `cargo test -p mios-tamagotchi` and warning-fatal Clippy from `tools/native`
 Rust 1.89 or newer is required for standard-library file locking. The lockfile
 pins Ratatui 0.30.2 and Crossterm 0.29. Local musl/PTY verification does not certify
 execution on an ARM64 node, real Inputd ownership, or live image installation.
+
+### Focused controller prompts
+
+The game reads the native Inputd map and connected-device ownership in a bounded
+background probe. A controller hint is shown only when a connected controller
+belongs to this session and the compositor's focused terminal client has this
+game's pane selected. Detach, foreign focus, unreadable or stale evidence restores
+keyboard hints. Snapshot and demo commands never start controller probes.
+
+The quick-care dock, menus, sprite studio, memory answers and new-pet prompt use
+the resolved positional buttons and controller-family labels. With a focused
+controller, the mapped Back button opens the main menu from the room; choose
+Quit there. Keyboard Q still saves and quits. A controller's system buttons keep
+their native Inputd behavior: Start is not advertised as Pause, and a desktop
+stick that scrolls is not advertised as directional game input.
+
+Controller hints are presentation only. The app consumes the existing terminal
+key projection, never grabs evdev devices or changes desktop input ownership.
+The polling, timeout, stale-age and output limits are vendor settings under
+[tamagotchi]; graphics and menu settings continue to use the embedded sample
+configuration for the user-local trial.
+
+### Autonomous voxel view and compact HUD
+
+The default view is a CPU-rendered 3D voxel MiOS-Mon. Its volumetric body, face,
+limbs and care props rotate with depth occlusion. The classic 8-bit and detailed
+16-bit pixel views remain selectable. Graphics also chooses Auto, Full or Minimal
+HUD; CLI overrides are --view voxel|pixel and --hud auto|full|minimal.
+
+Pet walking and turning are autonomous, using a separate seeded visual RNG and
+active simulation decisions conditioned on life stage, health, energy and sleep.
+Eggs and dead pets do not walk. Pause, menus, memory challenges and care reactions
+stop locomotion. Rendering, controller navigation and repaint frequency never
+consume the saved gameplay RNG or manufacture age, needs, coins or memory wins.
+The controller operates menus and HUD actions only; it never steers the pet.
+
+Minimal HUD keeps the pet, stage/state, fullness (F), happiness (H), energy (E),
+health (+) and selected care action. Other needs are in Status. Auto switches
+below the configured width/height thresholds. At 20x8 or larger every menu choice
+scrolls into view, and new-pet confirmation stays visible. Smaller viewports retain
+safe quit. This cell-based layout works through console and remote-terminal
+transports, including terminal-based smartwatch webviews; it does not add a new
+browser server. Headless snapshots remain plain ASCII and do not require a GPU,
+display server, controller, writable save or animation clock.
+
+### Sixteen animal MiOS-Mons and dialogue
+
+The embedded catalogue contains Mio, Yuzu, Mugi, Tofu, Kumo, Nori, Sora, Raku,
+Suzu, Aki, Hinoki, Haru, Mochi, Puku, Kiri and Iwa. They are original cat, fox,
+tanuki, rabbit, bear, frog, bird and turtle characters with distinct volumetric
+variants, palettes, hobbies and voices. Eight gender-neutral personality
+archetypes each have two individuals. These are Japanese-inspired original
+characters, not Animal Crossing character assets or copied dialogue.
+
+The main menu includes Talk and Roster. T opens Talk; B opens Roster. Roster is a
+read-only preview until adoption is confirmed. Arrows/controller navigation
+select menus and HUD actions; they never steer or rotate the pet. A confirmed
+adoption creates a new egg and resets presentation position and animation state.
+
+Thoughts and dialogue appear in a pane below the pet. In a focused, uniquely
+attached native tmux client, Talk can open a floating popup; right-click opens a
+native tmux context menu. The game enables mouse reporting only for its own
+terminal lifetime and restores it on normal/error exits. Native callbacks return
+only a bounded private choice; the main process retains the single save writer.
+There is no broadcast to another pane or default/headless tmux server.
+
+Use --dialogs inline to keep all conversation inline. Small, restricted,
+unattached, ambiguous/multiple-client and failed native-popup contexts use the
+inline pane. Read-more paging keeps longer conversation accessible in compact
+views. Snapshots print the full current thought and speech as plain ASCII.
+
+New saves use schema 2 to retain stable character identity. Schema-1 files load
+without modification, preserve all original gameplay state, and receive the
+default Mio identity; an explicit interactive save writes schema 2 atomically.
+Older executables cannot read schema 2, so retain the pre-upgrade binary and save
+backup for rollback. Unsupported versions, invalid identities and malformed
+catalogues are refused before raw mode. A read-only snapshot never upgrades a
+save.
+
+Research separates Nintendo's animal-role design discussion from community
+documentation of personality pools, hobbies/subtypes and species-first
+selection. See [the research note](research/mios-tamagotchi-villager-model.md).
+[Nintendo's developer interview](https://iwataasks.nintendo.com/interviews/3ds/animalcrossing-newleaf/0/2/),
+[Nookipedia's villager model](https://nookipedia.com/wiki/Villager) and
+[mystery-tour selection](https://nookipedia.com/wiki/Mystery_Island) informed the
+original implementation.
