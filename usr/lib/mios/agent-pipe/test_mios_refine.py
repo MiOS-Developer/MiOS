@@ -474,6 +474,7 @@ def t_requested_time_window_refiner_handler_news_integration():
          ["week"], ""),
         ("historical", "reports from the historical interval", {"start_date": "2024-02-01", "end_date": "2024-02-29", "timezone": zone},
          ["historical"], ""),
+        ("current day with null classifier metadata", "what is new today?", None, ["today"], "day"),
         ("unspecified", "show reports", None, ["today", "week"], "month"),
         ("incomplete", "reports from an unresolved interval", {"start_date": today, "end_date": None, "timezone": zone}, [], None),
         ("reversed", "reports for an invalid interval", {"start_date": today, "end_date": "2026-10-01", "timezone": zone}, [], None),
@@ -560,9 +561,12 @@ def t_requested_time_window_refiner_handler_news_integration():
                     args = search_calls[-1]
                     actual_range = args[args.index("--time-range") + 1] if "--time-range" in args else ""
                     assert actual_range == expected_search_range, (label, args)
-                    if window is not None:
-                        assert data["mios_news_window"] == window
-                        assert window["start_date"] in args[-1] and window["end_date"] in args[-1]
+                    expected_window = window
+                    if label == "current day with null classifier metadata":
+                        expected_window = {"start_date": today, "end_date": today, "timezone": zone}
+                    if expected_window is not None:
+                        assert data["mios_news_window"] == expected_window
+                        assert expected_window["start_date"] in args[-1] and expected_window["end_date"] in args[-1]
                         assert "configured month" not in answer and "haven't verified" not in answer, answer
                         assert "Interpreted publication-date interval" in answer
                     else:
@@ -570,6 +574,44 @@ def t_requested_time_window_refiner_handler_news_integration():
                 check("real refiner -> auto-council handler -> news: " + label, True)
             assert len(requests) == len(cases)
     asyncio.run(run())
+
+
+def t_relative_publication_day_protocol_recovery():
+    from mios_grounding import _refine_requested_time_window
+    reference = {"date": "2026-01-01", "timezone": "Pacific/Kiritimati"}
+    cases = [
+        ("what is new today?", "2026-01-01", "2026-01-01", False),
+        ("Yesterday's news", "2025-12-31", "2025-12-31", False),
+        ("reports today and yesterday", "2025-12-31", "2026-01-01", False),
+        ("news tomorrow", None, None, True),
+        ("news today but not yesterday", None, None, True),
+        ("news today since last week", None, None, True),
+        ("news today in UTC", None, None, True),
+        ("news today in Europe/Paris", None, None, True),
+        ("news today about 1995", None, None, True),
+        ("show reports", None, None, False),
+    ]
+    for query, first, last, expected_error in cases:
+        parsed = {"news": True, "requested_time_window": None}
+        _refine_requested_time_window(parsed, reference, query)
+        expected = ({"start_date": first, "end_date": last, "timezone": reference["timezone"]}
+                    if first else None)
+        check("relative publication protocol: " + query,
+              parsed["requested_time_window"] == expected
+              and bool(parsed.get("_requested_time_window_error")) == expected_error)
+    parsed = {"news": False, "requested_time_window": None}
+    _refine_requested_time_window(parsed, reference, "change today's wallpaper")
+    check("calendar recovery never turns an app action into news",
+          parsed["requested_time_window"] is None and not parsed.get("_requested_time_window_error"))
+    historical = {"start_date": "2024-02-01", "end_date": "2024-02-29", "timezone": None}
+    parsed = {"news": True, "requested_time_window": historical}
+    _refine_requested_time_window(parsed, reference, "news today about a historical interval")
+    check("validated classifier bounds retain their precedence",
+          parsed["requested_time_window"]["start_date"] == "2024-02-01")
+    parsed = {"news": True}
+    _refine_requested_time_window(parsed, reference, "show reports")
+    check("missing classifier metadata never means no interval specified",
+          parsed["requested_time_window"] is None and bool(parsed.get("_requested_time_window_error")))
 
 
 def main():
@@ -581,6 +623,7 @@ def main():
     t_deterministic_before_inference()
     t_selected_model_receipt_and_protected_stage()
     t_requested_time_window_refiner_handler_news_integration()
+    t_relative_publication_day_protocol_recovery()
     t_stream_deadline_and_cancellation()
     print(f"\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0

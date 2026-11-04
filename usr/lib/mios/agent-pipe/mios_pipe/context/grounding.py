@@ -712,10 +712,34 @@ def _temporal_reference_prompt(reference):
             + "\nCURRENT_TIMEZONE: " + str(reference["timezone"] or "local"))
 
 
-def _refine_requested_time_window(parsed, reference):
-    window, error = _validate_requested_time_window(parsed.get("requested_time_window"), reference)
-    if parsed.get("news") and "requested_time_window" not in parsed:
-        error = "The news refiner did not return date-window metadata."
+def _refine_requested_time_window(parsed, reference, user_text=""):
+    value = parsed.get("requested_time_window")
+    window, error = _validate_requested_time_window(value, reference)
+    if parsed.get("news") and value is None:
+        # A nullable model field is not evidence that the original request
+        # omitted a date. Resolve only unambiguous relative calendar days here;
+        # richer intervals remain the classifier's validated responsibility.
+        text = str(user_text or "")
+        days = re.findall(r"\b(today|yesterday|tomorrow)\b", text, re.I)
+        competing = re.search(
+            r"\b(?:week|month|year|hour|minute|days?|before|after|since|until|between|"
+            r"except|not|excluding|timezone|UTC|GMT)\b|\d|[A-Za-z_]+/[A-Za-z_]+",
+            text, re.I)
+        if days and not competing:
+            try:
+                current = datetime.date.fromisoformat(reference["date"])
+                offsets = {"today": datetime.timedelta(), "yesterday": -datetime.timedelta(days=1),
+                           "tomorrow": datetime.timedelta(days=1)}
+                dates = [current + offsets[day.lower()] for day in days]
+                window, error = _validate_requested_time_window({
+                    "start_date": min(dates).isoformat(), "end_date": max(dates).isoformat(),
+                    "timezone": reference.get("timezone")}, reference)
+            except (ValueError, TypeError, KeyError):
+                error = "The request's relative date could not be resolved against the caller clock."
+        elif days:
+            error = "The requested publication interval was not resolved; it includes additional date constraints."
+        elif "requested_time_window" not in parsed:
+            error = "The news refiner did not return date-window metadata."
     parsed["requested_time_window"] = window
     if error:
         parsed["_requested_time_window_error"] = error

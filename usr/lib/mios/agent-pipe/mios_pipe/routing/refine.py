@@ -877,7 +877,7 @@ async def _refine_intent(user_text: str,
         value = parsed.get(flag)
         parsed[flag] = value is True or (
             isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"})
-    _refine_requested_time_window(parsed, temporal_reference)
+    _refine_requested_time_window(parsed, temporal_reference, user_text)
     _ht = parsed.get("hint_tools")
     if isinstance(_ht, list) and _ht and _VERB_CATALOG:
         _folded_keys = {v.replace("-", "_").rstrip("s") for v in _VERB_CATALOG}
