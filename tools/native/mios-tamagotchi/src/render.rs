@@ -663,41 +663,48 @@ fn draw_camera_face(
             };
             match renderer {
                 Renderer::Auto | Renderer::Ascii => {
-                    if mono {
-                        cell.set_char(if ink[0] { '#' } else { base_ascii })
-                            .set_fg(Color::Reset)
-                            .set_bg(Color::Reset);
-                    } else {
-                        cell.set_char(if ink[0] { '#' } else { ' ' })
-                            .set_fg(colors.ink(0))
-                            .set_bg(backing);
+                    // ASCII has one foreground plane. Restore its actual body
+                    // glyph, then draw strokes without changing the room's
+                    // background (terminals may tint that plane independently).
+                    let background = cell.bg;
+                    paint_pixels(renderer, colors, original, cell);
+                    cell.set_bg(background);
+                    if ink[0] {
+                        let mark = if mono {
+                            if base_ascii == '@' { '#' } else { '@' }
+                        } else {
+                            '#'
+                        };
+                        cell.set_char(mark).set_fg(colors.ink(0));
                     }
                 }
                 Renderer::HalfBlock if mono => {
                     if !full_cell {
                         continue;
                     }
-                    cell.set_char(if ink[0] || ink[1] { '#' } else { base_ascii })
-                        .set_fg(Color::Reset)
-                        .set_bg(Color::Reset);
+                    let background = cell.bg;
+                    paint_pixels(renderer, colors, original, cell);
+                    cell.set_bg(background);
+                    if ink[0] || ink[1] {
+                        cell.set_char(if base_ascii == '@' { '#' } else { '@' });
+                    }
                 }
                 Renderer::HalfBlock => paint_pixels(renderer, colors, pixels, cell),
                 Renderer::Quadrant | Renderer::Braille => {
-                    // A one-foreground pattern cell cannot replace an excluded
-                    // nose/ear subpixel. In full cells use the actual material,
-                    // matching the base renderer's first-pixel color policy.
+                    // One-foreground pattern cells carve expression strokes
+                    // from the actual head color. Never paint a face rectangle
+                    // into the terminal's separately treated background plane.
+                    // Mixed cells keep the real nose/ear/occluder untouched.
                     if !full_cell {
                         continue;
                     }
-                    let mask = if mono { ink.map(|v| !v) } else { ink };
+                    let mask = ink.map(|v| !v);
                     let glyph = if renderer == Renderer::Quadrant {
                         quadrant(std::array::from_fn(|i| mask[i]))
                     } else {
                         braille(mask)
                     };
-                    cell.set_char(glyph)
-                        .set_fg(if mono { Color::Reset } else { colors.ink(0) })
-                        .set_bg(if mono { Color::Reset } else { backing });
+                    cell.set_char(glyph).set_fg(backing);
                 }
             }
             painted |= ink.iter().any(|on| *on);
@@ -2224,9 +2231,9 @@ mod camera_tests {
                 draw_projection(&sprite, renderer, &colors, projection, area, &mut source);
                 let mut buf = source.clone();
                 for cell in &mut buf.content {
-                    cell.set_char('X')
-                        .set_fg(colors.ink(5))
-                        .set_bg(colors.ink(5));
+                    // Plant stale foreground marks while retaining the actual
+                    // room plane, so restoring a gap cannot invent a backdrop.
+                    cell.set_char('X').set_fg(colors.ink(5));
                 }
                 let before = buf.clone();
                 assert!(draw_camera_face(
@@ -2256,21 +2263,23 @@ mod camera_tests {
                             let material = projection
                                 .sample(&sprite, u32::from(col) * u32::from(dx), py)
                                 .unwrap();
-                            if depth == Depth::Mono {
-                                assert_eq!(
-                                    buf[(col, row)],
-                                    source[(col, row)],
-                                    "{renderer:?}: monochrome gap lost original body representation"
-                                );
-                            } else {
-                                assert_eq!(
-                                    buf[(col, row)].bg,
-                                    colors.ink(usize::from(material)),
-                                    "{renderer:?}: face gap replaced actual material"
-                                );
-                            }
+                            assert_eq!(
+                                buf[(col, row)],
+                                source[(col, row)],
+                                "{renderer:?}: stroke gap changed the actual body representation"
+                            );
                             noncream_gaps += usize::from(material != 4);
                             cleared_gaps += 1;
+                        }
+                        if matches!(
+                            renderer,
+                            Renderer::Ascii | Renderer::Quadrant | Renderer::Braille
+                        ) {
+                            assert_eq!(
+                                buf[(col, row)].bg,
+                                before[(col, row)].bg,
+                                "{renderer:?}: expression painted a background rectangle"
+                            );
                         }
                         if !any_backing {
                             assert_eq!(buf[(col, row)], before[(col, row)], "{renderer:?}");
@@ -2283,6 +2292,61 @@ mod camera_tests {
                     "{renderer:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn monochrome_expression_strokes_contrast_with_the_actual_body_glyph() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let sprite = Sprite::voxel_with_appearance(
+            Stage::Adult,
+            Expression::Happy,
+            SpriteStyle::SixteenBit,
+            0,
+            0,
+            false,
+            Appearance {
+                shape: 0,
+                body: 4,
+                accent: 11,
+            },
+        );
+        for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+            let area = Rect::new(0, 0, 96, 48);
+            let projection = Projection::camera(
+                &sprite,
+                SolidBounds::of(&sprite).unwrap(),
+                area,
+                renderer,
+                0,
+                (500, 500),
+                Camera {
+                    view: CameraView::Face,
+                    ..Camera::default()
+                },
+            );
+            let mut before = Buffer::empty(area);
+            draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+            let mut after = before.clone();
+            assert!(draw_camera_face(
+                &sprite, renderer, &colors, projection, area, &mut after
+            ));
+            assert!(
+                before
+                    .content
+                    .iter()
+                    .zip(&after.content)
+                    .any(|(a, b)| a.symbol() != b.symbol()),
+                "{renderer:?}: monochrome face vanished into the body's glyph"
+            );
+            assert!(
+                before
+                    .content
+                    .iter()
+                    .zip(&after.content)
+                    .all(|(a, b)| a.bg == b.bg)
+            );
         }
     }
 
