@@ -9987,6 +9987,8 @@ force_zero_scaling = false
 enable = true
 pkgs = [
     "hyprland",
+    # The configured glass login uses greetd, cage and the tuigreet fallback.
+    "greetd", "cage", "tuigreet",
     "alacritty",
     "plocate",
     "rofi",
