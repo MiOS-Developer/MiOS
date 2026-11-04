@@ -931,7 +931,12 @@ async def _kv_paging(client, ep: str, cfg: dict, engine):
             _KV_RESIDENT[key] = conv
         try:
             yield
-        finally:
+        except BaseException:
+            # Cancellation/error already unwinds and closes the owned response.
+            # Optional disk snapshots must not extend a caller/reviewer deadline;
+            # keep admission held until that response cleanup finishes.
+            raise
+        else:
             await _kv_slot_action(client, ep, "save", conv, model, slot_id)
             _SAVED_CONVS.add(conv)
 

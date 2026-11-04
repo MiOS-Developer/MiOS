@@ -905,3 +905,76 @@ def _test_final_recovery_io_cleanup():
     print("bounded final recovery timeout/caller cancellation closes actual HTTPX response without closing caller client: OK")
 
 _test_final_recovery_io_cleanup()
+
+
+def _test_kv_cancelled_review_does_not_checkpoint():
+    import httpx
+    import time
+    from unittest.mock import patch
+    import mios_pipe.routing.agent_call as actual
+
+    async def scenario(deadline=False, cancel_snapshot=False):
+        started, closing, allow_close, closed = (asyncio.Event() for _ in range(4))
+        active, calls = [], []
+        class Pending(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                started.set()
+                await asyncio.Event().wait()
+                yield b"unreachable"
+            async def aclose(self):
+                closing.set()
+                await allow_close.wait()
+                closed.set()
+        async def transport(request):
+            calls.append((request.method, request.url.path, request.url.params.get("action")))
+            if request.method == "GET":
+                return httpx.Response(200, json=[{"id": 0}])
+            if request.url.path.endswith("/chat/completions") and cancel_snapshot:
+                return httpx.Response(200, json={"choices": [{"message": {"content": "done"}, "finish_reason": "stop"}]})
+            # Both inference and optional save use real streamed HTTPX bodies.
+            # A cancellation bug entering save would hang here.
+            return httpx.Response(200, stream=Pending())
+        async def model_active(ep, model, delta, est):
+            active.append(delta)
+        with patch.object(actual, "_model_active", model_active), \
+             patch.object(actual, "KV_PAGING_ENABLE", True), \
+             patch.object(actual, "RR_ENABLE", False), \
+             patch.object(actual, "SECONDARY_TOOL_LOOP", False), \
+             patch.object(actual, "_endpoint_is_llamacpp", lambda *args: True), \
+             patch.object(actual, "_KV_LOCKS", {}), \
+             patch.object(actual, "_KV_RESIDENT", {}), \
+             patch.object(actual, "_SAVED_CONVS", set()), \
+             patch.object(actual, "_ENDPOINT_SLOTS_CACHE", {}):
+            token = _conv.set("cancelled-review")
+            try:
+                async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+                    work = T._call_agent_complete("secondary", CFG, dict(BODY), {}, client)
+                    task = asyncio.create_task(asyncio.wait_for(work, 0.04) if deadline else work)
+                    await asyncio.wait_for(started.wait(), 0.5)
+                    start = time.monotonic()
+                    if not deadline:
+                        task.cancel()
+                    await asyncio.wait_for(closing.wait(), 0.5)
+                    # Closing the actual transport precedes release of admission.
+                    assert active == [1] and not task.done(), (active, task)
+                    allow_close.set()
+                    try:
+                        await asyncio.wait_for(task, 0.5)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+                    else:
+                        raise AssertionError("review cancellation/deadline swallowed")
+                    assert time.monotonic() - start < 0.5
+                    saves = [c for c in calls if c[2] == "save"]
+                    assert len(saves) == (1 if cancel_snapshot else 0), calls
+                    assert closed.is_set() and active == [1, -1], active
+                    assert not actual._IN_FLIGHT_PROMPTS and not client.is_closed
+                    assert len(asyncio.all_tasks()) == 1
+            finally:
+                _conv.reset(token)
+    asyncio.run(scenario())
+    asyncio.run(scenario(deadline=True))
+    asyncio.run(scenario(cancel_snapshot=True))
+    print("cancelled/deadline review skips optional KV save, drains HTTPX before admission release, cancels in-progress snapshot without fallback or orphan: OK")
+
+_test_kv_cancelled_review_does_not_checkpoint()
