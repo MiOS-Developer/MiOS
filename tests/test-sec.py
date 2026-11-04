@@ -3965,6 +3965,209 @@ class TestOwuiCredentialDiagnostics(unittest.TestCase):
         self.assertIn("api_key export skipped", output.getvalue())
 
 
+
+class CockpitSelinuxPolicy(unittest.TestCase):
+    """Run the shipped loader against owned SELinux tool fixtures, never the host store."""
+
+    def setUp(self):
+        from pathlib import Path
+        import shutil
+        self.tmp = tempfile.TemporaryDirectory(prefix="mios-cockpit-policy-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.state = self.root / "var/selinux"
+        self.state.mkdir(parents=True)
+        self.share = self.root / "usr/share/mios"
+        self.share.mkdir(parents=True)
+        self.modules = self.root / "usr/share/selinux/packages/mios"
+        self.modules.mkdir(parents=True)
+        self.policy = self.modules / "mios_cockpit_proxy.pp"
+        self.policy.write_bytes(b"fixture-policy-v1")
+        (self.root / "var/.selinux-init-done").touch()
+        self.db = self.root / "state.json"
+        self.config = dict(ports=[8110, 8120], labels={}, vendor={}, installed=False)
+        self.db.write_text(json.dumps(self.config))
+        self.events = self.root / "calls.jsonl"
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        tool = self.bin / "tool"
+        tool.write_text("""#!/usr/bin/env python3
+import json, os, pathlib, sys
+db=pathlib.Path(os.environ['MIOS_POLICY_FIXTURE'])
+s=json.loads(db.read_text()); cmd=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
+with open(os.environ['MIOS_POLICY_CALLS'],'a') as f: f.write(json.dumps([cmd,*a])+'\\n')
+def save(): db.write_text(json.dumps(s))
+if cmd=='getenforce': print(s.get('mode','Enforcing'))
+elif cmd=='logger': pass
+elif cmd=='mios-resolver':
+ print('MIOS_PORTS_COCKPIT='+str(s['ports'][0]))
+ print('MIOS_PORTS_COCKPIT_LINK='+str(s['ports'][1]))
+elif cmd=='semodule':
+ if a==['-l']:
+  if s.get('installed'): print('mios_cockpit_proxy 1.0')
+ elif a and a[0]=='-i':
+  if s.get('fail_load'): sys.exit(1)
+  s['installed']=True; save()
+ else: sys.exit(2)
+elif cmd=='semanage':
+ if a[:2]==['port','-l']:
+  print('SELinux Port Type              Proto    Port Number')
+  if '-C' not in a:
+   print('unreserved_port_t tcp 1024-65535')
+   for p,t in s.get('vendor',{}).items(): print(t+' tcp '+p)
+  for p,t in s['labels'].items(): print(t+' tcp '+p)
+ elif a[:2]==['port','-a']:
+  p=a[-1]; s['add_attempts']=s.get('add_attempts',0)+1; save()
+  if p in s['labels'] or s.get('fail_add')==p or s.get('fail_add_number')==s['add_attempts']: sys.exit(1)
+  s['labels'][p]=a[a.index('-t')+1]; save()
+ elif a[:2]==['port','-d']:
+  del s['labels'][a[-1]]; save()
+ else: sys.exit(2)
+else: sys.exit(2)
+""")
+        tool.chmod(0o755)
+        for name in ("semanage", "semodule", "mios-resolver", "getenforce", "logger"):
+            (self.bin / name).symlink_to(tool)
+        self.env = dict(os.environ, PATH=str(self.bin) + ":" + os.environ["PATH"],
+                        MIOS_VAR_DIR=str(self.root / "var"), MIOS_SHARE_DIR=str(self.share),
+                        MIOS_LIBEXEC_DIR=str(self.bin), MIOS_POLICY_FIXTURE=str(self.db),
+                        MIOS_POLICY_CALLS=str(self.events))
+
+    def change(self, **values):
+        state = json.loads(self.db.read_text())
+        state.update(values)
+        self.db.write_text(json.dumps(state))
+
+    def run_loader(self):
+        import subprocess
+        return subprocess.run(["bash", os.path.join(ar__ROOT, "usr/libexec/mios/selinux-init")],
+                              env=self.env, capture_output=True, text=True, timeout=30)
+
+    def calls(self):
+        return [json.loads(line) for line in self.events.read_text().splitlines()]
+
+    def test_global_sentinel_does_not_skip_proxy_upgrade_and_repeat_is_idempotent(self):
+        first = self.run_loader()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(self.db.read_text())["labels"],
+                         {"8110": "systemd_socket_proxyd_port_t", "8120": "systemd_socket_proxyd_port_t"})
+        self.assertTrue((self.state / "mios_cockpit_proxy.sha256").is_file())
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.assertEqual(sum(c[:2] == ["semodule", "-i"] for c in self.calls()), 1)
+        self.assertEqual(sum(c[:3] == ["semanage", "port", "-a"] for c in self.calls()), 2)
+
+    def test_matching_hash_does_not_hide_an_uninstalled_module(self):
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.change(installed=False)
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.assertEqual(sum(c[:2] == ["semodule", "-i"] for c in self.calls()), 2)
+
+    def test_stale_owned_port_changed_by_operator_is_preserved(self):
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.change(ports=[18110, 18120], labels={"8110": "http_port_t", "8120": "systemd_socket_proxyd_port_t"})
+        self.assertEqual(self.run_loader().returncode, 0)
+        labels = json.loads(self.db.read_text())["labels"]
+        self.assertEqual(labels["8110"], "http_port_t")
+        self.assertNotIn("8120", labels)
+
+    def test_invalid_owned_receipt_refuses_before_policy_install(self):
+        (self.state / "cockpit-ports").write_text("not-a-port")
+        self.assertNotEqual(self.run_loader().returncode, 0)
+        self.assertFalse(any(c[:2] == ["semodule", "-i"] for c in self.calls()))
+
+    def test_proxy_units_require_policy_loader_without_legacy_sentinel_gate(self):
+        import tomllib
+        with open(os.path.join(ar__ROOT, "usr/share/mios/mios.toml"), "rb") as fh:
+            data = tomllib.load(fh)
+        units = data["units"]
+        for name in ("mios-cockpit-link.socket", "mios-cockpit-link.service"):
+            self.assertIn("mios-selinux-init.service", units[name]["Unit"]["Requires"].split())
+            self.assertIn("mios-selinux-init.service", units[name]["Unit"]["After"].split())
+        init = units["mios-selinux-init.service"]["Unit"]
+        self.assertNotIn("selinux-init-done", init["ConditionPathExists"])
+        self.assertIn("systemd-tmpfiles-setup.service", init["After"].split())
+
+    def test_changed_policy_hash_reloads_existing_module(self):
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.policy.write_bytes(b"fixture-policy-v2")
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.assertEqual(sum(c[:2] == ["semodule", "-i"] for c in self.calls()), 2)
+
+    def test_existing_unowned_proxy_label_is_preserved_on_port_change(self):
+        self.change(labels={"8110": "systemd_socket_proxyd_port_t"})
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.change(ports=[18110, 18120])
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.assertEqual(set(json.loads(self.db.read_text())["labels"]), {"8110", "18110", "18120"})
+        self.assertEqual((self.state / "cockpit-ports").read_text().splitlines(), ["18110", "18120"])
+
+    def test_explicit_foreign_range_refuses_before_any_write(self):
+        self.change(labels={"8110-8120": "http_port_t"})
+        result = self.run_loader()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("explicit local http_port_t", result.stderr)
+        self.assertFalse(any(c[:2] == ["semodule", "-i"] or c[:3] == ["semanage", "port", "-a"]
+                             for c in self.calls()))
+
+    def test_vendor_foreign_port_is_not_overridden(self):
+        self.change(vendor={"8110": "websm_port_t"})
+        result = self.run_loader()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("existing websm_port_t", result.stderr)
+        self.assertEqual(json.loads(self.db.read_text())["labels"], {})
+
+    def test_failed_module_load_does_not_write_policy_hash_or_port_labels(self):
+        self.change(fail_load=True)
+        self.assertNotEqual(self.run_loader().returncode, 0)
+        self.assertFalse((self.state / "mios_cockpit_proxy.sha256").exists())
+        self.assertEqual(json.loads(self.db.read_text())["labels"], {})
+
+    def test_partial_port_add_is_journaled_for_later_owned_cleanup(self):
+        # Whichever associative iteration order is used, one successful add remains owned.
+        self.change(fail_add_number=2)
+        self.assertNotEqual(self.run_loader().returncode, 0)
+        state = json.loads(self.db.read_text())
+        self.assertEqual(len(state["labels"]), 1)
+        self.assertEqual(set((self.state / "cockpit-ports").read_text().splitlines()),
+                         set(state["labels"]))
+        self.change(fail_add_number=0, ports=[18110, 18120])
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.assertEqual(set(json.loads(self.db.read_text())["labels"]), {"18110", "18120"})
+
+    def test_invalid_resolved_port_refuses_before_any_policy_write(self):
+        self.change(ports=["bad", 8120])
+        self.assertNotEqual(self.run_loader().returncode, 0)
+        self.assertFalse(any(c[:2] == ["semodule", "-i"] for c in self.calls()))
+
+    def test_disabled_selinux_needs_no_proxy_policy(self):
+        self.change(mode="Disabled")
+        self.policy.unlink()
+        self.assertEqual(self.run_loader().returncode, 0)
+        self.assertFalse(any(c[0] in ("semanage", "semodule") for c in self.calls()))
+
+    def test_compiled_proxy_module_is_narrow_and_valid(self):
+        import re
+        import subprocess
+        from pathlib import Path
+        source = Path(ar__ROOT, "automation/38-selinux.sh").read_text()
+        match = re.search(r"MIOS_POLICIES\[cockpit_proxy\]='(.*?)'", source, re.S)
+        self.assertIsNotNone(match)
+        text = match.group(1)
+        self.assertEqual(text.count("allow "), 1)
+        self.assertIn("allow systemd_socket_proxyd_t websm_port_t:tcp_socket name_connect;", text)
+        self.assertNotIn("unreserved_port_t", text)
+        self.assertNotIn("name_bind", text)
+        te = self.root / "mios_cockpit_proxy.te"
+        mod = self.root / "mios_cockpit_proxy.mod"
+        pp = self.root / "mios_cockpit_proxy.pp"
+        te.write_text(text)
+        for command in (["checkmodule", "-M", "-m", "-o", str(mod), str(te)],
+                        ["semodule_package", "-o", str(pp), "-m", str(mod)]):
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreater(pp.stat().st_size, 0)
+
+
 def main() -> int:
     rc = 0 if unittest.main(argv=[sys.argv[0]], exit=False).result.wasSuccessful() else 1
     return rc

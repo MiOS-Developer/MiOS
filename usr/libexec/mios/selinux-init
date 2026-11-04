@@ -1,14 +1,130 @@
 #!/usr/bin/env bash
-# AI-hint: Initializes MiOS-specific SELinux policy modules and persistent booleans from /usr/share/selinux/packages/mios/ during first boot, guarded by a sentinel file to ensure one-time execution.
+# AI-hint: Initializes MiOS-specific SELinux policy modules and persistent booleans from /usr/share/selinux/packages/mios/ during boot; Cockpit proxy policy and listener labels reconcile on upgrades before the legacy first-boot sentinel.
 # AI-related: /usr/lib/mios/paths.sh, mios-selinux-init, mios-selinux-init.service
 # AI-functions: _log
 set -euo pipefail
+# shellcheck source=usr/lib/mios/paths.sh
 source /usr/lib/mios/paths.sh
 
 SENTINEL="${MIOS_VAR_DIR}/.selinux-init-done"
 MOD_DIR="${MIOS_SHARE_DIR%/mios}/selinux/packages/mios"
 
 _log()  { logger -t mios-selinux-init "$*" 2>/dev/null || true; echo "[selinux-init] $*" >&2; }
+
+
+# Reconcile this upgrade-sensitive proxy policy independently of the legacy one-shot work.
+_cockpit_policy() {
+    local policy="$MOD_DIR/mios_cockpit_proxy.pp" state="$MIOS_VAR_DIR/selinux"
+    local exports key value port name digest current all local_ports matches type _low _high
+    local -a ports=()
+    local -A wanted=() owned=()
+    if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce)" == Disabled ]]; then
+        _log "SELinux disabled; Cockpit policy not required"
+        return 0
+    fi
+    for name in semodule semanage sha256sum flock; do
+        command -v "$name" >/dev/null 2>&1 || { _log "missing $name; Cockpit policy cannot be reconciled"; return 1; }
+    done
+    [[ -f "$policy" && ! -L "$policy" ]] || { _log "missing regular Cockpit policy: $policy"; return 1; }
+    exports="$("$MIOS_LIBEXEC_DIR/mios-resolver" --emit=install-env)" || return 1
+    while IFS='=' read -r key value; do
+        case "$key" in
+            MIOS_PORTS_COCKPIT|MIOS_PORTS_COCKPIT_LINK)
+                if [[ ! "$value" =~ ^[0-9]{1,5}$ ]] || ((10#$value < 1 || 10#$value > 65535)); then
+                    _log "invalid resolved $key"; return 1
+                fi
+                wanted[$((10#$value))]=1
+                ports+=("$((10#$value))")
+                ;;
+        esac
+    done <<< "$exports"
+    [[ ${#ports[@]} == 2 ]] || { _log "Cockpit listener ports are unresolved"; return 1; }
+    [[ -d "$state" ]] || systemd-tmpfiles --create --prefix="$state"
+    [[ -d "$state" && ! -L "$state" ]] || { _log "SELinux state directory unavailable"; return 1; }
+    exec 8>"$state/lock"
+    flock 8
+    if [[ -f "$state/cockpit-ports" ]]; then
+        while IFS= read -r port || [[ -n "$port" ]]; do
+            [[ -z "$port" ]] && continue
+            if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
+                _log "invalid owned Cockpit port receipt"; return 1
+            fi
+            owned[$((10#$port))]=1
+        done < "$state/cockpit-ports"
+    fi
+    all="$(LC_ALL=C semanage port -l)" || return 1
+    local_ports="$(LC_ALL=C semanage port -l -C)" || return 1
+    # Preflight every requested port before installing policy or changing labels.
+    for port in "${!wanted[@]}"; do
+        matches="$(_port_matches "$local_ports" "$port")"
+        while read -r type _low _high; do
+            [[ -z "$type" || "$type" == systemd_socket_proxyd_port_t ]] \
+                || { _log "refusing Cockpit port $port: explicit local $type assignment"; return 1; }
+        done <<< "$matches"
+        matches="$(_port_matches "$all" "$port")"
+        while read -r type _low _high; do
+            case "$type" in
+                ""|systemd_socket_proxyd_port_t|unreserved_port_t|reserved_port_t|ephemeral_port_t) ;;
+                *) _log "refusing Cockpit port $port: existing $type assignment"; return 1 ;;
+            esac
+        done <<< "$matches"
+    done
+    digest="$(sha256sum "$policy")"; digest="${digest%% *}"
+    current=""
+    [[ ! -f "$state/mios_cockpit_proxy.sha256" ]] || current="$(< "$state/mios_cockpit_proxy.sha256")"
+    if [[ "$current" != "$digest" ]] || ! semodule -l | awk '$1=="mios_cockpit_proxy" { found=1 } END { exit !found }'; then
+        semodule -i "$policy"
+        _atomic_receipt "$state/mios_cockpit_proxy.sha256" "$digest"
+    fi
+    for port in "${!wanted[@]}"; do
+        matches="$(_port_matches "$all" "$port")"
+        if ! awk '$1=="systemd_socket_proxyd_port_t" { found=1 } END { exit !found }' <<< "$matches"; then
+            # Never use -m: an assignment raced in by somebody else must fail closed.
+            semanage port -a -t systemd_socket_proxyd_port_t -p tcp "$port"
+            owned[$port]=1
+            _save_owned_ports "$state/cockpit-ports" owned
+        fi
+    done
+    local_ports="$(LC_ALL=C semanage port -l -C)" || return 1
+    for port in "${!owned[@]}"; do
+        [[ -z "${wanted[$port]:-}" ]] || continue
+        matches="$(_port_matches "$local_ports" "$port")"
+        # Remove only our receipt's exact local assignment, never an operator's range/type.
+        if awk -v p="$port" '$1=="systemd_socket_proxyd_port_t" && $2==p && $3==p {found=1} END {exit !found}' <<< "$matches"; then
+            semanage port -d -p tcp "$port"
+        fi
+        unset 'owned[$port]'
+        _save_owned_ports "$state/cockpit-ports" owned
+    done
+    _log "Cockpit policy and configured listener labels reconciled"
+}
+
+_port_matches() {
+    awk -v p="$2" '$2=="tcp" {
+        for (i=3;i<=NF;i++) {
+            gsub(/,/, "", $i); n=split($i, a, "-");
+            if (a[1] !~ /^[0-9]+$/ || (n==2 && a[2] !~ /^[0-9]+$/)) continue;
+            lo=a[1]+0; hi=(n==2 ? a[2]+0 : lo);
+            if (p>=lo && p<=hi) print $1, lo, hi;
+        }
+    }' <<< "$1"
+}
+
+_atomic_receipt() {
+    local temporary
+    temporary="$(mktemp "${1}.new.XXXXXX")"
+    printf '%s\n' "$2" > "$temporary"
+    mv -f -- "$temporary" "$1"
+}
+
+_save_owned_ports() {
+    local -n entries="$2"
+    local text=""
+    if ((${#entries[@]})); then text="$(printf '%s\n' "${!entries[@]}" | sort -n)"; fi
+    _atomic_receipt "$1" "$text"
+}
+
+_cockpit_policy
 
 if [[ -f "$SENTINEL" ]]; then
     _log "sentinel exists ($SENTINEL); nothing to do"

@@ -108,7 +108,7 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 55
-max_undeclared = 162
+max_undeclared = 161
 max_undeclared_user = 19
 strict_no_write = [
   "mios-boot-display-report.service",
@@ -428,11 +428,28 @@ Wants = "k3s-agent.service"
 [units."mios-k3s-worker.target".Install]
 WantedBy = "multi-user.target"
 
+[units."mios-selinux-init.service".Unit]
+comment = "# AI-hint: Reconciles upgrade-sensitive Cockpit SELinux policy before the legacy first-boot policy initialization."
+Description = "'MiOS' SELinux Policy Loader"
+ConditionVirtualization = "!container"
+DefaultDependencies = false
+After = "local-fs.target systemd-tmpfiles-setup.service"
+Before = "sysinit.target"
+ConditionPathExists = "/usr/share/selinux/packages/mios"
+
+[units."mios-selinux-init.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/libexec/mios/selinux-init"
+RemainAfterExit = true
+
+[units."mios-selinux-init.service".Install]
+WantedBy = "sysinit.target"
+
 [units."mios-cockpit-link.service".Unit]
 comment = "# AI-hint: Native Cockpit proxy for the configured public and discovery listeners; the socket owns both bindings.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.socket"
 Description = "'MiOS' Cockpit Link Proxy Service"
-After = "network.target cockpit.socket mios-cockpit-link.socket"
-Requires = "cockpit.socket mios-cockpit-link.socket"
+After = "network.target cockpit.socket mios-cockpit-link.socket mios-selinux-init.service"
+Requires = "cockpit.socket mios-cockpit-link.socket mios-selinux-init.service"
 ConditionVirtualization = "!container"
 
 [units."mios-cockpit-link.service".Service]
@@ -451,6 +468,8 @@ WantedBy = "multi-user.target"
 comment = "# AI-hint: Native Cockpit public and discovery listeners projected from the canonical ports.\n# AI-related: usr/lib/systemd/system/mios-cockpit-link.service"
 Description = "'MiOS' Cockpit Link Proxy Socket"
 ConditionVirtualization = "!container"
+After = "mios-selinux-init.service"
+Requires = "mios-selinux-init.service"
 
 [units."mios-cockpit-link.socket".Socket]
 ListenStream = ["0.0.0.0:${MIOS_PORTS_COCKPIT}", "0.0.0.0:${MIOS_PORTS_COCKPIT_LINK}"]

@@ -4259,6 +4259,17 @@ units.mios-k3s-worker.target.Unit.After  MIOS_UNITS_MIOS_K3S_WORKER_TARGET_UNIT_
 units.mios-k3s-worker.target.Unit.AllowIsolate  MIOS_UNITS_MIOS_K3S_WORKER_TARGET_UNIT_ALLOWISOLATE
 units.mios-k3s-worker.target.Unit.Wants  MIOS_UNITS_MIOS_K3S_WORKER_TARGET_UNIT_WANTS
 units.mios-k3s-worker.target.Install.WantedBy  MIOS_UNITS_MIOS_K3S_WORKER_TARGET_INSTALL_WANTEDBY
+units.mios-selinux-init.service.Unit.comment  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_COMMENT
+units.mios-selinux-init.service.Unit.Description  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_DESCRIPTION
+units.mios-selinux-init.service.Unit.ConditionVirtualization  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_CONDITIONVIRTUALIZATION
+units.mios-selinux-init.service.Unit.DefaultDependencies  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_DEFAULTDEPENDENCIES
+units.mios-selinux-init.service.Unit.After  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_AFTER
+units.mios-selinux-init.service.Unit.Before  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_BEFORE
+units.mios-selinux-init.service.Unit.ConditionPathExists  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_UNIT_CONDITIONPATHEXISTS
+units.mios-selinux-init.service.Service.Type  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_SERVICE_TYPE
+units.mios-selinux-init.service.Service.ExecStart  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_SERVICE_EXECSTART
+units.mios-selinux-init.service.Service.RemainAfterExit  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_SERVICE_REMAINAFTEREXIT
+units.mios-selinux-init.service.Install.WantedBy  MIOS_UNITS_MIOS_SELINUX_INIT_SERVICE_INSTALL_WANTEDBY
 units.mios-cockpit-link.service.Unit.comment  MIOS_UNITS_MIOS_COCKPIT_LINK_SERVICE_UNIT_COMMENT
 units.mios-cockpit-link.service.Unit.Description  MIOS_UNITS_MIOS_COCKPIT_LINK_SERVICE_UNIT_DESCRIPTION
 units.mios-cockpit-link.service.Unit.After  MIOS_UNITS_MIOS_COCKPIT_LINK_SERVICE_UNIT_AFTER
@@ -4275,6 +4286,8 @@ units.mios-cockpit-link.service.Install.WantedBy  MIOS_UNITS_MIOS_COCKPIT_LINK_S
 units.mios-cockpit-link.socket.Unit.comment  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_UNIT_COMMENT
 units.mios-cockpit-link.socket.Unit.Description  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_UNIT_DESCRIPTION
 units.mios-cockpit-link.socket.Unit.ConditionVirtualization  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_UNIT_CONDITIONVIRTUALIZATION
+units.mios-cockpit-link.socket.Unit.After  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_UNIT_AFTER
+units.mios-cockpit-link.socket.Unit.Requires  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_UNIT_REQUIRES
 units.mios-cockpit-link.socket.Socket.ListenStream  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_SOCKET_LISTENSTREAM
 units.mios-cockpit-link.socket.Socket.BindIPv6Only  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_SOCKET_BINDIPV6ONLY
 units.mios-cockpit-link.socket.Install.WantedBy  MIOS_UNITS_MIOS_COCKPIT_LINK_SOCKET_INSTALL_WANTEDBY
@@ -10705,6 +10718,7 @@ containers.mios-llm-worker@.Container.Pod  MIOS_CONTAINERS_MIOS_LLM_WORKER__CONT
 containers.mios-llm-worker@.Container.User  MIOS_CONTAINERS_MIOS_LLM_WORKER__CONTAINER_USER
 containers.mios-llm-worker@.Container.Volume  MIOS_CONTAINERS_MIOS_LLM_WORKER__CONTAINER_VOLUME
 containers.mios-llm-worker@.Install.WantedBy  MIOS_CONTAINERS_MIOS_LLM_WORKER__INSTALL_WANTEDBY
+containers.mios-llm-worker@.Service.EnvironmentFile  MIOS_CONTAINERS_MIOS_LLM_WORKER__SERVICE_ENVIRONMENTFILE
 containers.mios-llm-worker@.Service.Delegate  MIOS_CONTAINERS_MIOS_LLM_WORKER__SERVICE_DELEGATE
 containers.mios-llm-worker@.Service.Restart  MIOS_CONTAINERS_MIOS_LLM_WORKER__SERVICE_RESTART
 containers.mios-llm-worker@.Service.RestartSec  MIOS_CONTAINERS_MIOS_LLM_WORKER__SERVICE_RESTARTSEC

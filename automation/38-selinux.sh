@@ -158,6 +158,11 @@ require { type xdm_t; type cache_home_t; class dir { add_name write create read 
 allow xdm_t cache_home_t:dir { add_name write create read open getattr search setattr };
 allow xdm_t cache_home_t:file { create write read open getattr setattr };'
 
+    MIOS_POLICIES[cockpit_proxy]='
+module mios_cockpit_proxy 1.0;
+require { type systemd_socket_proxyd_t; type websm_port_t; class tcp_socket name_connect; }
+allow systemd_socket_proxyd_t websm_port_t:tcp_socket name_connect;'
+
     mkdir -p /usr/share/selinux/packages/mios
 
     for name in "${!MIOS_POLICIES[@]}"; do
@@ -170,6 +175,7 @@ allow xdm_t cache_home_t:file { create write read open getattr setattr };'
             mios_ok "Mios_${name}: staged"
             SELINUX_OK=$((SELINUX_OK + 1))
         else
+            [[ "$name" != cockpit_proxy ]] || { mios_err "Cockpit proxy policy failed: $err_out"; exit 1; }
             mios_skip "mios_${name}: skipped ($err_out)"
             SELINUX_FAIL=$((SELINUX_FAIL + 1))
         fi
