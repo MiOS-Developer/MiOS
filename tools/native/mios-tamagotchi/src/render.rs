@@ -9,8 +9,8 @@ use ratatui::{
 
 use crate::{
     capabilities::{Depth, Renderer},
-    config::{Config, parse_rgb},
-    sprite::{Sprite, SpriteStyle, cell_size, fit_scale},
+    config::{parse_rgb, Config},
+    sprite::{cell_size, fit_scale, Sprite, SpriteStyle},
 };
 
 #[derive(Clone, Debug)]
@@ -350,7 +350,11 @@ fn paint_pixels(
             (Some(upper), Some(lower)) => {
                 fg = colors.ink(usize::from(upper));
                 bg = colors.ink(usize::from(lower));
-                if upper == lower { '█' } else { '▀' }
+                if upper == lower {
+                    '█'
+                } else {
+                    '▀'
+                }
             }
             (Some(_), None) => '▀',
             (None, Some(_)) => '▄',
@@ -772,6 +776,45 @@ fn valid_face_uv(sprite: &Sprite, x: u32, y: u32) -> Option<[f64; 2]> {
     }
 }
 
+/// Full visible head coverage is for native characters; the narrow face UV
+/// remains the atlas contract. Both maps have identical winning-depth authority.
+fn valid_head_uv(sprite: &Sprite, x: u32, y: u32) -> Option<[f64; 2]> {
+    sprite.pixel(x, y, 1)?;
+    let uv = sprite.head_uv(x, y)?;
+    uv.iter()
+        .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+        .then(|| uv.map(f64::from))
+}
+
+fn head_surface_bounds(sprite: &Sprite) -> Option<SolidBounds> {
+    let mut bounds = SolidBounds {
+        left: f64::from(sprite.width()),
+        top: f64::from(sprite.height()),
+        right: 0.0,
+        bottom: 0.0,
+    };
+    for y in 0..u32::from(sprite.height()) {
+        for x in 0..u32::from(sprite.width()) {
+            if valid_head_uv(sprite, x, y).is_some() {
+                bounds.left = bounds.left.min(f64::from(x));
+                bounds.top = bounds.top.min(f64::from(y));
+                bounds.right = bounds.right.max(f64::from(x) + 1.0);
+                bounds.bottom = bounds.bottom.max(f64::from(y) + 1.0);
+            }
+        }
+    }
+    (bounds.right > bounds.left && bounds.bottom > bounds.top).then_some(bounds)
+}
+
+fn projected_head_uv(
+    sprite: &Sprite,
+    projection: Projection,
+    x: u32,
+    y: u32,
+) -> Option<([f64; 2], [f64; 2])> {
+    projected_surface_uv(sprite, projection, x, y, valid_head_uv)
+}
+
 /// The same nearest material sample authorizes every interpolated UV.
 /// Derivatives refine ink within that pixel, never its depth/visibility mask.
 fn projected_face_uv(
@@ -780,10 +823,20 @@ fn projected_face_uv(
     x: u32,
     y: u32,
 ) -> Option<([f64; 2], [f64; 2])> {
+    projected_surface_uv(sprite, projection, x, y, valid_face_uv)
+}
+
+fn projected_surface_uv(
+    sprite: &Sprite,
+    projection: Projection,
+    x: u32,
+    y: u32,
+    lookup: fn(&Sprite, u32, u32) -> Option<[f64; 2]>,
+) -> Option<([f64; 2], [f64; 2])> {
     let (sx, sy) = projection.source_pixel(sprite, x, y)?;
-    let uv = valid_face_uv(sprite, sx, sy)?;
+    let uv = lookup(sprite, sx, sy)?;
     let neighbor = |x, y| {
-        valid_face_uv(sprite, x, y)
+        lookup(sprite, x, y)
             .filter(|next| (next[0] - uv[0]).abs() <= 0.25 && (next[1] - uv[1]).abs() <= 0.25)
     };
     let derivative = |forward: Option<[f64; 2]>, backward: Option<[f64; 2]>| {
@@ -839,7 +892,7 @@ fn draw_surface_glyphs(
             let mut complete = true;
             for y in 0..dy {
                 for x in 0..dx {
-                    if let Some((uv, footprint)) = projected_face_uv(
+                    if let Some((uv, footprint)) = projected_head_uv(
                         sprite,
                         projection,
                         u32::from(col) * u32::from(dx) + u32::from(x),
@@ -955,8 +1008,14 @@ fn draw_camera_face(
     let Some(texture) = FaceTexture::new(sprite) else {
         return draw_front_face(sprite, renderer, colors, projection, area, buf);
     };
-    let Some(bounds) = FaceTexture::bounds(sprite) else {
+    let Some(head_bounds) = head_surface_bounds(sprite) else {
         return false;
+    };
+    let (head_left, _) = projection.cell(head_bounds.left, head_bounds.top, renderer);
+    let (head_right, _) = projection.cell(head_bounds.right, head_bounds.bottom, renderer);
+    let native_fits = head_right - head_left >= texture.text.len() as f64;
+    let Some(bounds) = FaceTexture::bounds(sprite) else {
+        return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     };
     // Low detail uses independent UV anchors; fine detail samples the atlas.
     // A severely minified/foreshortened surface keeps the separate HUD caption
@@ -966,13 +1025,10 @@ fn draw_camera_face(
     let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
     let columns = right - left;
     let rows = bottom - top;
-    // A whole native kaomoji needs five cells, not eight. Below that budget
-    // leave the honest literal HUD fallback; never substitute unreadable bits.
-    if columns < texture.text.len() as f64 {
-        return false;
-    }
+    // Native cells use full visible head coverage, including the forehead.
+    // Atlas resolution still comes from its original narrow face surface.
     if columns < texture.text.len() as f64 * 5.0 || rows < 4.5 {
-        return draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
+        return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     }
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let mut painted = false;
@@ -1022,7 +1078,11 @@ fn draw_camera_face(
                     cell.set_bg(background);
                     if ink[0] {
                         let mark = if mono {
-                            if cell.symbol() == "@" { '#' } else { '@' }
+                            if cell.symbol() == "@" {
+                                '#'
+                            } else {
+                                '@'
+                            }
                         } else {
                             '#'
                         };
@@ -1850,12 +1910,10 @@ mod face_tests {
                     colors: &colors,
                 }
                 .render(Rect::new(2, 2, width, height), &mut buffer);
-                assert!(
-                    buffer
-                        .content
-                        .iter()
-                        .all(|c| !c.symbol().contains('\u{1b}'))
-                );
+                assert!(buffer
+                    .content
+                    .iter()
+                    .all(|c| !c.symbol().contains('\u{1b}')));
                 assert_eq!(buffer[(0, 0)].symbol(), " ");
                 assert_eq!(buffer[(99, 99)].symbol(), " ");
             }
@@ -2391,13 +2449,11 @@ mod camera_tests {
                     f64::from(front_face.y) + 0.5,
                     Renderer::HalfBlock,
                 );
-                assert!(
-                    text(
-                        &buf,
-                        Rect::new(area.x, face_y.floor() as u16, area.width, 1)
-                    )
-                    .contains(front_face.text)
-                );
+                assert!(text(
+                    &buf,
+                    Rect::new(area.x, face_y.floor() as u16, area.width, 1)
+                )
+                .contains(front_face.text));
                 assert!(rear.face_overlay().is_none());
                 let previous = buf.clone();
                 assert!(!draw_front_face(
@@ -2501,13 +2557,11 @@ mod camera_tests {
             .render(area, &mut buf);
             let caption = text(&buf, Rect::new(1, 8, 20, 1));
             assert!(caption.contains("munching"));
-            assert!(
-                caption.contains(
-                    sprite
-                        .face_overlay()
-                        .map_or(Expression::Eating.kaomoji(1), |f| f.text,)
-                )
-            );
+            assert!(caption.contains(
+                sprite
+                    .face_overlay()
+                    .map_or(Expression::Eating.kaomoji(1), |f| f.text,)
+            ));
         }
     }
 
@@ -2666,11 +2720,9 @@ mod camera_tests {
             .collect();
         assert_eq!(atlas[0], "   #                             #   ");
         // The same outer stem persists through three rows: a curve, not < or >.
-        assert!(
-            atlas[3..6]
-                .iter()
-                .all(|row| row.starts_with('#') && row.ends_with('#'))
-        );
+        assert!(atlas[3..6]
+            .iter()
+            .all(|row| row.starts_with('#') && row.ends_with('#')));
         for glyph in 0..4 {
             for x in glyph * 8 + 5..glyph * 8 + 8 {
                 for y in 0..9 {
@@ -2783,7 +2835,7 @@ mod camera_tests {
                             for y in 0..dy {
                                 for x in 0..dx {
                                     assert!(
-                                        projected_face_uv(
+                                        projected_head_uv(
                                             &sprite,
                                             projection,
                                             u32::from(col) * u32::from(dx) + u32::from(x),
@@ -2821,7 +2873,7 @@ mod camera_tests {
             false,
         );
         let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
-        let bounds = FaceTexture::bounds(&sprite).unwrap();
+        let bounds = head_surface_bounds(&sprite).unwrap();
         let area = Rect::new(0, 0, 64, 30);
         let mut core_cases = 0;
         for renderer in [
@@ -2863,10 +2915,8 @@ mod camera_tests {
                 marks.sort_by_key(|p| p.0);
                 let literal: String = marks.iter().map(|p| p.1).collect();
                 if !literal.is_empty() {
-                    assert!(
-                        matches!(literal.as_str(), "^_^" | "(^_^)"),
-                        "{renderer:?} {columns} cells: missing eye/mouth or unbalanced parentheses: {literal}"
-                    );
+                    assert!(matches!(literal.as_str(), "^_^" | "(^_^)"),
+                        "{renderer:?} {columns} cells: missing eye/mouth or unbalanced parentheses: {literal}");
                     core_cases += 1;
                 }
             }
@@ -2946,10 +2996,8 @@ mod camera_tests {
                     }
                     chars.sort_by_key(|p| p.0);
                     let literal: String = chars.iter().map(|p| p.1.as_str()).collect();
-                    assert!(
-                        matches!(literal.as_str(), "^_^" | "(^_^)"),
-                        "{width}x{height} {renderer:?} {view:?} zoom50 needs native eyes/mouth with balanced optional parentheses: {literal}"
-                    );
+                    assert!(matches!(literal.as_str(), "^_^" | "(^_^)"),
+                        "{width}x{height} {renderer:?} {view:?} zoom50 needs native eyes/mouth with balanced optional parentheses: {literal}");
                 }
             }
         }
@@ -2997,10 +3045,8 @@ mod camera_tests {
                     }
                     marks.sort_by_key(|p| p.0);
                     let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
-                    assert!(
-                        literal == canonical || literal == core,
-                        "actual bird child Sick {style:?} frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}"
-                    );
+                    assert!(literal == canonical || literal == core,
+                        "actual bird child Sick {style:?} frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}");
                 }
             }
         }
@@ -3059,12 +3105,8 @@ mod camera_tests {
                                 &mut before,
                             );
                             let mut after = before.clone();
-                            assert!(
-                                draw_camera_face(
-                                    &sprite, renderer, &colors, projection, area, &mut after
-                                ),
-                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core"
-                            );
+                            assert!(draw_camera_face(&sprite, renderer, &colors, projection, area, &mut after),
+                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core");
                             let mut marks = Vec::new();
                             for y in 0..area.height {
                                 for x in 0..area.width {
@@ -3076,10 +3118,8 @@ mod camera_tests {
                             }
                             marks.sort_by_key(|p| p.0);
                             let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
-                            assert!(
-                                literal == canonical || literal == core,
-                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}"
-                            );
+                            assert!(literal == canonical || literal == core,
+                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}");
                         }
                     }
                 }
@@ -3524,13 +3564,11 @@ mod camera_tests {
                     .any(|(a, b)| a.symbol() != b.symbol()),
                 "{renderer:?}: monochrome face vanished into the body's glyph"
             );
-            assert!(
-                before
-                    .content
-                    .iter()
-                    .zip(&after.content)
-                    .all(|(a, b)| a.bg == b.bg)
-            );
+            assert!(before
+                .content
+                .iter()
+                .zip(&after.content)
+                .all(|(a, b)| a.bg == b.bg));
         }
     }
 
@@ -3730,16 +3768,10 @@ mod camera_tests {
                             if before[(col, row)] != after[(col, row)] {
                                 for y in 0..dy {
                                     for x in 0..dx {
-                                        assert!(
-                                            projected_face_uv(
-                                                &sprite,
-                                                projection,
-                                                u32::from(col) * u32::from(dx) + u32::from(x),
-                                                u32::from(row) * u32::from(dy) + u32::from(y)
-                                            )
-                                            .is_some(),
-                                            "{renderer:?} yaw{yaw}: minified glyph escaped visible head material"
-                                        );
+                                        assert!(projected_head_uv(&sprite, projection,
+                                            u32::from(col) * u32::from(dx) + u32::from(x),
+                                            u32::from(row) * u32::from(dy) + u32::from(y)).is_some(),
+                                            "{renderer:?} yaw{yaw}: minified glyph escaped visible head material");
                                     }
                                 }
                                 marks.push((col, row, after[(col, row)].symbol().to_owned()));
@@ -3759,10 +3791,8 @@ mod camera_tests {
                     .iter()
                     .map(|(x, y, glyph)| (x - 10, *y, glyph.clone()))
                     .collect();
-                assert_eq!(
-                    moved, expected,
-                    "{renderer:?} yaw{yaw}: native glyphs must move with the head, never a fixed screen label"
-                );
+                assert_eq!(moved, expected,
+                    "{renderer:?} yaw{yaw}: native glyphs must move with the head, never a fixed screen label");
                 let mut rear_before = Buffer::empty(area);
                 draw_projection(&rear, renderer, &colors, projection, area, &mut rear_before);
                 let mut rear_after = rear_before.clone();

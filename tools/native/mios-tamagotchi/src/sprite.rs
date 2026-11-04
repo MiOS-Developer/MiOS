@@ -136,6 +136,7 @@ impl Appearance {
 struct FaceMapping {
     text: &'static str,
     texels: Vec<Option<[u16; 2]>>,
+    head_texels: Vec<Option<[u16; 2]>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +173,22 @@ impl Sprite {
         let mapping = self.face_mapping.as_ref()?;
         let uv = mapping
             .texels
+            .get(y as usize * usize::from(self.width) + x as usize)
+            .copied()
+            .flatten()?;
+        Some(uv.map(|value| f32::from(value) / f32::from(u16::MAX)))
+    }
+
+    /// Coordinates on the full visible front head, including real forehead.
+    /// Native text uses these whole cells; the atlas keeps its narrow UV band.
+    /// Noses, ears, props and rear views never authorize facial characters.
+    pub fn head_uv(&self, x: u32, y: u32) -> Option<[f32; 2]> {
+        if x >= u32::from(self.width) || y >= u32::from(self.height) {
+            return None;
+        }
+        let mapping = self.face_mapping.as_ref()?;
+        let uv = mapping
+            .head_texels
             .get(y as usize * usize::from(self.width) + x as usize)
             .copied()
             .flatten()?;
@@ -295,17 +312,22 @@ impl Sprite {
         }
         let face_mapping = self.face_mapping.as_ref().map(|mapping| {
             let mut texels = Vec::with_capacity(usize::from(width) * usize::from(height));
+            let mut head_texels = Vec::with_capacity(usize::from(width) * usize::from(height));
             for y in 0..u32::from(height) {
                 let sy = ((2 * y + 1) * sh / (2 * u32::from(height))).min(sh - 1);
                 for x in 0..u32::from(width) {
                     let sx = ((2 * x + 1) * sw / (2 * u32::from(width))).min(sw - 1);
                     texels
                         .push(mapping.texels[sy as usize * usize::from(self.width) + sx as usize]);
+                    head_texels.push(
+                        mapping.head_texels[sy as usize * usize::from(self.width) + sx as usize],
+                    );
                 }
             }
             FaceMapping {
                 text: mapping.text,
                 texels,
+                head_texels,
             }
         });
         let surface_shading = self.surface_shading.as_ref().map(|samples| {
@@ -1639,6 +1661,7 @@ impl VoxelModel {
         }
         if let (Some(head), Some((_, text))) = (self.head, self.face) {
             let mut texels = vec![None; sprite.pixels.len()];
+            let mut head_texels = vec![None; sprite.pixels.len()];
             for y in 0..sprite.height {
                 for x in 0..sprite.width {
                     let i = usize::from(y) * usize::from(sprite.width) + usize::from(x);
@@ -1660,6 +1683,13 @@ impl VoxelModel {
                     if z - head.center[2] <= head.radii[2] * 0.05 {
                         continue;
                     }
+                    let hu = (world_x - head.center[0]) / (2.0 * head.radii[0]) + 0.5;
+                    let hv = 0.5 - (world_y - head.center[1]) / (2.0 * head.radii[1]);
+                    if (0.0..=1.0).contains(&hu) && (0.0..=1.0).contains(&hv) {
+                        head_texels[i] = Some(
+                            [hu, hv].map(|value| (value * f32::from(u16::MAX)).round() as u16),
+                        );
+                    }
                     let u = (world_x - head.face_center[0]) / (2.0 * head.face_half[0]) + 0.5;
                     let v = 0.5 - (world_y - head.face_center[1]) / (2.0 * head.face_half[1]);
                     if (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) {
@@ -1670,7 +1700,11 @@ impl VoxelModel {
             }
             // Canonical texture identity survives complete occlusion. No UV
             // samples means a hidden mapped face, never a legacy billboard.
-            sprite.face_mapping = Some(FaceMapping { text, texels });
+            sprite.face_mapping = Some(FaceMapping {
+                text,
+                texels,
+                head_texels,
+            });
         }
 
         // Text follows the visible near half of the actual head surface.
@@ -1919,11 +1953,9 @@ mod body_face_tests {
                     "(x_x)"
                 );
             }
-            assert!(
-                Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
-                    .face_overlay()
-                    .is_none()
-            );
+            assert!(Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
+                .face_overlay()
+                .is_none());
         }
     }
 
@@ -1953,7 +1985,11 @@ mod body_face_tests {
                 // Clear air between two feet proves that the lower half is not
                 // a stretched, continuously filled head silhouette.
                 let feet_y = if style == SpriteStyle::EightBit {
-                    if stage == Stage::Adult { 15 } else { 14 }
+                    if stage == Stage::Adult {
+                        15
+                    } else {
+                        14
+                    }
                 } else if stage == Stage::Adult {
                     30
                 } else {
@@ -2109,19 +2145,17 @@ mod body_face_tests {
                     assert_eq!(anchor.text, Expression::Happy.kaomoji(usize::MAX));
                     assert!(anchor.center_x < front.width && anchor.y < front.height);
                     for yaw in [90, 135, 180, 225, 270] {
-                        assert!(
-                            Sprite::voxel_with_appearance(
-                                stage,
-                                Expression::Happy,
-                                style,
-                                usize::MAX,
-                                yaw,
-                                false,
-                                appearance
-                            )
-                            .face_overlay()
-                            .is_none()
-                        );
+                        assert!(Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            usize::MAX,
+                            yaw,
+                            false,
+                            appearance
+                        )
+                        .face_overlay()
+                        .is_none());
                     }
                 }
             }
@@ -2129,19 +2163,15 @@ mod body_face_tests {
         let mut model = VoxelModel::default();
         model.ellipsoid([0.0; 3], [3.0; 3], 1);
         model.face = Some(([0.0, 0.0, 3.5], "(o_o)"));
-        assert!(
-            model
-                .rasterize(SpriteStyle::SixteenBit, 0, false)
-                .face_overlay()
-                .is_some()
-        );
+        assert!(model
+            .rasterize(SpriteStyle::SixteenBit, 0, false)
+            .face_overlay()
+            .is_some());
         model.ellipsoid([0.0, 0.0, 8.0], [3.0; 3], 8);
-        assert!(
-            model
-                .rasterize(SpriteStyle::SixteenBit, 0, false)
-                .face_overlay()
-                .is_none()
-        );
+        assert!(model
+            .rasterize(SpriteStyle::SixteenBit, 0, false)
+            .face_overlay()
+            .is_none());
     }
 
     #[test]
@@ -2173,12 +2203,10 @@ mod body_face_tests {
                 assert!(s.downsample_to_fit(0, 5).face_overlay().is_none());
             }
         }
-        assert!(
-            Sprite::new(1, 1, vec![Some(1)])
-                .unwrap()
-                .face_overlay()
-                .is_none()
-        );
+        assert!(Sprite::new(1, 1, vec![Some(1)])
+            .unwrap()
+            .face_overlay()
+            .is_none());
     }
 
     #[test]
@@ -2249,11 +2277,9 @@ mod animation_tests {
             );
         }
         for index in [16, 17, u8::MAX] {
-            assert!(
-                Sprite::new(1, 1, vec![Some(index)])
-                    .unwrap_err()
-                    .contains("palette")
-            );
+            assert!(Sprite::new(1, 1, vec![Some(index)])
+                .unwrap_err()
+                .contains("palette"));
         }
         assert!(Sprite::new(256, 256, vec![Some(15); 65536]).is_ok());
         for (width, height) in [(0, 1), (1, 0), (257, 1), (1, 257), (u16::MAX, u16::MAX)] {
@@ -2966,13 +2992,12 @@ mod appearance_tests {
                     }
                 }
             }
-            assert!(
-                s.recolored(255, 254)
-                    .pixels
-                    .iter()
-                    .flatten()
-                    .all(|&c| c < 16)
-            );
+            assert!(s
+                .recolored(255, 254)
+                .pixels
+                .iter()
+                .flatten()
+                .all(|&c| c < 16));
             assert_eq!(s.pixels, before);
         }
     }
@@ -3287,10 +3312,9 @@ mod species_detail_tests {
                         .unwrap_or_else(|| panic!("{stage:?} {shape} {mood:?} lost its face"));
                     assert_eq!(face.text, mood.kaomoji(0));
                     // The anchor sits on an opaque head pixel in the upper body.
-                    assert!(
-                        s.pixel(u32::from(face.center_x), u32::from(face.y), 1)
-                            .is_some()
-                    );
+                    assert!(s
+                        .pixel(u32::from(face.center_x), u32::from(face.y), 1)
+                        .is_some());
                     if stage != Stage::Baby {
                         assert!(face.y < s.height / 2);
                     }
@@ -3540,6 +3564,7 @@ mod surface_lighting_tests {
                     reduced.surface_shading(x, y),
                     sprite.surface_shading(sx, sy)
                 );
+                assert_eq!(reduced.head_uv(x, y), sprite.head_uv(sx, sy));
             }
         }
     }
@@ -3572,5 +3597,75 @@ mod surface_lighting_tests {
         assert_eq!(sprite.pixel(0, 0, 1), Some(7));
         assert_eq!(sprite.surface_shading(0, 0), Some(([0.0, 0.0, 1.0], 25)));
         assert!(sprite.surface_shading(3, 3).is_none());
+    }
+}
+
+#[cfg(test)]
+mod native_head_surface_tests {
+    use super::*;
+    use crate::game::Stage;
+
+    #[test]
+    fn coarse_forehead_authorizes_native_text_but_beak_and_rear_never_do() {
+        for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            let make = |yaw| {
+                Sprite::voxel_with_appearance(
+                    Stage::Child,
+                    Expression::Sick,
+                    style,
+                    0,
+                    yaw,
+                    false,
+                    Appearance {
+                        shape: 14,
+                        body: 9,
+                        accent: 12,
+                    },
+                )
+            };
+            let front = make(0);
+            let mut extended = 0;
+            let mut beak = 0;
+            for y in 0..u32::from(front.height()) {
+                for x in 0..u32::from(front.width()) {
+                    let head = front.head_uv(x, y);
+                    if let Some(uv) = head {
+                        assert!(uv.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
+                        assert!(front.pixel(x, y, 1).is_some());
+                        assert!(front.surface_shading(x, y).is_some());
+                        extended += usize::from(front.face_uv(x, y).is_none());
+                    }
+                    if front.face_uv(x, y).is_some() {
+                        assert!(
+                            head.is_some(),
+                            "atlas UV is part of the actual head surface"
+                        );
+                    }
+                    if front.pixel(x, y, 1) == Some(7) {
+                        beak += 1;
+                        assert!(
+                            head.is_none(),
+                            "a real beak must occlude native facial text"
+                        );
+                    }
+                }
+            }
+            assert!(
+                extended > 0,
+                "{style:?}: forehead missing outside the narrow atlas band"
+            );
+            assert!(beak > 0, "{style:?}: test must include a visible real beak");
+            assert!(front.head_uv(u32::MAX, u32::MAX).is_none());
+            let rear = make(180);
+            for y in 0..u32::from(rear.height()) {
+                for x in 0..u32::from(rear.width()) {
+                    assert!(rear.head_uv(x, y).is_none(), "rear native face leak");
+                }
+            }
+        }
+        assert!(Sprite::new(1, 1, vec![Some(9)])
+            .unwrap()
+            .head_uv(0, 0)
+            .is_none());
     }
 }

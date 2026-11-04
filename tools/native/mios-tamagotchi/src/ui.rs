@@ -6,7 +6,7 @@ use crate::{
     config::{Config, HudMode, ViewMode},
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
-    input::{Action, ControllerMonitor, ControllerPrompts, action},
+    input::{action, Action, ControllerMonitor, ControllerPrompts},
     render::{Camera, CameraView, Colors, HabitatView, RoomWidget},
     save::Store,
     sprite::{Appearance, Expression, Sprite, SpriteStyle},
@@ -16,11 +16,11 @@ use crossterm::event::{
     MouseEventKind,
 };
 use ratatui::{
-    DefaultTerminal, Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    DefaultTerminal, Frame,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -322,7 +322,15 @@ impl Ui {
                 self.effective_style.set(self.sprite_style);
             }
         }
-        self.notice = format!("{} / D toggles automatic detail.", self.detail_label());
+        self.notice = if self
+            .presentation
+            .as_ref()
+            .is_some_and(|rules| rules.automatic)
+        {
+            "Automatic detail follows viewport and zoom. D selects manual.".into()
+        } else {
+            format!("{} / D toggles automatic detail.", self.detail_label())
+        };
     }
     fn effective_view(&self, view: CameraView, dimensions: (u16, u16)) -> CameraView {
         if (dimensions.0 < 28 || dimensions.1 < 10) && view == CameraView::Pet {
@@ -3674,7 +3682,7 @@ mod graphics_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -3793,14 +3801,12 @@ mod graphics_tests {
             terminal
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 5, false))
                 .unwrap();
-            assert!(
-                terminal
-                    .backend()
-                    .buffer()
-                    .content
-                    .iter()
-                    .all(|c| c.symbol().is_ascii())
-            );
+            assert!(terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .all(|c| c.symbol().is_ascii()));
         }
     }
     #[test]
@@ -3842,12 +3848,11 @@ mod graphics_tests {
             .collect();
         assert!(text.contains("Sprite studio"));
         assert!(text.contains("[Q] Quit"));
-        assert!(
-            ui.menu_targets
-                .borrow()
-                .iter()
-                .any(|(_, index)| *index == 9)
-        );
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, index)| *index == 9));
         assert_eq!(ui.handle(key(KeyCode::Enter), &config.game), Effect::Quit);
     }
     #[test]
@@ -4429,7 +4434,7 @@ mod progression_ui_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -4669,7 +4674,7 @@ mod progression_training_navigation_review {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -4760,7 +4765,7 @@ mod memory_thought_interruption_tests {
 mod portrait_density_tests {
     use super::*;
     use crate::capabilities::Depth;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
     #[test]
     fn tall_views_show_all_skills_needs_currency_and_controls_without_paging_them_away() {
         let config = Config::sample().unwrap();
@@ -4799,7 +4804,7 @@ mod direct_navigation_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -4960,12 +4965,11 @@ mod direct_navigation_regressions {
                 .find(|(_, action)| *action == Action::Quit)
                 .unwrap()
                 .0;
-            assert!(
-                ui.care_targets
-                    .borrow()
-                    .iter()
-                    .all(|(area, _)| area.intersection(target).is_empty())
-            );
+            assert!(ui
+                .care_targets
+                .borrow()
+                .iter()
+                .all(|(area, _)| area.intersection(target).is_empty()));
             assert_eq!(ui.click(target.x, target.y, &config.game), Effect::Quit);
             assert_eq!(ui.game, before);
         }
@@ -5016,7 +5020,7 @@ mod global_detail_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn fixture() -> (Config, Ui) {
         let mut config = Config::sample().unwrap();
@@ -5164,12 +5168,11 @@ mod global_detail_regressions {
         }
         let terminal = draw(&ui, &config, 12, 6);
         assert_eq!(ui.menu_selected, 19);
-        assert!(
-            ui.menu_targets
-                .borrow()
-                .iter()
-                .any(|(_, index)| *index == 19)
-        );
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, index)| *index == 19));
         assert!(text(&terminal).contains("Enter: OK") && text(&terminal).contains("Esc: Back"));
         ui.handle(key(KeyCode::Enter), &config.game);
         assert!(ui.automatic_detail());
