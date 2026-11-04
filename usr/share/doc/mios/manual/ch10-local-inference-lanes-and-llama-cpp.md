@@ -120,11 +120,11 @@ authorization and never forward one endpoint's credential to another endpoint.
 - [Async task cancellation](https://docs.python.org/3/library/asyncio-task.html):
   explicitly cancel and await tasks left pending by a deadline. Use APIs supported
   by the installed Python runtime.
-- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md):
+- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/785322d17f2d51e5185cf996a1f4e46d87640841/tools/server/README.md):
   slot state and generation capacity are separate from process liveness. Upstream
   documents `/slots?fail_on_no_slot=1` for capacity checks; verify support in the
   pinned engine before adopting it. Keep the public model interface OpenAI-compatible.
-- [llama-swap configuration](https://github.com/mostlygeek/llama-swap/blob/main/docs/config.example.yaml):
+- [llama-swap configuration](https://github.com/mostlygeek/llama-swap/blob/9fbc47ce96d10160e95994c7a26513c972201a74/docs/config.example.yaml):
   `swap` controls residency within a group; `exclusive` controls effects on
   other groups. Do not copy newer configuration fields into an older pinned image
   without validation.
