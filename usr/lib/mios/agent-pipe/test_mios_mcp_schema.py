@@ -216,6 +216,47 @@ class NamespaceProjectionTests(unittest.TestCase):
                                                "function": {"name": alias, "arguments": "{}"}})
             self.assertEqual((restored["namespace"], restored["function"]["name"]), name)
 
+    def test_inventory_diagnostic_is_bounded_deduplicated_and_contains_only_identities(self):
+        import json
+        from unittest import mock
+        body = self.body()
+        body["messages"][0]["content"] = "PRIVATE_PROMPT_MARKER"
+        body["headers"] = {"Authorization": "PRIVATE_HEADER_MARKER"}
+        body["tools"][0]["tools"][0]["description"] = "PRIVATE_DESCRIPTION_MARKER"
+        body["tools"][0]["tools"][0]["parameters"]["properties"]["PRIVATE_SCHEMA_MARKER"] = {"type": "string"}
+        S._CLIENT_TOOL_INVENTORIES.clear()
+        with mock.patch.object(S._CLIENT_TOOL_LOG, "isEnabledFor", return_value=True), \
+             mock.patch.object(S._CLIENT_TOOL_LOG, "info") as log:
+            projection = S.ClientToolProjection(body)
+            S.ClientToolProjection(body)
+        log.assert_called_once()
+        record = json.loads(log.call_args.args[1])
+        self.assertEqual(record["declared_count"], 2)
+        self.assertEqual(record["engine_offered_count"], 2)
+        self.assertEqual(record["tool_choice"], "auto")
+        self.assertEqual(record["identity_map"][0]["name"], "search")
+        self.assertEqual(record["identity_map"][0]["engine_alias"], next(iter(projection.names)))
+        self.assertTrue(record["identity_map"][0]["engine_offered"])
+        self.assertNotIn("PRIVATE_", json.dumps(record))
+        self.assertFalse(record["truncated"])
+
+    def test_inventory_diagnostic_bounds_catalog_and_namespace_without_changing_tools(self):
+        import json
+        from unittest import mock
+        body = {"tools": [{"type": "namespace", "name": "n" * 200, "tools": [
+            {"type": "function", "name": f"verb_{i}"} for i in range(257)]}]}
+        S._CLIENT_TOOL_INVENTORIES.clear()
+        with mock.patch.object(S._CLIENT_TOOL_LOG, "isEnabledFor", return_value=True), \
+             mock.patch.object(S._CLIENT_TOOL_LOG, "info") as log:
+            projection = S.ClientToolProjection(body)
+        record = json.loads(log.call_args.args[1])
+        self.assertEqual(len(projection.body["tools"]), 257)
+        self.assertEqual(record["declared_count"], 257)
+        self.assertTrue(record["truncated"])
+        self.assertEqual(len(record["identity_map"]), 256)
+        self.assertEqual(len(record["identity_map"][0]["namespace"]), 128)
+        self.assertTrue(record["identity_map"][0]["namespace_truncated"])
+
     def test_invalid_names_cannot_enter_engine_alias_or_identity_description(self):
         for name in ["line\nbreak", "semi;colon", "space name", "x" * 129, "nonascii-é"]:
             with self.subTest(name=repr(name)), self.assertRaises(S.ClientToolSchemaError):

@@ -3,12 +3,48 @@
 # AI-related: mios_mcp, mios_mcp_transport
 """Pure schema translation, split out of mios_mcp.py.
 
-No module state: these are total functions over dicts, which is why they were
-the first thing to lift when mios_mcp.py went past the 800-line ceiling.
+Schema conversion and request-local projection are pure over their input dicts.
+A bounded diagnostic cache records only validated tool identities, never request
+arguments, prompts, headers, credentials or tool results.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+
+from collections import deque
+import hashlib
+import json
+import logging
+import threading
+
+_CLIENT_TOOL_LOG = logging.getLogger("mios-agent-pipe.client-tools")
+_CLIENT_TOOL_INVENTORIES = deque(maxlen=16)
+_CLIENT_TOOL_INVENTORY_LOCK = threading.Lock()
+
+
+def _log_client_tool_inventory(names, tools, choice):
+    """Log bounded protocol identities once per catalog, without request data."""
+    if not _CLIENT_TOOL_LOG.isEnabledFor(logging.INFO):
+        return
+    active = {tool["function"]["name"] for tool in tools}
+    rows = [{"namespace": namespace[:128] if namespace is not None else None,
+             "namespace_truncated": namespace is not None and len(namespace) > 128,
+             "name": name, "engine_alias": alias, "engine_offered": alias in active}
+            for alias, (namespace, name) in list(names.items())[:256]]
+    # The fingerprint covers complete validated identities; only bounded names
+    # enter the logger, and only bounded fingerprints remain in the cache.
+    signature = hashlib.sha256(json.dumps(
+        [list(names), sorted(active), choice], ensure_ascii=True).encode()).hexdigest()
+    with _CLIENT_TOOL_INVENTORY_LOCK:
+        if signature in _CLIENT_TOOL_INVENTORIES:
+            return
+        _CLIENT_TOOL_INVENTORIES.append(signature)
+    _CLIENT_TOOL_LOG.info("Client tool projection inventory: %s", json.dumps({
+        "fingerprint": signature, "declared_count": len(names),
+        "engine_offered_count": len(active), "tool_choice": choice,
+        "identity_map": rows, "truncated": len(names) > len(rows)},
+        ensure_ascii=True, separators=(",", ":")))
+
 
 # ---------------------------------------------------------------------------
 # Strict OpenAI Function Schema Conversion
@@ -307,6 +343,7 @@ class ClientToolProjection:
                         "arguments": json.dumps({"input": value}, ensure_ascii=False)})
                 else:
                     payload["name"] = alias
+        _log_client_tool_inventory(self.names, self.body["tools"], self.body.get("tool_choice", "auto"))
 
     @staticmethod
     def _validate_schema(schema, *, root=False):
