@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -178,6 +179,12 @@ class Lint(unittest.TestCase):
                 f.write(src.replace("function submit() {", "function submit( {", 1))
             out = subprocess.run([self.LINT, "shell.qml"], cwd=d, capture_output=True, text=True, timeout=60)
             self.assertIn("[syntax]", out.stdout + out.stderr)
+
+    def test_hyprland_provisions_the_configured_login_stack(self):
+        with open(os.path.join(ROOT, "usr/share/mios/mios.toml"), "rb") as fh:
+            data = tomllib.load(fh)
+        packages = set(data["packages"]["hyprland"]["pkgs"])
+        self.assertTrue({"greetd", "cage", "tuigreet"} <= packages)
 
     def test_theme_is_the_shared_projection(self):
         self.assertEqual(os.readlink(os.path.join(GREETER, "Theme.qml")), "../quickshell/Theme.qml")

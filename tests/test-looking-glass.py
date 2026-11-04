@@ -14,6 +14,11 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import stat
+import subprocess
+import tempfile
+from pathlib import Path
 import sys
 import unittest
 
@@ -164,6 +169,36 @@ class TestLookingGlassConfig(unittest.TestCase):
 
 class TestLookingGlassSetup(unittest.TestCase):
     """Validates Looking Glass IVSHMEM XML generation and memory allocation checks."""
+
+    @unittest.skipUnless(os.name == "posix" and getattr(os, "geteuid", lambda: -1)() == 0
+                         and shutil.which("systemd-tmpfiles"), "offline tmpfiles ownership needs root")
+    def test_shm_tmpfiles_accepts_configured_login_name(self):
+        source = Path(_ROOT, "usr/lib/tmpfiles.d/50-mios.conf").read_text()
+        rules = [line for line in source.splitlines()
+                 if line.startswith(("f /dev/shm/looking-glass ", "z /dev/shm/looking-glass "))]
+        self.assertEqual(len(rules), 2)
+        with tempfile.TemporaryDirectory(prefix="mios-shm-identity-") as name:
+            root = Path(name)
+            (root / "etc").mkdir()
+            (root / "etc/passwd").write_text("root:x:0:0:root:/root:/bin/sh\noperator:x:1000:1000::/home/operator:/bin/sh\n")
+            (root / "etc/group").write_text("root:x:0:\noperator:x:1000:\nkvm:x:36:operator\n")
+            configs = root / "usr/lib/tmpfiles.d"
+            configs.mkdir(parents=True)
+            rule = configs / "mios-test.conf"
+            rule.write_text("\n".join(rules) + "\n")
+            command = ["systemd-tmpfiles", "--root=" + name, "--create"]
+            result = subprocess.run(command, text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            shm = root / "dev/shm/looking-glass"
+            self.assertEqual((shm.stat().st_uid, shm.stat().st_gid), (1000, 36))
+            self.assertEqual(stat.S_IMODE(shm.stat().st_mode), 0o660)
+            # The old literal account must fail in this same operator-only root.
+            for line in rules:
+                self.assertEqual(line.split()[3], "1000")
+            rule.write_text("\n".join(line.replace("1000", "mios", 1) for line in rules) + "\n")
+            failed = subprocess.run(command + ["--dry-run"], text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("Failed to resolve user", failed.stderr)
 
     def test_ivshmem_xml_generation(self):
         lg = setup_looking_glass.LookingGlassManager(size_mb=128)
