@@ -149,8 +149,99 @@ EOF
     if grep -q 'python3-psycopg3' "$TMP/dnf.log" && grep -q 'python3-cryptography' "$TMP/dnf.log" && grep -q 'cargo' "$TMP/dnf.log"; then
         pass "core install dispatch includes direct service and compiler dependencies"
     else fail "core dependency declarations did not reach package installation"; fi
+    # Constrain a declared package before the solver sees the request; a native
+    # compositor selector supplies its ABI-held version to the same strict path.
+    : > "$TMP/dnf.log"
+    (export PATH="$TMP/bin:$PATH"; resolve install_packages_strict parent shared shared-0.56.2) > "$TMP/out.log" 2>&1
+    if grep -Eq ' shared-0[.]56[.]2( |$)' "$TMP/dnf.log" && ! grep -Eq ' shared( |$)' "$TMP/dnf.log"; then
+        pass "strict package constraint selects held version instead of floating latest"
+    else fail "held package constraint was lost"; fi
+    for bad in "undeclared undeclared-1.0.0" "shared other-0.56.2" "shared --nogpgcheck"; do
+        : > "$TMP/dnf.log"
+        read -r bad_name bad_spec <<< "$bad"
+        if (export PATH="$TMP/bin:$PATH"; resolve install_packages_strict parent "$bad_name" "$bad_spec") > "$TMP/out.log" 2>&1; then
+            fail "invalid or undeclared package constraint was accepted: $bad"
+        elif [[ -s "$TMP/dnf.log" ]]; then fail "invalid constraint reached dnf: $bad"
+        else pass "invalid constraint refuses before package installation: $bad"; fi
+    done
+    cp "$fixture/packages.toml" "$fixture/no-catalog.toml"
+    printf '\nbuild_catalog_authoritative = true\n' >> "$fixture/packages.toml"
+    printf '[{"name":"child","pkgs":["catalog-compiler"]},{"name":"parent","pkgs":["catalog-runtime"]}]\n' > "$fixture/package_sets.json"
+    : > "$TMP/dnf.log"
+    if (export PATH="$TMP/bin:$PATH"; resolve install_packages_strict parent shared shared-0.56.2) > "$TMP/out.log" 2>&1; then
+        fail "constraint injected package absent from authoritative catalog"
+    elif [[ -s "$TMP/dnf.log" ]]; then fail "authoritative catalog bypass reached dnf"
+    else pass "package constraint cannot bypass authoritative catalog"; fi
+    mv "$fixture/no-catalog.toml" "$fixture/packages.toml"
     unset -f resolve
 }
+
+hyprland_bake_checks() (
+    local fixture="$TMP/hyprland-fixture"
+    mkdir -p "$fixture/lib" "$fixture/bin"
+    cp "$ROOT/automation/lib/packages.sh" "$fixture/lib/"
+    cp "$TMP/fixture/lib/common.sh" "$fixture/lib/"
+    # Run the real bake through compositor and plugin creation, with package
+    # operations and the native builder stubbed inside this private fixture.
+    python3 - "$ROOT/automation/65-bake-hyprland.sh" "$fixture/phase.sh" "$fixture/bin/mios-gen" <<'PYTEST'
+from pathlib import Path
+import sys
+source=Path(sys.argv[1]).read_text().split('/usr/libexec/mios/mios-gen render-hyprland --root /',1)[0]
+# Theme renderers are outside this source-lifetime test and must not write /usr.
+theme_start=source.index('# Render each imperative generator')
+plugin_start=source.index('/usr/libexec/mios/mios-gen build-hyprglass')
+source=source[:theme_start]+source[plugin_start:]
+source=source.replace('/usr/libexec/mios/mios-gen',sys.argv[3])
+Path(sys.argv[2]).write_text(source)
+PYTEST
+    cat > "$fixture/bin/mios-gen" <<'GEN'
+#!/bin/bash
+set -euo pipefail
+verb="$1"; shift
+if [[ "$verb" == build-hyprland && " $* " == *" --package-spec "* ]]; then echo hyprland-0.56.2; exit; fi
+source_path=""; out=""
+while (( $# )); do
+    case "$1" in
+        --out) out="$2"; shift 2;;
+        --srpm) source_path="$2"; shift 2;;
+        *) shift;;
+    esac
+done
+if [[ "$verb" == build-hyprland ]]; then
+    mkdir -p "$out/source"
+    printf 'binary' > "$out/hyprland-0.56.2-2.mios2.fc44.x86_64.rpm"
+    [[ "${MIOS_TEST_MISSING_SDK:-0}" != 1 ]] || exit 0
+    printf 'original signed SDK source' > "$out/source/hyprland-0.56.2-2.fc44.src.rpm"
+else
+    [[ -f "$source_path" ]] || exit 43
+    printf '%s %s\n' "$verb" "$(sha256sum "$source_path" | cut -d' ' -f1)" >> "$MIOS_TEST_SDK_LOG"
+fi
+GEN
+    chmod +x "$fixture/bin/mios-gen"
+    cat > "$fixture/bin/rpm" <<'RPM'
+#!/bin/sh
+printf '%s\n' hyprland
+RPM
+    chmod +x "$fixture/bin/rpm"
+    printf '#!/bin/sh\nexit 0\n' > "$fixture/bin/systemctl"
+    chmod +x "$fixture/bin/systemctl"
+    : > "$TMP/dnf.log"
+    export PATH="$fixture/bin:$TMP/bin:$PATH" MIOS_TOML="$ROOT/usr/share/mios/mios.toml"
+    export MIOS_TEST_SDK_LOG="$fixture/sdk.log"
+    if ! bash "$fixture/phase.sh" > "$fixture/positive.log" 2>&1; then
+        cat "$fixture/positive.log" >&2
+        fail "compositor/plugin source-lifetime fixture failed"
+        return 1
+    fi
+    if [[ "$(wc -l < "$fixture/sdk.log")" == 4 && "$(awk '{print $2}' "$fixture/sdk.log" | sort -u | wc -l)" == 1 ]]; then
+        pass "all four plugin builds reuse the original compositor SDK source"
+    else fail "plugins lost their matching SDK source"; return 1; fi
+    : > "$fixture/sdk.log"
+    if MIOS_TEST_MISSING_SDK=1 bash "$fixture/phase.sh" > "$fixture/negative.log" 2>&1; then
+        fail "missing compositor SDK source was accepted"; return 1
+    elif [[ -s "$fixture/sdk.log" ]]; then fail "plugins ran without the retained SDK source"; return 1
+    else pass "missing retained compositor source refuses before any plugin builds"; fi
+)
 
 native_build_checks() (
     # This shell phase only bootstraps/delegates. Artifact, catalog and atomic
@@ -289,6 +380,7 @@ main() {
     if ! health_checks; then fail "critical package health controls"; fi
     if [[ "${1:-}" == --health-only ]]; then (( fails == 0 )); return; fi
     dependency_checks
+    hyprland_bake_checks
     native_build_checks
     if [[ "${1:-}" == --dependency-only ]]; then
         echo "[test-profile-packages] dependency failures: $fails"

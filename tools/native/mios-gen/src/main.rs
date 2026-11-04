@@ -404,8 +404,11 @@ enum Commands {
         #[arg(long)]
         srpm: Option<PathBuf>,
         /// Directory the patched RPMs are copied to.
-        #[arg(long)]
-        out: PathBuf,
+        #[arg(long, required_unless_present = "package_spec")]
+        out: Option<PathBuf>,
+        /// Print the package selection held to the compositor/plugin ABI without building.
+        #[arg(long, conflicts_with_all = ["srpm", "out", "check"])]
+        package_spec: bool,
         /// Only check that every patch applies to the pristine release.
         #[arg(long)]
         check: bool,
@@ -1906,13 +1909,24 @@ fn main() -> ExitCode {
             root,
             srpm,
             out,
+            package_spec,
             check,
         } => {
             let r = resolve_root(root);
+            let result = if package_spec {
+                mios_resolver::resolve_merged(Some(&r), false)
+                    .map_err(|error| error.to_string())
+                    .and_then(|data| hyprland_build::package_spec(&data))
+                    .map(|spec| spec + "\n")
+            } else if let Some(out) = out {
+                hyprland_build::run(&r, srpm.as_deref(), &out, check)
+            } else {
+                Err("build-hyprland requires --out or --package-spec".into())
+            };
             (
                 "build-hyprland",
                 "usr/share/mios/hyprland/patches",
-                hyprland_build::run(&r, srpm.as_deref(), &out, check)
+                result
                     .map(|msg| {
                         if cli.format != "json" {
                             print!("{msg}");

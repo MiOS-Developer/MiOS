@@ -345,8 +345,32 @@ install_packages_strict() {
     fi
     local packages
     packages=$(get_packages_strict "$category") || return 1
+    # An optional name/spec pair constrains an existing catalog member; it cannot
+    # add an undeclared package or bypass profile, enable, closure or catalog checks.
+    local -a selected
+    read -r -a selected <<< "$packages"
+    if (( $# == 3 )); then
+        local name="$2" spec="$3" found=0 index
+        if [[ ! "$name" =~ ^[A-Za-z0-9_+.-]+$ || "$spec" != "$name"-* || ! "$spec" =~ ^[A-Za-z0-9_+.:%~-]+$ ]]; then
+            echo "[packages.sh] ERROR: invalid constrained package selection" >&2
+            return 1
+        fi
+        for index in "${!selected[@]}"; do
+            if [[ "${selected[index]}" == "$name" ]]; then
+                selected[index]="$spec"
+                found=1
+            fi
+        done
+        if (( ! found )); then
+            echo "[packages.sh] ERROR: constrained package '$name' is absent from [packages.$category]" >&2
+            return 1
+        fi
+    elif (( $# != 1 )); then
+        echo "[packages.sh] ERROR: strict install expects a category and optional name/spec pair" >&2
+        return 1
+    fi
     echo "[packages.sh] Installing '$category' packages"
-    _dnf_retry_exec "$DNF_BIN" "${DNF_SETOPT[@]}" install -y --allowerasing --exclude=PackageKit $packages || {
+    _dnf_retry_exec "$DNF_BIN" "${DNF_SETOPT[@]}" install -y --allowerasing --exclude=PackageKit "${selected[@]}" || {
         echo "[packages.sh] FATAL: Mandatory '$category' packages failed to install after retries" >&2
         echo "[packages.sh] Packages requested: $packages" >&2
         return 1

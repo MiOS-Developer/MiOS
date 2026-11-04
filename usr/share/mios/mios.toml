@@ -1929,11 +1929,22 @@ source_exempt = []
 # tools/sign-powershell.ps1 takes -CertPassword as a SecureString, or prompts.
 signing_cert = ""
 
+# The compositor SDK uses the vendored source bundle of this signed provider.
+# Its stable release is selected by desktop.hyprland.hyprglass.hyprland_version.
 [repos.external.hyprland]
+enabled = true
+name = "MiOS compositor and matching vendored SDK (ashbuk COPR)"
+baseurl = "https://download.copr.fedorainfracloud.org/results/ashbuk/Hyprland-Fedora/fedora-$releasever-$basearch/"
+gpgkey = "https://download.copr.fedorainfracloud.org/results/ashbuk/Hyprland-Fedora/pubkey.gpg"
+includepkgs = ["hyprland"]
+
+# Keep current shell dependencies without replacing the held compositor/SDK provider.
+[repos.external.hyprland-dependencies]
 enabled = true
 name = "MiOS Hyprland and Quickshell dependencies (nett00n COPR)"
 baseurl = "https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/fedora-$releasever-$basearch/"
 gpgkey = "https://download.copr.fedorainfracloud.org/results/nett00n/hyprland/pubkey.gpg"
+excludepkgs = ["hyprland", "hyprland-devel"]
 
 [repos.external.nvidia-container-toolkit]
 enabled = true
