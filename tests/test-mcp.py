@@ -1193,6 +1193,73 @@ class TestAgentCliCatalog(unittest.TestCase):
                 )
 
 
+class TestAgentTmuxBinding(unittest.TestCase):
+    """Private automation does not become a desktop binding across MCP startup."""
+
+    def setUp(self):
+        import pathlib
+        import subprocess
+        self.server = _load_mios_mcp_server_module()
+        self.directory = tempfile.TemporaryDirectory(prefix="mios-binding-")
+        self.socket = pathlib.Path(self.directory.name) / "mcp-headless"
+        subprocess.run(
+            ["tmux", "-u", "-S", str(self.socket), "-f", os.devnull,
+             "new-session", "-d", "-s", "mios-private"],
+            check=True, capture_output=True, timeout=5,
+        )
+        fields = subprocess.check_output(
+            ["tmux", "-u", "-S", str(self.socket), "display-message", "-p",
+             "#{socket_path}|#{pid}|#{pane_id}"], text=True, timeout=5,
+        ).strip().split("|")
+        self.environment = {
+            "TMUX": f"{fields[0]},{fields[1]},0", "TMUX_PANE": fields[2],
+            "MIOS_TMUX_HELPER": "1", "MIOS_TMUX_PRIVATE_SOCKET": fields[0],
+        }
+
+    def tearDown(self):
+        import subprocess
+        subprocess.run(["tmux", "-S", str(self.socket), "kill-server"],
+                       capture_output=True, timeout=5)
+        self.directory.cleanup()
+
+    def test_witnessed_private_helper_remains_headless(self):
+        with mock.patch.dict(os.environ, self.environment, clear=True):
+            self.assertIsNone(self.server._agent_tmux_context())
+
+    def test_explicit_binding_remains_bound(self):
+        environment = {**self.environment,
+                       "MIOS_TMUX_UI_SOCKET": str(self.socket),
+                       "MIOS_TMUX_UI_PANE": self.environment["TMUX_PANE"]}
+        with mock.patch.dict(os.environ, environment, clear=True):
+            context = self.server._agent_tmux_context()
+        self.assertEqual(context["socket"], str(self.socket))
+        self.assertEqual(context["pane"], environment["TMUX_PANE"])
+
+    def test_invalid_explicit_binding_is_not_cleared_by_private_provenance(self):
+        environment = {**self.environment,
+                       "MIOS_TMUX_UI_SOCKET": "/nonexistent/mios-invalid",
+                       "MIOS_TMUX_UI_PANE": "%1"}
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(ValueError, "invalid native"):
+                self.server._agent_tmux_context()
+
+    def test_private_marker_cannot_bypass_server_pid_witness(self):
+        environment = dict(self.environment)
+        socket, pid, index = environment["TMUX"].rsplit(",", 2)
+        environment["TMUX"] = f"{socket},{int(pid) + 1},{index}"
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(ValueError, "desktop pane"):
+                self.server._agent_tmux_context()
+
+    def test_unmarked_interactive_pane_remains_bound(self):
+        for removed in ("MIOS_TMUX_HELPER", "MIOS_TMUX_PRIVATE_SOCKET"):
+            environment = dict(self.environment)
+            environment.pop(removed)
+            with self.subTest(removed=removed), \
+                 mock.patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(self.server._agent_tmux_context()["socket"], str(self.socket))
+
+
 class TestManagedMcpClientStartup(unittest.TestCase):
     """The owned local tool server is ready before the first client model turn."""
 
@@ -1250,6 +1317,8 @@ class TestManagedMcpClientStartup(unittest.TestCase):
                         self.assertEqual(owned["required"], required)
                         self.assertEqual(owned["startup_timeout_sec"], timeout)
                         self.assertTrue(owned["enabled"])
+                        self.assertIn("TMUX", owned["env_vars"])
+                        self.assertIn("TMUX_PANE", owned["env_vars"])
                         self.assertIn("/usr/libexec/mios/mios-mcp-server", owned["args"])
                         self.assertEqual(data["model_provider"], "operator")
                         self.assertEqual(data["model"], "operator-model")

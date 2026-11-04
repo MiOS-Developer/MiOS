@@ -539,6 +539,23 @@ def _human_tmux_context(socket_path=None, pane=None):
             "tmux": f"{path},{fields[4]},0"}
 
 
+def _agent_tmux_context():
+    """Preserve explicit pane bindings; keep verified private helpers headless."""
+    if os.environ.get("MIOS_TMUX_UI_SOCKET") or os.environ.get("MIOS_TMUX_UI_PANE"):
+        return _human_tmux_context()
+    ambient = os.environ.get("TMUX", "")
+    pane = os.environ.get("TMUX_PANE")
+    if not ambient or not pane:
+        return None
+    # Validate the real caller socket, owner, pane and server PID before using
+    # its provenance. A marker cannot turn an invalid binding into a valid one.
+    context = _human_tmux_context(ambient.rsplit(",", 2)[0], pane)
+    if (os.environ.get("MIOS_TMUX_HELPER") == "1"
+            and os.environ.get("MIOS_TMUX_PRIVATE_SOCKET") == context["socket"]):
+        return None
+    return context
+
+
 # Command the workspace observer pane runs; resize uses it to rebuild a dead observer.
 _WORKSPACE_OBSERVER_COMMAND = "/usr/bin/mios agents --watch"
 
@@ -777,6 +794,11 @@ class _TmuxBridge:
                 await self._tmux("set-option", "-g", name, value, check=True)
             # tmux carries both global and per-session environments. Set the
             # global values explicitly before upstream creates new sessions.
+            # Witness the actual namespace socket rather than assuming /tmp or
+            # promoting an unbound private helper into a desktop pane binding.
+            private_socket = await self._tmux("display-message", "-p", "-t", "mios-anchor",
+                                              "#{socket_path}", check=True)
+            self.env["MIOS_TMUX_PRIVATE_SOCKET"] = private_socket.stdout.decode().strip()
             for key, value in self.env.items():
                 await self._tmux("set-environment", "-g", key, value, check=True)
             await self._tmux("source-file", os.path.join(self.directory.name, "tmux.conf"), check=True)
@@ -2021,7 +2043,7 @@ def _project_agent_clients(home=None):
     selected = tomllib.loads(text).get("model_provider") if text.strip() else None
     text = re.sub(r"(?ms)^\[model_providers\.mios(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", "", text)
     text = re.sub(r"(?ms)^\[mcp_servers\.mios-control(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", "", text)
-    text = text.rstrip() + "\n\n[mcp_servers.mios-control]\ncommand = " + json.dumps(entry["command"]) + "\nargs = " + json.dumps(entry["args"]) + "\nenabled = true\nenv_vars = [\"MIOS_TMUX_UI_SOCKET\", \"MIOS_TMUX_UI_PANE\", \"MIOS_AGENT_RELAY_STATE\", \"MIOS_AI_ENDPOINT\", \"MIOS_AI_MODEL\"]\n"
+    text = text.rstrip() + "\n\n[mcp_servers.mios-control]\ncommand = " + json.dumps(entry["command"]) + "\nargs = " + json.dumps(entry["args"]) + "\nenabled = true\nenv_vars = [\"MIOS_TMUX_UI_SOCKET\", \"MIOS_TMUX_UI_PANE\", \"TMUX\", \"TMUX_PANE\", \"MIOS_AGENT_RELAY_STATE\", \"MIOS_AI_ENDPOINT\", \"MIOS_AI_MODEL\"]\n"
     if selected is None:
         text = 'model_provider = "mios"\n' + text
         if "model" not in tomllib.loads(text):
@@ -2594,9 +2616,8 @@ def main() -> int:
         if backend == "local":
             os.environ.setdefault("OPENAI_BASE_URL", endpoint)
             os.environ.setdefault("OPENAI_API_BASE", endpoint)
-        ui = None
-        if os.environ.get("TMUX") and os.environ.get("TMUX_PANE"):
-            ui = _human_tmux_context(os.environ["TMUX"].rsplit(",", 2)[0], os.environ["TMUX_PANE"])
+        ui = _agent_tmux_context()
+        if ui:
             os.environ["MIOS_TMUX_UI_SOCKET"] = ui["socket"]
             os.environ["MIOS_TMUX_UI_PANE"] = ui["pane"]
             subprocess.run(["tmux", "-S", ui["socket"], "set-option", "-p", "-t", ui["pane"],
