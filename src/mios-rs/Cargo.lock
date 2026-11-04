@@ -1208,9 +1208,12 @@ dependencies = [
 name = "mios-build"
 version = "0.3.0"
 dependencies = [
+ "chrono",
+ "glob",
  "insta",
  "mios-resolver",
  "object",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

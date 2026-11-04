@@ -1128,3 +1128,30 @@ pub mod phases {
             .transpose()
     }
 }
+
+// Typed multicall routes share one spelling between native publication and dispatch.
+pub mod native_aliases {
+    #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum Command {
+        BuildStatus,
+        BuildTail,
+    }
+
+    impl Command {
+        pub fn argument(self) -> &'static str {
+            match self {
+                Self::BuildStatus => "build-status",
+                Self::BuildTail => "build-tail",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct Alias {
+        pub binary: String,
+        pub command: Command,
+        pub platform: String,
+    }
+}

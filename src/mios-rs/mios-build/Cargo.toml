@@ -6,6 +6,9 @@ edition.workspace = true
 description = "MiOS native build orchestrator and phase registry"
 
 [dependencies]
+chrono.workspace = true
+regex.workspace = true
+glob = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

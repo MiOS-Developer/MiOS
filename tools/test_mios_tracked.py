@@ -203,6 +203,29 @@ compat_dirs = []
         self.assertEqual({"/usr/libexec/mios/mios-worker":"mios-worker",
                           "/usr/bin/mios-worker":"mios-worker"}, self.invoke([self.row]))
 
+    def test_named_aliases_require_exact_planner_and_policy_agreement(self):
+        self.policy.write_text(self.policy.read_text() + """
+[build.native.aliases.mios-observe]
+binary = "mios-worker"
+command = "build-status"
+platform = "linux"
+""")
+        row = {**self.row, "named_aliases": ["mios-observe"]}
+        paths = self.invoke([row])
+        self.assertEqual("mios-worker", paths["/usr/bin/mios-observe"])
+        self.assertEqual("mios-worker", paths["/usr/libexec/mios/mios-observe"])
+        for names in ([], ["foreign"], ["../escape"], "mios-observe", ["mios-observe", "mios-observe"]):
+            with self.subTest(names=names), self.assertRaises(mt.NativeCatalogError):
+                self.invoke([{**row, "named_aliases": names}])
+        valid = self.policy.read_text()
+        for old, new in (('binary = "mios-worker"', 'binary = "missing"'),
+                         ('platform = "linux"', 'platform = "windows"'),
+                         ('command = "build-status"', 'command = ""'),
+                         ('aliases.mios-observe', 'aliases.mios-worker')):
+            self.policy.write_text(valid.replace(old, new))
+            with self.subTest(new=new), self.assertRaises(mt.NativeCatalogError):
+                self.invoke([row])
+
     def test_unknown_wrong_path_platform_and_partial_metadata_fail(self):
         for patch in ({"binary":"unknown"}, {"install_dir":"/tmp"}, {"category":{}},
                       {"install_dir":[]}, {"platform":"windows"}, {"workspace":"elsewhere"},

@@ -104,6 +104,16 @@ def native_install_paths(root: str) -> dict[str, str]:
             or not set(excluded).issubset(expected)):
         raise NativeCatalogError("malformed Windows-only native declaration")
     expected.difference_update(excluded)
+    aliases = native.get("aliases", {})
+    if not isinstance(aliases, dict):
+        raise NativeCatalogError("malformed native aliases")
+    for name, route in aliases.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name)
+                or name in expected or not isinstance(route, dict)
+                or set(route) != {"binary", "command", "platform"}
+                or route.get("binary") not in expected or route.get("platform") != "linux"
+                or not isinstance(route.get("command"), str) or not route["command"]):
+            raise NativeCatalogError("malformed native alias declaration")
     observed, paths = set(), {}
     for row in rows:
         if not isinstance(row, dict):
@@ -122,6 +132,9 @@ def native_install_paths(root: str) -> dict[str, str]:
                 or row.get("compat_dirs") != group.get("compat_dirs", [])
                 or row.get("expose_bin") is not group.get("expose_bin", False)):
             raise NativeCatalogError(f"inconsistent native installation metadata for {binary!r}")
+        declared_aliases = sorted(name for name, route in aliases.items() if route["binary"] == binary)
+        if row.get("named_aliases", []) != declared_aliases:
+            raise NativeCatalogError(f"inconsistent native aliases for {binary}")
         directories = [row["install_dir"], *row["compat_dirs"]]
         if row["expose_bin"]:
             directories.append("/usr/bin")
@@ -129,7 +142,8 @@ def native_install_paths(root: str) -> dict[str, str]:
             raise NativeCatalogError(f"unsupported native installation path for {binary}")
         observed.add(binary)
         for directory in directories:
-            paths[directory + "/" + binary] = binary
+            for name in [binary, *declared_aliases]:
+                paths[directory + "/" + name] = binary
     if observed != expected:
         raise NativeCatalogError("native installation metadata does not cover the declared Linux catalog")
     return paths

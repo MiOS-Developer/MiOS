@@ -365,7 +365,8 @@ def test_native_runtime_check_rejects_dynamic_or_missing():
     assert os.access(miosd, os.X_OK), f"native miosd required ({miosd}); absence is not a skipped test"
     dynamic = next(p for p in ("/usr/bin/ls", "/bin/ls") if os.path.exists(p))
     ssot = pathlib.Path(_ROOT, "usr/share/mios/mios.toml")
-    categories = tomllib.loads(ssot.read_text())["build"]["native"]["categories"]
+    native = tomllib.loads(ssot.read_text())["build"]["native"]
+    categories = native["categories"]
     env = {k: v for k, v in os.environ.items() if k not in ("MIOS_TOML", "MIOS_VENDOR_TOML")}
     with tempfile.TemporaryDirectory(prefix="mios-native-runtime-") as tmp:
         root = pathlib.Path(tmp)
@@ -390,6 +391,16 @@ def test_native_runtime_check_rejects_dynamic_or_missing():
                     alias_directory.mkdir(parents=True, exist_ok=True)
                     (alias_directory / binary).symlink_to(
                         pathlib.PurePosixPath(category["install_dir"]) / binary)
+
+        for name, route in native.get("aliases", {}).items():
+            category = next(group for group in categories.values() if route["binary"] in group["binaries"])
+            directories = [category["install_dir"], *category.get("compat_dirs", [])]
+            if category.get("expose_bin", False):
+                directories.append("/usr/bin")
+            for directory in set(directories):
+                path = root / directory.lstrip("/") / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.symlink_to(pathlib.PurePosixPath(category["install_dir"]) / route["binary"])
 
         def check():
             return subprocess.run([miosd, "native-runtime-check", "--root", str(root)],

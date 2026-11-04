@@ -1596,6 +1596,18 @@ class NativeOverlayClosureTests(unittest.TestCase):
                     alias.symlink_to(group["install_dir"] + "/" + name)
                     self.aliases.append(alias)
 
+        for name, route in self.config.get("aliases", {}).items():
+            group = next(g for g in self.config["categories"].values() if route["binary"] in g["binaries"])
+            directories = [group["install_dir"], *group["compat_dirs"]]
+            if group["expose_bin"]:
+                directories.append("/usr/bin")
+            for directory in set(directories):
+                self.expected.add("." + directory.removeprefix("/usr") + "/" + name)
+                alias = self.image / directory.lstrip("/") / name
+                alias.parent.mkdir(parents=True, exist_ok=True)
+                alias.symlink_to(group["install_dir"] + "/" + route["binary"])
+                self.aliases.append(alias)
+
     def command(self):
         return [
             self.binary, "native-overlay-paths", "--root", str(self.source),
