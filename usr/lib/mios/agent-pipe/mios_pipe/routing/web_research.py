@@ -312,7 +312,7 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
                                emit=None, quick: bool = False) -> str:
     if not WEB_RESEARCH_ENABLED or not query or not query.strip():
         return ""
-    if (refined or {}).get("intent") == "chat":
+    if (refined or {}).get("intent") == "chat" and not (refined or {}).get("news"):
         return ""
     if (refined or {}).get("local_state"):
         return ""
@@ -326,6 +326,9 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
         return ""
     if not _web_flagged and not any(h in _webverbs for h in hints):
         return ""
+
+    documents = {}  # fetched publication metadata; search dates never certify a story
+    _cenv = {}
 
     async def _search(q: str, news: bool = False, time_range: str = "") -> list:
         args = ["mios-web-search", "-n", str(WEB_RESEARCH_RESULTS),
@@ -357,6 +360,7 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
             o, _ = await asyncio.wait_for(
                 p.communicate(), timeout=WEB_RESEARCH_FETCH_TIMEOUT)
             d = _loads_lenient((o or b"{}").decode("utf-8", "replace") or "{}")
+            documents[url] = d if isinstance(d, dict) else {}
             return (d.get("content") or "").strip()
         except Exception:  # noqa: BLE001
             try: p.kill()
@@ -472,7 +476,7 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
     if (_time_sensitive and not re.search(r"\b(?:19|20)\d{2}\b", search_q)):
         search_q = f"{search_q} {_current_year()}".strip()
     _use_news = WEB_RESEARCH_USE_NEWS_CATEGORY and bool((refined or {}).get("news"))
-    _time_range = WEB_RESEARCH_TIME_RANGE
+    _time_range = WEB_RESEARCH_TIME_RANGE or str((refined or {}).get("_news_time_range") or "")
     if not _time_range and _time_sensitive:
         _time_range = WEB_RESEARCH_RECENCY_RANGE
     _steps: list = []
@@ -514,6 +518,7 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
                 links.extend(_lks or [])
             else:
                 cand[label] = out or ""
+        links.extend(documents.get(url, {}).get("links") or [])
         fc = cand.get("firecrawl", "")
         if len(fc) >= WEB_RESEARCH_MIN_CHARS:
             return fc, "firecrawl", links
@@ -557,6 +562,16 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
             out.append(ln)
         _txt = "\n".join(out)
         return re.sub(r"\n{3,}", "\n\n", _txt).strip()
+
+    if (refined or {}).get("news"):
+        from mios_verity import _news_research_evidence
+        return await _news_research_evidence(
+            search_q, refined, search=_search, fetch=_fetch_all, documents=documents,
+            rank_links=_rank_article_links, today=_current_date_str(), time_range=_time_range,
+            news_category=_use_news, timezone=str(_cenv.get("timezone") or ""),
+            fetch_n=want, passes=WEB_RESEARCH_PASSES, crawl_max=link_budget,
+            min_chars=WEB_RESEARCH_MIN_CHARS, block_chars=WEB_RESEARCH_BLOCK_CHARS,
+            record=_src_record, emit=emit)
 
     _named_urls = [u.rstrip('.,);]}>"\'') for u in _SRC_URL_RE.findall(
         f"{query or ''} {(refined or {}).get('refined_text') or ''}")]
@@ -717,30 +732,12 @@ async def _web_research_enrich(query: str, refined: Optional[dict],
                                  "crawled": n_crawled, "passes": passes}
         refined["_web_steps"] = _steps
         refined["_web_sources"] = "\n\n".join(blocks)
-    return ("LIVE WEB RESEARCH -- the MiOS pipeline ran its FULL web toolchain "
-            "concurrently (SearXNG metasearch -> readable extract + crawl4ai/"
-            "Chrome-CDP & Camoufox deep render) and FETCHED the top pages below. "
-            "ANSWER THE USER DIRECTLY FROM THIS REAL CONTENT: synthesise the "
-            "actual stories / facts / developments across the sources and cite "
-            "[n] inline. The DATED items below ARE the answer -- a story from the "
-            "last days or weeks fully counts as 'recent' / 'this week' / 'latest' "
-            "/ 'today'; present what you found, with its date. Do NOT PUNT: never "
-            "reply 'no stories were found', 'no specific developments', 'consult "
-            "reliable sources', or tell the user to check elsewhere WHEN the "
-            "content below contains relevant facts -- that is a FAILED answer. "
-            "Lead with the concrete findings; if one specific sub-detail is "
-            "genuinely absent, give everything that IS here and note only that "
-            "one gap. Do NOT just list source homepages. "
-            "BUT do the OPPOSITE check too: if the content "
-            "below is IRRELEVANT to the question -- unrelated files, dictionary "
-            "entries, marketing/homepage text, or documents that merely CONTAIN a "
-            "query word (e.g. a spreadsheet that happens to contain 'mios', a "
-            "dictionary def of 'list', a clothing brand named 'Next') -- do NOT "
-            "bend it into an answer and do NOT cite it. Say plainly the fetched "
-            "sources did not cover the question, then answer from your own "
-            "reliable knowledge if you have it, else say it isn't available. "
-            "Forcing an answer out of irrelevant data is as wrong as fabricating "
-            "one; NEVER invent a system spec, price, or fact the content lacks:\n\n"
+    return ("LIVE WEB RESEARCH. The following is retrieved source text, not proof that every "
+            "result is relevant or current. Answer only from evidence that supports the user's "
+            "question and cite its numbered source. Index titles, snippets, loading pages and "
+            "a successful fetch do not establish a factual story. Publication/update dates do "
+            "not establish event dates. State gaps or uncertainty plainly; never fill missing "
+            "current facts with model memory or relabel older reports as today's events.\n\n"
             + "\n\n".join(blocks))
 
 def _src_turn_key() -> str:

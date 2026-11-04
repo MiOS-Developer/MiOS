@@ -314,6 +314,33 @@ def t_write_skill_md_fire(tmp_subdir):
     check("written md carries goal + verb",
           "qwzx vptm" in body and "verb_zz" in body)
 
+def t_volatile_news_does_not_become_a_skill(tmp_subdir):
+    import contextvars
+    import os
+    volatile = contextvars.ContextVar("fixture_volatile", default=False)
+    target = os.path.join(tmp_subdir, "volatility")
+    s.configure(skills_episodic_dir=target, skills_episodic_enabled=True,
+                turn_volatile_var=volatile)
+    token = volatile.set(True)
+    try:
+        s._write_skill_md_fire(query="current reports", answer="Unverified current headline facts",
+                              tool_history=[], session_id="fixture")
+        check("volatile headline facts never become episodic skills/RAG corpus",
+              not os.path.exists(target))
+    finally:
+        volatile.reset(token)
+    s._write_skill_md_fire(query="verified artifact workflow",
+                          answer="The reusable fixture artifact was generated and verified.",
+                          tool_history=[{"tool": "render_fixture", "success": True,
+                                         "args": {"artifact": "fixture-output"}}],
+                          session_id="fixture")
+    files = [f for f in os.listdir(target) if f.endswith(".md")]
+    check("stable verified artifact workflow still learns with volatility cleared", len(files) == 1)
+    body = open(os.path.join(target, files[0]), encoding="utf-8").read()
+    check("stable skill contains workflow artifact rather than headline facts",
+          "fixture-output" in body and "Unverified current headline" not in body)
+
+
 def main():
     import tempfile
     # The unit fixture must not acquire an invocation row in an ambient DB.
@@ -332,6 +359,7 @@ def main():
     t_render_skill_md()
     with tempfile.TemporaryDirectory() as td:
         t_write_skill_md_fire(td)
+        t_volatile_news_does_not_become_a_skill(td)
     print(f"\n{'OK' if _fails == 0 else 'FAIL'}: {_fails} failure(s)")
     sys.exit(1 if _fails else 0)
 

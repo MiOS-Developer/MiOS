@@ -630,6 +630,16 @@ async def _respond_native_loop_direct(
              (refined or {}).get("intent"),
              bool(refined and refined.get("news")),
              bool(refined and refined.get("web")), _hint_tools[:6])
+    if ((refined or {}).get("news") and (refined or {}).get("intent") == "chat"
+            and not force_delegate and not target_agents and tool_choice in (None, "auto")
+            and not (refined or {}).get("tool")
+            and not (refined or {}).get("tasks") and not (refined or {}).get("local_state")
+            and not (refined or {}).get("browser_action")):
+        from mios_verity import _respond_news_evidence
+        return await _respond_news_evidence(
+            refined, streaming=streaming, chat_id=chat_id, model=model,
+            query=last_user_text, time_range=(_recency_ctx_var.get() or {}).get("time_range"),
+            emit=emit)
     _recall_text = ""
     try:
         _mem, _kn, _rag = await asyncio.gather(
@@ -821,14 +831,14 @@ async def _respond_native_loop_direct(
                     _push(" 🔎")
                     _fetched_corpus += "\n" + _wtext   # FAB-02 ground truth
                     _msgs.append({"role": "system", "content":
-                     "LIVE web_search results for the user's request (current and "
-                     "real). Answer from these results if they are relevant; if they are empty "
-                     "or do not contain the required information, DO NOT summarize their absence. "
-                     "Instead, call the `web_search` tool again with a different or broader query to "
-                     "find the relevant details. Do NOT invent headlines, titles, or figures. Cite sources inline as [n]; the system appends the "
-                     "numbered Sources list with the real URLs -- do NOT write your own "
-                     "'Source: <name>' lines or homepage URLs (those are fabrications). "
-                     "If you have no source for a claim, omit the citation:\n"
+                     "LIVE web_search discovery results, not verified article evidence. "
+                     "Fetch substantive source content before asserting a current fact. "
+                     "Search/index titles and retrieval timestamps do not date an article. "
+                     "Keep publication dates separate from event dates and the caller's "
+                     "current date/timezone. Never relabel older reports as today's events. "
+                     "If dated evidence or the requested time window cannot be verified, "
+                     "state that gap instead of inventing details or filling it from memory. "
+                     "Cite only the actual sources supporting each claim:\n"
                      + _wtext[:6000]})
                     try:
                         _wj = _loads_lenient(_wtext) if isinstance(_wtext, str) else _wtext

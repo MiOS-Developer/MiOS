@@ -151,6 +151,36 @@ def t_clarify_extracts_question():
         v.httpx = saved
     check("clarify: extracts model 'question' field", out == _CLARIFY_TOKEN, repr(out))
 
+
+def t_news_polish_preserves_checked_evidence():
+    import importlib
+    from unittest import mock
+    target = importlib.import_module("mios_pipe.lifecycle.verity")
+    checked = "Reports published on 2026-11-03:\n> A source excerpt about an earlier event."
+    with mock.patch.object(target.httpx, "AsyncClient",
+                           side_effect=AssertionError("polish must not invent news synthesis")):
+        answer = asyncio.run(target.polish_response(
+            "A fabricated current event from model memory.",
+            {"news": True, "_news_answer": checked}, original_user_text="current reports"))
+    check("news polish preserves checked article receipt without model synthesis", answer == checked)
+
+def t_news_retrieval_failure_drops_stale_receipt():
+    import importlib
+    from unittest import mock
+    web = importlib.import_module("mios_pipe.routing.web_research")
+    with mock.patch.object(web, "_web_research_enrich", mock.AsyncMock(side_effect=RuntimeError("fixture offline"))):
+        response = asyncio.run(v._respond_news_evidence(
+            {"news": True, "_news_answer": "UNVERIFIED OLD ANSWER", "_news_evidence": [{"url": "forged"}]},
+            streaming=False, chat_id="news", model="public", query="fixture",
+            time_range="day"))
+    import json
+    data = json.loads(response.body)
+    answer = data["choices"][0]["message"]["content"]
+    check("failed news retrieval yields explicit evidence gap and no stale sources",
+          "couldn't verify" in answer and "UNVERIFIED" not in answer
+          and data["mios_sources"] == [] and data["mios_news_evidence"] == [])
+
+
 def main():
     t_strip_figures()
     t_strip_failsafe()
@@ -160,6 +190,8 @@ def main():
     t_polish_passthrough()
     t_clarify_empty()
     t_clarify_extracts_question()
+    t_news_polish_preserves_checked_evidence()
+    t_news_retrieval_failure_drops_stale_receipt()
     print(f"\n{'ok' if _fails == 0 else str(_fails) + ' FAILED'}")
     return 1 if _fails else 0
 

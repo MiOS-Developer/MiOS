@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-# AI-hint: Python utility to fetch a URL and strip HTML noise (scripts, styles, nav) to return raw, readable text for grounding agent responses on actual web content rather than search snippets.
-"""mios-web-extract -- fetch a URL and return its READABLE TEXT.
-
-The web_search verb returns short engine SNIPPETS, which is why the agent
-fabricated (e.g. invented a "car" etymology + cited the alphabet page) when a
-snippet didn't actually contain the answer (operator 2026-05-23). web_extract
-fetches the ACTUAL page text so an agent can GROUND on real content -- or, when
-the page does not contain the answer, see that it doesn't and say so.
-
-Offline-first: plain stdlib fetch (no cloud AI), crude HTML->text strip. Pairs
-with web_search (search -> pick a URL -> extract its content -> ground).
-SSOT: limit/timeout via flags; no endpoints to configure.
-"""
+# AI-hint: Fetch readable source text while retaining explicit article/publication metadata for dated evidence; publication, modification, retrieval and event dates remain distinct.
+# AI-related: usr/lib/mios/agent-pipe/mios_pipe/routing/web_research.py, usr/lib/mios/agent-pipe/mios_pipe/lifecycle/verity.py
+"""Read a source document; never infer publication dates from a URL or event."""
 from __future__ import annotations
 
 import argparse
+import datetime
 import html as _html
+from html.parser import HTMLParser
 import json
 import re
 import sys
@@ -23,49 +15,141 @@ import urllib.request
 
 _DROP = re.compile(r"(?is)<(script|style|head|nav|footer|aside|svg|noscript|form|button|select|dialog|iframe|template)\b[^>]*>.*?</\1>")
 _MAIN = re.compile(r"(?is)<(?:article|main)\b[^>]*>(.*?)</(?:article|main)>")
+_ARTICLE = re.compile(r"(?is)<article\b[^>]*>(.*?)</article>")
+_PARAGRAPH = re.compile(r"(?is)<p\b[^>]*>(.*?)</p>")
 _TAGS = re.compile(r"(?s)<[^>]+>")
-def _unent(s: str) -> str:
-    return _html.unescape(s)
+
+def _readable(raw: str) -> str:
+    text = _html.unescape(_TAGS.sub(" ", _DROP.sub(" ", raw)))
+    text = re.sub(r"[ \t\f\v]+", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", re.sub(r"\s*\n\s*", "\n", text)).strip()
 
 
-def extract(url: str, limit: int, timeout: float) -> str:
+class _Metadata(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.meta = {}
+        self.dates = {}
+        self.ld = []
+        self.links = []
+        self.script = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "a" and a.get("href"):
+            self.links.append(a["href"])
+        if tag == "meta":
+            key = a.get("property") or a.get("name") or a.get("itemprop")
+            if key and a.get("content"):
+                self.meta[key.lower()] = a["content"]
+        if tag == "time" and a.get("itemprop") in {"datePublished", "dateModified"} and a.get("datetime"):
+            self.dates[a["itemprop"]] = a["datetime"]
+        if tag == "script" and a.get("type", "").lower() == "application/ld+json":
+            self.script = []
+
+    def handle_data(self, data):
+        if self.script is not None:
+            self.script.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self.script is not None:
+            try:
+                self.ld.append(json.loads("".join(self.script)))
+            except (ValueError, TypeError):
+                pass
+            self.script = None
+
+
+def article_metadata(raw: str, url: str, limit: int) -> dict:
+    from urllib.parse import urljoin
+    page = _Metadata()
+    page.feed(raw)
+    articles = []
+    def visit(value):
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            kinds = value.get("@type") or []
+            kinds = [kinds] if isinstance(kinds, str) else kinds
+            if isinstance(kinds, list) and set(kinds) & {"Article", "NewsArticle", "BlogPosting", "Report"}:
+                articles.append(value)
+            visit(value.get("@graph"))
+    for value in page.ld:
+        visit(value)
+    def identity(item):
+        target = item.get("mainEntityOfPage") or item.get("url")
+        return target.get("@id") if isinstance(target, dict) else target
+    normalized = url.rstrip("/")
+    matching = [a for a in articles if str(identity(a) or "").rstrip("/") == normalized]
+    # Lists of story cards are indexes, not a single article's provenance.
+    article = matching[0] if len(matching) == 1 else (
+        articles[0] if len(articles) == 1 and not identity(articles[0]) else {})
+    typed = bool(article) or (not articles and page.meta.get("og:type") == "article")
+    published = article.get("datePublished") or page.meta.get("article:published_time") or page.meta.get("datepublished") or page.dates.get("datePublished")
+    modified = article.get("dateModified") or page.meta.get("article:modified_time") or page.meta.get("datemodified") or page.dates.get("dateModified")
+    scope = max(_ARTICLE.findall(raw) or _MAIN.findall(raw) or [raw], key=len)
+    paragraphs = []
+    for paragraph in _PARAGRAPH.findall(_DROP.sub(" ", scope)):
+        text = _readable(paragraph)
+        if text and text not in paragraphs:
+            paragraphs.append(text)
+    prose = "\n\n".join(paragraphs)
+    structured_body = article.get("articleBody")
+    if isinstance(structured_body, str) and len(structured_body.strip()) > len(prose):
+        prose = _readable(structured_body)
+    event_dates = []
+    about = article.get("about")
+    for event in about if isinstance(about, list) else [about]:
+        if isinstance(event, dict) and event.get("@type") == "Event" and event.get("startDate"):
+            event_dates.append(str(event["startDate"]))
+    return {
+        "document_type": "article" if typed else "unverified",
+        "title": str(article.get("headline") or page.meta.get("og:title") or ""),
+        "published_date": str(published or ""), "modified_date": str(modified or ""),
+        "event_dates": event_dates, "article_text": prose[:limit] if typed else "",
+        "date_source": "article-metadata" if published and typed else "",
+        "links": [{"href": urljoin(url, href)} for href in page.links],
+    }
+
+
+def extract_document(url: str, limit: int, timeout: float) -> dict:
     req = urllib.request.Request(
         url, headers={"User-Agent": "mios-web-extract/1 (+local MiOS)",
                       "Accept": "text/html,text/plain;q=0.9,*/*;q=0.1"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read(3_000_000)  # cap the download
-    html = raw.decode("utf-8", "replace")
-    html = _DROP.sub(" ", html)
-    mains = _MAIN.findall(html)
-    if mains:
-        biggest = max(mains, key=len)
-        if len(biggest) > 500:
-            html = biggest
-    text = _unent(_TAGS.sub(" ", html))
-    text = re.sub(r"[ \t\f\v]+", " ", text)
-    text = re.sub(r"\s*\n\s*", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return text[:limit]
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        raw = response.read(3_000_000).decode("utf-8", "replace")
+        resolved = response.geturl() if hasattr(response, "geturl") else url
+    metadata = article_metadata(raw, resolved, limit)
+    cleaned = _DROP.sub(" ", raw)
+    mains = _MAIN.findall(cleaned)
+    if mains and len(max(mains, key=len)) > 500:
+        cleaned = max(mains, key=len)
+    content = _readable(cleaned)[:limit]
+    return {"success": bool(content), "url": url, "resolved_url": resolved,
+            "chars": len(content), "content": content, **metadata,
+            "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+
+
+def extract(url: str, limit: int, timeout: float) -> str:
+    """Compatibility entry point for consumers needing readable text only."""
+    return extract_document(url, limit, timeout)["content"]
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(prog="mios-web-extract")
-    p.add_argument("url", help="URL to fetch + extract readable text from")
-    p.add_argument("-n", "--limit", type=int, default=4000,
-                   help="max characters of extracted text")
-    p.add_argument("--timeout", type=float, default=12.0)
-    p.add_argument("--json", action="store_true", default=True)
-    a = p.parse_args()
-    url = a.url.strip()
+    parser = argparse.ArgumentParser(prog="mios-web-extract")
+    parser.add_argument("url", help="URL to fetch and extract readable text")
+    parser.add_argument("-n", "--limit", type=int, default=4000)
+    parser.add_argument("--timeout", type=float, default=12.0)
+    parser.add_argument("--json", action="store_true", default=True)
+    args = parser.parse_args()
+    url = args.url.strip()
     if not re.match(r"^https?://", url):
         url = "https://" + url
     try:
-        content = extract(url, max(200, a.limit), a.timeout)
-        out = {"success": bool(content), "url": url,
-               "chars": len(content), "content": content}
-    except Exception as e:
-        out = {"success": False, "url": url,
-               "error": f"extract failed: {e}", "content": ""}
+        out = extract_document(url, max(200, args.limit), args.timeout)
+    except Exception as exc:
+        out = {"success": False, "url": url, "error": f"extract failed: {exc}", "content": ""}
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out.get("success") else 1
 

@@ -245,7 +245,7 @@ def test_recency_flag_drives_time_range():
         sink_a: list = []
         _install_exec(_capturing_router(sink_a), {})
         out = asyncio.run(W._web_research_enrich("xyz developments", {"news": True}))
-        assert out.startswith("LIVE WEB RESEARCH"), out[:60]
+        assert out.startswith("DATED SOURCE EVIDENCE") and "insufficient" in out, out[:100]
         assert sink_a, "no search fired"
         a = sink_a[0]
         assert "--time-range" in a and a[a.index("--time-range") + 1] == "month", a
@@ -535,6 +535,122 @@ def _run_all_folded_web_research_suites():
         import sys
         sys.exit(f"Folded test suite failed: exit code {rc}")
 
+
+def test_dated_news_evidence_and_extract_metadata():
+    """Publication dates and substantive article bytes govern current-news evidence."""
+    import importlib.machinery
+    import importlib.util
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[4]
+    loader = importlib.machinery.SourceFileLoader("mios_news_extract_fixture",
+        str(root / "usr/libexec/mios/mios-web-extract"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    extract = importlib.util.module_from_spec(spec)
+    loader.exec_module(extract)
+    today = "2026-11-03"
+    prose = ("The fictional research team published a detailed measurement report. "
+             "The event described in the report occurred on 2026-10-10. "
+             "The source reports methods, observations and limitations without making a new event claim. " * 3)
+    def article(url, published, *, modified="", event="", body=prose):
+        schema = {"@type": "NewsArticle", "mainEntityOfPage": {"@id": url},
+                  "headline": "Synthetic dated measurement report", "datePublished": published,
+                  "dateModified": modified}
+        if event:
+            schema["about"] = {"@type": "Event", "startDate": event}
+        return ('<html><head><script type="application/ld+json">' + json.dumps(schema)
+                + '</script></head><body><article><p>' + body + '</p></article></body></html>')
+    urls = {kind: "https://evidence.invalid/reports/" + kind for kind in
+            ("verified", "old", "index", "loading", "event-only", "future")}
+    fixtures = {
+        "verified": article(urls["verified"], today, event="2026-10-10"),
+        "old": article(urls["old"], "2024-01-02", modified=today, event=today),
+        "index": '<html><head><meta property="og:type" content="website"></head><main><p>'
+                 + prose + '</p><a href="/reports/verified">story</a></main></html>',
+        "loading": '<html><head><meta property="og:type" content="article">'
+                   '<meta property="article:published_time" content="' + today + '"></head>'
+                   '<main><div role="progressbar" aria-busy="true">' + ("Loading " * 120)
+                   + '</div></main></html>',
+        "event-only": article(urls["event-only"], "", event=today),
+        "future": article(urls["future"], "2026-11-04", event=today),
+    }
+    documents = {}
+    for kind, raw in fixtures.items():
+        metadata = extract.article_metadata(raw, urls[kind], 3000)
+        documents[kind] = {"content": prose, **metadata}
+    assert documents["verified"]["published_date"] == today
+    assert documents["verified"]["event_dates"] == ["2026-10-10"]
+    assert documents["old"]["published_date"] == "2024-01-02" and documents["old"]["modified_date"] == today
+    assert documents["loading"]["article_text"] == ""
+    assert documents["index"]["document_type"] == "unverified"
+    assert documents["event-only"]["published_date"] == ""
+    print("article metadata keeps publication, modification and event dates separate: OK")
+    from mios_verity import _news_article_evidence
+    timed = dict(documents["verified"], published_date="2026-11-03T00:15:00Z",
+                 fetched_at="2026-11-03T03:00:00Z")
+    local, reason = _news_article_evidence({"url": urls["verified"]}, timed,
+        today="2026-11-02", timezone="America/New_York", time_range="day",
+        min_chars=300, block_chars=300)
+    assert not reason and local["published_date"] == "2026-11-02"
+    assert local["published_at"] == "2026-11-03T00:15:00Z" and local["event_dates"] == ["2026-10-10"]
+    stale = dict(documents["old"], fetched_at="2026-11-03T03:00:00Z")
+    rejected, _ = _news_article_evidence({"url": urls["old"]}, stale,
+        today=today, timezone="America/New_York", time_range="day", min_chars=300, block_chars=300)
+    assert rejected is None
+    print("caller date/timezone governs publication day; retrieval timestamp never refreshes an old article: OK")
+
+
+    def router(kinds, sink):
+        def run(tool, args):
+            if tool == "mios-web-search":
+                sink.append(args)
+                return {"results": [{"url": urls[k], "title": "Synthetic " + k,
+                    "publishedDate": today, "content": "Search result only; not article proof."} for k in kinds]}
+            if tool == "mios-web-extract":
+                kind = args[-1].rsplit("/", 1)[-1]
+                return documents[kind]
+            return {"success": False}
+        return run
+    saved_httpx = W.httpx
+    token = _sources_var.set([])
+    try:
+        _configure(current_date_str=lambda: today, web_research_fetch_n=6,
+                   web_research_passes=1, web_research_min_chars=300,
+                   web_research_recency_range="day", web_research_crawl_max=0,
+                   web_research_use_news_category=True)
+        # No judge is allowed to certify these synthetic fixtures.
+        W.httpx = type("NoJudge", (), {"AsyncClient": lambda *a, **k:
+                    (_ for _ in ()).throw(AssertionError("news evidence must not depend on a model judge"))})
+        sink = []
+        _install_exec(router(list(fixtures), sink), {})
+        refined = {"intent": "chat", "news": True}
+        out = asyncio.run(W._web_research_enrich("synthetic current reports", refined))
+        assert out.startswith("DATED SOURCE EVIDENCE")
+        assert len(refined["_news_evidence"]) == 1, refined
+        evidence = refined["_news_evidence"][0]
+        assert evidence["url"] == urls["verified"] and evidence["event_dates"] == ["2026-10-10"]
+        assert refined["_web_stats"]["real"] == 1 and refined["_web_stats"]["rejected"] == 5
+        answer = refined["_news_answer"]
+        assert "published " + today in answer and "2026-10-10" in answer
+        assert "do not establish when" in answer
+        assert all(urls[k] not in refined["_web_sources"] for k in fixtures if k != "verified")
+        assert "--news" in sink[0] and sink[0][sink[0].index("--time-range") + 1] == "day"
+        assert W._src_collected() == [(evidence["title"], urls["verified"])], W._src_collected()
+        print("old/index/loading/event-only/future news fixtures are excluded; dated article is quoted: OK")
+        _configure(current_date_str=lambda: today, web_research_fetch_n=6,
+                   web_research_passes=1, web_research_min_chars=300,
+                   web_research_recency_range="day", web_research_crawl_max=0)
+        _install_exec(router(["old", "index", "loading"], []), {})
+        absent = {"intent": "chat", "news": True}
+        asyncio.run(W._web_research_enrich("synthetic reports", absent))
+        assert absent["_news_evidence"] == [] and absent["_web_stats"]["real"] == 0
+        assert "couldn't verify" in absent["_news_answer"] and absent["_web_sources"] == ""
+        print("insufficient dated evidence yields an explicit gap rather than invented current facts: OK")
+    finally:
+        _sources_var.reset(token)
+        asyncio.create_subprocess_exec = _REAL_EXEC
+        W.httpx = saved_httpx
+
+
 if __name__ == "__main__":
     _run_all_folded_web_research_suites()
     test_web_text_anchor_helpers_native()
@@ -545,4 +661,5 @@ if __name__ == "__main__":
     test_recency_flag_drives_time_range()
     test_source_registry_cluster()
     test_src_record_from_text_harvest()
+    test_dated_news_evidence_and_extract_metadata()
     print("ALL mios_web_research tests passed")

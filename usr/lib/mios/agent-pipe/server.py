@@ -2800,6 +2800,7 @@ sys.modules["mios_skills"].configure(
     skills_enabled=SKILLS_ENABLED,
     skills_episodic_dir=SKILLS_EPISODIC_DIR,
     skills_episodic_enabled=SKILLS_EPISODIC_ENABLED,
+    turn_volatile_var=_turn_volatile_var,
 )
 
 _ROUTE_ON_CARD_SKILLS = os.environ.get(

@@ -26,13 +26,17 @@ dispatch_mios_verb = None
 SKILLS_ENABLED = True
 _SKILLS_EPISODIC_DIR = None
 _SKILLS_EPISODIC_ENABLED = None
+_turn_volatile_var = None
 
 def configure(*, db_read=None, db_post=None, db_update=None, db_write=None,
               pg_mirror=None, dispatch_verb=None, skills_enabled=None,
-              skills_episodic_dir=None, skills_episodic_enabled=None) -> None:
+              skills_episodic_dir=None, skills_episodic_enabled=None,
+              turn_volatile_var=None) -> None:
     global _db_read, _db_post, _db_update, _db_write, _pg_mirror
     global dispatch_mios_verb, SKILLS_ENABLED
-    global _SKILLS_EPISODIC_DIR, _SKILLS_EPISODIC_ENABLED
+    global _SKILLS_EPISODIC_DIR, _SKILLS_EPISODIC_ENABLED, _turn_volatile_var
+    if turn_volatile_var is not None:
+        _turn_volatile_var = turn_volatile_var
     if db_read is not None:
         _db_read = db_read
     if db_post is not None:
@@ -599,6 +603,13 @@ def _write_skill_md_fire(*, query: str, answer: str,
                          session_id: Optional[str] = None) -> None:
     """Fire-and-forget SKILL.md write to _SKILLS_EPISODIC_DIR. Never raises --
     a write failure is logged + ignored; the answer is already returned."""
+    try:
+        if _turn_volatile_var is not None and _turn_volatile_var.get(False):
+            log.info("skill md: skipped volatile/point-in-time facts; no durable learned skill")
+            return
+    except Exception:
+        log.warning("skill md: volatility classification unavailable; skipping durable write")
+        return
     if not _SKILLS_EPISODIC_ENABLED:
         log.info("skill md: disabled by env")
         return

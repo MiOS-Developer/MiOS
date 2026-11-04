@@ -348,6 +348,8 @@ async def polish_response(raw_text: str,
                           persona_system: str = "",
                           agent_tools: Optional[list] = None,
                           max_tokens: Optional[int] = None) -> Optional[str]:
+    if (refined or {}).get("news") and "_news_answer" in (refined or {}):
+        return refined["_news_answer"]
     if not POLISH_ENABLED or not raw_text or not raw_text.strip():
         return None
     intended = (refined or {}).get("intended_outcome", "") or ""
@@ -471,3 +473,148 @@ async def polish_response(raw_text: str,
     _write_skill_md_fire(query=user_q, answer=polished,
                          tool_history=tool_history, session_id=session_id)
     return polished
+
+
+def _news_article_evidence(result: dict, document: dict, *, today: str,
+                           time_range: str, min_chars: int, block_chars: int, timezone: str = ""):
+    """Accept publisher-dated article prose, never a search/index date as an event."""
+    import datetime
+    from urllib.parse import urlsplit
+    if document.get("document_type") != "article":
+        return None, "not-article"
+    text = str(document.get("article_text") or "").strip()
+    if len(text) < min_chars:
+        return None, "insufficient-article-prose"
+    try:
+        published_at = str(document.get("published_date") or "")
+        published = datetime.date.fromisoformat(published_at[:10])
+        if len(published_at) > 10:
+            timestamp = datetime.datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            if timestamp.tzinfo:
+                from zoneinfo import ZoneInfo
+                published = timestamp.astimezone(ZoneInfo(timezone) if timezone else None).date()
+        current = datetime.date.fromisoformat(today[:10])
+    except (ValueError, KeyError):
+        return None, "unverified-publication-date-or-timezone"
+    windows = {"day": 0, "week": 7, "month": 31, "year": 366}
+    if time_range not in windows:
+        return None, "unverified-time-window"
+    age = (current - published).days
+    if age < 0 or age > windows[time_range]:
+        return None, "outside-publication-window"
+    url = str(result.get("url") or "").strip()
+    if urlsplit(url).scheme not in {"http", "https"}:
+        return None, "invalid-source-url"
+    return {
+        "title": str(document.get("title") or result.get("title") or url).strip(),
+        "url": url, "published_date": published.isoformat(), "published_at": published_at,
+        "publication_timezone": timezone, "fetched_at": str(document.get("fetched_at") or ""),
+        "modified_date": str(document.get("modified_date") or ""),
+        "event_dates": list(document.get("event_dates") or []),
+        "excerpt": text[:block_chars], "evidence_kind": "dated-article-excerpt",
+    }, ""
+
+
+def _news_evidence_answer(records: list, today: str, search_window: str = "") -> str:
+    """An extractive receipt: no model-memory claims or inferred event dates."""
+    import html
+    def literal(text):
+        value = html.escape(str(text)).replace(chr(96), "\\" + chr(96))
+        return re.sub(r"([\\*_{}\[\]<>])", r"\\\1", value)
+    scope = (" The search used the configured " + search_window + " window; "
+             "I haven't verified that it matches the exact requested date period.") if search_window else ""
+    if not records:
+        return ("I couldn't verify substantive, dated article evidence for this news request. "
+                "The retrieved results are insufficient for a factual news summary." + scope)
+    lines = ["Dated source excerpts (publication dates shown):"]
+    for record in records:
+        title = literal(record["title"]).replace("(", r"\(").replace(")", r"\)")
+        url = record["url"].replace("(", "%28").replace(")", "%29")
+        lines.append(f"\n- [{title}]({url}) — published {record['published_date']}.")
+        excerpt = literal(record["excerpt"]).replace("\n", "\n  > ")
+        lines.append("  > " + excerpt)
+    lines.append("\nPublication dates describe the reports; they do not establish when the quoted events occurred.")
+    return "\n".join(lines) + scope
+
+
+async def _news_research_evidence(query, refined, *, search, fetch, documents,
+                                  rank_links, today, time_range, timezone, news_category, fetch_n, passes,
+                                  crawl_max, min_chars, block_chars, record, emit):
+    """Use existing retrieval tools; only accepted dated article excerpts are citable."""
+    from collections import Counter
+    records, seen, rejected = [], set(), Counter()
+    results = await search(query, news=news_category, time_range=time_range)
+    pending = [r for r in results if isinstance(r, dict) and r.get("url")]
+    drill_left = crawl_max
+    for _ in range(max(1, passes)):
+        batch = [r for r in pending if r.get("url") not in seen][:max(1, fetch_n)]
+        if not batch:
+            break
+        pending = [r for r in pending if r not in batch]
+        for result in batch:
+            seen.add(result["url"])
+        if emit:
+            emit({"label": "checking dated article evidence", "detail": str(len(batch)) + " sources"})
+        fetched = await asyncio.gather(*[fetch(r["url"]) for r in batch])
+        for result, (text, engine, links) in zip(batch, fetched):
+            item, reason = _news_article_evidence(
+                result, documents.get(result["url"], {}), today=today, time_range=time_range,
+                min_chars=min_chars, block_chars=block_chars, timezone=timezone)
+            if item:
+                records.append(item)
+            else:
+                rejected[reason] += 1
+                if drill_left:
+                    for url in rank_links(links, text, set(), result["url"])[:drill_left]:
+                        if url not in seen and not any(r["url"] == url for r in pending):
+                            pending.append({"url": url, "title": ""})
+                            drill_left -= 1
+        if len(records) >= fetch_n:
+            break
+    records = records[:fetch_n]
+    record(records)
+    answer = _news_evidence_answer(records, today, time_range)
+    refined["_news_evidence"] = records
+    refined["_news_answer"] = answer
+    refined["_news_evidence_rejected"] = dict(rejected)
+    refined["_web_stats"] = {"sources": len(records), "real": len(records),
+                             "examined": len(seen), "rejected": sum(rejected.values())}
+    refined["_web_sources"] = "\n\n".join(
+        f"[{i}] {r['title']} ({r['url']})\nPublished: {r['published_date']}\n"
+        f"Event dates are separate: {r['event_dates']}\n{r['excerpt']}"
+        for i, r in enumerate(records, 1))
+    return ("DATED SOURCE EVIDENCE. Cite only these article excerpts. Publication, update, "
+            "retrieval and event dates are distinct. Do not add current facts from model memory, "
+            "infer that an event occurred today, or turn an index/loading page into a story.\n\n"
+            + (refined["_web_sources"] or answer))
+
+
+async def _respond_news_evidence(refined, *, streaming, chat_id, model, query, time_range, emit=None):
+    """Publish source excerpts or an explicit evidence gap, without unchecked synthesis."""
+    from fastapi.responses import JSONResponse, StreamingResponse
+    from mios_web_research import _web_research_enrich, _sources_annotations, _sources_metadata
+    from mios_sse import _sse_chunk, _sse_done
+    for key in ("_news_evidence", "_news_answer", "_web_sources", "_news_time_range"):
+        refined.pop(key, None)
+    if time_range:
+        refined["_news_time_range"] = time_range
+    try:
+        await _web_research_enrich(query, refined, emit=emit)
+    except Exception:
+        log.exception("dated news retrieval failed")
+    records = refined.get("_news_evidence") or []
+    answer = refined.get("_news_answer") or _news_evidence_answer([], "")
+    refs = [(r["title"], r["url"]) for r in records]
+    if streaming:
+        async def chunks():
+            yield _sse_chunk("", chat_id=chat_id, model=model, role="assistant")
+            yield _sse_chunk(answer, chat_id=chat_id, model=model)
+            yield _sse_chunk("", chat_id=chat_id, model=model, finish_reason="stop")
+            yield _sse_done()
+        return StreamingResponse(chunks(), media_type="text/event-stream")
+    return JSONResponse(content={
+        "id": chat_id, "object": "chat.completion", "created": int(time.time()), "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": answer,
+                     "annotations": _sources_annotations(refs, answer)}, "finish_reason": "stop"}],
+        "mios_sources": _sources_metadata(refs), "mios_news_evidence": records,
+    })

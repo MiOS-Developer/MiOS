@@ -1198,6 +1198,49 @@ def _run_chat_surface_permissions_contract():
     print("chat exposes and executes only configured read tools; dispatch retains write surface and approval gate: OK")
 
 
+
+def _run_verified_news_has_no_unchecked_generation():
+    import importlib
+    from unittest import mock
+    native = importlib.import_module("mios_pipe.routing.native_loop")
+    web = importlib.import_module("mios_pipe.routing.web_research")
+    calls, loop_calls = [], []
+    _base_configure({}, calls, loop_calls)
+    recency_token = M._recency_ctx_var.set({"time_range": "week"})
+    expected = "Reports published on 2026-11-03:\n> The source describes an event on 2026-10-10."
+    record = {"title": "Fixture dated report", "url": "https://evidence.invalid/report",
+              "published_date": "2026-11-03", "event_dates": ["2026-10-10"],
+              "modified_date": "", "excerpt": "The source describes an event on 2026-10-10."}
+    async def retrieved(query, refined, **kwargs):
+        assert refined["_news_time_range"] == "week"
+        refined["_news_evidence"] = [record]
+        refined["_news_answer"] = expected
+    async def exercise():
+        with mock.patch.object(web, "_web_research_enrich", retrieved), \
+             mock.patch.object(native, "_v1_secondary_tool_loop",
+                               side_effect=AssertionError("verified news must not enter unchecked generation")):
+            for streaming in (False, True):
+                response = await native._respond_native_loop_direct(
+                    {"intent": "chat", "news": True}, streaming=streaming,
+                    chat_id="verified-news", model="public", session_id=None,
+                    last_user_text="current reports", persona_system="", messages=[])
+                if streaming:
+                    wire = b"".join([chunk async for chunk in response.body_iterator]).decode()
+                    assert "2026-10-10" in wire and '"finish_reason": "stop"' in wire
+                    assert "inference_unavailable" not in wire
+                else:
+                    assert _body_text(response) == expected
+                    data = json.loads(response.body)
+                    assert data["mios_sources"][0]["url"] == record["url"]
+                    assert data["mios_news_evidence"] == [record]
+    try:
+        asyncio.run(exercise())
+    finally:
+        M._recency_ctx_var.reset(recency_token)
+    assert calls == [] and loop_calls == []
+    print("verified news source receipt reaches JSON and SSE without unchecked model generation: OK")
+
+
 if __name__ == "__main__":
     _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
@@ -1215,3 +1258,4 @@ if __name__ == "__main__":
     _run_partial_stream_never_replays_or_substitutes()
     _run_native_unfinished_final_httpx()
     _run_chat_surface_permissions_contract()
+    _run_verified_news_has_no_unchecked_generation()
