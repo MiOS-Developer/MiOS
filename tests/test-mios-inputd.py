@@ -91,9 +91,34 @@ class InputPolicy(unittest.TestCase):
         self.assertEqual(result['output']['actions'], ['input:cursor on'])
 
     def test_2d_pointer_movement(self):
+        # The published smoothing policy can accumulate a subpixel during its
+        # first polling interval. Replay sustained input rather than require an
+        # immediate whole-pixel jump, which was the retired snappy behavior.
         axes = {str(c): dict(min=-32768, max=32767, value=0) for c in (0, 1, 3, 4)}
-        result = self.replay('desktop-2d', [self.key(0x13b), dict(kind=3, code=3, value=32767)], axes, 10)
-        self.assertTrue(any(e['kind'] == 2 and e['code'] == 0 and e['value'] > 0 for e in result['output']['pointer']))
+        for value, direction in ((32767, 1), (-32768, -1)):
+            with self.subTest(direction=direction):
+                result = self.call('replay', data=dict(
+                    context='desktop-2d', axes=axes,
+                    events=[self.key(0x13b), dict(kind=3, code=3, value=value)],
+                    script=[dict(tick_ms=100)]))
+                movement = sum(e['value'] for e in result['output']['pointer']
+                               if e['kind'] == 2 and e['code'] == 0)
+                self.assertGreater(movement * direction, 0)
+
+    def test_2d_pointer_stops_when_the_stick_returns_to_center(self):
+        axes = {str(c): dict(min=-32768, max=32767, value=0) for c in (0, 1, 3, 4)}
+        start = [self.key(0x13b), dict(kind=3, code=3, value=32767)]
+        held = self.call('replay', data=dict(context='desktop-2d', axes=axes,
+            events=start, script=[dict(tick_ms=100)]))
+        centered = self.call('replay', data=dict(context='desktop-2d', axes=axes,
+            events=start, script=[dict(tick_ms=100),
+                dict(kind=3, code=3, value=0), dict(tick_ms=100)]))
+        def horizontal(result):
+            return sum(e['value'] for e in result['output']['pointer']
+                       if e['kind'] == 2 and e['code'] == 0)
+        self.assertGreater(horizontal(held), 0)
+        self.assertEqual(horizontal(centered), horizontal(held),
+                         'Centered sticks must not retain cursor momentum')
 
     def test_terminal_cursor_mode_is_explicitly_available(self):
         result=self.replay('terminal',[self.key(0x13b)])

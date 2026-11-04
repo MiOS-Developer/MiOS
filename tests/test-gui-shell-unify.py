@@ -502,7 +502,12 @@ class TestBrowserDispatchIntegrity(unittest.TestCase):
         return path
 
     def test_desktop_exec_full_argv_and_child_failure_propagate(self):
-        native = os.environ["MIOS_BROWSER_TEST_BIN"]
+        native = os.environ.get("MIOS_BROWSER_TEST_BIN") or shutil.which("mios-browser")
+        self.assertTrue(native, "Build and install the native catalog before browser dispatch tests")
+        native = os.path.realpath(native)
+        self.assertTrue(os.access(native, os.X_OK), "Native browser artifact is not executable: " + native)
+        with open(native, "rb") as artifact:
+            self.assertEqual(artifact.read(4), b"\x7fELF", "Browser dispatch must exercise the native artifact")
         os.symlink(native, os.path.join(self.bin, "mios-browser"))
         recorder = self.make("record-argv", "#!" + sys.executable + "\n"
             "import os,sys,json\n"
