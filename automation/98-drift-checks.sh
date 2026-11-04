@@ -555,20 +555,8 @@ check_no_hardcode() {
         fi
     fi
 
-    _need_python || return 0
-    local tool="$ROOT/usr/libexec/mios/mios-hardcode-lint"
-    if [[ ! -f "$tool" ]]; then
-        _violation "usr/libexec/mios/mios-hardcode-lint absent -- a tracked deliverable is missing, so this check cannot run"
-        return
-    fi
-    if python3 "$tool" "$ROOT" >/dev/null 2>"$ROOT/.nohc.err"; then
-        rm -f "$ROOT/.nohc.err" 2>/dev/null || true
-        echo "[98-drift-checks]   no date-in-comment / header crash-risk"
-    else
-        sed 's/^/    /' "$ROOT/.nohc.err" >&2 2>/dev/null || true
-        rm -f "$ROOT/.nohc.err" 2>/dev/null || true
-        _violation "NO-HARDCODE law (Law 7): a date/timestamp in a comment/docstring OR an AI-Hint header crash-risk -- strip the date (timeless comment) or move the header below the shebang/BOM (see mios-hardcode-lint)"
-    fi
+    _violation "native mios-hardcode-lint is required; install the selected native catalog"
+
 }
 
 check_no_hardcode_version() {

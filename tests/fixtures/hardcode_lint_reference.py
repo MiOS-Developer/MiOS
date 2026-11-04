@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Read-only enforcement gate for the NO-HARDCODE law (Law 7): fails on a date or dated attribution in comments, docstrings or .py string prose, and on AI-hint header crash-risks (a BOM not at byte 0, a header above a shebang).
+# AI-hint: Test-only frozen migration reference; never installed. Former runtime contract:  Read-only enforcement gate for the NO-HARDCODE law (Law 7): fails on a date or dated attribution in comments, docstrings or .py string prose, and on AI-hint header crash-risks (a BOM not at byte 0, a header above a shebang).
 # AI-related: ../../../automation/98-drift-checks.sh, ../../share/mios/mios.toml, ./mios-ai-tag, ../../../CLAUDE.md, tools/native/mios-hardcode-lint/
 # AI-functions: _try_native_bin, _date_in_comment_py, _date_in_string_py, _date_in_comment_generic, _header_risk, scan, main
 #
@@ -32,49 +32,6 @@ _EXEMPT = (
 )
 _UNIT_EXT = ('.service', '.socket', '.container', '.timer', '.conf')
 _CODE_EXT = ('.py', '.sh', '.bash', '.toml', '.yml', '.yaml', '.ps1', '.psm1') + _UNIT_EXT
-
-
-def _is_self(path: str) -> bool:
-    """True when `path` is this script (or a link to it), not a native build.
-
-    The candidate list includes /usr/libexec/mios/mios-hardcode-lint, which on a
-    repo-as-root host IS this script. While it was mode 0644 the exec failed and
-    the Python scan ran; made executable, the shim re-ran itself without end
-    until the OOM killer stopped it (98-drift-checks check_no_hardcode).
-    """
-    try:
-        return os.path.samefile(path, os.path.abspath(__file__))
-    except OSError:
-        return False
-
-
-def _try_native_bin(args_list: list[str]) -> None:
-    if os.environ.get("MIOS_HARDCODE_LINT_NO_NATIVE") == "1":
-        return
-    bin_path = os.environ.get("MIOS_HARDCODE_LINT_BIN")
-    if not bin_path:
-        exe = "mios-hardcode-lint.exe" if os.name == "nt" else "mios-hardcode-lint"
-        root = os.environ.get("MIOS_ROOT") or os.path.abspath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
-        )
-        for candidate in (
-            os.path.join(root, "tools", "native", "target", "release", exe),
-            os.path.join(root, "tools", "native", "target", "debug", exe),
-            os.path.join("/usr/libexec/mios", exe),
-            os.path.join("/usr/bin", exe),
-            os.path.join("/usr/local/bin", exe),
-        ):
-            if os.path.isfile(candidate) and not _is_self(candidate):
-                bin_path = candidate
-                break
-    if bin_path and os.path.isfile(bin_path) and not _is_self(bin_path):
-        # The child never delegates again, so no chain of shims can recurse.
-        env = dict(os.environ, MIOS_HARDCODE_LINT_NO_NATIVE="1")
-        try:
-            res = subprocess.run([bin_path] + args_list, stdout=sys.stdout, stderr=sys.stderr, env=env)
-            sys.exit(res.returncode)
-        except OSError:
-            pass
 
 
 def _date_in_comment_py(text: str):
@@ -337,7 +294,7 @@ def _check_ports_ips(text: str, filename: str, exempt_patterns: list[str]) -> li
     return violations
 
 sys.path.insert(0, os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "usr", "lib", "mios"))
 import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver
 
 
@@ -428,7 +385,6 @@ def scan(roots):
 
 
 def main(argv):
-    _try_native_bin(argv[1:])
     roots = [a for a in argv[1:] if not a.startswith('--')] or ['.']
     soft = os.environ.get('MIOS_HARDCODE_LINT_SOFT', '0') == '1'
     missing = [r for r in roots if not os.path.exists(r)]

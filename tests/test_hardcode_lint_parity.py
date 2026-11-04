@@ -34,11 +34,13 @@ from pathlib import Path
 # Resolve repository paths
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
-_ORACLE_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-hardcode-lint")
+_ORACLE_PATH = os.path.join(_ROOT, "tests", "fixtures", "hardcode_lint_reference.py")
 _SSOT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
 
 # Detect Rust binary candidates
 _RUST_CANDIDATES = [
+    os.environ.get("MIOS_HARDCODE_LINT_BIN", ""),
+    shutil.which("mios-hardcode-lint") or "",
     os.path.join(_ROOT, "tools", "native", "target", "debug", "mios-hardcode-lint.exe"),
     os.path.join(_ROOT, "tools", "native", "target", "release", "mios-hardcode-lint.exe"),
     os.path.join(_ROOT, "tools", "native", "target", "debug", "mios-hardcode-lint"),
