@@ -21002,8 +21002,8 @@ usr/lib/mios/agent-pipe/mios_mcp_schema.py	156	156	1	9	a9931984b7f9	STAY	local-s
 usr/lib/mios/agent-pipe/mios_mcp_schema.py	189	195	7	54	139c46efd5ac	MIGRATE	narrative-rationale		0				0
 usr/lib/mios/agent-pipe/mios_mcp_schema.py	226	227	2	17	8979481a951a	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_mcp_schema.py	249	250	2	18	e3aa4ba3ba2e	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_mcp_schema.py	457	457	1	11	3b6092f58b4e	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/mios_mcp_schema.py	519	519	1	10	0e75c452e23e	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	458	458	1	11	3b6092f58b4e	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/mios_mcp_schema.py	520	520	1	10	0e75c452e23e	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/mios_mcp_transport.py	1	2	2	19	5235acedfba7	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/mios_mcp_transport.py	3	7	4	33	6dc510f8bb03	STAY	midsize-why		0				0
 usr/lib/mios/agent-pipe/mios_mcp_transport.py	47	47	1	8	d1717ed797e5	STAY	local-scoped		0				0
