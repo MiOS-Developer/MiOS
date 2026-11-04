@@ -7816,6 +7816,15 @@ ram_floor_gb        = 8
 
 micro_model              = "lfm2:700m"   # Background classify/expand/gate model served by the configured local light lane.
 
+# SDK retries repeat the whole HTTP POST, which can invoke tools at the gateway.
+# Zero retries is the interactive default so an uncertain result is never
+# automatically replayed. Positive retries are an explicit operator opt-in.
+[ai.cli]
+max_retries = 0
+# SDK read/write/pool inactivity limits, not a total agent wall-clock deadline.
+timeout_s = 90.0
+connect_timeout_s = 5.0
+
 [ai.kv]
 slot_save_path = "/var/lib/mios/llamacpp/slots"   # --slot-save-path for chat lanes (matches tmpfiles + mios-llm-light.yaml)
 swa_full       = false                            # append --swa-full to SWA lanes ONLY; OFF for the current hybrid/recurrent brains

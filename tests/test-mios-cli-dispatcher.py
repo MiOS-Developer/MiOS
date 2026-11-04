@@ -75,7 +75,7 @@ class TestMiosChatConfig(unittest.TestCase):
         for path in (self.vendor, self.host, self.user):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("")
-        self.vendor.write_text('''[ports]\nstack_id=0\n[ports.categories.agent]\nbase=17000\nstride=2\nmembers=["gateway", "agent_pipe"]\n[ai]\nendpoint="http://127.0.0.1:${MIOS_PORTS_AGENT_PIPE}/v1"\nagent_model="Fixture Public"\nmodel="fixture-base"\napi_key="fixture-config-key"\n''')
+        self.vendor.write_text('''[ports]\nstack_id=0\n[ports.categories.agent]\nbase=17000\nstride=2\nmembers=["gateway", "agent_pipe"]\n[ai]\nendpoint="http://127.0.0.1:${MIOS_PORTS_AGENT_PIPE}/v1"\nagent_model="Fixture Public"\nmodel="fixture-base"\napi_key="fixture-config-key"\n[ai.cli]\nmax_retries=0\ntimeout_s=90.0\nconnect_timeout_s=5.0\n''')
         self.env = {key:value for key,value in os.environ.items()
                     if not key.startswith(("MIOS_", "PYTHON", "OPENAI_"))}
         self.env.update(HOME=str(self.root / "home"), PYTHONDONTWRITEBYTECODE="1",

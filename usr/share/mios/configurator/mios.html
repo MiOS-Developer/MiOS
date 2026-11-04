@@ -2073,6 +2073,12 @@
           <input type="text" id="f-ai-endpoint" data-key="ai.endpoint" placeholder="http://localhost:8640/v1">
           <label for="f-ai-agent-model">agent_model (served model id the orchestrator advertises)</label>
           <input type="text" id="f-ai-agent-model" data-key="ai.agent_model" placeholder="MiOS AI">
+          <label for="f-ai-cli-retries">Interactive HTTP retries (0 avoids replaying a request that may run tools)</label>
+          <input id="f-ai-cli-retries" data-key="ai.cli.max_retries" data-type="int" type="number" min="0" step="1">
+          <label for="f-ai-cli-timeout">Interactive request inactivity timeout (seconds)</label>
+          <input id="f-ai-cli-timeout" data-key="ai.cli.timeout_s" data-type="float" type="number" min="0.001" step="0.1">
+          <label for="f-ai-cli-connect-timeout">Interactive connection timeout (seconds)</label>
+          <input id="f-ai-cli-connect-timeout" data-key="ai.cli.connect_timeout_s" data-type="float" type="number" min="0.001" step="0.1">
           <label for="f-ai-model">model</label>
           <select id="f-ai-model" data-key="ai.model" data-catalog-of="ai.catalog">
             <!-- Static fallback mirrors the vendor [[ai.catalog]] in

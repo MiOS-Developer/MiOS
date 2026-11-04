@@ -77,6 +77,40 @@ def _resolve_ai_config() -> tuple[str, str]:
     return endpoint, model
 
 
+def _resolve_request_policy() -> dict[str, int | float]:
+    """Resolve interactive SDK limits; defaults belong to the layered SSOT."""
+    import math
+    _, ai, _ = _ai_configuration()
+    policy = ai.get("cli")
+    if not isinstance(policy, dict):
+        raise ValueError("ai.cli must declare the interactive request policy")
+    values: dict[str, int | float] = {}
+    for key in ("max_retries", "timeout_s", "connect_timeout_s"):
+        name = "MIOS_AI_CLI_" + key.upper()
+        value = os.environ.get(name, policy.get(key))
+        if isinstance(value, str):
+            value = _connection_value(name, value)
+        if key == "max_retries":
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                raise ValueError("ai.cli.max_retries must be a non-negative integer")
+            if isinstance(value, str) and (not value.isascii() or not value.isdecimal()):
+                raise ValueError("ai.cli.max_retries must be a non-negative integer")
+            value = int(value)
+            if value < 0:
+                raise ValueError("ai.cli.max_retries must be a non-negative integer")
+        else:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ValueError(f"ai.cli.{key} must be finite positive seconds")
+            try:
+                value = float(value)
+            except ValueError:
+                raise ValueError(f"ai.cli.{key} must be finite positive seconds") from None
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"ai.cli.{key} must be finite positive seconds")
+        values[key] = value
+    return values
+
+
 ENDPOINT = MODEL = ""  # Chat resolves lazily; local verbs do not require AI configuration.
 SHARE    = pathlib.Path(os.environ.get("MIOS_SHARE_DIR", "/usr/share/mios"))
 LIB      = pathlib.Path("/usr/lib/mios")
@@ -908,12 +942,14 @@ def main(argv: list[str]) -> int:
     try:
         ENDPOINT, MODEL = _resolve_ai_config()
         API_KEY = _resolve_api_key()
+        request_policy = _resolve_request_policy()
     except ValueError as error:
         sys.stderr.write(f"mios: invalid AI configuration: {error}\n")
         return 2
 
     try:
         from openai import OpenAI
+        from httpx import Timeout
     except ImportError:
         sys.stderr.write(
             "mios: openai SDK missing. Install via:\n"
@@ -923,7 +959,13 @@ def main(argv: list[str]) -> int:
         )
         sys.exit(127)
 
-    client = OpenAI(base_url=ENDPOINT, api_key=API_KEY, default_headers={"x-mios-reasoning-ok": "true"})
+    client = OpenAI(
+        base_url=ENDPOINT, api_key=API_KEY,
+        default_headers={"x-mios-reasoning-ok": "true"},
+        max_retries=request_policy["max_retries"],
+        timeout=Timeout(request_policy["timeout_s"],
+                        connect=request_policy["connect_timeout_s"]),
+    )
     is_orchestrator = ":8640" in ENDPOINT or "/agent-pipe" in ENDPOINT
     msgs: list[dict[str, Any]] = []
     if not is_orchestrator:
