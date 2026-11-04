@@ -2400,7 +2400,18 @@ mod voxel_tests {
                 for dz in -1..=1 {
                     assert!(m.cells.contains_key(&(x, y, z + dz)), "{style:?} {stage:?}");
                 }
-                assert!(m.cells.len() > 100);
+                // Every stage retains a true solid interior, even when baby
+                // art occupies fewer than the old arbitrary hundred cells.
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            assert!(
+                                m.cells.contains_key(&(x + dx, y + dy, z + dz)),
+                                "{style:?} {stage:?} lacks a solid 3D core"
+                            );
+                        }
+                    }
+                }
                 for &(x, y, z) in m.cells.keys() {
                     assert!(
                         anatomy.parts.iter().any(|p| [x, y, z]
