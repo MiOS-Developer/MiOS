@@ -6,7 +6,7 @@ use crate::{
     config::{Config, HudMode, ViewMode},
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
-    input::{action, Action, ControllerMonitor, ControllerPrompts},
+    input::{Action, ControllerMonitor, ControllerPrompts, action},
     render::{Colors, HabitatView, RoomWidget},
     save::Store,
     sprite::{Appearance, Expression, Sprite, SpriteStyle},
@@ -16,11 +16,11 @@ use crossterm::event::{
     MouseEventKind,
 };
 use ratatui::{
+    DefaultTerminal, Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    DefaultTerminal, Frame,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -814,11 +814,26 @@ impl Ui {
         self.notice = "Replace this pet? Enter/Y confirms; Escape keeps it.".into();
     }
     pub fn summary(&self, rules: &Rules) -> String {
-        format!("{} - {:?} | age {} ticks | coins {} | memory wins {}\nFull {}  Happy {}  Clean {}  Energy {}  Health {}\n{}{}{}",
-            self.name(), self.game.stage(rules), self.game.age_ticks, self.game.coins, self.game.wins,
-            self.game.fullness, self.game.happiness, self.game.hygiene, self.game.energy, self.game.health,
-            if self.game.paused { "PAUSED " } else { "" }, if self.game.sleeping { "RESTING " } else { "" },
-            if self.game.ill { "ILL - clean, then give medicine" } else { "" })
+        format!(
+            "{} - {:?} | age {} ticks | coins {} | memory wins {}\nFull {}  Happy {}  Clean {}  Energy {}  Health {}\n{}{}{}",
+            self.name(),
+            self.game.stage(rules),
+            self.game.age_ticks,
+            self.game.coins,
+            self.game.wins,
+            self.game.fullness,
+            self.game.happiness,
+            self.game.hygiene,
+            self.game.energy,
+            self.game.health,
+            if self.game.paused { "PAUSED " } else { "" },
+            if self.game.sleeping { "RESTING " } else { "" },
+            if self.game.ill {
+                "ILL - clean, then give medicine"
+            } else {
+                ""
+            }
+        )
     }
     pub fn draw(
         &self,
@@ -1277,7 +1292,11 @@ impl Ui {
         colors: &Colors,
         renderer: Renderer,
     ) {
-        let area = center(screen.area(), 66, 26);
+        let area = if screen.area().width < 40 || screen.area().height < 14 {
+            screen.area()
+        } else {
+            center(screen.area(), 66, 26)
+        };
         screen.render_widget(Clear, area);
         let block = panel(" HABITAT / ITEMS ", colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
@@ -1515,7 +1534,10 @@ impl Ui {
                     format!("{question}\nEnter/Y: New\nEsc: Keep")
                 }
             } else if let Some(pad) = &self.controller {
-                format!("Replace this pet with a new egg?\nYour current save changes only after confirmation.\n\n[{}] New pet    [{}] Keep current pet", pad.accept,pad.back)
+                format!(
+                    "Replace this pet with a new egg?\nYour current save changes only after confirmation.\n\n[{}] New pet    [{}] Keep current pet",
+                    pad.accept, pad.back
+                )
             } else {
                 "Replace this pet with a new egg?\nYour current save changes only after confirmation.\n\nEnter / Y: new pet    Escape: keep current pet".into()
             };
@@ -1883,9 +1905,27 @@ impl Ui {
         );
     }
     fn summary_for_menu(&self) -> String {
-        format!("MIO\nAge {} game ticks / {} coins / {} wins\n\nFullness {}%     Happiness {}%\nHygiene  {}%     Energy    {}%\nHealth   {}%\n\n{}{}",
-            self.game.age_ticks,self.game.coins,self.game.wins,self.game.fullness,self.game.happiness,self.game.hygiene,self.game.energy,self.game.health,
-            if self.game.paused {"Clock paused. "} else {""},if self.game.ill {"Needs medicine."} else {"Healthy."})
+        format!(
+            "MIO\nAge {} game ticks / {} coins / {} wins\n\nFullness {}%     Happiness {}%\nHygiene  {}%     Energy    {}%\nHealth   {}%\n\n{}{}",
+            self.game.age_ticks,
+            self.game.coins,
+            self.game.wins,
+            self.game.fullness,
+            self.game.happiness,
+            self.game.hygiene,
+            self.game.energy,
+            self.game.health,
+            if self.game.paused {
+                "Clock paused. "
+            } else {
+                ""
+            },
+            if self.game.ill {
+                "Needs medicine."
+            } else {
+                "Healthy."
+            }
+        )
     }
 }
 fn tiny_button(value: &str) -> String {
@@ -2137,7 +2177,7 @@ mod graphics_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -2254,12 +2294,14 @@ mod graphics_tests {
             terminal
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 5, false))
                 .unwrap();
-            assert!(terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .all(|c| c.symbol().is_ascii()));
+            assert!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .all(|c| c.symbol().is_ascii())
+            );
         }
     }
     #[test]

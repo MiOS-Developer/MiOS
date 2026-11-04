@@ -48,7 +48,7 @@ impl Expression {
             Playful => "(o_<)",
             Shy => "(._.)",
             Excited => "(*_*)",
-            Eating if frame % 2 == 0 => "(o_O)",
+            Eating if frame.is_multiple_of(2) => "(o_O)",
             Eating => "(o_o)",
             Cleaning => "(o.o)",
             Healing => "(u_u)",
@@ -431,11 +431,12 @@ impl Sprite {
             }
             let hips = if adult { 25 } else { 23 };
             self.stamp(4, hips, &["0aaaaaa0", ".00..00."]);
+            let foot_drop = if adult { 4 } else { 5 };
             for (x, lift) in [(4, gait.max(0)), (10, (-gait).max(0))] {
-                for y in hips + 2..hips + 5 - lift {
+                for y in hips + 2..hips + foot_drop + 1 - lift {
                     self.stamp(x, y, &["010"]);
                 }
-                self.stamp(x - 1, hips + 4 - lift, &["0ee0", "0000"]);
+                self.stamp(x - 1, hips + foot_drop - lift, &["0ee0", "0000"]);
             }
             self.paint(5, 19, 15);
             self.paint(10, 21, 10);
@@ -1956,9 +1957,11 @@ mod body_face_tests {
                     "(x_x)"
                 );
             }
-            assert!(Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
-                .face_overlay()
-                .is_none());
+            assert!(
+                Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
+                    .face_overlay()
+                    .is_none()
+            );
         }
     }
 
@@ -1988,11 +1991,7 @@ mod body_face_tests {
                 // Clear air between two feet proves that the lower half is not
                 // a stretched, continuously filled head silhouette.
                 let feet_y = if style == SpriteStyle::EightBit {
-                    if stage == Stage::Adult {
-                        15
-                    } else {
-                        14
-                    }
+                    if stage == Stage::Adult { 15 } else { 14 }
                 } else if stage == Stage::Adult {
                     30
                 } else {
@@ -2079,17 +2078,19 @@ mod body_face_tests {
                     assert_eq!(anchor.text, "(^_^)");
                     assert!(anchor.center_x < front.width && anchor.y < front.height);
                     for yaw in [90, 135, 180, 225, 270] {
-                        assert!(Sprite::voxel_with_appearance(
-                            stage,
-                            Expression::Happy,
-                            style,
-                            usize::MAX,
-                            yaw,
-                            false,
-                            appearance
-                        )
-                        .face_overlay()
-                        .is_none());
+                        assert!(
+                            Sprite::voxel_with_appearance(
+                                stage,
+                                Expression::Happy,
+                                style,
+                                usize::MAX,
+                                yaw,
+                                false,
+                                appearance
+                            )
+                            .face_overlay()
+                            .is_none()
+                        );
                     }
                 }
             }
@@ -2097,15 +2098,19 @@ mod body_face_tests {
         let mut model = VoxelModel::default();
         model.ellipsoid([0.0; 3], [3.0; 3], 1);
         model.face = Some(([0.0, 0.0, 3.5], "(o_o)"));
-        assert!(model
-            .rasterize(SpriteStyle::SixteenBit, 0, false)
-            .face_overlay()
-            .is_some());
+        assert!(
+            model
+                .rasterize(SpriteStyle::SixteenBit, 0, false)
+                .face_overlay()
+                .is_some()
+        );
         model.ellipsoid([0.0, 0.0, 8.0], [3.0; 3], 8);
-        assert!(model
-            .rasterize(SpriteStyle::SixteenBit, 0, false)
-            .face_overlay()
-            .is_none());
+        assert!(
+            model
+                .rasterize(SpriteStyle::SixteenBit, 0, false)
+                .face_overlay()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2137,10 +2142,12 @@ mod body_face_tests {
                 assert!(s.downsample_to_fit(0, 5).face_overlay().is_none());
             }
         }
-        assert!(Sprite::new(1, 1, vec![Some(1)])
-            .unwrap()
-            .face_overlay()
-            .is_none());
+        assert!(
+            Sprite::new(1, 1, vec![Some(1)])
+                .unwrap()
+                .face_overlay()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2204,9 +2211,11 @@ mod animation_tests {
             );
         }
         for index in [16, 17, u8::MAX] {
-            assert!(Sprite::new(1, 1, vec![Some(index)])
-                .unwrap_err()
-                .contains("palette"));
+            assert!(
+                Sprite::new(1, 1, vec![Some(index)])
+                    .unwrap_err()
+                    .contains("palette")
+            );
         }
         assert!(Sprite::new(256, 256, vec![Some(15); 65536]).is_ok());
         for (width, height) in [(0, 1), (1, 0), (257, 1), (1, 257), (u16::MAX, u16::MAX)] {
@@ -2453,10 +2462,11 @@ mod voxel_tests {
                     assert!(m.cells.contains_key(&(0, 0, z)));
                 }
                 assert!(m.cells.len() > 100);
-                assert!(m
-                    .cells
-                    .keys()
-                    .all(|&(x, y, z)| x.abs() <= 12 && y.abs() <= 12 && z.abs() <= 12));
+                assert!(
+                    m.cells
+                        .keys()
+                        .all(|&(x, y, z)| x.abs() <= 12 && y.abs() <= 12 && z.abs() <= 12)
+                );
             }
         }
         let coarse = VoxelModel::pet(Stage::Adult, Expression::Idle, STYLES[0], 0, false);
@@ -2874,12 +2884,13 @@ mod appearance_tests {
                     }
                 }
             }
-            assert!(s
-                .recolored(255, 254)
-                .pixels
-                .iter()
-                .flatten()
-                .all(|&c| c < 16));
+            assert!(
+                s.recolored(255, 254)
+                    .pixels
+                    .iter()
+                    .flatten()
+                    .all(|&c| c < 16)
+            );
             assert_eq!(s.pixels, before);
         }
     }

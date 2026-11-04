@@ -6,14 +6,14 @@ use clap::ValueEnum;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Modifier, Style},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
-    Terminal,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,9 +26,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -321,7 +321,12 @@ fn helper_exe() -> Result<PathBuf, String> {
 }
 fn validate_request(request: &DialogRequest, limit: usize) -> Result<(), String> {
     if request.choices.is_empty()
-        || request.choices.len() > 13
+        || request.choices.len() > Choice::value_variants().len()
+        || request
+            .choices
+            .iter()
+            .enumerate()
+            .any(|(index, choice)| request.choices[..index].contains(choice))
         || serde_json::to_vec(request)
             .map_err(|e| e.to_string())?
             .len()
@@ -813,7 +818,7 @@ pub fn popup_helper(path: &Path) -> Result<(), String> {
                 Some(HelperKey::ScrollUp) => scroll = scroll.saturating_sub(4),
                 Some(HelperKey::ScrollDown) => scroll = scroll.saturating_add(4),
                 Some(HelperKey::Accept) => {
-                    break reply_helper(&payload.reply, request.choices[selected])
+                    break reply_helper(&payload.reply, request.choices[selected]);
                 }
                 Some(HelperKey::Back) => break reply_helper(&payload.reply, Choice::Back),
                 None => {}
@@ -921,13 +926,15 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, value.as_bytes());
-        assert!(callback(
-            Path::new("/own helper/'$`#(job)"),
-            Path::new("/reply ' $`"),
-            Choice::Feed
-        )
-        .unwrap()
-        .contains("####(job)"));
+        assert!(
+            callback(
+                Path::new("/own helper/'$`#(job)"),
+                Path::new("/reply ' $`"),
+                Choice::Feed
+            )
+            .unwrap()
+            .contains("####(job)")
+        );
         assert!(callback(Path::new("/bad\nhelper"), Path::new("/reply"), Choice::Feed).is_err());
     }
     #[test]
@@ -1133,5 +1140,26 @@ mod tests {
         tx.send(DialogEvent::Inline).unwrap();
         assert_eq!(dialogs.poll(), Some(DialogEvent::Inline));
         assert!(!dialogs.active());
+    }
+}
+
+#[cfg(test)]
+mod habitat_context_tests {
+    use super::*;
+
+    #[test]
+    fn all_declared_context_actions_fit_but_duplicate_actions_are_rejected() {
+        let mut request = DialogRequest {
+            title: "Pet".into(),
+            text: "Thought".into(),
+            choices: Choice::value_variants().to_vec(),
+            accept_hint: "Enter".into(),
+            back_hint: "Escape".into(),
+            ascii: true,
+        };
+        assert!(request.choices.contains(&Choice::Habitat));
+        assert!(validate_request(&request, 4096).is_ok());
+        request.choices[1] = request.choices[0];
+        assert!(validate_request(&request, 4096).is_err());
     }
 }
