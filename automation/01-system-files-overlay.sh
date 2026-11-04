@@ -11,6 +11,35 @@ source "$(dirname "$0")/lib/common.sh"
 
 CTX="${CTX:-/ctx}"
 
+# Validate the complete selected native layout before the first rootfs write.
+# Cold bootstrap helpers remain in source; verified runtime artifacts own these
+# exact paths after the native builder has installed the catalog.
+# Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
+# nothing puts on PATH at bake time, so the lookup this replaced could never
+# succeed and the branch below it was dead on every build (task_962).
+_miosd=""
+for _c in "${MIOS_MIOSD_BIN:-}" \
+          /usr/libexec/mios/miosd \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/mios-rs/target/release/miosd" \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/mios-rs/target/debug/miosd"; do
+    if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
+done
+
+if [[ -z "$_miosd" ]]; then
+    mios_err "Native miosd is required before the rootfs overlay"
+    exit 1
+fi
+
+if ! _native_paths="$("$_miosd" native-overlay-paths --root "$CTX")"; then
+    mios_err "Native catalog must be installed before the rootfs overlay"
+    exit 1
+fi
+_native_excludes=()
+while IFS= read -r _native_path; do
+    [[ -n "$_native_path" ]] || continue
+    _native_excludes+=("--exclude=$_native_path")
+done <<< "$_native_paths"
+
 mios_step "Rootfs-native overlay"
 
 if [[ -f "${CTX}/VERSION" ]]; then
@@ -39,7 +68,7 @@ done
 
 if [[ -d "${CTX}/usr" ]]; then
     mios_log "Stage 1: overlay usr"
-    tar -C "${CTX}/usr" -cf - --exclude='./local' . | tar -C /usr --no-overwrite-dir -xf -
+    tar -C "${CTX}/usr" -cf - --exclude='./local' "${_native_excludes[@]}" . | tar -C /usr --no-overwrite-dir -xf -
     if [[ -d /usr/share/mios/vendored && -w /usr/share/mios/vendored ]]; then
         for _bundle in /usr/share/mios/vendored/*.tar; do
             [[ -f "$_bundle" ]] || continue
@@ -136,21 +165,6 @@ fi
 
 BDIR="/usr/lib/bootc/bound-images.d"
 install -d -m 0755 "${BDIR}"
-# Absolute path, never `command -v`: miosd installs to /usr/libexec/mios, which
-# nothing puts on PATH at bake time, so the lookup this replaced could never
-# succeed and the branch below it was dead on every build (task_962).
-_miosd=""
-for _c in "${MIOS_MIOSD_BIN:-}" \
-          /usr/libexec/mios/miosd \
-          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/mios-rs/target/release/miosd" \
-          "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/mios-rs/target/debug/miosd"; do
-    if [[ -n "$_c" && -x "$_c" ]]; then _miosd="$_c"; break; fi
-done
-
-if [[ -z "$_miosd" ]]; then
-    mios_err "Native miosd is required for overlay-bind-images (task_962)"
-    exit 1
-fi
 
 MIOS_TOML="${MIOS_TOML:-/usr/share/mios/mios.toml}" "$_miosd" overlay-bind-images --dest "${BDIR}"
 mios_ok "LBI binding completed via miosd"

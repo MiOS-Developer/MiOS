@@ -347,6 +347,73 @@ fn check_linux_alias(
     Ok(())
 }
 
+/// Protect exactly the selected Linux artifact layout from a source overlay.
+/// Resolve policy from the source tree, inspect the destination without Cargo,
+/// and emit nothing until the entire installed closure has passed.
+pub fn overlay_paths(
+    source: &Path,
+    installed_root: &Path,
+    arch: &str,
+) -> Result<Vec<String>, String> {
+    let config = config(source)?;
+    let policy = super::linux_target(&config, arch)?;
+    let prefix = installed_root.canonicalize().map_err(|e| e.to_string())?;
+    let mut paths = std::collections::BTreeSet::new();
+    let mut count = 0;
+    for category in config.categories.values() {
+        for binary in &category.binaries {
+            if !super::supports_platform(&config, binary, "linux") {
+                continue;
+            }
+            let directory = prefix.join(category.install_dir.trim_start_matches('/'));
+            let resolved = directory
+                .canonicalize()
+                .map_err(|e| format!("native directory {}: {e}", directory.display()))?;
+            if !resolved.starts_with(&prefix) {
+                return Err(format!(
+                    "native directory {} escapes the image root",
+                    directory.display()
+                ));
+            }
+            let canonical = directory.join(binary);
+            let metadata = std::fs::symlink_metadata(&canonical)
+                .map_err(|e| format!("installed native {binary}: {e}"))?;
+            if !metadata.file_type().is_file() {
+                return Err(format!(
+                    "installed native {binary} must be a regular artifact"
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o111 == 0 {
+                    return Err(format!("installed native {binary} is not executable"));
+                }
+            }
+            let data = std::fs::read(&canonical).map_err(|e| e.to_string())?;
+            super::verify_static_elf(&data, arch, policy.pie)
+                .map_err(|e| format!("installed native {binary}: {e}"))?;
+            paths.insert(format!(
+                ".{}/{binary}",
+                category.install_dir.trim_start_matches("/usr")
+            ));
+            let mut aliases = category.compat_dirs.clone();
+            if category.expose_bin {
+                aliases.push("/usr/bin".into());
+            }
+            for alias in aliases {
+                check_linux_alias(&prefix, &category.install_dir, binary, &alias)?;
+                paths.insert(format!(".{}/{binary}", alias.trim_start_matches("/usr")));
+            }
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return Err("native overlay catalog selects zero artifacts".into());
+    }
+    Ok(paths.into_iter().collect())
+}
+
 /// Uses the shipped role catalog without Cargo metadata, so the final image can
 /// check its real installed programs after the build toolchain has been stripped.
 /// Windows callers provide the installed flat bin directory; Linux uses FHS.
@@ -537,6 +604,130 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    #[cfg(unix)]
+    fn overlay_fixture() -> tempfile::TempDir {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = fixture();
+        let catalog = config(root.path()).unwrap();
+        for category in catalog.categories.values() {
+            for binary in &category.binaries {
+                if !super::super::supports_platform(&catalog, binary, "linux") {
+                    continue;
+                }
+                let path = root
+                    .path()
+                    .join(category.install_dir.trim_start_matches('/'))
+                    .join(binary);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, crate::native_catalog_tests::static_pie()).unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+                let mut aliases = category.compat_dirs.clone();
+                if category.expose_bin {
+                    aliases.push("/usr/bin".into());
+                }
+                for alias in aliases {
+                    if alias == category.install_dir {
+                        continue;
+                    }
+                    let link = root.path().join(alias.trim_start_matches('/')).join(binary);
+                    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+                    symlink(Path::new(&category.install_dir).join(binary), link).unwrap();
+                }
+            }
+        }
+        root
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_layout_is_exact_and_preserves_platform_fallbacks_without_cargo() {
+        let root = overlay_fixture();
+        let paths = overlay_paths(root.path(), root.path(), "x86_64").unwrap();
+        let catalog = config(root.path()).unwrap();
+        let mut expected = std::collections::BTreeSet::new();
+        for category in catalog.categories.values() {
+            for binary in &category.binaries {
+                if !super::super::supports_platform(&catalog, binary, "linux") {
+                    continue;
+                }
+                let mut directories = category.compat_dirs.clone();
+                directories.push(category.install_dir.clone());
+                if category.expose_bin {
+                    directories.push("/usr/bin".into());
+                }
+                for directory in directories {
+                    expected.insert(format!(
+                        ".{}/{binary}",
+                        directory.trim_start_matches("/usr")
+                    ));
+                }
+            }
+        }
+        assert_eq!(paths, expected.into_iter().collect::<Vec<_>>());
+        for binary in &catalog.windows_only {
+            assert!(!paths
+                .iter()
+                .any(|path| path.ends_with(&format!("/{binary}"))));
+        }
+        assert!(paths
+            .iter()
+            .all(|p| p.starts_with("./bin/") || p.starts_with("./libexec/mios/")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_layout_rejects_missing_corrupt_nonexecutable_and_foreign_artifacts() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = overlay_fixture();
+        let path = root.path().join("usr/bin/mios-toml-get");
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+        std::fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+        std::fs::write(&path, &bytes).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+        std::fs::remove_file(&path).unwrap();
+        let foreign = tempfile::tempdir().unwrap();
+        let target = foreign.path().join("artifact");
+        std::fs::write(&target, &bytes).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let alias = root.path().join("usr/libexec/mios/mios-toml-get");
+        std::fs::remove_file(&alias).unwrap();
+        symlink("/usr/bin/foreign", &alias).unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_layout_rejects_escaping_directories_and_invalid_catalog_paths() {
+        use std::os::unix::fs::symlink;
+        let root = overlay_fixture();
+        let foreign = tempfile::tempdir().unwrap();
+        let directory = root.path().join("usr/bin");
+        std::fs::rename(&directory, foreign.path().join("bin")).unwrap();
+        symlink(foreign.path().join("bin"), &directory).unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64")
+            .unwrap_err()
+            .contains("escapes"));
+        let ssot = root.path().join("usr/share/mios/mios.toml");
+        let text = std::fs::read_to_string(&ssot).unwrap();
+        std::fs::write(
+            &ssot,
+            text.replace(
+                "install_dir = \"/usr/bin\"",
+                "install_dir = \"/usr/../tmp\"",
+            ),
+        )
+        .unwrap();
+        assert!(overlay_paths(root.path(), root.path(), "x86_64").is_err());
     }
 
     #[cfg(unix)]

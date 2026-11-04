@@ -8,7 +8,7 @@ Tier 1: Feature Coverage (F1..F10, >=5 tests each = 50 tests)
 Tier 2: Boundary & Corner Cases (F1..F10, >=5 tests each = 50 tests)
 Tier 3: Pairwise Combinatorial Interactions (10 tests)
 Tier 4: Real-World Application Scenarios (5 tests)
-Total: 115 test cases.
+Original tiers: 115 test cases; native overlay closure adds six integration controls.
 """
 
 from __future__ import annotations
@@ -1537,6 +1537,7 @@ def main() -> int:
     suite.addTests(loader.loadTestsFromTestCase(TestTier2BoundaryAndCornerCases))
     suite.addTests(loader.loadTestsFromTestCase(TestTier3PairwiseCombinatorialInteractions))
     suite.addTests(loader.loadTestsFromTestCase(TestTier4RealWorldScenarios))
+    suite.addTests(loader.loadTestsFromTestCase(NativeOverlayClosureTests))
 
     total_tests = suite.countTestCases()
     print("=" * 80)
@@ -1554,6 +1555,128 @@ def main() -> int:
 
     return 0 if result.wasSuccessful() else 1
 
+
+
+class NativeOverlayClosureTests(unittest.TestCase):
+    """Verify the native catalog before protecting its exact tar members."""
+
+    def setUp(self):
+        self.binary = os.environ.get("MIOS_MIOSD_BIN") or shutil.which("miosd")
+        self.assertTrue(self.binary, "current miosd is required for overlay verification")
+        self.temp = tempfile.TemporaryDirectory(prefix="mios-native-overlay-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.source = self.root / "source"
+        self.image = self.root / "image"
+        vendor = self.source / "usr/share/mios"
+        vendor.mkdir(parents=True)
+        shutil.copy2(_SSOT_PATH, vendor / "mios.toml")
+        self.config = tomllib.loads((vendor / "mios.toml").read_text())["build"]["native"]
+        self.expected = set()
+        self.canonical = []
+        self.aliases = []
+        for group in self.config["categories"].values():
+            for name in group["binaries"]:
+                if name in self.config["windows_only"]:
+                    continue
+                destination = self.image / group["install_dir"].lstrip("/") / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self.binary, destination)
+                destination.chmod(0o755)
+                self.canonical.append(destination)
+                directories = [group["install_dir"], *group["compat_dirs"]]
+                if group["expose_bin"]:
+                    directories.append("/usr/bin")
+                for directory in set(directories):
+                    self.expected.add("." + directory.removeprefix("/usr") + "/" + name)
+                    if directory == group["install_dir"]:
+                        continue
+                    alias = self.image / directory.lstrip("/") / name
+                    alias.parent.mkdir(parents=True, exist_ok=True)
+                    alias.symlink_to(group["install_dir"] + "/" + name)
+                    self.aliases.append(alias)
+
+    def command(self):
+        return [
+            self.binary, "native-overlay-paths", "--root", str(self.source),
+            "--installed-root", str(self.image), "--arch", "x86_64",
+        ]
+
+    def run_verifier(self):
+        env = os.environ.copy()
+        # The native policy reader must not invoke Cargo or another shell tool.
+        env["PATH"] = str(self.root / "no-external-tools")
+        env["MIOS_TOML_ROOT"] = str(self.source)
+        env["MIOS_VENDOR_TOML"] = str(self.source / "usr/share/mios/mios.toml")
+        env["MIOS_HOST_TOML"] = str(self.root / "absent-host")
+        env["MIOS_USER_TOML"] = str(self.root / "absent-user")
+        return subprocess.run(self.command(), env=env, capture_output=True, text=True, timeout=30)
+
+    def assert_rejected(self):
+        result = self.run_verifier()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "", "a failed catalog must not emit partial exclusions")
+
+    def test_real_tar_preserves_native_bytes_and_links_and_overlays_fallbacks(self):
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        paths = result.stdout.splitlines()
+        self.assertEqual(set(paths), self.expected)
+        before = {p.relative_to(self.image): p.read_bytes() for p in self.canonical}
+        links = {p.relative_to(self.image): os.readlink(p) for p in self.aliases}
+        for member in paths:
+            path = self.source / "usr" / member.removeprefix("./")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"cold source must not replace runtime native artifact\n")
+        fallback = self.config["windows_only"][0]
+        relative = Path("usr/libexec/mios") / fallback
+        for base, data in [(self.image, b"previous fallback\n"), (self.source, b"updated Linux fallback\n")]:
+            path = base / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        excluded = ["--exclude=" + path for path in paths]
+        archive = subprocess.run(
+            ["tar", "-C", str(self.source / "usr"), "-cf", "-", *excluded, "."],
+            check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["tar", "-C", str(self.image / "usr"), "--no-overwrite-dir", "-xf", "-"],
+            input=archive.stdout, check=True, capture_output=True,
+        )
+        for path, data in before.items():
+            self.assertEqual((self.image / path).read_bytes(), data)
+        for path, target in links.items():
+            self.assertTrue((self.image / path).is_symlink())
+            self.assertEqual(os.readlink(self.image / path), target)
+        self.assertEqual((self.image / relative).read_bytes(), b"updated Linux fallback\n")
+        self.assertEqual(self.run_verifier().returncode, 0)
+
+    def test_missing_artifact_emits_no_exclusions(self):
+        self.canonical[0].unlink()
+        self.assert_rejected()
+
+    def test_script_in_place_of_static_artifact_emits_no_exclusions(self):
+        self.canonical[0].write_bytes(b"#!/bin/sh\nexit 0\n")
+        self.assert_rejected()
+
+    def test_foreign_canonical_and_alias_links_are_rejected(self):
+        original = self.canonical[0]
+        original.unlink()
+        original.symlink_to(self.binary)
+        self.assert_rejected()
+
+    def test_foreign_compatibility_target_is_rejected(self):
+        alias = self.aliases[0]
+        alias.unlink()
+        alias.symlink_to("/usr/bin/foreign")
+        self.assert_rejected()
+
+    def test_phase_preflight_precedes_rootfs_writes_and_tar_exclusions_are_exact(self):
+        script = Path(_ROOT, "automation/01-system-files-overlay.sh").read_text()
+        self.assertLess(script.index("native-overlay-paths"), script.index('install -d'))
+        self.assertLess(script.index("native-overlay-paths"), script.index('tar -'))
+        self.assertIn('"${_native_excludes[@]}"', script)
+        self.assertIn('--exclude=$_native_path', script)
 
 if __name__ == "__main__":
     sys.exit(main())

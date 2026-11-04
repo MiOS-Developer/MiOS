@@ -586,6 +586,15 @@ enum Commands {
         #[arg(long)]
         bin_dir: std::path::PathBuf,
     },
+    /// Verify selected Linux artifacts and print exact usr-relative overlay exclusions
+    NativeOverlayPaths {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "/")]
+        installed_root: std::path::PathBuf,
+        #[arg(long, default_value = std::env::consts::ARCH)]
+        arch: String,
+    },
     /// Check every installed SSOT native artifact without requiring Cargo
     NativeRuntimeCheck {
         #[arg(long, default_value = "/")]
@@ -1876,6 +1885,27 @@ async fn main() {
                 std::process::exit(1);
             }
         },
+        Commands::NativeOverlayPaths {
+            root,
+            installed_root,
+            arch,
+        } => {
+            match mios_build::verification::overlay_paths(
+                std::path::Path::new(root),
+                installed_root,
+                arch,
+            ) {
+                Ok(paths) => {
+                    for path in paths {
+                        println!("{path}");
+                    }
+                }
+                Err(error) => {
+                    eprintln!("[miosd] Native overlay prerequisites: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::NativeRuntimeCheck {
             root,
             platform,
