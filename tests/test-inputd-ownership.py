@@ -4,7 +4,7 @@
 # AI-functions: Ownership, Serve
 # Environment: MIOS_INPUTD_BIN = the binary under test (default: installed). MIOS_INPUTD_OLD_BIN + MIOS_INPUTD_OLD_SSOT =
 # the pre-I1 binary and SSOT for the negative controls (skipped when absent). No physical device is ever opened:
-# serve runs inside bubblewrap with an empty /dev/input, a private /tmp and no compositor signature.
+# serve runs in a private filesystem with an empty /dev/input, synthetic logind records, and an unprivileged uid.
 import fcntl
 import json
 import os
@@ -273,32 +273,64 @@ for _,d in ipairs(D) do print('DISPATCH '..d.kind..' '..tostring(d.v)) end
 
 class Serve(Base):
     def sandbox(self, *, uinput=True, lock_held=False):
-        """bubblewrap: read-only host, private /tmp and runtime dir, an EMPTY /dev/input, optional /dev/uinput."""
-        if not shutil.which('bwrap'):
-            self.fail('bubblewrap required to run serve without any physical device')
-        rt = Path(self.temp.name) / f'rt-{time.monotonic_ns()}'
-        rt.mkdir(mode=0o700)
-        self.host_layer(f'[keybindings.global.controller]\nlegacy_pad_state_path = "{rt}/pad.bin"\n')
+        """A private root has no host input, compositor, /proc or logind state.
+        Root CI uses chroot then drops uid/gid; unprivileged callers use bwrap.
+        A regular file stands in only for the uinput access check. There are no
+        event nodes, so no evdev grab or uinput ioctl can reach the host.
+        """
+        private = Path(self.temp.name) / f'sandbox-{time.monotonic_ns()}'
+        private.mkdir(mode=0o755)
+        for directory in ('bin', 'dev/input', 'run/runtime', 'run/systemd/users',
+                          'run/systemd/sessions', 'usr/share/mios'):
+            (private / directory).mkdir(parents=True, exist_ok=True)
+        uid, gid = (1000, 1000) if os.geteuid() == 0 else (os.getuid(), os.getgid())
+        runtime = private / 'run/runtime'
+        if os.geteuid() == 0:
+            os.chown(runtime, uid, gid)
+        runtime.chmod(0o700)
+        shutil.copy2(BIN, private / 'bin/mios-inputd')
+        shutil.copy2(self.root / 'usr/share/mios/mios.toml', private / 'usr/share/mios/mios.toml')
+        (private / 'run/systemd/users' / str(uid)).write_text('STATE=active\nDISPLAY=fixture\n')
+        (private / 'run/systemd/sessions/fixture').write_text(
+            f'UID={uid}\nTYPE=wayland\nSEAT=seat-fixture\nACTIVE=1\n')
+        if uinput:
+            (private / 'dev/uinput').touch(mode=0o666)
+            (private / 'dev/uinput').chmod(0o666)
         if lock_held:
-            lock = open(rt / 'mios-inputd.lock', 'w')
+            lock_path = runtime / 'mios-inputd.lock'
+            lock = open(lock_path, 'w')
+            if os.geteuid() == 0:
+                os.chown(lock_path, uid, gid)
             fcntl.flock(lock, fcntl.LOCK_EX)
             self.addCleanup(lock.close)
-        argv = ['bwrap', '--ro-bind', '/', '/', '--dev', '/dev', '--dir', '/dev/input', '--tmpfs', '/tmp', '--proc', '/proc',
-                '--bind', self.temp.name, self.temp.name, '--ro-bind', str(BIN), str(BIN), '--die-with-parent']
-        if uinput:
-            argv[argv.index('--dir'):argv.index('--dir')] = ['--dev-bind', '/dev/uinput', '/dev/uinput']
-        env = dict(self.env, XDG_RUNTIME_DIR=str(rt))
-        return argv + [str(BIN), '--root', str(self.root), 'serve'], env
+        # The real bridge must never write the operator's room packet.
+        cfg = private / 'etc/mios/mios.toml'
+        cfg.parent.mkdir(parents=True)
+        cfg.write_text('[keybindings.global.controller]\nlegacy_pad_state_path = "/run/runtime/pad.bin"\n')
+        env = dict(self.env, XDG_RUNTIME_DIR='/run/runtime', HOME='/run/runtime',
+                   XDG_CONFIG_HOME='/run/runtime/config')
+        if os.geteuid() == 0:
+            self.assertIsNotNone(shutil.which('chroot'), 'chroot is required for root CI device isolation')
+            argv = ['chroot', f'--userspec={uid}:{gid}', str(private)]
+        else:
+            self.assertIsNotNone(shutil.which('bwrap'), 'bwrap is required for unprivileged device isolation')
+            argv = ['bwrap', '--bind', str(private), '/', '--die-with-parent']
+        return argv + ['/bin/mios-inputd', '--root', '/', 'serve'], env
 
     def start(self, argv, env):
         return subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     @staticmethod
     def term(p):
-        # bubblewrap does not forward signals: SIGTERM the serve process it runs (its exit status is bwrap's).
+        # chroot execs directly; bwrap's child is the owned serve process.
+        if p.poll() is not None:
+            return
         children = subprocess.run(['pgrep', '-P', str(p.pid)], capture_output=True, text=True).stdout.split()
         for pid in children or [str(p.pid)]:
-            os.kill(int(pid), signal.SIGTERM)
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
     def test_disabled_and_ungrabbed_exit_zero(self):
         for text in ('enabled = false', 'exclusive_grab = false'):
@@ -313,12 +345,17 @@ class Serve(Base):
         p = self.start(argv, env)
         try:
             time.sleep(2.5)
-            self.assertIsNone(p.poll(), 'serve must idle, not exit into a restart loop')
+            self.assertIsNone(p.poll(), 'serve must idle, not exit into a restart loop: ' + (p.stderr.read() if p.poll() is not None else ''))
             self.term(p)
             out, err = p.communicate(timeout=5)
         finally:
             if p.poll() is None:
                 p.kill()
+            p.wait(timeout=5)
+            if p.stdout:
+                p.stdout.close()
+            if p.stderr:
+                p.stderr.close()
         self.assertEqual(p.returncode, 0, err)
         self.assertIn('"serve":"idle"', err)
         self.assertIn('/dev/uinput', err)
@@ -332,8 +369,11 @@ class Serve(Base):
         finally:
             if p.poll() is None:
                 p.kill()
-        if '"serve":"idle"' in err:
-            self.skipTest(f'this login has no seat; the error path needs one: {err.strip()[:200]}')
+            p.wait(timeout=5)
+            if p.stdout:
+                p.stdout.close()
+            if p.stderr:
+                p.stderr.close()
         self.assertEqual(p.returncode, 1, err)
         self.assertIn('already owns', err)
 
@@ -348,8 +388,11 @@ class Serve(Base):
         finally:
             if p.poll() is None:
                 p.kill()
-        if '"serve":"idle"' in err:
-            self.skipTest('this login has no seat')
+            p.wait(timeout=5)
+            if p.stdout:
+                p.stdout.close()
+            if p.stderr:
+                p.stderr.close()
         self.assertTrue(alive, err)
         self.assertEqual(p.returncode, 0, err)
         self.assertNotIn('"mode":"bridge"', err, 'the empty /dev/input must not yield a device')

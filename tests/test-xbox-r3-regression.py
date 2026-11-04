@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -560,6 +561,16 @@ class TestR3PreventDeviceEncryption(R3Base):
 class TestR3Ovmf4mSecureBootQcow2(unittest.TestCase):
     """Verifies that 4M Secure Boot OVMF firmware in QCow2 format with TPM 2.0 emulator CRB
     is required by domain XML, and that legacy 2M raw firmware is rejected."""
+
+    def test_lean_ci_provisions_the_real_firmware_package(self):
+        """The lean analysis image must request the same real firmware used below."""
+        result = subprocess.run(
+            [sys.executable, os.path.join(FX.ROOT, "tools", "ci-suites.py"), "--dnf-packages"],
+            cwd=FX.ROOT, capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("edk2-ovmf", result.stdout.split(),
+                      "CI must install the firmware producer; assertions must not rely on a full host image")
 
     def test_host_firmware_files_exist_and_format(self):
         """Authoritative host check: /usr/share/edk2/ovmf/ contains valid 4M QCow2 firmware and NVRAM."""

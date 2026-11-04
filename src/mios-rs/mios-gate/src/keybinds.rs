@@ -834,6 +834,7 @@ const CONTRACT_INPUTS: &[&str] = &["BTN_NORTH", "BTN_TL", "BTN_TR", "BTN_START",
 /// so an uncaptured game or VM window follows a nav profile like any window until North captures it. `app-capture`
 /// (captured: the controller belongs to the app) and `desktop-3d` (the room has its own map) never take one.
 const NAV_CONTEXTS: &[&str] = &[
+    "shell",
     "desktop-2d",
     "terminal",
     "game",
@@ -1153,8 +1154,9 @@ pub fn controller_audit(
             continue;
         }
         if profile == "vpad" {
-            if ctx == CONSOLE {
-                out.push("controller.nav.contexts.console: the console has no virtual-pad consumer; give it a profile".into());
+            if ctx == CONSOLE || ctx == "shell" {
+                let owner = if ctx == CONSOLE { "the console" } else { "shell" };
+                out.push(format!("controller.nav.contexts.{ctx}: {owner} has no virtual-pad consumer; give it a profile"));
             }
             continue;
         }
@@ -1168,12 +1170,13 @@ pub fn controller_audit(
             vec![profile.to_string()]
         };
         let console = ctx == CONSOLE;
+        let shell = ctx == "shell";
         for name in names {
             let Some(map) = resolve_profile(nav, &name, &mut out) else {
                 continue;
             };
             let tag = format!("controller.nav {ctx} ({name})");
-            let required: Vec<&str> = if console {
+            let required: Vec<&str> = if console || shell {
                 NAV_REQUIRED
                     .iter()
                     .chain(CONTRACT_INPUTS)
@@ -1194,7 +1197,21 @@ pub fn controller_audit(
                     }
                 }
             }
-            if !console {
+            if shell {
+                for (input, value) in &map {
+                    let actions: Vec<&str> = match value {
+                        Value::String(action) => vec![action.as_str()],
+                        Value::Array(actions) => actions.iter().filter_map(Value::as_str).collect(),
+                        _ => vec![],
+                    };
+                    for action in actions {
+                        if action != "none" && !action.starts_with("key:") {
+                            out.push(format!("{tag}.{input}: shell navigation uses key: or none"));
+                        }
+                    }
+                }
+            }
+            if !console && !shell {
                 for input in CONTRACT_INPUTS {
                     if map.contains_key(*input) {
                         out.push(format!("{tag}: {input} is owned by the capture contract or the room on a compositor; it cannot be remapped here"));
@@ -1997,6 +2014,38 @@ crouch_button = "BTN_WEST"
         );
         let f = audit(&ok);
         assert!(f.is_empty(), "{f:?}");
+        let shell = ok.replacen(
+            "console = \"console\"",
+            "console = \"console\"\nshell = \"shell\"",
+            1,
+        ) + r#"
+[keybindings.global.controller.nav.shell]
+inherits = "desktop"
+BTN_NORTH = "key:COMPOSE"
+BTN_TL = "key:PAGEUP"
+BTN_TR = "key:PAGEDOWN"
+BTN_START = "key:ENTER"
+TOGGLE_CHORD = "key:ESC"
+BTN_SELECT = "none"
+BTN_MODE = "key:ESC"
+LS_UP = "none"
+LS_DOWN = "none"
+LS_LEFT = "none"
+LS_RIGHT = "none"
+RS_UP = "none"
+RS_DOWN = "none"
+RS_LEFT = "none"
+RS_RIGHT = "none"
+"#;
+        assert!(audit(&shell).is_empty(), "{:?}", audit(&shell));
+        let bad_shell = shell.replace("BTN_NORTH = \"key:COMPOSE\"", "BTN_NORTH = \"hypr:killactive\"");
+        assert!(audit(&bad_shell)
+            .iter()
+            .any(|x| x.contains("shell navigation uses key: or none")));
+        let vpad_shell = shell.replace("shell = \"shell\"", "shell = \"vpad\"");
+        assert!(audit(&vpad_shell)
+            .iter()
+            .any(|x| x.contains("contexts.shell: shell has no virtual-pad consumer")));
         // a class context profile is still a compositor profile: the capture contract owns North there
         let bad = audit(&ok.replacen("game = \"desktop\"", "game = \"gamenav\"", 1).replacen(
             "[keybindings.global.controller.nav.terminal_tmux]",

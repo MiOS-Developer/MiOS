@@ -97,7 +97,7 @@ class Base(unittest.TestCase):
 class Grammar(Base):
     def test_c08_value_grammar_and_contract_inputs_are_validated(self):
         self.assertEqual(json.loads(self.run_bin('check').stdout)['unresolved_actions'], [])
-        for body, why in [('BTN_SOUTH = ""', '"" is not a value'), ('BTN_SOUTH = "app"', 'namespace'),
+        for body, why in [('BTN_SOUTH = ["", "none"]', '"" is not a value'), ('BTN_SOUTH = "app"', 'namespace'),
                           ('BTN_SOUTH = "key:HYPER+a"', 'unknown modifier'), ('BTN_TL = "key:ENTER"', 'capture contract'),
                           ('BTN_NORTH = "key:ENTER"', 'capture contract'), ('BTN_MODE = ["key:ENTER", "key:ESC"]', 'Guide hold'),
                           ('BTN_SOUTH = "pointer:wheel-up"', 'only LS_*/RS_*')]:
@@ -110,6 +110,12 @@ class Grammar(Base):
         r = self.run_bin('check')
         self.assertIn('not a prefix-table key', r.stderr, 'tests.md C-30: a key the SSOT prefix table does not bind (r)')
 
+
+    def test_empty_scalar_override_preserves_vendor_binding(self):
+        # Empty strings in a higher TOML tier do not erase a nonempty lower-tier value.
+        self.host_layer('[keybindings.global.controller.nav.desktop]\nBTN_SOUTH = ""\n')
+        self.assertEqual(self.run_bin('check').returncode, 0)
+        self.assertEqual(self.actions('desktop-2d', tap(SOUTH, 50)), ['key:ENTER'])
 
     def test_c08_arrays_replace_atomically_across_tiers(self):
         self.host_layer('[keybindings.global.controller.nav.desktop]\nBTN_SOUTH = ["key:SPACE", "none"]\n')
@@ -168,8 +174,13 @@ class Timing(Base):
         self.assertEqual(self.actions('desktop-2d', guide), [], 'Guide+L3+R3: neither lock nor the VM latch')
         self.assertEqual(self.actions('desktop-2d', [key(GUIDE), key(L3), key(L3, 0), key(GUIDE, 0)]), ['quickshell:lock'])
 
-    def test_r26_guide_tap_is_the_drawer(self):
-        self.assertEqual(self.actions('desktop-2d', tap(GUIDE, 100)), ['quickshell:drawer-toggle'])
+    def test_r26_guide_double_tap_is_the_drawer(self):
+        self.assertEqual(self.actions('desktop-2d', tap(GUIDE, 100)), [], 'single tap waits for the configured second tap')
+        self.assertEqual(self.actions('desktop-2d', tap(GUIDE, 100) + wait(40) + tap(GUIDE, 100)),
+                         ['quickshell:drawer-toggle'])
+        self.assertEqual(self.actions('desktop-2d', tap(GUIDE, 100) + wait(400) + tap(GUIDE, 100)),
+                         ['quickshell:drawer-toggle'],
+                         'expired first tap resolves its single action; the second tap is still pending')
         self.assertEqual(self.actions('desktop-2d', tap(GUIDE, 600)), [], 'a Guide hold is the modifier, never the drawer')
         self.assertEqual(self.actions('desktop-2d', [key(GUIDE)] + tap(LB) + [key(GUIDE, 0)]), ['hypr:workspace e-1'])
         self.assertEqual(self.actions('app-capture', tap(GUIDE, 100)), [], 'a captured app gets the Guide tap replayed')

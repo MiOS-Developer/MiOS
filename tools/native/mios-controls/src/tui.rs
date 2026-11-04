@@ -3712,9 +3712,10 @@ pub fn cli_rebind(
 /// also fixes the layer).
 pub fn normalize_input(s: &str) -> Result<(String, Option<String>), String> {
     if let Some((k, _)) = s.split_once(':') {
-        if ["key", "mouse", "pad"].contains(&k) {
+        if ["key", "mouse", "pad"].contains(&k) && !s.ends_with(':') {
             return Ok((s.to_owned(), None));
         }
+        return Err(format!("{s:?} is not a supported input id (key:, mouse:, pad:)"));
     }
     if s.starts_with("BTN_") {
         return Ok((format!("pad:{s}"), None));

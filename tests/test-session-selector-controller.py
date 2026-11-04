@@ -1,13 +1,26 @@
 #!/usr/bin/env python3
-# AI-hint: Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server under bwrap with a fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.
+# AI-hint: Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server with an isolated filesystem and fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.
 # AI-related: src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions], usr/share/doc/mios/keybinds.md, docs/design/mios-global-bindings-final.md
-# Env: MIOSD = the candidate miosd (required); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
+# Env: MIOSD = the candidate miosd (explicit, otherwise built/installed native catalog); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
 # deployed miosd already carries C-33 from main, so it is no control any more).
-import os, shutil, subprocess, sys, tempfile, time
+import os, re, shlex, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CAND = os.environ.get('MIOSD', '')
+def candidate():
+    explicit = os.environ.get('MIOSD')
+    if explicit:
+        return explicit  # An explicit missing candidate fails; never silently run another binary.
+    for path in (ROOT / 'usr/libexec/mios/miosd',
+                 ROOT / 'src/mios-rs/target/release/miosd',
+                 ROOT / 'tools/native/target/x86_64-unknown-linux-musl/release/miosd',
+                 Path('/usr/libexec/mios/miosd')):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ''
+
+
+CAND = candidate()
 OLD = os.environ.get('MIOSD_OLD', '')
 TERMINAL = '/usr/libexec/mios/mios-terminal'
 res = []
@@ -29,36 +42,84 @@ def wait(pred, timeout=6.0):
     return pred()
 
 
+def copy_executable(source, root, destination):
+    """Copy a fixture executable plus its ELF loader/libraries into a private root."""
+    target = root / destination.lstrip('/')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    result = subprocess.run(['ldd', str(source)], capture_output=True, text=True, timeout=10)
+    for library in re.findall(r'(?:=>\s*)?(/[a-zA-Z0-9_./+-]+)', result.stdout):
+        path = Path(library)
+        if path.is_file():
+            dest = root / library.lstrip('/')
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+
+
 def selector(miosd, tmp, tag, keys):
-    """Open the selector of `miosd` in a private tmux pane; press `keys` one by one. Returns the argv the selector
-    exec'd mios-terminal with ('' when it did not)."""
+    """The TUI runs on a private tmux pty and can exec only a fixture launcher."""
     d = Path(tmp) / tag
-    (d / 'bin').mkdir(parents=True)
-    argv = d / 'argv'
-    fake = d / 'mios-terminal'
-    fake.write_text(f'#!/bin/sh\nprintf "%s " "$@" > {argv}\nexec sleep 30\n')
-    tail = d / 'bin/tailscale'
-    tail.write_text('#!/bin/sh\nexit 1\n')  # no tailnet: the selector lists this node only
-    for f in (fake, tail):
-        f.chmod(0o700)
-    user = d / 'user.toml'
-    # A private tmux namespace for the selector's own discovery (never the operator's tmux-os server).
-    user.write_text(f'[keybindings]\nsocket_name = "mios-m1-{os.getpid()}"\n[terminal]\nsocket_root = "{d}"\n')
-    env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'TMUX', 'TMUX_PANE')}
-    env.update(MIOS_VENDOR_TOML=str(ROOT / 'usr/share/mios/mios.toml'), MIOS_USER_TOML=str(user),
-               MIOS_USER_TOML_D=str(d / 'none.d'), TMUX_TMPDIR=str(d), PATH=f"{d / 'bin'}:{env.get('PATH', '/usr/bin:/bin')}")
-    cmd = ['bwrap', '--dev-bind', '/', '/', '--ro-bind', str(fake), TERMINAL, '--die-with-parent', miosd, 'sessions', '--root', '/']
+    d.mkdir()
+    uid, gid = (1000, 1000) if os.geteuid() == 0 else (os.getuid(), os.getgid())
+    if os.geteuid() == 0:
+        root = d / 'root'
+        fixture = root / 'fixture'
+        fixture.mkdir(parents=True)
+        fixture.chmod(0o700)
+        os.chown(fixture, uid, gid)
+        for directory in ('dev', 'run', 'etc', 'usr/share/mios', 'fixture/bin'):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        # Standard fds already refer to the private tmux pty. Leave /dev empty;
+        # the TUI uses its tty stdin, with no device-node creation or passthrough.
+        copy_executable(miosd, root, '/bin/miosd')
+        copy_executable(shutil.which('sh'), root, '/bin/sh')
+        shutil.copy2(ROOT / 'usr/share/mios/mios.toml', root / 'usr/share/mios/mios.toml')
+        (root / 'etc/passwd').write_text(f'fixture:x:{uid}:{gid}:fixture:/fixture:/bin/sh\n')
+        argv = fixture / 'argv'
+        fake = root / TERMINAL.lstrip('/')
+        fake.parent.mkdir(parents=True, exist_ok=True)
+        fake.write_text('#!/bin/sh\nprintf "%s " "$@" > /fixture/argv\n')
+        user = fixture / 'user.toml'
+        paths = dict(vendor='/usr/share/mios/mios.toml', user='/fixture/user.toml',
+                     tmux='/fixture', bin='/fixture/bin')
+        cmd = ['chroot', f'--userspec={uid}:{gid}', str(root), '/bin/miosd', 'sessions', '--root', '/']
+    else:
+        fixture = d
+        (fixture / 'bin').mkdir()
+        argv = fixture / 'argv'
+        fake = fixture / 'mios-terminal'
+        fake.write_text(f'#!/bin/sh\nprintf "%s " "$@" > {shlex.quote(str(argv))}\n')
+        user = fixture / 'user.toml'
+        paths = dict(vendor=str(ROOT / 'usr/share/mios/mios.toml'), user=str(user),
+                     tmux=str(fixture), bin=str(fixture / 'bin'))
+        cmd = ['bwrap', '--ro-bind', '/', '/', '--dev', '/dev', '--tmpfs', '/run', '--tmpfs', '/tmp',
+               '--bind', str(fixture), str(fixture), '--ro-bind', str(fake), TERMINAL,
+               '--die-with-parent', miosd, 'sessions', '--root', '/']
+    fake.chmod(0o755)
+    tail = fixture / 'bin/tailscale'
+    tail.write_text('#!/bin/sh\nexit 1\n')
+    tail.chmod(0o755)  # No network lookup; selector lists the fixture node only.
+    user.write_text(f'[keybindings]\nsocket_name = "mios-m1-{os.getpid()}"\n[terminal]\nsocket_root = "{paths["tmux"]}"\n')
+    env = {k: v for k, v in os.environ.items() if not k.startswith('MIOS_') and k not in ('TMUX', 'TMUX_PANE')}
+    env.update(MIOS_VENDOR_TOML=paths['vendor'], MIOS_USER_TOML=paths['user'],
+               MIOS_USER_TOML_D=paths['tmux'] + '/none.d', HOME=paths['tmux'],
+               TMUX_TMPDIR=str(d), TERM='xterm-256color')
+    # The outer server has a host-private socket. Child receives only the inner private paths.
+    # Resolve the isolator before replacing PATH with the fixture-only commands.
+    cmd[0] = shutil.which(cmd[0])
+    cmd = ['env', 'TMUX_TMPDIR=' + paths['tmux'], 'PATH=' + paths['bin'], *cmd]
     sock = f'mios-m1-host-{os.getpid()}-{tag}'
     T = lambda *a: subprocess.run(['tmux', '-L', sock, *a], env=env, capture_output=True, text=True, timeout=10)
     try:
-        r = T('new-session', '-d', '-x', '100', '-y', '30', '-s', 'm1', subprocess.list2cmdline(cmd) + '; sleep 30')
-        if r.returncode:
-            raise RuntimeError(r.stderr)
+        result = T('new-session', '-d', '-x', '100', '-y', '30', '-s', 'm1', shlex.join(cmd) + '; sleep 30')
+        if result.returncode:
+            raise RuntimeError(result.stderr)
         shown = wait(lambda: any(h in T('capture-pane', '-p', '-t', 'm1').stdout for h in ('new here', 'n new')), 15)
-        check(f'[{tag}] selector rendered in the private pane', shown, T('capture-pane', '-p', '-t', 'm1').stdout.strip()[-200:])
+        check(f'[{tag}] selector rendered in the private pane', shown,
+              T('capture-pane', '-p', '-t', 'm1').stdout.strip()[-300:])
         out = ''
-        for k in keys:
-            T('send-keys', '-t', 'm1', k)
+        for key in keys:
+            T('send-keys', '-t', 'm1', key)
             out = wait(lambda: argv.is_file() and argv.read_text().strip(), 3) or ''
             if out:
                 break
@@ -68,8 +129,8 @@ def selector(miosd, tmp, tag, keys):
 
 
 def main():
-    if not CAND or not os.access(CAND, os.X_OK) or not shutil.which('bwrap'):
-        check('candidate MIOSD and bwrap available', False, CAND)
+    if not CAND or not os.access(CAND, os.X_OK) or not shutil.which('chroot' if os.geteuid() == 0 else 'bwrap'):
+        check('candidate MIOSD and isolated launcher available', False, CAND)
         return 1
     with tempfile.TemporaryDirectory(prefix='mios-m1-') as tmp:
         os.chmod(tmp, 0o700)

@@ -7,14 +7,15 @@
 import hashlib, json, os, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
-OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-controls-live-'))
+# Import and non-opted-in execution have no desktop probes or temporary side effects.
+OUT = None
 BIN = os.environ.get('MIOS_CONTROLS', '/usr/bin/mios-controls')
-PRIMARY_PID = int(os.environ.get('PRIMARY_PID') or subprocess.run(['pgrep', '-x', 'Hyprland', '-o'], capture_output=True, text=True).stdout.strip() or 0)
-PRIMARY_SIG = os.environ['HYPRLAND_INSTANCE_SIGNATURE']
+PRIMARY_PID = None
+PRIMARY_SIG = None
 USER_TIER = Path.home() / '.config/mios/mios.toml'
-SCRATCH = OUT / 'scratch-user.toml'
+SCRATCH = None
 SOCK = 'mios-controls-live'
-TMUXDIR = OUT / 'tmux'
+TMUXDIR = None
 results = []
 
 
@@ -322,4 +323,13 @@ if __name__ == '__main__':
     if os.environ.get('MIOS_LIVE_NESTED') != '1' or not os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
         print('skip: live nested-session test (set MIOS_LIVE_NESTED=1 inside a MiOS desktop session)')
         sys.exit(0)
-    sys.exit(main())
+    # Explicit output paths retain proof artifacts; automatic scratch is always reclaimed.
+    with tempfile.TemporaryDirectory(prefix='mios-controls-live-') as private:
+        OUT = Path(os.environ.get('MIOS_LIVE_OUT') or private)
+        OUT.mkdir(parents=True, exist_ok=True)
+        PRIMARY_PID = int(os.environ.get('PRIMARY_PID') or subprocess.run(
+            ['pgrep', '-x', 'Hyprland', '-o'], capture_output=True, text=True).stdout.strip() or 0)
+        PRIMARY_SIG = os.environ['HYPRLAND_INSTANCE_SIGNATURE']
+        SCRATCH = OUT / 'scratch-user.toml'
+        TMUXDIR = OUT / 'tmux'
+        sys.exit(main())

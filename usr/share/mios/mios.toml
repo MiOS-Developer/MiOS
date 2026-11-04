@@ -18186,10 +18186,11 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # composefs sealing (mkcomposefs, composefs-info), unit verification
 # (systemd-analyze), the lint tier's pwsh and the analyzer's .NET runtime, and
 # test-ukify-stage's real-compiler tier (ukify + the systemd-boot EFI stub; the
-# image's own kernel is the input). A suite that cannot run its live tier exits
-# 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
+# image's own kernel is the input), and the real OVMF firmware/descriptor
+# package used by the Xbox firmware regression. A suite that cannot run its live
+# tier exits 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
-            "systemd-ukify", "systemd-boot-unsigned", "lua"]
+            "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.
