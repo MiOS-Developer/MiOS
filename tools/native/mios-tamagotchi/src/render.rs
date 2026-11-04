@@ -601,11 +601,9 @@ fn draw_camera_face(
     let Some(bounds) = FaceTexture::bounds(sprite) else {
         return false;
     };
-    // Resolution gating uses the actual UV footprint, never a screen-axis face
-    // placement. Occluded surfaces cannot acquire a fabricated text label.
-    if bounds.width() * projection.scale < 10.0 || bounds.height() * projection.scale < 3.0 {
-        return draw_front_face(sprite, renderer, colors, projection, area, buf);
-    }
+    // Foreshortening or minification never replaces a mapped surface with a
+    // screen-axis label. The atlas footprint and the separate caption handle
+    // underresolution; only the actual tiny viewport above uses literal text.
     let (dx, dy) = renderer.packing();
     let (left, top) = projection.cell(bounds.left, bounds.top, renderer);
     let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
@@ -2366,6 +2364,47 @@ mod camera_tests {
                     }
                 }
                 assert!(protected > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn foreshortened_mapped_faces_never_revert_to_a_screen_axis_literal() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        for yaw in [0, 60] {
+            let sprite = Sprite::voxel(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                yaw,
+                false,
+            );
+            assert!(sprite.face_text().is_some());
+            let face = sprite.face_overlay().unwrap();
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                let (dx, dy) = renderer.packing();
+                let scale = 0.1 * f64::from(dx);
+                let projection = Projection {
+                    left: 40.0 * f64::from(dx) - (f64::from(face.center_x) + 0.5) * scale,
+                    top: 20.0 * f64::from(dy) - (f64::from(face.y) + 0.5) * scale,
+                    scale,
+                };
+                let area = Rect::new(0, 0, 80, 40);
+                let mut buf = Buffer::empty(area);
+                draw_projection(&sprite, renderer, &colors, projection, area, &mut buf);
+                draw_camera_face(&sprite, renderer, &colors, projection, area, &mut buf);
+                let image = text(&buf, area);
+                assert!(
+                    !image.contains('^') && !image.contains('(') && !image.contains(')'),
+                    "{renderer:?} yaw {yaw}: mapped texture became a literal label"
+                );
             }
         }
     }
