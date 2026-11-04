@@ -20,6 +20,10 @@ pub enum Action {
     Habitat,
     Status,
     Graphics,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    Camera,
     Help,
     Direction(Direction),
     Care(Care),
@@ -63,6 +67,10 @@ pub fn action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('b') => Some(Action::Roster),
         KeyCode::Char('h') => Some(Action::Habitat),
         KeyCode::Char('v') => Some(Action::Graphics),
+        KeyCode::Char('+') | KeyCode::Char('=') => Some(Action::ZoomIn),
+        KeyCode::Char('-') => Some(Action::ZoomOut),
+        KeyCode::Char('0') => Some(Action::ZoomReset),
+        KeyCode::Char('z') => Some(Action::Camera),
         KeyCode::Char('?') => Some(Action::Help),
         KeyCode::Char('f') => Some(Action::Care(Care::Feed)),
         KeyCode::Char('g') => Some(Action::Care(Care::Play)),
@@ -88,9 +96,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
-        Arc,
     },
     time::{Duration, Instant},
 };
@@ -1134,21 +1142,27 @@ mod controller_tests {
         let start = Instant::now();
         assert!(query.command("/bin/sh", &["-c", "sleep 5"], None).is_none());
         assert!(start.elapsed() < Duration::from_secs(1));
-        assert!(query
-            .command("/bin/sh", &["-c", "printf '%100s' x"], None)
-            .is_none());
+        assert!(
+            query
+                .command("/bin/sh", &["-c", "printf '%100s' x"], None)
+                .is_none()
+        );
         assert!(query.command("/bin/sh", &["-c", "exit 1"], None).is_none());
-        assert!(query
-            .json("/bin/sh", &["-c", "printf '{broken'"], None)
-            .is_none());
+        assert!(
+            query
+                .json("/bin/sh", &["-c", "printf '{broken'"], None)
+                .is_none()
+        );
         assert_eq!(
             query.json("/bin/sh", &["-c", "printf '{\"ok\":true}'"], None),
             Some(json!({"ok":true}))
         );
         stop.store(true, Ordering::Relaxed);
-        assert!(query
-            .command("/bin/sh", &["-c", "printf ok"], None)
-            .is_none());
+        assert!(
+            query
+                .command("/bin/sh", &["-c", "printf ok"], None)
+                .is_none()
+        );
     }
 
     #[test]

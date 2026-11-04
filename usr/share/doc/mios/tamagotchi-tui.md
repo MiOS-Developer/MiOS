@@ -359,3 +359,36 @@ verified-client contract. Tiny, unfocused, restricted or multiply attached
 clients use the paged inline dialogue pane below the pet. Actual phone and
 physical-controller acceptance is recorded per session; compatibility does not
 by itself certify a device.
+
+## Closer cameras and cell-budgeted HUD
+
+The Room, Pet and Face camera views use actual solid sprite bounds. The default
+Pet framing removes transparent padding; Face focuses on the head. Zoom crops
+rather than silently fitting the pet back down. Press + or = to zoom in, - to
+zoom out,0 to reset and lowercase z to cycle views. The mouse wheel and focused
+controller Graphics menu provide the same presentation actions; none steers the
+pet. --camera room|pet|face and --zoom50..400 select initial framing.
+
+Zoom and camera changes use bounded smooth interpolation. The layered
+[tamagotchi] zoom_percent, zoom_step_percent and zoom_transition_frames settings
+control their initial value, step and transition length.
+
+The compact HUD puts identity, stage, expression and needs into the viewport
+frame. Its landscape sidebar and portrait stack derive proportions from the
+existing [mcp.tmux.workspace] golden_ratio, resource_min_columns and
+portrait_ratio_percent SSOT fields. Tiny frames page needs; *=100 exactly.
+At smartwatch-sized12x6 clients the default Pet view adapts to a frontal Face
+view, with short selected-action and Menu prompts. Native tmux popups are used
+only when the verified focused client fits; smaller clients use paged inline
+menus/dialogue. Reset requires a readable confirmation and cancels after a
+resize that hides it.
+
+All living moods have pure ASCII expression cycles. Detailed voxel rendering
+re-samples the model at a finer lattice rather than enlarging block pixels.
+Frontal kaomoji appears on the head; oblique views show only the nearer half,
+and rear views do not receive face text. The HUD can still report mood.
+
+Inputd-projected arrows, Enter, Tab and Back follow the same menu/care actions
+in every terminal transport. Pad-specific hints require native focus and device
+ownership proof; absent graphical context cannot certify console or remote
+controller ownership. Physical device acceptance remains separate.

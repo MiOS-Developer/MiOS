@@ -7,7 +7,7 @@ use crate::{
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
     input::{Action, ControllerMonitor, ControllerPrompts, action},
-    render::{Colors, HabitatView, RoomWidget},
+    render::{Camera, CameraView, Colors, HabitatView, RoomWidget},
     save::Store,
     sprite::{Appearance, Expression, Sprite, SpriteStyle},
 };
@@ -61,12 +61,22 @@ pub struct Ui {
     pub game: Game,
     pub selected: usize,
     pub confirm_reset: bool,
+    reset_refused: bool,
     pub notice: String,
     pub menu: Option<Menu>,
     pub menu_selected: usize,
     gallery_stage: usize,
     pub view_mode: ViewMode,
     pub hud_mode: HudMode,
+    camera_view: CameraView,
+    camera_from_view: CameraView,
+    zoom_percent: u16,
+    zoom_target: u16,
+    zoom_origin: u16,
+    zoom_step: u16,
+    camera_transition_frames: usize,
+    camera_started: usize,
+    camera_blend: u16,
     menu_scroll: usize,
     pub sprite_style: SpriteStyle,
     pub renderer: Option<Renderer>,
@@ -106,12 +116,22 @@ impl Ui {
             game,
             selected: 0,
             confirm_reset: false,
+            reset_refused: false,
             notice: "Welcome home. Raise a healthy, happy adult.".into(),
             menu: None,
             menu_selected: 0,
             gallery_stage: 3,
             view_mode: ViewMode::Pixel,
             hud_mode: HudMode::Auto,
+            camera_view: CameraView::Pet,
+            camera_from_view: CameraView::Pet,
+            zoom_percent: 100,
+            zoom_target: 100,
+            zoom_origin: 100,
+            zoom_step: 25,
+            camera_transition_frames: 8,
+            camera_started: 0,
+            camera_blend: 100,
             menu_scroll: 0,
             sprite_style: SpriteStyle::EightBit,
             renderer: None,
@@ -152,6 +172,13 @@ impl Ui {
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
         ui.sprite_style = config.sprite_style;
+        ui.camera_view = config.camera_view;
+        ui.camera_from_view = config.camera_view;
+        ui.zoom_percent = config.zoom_percent;
+        ui.zoom_target = config.zoom_percent;
+        ui.zoom_origin = config.zoom_percent;
+        ui.zoom_step = config.zoom_step_percent;
+        ui.camera_transition_frames = config.zoom_transition_frames;
         ui.wander_speed = config.wander_speed;
         ui.mobile_stage = !matches!(
             ui.game.stage(&config.game),
@@ -177,7 +204,78 @@ impl Ui {
                 self.yaw = (i32::from(self.yaw) + turn.clamp(-15, 15)).rem_euclid(360) as u16;
             }
         }
+        let elapsed_camera = frame.saturating_sub(self.camera_started);
+        let t = elapsed_camera
+            .saturating_mul(100)
+            .checked_div(self.camera_transition_frames.max(1))
+            .unwrap_or(100)
+            .min(100) as i32;
+        let eased = t * t * (300 - 2 * t) / 10000;
+        self.camera_blend = eased as u16;
+        self.zoom_percent = (i32::from(self.zoom_origin)
+            + (i32::from(self.zoom_target) - i32::from(self.zoom_origin)) * eased / 100)
+            .clamp(50, 400) as u16;
         self.frame = frame;
+    }
+    fn camera(&self) -> Camera {
+        let (w, h) = self.viewport.get();
+        let effective = |view| {
+            if (w < 28 || h < 10) && view == CameraView::Pet {
+                CameraView::Face
+            } else {
+                view
+            }
+        };
+        Camera {
+            view: effective(self.camera_view),
+            zoom_percent: self.zoom_percent,
+            from_view: effective(self.camera_from_view),
+            transition_percent: self.camera_blend,
+        }
+    }
+    fn change_camera(&mut self, view: CameraView, zoom: u16) {
+        self.camera_from_view = self.camera_view;
+        self.camera_view = view;
+        self.zoom_origin = self.zoom_percent;
+        self.zoom_target = zoom.clamp(50, 400);
+        self.camera_started = self.frame;
+        self.camera_blend = 0;
+        self.notice = format!(
+            "{:?} view / {}% zoom. + - zoom, 0 reset, Z view.",
+            view, self.zoom_target
+        );
+    }
+    fn zoom_by(&mut self, inward: bool) {
+        let zoom = if inward {
+            self.zoom_target.saturating_add(self.zoom_step).min(400)
+        } else {
+            self.zoom_target.saturating_sub(self.zoom_step).max(50)
+        };
+        self.change_camera(self.camera_view, zoom);
+    }
+    fn cycle_camera(&mut self) {
+        let next = match self.camera_view {
+            CameraView::Room => CameraView::Pet,
+            CameraView::Pet => CameraView::Face,
+            CameraView::Face => CameraView::Room,
+        };
+        self.change_camera(next, self.zoom_target);
+    }
+    fn camera_yaw(&self, yaw: u16) -> u16 {
+        // The camera orbits toward the face; pet simulation orientation is untouched.
+        let camera = self.camera();
+        let from = if camera.from_view == CameraView::Face {
+            0
+        } else {
+            i32::from(yaw)
+        };
+        let to = if camera.view == CameraView::Face {
+            0
+        } else {
+            i32::from(yaw)
+        };
+        let turn = (to - from + 540) % 360 - 180;
+        (from + turn * i32::from(self.camera_blend) / 100).rem_euclid(360) as u16
     }
     fn can_move(&self) -> bool {
         self.mobile_stage
@@ -259,7 +357,7 @@ impl Ui {
                 expression,
                 self.sprite_style,
                 pose,
-                self.yaw,
+                self.camera_yaw(self.yaw),
                 self.walking(),
                 self.appearance(),
             ),
@@ -449,9 +547,32 @@ impl Ui {
             return Effect::Quit;
         }
         let (width, height) = self.viewport.get();
-        if (width < 18 || height < 6) && !matches!(a, Action::Save | Action::Pause) {
+        if (width < 10 || height < 4)
+            && !matches!(
+                a,
+                Action::Save
+                    | Action::Pause
+                    | Action::ZoomIn
+                    | Action::ZoomOut
+                    | Action::ZoomReset
+                    | Action::Camera
+            )
+        {
             self.confirm_reset = false;
             self.notice = "Enlarge the viewport to confirm a new pet.".into();
+            return Effect::Continue;
+        }
+        if self.reset_refused {
+            self.reset_refused = false;
+            if matches!(a, Action::Accept | Action::Confirm) {
+                return Effect::Continue;
+            }
+        }
+        if self.confirm_reset && (width < 18 || height < 6) {
+            self.confirm_reset = false;
+            self.adopt_character = None;
+            self.reset_refused = true;
+            self.notice = "Kept pet; confirmation no longer fits.".into();
             return Effect::Continue;
         }
         if self.confirm_reset {
@@ -483,6 +604,22 @@ impl Ui {
             return Effect::Continue;
         }
         match a {
+            Action::ZoomIn => {
+                self.zoom_by(true);
+                return Effect::Continue;
+            }
+            Action::ZoomOut => {
+                self.zoom_by(false);
+                return Effect::Continue;
+            }
+            Action::ZoomReset => {
+                self.change_camera(self.camera_view, 100);
+                return Effect::Continue;
+            }
+            Action::Camera => {
+                self.cycle_camera();
+                return Effect::Continue;
+            }
             Action::Menu => {
                 if self.menu.is_some() {
                     self.menu = None;
@@ -669,7 +806,7 @@ impl Ui {
             Menu::Home => 11,
             Menu::Care => 5,
             Menu::Games => 2,
-            Menu::Graphics => 13,
+            Menu::Graphics => 19,
             Menu::Status | Menu::Help => 1,
             Menu::Gallery => 16,
             Menu::Talk => 7,
@@ -747,6 +884,12 @@ impl Ui {
                     9 => self.hud_mode = HudMode::Auto,
                     10 => self.hud_mode = HudMode::Minimal,
                     11 => self.hud_mode = HudMode::Full,
+                    12 => self.change_camera(CameraView::Room, self.zoom_target),
+                    13 => self.change_camera(CameraView::Pet, self.zoom_target),
+                    14 => self.change_camera(CameraView::Face, self.zoom_target),
+                    15 => self.zoom_by(true),
+                    16 => self.zoom_by(false),
+                    17 => self.change_camera(self.camera_view, 100),
                     _ => self.menu = None,
                 },
                 Menu::Status | Menu::Help => self.menu = None,
@@ -810,6 +953,13 @@ impl Ui {
         Effect::Continue
     }
     fn ask_reset(&mut self) {
+        let (w, h) = self.viewport.get();
+        if w < 18 || h < 6 {
+            self.confirm_reset = false;
+            self.reset_refused = true;
+            self.notice = "Enlarge to confirm a new pet.".into();
+            return;
+        }
         self.confirm_reset = true;
         self.notice = "Replace this pet? Enter/Y confirms; Escape keeps it.".into();
     }
@@ -850,11 +1000,41 @@ impl Ui {
         self.pet_area.set(Rect::default());
         self.dialog_area.set(Rect::default());
         self.care_targets.borrow_mut().clear();
-        let outer = panel(" MIOS / PET ROOM ", colors, ascii);
+        let face = self.expression(&config.game, frame).kaomoji(frame);
+        let stage = format!("{:?}", self.game.stage(&config.game));
+        let clock = if self.game.paused {
+            "P"
+        } else if self.game.sleeping {
+            "R"
+        } else {
+            "L"
+        };
+        let heading = if area.width < 28 {
+            format!("{} {}{clock} {face}", self.name(), &stage[..1])
+        } else {
+            format!(
+                "{} / {} / {stage} {clock} {face} / {:?} {}%",
+                self.name(),
+                self.current_character()
+                    .map_or("pet", |c| c.species.as_str()),
+                self.camera().view,
+                self.zoom_percent
+            )
+        };
+        let compact = self.hud_mode == HudMode::Minimal
+            || area.width < config.hud_minimal_width
+            || area.height < config.hud_minimal_height;
+        let footer = if compact {
+            crate::hud::needs(&self.game, area.width.saturating_sub(2), frame / 14)
+        } else {
+            "MIOS / PET ROOM".into()
+        };
+        let outer = panel(&heading, colors, ascii)
+            .title_bottom(Line::from(footer).style(Style::default().fg(colors.ink(7))));
         let inner = outer.inner(area);
         self.viewport.set((inner.width, inner.height));
         screen.render_widget(outer, area);
-        if inner.width < 18 || inner.height < 6 {
+        if inner.width < 10 || inner.height < 4 {
             screen.render_widget(
                 Paragraph::new(format!(
                     "Mio / {:?}\n{}\n{}",
@@ -968,7 +1148,13 @@ impl Ui {
             (content, None)
         };
         let expression = self.expression(&config.game, frame);
-        let room_title = format!(" ROOM / {:?} {} ", expression, expression.kaomoji(frame));
+        let room_title = format!(
+            " {:?} {}% / {:?} {} ",
+            self.camera_view,
+            self.zoom_percent,
+            expression,
+            expression.kaomoji(frame)
+        );
         let border = panel(&room_title, colors, ascii);
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
@@ -976,6 +1162,7 @@ impl Ui {
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
+                camera: self.camera(),
                 sprite: &sprite,
                 renderer,
                 scale: config.scale,
@@ -1053,7 +1240,7 @@ impl Ui {
                     pad.navigate, pad.accept, pad.back, pad.next
                 )
             } else {
-                " O Menu  H Habitat  I Status  ? Help  |  Arrows/Tab + Enter  |  Q Quit".into()
+                " O Menu H Habitat | +/- zoom 0 reset Z view | Arrows/Tab + Enter | Q Quit".into()
             })
             .style(Style::default().fg(colors.ink(13))),
         );
@@ -1098,49 +1285,20 @@ impl Ui {
         area: Rect,
     ) {
         let talking = self.menu == Some(Menu::Talk) && !self.native_modal;
-        let [title, needs, room, dialogue, actions] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(if talking { 0 } else { 1 }),
-            Constraint::Min(1),
-            Constraint::Length(if talking { 3 } else { 1 }),
-            Constraint::Length(if talking { 0 } else { 2 }),
-        ])
-        .areas(area);
-        let state = if self.game.paused {
-            "PAUSE"
-        } else if self.overlay_open() {
-            "MENU"
-        } else if self.game.sleeping {
-            "REST"
-        } else if self.game.ill {
-            "ILL"
-        } else {
-            "LIVE"
-        };
-        let expression = self.expression(&config.game, frame);
-        let face = expression.kaomoji(frame);
-        let heading = if title.width < 28 {
-            format!("{:?} {} {face}", self.game.stage(&config.game), &state[..1])
-        } else {
-            format!("{:?} / {state} {face}", self.game.stage(&config.game))
-        };
-        screen.render_widget(
-            Paragraph::new(heading).style(Style::default().fg(colors.ink(7))),
-            title,
+        let layout = crate::hud::split(
+            area,
+            config.hud_golden_ratio,
+            config.hud_landscape_columns,
+            config.hud_portrait_ratio_percent,
         );
-        screen.render_widget(
-            Paragraph::new(format!(
-                "F{}H{}E{}+{}",
-                self.game.fullness, self.game.happiness, self.game.energy, self.game.health
-            ))
-            .style(Style::default().fg(colors.ink(2))),
-            needs,
-        );
-        self.pet_area.set(room);
+        let scene = layout.scene;
+        let info = layout.info;
+        self.pet_area.set(scene);
         let sprite = self.pet_sprite(&config.game, frame);
         let expression = self.expression(&config.game, frame);
         screen.render_widget(
             RoomWidget {
+                camera: self.camera(),
                 sprite: &sprite,
                 renderer,
                 scale: 0,
@@ -1155,25 +1313,179 @@ impl Ui {
                     age: self.game.age_ticks,
                 }),
             },
-            room,
+            scene,
         );
-        let hints = if let Some(pad) = &self.controller {
-            let short = |s: &str| s.strip_prefix("Tap ").unwrap_or(s).to_owned();
-            format!(
-                "[{}] {}\n{} Menu {}",
-                short(&pad.accept),
-                LABELS[self.selected],
-                short(&pad.back),
-                pad.navigate
-            )
+        if talking {
+            let body = if info.height >= 3 {
+                info
+            } else {
+                Rect::new(
+                    area.x,
+                    area.bottom().saturating_sub(3),
+                    area.width,
+                    3.min(area.height),
+                )
+            };
+            self.draw_dialogue(screen, config, colors, renderer, body, true);
+        } else if layout.landscape {
+            let mut lines = vec![
+                Line::from(format!(
+                    "{} / {:?}",
+                    self.name(),
+                    self.game.stage(&config.game)
+                ))
+                .style(Style::default().fg(colors.ink(7))),
+                Line::from(format!(
+                    "{:?} {} / {:?} {}%",
+                    expression,
+                    expression.kaomoji(frame),
+                    self.camera().view,
+                    self.zoom_percent
+                )),
+                Line::from(format!(
+                    "Age {} | {} coins | {} wins",
+                    self.game.age_ticks, self.game.coins, self.game.wins
+                )),
+            ];
+            for (label, value, index) in [
+                ("Food", self.game.fullness, 8),
+                ("Happy", self.game.happiness, 12),
+                ("Clean", self.game.hygiene, 9),
+                ("Energy", self.game.energy, 7),
+                ("Health", self.game.health, 15),
+            ] {
+                let width = usize::from(info.width.saturating_sub(15)).min(24);
+                let filled = width * usize::from(value) / 100;
+                lines.push(
+                    Line::from(format!(
+                        "{label:6} {value:3} [{}{}]",
+                        "#".repeat(filled),
+                        ".".repeat(width.saturating_sub(filled))
+                    ))
+                    .style(Style::default().fg(colors.ink(index))),
+                );
+            }
+            if let Some(theme) = config.habitat.theme(self.game.habitat.theme) {
+                lines.push(Line::from(theme.name.clone()));
+            }
+            lines.push(Line::from(format!(
+                "{} items placed | {}",
+                self.game.habitat.placed.count_ones(),
+                if self.game.paused {
+                    "PAUSED"
+                } else if self.game.sleeping {
+                    "RESTING"
+                } else {
+                    "LIVE"
+                }
+            )));
+            if let Some(pad) = &self.controller {
+                lines.push(Line::from(format!("{} / Inputd focused", pad.family)));
+                lines.push(Line::from(pad.release.clone()));
+            }
+            let footer_rows = if self.controller.is_some() { 3 } else { 2 };
+            let available = usize::from(info.height).saturating_sub(lines.len() + footer_rows);
+            lines.extend(
+                wrap_dialogue(&self.words(config, true), usize::from(info.width))
+                    .into_iter()
+                    .take(available)
+                    .map(Line::from),
+            );
+            let footer = Rect::new(
+                info.x,
+                info.bottom().saturating_sub(footer_rows as u16),
+                info.width,
+                (footer_rows as u16).min(info.height),
+            );
+            let upper = Rect::new(
+                info.x,
+                info.y,
+                info.width,
+                info.height.saturating_sub(footer.height),
+            );
+            screen.render_widget(
+                Paragraph::new(lines).style(Style::default().fg(colors.ink(2))),
+                upper,
+            );
+            let hints = if let Some(pad) = &self.controller {
+                format!(
+                    "{} {} | {} Menu\n{} select\nV Graphics +/- Z",
+                    tiny_button(&pad.accept),
+                    LABELS[self.selected],
+                    tiny_button(&pad.back),
+                    pad.navigate
+                )
+            } else {
+                format!(
+                    "Enter {} | O Menu\n+/- zoom 0 reset Z view",
+                    LABELS[self.selected]
+                )
+            };
+            screen.render_widget(
+                Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+                footer,
+            );
+            self.care_targets.borrow_mut().push((
+                Rect::new(footer.x, footer.y, footer.width, 1),
+                self.selected,
+            ));
         } else {
-            format!("[Enter] {}\nArrows/Tab O Menu", LABELS[self.selected])
-        };
-        screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
-            actions,
-        );
-        self.draw_dialogue(screen, config, colors, renderer, dialogue, true);
+            let controls = Rect::new(
+                info.x,
+                info.bottom().saturating_sub(1),
+                info.width,
+                1.min(info.height),
+            );
+            let metadata = Rect::new(info.x, info.y, info.width, 1.min(info.height));
+            let thought = Rect::new(
+                info.x,
+                info.y.saturating_add(1),
+                info.width,
+                info.height.saturating_sub(2),
+            );
+            screen.render_widget(
+                Paragraph::new(if info.width < 18 {
+                    format!(
+                        "{}t${}w{}",
+                        self.game.age_ticks, self.game.coins, self.game.wins
+                    )
+                } else {
+                    format!(
+                        "t{} ${} w{} {}%",
+                        self.game.age_ticks, self.game.coins, self.game.wins, self.zoom_percent
+                    )
+                })
+                .style(Style::default().fg(colors.ink(7))),
+                metadata,
+            );
+            if thought.height > 0 {
+                self.draw_dialogue(screen, config, colors, renderer, thought, true);
+            }
+            let hint = if let Some(pad) = &self.controller {
+                format!(
+                    "{}:{} {}:Menu",
+                    tiny_button(&pad.accept),
+                    LABELS[self.selected],
+                    tiny_button(&pad.back)
+                )
+            } else if controls.width < 18 {
+                format!(
+                    "Ent {} O",
+                    [
+                        "Feed", "Play", "Wash", "Rest", "Med", "Pause", "Save", "New"
+                    ][self.selected]
+                )
+            } else {
+                format!("Enter {} O Menu", LABELS[self.selected])
+            };
+            screen.render_widget(
+                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                controls,
+            );
+            self.care_targets
+                .borrow_mut()
+                .push((controls, self.selected));
+        }
         if let Some(challenge) = &self.game.challenge {
             let text = if challenge.reveal > 0 {
                 format!(
@@ -1263,11 +1575,27 @@ impl Ui {
                 |pad| (tiny_button(&pad.accept), tiny_button(&pad.back)),
             );
             lines.push(
-                Line::from(format!("[{accept}] {label}")).style(Style::default().fg(colors.ink(7))),
+                Line::from(if body.width < 18 {
+                    format!(
+                        "{accept}: {}",
+                        if self.menu_selected == 0 {
+                            "More"
+                        } else {
+                            label
+                        }
+                    )
+                } else {
+                    format!("[{accept}] {label}")
+                })
+                .style(Style::default().fg(colors.ink(7))),
             );
             lines.push(
-                Line::from(format!("[{back}] Back / Tab"))
-                    .style(Style::default().fg(colors.ink(13))),
+                Line::from(if body.width < 18 {
+                    format!("{back}:Back")
+                } else {
+                    format!("[{back}] Back / Tab")
+                })
+                .style(Style::default().fg(colors.ink(13))),
             );
         } else if !compact && lines.len() < usize::from(body.height) {
             lines.push(Line::from(self.notice.clone()).style(Style::default().fg(colors.ink(13))));
@@ -1458,13 +1786,14 @@ impl Ui {
                 expression,
                 self.sprite_style,
                 self.frame,
-                ((self.frame / 2 * 15) % 360) as u16,
+                self.camera_yaw(((self.frame * 3) % 360) as u16),
                 false,
                 appearance,
             ),
         };
         screen.render_widget(
             RoomWidget {
+                camera: self.camera(),
                 sprite: &sprite,
                 renderer,
                 scale: 0,
@@ -1691,13 +2020,14 @@ impl Ui {
                     expression,
                     self.sprite_style,
                     self.frame,
-                    ((self.frame / 2 * 15) % 360) as u16,
+                    self.camera_yaw(((self.frame * 3) % 360) as u16),
                     false,
                     self.appearance(),
                 ),
             };
             screen.render_widget(
                 RoomWidget {
+                    camera: self.camera(),
                     sprite: &sprite,
                     renderer,
                     scale: 0,
@@ -1772,6 +2102,12 @@ impl Ui {
                     "HUD / Automatic",
                     "HUD / Minimal",
                     "HUD / Full",
+                    "Camera / whole room",
+                    "Camera / pet body",
+                    "Camera / face close-up",
+                    "Zoom in (+)",
+                    "Zoom out (-)",
+                    "Reset zoom (0)",
                     "Back",
                 ],
             ),
@@ -1789,9 +2125,18 @@ impl Ui {
         } else {
             4
         };
-        let modal = center(screen.area(), 64, (entries.len() + extra) as u16);
+        let modal = if screen.area().width < 32 || screen.area().height < 12 {
+            screen.area()
+        } else {
+            center(screen.area(), 64, (entries.len() + extra) as u16)
+        };
         screen.render_widget(Clear, modal);
-        let block = panel(title, colors, ascii);
+        let menu_title = if menu == Menu::Graphics {
+            format!(" GRAPHICS / {:?} {}% ", self.camera_view, self.zoom_target)
+        } else {
+            title.to_owned()
+        };
+        let block = panel(&menu_title, colors, ascii);
         let body = block.inner(modal);
         screen.render_widget(block, modal);
         let mut lines = Vec::new();
@@ -1825,11 +2170,35 @@ impl Ui {
                 "O / F1 Menu  I Status  V Graphics  ? Help",
                 "Escape closes a menu; Q saves and quits.",
                 "Menus freeze care time; animation keeps moving.",
+                "Compact HUD: *=100. Tiny frames page all needs.",
+                "Inputd arrows/Enter/Tab/Back operate menus and care.",
+                "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
+                "Room / Pet / Face cameras never steer your pet.",
                 "Graphics choices affect this session only.",
                 "",
             ] {
                 lines.push(Line::from(line));
             }
+        }
+        if matches!(menu, Menu::Status | Menu::Help) {
+            lines = lines
+                .into_iter()
+                .flat_map(|line| {
+                    let text = line
+                        .spans
+                        .iter()
+                        .map(|span| span.content.as_ref())
+                        .collect::<String>();
+                    if text.is_empty() {
+                        vec![Line::from("")]
+                    } else {
+                        wrap_dialogue(&text, usize::from(body.width.max(1)))
+                            .into_iter()
+                            .map(Line::from)
+                            .collect()
+                    }
+                })
+                .collect();
         }
         for (i, entry) in entries.iter().enumerate() {
             let selected = i == self.menu_selected;
@@ -1856,8 +2225,22 @@ impl Ui {
         let footer: Vec<Line> = if body.width < 32 {
             if let Some(pad) = &self.controller {
                 vec![
-                    Line::from(format!("{}: OK", compact_button(&pad.accept))),
-                    Line::from(format!("{}: Back", compact_button(&pad.back))),
+                    Line::from(format!(
+                        "{}: OK",
+                        if body.width < 18 {
+                            tiny_button(&pad.accept)
+                        } else {
+                            compact_button(&pad.accept)
+                        }
+                    )),
+                    Line::from(format!(
+                        "{}: Back",
+                        if body.width < 18 {
+                            tiny_button(&pad.back)
+                        } else {
+                            compact_button(&pad.back)
+                        }
+                    )),
                 ]
             } else {
                 vec![Line::from("Enter: OK"), Line::from("Esc: Back")]
@@ -1884,7 +2267,11 @@ impl Ui {
                 let visible = height.saturating_sub(footer.len() + 1);
                 let start = self.menu_scroll.min(end.saturating_sub(visible));
                 let mut page = lines[start..(start + visible).min(end)].to_vec();
-                page.push(Line::from("> Back / scroll"));
+                page.push(Line::from(if body.width < 18 {
+                    "> Back"
+                } else {
+                    "> Back / scroll"
+                }));
                 page.extend(footer);
                 lines = page;
             } else {
@@ -1931,6 +2318,7 @@ impl Ui {
 }
 fn tiny_button(value: &str) -> String {
     compact_button(value)
+        .replace("Hold ", "H-")
         .replace("Cross", "X")
         .replace("Circle", "O")
         .replace("South", "S")
@@ -2104,6 +2492,14 @@ pub fn run(
             let old_age = ui.game.age_ticks;
             let effect = match incoming {
                 Event::Key(key) => ui.handle(key, &config.game),
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => {
+                    ui.zoom_by(true);
+                    Effect::Continue
+                }
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollDown => {
+                    ui.zoom_by(false);
+                    Effect::Continue
+                }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Right) => {
                     ui.open(Menu::Home);
                     ui.native_request = Some(NativeKind::Context);
@@ -2657,6 +3053,106 @@ mod graphics_tests {
             .collect();
         assert!(text.contains("R R R"), "{text}");
     }
+    #[test]
+    fn pending_reset_is_cancelled_on_micro_resize_and_cannot_replace_pet() {
+        let (config, mut ui) = pet();
+        let saved = ui.game.clone();
+        ui.viewport.set((18, 6));
+        ui.ask_reset();
+        assert!(ui.confirm_reset);
+        ui.viewport.set((10, 4));
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(!ui.confirm_reset);
+        assert!(ui.adopt_character.is_none());
+        assert_eq!(ui.game, saved);
+        ui.handle(key(KeyCode::Char('n')), &config.game);
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.game, saved);
+    }
+    #[test]
+    fn micro_menu_keeps_selected_option_and_both_navigation_prompts() {
+        let (config, mut ui) = pet();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(12, 6)).unwrap();
+        ui.open(Menu::Home);
+        ui.menu_selected = 9;
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("Quit"), "{text}");
+        assert!(text.contains("Enter: OK"), "{text}");
+        assert!(text.contains("Esc: Back"), "{text}");
+    }
+    #[test]
+    fn camera_controls_interpolate_without_steering_or_mutating_pet() {
+        let (config, mut ui) = pet();
+        let saved = ui.game.clone();
+        let position = ui.position;
+        let yaw = ui.yaw;
+        ui.animate(10);
+        ui.handle(key(KeyCode::Char('+')), &config.game);
+        assert_eq!(ui.zoom_target, 125);
+        assert_eq!(ui.zoom_percent, 100);
+        ui.animate(14);
+        assert!(ui.zoom_percent > 100 && ui.zoom_percent < 125);
+        ui.animate(18);
+        assert_eq!(ui.zoom_percent, 125);
+        ui.handle(key(KeyCode::Char('0')), &config.game);
+        ui.animate(26);
+        assert_eq!(ui.zoom_percent, 100);
+        ui.handle(key(KeyCode::Char('z')), &config.game);
+        assert_eq!(ui.camera_view, CameraView::Face);
+        assert_eq!(ui.camera_from_view, CameraView::Pet);
+        ui.animate(30);
+        assert!(ui.camera_blend > 0 && ui.camera_blend < 100);
+        ui.animate(34);
+        assert_eq!(ui.camera_blend, 100);
+        for _ in 0..50 {
+            ui.handle(key(KeyCode::Char('+')), &config.game);
+        }
+        assert_eq!(ui.zoom_target, 400);
+        for _ in 0..100 {
+            ui.handle(key(KeyCode::Char('-')), &config.game);
+        }
+        assert_eq!(ui.zoom_target, 50);
+        let zoom = ui.zoom_target;
+        let mut released = key(KeyCode::Char('+'));
+        released.kind = KeyEventKind::Release;
+        ui.handle(released, &config.game);
+        released.kind = KeyEventKind::Repeat;
+        ui.handle(released, &config.game);
+        assert_eq!(ui.zoom_target, zoom);
+        assert_eq!(ui.game, saved);
+        assert_eq!(ui.position, position);
+        assert_eq!(ui.yaw, yaw);
+    }
+    #[test]
+    fn focused_controller_can_choose_camera_and_zoom_in_graphics_menu() {
+        let (config, mut ui) = pet();
+        let saved = ui.game.clone();
+        ui.open(Menu::Graphics);
+        ui.menu_selected = 14;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.camera_view, CameraView::Face);
+        ui.menu_selected = 15;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.zoom_target, 125);
+        ui.menu_selected = 16;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.zoom_target, 100);
+        ui.menu_selected = 18;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(ui.menu.is_none());
+        assert_eq!(ui.game, saved);
+    }
+
     #[test]
     fn habitat_menu_buys_places_and_hides_once_without_steering_or_repeated_charges() {
         let (config, mut ui) = pet();

@@ -39,7 +39,17 @@ pub struct Config {
     pub characters: Vec<crate::characters::Character>,
     pub renderer: Renderer,
     pub view_mode: ViewMode,
+    pub camera_view: crate::render::CameraView,
+    pub zoom_percent: u16,
+    pub zoom_step_percent: u16,
+    pub zoom_transition_frames: usize,
     pub hud_mode: HudMode,
+    #[serde(skip)]
+    pub hud_golden_ratio: f64,
+    #[serde(skip)]
+    pub hud_landscape_columns: u16,
+    #[serde(skip)]
+    pub hud_portrait_ratio_percent: u16,
     pub hud_minimal_width: u16,
     pub hud_minimal_height: u16,
     pub wander_chance: u8,
@@ -87,7 +97,33 @@ impl Config {
         if let Some(layered) = value.get("tamagotchi") {
             mios_resolver::merge::deep_merge(&mut table, layered.clone());
         }
-        let config: Self = table.try_into().map_err(|e| format!("[tamagotchi]: {e}"))?;
+        let mut config: Self = table.try_into().map_err(|e| format!("[tamagotchi]: {e}"))?;
+        let workspace = |document: &toml::Value, key: &str| {
+            document
+                .get("mcp")
+                .and_then(|v| v.get("tmux"))
+                .and_then(|v| v.get("workspace"))
+                .and_then(|v| v.get(key))
+                .cloned()
+        };
+        let resolved = |key: &str| {
+            workspace(value, key)
+                .or_else(|| workspace(&vendor, key))
+                .ok_or_else(|| format!("missing native workspace layout setting {key}"))
+        };
+        let ratio = resolved("golden_ratio")?;
+        config.hud_golden_ratio = ratio
+            .as_float()
+            .or_else(|| ratio.as_integer().map(|v| v as f64))
+            .ok_or("native workspace golden_ratio must be numeric")?;
+        config.hud_landscape_columns = resolved("resource_min_columns")?
+            .as_integer()
+            .and_then(|v| u16::try_from(v).ok())
+            .ok_or("invalid native workspace resource_min_columns")?;
+        config.hud_portrait_ratio_percent = resolved("portrait_ratio_percent")?
+            .as_integer()
+            .and_then(|v| u16::try_from(v).ok())
+            .ok_or("invalid native workspace portrait_ratio_percent")?;
         config.validate()?;
         Ok(config)
     }
@@ -110,10 +146,26 @@ impl Config {
             return Err("tamagotchi: invalid native/inline dialogue limits".into());
         }
         crate::characters::validate_catalogue(&self.characters)?;
+        if !self.hud_golden_ratio.is_finite()
+            || !(1.1..=4.0).contains(&self.hud_golden_ratio)
+            || !(20..=240).contains(&self.hud_landscape_columns)
+            || !(100..=400).contains(&self.hud_portrait_ratio_percent)
+        {
+            return Err("tamagotchi: invalid inherited native workspace HUD proportions".into());
+        }
         if !(20..=200).contains(&self.hud_minimal_width)
             || !(8..=80).contains(&self.hud_minimal_height)
         {
             return Err("tamagotchi: invalid automatic minimal HUD threshold".into());
+        }
+        if !(50..=400).contains(&self.zoom_percent)
+            || !(5..=100).contains(&self.zoom_step_percent)
+            || !(1..=60).contains(&self.zoom_transition_frames)
+        {
+            return Err(
+                "tamagotchi: zoom must be50..=400 percent, step5..=100 and transition1..=60 frames"
+                    .into(),
+            );
         }
         if self.wander_chance > 100
             || !(1..=60).contains(&self.wander_interval_ticks)

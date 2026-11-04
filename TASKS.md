@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1747 |
+| pending | 1751 |
 | in_progress | 70 |
 | completed | 1865 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3722 |
+| total | 3726 |
 
 0 record(s) carry at least one override.
 
@@ -4446,6 +4446,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3720` Mature MiOS-Mon bodies and kaomoji sprite faces -- completed · owner mios-mons-body-worker · P1
 - `task_3721` Independently verify bodied MiOS-Mons and small terminal dialogue -- completed · owner mios-mons-body-verifier · P1
 - `task_3722` Generate persistent thematic pet habitats with earned and purchased furniture -- completed · owner mios-mons-habitat-worker · P1
+- `task_3723` Make voxel animal identities legible at larger resolutions -- pending · owner mios-tamagotchi-live-coordinator · P1
+- `task_3724` Add framed zoom views and readable animated pet faces -- pending · owner mios-mons-camera-worker · P1
+- `task_3725` Verify readable MiOS-Mons zoom and animated facial states live -- pending · owner mios-mons-clarity-verifier · P1
+- `task_3726` Generate names and hatch statistics with trainable levels and bound identity colors -- pending · owner mios-mons-progression-worker · P1
 
 ## test-coverage
 

@@ -18,3 +18,5 @@ pub mod ui;
 mod game_tests;
 #[cfg(test)]
 mod tests;
+
+pub mod hud;

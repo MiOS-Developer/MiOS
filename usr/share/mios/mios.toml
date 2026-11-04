@@ -20039,6 +20039,10 @@ hud_mode = "auto"            # auto, full, minimal; also selectable in Graphics
 hud_minimal_width = 88       # automatic compact HUD below this terminal width
 hud_minimal_height = 28      # automatic compact HUD below this terminal height
 view_mode = "voxel"          # CPU voxel 3D; pixel keeps the original 8-bit / 16-bit sprite views
+camera_view = "pet"          # room, pet, face; closer views frame actual solid contents
+zoom_percent = 100           # camera magnification,50..400%; + / - and mouse wheel change it
+zoom_step_percent = 25       # one explicit zoom action,5..100 percentage points
+zoom_transition_frames = 8   # smooth camera/zoom interpolation,1..60 animation frames
 wander_chance = 65           # percent chance of an autonomous decision; no controller locomotion
 wander_interval_ticks = 2    # decisions use active simulation ticks, never offline time
 wander_speed = 18            # normalized room units per animation frame (room axis = 1000)

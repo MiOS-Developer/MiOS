@@ -7,7 +7,7 @@ use mios_tamagotchi::{
     config::{Config, HudMode, ViewMode},
     dialogs::{self, Choice, DialogMode},
     game::{Care, Game},
-    render::{snapshot, Colors},
+    render::{CameraView, Colors, snapshot},
     save::{self, Store},
     ui::{self, Ui},
 };
@@ -56,6 +56,12 @@ struct Args {
     /// Automatic, full, or minimal HUD for consoles and remote terminal views.
     #[arg(long, value_enum)]
     hud: Option<HudMode>,
+    /// Frame the room, the complete pet, or a close-up of its face.
+    #[arg(long, value_enum)]
+    camera: Option<CameraView>,
+    /// Camera magnification50..400 percent; zoom crops rather than silently refitting.
+    #[arg(long)]
+    zoom: Option<u16>,
     /// Native floating dialogues when eligible, or inline only.
     #[arg(long, value_enum)]
     dialogs: Option<DialogMode>,
@@ -104,6 +110,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(hud) = args.hud {
         config.hud_mode = hud;
+    }
+    if let Some(camera) = args.camera {
+        config.camera_view = camera;
+    }
+    if let Some(zoom) = args.zoom {
+        config.zoom_percent = zoom;
     }
     if let Some(mode) = args.dialogs {
         config.dialog_mode = mode;
@@ -160,7 +172,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 placed.as_str()
             }
         )?;
-        writeln!(io::stdout().lock(), "MiOS Tamagotchi\n{status}\n{art}\n{} thinks: {thought}\n{} says: {speech}\nSnapshot only; no clock or save writes. Use a terminal to play.",character.name,character.name)?;
+        writeln!(
+            io::stdout().lock(),
+            "MiOS Tamagotchi\n{status}\n{art}\n{} thinks: {thought}\n{} says: {speech}\nSnapshot only; no clock or save writes. Use a terminal to play.",
+            character.name,
+            character.name
+        )?;
         return Ok(());
     }
     if !ephemeral && path.is_none() {
