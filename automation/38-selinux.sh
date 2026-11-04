@@ -159,8 +159,9 @@ allow xdm_t cache_home_t:dir { add_name write create read open getattr search se
 allow xdm_t cache_home_t:file { create write read open getattr setattr };'
 
     MIOS_POLICIES[cockpit_proxy]='
-module mios_cockpit_proxy 1.0;
-require { type systemd_socket_proxyd_t; type websm_port_t; class tcp_socket name_connect; }
+module mios_cockpit_proxy 1.1;
+require { type init_t; type systemd_socket_proxyd_t; type websm_port_t; class tcp_socket name_connect; class process2 nnp_transition; }
+allow init_t systemd_socket_proxyd_t:process2 nnp_transition;
 allow systemd_socket_proxyd_t websm_port_t:tcp_socket name_connect;'
 
     mkdir -p /usr/share/selinux/packages/mios

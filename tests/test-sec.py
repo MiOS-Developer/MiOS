@@ -4153,8 +4153,15 @@ else: sys.exit(2)
         match = re.search(r"MIOS_POLICIES\[cockpit_proxy\]='(.*?)'", source, re.S)
         self.assertIsNotNone(match)
         text = match.group(1)
-        self.assertEqual(text.count("allow "), 1)
+        self.assertEqual(text.count("allow "), 2)
+        self.assertIn("allow init_t systemd_socket_proxyd_t:process2 nnp_transition;", text)
         self.assertIn("allow systemd_socket_proxyd_t websm_port_t:tcp_socket name_connect;", text)
+        self.assertNotIn("allow init_t websm_port_t", text)
+        self.assertNotIn("connect_any", text)
+        import tomllib
+        with open(os.path.join(ar__ROOT, "usr/share/mios/mios.toml"), "rb") as fh:
+            config = tomllib.load(fh)
+        self.assertTrue(config["units"]["mios-cockpit-link.service"]["Service"]["NoNewPrivileges"])
         self.assertNotIn("unreserved_port_t", text)
         self.assertNotIn("name_bind", text)
         te = self.root / "mios_cockpit_proxy.te"
