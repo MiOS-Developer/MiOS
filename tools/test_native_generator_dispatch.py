@@ -51,17 +51,35 @@ class NativeGeneratorDispatch(unittest.TestCase):
         result = self.run_tool('cosign-policy', '--check')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_layered_host_policy_reaches_native_outputs(self):
+    def test_vendor_policy_projection_ignores_runtime_layers(self):
         host = self.root/'etc/mios/mios.toml'
         host.parent.mkdir(parents=True)
         host.write_text('[security.sigstore]\npolicy_mode="reject"\n', encoding='utf-8')
         result = self.run_tool('cosign-policy')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         policy = self.root/'usr/lib/containers/policy.json'
-        self.assertIn('"reject"', policy.read_text())
+        baseline = policy.read_bytes()
+        self.assertIn('"insecureAcceptAnything"', baseline.decode())
+        # A runtime override, even malformed, cannot alter a vendor artifact.
         host.write_text('[security.sigstore\n', encoding='utf-8')
+        result = self.run_tool('cosign-policy', '--check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(policy.read_bytes(), baseline)
+
+        vendor = self.root/'usr/share/mios/mios.toml'
+        source = vendor.read_text()
+        original = 'policy_mode = "insecureAcceptAnything"'
+        self.assertEqual(source.count(original), 1)
+        vendor.write_text(source.replace(original, 'policy_mode = "reject"', 1))
+        result = self.run_tool('cosign-policy')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rendered = policy.read_bytes()
+        self.assertIn('"reject"', rendered.decode())
+        self.assertNotEqual(rendered, baseline)
+        # Invalid vendor data must fail closed and retain the last good bytes.
+        vendor.write_text('[security.sigstore\n', encoding='utf-8')
         result = self.run_tool('cosign-policy')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('"reject"', policy.read_text())
+        self.assertEqual(policy.read_bytes(), rendered)
 
 if __name__ == '__main__': unittest.main()

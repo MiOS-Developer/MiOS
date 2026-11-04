@@ -721,7 +721,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         """F8.2: Negative control: planted unregistered phase fails phase-registry naming the plant."""
         scratch_root = tempfile.mkdtemp(prefix="mios_scratch_f8_")
         try:
-            shutil.copytree(os.path.join(_ROOT, "usr"), os.path.join(scratch_root, "usr"))
+            shutil.copytree(os.path.join(_ROOT, "usr"), os.path.join(scratch_root, "usr"), symlinks=True)
             shutil.copytree(os.path.join(_ROOT, "automation"), os.path.join(scratch_root, "automation"))
             plant_name = "99-unregistered-defect.sh"
             with open(os.path.join(scratch_root, "automation", plant_name), "w") as fh:
@@ -1041,7 +1041,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
         """F4.B2: Registered phase script missing from disk triggers violation."""
         scratch_root = tempfile.mkdtemp(prefix="mios_scratch_f4_")
         try:
-            shutil.copytree(os.path.join(_ROOT, "usr"), os.path.join(scratch_root, "usr"))
+            shutil.copytree(os.path.join(_ROOT, "usr"), os.path.join(scratch_root, "usr"), symlinks=True)
             auto_scratch = os.path.join(scratch_root, "automation")
             os.makedirs(auto_scratch, exist_ok=True)
             proc = execute_gate_cli("phase-registry", root=scratch_root)
