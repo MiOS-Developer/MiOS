@@ -585,10 +585,25 @@ async def _call_agent_complete_inner_orig(name: str, cfg: dict, body: dict,
         async with _kv_paging(client, ep, cfg, _eng):
             if SECONDARY_TOOL_LOOP and body.get("tools"):
                 sess_id = (_conv_key_var.get() if _conv_key_var else None) or None
+                terminal = {}
                 nb["messages"] = await _v1_secondary_tool_loop(
                     client, ep, nb.get("model") or cfg.get("model"),
-                    headers, nb.get("messages") or [], body["tools"], _to,
-                    lambda _s: None, session_id=sess_id)
+                    _hdrs, nb.get("messages") or [], body["tools"], _to,
+                    lambda _s: None, session_id=sess_id, terminal_response=terminal,
+                    max_tokens=nb.get("max_tokens"))
+                if terminal.get("_backend_failed"):
+                    return await _try_failover("tool loop backend failed")
+                if str(terminal.get("content") or "").strip():
+                    content = str(terminal["content"])
+                    try:
+                        _harvest_sub_sources({"choices": [{"message": terminal}]}, content)
+                    except Exception:  # best-effort source collection, as in final completion
+                        pass
+                    return name, _strip_think_tags(content)
+                # Tool-limit/runaway exits need one final answer, with tools
+                # removed so synthesis cannot request another unexecuted action.
+                for key in ("tools", "tool_choice", "parallel_tool_calls"):
+                    nb.pop(key, None)
             r = await client.post(
                 f"{ep}/chat/completions",
                 content=json.dumps(nb).encode("utf-8"), headers=_hdrs,
@@ -601,6 +616,11 @@ async def _call_agent_complete_inner_orig(name: str, cfg: dict, body: dict,
         _rj = r.json()
         ch = (_rj.get("choices") or [])
         msg = (ch[0].get("message") if ch else {}) or {}
+        finish = ch[0].get("finish_reason") if ch else None
+        if finish != "stop" and (finish is not None or SECONDARY_TOOL_LOOP and body.get("tools")):
+            return await _try_failover("incomplete final completion")
+        if msg.get("tool_calls"):
+            return await _try_failover("final completion requested unexecuted tools")
         _content = str(msg.get("content") or "")
         try:   # harvest the sub-agent's real sources into THIS (parent) turn
             _harvest_sub_sources(_rj, _content)

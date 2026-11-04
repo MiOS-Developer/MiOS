@@ -774,3 +774,51 @@ def _run_all_folded_agent_call_suites():
         sys.exit(f"Folded test suite failed: exit code {rc}")
 
 _run_all_folded_agent_call_suites()
+
+
+def _test_child_terminal_completion_contract():
+    import mios_pipe.routing.agent_call as actual
+    async def scenario(mode):
+        _configure()
+        actual.RR_ENABLE = False
+        actual.SECONDARY_TOOL_LOOP = True
+        loops, posts = [], []
+        async def tool_loop(client, endpoint, model, headers, messages, tools, timeout, push, **kwargs):
+            loops.append((kwargs["max_tokens"], headers))
+            if mode == "terminal":
+                kwargs["terminal_response"]["content"] = "Completed grounded child answer."
+            elif mode == "failed":
+                kwargs["terminal_response"]["_backend_failed"] = True
+            return list(messages) + [{"role": "tool", "content": "real tool evidence"}]
+        class Client:
+            async def post(self, url, **kwargs):
+                body = json.loads(kwargs["content"])
+                posts.append(body)
+                assert "tools" not in body and "tool_choice" not in body and "parallel_tool_calls" not in body, body
+                assert body["max_tokens"] == 8
+                assert body["messages"][-1]["content"] == "real tool evidence"
+                message = {"content": "Final grounded synthesis."}
+                reason = "stop"
+                if mode == "truncated": reason = "length"
+                if mode == "missing-stop": reason = None
+                if mode == "unexecuted":
+                    message["tool_calls"] = [{"id": "opaque"}]
+                    reason = "tool_calls"
+                return _Resp(200, {"choices": [{"message": message, "finish_reason": reason}]})
+        actual._v1_secondary_tool_loop = tool_loop
+        name, text = await actual._call_agent_complete(
+            "child", CFG, {**BODY, "max_tokens": 8, "tool_choice": "auto",
+                            "parallel_tool_calls": True}, {}, Client(), prefer_cpu=False)
+        assert name == "child" and loops[0][0] == 8
+        if mode == "terminal":
+            assert text == "Completed grounded child answer." and not posts, (text, posts)
+        elif mode == "failed":
+            assert text == "" and not posts, (text, posts)
+        else:
+            assert len(posts) == 1, posts
+            assert text == ("Final grounded synthesis." if mode == "synthesis" else ""), (mode, text)
+    for mode in ("terminal", "failed", "synthesis", "truncated", "missing-stop", "unexecuted"):
+        asyncio.run(scenario(mode))
+    print("child terminal answer reused; bounded final synthesis has no tools; failures/truncations stay failures: OK")
+
+_test_child_terminal_completion_contract()

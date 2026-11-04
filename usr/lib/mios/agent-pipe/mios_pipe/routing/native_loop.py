@@ -924,6 +924,7 @@ async def _respond_native_loop_direct(
         if kwargs.get("max_tokens") is not None:
             _pb["max_tokens"] = kwargs["max_tokens"]
         _live_streamed = False
+        _answer_started = False
         if emit is not None:
             _pb["stream"] = True
 
@@ -954,6 +955,7 @@ async def _respond_native_loop_direct(
                                 if _reasoning: emit({"reasoning": _reasoning})
                                 if _content:
                                     _raw_parts.append(_content)
+                                    _answer_started = True
                                     emit({"content": _content, "answer": True})
                     if _finish_reason != "stop":
                         raise ValueError("final inference stream ended without a stop acknowledgment")
@@ -969,13 +971,13 @@ async def _respond_native_loop_direct(
             except Exception as _e:  # noqa: BLE001
                 log.warning("native-loop final completion failed: %s", _e)
                 _raw = ""
-        if not _raw.strip() and _council_draft:
+        if not _raw.strip() and _council_draft and not _answer_started:
             # A failed optional synthesis must not erase a completed GPU answer.
             _raw = _council_draft
         _attempted = {_endpoint_key(_backend)} if _endpoint_key else {_backend.rstrip("/").removesuffix("/v1")}
         _refine_key = (_endpoint_key(REFINE_ENDPOINT) if _endpoint_key
                        else REFINE_ENDPOINT.rstrip("/").removesuffix("/v1"))
-        if (not _raw.strip() and automatic_fallback and not force_delegate
+        if (not _raw.strip() and not _answer_started and automatic_fallback and not force_delegate
                 and REFINE_ENDPOINT and _refine_key not in _attempted):
             _attempted.add(_refine_key)
             try:
@@ -994,7 +996,7 @@ async def _respond_native_loop_direct(
                     log.info("native-loop: heavy lane empty -> light-lane fallback answered")
             except Exception as _e2:  # noqa: BLE001
                 log.warning("native-loop light-lane fallback failed: %s", _e2)
-        if not _raw.strip() and automatic_fallback and not force_delegate:
+        if not _raw.strip() and not _answer_started and automatic_fallback and not force_delegate:
             _raw = await _registered_cpu_completion(_m2, _attempted, kwargs.get("max_tokens"))
         for _mm in _m2:
             for _tc in (_mm.get("tool_calls") or []):

@@ -684,49 +684,49 @@ async def _execute_dag_saturated(dag: dict, *, session_id: Optional[str],
                     changed = True
         _check_barrier()
 
-    _cascade_skips()
-    while pending or running:
-        for nid in [x for x in pending if deps[x] <= succeeded]:
-            pending.discard(nid)
-            node = by_id[nid]
-            if event_q is not None:
-                event_q.put_nowait(("engage", node, None))
-            running[asyncio.create_task(_run_node(node))] = nid
-        if not running:
-            if pending:
-                nid = next(iter(pending))
+    try:
+        _cascade_skips()
+        while pending or running:
+            for nid in [x for x in pending if deps[x] <= succeeded]:
                 pending.discard(nid)
                 node = by_id[nid]
                 if event_q is not None:
                     event_q.put_nowait(("engage", node, None))
                 running[asyncio.create_task(_run_node(node))] = nid
-            else:
-                break
-        try:
+            if not running:
+                if pending:
+                    nid = next(iter(pending))
+                    pending.discard(nid)
+                    node = by_id[nid]
+                    if event_q is not None:
+                        event_q.put_nowait(("engage", node, None))
+                    running[asyncio.create_task(_run_node(node))] = nid
+                else:
+                    break
             completed, _ = await asyncio.wait(
                 set(running.keys()), return_when=asyncio.FIRST_COMPLETED)
-        except asyncio.CancelledError:
-            for _t in list(running.keys()):
-                if not _t.done():
-                    _t.cancel()
-            raise
-        for t in completed:
-            nid = running.pop(t)
-            node = by_id[nid]
-            try:
-                node, res = t.result()
-            except BaseException as e:  # noqa: BLE001
-                res = {"success": False, "node_id": nid, "tool": _node_tool(node),
-                       "args": {}, "output": f"node {nid} raised: {e}"}
-            _record(node, res)
-            if res.get("success"):
-                succeeded.add(nid)
-                results_by_id[nid] = res
-                if res.get("_act"):
-                    seen_actions[res["_act"]] = res
-            else:
-                failed.add(nid)
-        _cascade_skips()
+            for t in completed:
+                nid = running.pop(t)
+                node = by_id[nid]
+                try:
+                    node, res = t.result()
+                except BaseException as e:  # noqa: BLE001
+                    res = {"success": False, "node_id": nid, "tool": _node_tool(node),
+                           "args": {}, "output": f"node {nid} raised: {e}"}
+                _record(node, res)
+                if res.get("success"):
+                    succeeded.add(nid)
+                    results_by_id[nid] = res
+                    if res.get("_act"):
+                        seen_actions[res["_act"]] = res
+                else:
+                    failed.add(nid)
+            _cascade_skips()
+    finally:
+        for task in running:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
     if event_q is not None:
         event_q.put_nowait(None)  # sentinel: DAG complete, drainer can stop
     return {
@@ -916,13 +916,14 @@ async def _execute_dag_bounded(dag: dict, *, session_id: Optional[str],
         if _disconnected:
             log.info("non-streaming turn CANCELLED: client disconnected -> swarm stopped")
             await _reap_cpu_lane("client disconnect")
-            return {"success": False, "summary": dag.get("summary", ""),
-                    "nodes_total": len(dag.get("nodes") or []), "nodes_executed": 0,
-                    "node_results": [], "disconnected": True}
+            # A disconnected invocation cannot launch synthesis or native fallback.
         raise
     finally:
-        if _watch is not None:
-            _watch.cancel()
+        owned = [_task] + ([_watch] if _watch is not None else [])
+        for task in owned:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*owned, return_exceptions=True)
 
 async def _execute_dag_emitting(dag: dict, *, session_id: Optional[str],
                                 chat_id: str, model: str,
@@ -1014,11 +1015,20 @@ async def _execute_dag_emitting(dag: dict, *, session_id: Optional[str],
                                              name=name, cfg=cfg,
                                              state="ok" if ok else "down",
                                              context=_node_context(node)))
-        dag_result = await task
+        if not task.done() and (_my_cancel.is_set() or time.monotonic() > _turn_deadline):
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            dag_result = {"success": False, "summary": dag.get("summary", ""),
+                          "nodes_total": len(dag.get("nodes") or []), "nodes_executed": 0,
+                          "node_results": [], "timed_out": not _my_cancel.is_set(),
+                          "superseded": _my_cancel.is_set()}
+        else:
+            dag_result = await task
         yield ("result", dag_result)
     finally:
         if not task.done():
             task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         if _sup and _CHAT_CANCEL.get(chat_id) is _my_cancel:
             _CHAT_CANCEL.pop(chat_id, None)
 

@@ -1036,6 +1036,57 @@ def _run_council_httpx_dispatch_contract():
     print("canonical dispatch sends exact CPU URLs/models/auth/context and cancels actual pending HTTPX response: OK")
 
 
+
+def _run_partial_stream_never_replays_or_substitutes():
+    from mios_pipe.routing import native_loop as native
+    from unittest import mock
+    async def scenario(mode, council=False):
+        _base_configure({}, [], [])
+        replacements = []
+        class PartialClient(_FakeClient):
+            async def post(self, url, **kwargs):
+                replacements.append(url)
+                return _FakeResp("Replacement that must not be appended.")
+            def stream(self, *args, **kwargs):
+                class Stream:
+                    status_code = 200
+                    async def __aenter__(self): return self
+                    async def __aexit__(self, *args): return False
+                    async def aiter_lines(self):
+                        yield "data: " + json.dumps({"choices": [{"delta": {
+                            "content": "Visible partial answer."}, "finish_reason": None}]})
+                        if mode == "transport":
+                            raise OSError("stream interrupted after visible answer")
+                        yield "data: " + json.dumps({"choices": [{"delta": {},
+                            "finish_reason": "length" if mode == "length" else None}]})
+                        yield "data: [DONE]"
+                return Stream()
+        async def cpu(*args, **kwargs):
+            replacements.append("cpu")
+            return "CPU answer that must not be appended."
+        async def loop(client, endpoint, model, headers, messages, *args, **kwargs):
+            if council: kwargs["terminal_response"]["content"] = "Completed earlier GPU draft."
+            return list(messages)
+        M._v1_secondary_tool_loop = loop
+        M.REFINE_ENDPOINT = "http://different-refine.invalid"
+        M.httpx = types.SimpleNamespace(AsyncClient=PartialClient, Timeout=lambda *a, **k: None)
+        with mock.patch.object(native, "_registered_cpu_completion", cpu),              mock.patch.object(native, "_selected_council_reviews",
+                               _async_const([("cpu", "Independent review")] if council else [])):
+            response = await M._respond_native_loop_direct(
+                {}, streaming=True, chat_id="partial", model="m", session_id=None,
+                last_user_text="Explain this", persona_system="", messages=[],
+                target_agents=["cpu"] if council else None)
+            wire = b"".join([chunk async for chunk in response.body_iterator]).decode()
+        assert wire.count("Visible partial answer.") == 1, wire
+        assert "Replacement" not in wire and "CPU answer" not in wire and "earlier GPU draft" not in wire, wire
+        assert '"code": "inference_unavailable"' in wire and '"finish_reason": "stop"' not in wire, wire
+        assert wire.count("data: [DONE]") == 1 and not replacements, (wire, replacements)
+    for mode in ("transport", "length", "missing-stop"):
+        asyncio.run(scenario(mode))
+        asyncio.run(scenario(mode, council=True))
+    print("after visible answer tokens, partial stream failures never replay CPU/refine/council drafts: OK")
+
+
 if __name__ == "__main__":
     _run_progress_and_completion_contract()
     _run_all_folded_native_loop_suites()
@@ -1050,3 +1101,4 @@ if __name__ == "__main__":
     _run_explicit_delegate_binding_contract()
     _run_council_request_cancellation_contract()
     _run_council_httpx_dispatch_contract()
+    _run_partial_stream_never_replays_or_substitutes()

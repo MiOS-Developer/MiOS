@@ -362,6 +362,126 @@ def _run_all_folded_dag_exec_suites():
         import sys
         sys.exit(f"Folded test suite failed: exit code {rc}")
 
+
+def test_saturated_cancellation_drains_owned_nodes():
+    from mios_pipe.routing import dag_exec as actual
+    from unittest import mock
+    async def scenario(cancel):
+        entered, closed = set(), set()
+        ready = asyncio.Event()
+        async def client(): return object()
+        async def node(n, *args, **kwargs):
+            entered.add(n["id"])
+            if len(entered) == 2: ready.set()
+            if not cancel:
+                return {"node_id": n["id"], "success": True, "output": "done"}
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0.01)
+                closed.add(n["id"])
+        dag = {"nodes": [{"id": "one"}, {"id": "two"}]}
+        with mock.patch.object(actual, "_get_client", client),              mock.patch.object(actual, "_execute_dag_node", node),              mock.patch.object(actual, "_record_dag_node_row", lambda *args: None),              mock.patch.object(actual, "_scratchpad_note", lambda *args, **kwargs: None):
+            task = asyncio.create_task(actual._execute_dag_saturated(dag, session_id=None))
+            await asyncio.wait_for(ready.wait(), 0.5)
+            if cancel:
+                task.cancel()
+                try: await task
+                except asyncio.CancelledError: pass
+                else: raise AssertionError("DAG caller cancellation swallowed")
+                assert closed == entered, (closed, entered)
+            else:
+                result = await task
+                assert result["success"] and result["nodes_executed"] == 2, result
+    asyncio.run(scenario(False))
+    asyncio.run(scenario(True))
+    print("[PASS] ready-queue executes both nodes and awaits every cancelled child cleanup")
+
+
+def test_bounded_cancellation_drains_disconnect_watcher():
+    from mios_pipe.routing import dag_exec as actual
+    from unittest import mock
+    async def scenario():
+        entered, closed = asyncio.Event(), set()
+        async def dag(*args, **kwargs):
+            entered.set()
+            try: await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0.01)
+                closed.add("dag")
+        class Request:
+            async def is_disconnected(self):
+                try: await asyncio.Event().wait()
+                finally:
+                    await asyncio.sleep(0.01)
+                    closed.add("watcher")
+        with mock.patch.object(actual, "execute_dag", dag),              mock.patch.object(actual, "REQUEST_CANCEL_ENABLE", True):
+            task = asyncio.create_task(actual._execute_dag_bounded(
+                {"nodes": [{"id": "one"}]}, session_id=None, request=Request()))
+            await entered.wait()
+            await asyncio.sleep(0)
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+            else: raise AssertionError("bounded cancellation swallowed")
+            assert closed == {"dag", "watcher"}, closed
+    asyncio.run(scenario())
+    print("[PASS] bounded DAG cancellation drains execution and disconnect watcher")
+
+
+def test_emitting_deadline_cancels_before_join():
+    from mios_pipe.routing import dag_exec as actual
+    from unittest import mock
+    async def scenario():
+        closed = asyncio.Event()
+        async def dag(*args, **kwargs):
+            try: await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0.01)
+                closed.set()
+        async def reap(*args): pass
+        async def consume():
+            return [row async for row in actual._execute_dag_emitting(
+                {"nodes": [{"id": "one"}]}, session_id=None, chat_id="cleanup", model="m")]
+        with mock.patch.object(actual, "execute_dag", dag),              mock.patch.object(actual, "_reap_cpu_lane", reap),              mock.patch.object(actual, "TURN_DEADLINE_S", 0.01):
+            rows = await asyncio.wait_for(consume(), 1.0)
+        assert closed.is_set() and rows[-1][0] == "result", rows
+        assert rows[-1][1]["timed_out"] is True and not rows[-1][1]["success"], rows
+        assert "cleanup" not in actual._CHAT_CANCEL
+    asyncio.run(scenario())
+    print("[PASS] streaming deadline cancels and drains infinite DAG before reporting timeout")
+
+
+
+def test_disconnect_propagates_instead_of_resuming_synthesis():
+    from mios_pipe.routing import dag_exec as actual
+    from unittest import mock
+    async def scenario():
+        entered, closed = asyncio.Event(), asyncio.Event()
+        async def dag(*args, **kwargs):
+            entered.set()
+            try: await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0.01)
+                closed.set()
+        class Request:
+            async def is_disconnected(self):
+                await entered.wait()
+                return True
+        async def reap(*args): pass
+        with mock.patch.object(actual, "execute_dag", dag),              mock.patch.object(actual, "_reap_cpu_lane", reap),              mock.patch.object(actual, "REQUEST_CANCEL_ENABLE", True):
+            try:
+                await actual._execute_dag_bounded({"nodes": [{"id": "one"}]},
+                                                 session_id=None, request=Request())
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("disconnect returned a result that could launch more inference")
+        assert closed.is_set()
+    asyncio.run(scenario())
+    print("[PASS] disconnect cancels invocation instead of resuming synthesis/fallback")
+
+
 if __name__ == "__main__":
     _run_all_folded_dag_exec_suites()
     test_verb_node_dispatches_via_broker()
@@ -374,4 +494,8 @@ if __name__ == "__main__":
     test_node_deepens_fast_lane_only()
     test_reap_cpu_lane_disabled_noop()
     test_deepen_early_exit()
+    test_saturated_cancellation_drains_owned_nodes()
+    test_bounded_cancellation_drains_disconnect_watcher()
+    test_emitting_deadline_cancels_before_join()
+    test_disconnect_propagates_instead_of_resuming_synthesis()
     print("\nok")
