@@ -153,6 +153,11 @@ pub fn priv_tls(socket: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     Ok((cert, key))
 }
 
+/// The authorization decision is independent of the configured login name.
+fn group_authorizes_user(uid: u32, gid: u32, group_gid: u32, listed_member: bool) -> bool {
+    uid >= 1000 && (gid == group_gid || listed_member)
+}
+
 /// Re-verify on auto-reconnect that `username` exists, has `uid >= 1000`, and is a member of `group_name`.
 pub fn check_user_authorized(username: &str, group_name: &str) -> bool {
     let Ok(c_user) = std::ffi::CString::new(username) else {
@@ -175,14 +180,14 @@ pub fn check_user_authorized(username: &str, group_name: &str) -> bool {
         if grp.is_null() {
             return false;
         }
-        if gid == (*grp).gr_gid {
+        if group_authorizes_user(uid, gid, (*grp).gr_gid, false) {
             return true;
         }
         let mut gr_mem = (*grp).gr_mem;
         while !gr_mem.is_null() && !(*gr_mem).is_null() {
             let member = std::ffi::CStr::from_ptr(*gr_mem);
             if member.to_bytes() == username.as_bytes() {
-                return true;
+                return group_authorizes_user(uid, gid, (*grp).gr_gid, true);
             }
             gr_mem = gr_mem.add(1);
         }
@@ -382,11 +387,21 @@ mod tests {
     }
 
     #[test]
-    fn check_user_authorized_enforces_uid_and_group() {
+    fn check_user_authorized_rejects_missing_and_system_accounts() {
         assert!(!check_user_authorized("root", "root"));
         assert!(!check_user_authorized("root", "mios-rdp"));
         assert!(!check_user_authorized("no-such-user-mios", "mios-rdp"));
-        assert!(!check_user_authorized("mios", "no-such-group-mios"));
-        assert!(check_user_authorized("mios", "mios-rdp"));
+        assert!(!check_user_authorized("root", "no-such-group-mios"));
+        assert!(!check_user_authorized("operator\0invalid", "mios-rdp"));
+        assert!(!check_user_authorized("operator", "group\0invalid"));
+    }
+
+    #[test]
+    fn group_authorization_enforces_uid_and_primary_or_supplementary_membership() {
+        assert!(group_authorizes_user(1000, 1000, 1000, false));
+        assert!(group_authorizes_user(1400, 1400, 810, true));
+        assert!(!group_authorizes_user(1400, 1400, 810, false));
+        assert!(!group_authorizes_user(999, 810, 810, true));
+        assert!(!group_authorizes_user(0, 0, 0, true));
     }
 }
