@@ -95,6 +95,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-cursor-apply` | Sets the X11 root-window default cursor via XDefineCursor to ensure consistent cursor themes across GTK4/Xwayland windows where explicit cursor names are missing, using settings from mios.toml. |
 | `usr/libexec/mios/mios-cursor-ensure` | Ensures the global system cursor theme (Bibata) is correctly installed and linked in /usr/share/icons or ~/.local/share/icons based on available privileges to guarantee consistent cursor rendering... |
 | `usr/libexec/mios/mios-daemon` | Consolidated MiOS core daemon that unifies log classification, refusal detection, and cron task evaluation into a single llama.cpp /v1-backed process, outputting a unified state.json for the OWUI... |
+| `usr/libexec/mios/mios-dashboard` | Canonical dashboard compatibility entry: native SSOT snapshots and the existing interactive monitor; no embedded service roster. |
 | `usr/libexec/mios/mios-dashboard-render-issue.sh` | bash Composites the MiOS dashboard into /etc/issue.d/30-mios.issue so it AI-related: /usr/libexec/mios/mios-dashboard-render-issu... |
 | `usr/libexec/mios/mios-day0-reset` | Purges volatile runtime data (sessions, tool_calls, knowledge, logs) from the pgvector agent DB (via parameterized mios-db --pg) plus OWUI's sqlite chats and filesystem caches, while preserving core... |
 | `usr/libexec/mios/mios-db` | Unified MiOS shared-state CLI fronting the agent backends: PostgreSQL/pgvector for cross-cutting state (--pg), Open WebUI's SQLite webui.db (--owui), and local OpenAI-compat embeddings on... |
@@ -302,7 +303,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 272 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 273 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)

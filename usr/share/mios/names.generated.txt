@@ -3272,6 +3272,7 @@ packages.windows.verify_probes  MIOS_PACKAGES_WINDOWS_VERIFY_PROBES
 packages.windows.bin_map  MIOS_PACKAGES_WINDOWS_BIN_MAP
 packages.windows.btop_config_dir  MIOS_PACKAGES_WINDOWS_BTOP_CONFIG_DIR
 browser_ai.enable  MIOS_BROWSER_AI_ENABLE
+browser_ai.smart_window  MIOS_BROWSER_AI_SMART_WINDOW
 browser_ai.package  MIOS_BROWSER_AI_PACKAGE
 browser_ai.provider_url  MIOS_BROWSER_AI_PROVIDER_URL
 browser_ai.prefs  MIOS_BROWSER_AI_PREFS
@@ -8610,6 +8611,7 @@ containers.mios-headscale.Container.Pod  MIOS_CONTAINERS_MIOS_HEADSCALE_CONTAINE
 containers.mios-headscale.Container.User  MIOS_CONTAINERS_MIOS_HEADSCALE_CONTAINER_USER
 containers.mios-headscale.Container.Volume  MIOS_CONTAINERS_MIOS_HEADSCALE_CONTAINER_VOLUME
 containers.mios-headscale.Install.WantedBy  MIOS_CONTAINERS_MIOS_HEADSCALE_INSTALL_WANTEDBY
+containers.mios-headscale.Service.ExecCondition  MIOS_CONTAINERS_MIOS_HEADSCALE_SERVICE_EXECCONDITION
 containers.mios-headscale.Service.Delegate  MIOS_CONTAINERS_MIOS_HEADSCALE_SERVICE_DELEGATE
 containers.mios-headscale.Service.Restart  MIOS_CONTAINERS_MIOS_HEADSCALE_SERVICE_RESTART
 containers.mios-headscale.Service.RestartSec  MIOS_CONTAINERS_MIOS_HEADSCALE_SERVICE_RESTARTSEC

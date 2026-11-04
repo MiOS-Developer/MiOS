@@ -46,7 +46,6 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-cephfs-quota.service` | `usr/lib/systemd/system` | MiOS CephFS Tenant Dynamic Quota Enforcement Service |
 | `mios-cephfs-quota.timer` | `usr/lib/systemd/system` | Periodic CephFS Tenant Dynamic Quota Enforcement Timer |
 | `mios-chrony-ptp.service` | `usr/lib/systemd/system` | MiOS Chrony PTP Drop-in Generator |
-| `mios-cockpit-link.container` | `usr/share/containers/systemd` | MiOS' Cockpit web-console discovery shim (Podman Desktop link) |
 | `mios-cockpit-link.service` | `usr/lib/systemd/system` | MiOS' Cockpit Link Proxy Service |
 | `mios-cockpit-link.socket` | `usr/lib/systemd/system` | MiOS' Cockpit Link Proxy Socket |
 | `mios-compute.target` | `usr/lib/systemd/system` | MiOS' Compute Role |
@@ -233,5 +232,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (225 unit(s)) -->
+<!-- derived from tracked unit files (224 unit(s)) -->
 <!-- /MIOS-GEN:units -->

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4127,
+  "total_files_scanned": 4129,
   "total_metadata_entries": 3388,
   "total_hints": 3382,
   "total_functions_indexed": 2105,
-  "total_related_links": 6645,
+  "total_related_links": 6650,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -8639,9 +8639,10 @@
     },
     {
       "path": "tests/test-mios-cli-dispatcher.py",
-      "hint": "Test suite for task_343: Compiled binary CLI dispatcher (/usr/bin/mios).",
+      "hint": "Compiled CLI dispatcher checks and offline /usr/bin/mios layered AI configuration tests.",
       "related": [
         "usr/bin/mios",
+        "usr/lib/mios/mios_toml.py",
         "src/mios-rs/miosd/src/cli.rs"
       ],
       "functions": [],
@@ -14814,6 +14815,7 @@
       "path": "usr/bin/mios",
       "hint": "The primary CLI entry point for the MiOS system, providing an OpenAI-compatible agent shell that handles tool-calling, system prompt resolution, and streaming responses from the Hermes-Agent gateway.",
       "related": [
+        "/usr/lib/mios/mios_toml.py",
         "/usr/lib/mios/tools/chat-completions-api/",
         "/usr/libexec/mios/tools",
         "/etc/mios/install.env",
@@ -21240,7 +21242,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-cockpit-link.service",
-      "hint": "Service file for mios-cockpit-link proxy. Uses systemd-socket-proxyd to proxy to host Cockpit socket.",
+      "hint": "Native Cockpit proxy for the configured public and discovery listeners; the socket owns both bindings.",
       "related": [
         "usr/lib/systemd/system/mios-cockpit-link.socket"
       ],
@@ -21251,7 +21253,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-cockpit-link.socket",
-      "hint": "Socket file for mios-cockpit-link proxy. Maps port 8091 on host/WSL to the cockpit service.",
+      "hint": "Native Cockpit public and discovery listeners projected from the canonical ports.",
       "related": [
         "usr/lib/systemd/system/mios-cockpit-link.service"
       ],
@@ -26119,6 +26121,19 @@
       "functions": [
         "_atomic_write_state"
       ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/mios-dashboard",
+      "hint": "Canonical dashboard compatibility entry: native SSOT snapshots and the existing interactive monitor; no embedded service roster.",
+      "related": [
+        "tools/native/mios-gen/src/main.rs",
+        "usr/libexec/mios/mios-mon.py",
+        "etc/profile.d/50-mios.sh"
+      ],
+      "functions": [],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
@@ -31983,15 +31998,6 @@
     {
       "path": "usr/share/containers/systemd/mios-ceph.container",
       "hint": "MiOS mios-ceph container. (WS-7 pods-as-SSOT).",
-      "related": [],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/share/containers/systemd/mios-cockpit-link.container",
-      "hint": "MiOS mios-cockpit-link container. (WS-7 pods-as-SSOT).",
       "related": [],
       "functions": [],
       "doc": null,
