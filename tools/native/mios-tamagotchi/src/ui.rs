@@ -1593,7 +1593,7 @@ impl Ui {
                 )
             };
             self.draw_dialogue(screen, config, colors, renderer, body, true);
-        } else if layout.landscape || (info.height >= 10 && info.width >= 18) {
+        } else if layout.landscape || (info.height >= 8 && info.width >= 18) {
             self.draw_information(screen, config, colors, info, frame, layout.landscape);
         } else {
             let control_rows = 2.min(info.height);
@@ -1729,7 +1729,7 @@ impl Ui {
         frame: usize,
         landscape: bool,
     ) {
-        let expanded_controls = info.width >= 28 && info.height >= 10;
+        let expanded_controls = info.width >= 28 && info.height >= 8;
         let footer_rows: u16 = if expanded_controls { 6 } else { 3 };
         let footer_rows = footer_rows.min(info.height);
         let upper = Rect::new(
@@ -4635,7 +4635,7 @@ mod direct_navigation_regressions {
     }
     #[test]
     fn back_never_quits_and_nested_back_returns_parent_without_changing_pet() {
-        for (width, height) in [(12, 6), (62, 30), (61, 45), (4, 2)] {
+        for (width, height) in [(12, 6), (61, 26), (62, 30), (61, 45), (4, 2)] {
             let (config, mut ui) = pet();
             let before = ui.game.clone();
             draw(&ui, &config, width, height);
@@ -4693,7 +4693,7 @@ mod direct_navigation_regressions {
     }
     #[test]
     fn paused_phone_controls_explain_resume_and_mouse_resume_does_not_feed() {
-        for (width, height) in [(12, 6), (62, 30), (61, 45)] {
+        for (width, height) in [(12, 6), (61, 26), (62, 30), (61, 45)] {
             let (config, mut ui) = pet();
             ui.hud_mode = HudMode::Minimal;
             ui.game.paused = true;

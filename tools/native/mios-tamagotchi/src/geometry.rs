@@ -22,7 +22,7 @@ pub struct Part {
 }
 
 /// Head-space anchor, already lifted and scaled exactly like its volumes.
-/// face_center/face_half describe the padded 21x7 expression texture in XY.
+/// face_center/face_half bound the normalized expression region in head-local XY.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Head {
     pub center: [f32; 3],

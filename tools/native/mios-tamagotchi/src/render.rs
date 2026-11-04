@@ -651,7 +651,7 @@ fn draw_surface_glyphs(
         let target = [
             (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0),
             if index == texture.text.len() / 2 {
-                0.68
+                0.84
             } else {
                 0.45
             },
@@ -2203,10 +2203,47 @@ mod camera_tests {
         ] {
             for columns in [12, 16] {
                 let (small_before, small_after) = facial_marks(&sprite, renderer, columns);
-                let small = mark_bounds(&small_before, &small_after);
+                // At this resolution the meaningful result is separated,
+                // readable terminal glyphs, not a minimum area of bitmap ink.
+                // In particular a one-row kaomoji must not fail for being thin.
+                let mut visible = Vec::new();
+                for y in small_after.area.y..small_after.area.bottom() {
+                    for x in small_after.area.x..small_after.area.right() {
+                        let before = &small_before[(x, y)];
+                        let after = &small_after[(x, y)];
+                        assert_eq!(before.bg, after.bg, "{renderer:?}: Pet {columns}");
+                        if before != after {
+                            let glyph = after.symbol().chars().next().unwrap();
+                            assert!("(^_^)".contains(glyph), "{renderer:?}: {glyph}");
+                            visible.push((x, y, glyph));
+                        }
+                    }
+                }
+                let mut eyes: Vec<_> = visible.iter().filter(|p| p.2 == '^').collect();
+                eyes.sort_by_key(|p| p.0);
+                assert_eq!(eyes.len(), 2, "{renderer:?}: Pet {columns}: {visible:?}");
+                let left = visible
+                    .iter()
+                    .find(|p| p.2 == '(')
+                    .expect("small head must retain a clean opening parenthesis");
+                let right = visible
+                    .iter()
+                    .find(|p| p.2 == ')')
+                    .expect("small head must retain a clean closing parenthesis");
                 assert!(
-                    small.0 >= 8 && small.1 >= 2,
-                    "{renderer:?}: Pet {columns}: {small:?}"
+                    left.0 < eyes[0].0 && eyes[0].0 + 1 < eyes[1].0 && eyes[1].0 < right.0,
+                    "{renderer:?}: Pet {columns}: merged or reordered features {visible:?}"
+                );
+                let mouth = visible
+                    .iter()
+                    .find(|p| p.2 == '_')
+                    .expect("frontal small head must retain its mouth below the real nose");
+                assert_eq!(visible.len(), 5, "{renderer:?}: Pet {columns}: {visible:?}");
+                assert!(
+                    eyes[0].0 < mouth.0
+                        && mouth.0 < eyes[1].0
+                        && mouth.1 > eyes[0].1.max(eyes[1].1),
+                    "{renderer:?}: Pet {columns}: mouth must sit below/between the eyes {visible:?}"
                 );
             }
             let marks: Vec<_> = [28, 44, 68]
