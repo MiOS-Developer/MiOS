@@ -3988,6 +3988,7 @@ class CockpitSelinuxPolicy(unittest.TestCase):
         self.config = dict(ports=[8110, 8120], labels={}, vendor={}, installed=False)
         self.db.write_text(json.dumps(self.config))
         self.events = self.root / "calls.jsonl"
+        self.events.touch()
         self.bin = self.root / "bin"
         self.bin.mkdir()
         tool = self.bin / "tool"
@@ -4038,10 +4039,34 @@ else: sys.exit(2)
         state.update(values)
         self.db.write_text(json.dumps(state))
 
-    def run_loader(self):
+    def run_loader(self, paths_library=None):
         import subprocess
-        return subprocess.run(["bash", os.path.join(ar__ROOT, "usr/libexec/mios/selinux-init")],
-                              env=self.env, capture_output=True, text=True, timeout=30)
+        # Run the unchanged production loader and the real checkout library.
+        # Lean CI does not install the overlay into its own /usr. Only this
+        # interpreter's exact canonical paths-library request is redirected.
+        bridge = r'''
+readonly MIOS_FIXTURE_PATHS_LIBRARY="$2"
+source() {
+    if [[ "$1" == /usr/lib/mios/paths.sh ]]; then
+        shift
+        builtin source "$MIOS_FIXTURE_PATHS_LIBRARY" "$@"
+    else
+        builtin source "$@"
+    fi
+}
+source "$1"
+'''
+        return subprocess.run(
+            ["bash", "-c", bridge, "mios-policy-fixture",
+             os.path.join(ar__ROOT, "usr/libexec/mios/selinux-init"),
+             str(paths_library or os.path.join(ar__ROOT, "usr/lib/mios/paths.sh"))],
+            env=self.env, capture_output=True, text=True, timeout=30)
+
+    def test_missing_checkout_paths_library_fails_before_policy_writes(self):
+        result = self.run_loader(paths_library=self.root / "absent-paths.sh")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("absent-paths.sh", result.stderr)
+        self.assertEqual(self.calls(), [])
 
     def calls(self):
         return [json.loads(line) for line in self.events.read_text().splitlines()]

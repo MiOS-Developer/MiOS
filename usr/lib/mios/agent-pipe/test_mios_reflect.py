@@ -72,7 +72,7 @@ class _FakeResp:
         self._content = content
 
     def json(self):
-        return {"choices": [{"message": {"content": self._content}}]}
+        return {"choices": [{"message": {"content": self._content}, "finish_reason": "stop"}]}
 
 def _mk_client(content):
     class _FakeClient:
@@ -153,7 +153,7 @@ class _JResp:
         self.status_code = status
 
     def json(self):
-        return {"choices": [{"message": {"content": self._content}}]}
+        return {"choices": [{"message": {"content": self._content}, "finish_reason": "stop"}]}
 
 def _mk_judge_client(content, status=200):
     class _C:
@@ -343,11 +343,25 @@ class _FakeClient_react_reflexion:
     def __init__(self, scripted_messages):
         self._q = list(scripted_messages)
         self.calls = 0
+        self.requests = []
 
     async def post(self, url, content=None, headers=None, timeout=None):
         self.calls += 1
-        msg = self._q.pop(0) if self._q else {"content": "done."}
-        return _Resp({"choices": [{"message": msg}]})
+        self.requests.append((url, json.loads(content), headers, timeout))
+        item = self._q.pop(0) if self._q else {"content": "done."}
+        if isinstance(item, tuple):
+            msg, finish = item
+        else:
+            msg = item
+            finish = "tool_calls" if msg.get("tool_calls") else "stop"
+        return _Resp({"choices": [{"message": msg, "finish_reason": finish}]})
+
+_REFLECT_READ_TOOLS = [{
+    "type": "function",
+    "function": {"name": "read_file", "description": "Read a fixture file",
+                 "parameters": {"type": "object", "properties": {"path": {"type": "string"}},
+                                "additionalProperties": False}},
+}]
 
 def t_reflexion_gate():
     class FakeConfig:
@@ -392,7 +406,7 @@ def t_reflexion_gate():
     sl._rescue_tool_calls = lambda *a: []
 
     res_msgs = asyncio.run(sl._v1_secondary_tool_loop(
-        client, "http://endpoint", "model-1", {}, [], [{"name": "read_file"}], 10, lambda *a: None,
+        client, "http://endpoint", "model-1", {}, [], _REFLECT_READ_TOOLS, 10, lambda *a: None,
         session_id="session-1"
     ))
 
@@ -453,7 +467,7 @@ def t_tool_failure_reflexion_flow():
     sl._exec_tool_calls = mock_exec_failed
 
     res_msgs = asyncio.run(sl._v1_secondary_tool_loop(
-        client, "http://endpoint", "model-1", {}, [], [{"name": "read_file"}], 10, lambda *a: None,
+        client, "http://endpoint", "model-1", {}, [], _REFLECT_READ_TOOLS, 10, lambda *a: None,
         session_id="session-100"
     ))
 
@@ -502,7 +516,7 @@ def t_superstep_checkpoints():
     sl._exec_tool_calls = mock_exec_ok
 
     asyncio.run(sl._v1_secondary_tool_loop(
-        client, "http://endpoint", "model-1", {}, [], [{"name": "read_file"}], 10, lambda *a: None,
+        client, "http://endpoint", "model-1", {}, [], _REFLECT_READ_TOOLS, 10, lambda *a: None,
         session_id="session-react-1"
     ))
 
@@ -581,12 +595,118 @@ def t_dag_execution_checkpoint_resume():
     checkpoint_2_saved = any(table == "session" and "superstep_2" in row.get("id") for table, row in created_queries)
     _check_react_reflexion("dag-resume: saved level 2 checkpoint to session table", checkpoint_2_saved)
 
+
+def t_incomplete_tool_turn_never_executes_or_checkpoints():
+    from unittest import mock
+    for finish in (None, "length"):
+        rows, executed, terminal = [], [], {}
+        async def read(*args, **kwargs): return []
+        def create(table, row, **kwargs):
+            rows.append((table, row)); return "fixture"
+        async def execute(*args, **kwargs):
+            executed.append(args)
+            raise AssertionError("incomplete tool completion executed")
+        sl.configure(secondary_tool_max_iters=2, db_read=read, db_create=create,
+                     db_fire=lambda sql: None, db_post=lambda sql: sql)
+        message = {"tool_calls": [{"id": "incomplete-call", "type": "function",
+                                  "function": {"name": "read_file", "arguments": "{}"}}]}
+        client = _FakeClient_react_reflexion([(message, finish)])
+        with mock.patch.object(sl, "_exec_tool_calls", execute):
+            asyncio.run(sl._v1_secondary_tool_loop(
+                client, "http://selected.invalid/v1", "selected-model", {}, [],
+                _REFLECT_READ_TOOLS, 10, lambda *args: None,
+                session_id="incomplete-session", terminal_response=terminal,
+                max_tokens=41))
+        _check_react_reflexion("incomplete tool response fails closed before actions/checkpoints",
+                              not executed and not rows and terminal.get("_incomplete") is True)
+        url, body, headers, timeout = client.requests[0]
+        _check_react_reflexion("explicit selected binding and generation limit reach tool loop",
+                              url == "http://selected.invalid/v1/chat/completions"
+                              and body["model"] == "selected-model" and body["max_tokens"] == 41
+                              and body["tools"] == _REFLECT_READ_TOOLS)
+
+def t_reflexion_httpx_wire_contract():
+    import httpx
+    from unittest import mock
+    import mios_pipe.routing.reflect as actual_reflect
+    async def scenario():
+        requests, rows, executed, repaired = [], [], [], []
+        responses = [
+            {"message": {"tool_calls": [{"id": "failed", "type": "function",
+                "function": {"name": "read_file", "arguments": '{"path":"missing"}'}}]},
+             "finish_reason": "tool_calls"},
+            {"message": {"tool_calls": [{"id": "corrected", "type": "function",
+                "function": {"name": "read_file", "arguments": '{"path":"present"}'}}]},
+             "finish_reason": "tool_calls"},
+            {"message": {"content": "Read the file."}, "finish_reason": "stop"},
+            {"message": {"content": "Read the file."}, "finish_reason": "stop"},
+        ]
+        def transport(request):
+            body = json.loads(request.content)
+            requests.append((str(request.url), body))
+            if request.url.host == "monitor.invalid":
+                return httpx.Response(200, json={"choices": [{
+                    "message": {"content": "Retry the corrected fixture path."},
+                    "finish_reason": "stop"}]})
+            return httpx.Response(200, json={"choices": [responses.pop(0)]})
+        async def execute(calls, push, allow_write=False):
+            executed.append((calls, allow_write))
+            call = calls[0]
+            result = {"success": call["id"] == "corrected"}
+            if not result["success"]: result["error"] = "missing fixture"
+            return [{"role": "tool", "tool_call_id": call["id"],
+                     "content": json.dumps(result)}], True
+        async def repair(node, result, context, session_id):
+            repaired.append((node, session_id))
+            return {"tool": "read_file", "args": {"path": "present"}, "rationale": "use verified fixture"}
+        async def read(*args, **kwargs): return []
+        def create(table, row, **kwargs):
+            rows.append((table, row)); return "fixture"
+        config = types.SimpleNamespace(_toml_section=lambda section: {
+            "reflexion_enable": True, "tool_max_iters": 4, "replan_max": 1,
+        } if section == "agent_pipe" else {})
+        sl.configure(secondary_tool_max_iters=4, db_read=read, db_create=create,
+                     daemon_diagnose_model="monitor-model",
+                     daemon_diagnose_endpoint="http://monitor.invalid/v1",
+                     daemon_diagnose_enable=True,
+                     db_fire=lambda sql: None, db_post=lambda sql: sql,
+                     apply_outbound_auth=lambda *args: None,
+                     endpoint_supports_parallel_tools=lambda *args: False)
+        with mock.patch.dict(sys.modules, {"mios_config": config}), \
+             mock.patch.object(sl, "_exec_tool_calls", execute), \
+             mock.patch.object(actual_reflect, "reflect_on_step_failure", repair), \
+             mock.patch.dict(sys.modules["mios_reflect"].__dict__, {"reflect_on_step_failure": repair}):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+                terminal = {}
+                messages = await sl._v1_secondary_tool_loop(
+                    client, "http://selected.invalid/v1", "selected-model", {}, [],
+                    _REFLECT_READ_TOOLS, 10, lambda *args: None, allow_write=False,
+                    session_id="wire-session", terminal_response=terminal, max_tokens=41)
+        primary = [(url, body) for url, body in requests if "selected.invalid" in url]
+        monitors = [(url, body) for url, body in requests if "monitor.invalid" in url]
+        assert len(primary) == 4 and len(monitors) == 1, requests
+        assert all(url == "http://selected.invalid/v1/chat/completions"
+                   and body["model"] == "selected-model"
+                   and body["max_tokens"] == 41 for url, body in primary)
+        assert monitors[0][1]["model"] == "monitor-model"
+        assert len(executed) == 2 and all(allowed is False for calls, allowed in executed)
+        assert repaired[0][0]["args"] == {"path": "missing"} and repaired[0][1] == "wire-session"
+        assert any(table == "event" and row["kind"] == "reflexion_retry" for table, row in rows)
+        checkpoints = [row for table, row in rows if table == "session" and row["kind"] == "checkpoint"]
+        assert checkpoints and "superstep_idx" in checkpoints[0]["meta"] and "messages" in checkpoints[0]["meta"]
+        assert any("SYSTEM REFLEXION" in str(message.get("content")) for message in messages)
+        assert terminal["content"] == "Read the file."
+    asyncio.run(scenario())
+    _check_react_reflexion("real HTTPX stop/tool_calls wire preserves explicit binding, read-only kwargs, retry event, prompt, checkpoint and final answer", True)
+
 def _main_react_reflexion():
     print("=== Running task_31 ReAct/Reflexion Durable Loop Tests ===")
     t_reflexion_gate()
     t_tool_failure_reflexion_flow()
     t_superstep_checkpoints()
     t_dag_execution_checkpoint_resume()
+    t_incomplete_tool_turn_never_executes_or_checkpoints()
+    t_reflexion_httpx_wire_contract()
     print("=== task_31 ReAct/Reflexion Durable Loop Tests Done ===")
     sys.exit(1 if _fails_react_reflexion > 0 else 0)
 
