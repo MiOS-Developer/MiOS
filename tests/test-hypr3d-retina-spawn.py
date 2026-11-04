@@ -16,7 +16,8 @@
 #   2. cli (MIOS_GEN = a built mios-gen): `mios-gen hyprland-3d-spawn` on monitor fixtures against the oracle; a
 #      "fixed" criterion and bad arguments are refused.
 #   3. upstream (MIOS_H3D_UPSTREAM = a checkout of the current upstream HEAD): every SSOT patch applies in order (the
-#      retina and transform patches last, after the frame-rate patch), the patched source parses the new keys, and its
+#      reviewed SDK-specific source when a compatibility hold is declared, otherwise HEAD), retaining the
+#      frame-rate/retina/transform prerequisite chain. The patched source parses the new keys, and its
 #      static_assert compiles -- and fails when kFovDeg or LOGICAL_PX_PER_UNIT change (negative control).
 #   4. nested (MIOS_H3R_NEST_SIG + _XDG + _WL + _STATUS + MIOS_H3R_NEW_SO + MIOS_H3R_QML + MIOS_GEN +
 #      MIOS_H3R_SSOT: a NESTED Hyprland, never the live session): measured on screen -- M = 1 and work-area centring
@@ -191,18 +192,20 @@ class Static(unittest.TestCase):
         self.assertTrue(h["config"]["render"]["texel_sharp"])
         # no hard-coded window placement left in the room config: the policy derives it per output
         self.assertNotIn("window_scale", h["config"].get("windows", {}))
-        patches = [p for p in h["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p and "room-input" not in p and "input-transitions" not in p]  # trailing delta patch
+        patches = h["patches"]  # Later independent deltas do not change these prerequisite edges.
         self.assertEqual(len(patches), len(set(patches)))
         edge = patches.index("usr/share/mios/hyprland/patches/hypr3d-mios-edge-quality.patch")
         self.assertLess(edge, len(patches) - 2)
         idx_patch = patches.index(PATCH)
         self.assertEqual(patches[idx_patch - 1], FRAME_RATE, "ordered after the frame-rate patch")
-        if patches[-1] == HUD_CURSOR:
-            self.assertEqual(patches[-4:], [PATCH, TRANSFORM, CRT, HUD_CURSOR])
-        elif patches[-1] == CRT:
-            self.assertEqual(patches[-3:], [PATCH, TRANSFORM, CRT])
-        else:
-            self.assertEqual(patches[-2:], [PATCH, TRANSFORM], "retina spawn, then rotated outputs, last")
+        ordered = [PATCH, TRANSFORM]
+        if CRT in patches:
+            ordered.append(CRT)
+        if HUD_CURSOR in patches:
+            ordered.append(HUD_CURSOR)
+        start = patches.index(PATCH)
+        self.assertEqual(patches[start:start + len(ordered)], ordered,
+                         "retina, output transform, CRT and HUD cursor retain their prerequisite order")
         for p in patches:
             self.assertTrue(os.path.isfile(os.path.join(ROOT, p)), p)
 
@@ -363,6 +366,7 @@ class Upstream(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp(prefix="h3r-up-")
         cls.work = os.path.join(cls.tmp, "src")
         subprocess.run(["git", "-c", "safe.directory=*", "clone", "-q", UPSTREAM, cls.work], check=True)
+        cls.select_build_revision(cls.work)
         cls.applied = []
         for p in ssot()["desktop"]["hyprland"]["hypr3d"]["patches"]:
             r = subprocess.run(["git", "apply", "--check", os.path.join(ROOT, p)], cwd=cls.work, capture_output=True,
@@ -370,6 +374,19 @@ class Upstream(unittest.TestCase):
             cls.applied.append((p, r.returncode, r.stderr))
             if r.returncode == 0:
                 subprocess.run(["git", "apply", os.path.join(ROOT, p)], cwd=cls.work, check=True)
+
+    @classmethod
+    def select_build_revision(cls, work):
+        h = ssot()["desktop"]["hyprland"]
+        hold = h["hypr3d"].get("compatibility")
+        if not hold:
+            return
+        if (hold.get("hyprland_version") != h["hyprglass"]["hyprland_version"]
+                or not re.fullmatch(r"[0-9a-fA-F]{40}", hold.get("revision", ""))
+                or not hold.get("reason", "").strip()):
+            raise AssertionError("invalid reviewed compositor compatibility hold")
+        subprocess.run(["git", "-C", work, "fetch", "-q", "--depth=1", "origin", hold["revision"]], check=True)
+        subprocess.run(["git", "-C", work, "checkout", "-q", hold["revision"]], check=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -385,7 +402,7 @@ class Upstream(unittest.TestCase):
             self.assertEqual(ordered[index + 2], CRT)
 
     def test_upstream_is_the_latest_head(self):
-        """Never pinned: the checkout is at the upstream default branch's HEAD (skipped offline)."""
+        """The acquisition checkout tracks upstream HEAD; the build may select its reviewed SDK hold."""
         r = subprocess.run(["git", "-c", "safe.directory=*", "ls-remote", "https://github.com/samine825/Hypr3D.git", "HEAD"],
                            capture_output=True, text=True, timeout=60)
         if r.returncode:
@@ -400,6 +417,7 @@ class Upstream(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="h3r-order-", dir=self.tmp)
         work = os.path.join(d, "src")
         subprocess.run(["git", "-c", "safe.directory=*", "clone", "-q", UPSTREAM, work], check=True)
+        self.select_build_revision(work)
 
         def check(p):
             return subprocess.run(["git", "apply", "--check", os.path.join(ROOT, p)], cwd=work, capture_output=True).returncode

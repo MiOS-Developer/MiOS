@@ -37,6 +37,11 @@ for _gen in ux/wm_config_gen.py desktop/gpu_terminal.py win/wt_profile_inject.py
 done
 /usr/libexec/mios/mios-gen build-hyprglass --root / --srpm "${_hl_sources[0]}"
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name hypr3d --srpm "${_hl_sources[0]}"
+# Compiled CRT interface is an image-producer postcondition, not a lean source-CI assumption.
+if [[ "$(/usr/libexec/mios/mios-toml-get desktop.hyprland.hypr3d enabled)" == true ]]; then
+    _h3d_artifact="$(/usr/libexec/mios/mios-toml-get desktop.hyprland.hypr3d path)"
+    MIOS_HYPR3D_SO="$_h3d_artifact" python3 "${SCRIPT_DIR}/../tests/test-hypr3d-crt.py" TestHypr3DCrtBinary
+fi
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-pacing --srpm "${_hl_sources[0]}"
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-appmenu --srpm "${_hl_sources[0]}"
 rm -rf -- "$_hl_rpms"

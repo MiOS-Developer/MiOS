@@ -35,7 +35,8 @@ class RoomTable(unittest.TestCase):
         cls.env = {k: v for k, v in os.environ.items() if not (k.startswith('MIOS_') and 'TOML' in k)}
         cls.env['HOME'] = str(cls.root / 'home')
         cls.env['XDG_CONFIG_HOME'] = str(cls.root / 'home/.config')
-        cls.room = tomllib.loads(cls.text)['keybindings']['global']['controller']['room']
+        cls.controller = tomllib.loads(cls.text)['keybindings']['global']['controller']
+        cls.room = cls.controller['room']
 
     @classmethod
     def tearDownClass(cls):
@@ -96,8 +97,14 @@ class RoomTable(unittest.TestCase):
         self.assertEqual(hold['output']['actions'], ['quickshell:keymap-toggle'])
         self.assertEqual(hold['pad']['sequences'][0], 0, 'a hold does not also cycle the view')
 
-    def test_guide_tap_opens_the_drawer_and_guide_layer_does_not(self):
-        self.assertEqual(self.replay('desktop-3d', [key(GUIDE), key(GUIDE, 0)])['output']['actions'], ['quickshell:drawer-toggle'])
+    def test_guide_double_tap_opens_the_drawer_and_guide_layer_does_not(self):
+        single = [key(GUIDE), key(GUIDE, 0)]
+        self.assertEqual(self.replay('desktop-3d', single)['output']['actions'], [],
+                         'the first tap waits for the configured double-press window')
+        self.assertEqual(self.replay('desktop-3d', single, tick=self.controller['guide_double_press_ms'] + 1)['output']['actions'],
+                         ['quickshell:drawer-toggle'], 'an expired tap resolves the room single action')
+        self.assertEqual(self.replay('desktop-3d', single + single)['output']['actions'],
+                         ['quickshell:drawer-toggle'], 'a clean double press opens once immediately')
         o = self.replay('desktop-3d', [key(GUIDE), key(SOUTH), key(SOUTH, 0), key(GUIDE, 0)])['output']['actions']
         self.assertNotIn('quickshell:drawer-toggle', o, 'Guide + South is the system layer, not a tap')
 

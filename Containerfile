@@ -12,6 +12,8 @@ COPY etc/                  /ctx/etc/
 COPY VERSION               /ctx/VERSION
 COPY config/artifacts/     /ctx/config/artifacts/
 COPY tools/                /ctx/tools/
+# Strict plugin postcondition runs immediately after phase 65 builds the image artifact.
+COPY tests/test-hypr3d-crt.py /ctx/tests/test-hypr3d-crt.py
 COPY src/                  /ctx/src/
 # Produced by mios-portal-tree stage-run after the off-image builder succeeds.
 # Required by universal phase 67; never copy the whole /artifacts symlink store.
@@ -101,7 +103,7 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
         export MIOS_USER_PASSWORD_HASH; \
     fi; \
     install -d -m 0755 /tmp/build; \
-    cp -a /ctx/automation /ctx/usr /ctx/etc /ctx/VERSION /ctx/config /ctx/tools /ctx/Justfile /ctx/.dotfiles /ctx/src /ctx/artifacts /tmp/build/; \
+    cp -a /ctx/automation /ctx/usr /ctx/etc /ctx/VERSION /ctx/config /ctx/tests /ctx/tools /ctx/Justfile /ctx/.dotfiles /ctx/src /ctx/artifacts /tmp/build/; \
     if [ -d /ctx/.git ]; then \
         cp -a /ctx/.git /tmp/build/.git 2>/dev/null && echo "[ctx] .git -> /tmp/build" \
             || echo "[ctx] WARN: .git copy failed"; \

@@ -13,7 +13,8 @@
 #      (tuned-ppd base profile + sysfs battery per login tier) runs under a Lua stub: the pacing cap and the Hyprglass
 #      rate per tier; nothing when the policy is disabled; a fixed live_resample_fps or Hypr3D rate key is refused.
 #   3. upstream (network; MIOS_TEST_OFFLINE=1 skips; MIOS_FR_UPSTREAM = a checkout instead of a clone): every SSOT Hypr3D
-#      patch applies to upstream HEAD in order, the frame-rate patch last; it does not apply without the earlier ones.
+#      patch applies to the producer-selected revision (a recorded SDK-specific hold, otherwise HEAD) in order;
+#      actual HEAD compatibility is probed separately, and frame-rate needs the preceding patches.
 #   4. nested (MIOS_FR_NEST = framerate/nest with start.sh running, the staged daemon and wallpaper started by run.sh;
 #      never the live session): fake power-profile / UPower / GameMode signals on private buses move the daemon's tier;
 #      the pacing plugin holds the compositor at the tier's rate (never above it; at it whenever frames were deferred --
@@ -249,7 +250,7 @@ class SsotAndSource(unittest.TestCase):
         old = plan.replace("match choose_mode(m, target, policy", "match nearest_mode(m, target")
         self.assertNotIn("match choose_mode(m, target, policy", old)
         # the modeline clock is whole MHz (Hyprland truncates the fraction) and parsed the way Hyprland does
-        self.assertIn("Timing { clock_khz: self.clock_khz / 1000 * 1000, ..*self }", res)
+        self.assertRegex(res, r"Timing\s*\{\s*clock_khz:\s*self.clock_khz\s*/\s*1000\s*\*\s*1000,\s*\.\.\*self\s*\}")
         self.assertIn("(mhz.trunc() as u32) * 1000", res)
         self.assertNotIn("(mhz * 1000.0).round() as u32", res, "the pre-fix parse kept the fraction Hyprland drops")
 
@@ -260,9 +261,9 @@ class SsotAndSource(unittest.TestCase):
         plan = read(os.path.join(ROOT, "src", "mios-rs", "miosd", "src", "framerate", "plan.rs"))
         self.assertIn("pub fn restorable_mode(m: &Monitor, set: Option<&str>, rule: &str) -> Restore", plan)
         self.assertIn("baseline: BTreeMap<String, plan::Restore>,", src)
-        self.assertIn("let here = plan::restorable_mode(m, self.set.get(&m.name).map(String::as_str), &self.cfg.rule(&m.name));", src)
+        self.assertRegex(src, r"let here\s*=\s*plan::restorable_mode\(\s*m,\s*self.set.get\(&m.name\).map\(String::as_str\),\s*&self.cfg.rule\(&m.name\),?\s*\);")
         self.assertIn("self.switch(m, &here, &want,", src)
-        self.assertIn(".filter(|b| b.exact).map(|b| b.mode.clone())", src, "a guessed baseline is not exempt from the confirm guard")
+        self.assertRegex(src, r"\.filter\(\|b\| b.exact\)\s*\.map\(\|b\| b.mode.clone\(\)\)", "a guessed baseline is not exempt from the confirm guard")
         # negative control: the pre-fix capture (the shown WxH@Hz as the baseline and the switch snapshot)
         for pre in ("self.baseline.entry(m.name.clone()).or_insert(current.clone());", "self.switch(m, &current, &want,"):
             self.assertNotIn(pre, src, pre)
@@ -675,7 +676,7 @@ class Projection(unittest.TestCase):
 
 @unittest.skipIf(OFFLINE and not UPSTREAM, "offline")
 class Upstream(unittest.TestCase):
-    def test_hypr3d_patches_apply_in_order_on_head(self) -> None:
+    def test_hypr3d_patches_apply_in_order_on_selected_build_revision(self) -> None:
         patches = ssot()["desktop"]["hyprland"]["hypr3d"]["patches"]
         url = ssot()["desktop"]["hyprland"]["hypr3d"]["source_repository"]
         with tempfile.TemporaryDirectory() as t:
@@ -683,16 +684,36 @@ class Upstream(unittest.TestCase):
             r = run(["git", "clone", "-q", "--depth=1", UPSTREAM or url, src], timeout=300)
             self.assertEqual(r.returncode, 0, r.stderr)
             head = run(["git", "-C", src, "rev-parse", "HEAD"]).stdout.strip()
+            h = ssot()["desktop"]["hyprland"]
+            hold = h["hypr3d"].get("compatibility")
+            selected = head
+            if hold:
+                self.assertEqual(hold["hyprland_version"], h["hyprglass"]["hyprland_version"])
+                self.assertRegex(hold["revision"], r"^[0-9a-fA-F]{40}$")
+                self.assertTrue(hold["reason"].strip(), "an ABI hold needs its recorded reason")
+                # Probe actual HEAD before selecting the same reviewed SDK ref as
+                # the producer. This reports drift; it never silently advances the hold.
+                head_check = run(["git", "-C", src, "apply", "--check", os.path.join(ROOT, patches[0])])
+                evidence("upstream", {"head": head, "head_patch_applies": head_check.returncode == 0,
+                                      "head_patch_error": head_check.stderr.strip(), "selected": hold["revision"], "sdk": hold["hyprland_version"]})
+                print(f"[upstream] HEAD {head}: first reviewed patch rc={head_check.returncode}; "
+                      f"SDK {hold['hyprland_version']} selects {hold['revision']}")
+                selected = hold["revision"]
+                fetched = run(["git", "-C", src, "fetch", "-q", "--depth=1", "origin", selected])
+                self.assertEqual(fetched.returncode, 0, fetched.stderr)
+                checkout = run(["git", "-C", src, "checkout", "-q", selected])
+                self.assertEqual(checkout.returncode, 0, checkout.stderr)
+            self.assertEqual(run(["git", "-C", src, "rev-parse", "HEAD"]).stdout.strip(), selected)
             # negative control: the frame-rate patch alone does not apply to pristine upstream
             alone = run(["git", "-C", src, "apply", "--check", os.path.join(ROOT, FR_PATCH)])
             self.assertNotEqual(alone.returncode, 0, "the frame-rate patch must build on the earlier MiOS patches")
             for p in patches:
                 a = run(["git", "-C", src, "apply", os.path.join(ROOT, p)])
-                self.assertEqual(a.returncode, 0, f"{p} on {head}: {a.stderr}")
+                self.assertEqual(a.returncode, 0, f"{p} on selected {selected} (HEAD {head}): {a.stderr}")
             main = read(f"{src}/src/main.cpp")
             for key in ('"max_fps"', '"glass_fps"', '"glass_cache_mib"', '"live_fps"'):
                 self.assertIn(f"SET_NUM(idx, {key}", main)
-            print(f"\n[upstream] Hypr3D HEAD {head}: {len(patches)} MiOS patches applied")
+            print(f"\n[upstream] Hypr3D selected {selected}: {len(patches)} MiOS patches applied")
 
 
 # ---------------------------------------------------------------- 4. nested

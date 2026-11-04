@@ -22,7 +22,7 @@ PATCH_REL = "usr/share/mios/hyprland/patches/hypr3d-mios-crt.patch"
 PATCH_PATH = os.path.join(ROOT, PATCH_REL)
 HUD_CURSOR_PATCH = os.path.join(ROOT, "usr", "share", "mios", "hyprland", "patches", "hypr3d-mios-hud-cursor.patch")
 BINARY_PATH = os.environ.get("MIOS_HYPR3D_SO") or "/usr/lib64/mios/hypr3d.so"
-SHADERGLASS_BIN = "/usr/bin/mios-shaderglass"
+SHADERGLASS_BIN = os.path.join(ROOT, "usr", "bin", "mios-shaderglass")
 
 
 def ssot() -> dict:
@@ -112,10 +112,11 @@ class TestHypr3DCrtSSOT(unittest.TestCase):
         data = ssot()
         h = data["desktop"]["hyprland"]["hypr3d"]
         self.assertTrue(h.get("enabled"), "Hypr3D must be enabled in SSOT")
-        # hypr3d-mios-enter-morph-scale.patch is a trailing delta on the whole series
-        patches = [p for p in h.get("patches", []) if "enter-morph-scale" not in p and "pip-theatre" not in p and "room-input" not in p and "input-transitions" not in p]
+        patches = h.get("patches", [])
         self.assertIn(PATCH_REL, patches, f"SSOT patches list must contain {PATCH_REL}")
-        self.assertEqual(patches[-2], PATCH_REL, f"{PATCH_REL} must run immediately before the HUD cursor patch")
+        cursor = "usr/share/mios/hyprland/patches/hypr3d-mios-hud-cursor.patch"
+        index = patches.index(PATCH_REL)
+        self.assertEqual(patches[index + 1], cursor, "CRT precedes its HUD cursor dependent; later deltas may follow")
 
         render = h.get("config", {}).get("render", {})
         self.assertTrue(render.get("crt_curvature"), "crt_curvature must be true")
@@ -127,6 +128,20 @@ class TestHypr3DCrtSSOT(unittest.TestCase):
 
         unit_tests = data.get("ci", {}).get("tiers", {}).get("unit", [])
         self.assertIn("tests/test-hypr3d-crt.py", unit_tests, "tests/test-hypr3d-crt.py must be registered in [ci.tiers].unit")
+
+    def test_image_phase_checks_the_real_plugin_after_build(self):
+        with open(os.path.join(ROOT, "automation/65-bake-hyprland.sh"), encoding="utf-8") as source:
+            phase = source.read()
+        producer = phase.index("build-hyprland-plugin --root / --name hypr3d")
+        check = phase.index("TestHypr3DCrtBinary")
+        self.assertLess(producer, check)
+        self.assertIn('MIOS_HYPR3D_SO="$_h3d_artifact" python3', phase)
+        self.assertIn("mios-toml-get desktop.hyprland.hypr3d path", phase)
+        self.assertIn('mios-toml-get desktop.hyprland.hypr3d enabled)" == true', phase)
+        with open(os.path.join(ROOT, "Containerfile"), encoding="utf-8") as source:
+            container = source.read()
+        self.assertIn("COPY tests/test-hypr3d-crt.py", container)
+        self.assertIn("/ctx/tests", container)
 
     def test_ssot_negative_control(self):
         """Negative control: tampering with CRT parameters in SSOT fixture triggers assertion failure."""
@@ -199,7 +214,8 @@ class TestHypr3DCrtPatch(unittest.TestCase):
     def test_controller_cursor_routes_clicks_to_hud_layers(self):
         with open(HUD_CURSOR_PATCH, "r", encoding="utf-8") as f:
             patch = f.read()
-        self.assertIn("hypr3d-mios-hud-cursor.patch", [p for p in ssot()["desktop"]["hyprland"]["hypr3d"]["patches"] if "enter-morph-scale" not in p and "pip-theatre" not in p and "room-input" not in p and "input-transitions" not in p][-1])
+        patches = ssot()["desktop"]["hyprland"]["hypr3d"]["patches"]
+        self.assertLess(patches.index(PATCH_REL), patches.index(os.path.relpath(HUD_CURSOR_PATCH, ROOT)))
         self.assertIn("Compat::interactiveLayerAt(MON, Pointer::mgr()->position()", patch)
         self.assertIn("Compat::deliverClick(layer, local, button, true, nowMs)", patch)
         self.assertIn("g_clientButtonLayer  = layer", patch)
@@ -224,6 +240,7 @@ class TestHypr3DCrtBinary(unittest.TestCase):
         with open(BINARY_PATH, "rb") as f:
             raw = f.read()
 
+        self.assertEqual(raw[:4], b"\x7fELF", "the producer must supply a real ELF plugin")
         required_symbols = (
             b"uCrtCurvature", b"uCrtRadius", b"uCrtScanlines", b"uCrtScanlineWeight", b"uCrtDotmask",
             b"crt_curvature", b"crt_radius", b"crt_scanlines", b"crt_scanline_weight", b"crt_dotmask",
@@ -369,4 +386,10 @@ class TestShaderGlassIntegration(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # Source CI does not build the desktop image. Phase 65 explicitly invokes
+    # TestHypr3DCrtBinary immediately after its real plugin producer; an explicit
+    # test name on argv still runs those same strict image assertions.
+    source_cases = [name for name, case in list(globals().items())
+                    if isinstance(case, type) and issubclass(case, unittest.TestCase)
+                    and case is not TestHypr3DCrtBinary]
+    unittest.main(defaultTest=source_cases)
