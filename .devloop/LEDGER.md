@@ -3889,3 +3889,28 @@ Existing mobile frontdoor independently verified HTTPS200/TLS0 and protected
 login401/TLS0; only desktop client attached, no real phone certification.
 
 Final verifier release/exit ACK received; native verify socket now contains only original game pane0. Worker appended release receipts before exit; above receipt checksums reconciled after that final mutation. Continuing launcher owner coordinator, all four viewports preserved.
+
+## 2026-11-04 · Published graphical dispatch checkpoint · standing goal open
+
+Source [48eb5d812](https://github.com/MiOS-Developer/MiOS/commit/48eb5d812023eea9bfa496faafbcbd976ffd30d1) is deployed and API-confirmed on main. The full popup exposes 62 desktop apps and 12 TUIs across five ready graphical sessions, and its standard TUI entry resolves on desktop and text consoles. Direct Ptyxis executable acknowledgment took 3.531 s with legitimate existing-window reuse; popup-selected Alacritty produced a verified new window in 4.081 s. Two intentional requests, zero duplicate retries. Five continuing games and saves remain paused/unchanged; eight clients and ten existing window geometries were preserved.
+
+The canonical game was launched from the native menu. All 16 roster entries were inspected without adoption or save changes, then the game returned paused. That preserved running process uses SHA256 `362c7c8bcb8485cea84b396a7e63fe77bdd5ca8ac5a3ef019cda109dbdc4b666`; it was not replaced when the new disk artifact below was installed.
+
+Four-CPU MiOS-DEV verified the selected five binaries plus five generation prerequisites: strict static producer, selector 23/native launch 26, private terminal 82/broker 29, normal-game nine, FHS/alias and phase checks, and 29-stage generation/copies. All 318 native/TOML inputs match; source input SHA256 `cb5dd2f5b757bd288ff77d33b653a1e1def6e2d727efc3aafd735320f3a6e2bb`. The matching 13-path overlay SHA256 is `e082d8be3fa715461dff25337e2a95465f1fa7577f99968357a72369e4b761db`.
+
+| Installed native binary | SHA256 |
+|---|---|
+| miosd | `9371d661f4c3bff15a036a4672e5f92306b9e3e6da9c8e839967c59918ae5818` |
+| mios-gen | `e7171335fdc66ec238d6c89525c4bb0aa931214d7fe4f039a1fa55a17204280e` |
+| mios-gate | `3934e4e535d9a3eea529a10d3dcd2edf41621b0fcfcbf39ae470a665718e15ea` |
+| mios-hardcode-lint | `d13f1f46ce8c3e05a8e064822e7aef7d178d0645f596e985467dd4afbb25bf9d` |
+| mios-tamagotchi | `f2a6ef9bdbbc51e658aa4e9bedc8d2ea5b880cc6608d32ec3bd1bc265bdbd774` |
+
+Runtime evidence (local receipt path, SHA256):
+
+- Live popup: `/var/tmp/mios-global-popup-live-proof/receipt.json` — `24b5a8db18486112107d34d983ff5acdee54989bf0231531b55959de1aa58cbb`.
+- Read-only roster: `/var/tmp/mios-game-roster-live-proof/receipt.json` — `4ea34803cf1779342d46a08bf2450809b07c5263d7688d0fa7a43590095f3ae4`.
+- Deployment: `/var/tmp/mios-global-menu-final-deployment/deployment-receipt.json` — `c70051a413db1089aa7a3e135e0290312d3dcf3b8fd35ed3264f1798b39b6388`.
+- Publication: `/var/tmp/mios-global-menu-final-deployment/publication-receipt.json` — `6c0544d9e821807151bd1da7c3e5963a9a5aa53f5f58cbe51c7e976fe769ff8f`.
+
+The standing goal remains open: full native 8B tool selection still fails; the full 55-artifact native catalogue, fresh CI95, image builds and boot acceptance are not proved. The libexec budget remains 328/312 (16 migrations), and generic root-pull native publication remains unresolved. No reboot, service/compositor/input-daemon restart, controller certification or mobile-play certification is claimed.
