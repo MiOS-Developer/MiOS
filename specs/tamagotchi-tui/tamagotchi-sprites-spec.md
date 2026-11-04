@@ -1,5 +1,7 @@
 # Tamagotchi TUI - 8-Bit & Pseudo-16-Bit Sprite Specification
 
+> The implemented sprite/widget foundation is in `tools/native/mios-tamagotchi`. See [the native preview guide](../../usr/share/doc/mios/tamagotchi-tui.md); later features remain planned.
+
 ## Document Information
 - **Version:** 1.0
 - **Created:** 2024-11-03
@@ -169,35 +171,11 @@ pub struct Sprite8BitDefinition {
 ### 2.4 Sprite Rendering (8-Bit to Terminal)
 
 #### 2.4.1 Mono 8x8 to Block Characters
-```rust
-/// Maps 2x2 pixel block to Unicode block character
-fn pixels_to_block(pixels: [bool; 4]) -> char {
-    let index = if pixels[0] { 8 } else { 0 } |
-                if pixels[1] { 4 } else { 0 } |
-                if pixels[2] { 2 } else { 0 } |
-                if pixels[3] { 1 } else { 0 };
-    
-    match index {
-        0b0000 => ' ',      // Empty
-        0b0001 => '▗',      // Lower left
-        0b0010 => '▖',      // Lower right
-        0b0011 => '▝',      // Lower half
-        0b0100 => '▘',      // Upper left
-        0b0101 => '▙',      // Left half
-        0b0110 => '▚',      // Right half
-        0b0111 => '▞',      // All except upper right
-        0b1000 => '▀',      // Upper half left
-        0b1001 => '▛',      // All except lower right
-        0b1010 => '▜',      // All except lower left
-        0b1011 => '▌',      // Right half (vertical)
-        0b1100 => '▄',      // Upper half right
-        0b1101 => '▟',      // All except upper left
-        0b1110 => '▢',      // All except upper right (hollow)
-        0b1111 => '█',      // Full block
-        _ => '▓',           // Fallback (should not happen)
-    }
-}
-```
+Pixels use row-major order `[top_left, top_right, bottom_left, bottom_right]`,
+with weights 1, 2, 4 and 8. The native `render::quadrant` implementation indexes
+`ratatui::symbols::pixel::QUADRANTS`, including the existing half/full block
+characters. Do not map masks by Unicode codepoint arithmetic.
+
 
 #### 2.4.2 Mono 8x8 to ASCII Art
 ```rust
@@ -542,19 +520,21 @@ fn render_multi_char_pixel(
 
 ### 5.2 Scale Detection
 
-```rust
-pub fn detect_scale(terminal_width: u16, terminal_height: u16) -> SpriteScale {
-    let area = terminal_width * terminal_height;
-    
-    match area {
-        a if a < 2000 => SpriteScale::S1,
-        a if a < 4000 => SpriteScale::S2,
-        a if a < 8000 => SpriteScale::S3,
-        a if a < 16000 => SpriteScale::S4,
-        _ => SpriteScale::S5,
-    }
-}
+The native `sprite::fit_scale` selects the largest fitting scale from
+1, 2, 4, 8 and 16 using BOTH drawable dimensions after UI chrome is removed:
+
+```text
+ceil(sprite_width * scale / pixels_per_cell_x) <= viewport_columns
+ceil(sprite_height * scale / pixels_per_cell_y) <= viewport_rows
 ```
+
+Packing is 1x1 for ASCII, 1x2 for half-blocks, 2x2 for quadrants and 2x4 for
+Braille. Intermediate products use `u32`. A requested fixed scale that does not
+fit returns no fit. The scale/use-case table above is illustrative: for the old
+full-cell 8x8 algorithm, S4 needs 64 rows and S5 needs 128 rows, so its 120x60 and
+160x90 examples cannot use those advertised scales. Area alone is insufficient:
+320x25 selects S4 in the retired area algorithm, producing 64 rows in 25.
+
 
 ### 5.3 Scaling Algorithms
 

@@ -10488,6 +10488,9 @@ rust.categories.apps.binary  MIOS_RUST_CATEGORIES_APPS_BINARY
 rust.categories.apps.description  MIOS_RUST_CATEGORIES_APPS_DESCRIPTION
 rust.categories.apps.replaces  MIOS_RUST_CATEGORIES_APPS_REPLACES
 rust.categories.apps.crates  MIOS_RUST_CATEGORIES_APPS_CRATES
+rust.categories.tamagotchi.binary  MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY
+rust.categories.tamagotchi.description  MIOS_RUST_CATEGORIES_TAMAGOTCHI_DESCRIPTION
+rust.categories.tamagotchi.replaces  MIOS_RUST_CATEGORIES_TAMAGOTCHI_REPLACES
 rust.categories.wallpaperd.binary  MIOS_RUST_CATEGORIES_WALLPAPERD_BINARY
 rust.categories.wallpaperd.description  MIOS_RUST_CATEGORIES_WALLPAPERD_DESCRIPTION
 rust.categories.wallpaperd.replaces  MIOS_RUST_CATEGORIES_WALLPAPERD_REPLACES
@@ -10689,6 +10692,12 @@ desktop.launchers.mios-nested-session.ai_hint  MIOS_DESKTOP_LAUNCHERS_MIOS_NESTE
 desktop.launchers.mios-nested-session.ai_related  MIOS_DESKTOP_LAUNCHERS_MIOS_NESTED_SESSION_AI_RELATED
 desktop.launchers.mios-nested-session.actions  MIOS_DESKTOP_LAUNCHERS_MIOS_NESTED_SESSION_ACTIONS
 desktop.hyprland.config.binds.allow_pin_fullscreen  MIOS_DESKTOP_HYPRLAND_CONFIG_BINDS_ALLOW_PIN_FULLSCREEN
+tamagotchi.renderer  MIOS_TAMAGOTCHI_RENDERER
+tamagotchi.color  MIOS_TAMAGOTCHI_COLOR
+tamagotchi.scale  MIOS_TAMAGOTCHI_SCALE
+tamagotchi.tick_ms  MIOS_TAMAGOTCHI_TICK_MS
+tamagotchi.palette  MIOS_TAMAGOTCHI_PALETTE
+tamagotchi.background  MIOS_TAMAGOTCHI_BACKGROUND
 containers.mios-llm-worker@.Container.AddDevice  MIOS_CONTAINERS_MIOS_LLM_WORKER__CONTAINER_ADDDEVICE
 containers.mios-llm-worker@.Container.ContainerName  MIOS_CONTAINERS_MIOS_LLM_WORKER__CONTAINER_CONTAINERNAME
 containers.mios-llm-worker@.Container.Entrypoint  MIOS_CONTAINERS_MIOS_LLM_WORKER__CONTAINER_ENTRYPOINT

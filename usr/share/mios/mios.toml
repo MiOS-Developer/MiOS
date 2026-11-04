@@ -2040,6 +2040,7 @@ windows_shared = [
   "mios-size-ceiling",
   "mios-ssot-lint",
   "mios-task",
+  "mios-tamagotchi",
   "mios-toml-get",
   "mios-template-compile",
   "mios-template-conform",
@@ -2138,8 +2139,8 @@ expose_bin = false
 compat_dirs = ["/usr/libexec/mios"]
 
 [build.native.categories.apps]
-# Native Windows terminal launcher; Linux uses /usr/bin/mios terminal.
-binaries = ["mios-launch"]
+# Native terminal apps. mios-launch is Windows-only; mios-tamagotchi is portable.
+binaries = ["mios-launch", "mios-tamagotchi"]
 install_dir = "/usr/bin"
 expose_bin = false
 compat_dirs = []
@@ -18797,7 +18798,7 @@ max_untested_crates = 0
 binaries = [
   "mios-gate", "mios-gen", "mios-resolver", "mios-serve", "mios-probe",
   "mios-install", "mios-build", "mios-task", "mios-node", "mios-launch",
-  "mios-wallpaperd", "mios-inputd", "mios-pip-gravity", "miosd", "mios-fanctl", "mios-displays", "mios-shot",
+  "mios-wallpaperd", "mios-inputd", "mios-pip-gravity", "miosd", "mios-fanctl", "mios-displays", "mios-shot", "mios-tamagotchi",
 ]
 max_unowned = 128
 universe = [
@@ -18809,7 +18810,7 @@ universe = [
 port-lane = ["gate", "gen"]
 native-tier = [
   "resolver", "serve", "probe", "install", "build", "task", "node", "apps",
-  "wallpaperd", "daemon_meta", "fan", "shot", "input",
+  "wallpaperd", "daemon_meta", "fan", "shot", "input", "tamagotchi",
 ]
 agent-plane = ["ai-plane"]
 build-lane = ["automation-glue"]
@@ -18819,7 +18820,7 @@ qa-lane = ["tests"]
 cli = ["gate", "gen", "resolver", "probe", "install", "build", "task", "daemon_meta", "fan", "shot"]
 services = ["serve"]
 daemons = ["node", "wallpaperd", "input"]
-apps = ["apps"]
+apps = ["apps", "tamagotchi"]
 exempt = ["ai-plane", "automation-glue", "tests"]
 
 [rust.categories.gate]
@@ -18970,6 +18971,11 @@ description = "Windows native terminal launcher and desktop client"
 replaces = []
 crates = ["mios-browser"]
 
+[rust.categories.tamagotchi]
+binary = "mios-tamagotchi"
+description = "Terminal sprite rendering and Inputd-key preview foundation"
+replaces = []
+
 [rust.categories.wallpaperd]
 binary = "mios-wallpaperd"
 description = "Dynamic live wallpaper daemon and directX GPU supervisor"
@@ -19031,7 +19037,7 @@ scope = ["tests/**", "tools/test_*.py"]
 # Sections a renderer or a direct TOML reader owns; never exported as variables.
 # ci/tests: the suite registry reader parses the TOML itself. units: mios-unit-gen
 # renders unit files from mios.toml and never reads globals.
-excluded_sections = ["containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation"]
+excluded_sections = ["containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation", "tamagotchi"]
 # Sections whose canonical names are suppressed, except the emit_keep names below.
 # Their legacy aliases still emit.
 mostly_dead_sections = ["ai", "image", "bootstrap", "profile", "sandbox", "security"]
@@ -19800,3 +19806,12 @@ Service = 'mios-agent-pipe.service'
 
 [units."mios-agent-pipe.socket".Install]
 WantedBy = 'sockets.target'
+
+# Native terminal sprite/input foundation. Gameplay and persistence are separate tasks.
+[tamagotchi]
+renderer = "auto"       # auto, ascii, half-block, quadrant, braille; glyphs are independent of color
+color = "auto"          # auto, mono, ansi, indexed, rgb; NO_COLOR always disables color
+scale = 0               # 0 = largest fitting integer scale; or 1, 2, 4, 8, 16
+tick_ms = 100           # animation poll deadline, 16..60000 milliseconds
+palette = ["#202030", "#70C090", "#FFFFFF", "#B0E0B0"]
+background = "#101018"

@@ -17,8 +17,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1747 |
-| in_progress | 69 |
-| completed | 1850 |
+| in_progress | 68 |
+| completed | 1851 |
 | incomplete | 19 |
 | cancelled | 21 |
 | total | 3706 |
@@ -4432,7 +4432,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### No epic
 
-- `task_3702` Implement the researched Rust Tamagotchi terminal foundation -- in_progress · owner mios-tamagotchi · P1 · size M
+- `task_3702` Implement the researched Rust Tamagotchi terminal foundation -- completed · owner mios-tamagotchi · P1 · size M
 - `task_3703` Integrate and verify the Tamagotchi native binary in the MiOS image -- pending · P2 · size M · depends_on task_3702
 - `task_3704` Expose Tamagotchi render settings through the bootstrap configurator -- pending · P2 · size M · depends_on task_3702
 - `task_3705` Verify Tamagotchi terminal rendering and controller routing on real sessions -- pending · P2 · size M · depends_on task_3702
