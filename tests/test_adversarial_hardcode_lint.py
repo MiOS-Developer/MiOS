@@ -13,6 +13,7 @@ Executes four targeted challenge dimensions:
 from __future__ import annotations
 
 import os
+import importlib.util
 import platform
 import shutil
 import subprocess
@@ -30,7 +31,13 @@ _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 # Fixture date for the cases the lint must FLAG. Assembled at runtime so this
 # source carries no date literal of its own; the fixtures it writes are unchanged.
 _D = "-".join(("2026", "10", "06"))
-_ORACLE_PATH = os.path.join(_ROOT, "tests", "fixtures", "hardcode_lint_reference.py")
+# Load the one test-domain reference without adding a production helper.
+_reference_spec = importlib.util.spec_from_file_location(
+    "mios_hardcode_parity_reference", os.path.join(_HERE, "test_hardcode_lint_parity.py"))
+_reference = importlib.util.module_from_spec(_reference_spec)
+_reference_spec.loader.exec_module(_reference)
+oracle_command = _reference.oracle_command
+_ORACLE_PATH = _reference._ORACLE_PATH
 _SSOT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
 _EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 
@@ -43,6 +50,9 @@ def _locate_rust_bin() -> str | None:
     cargo build writes target/{release,debug}. The native install puts the
     binary on PATH, which is what CI has after its native stage.
     """
+    override = os.environ.get("MIOS_HARDCODE_LINT_BIN")
+    if override is not None:
+        return override if override and os.path.isfile(override) and os.access(override, os.X_OK) else None
     name = "mios-hardcode-lint" + _EXE_SUFFIX
     target = os.path.join(_ROOT, "tools", "native", "target")
     with open(_SSOT_PATH, "rb") as fh:
@@ -66,7 +76,7 @@ def run_oracle(args: list[str], env: dict[str, str] | None = None) -> subprocess
     # its own Python implementation.
     oracle_env = dict(os.environ if env is None else env)
     oracle_env["MIOS_HARDCODE_LINT_NO_NATIVE"] = "1"
-    cmd = [sys.executable, _ORACLE_PATH] + args
+    cmd = oracle_command(args)
     return subprocess.run(cmd, capture_output=True, text=True, env=oracle_env)
 
 
@@ -568,6 +578,11 @@ class TestChallenge4ErrorBehaviorAndParity(HardcodeLintAdversarialTestBase):
 
 class TestReferenceNeverDelegates(unittest.TestCase):
     """The unshipped Python oracle cannot dispatch back to the Rust under test."""
+    def test_explicit_missing_binary_never_selects_an_installed_copy(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"MIOS_HARDCODE_LINT_BIN": "/nonexistent/mios-hardcode-lint"}):
+            self.assertIsNone(_locate_rust_bin())
+
     def test_native_override_does_not_replace_reference_execution(self):
         with tempfile.TemporaryDirectory() as directory:
             fake = os.path.join(directory, "fake-native")
@@ -578,7 +593,7 @@ class TestReferenceNeverDelegates(unittest.TestCase):
             sample = os.path.join(directory, "clean.sh")
             with open(sample, "w", encoding="utf-8") as stream:
                 stream.write("#!/bin/sh\necho ok\n")
-            result = subprocess.run([sys.executable, _ORACLE_PATH, sample],
+            result = subprocess.run(oracle_command([sample]),
                                     env=dict(os.environ, MIOS_HARDCODE_LINT_BIN=fake),
                                     capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)

@@ -34,7 +34,429 @@ from pathlib import Path
 # Resolve repository paths
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
-_ORACLE_PATH = os.path.join(_ROOT, "tests", "fixtures", "hardcode_lint_reference.py")
+_ORACLE_PATH = "independent Python reference embedded in this parity suite"
+# Frozen full source data; this program is never installed.
+_ORACLE_SOURCE = (
+    '#!/usr/bin/env python3\n'
+    '# AI-hint: Test-only frozen migration reference; never installed. Former runtime contract:  Read-only enforcement gate for the NO-HARDCODE law (Law 7): fails on a date or dated attribution in comments, docstrings or .py string prose, and on AI-hint header crash-risks (a BOM not at byte 0, a header above a shebang).\n'
+    '# AI-related: ../../../automation/98-drift-checks.sh, ../../share/mios/mios.toml, ./mios-ai-tag, ../../../CLAUDE.md, tools/native/mios-hardcode-lint/\n'
+    '# AI-functions: _try_native_bin, _date_in_comment_py, _date_in_string_py, _date_in_comment_generic, _header_risk, scan, main\n'
+    '#\n'
+    '# Comments must describe the WHY abstractly, never pin code to a frozen history.\n'
+    '# A date inside served CSS/JS-comment text or a system-prompt string is prose the\n'
+    '# comment scan never sees, so .py adds a string-token scan that flags only a\n'
+    '# whitespace-led date and exempts one used as a VALUE (a protocol-version or\n'
+    '# config literal, or one glued into a URL/slug/identifier); other files use\n'
+    '# quote-aware comment detection. Exit 1 on violation, MIOS_HARDCODE_LINT_SOFT=1\n'
+    '# for advisory; pairs with the surface-parity + module-boundary gates.\n'
+    '"""NO-HARDCODE law enforcement: forbid date-literals in comments/docstrings + dated attributions in string-literal prose + header crash-risks."""\n'
+    '\n'
+    'from __future__ import annotations\n'
+    '\n'
+    'import ast\n'
+    'import io\n'
+    'import os\n'
+    'import re\n'
+    'import subprocess\n'
+    'import sys\n'
+    'import tokenize\n'
+    '\n'
+    "_DATE = re.compile(r'\\b20[0-9]{2}-[01][0-9]-[0-3][0-9]\\b')\n"
+    "_BOM = b'\\xef\\xbb\\xbf'\n"
+    '_EXEMPT = (\n'
+    "    '/var/lib/mios/', '/.git/', '/__pycache__/', '/node_modules/',\n"
+    "    '/usr/share/mios/knowledge/',          # generated knowledge snapshots\n"
+    "    '/.claude/',                           # Claude worktrees\n"
+    "    '/.agents/',                           # Agent worktrees\n"
+    ')\n'
+    "_UNIT_EXT = ('.service', '.socket', '.container', '.timer', '.conf')\n"
+    "_CODE_EXT = ('.py', '.sh', '.bash', '.toml', '.yml', '.yaml', '.ps1', '.psm1') + _UNIT_EXT\n"
+    '\n'
+    '\n'
+    'def _date_in_comment_py(text: str):\n'
+    '    """Yield (lineno, snippet) for a date inside a .py COMMENT or DOCSTRING only."""\n'
+    '    try:\n'
+    '        for t in tokenize.generate_tokens(io.StringIO(text).readline):\n'
+    '            if t.type == tokenize.COMMENT and _DATE.search(t.string):\n'
+    '                yield t.start[0], t.string.strip()[:80]\n'
+    '    except (tokenize.TokenError, IndentationError, SyntaxError):\n'
+    '        return\n'
+    '    try:\n'
+    '        tree = ast.parse(text)\n'
+    '    except SyntaxError:\n'
+    '        return\n'
+    "    lines = text.split('\\n')\n"
+    '    for node in ast.walk(tree):\n'
+    '        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):\n'
+    '            continue\n'
+    "        body = getattr(node, 'body', None) or []\n"
+    '        if (body and isinstance(body[0], ast.Expr)\n'
+    "                and isinstance(getattr(body[0], 'value', None), ast.Constant)\n"
+    '                and isinstance(body[0].value.value, str)):\n'
+    '            c = body[0].value\n'
+    '            for ln in range(c.lineno, (c.end_lineno or c.lineno) + 1):\n'
+    '                if 1 <= ln <= len(lines) and _DATE.search(lines[ln - 1]):\n'
+    '                    yield ln, lines[ln - 1].strip()[:80]\n'
+    '\n'
+    '\n'
+    'def _date_in_string_py(text: str):\n'
+    '    """Yield (lineno, snippet) for a dated ATTRIBUTION baked into a .py STRING\n'
+    '    literal -- the hole that a date inside served CSS/JS-comment text or inside a\n'
+    '    system-prompt string slips through (the #-comment scan never sees string\n'
+    '    content). A date used as a VALUE is legitimate and exempt: a standalone or\n'
+    '    leading literal (a protocol-version id or a date config value is quote-led, so\n'
+    '    the char before it is the opening quote) or one glued into a URL/slug/identifier\n'
+    '    (preceded by a non-space joiner). The forbidden pattern is a date sitting in\n'
+    '    running prose -- structurally, one preceded by WHITESPACE and never the head of\n'
+    '    its own literal -- which is exactly how an `<attribution> <date>` credit reads.\n'
+    '    The discriminator is positional, not lexical (no keyword/English gate)."""\n'
+    '    try:\n'
+    '        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))\n'
+    '    except (tokenize.TokenError, IndentationError, SyntaxError):\n'
+    '        return\n'
+    "    lines = text.split('\\n')\n"
+    '    str_types = {tokenize.STRING}\n'
+    "    fmid = getattr(tokenize, 'FSTRING_MIDDLE', None)  # 3.12+ splits f-strings\n"
+    '    if fmid is not None:\n'
+    '        str_types.add(fmid)\n'
+    '    for t in toks:\n'
+    '        if t.type not in str_types:\n'
+    '            continue\n'
+    '        s = t.string\n'
+    '        for m in _DATE.finditer(s):\n'
+    '            i = m.start()\n'
+    '            if i == 0 or not s[i - 1].isspace():\n'
+    '                continue\n'
+    "            ln = t.start[0] + s[:i].count('\\n')\n"
+    '            snip = lines[ln - 1].strip()[:80] if 1 <= ln <= len(lines) else m.group(0)\n'
+    '            yield ln, snip\n'
+    '\n'
+    '\n'
+    'def _comment_start(line: str) -> int:\n'
+    '    in_s = in_d = False\n'
+    '    for i, ch in enumerate(line):\n'
+    '        if ch == "\'" and not in_d:\n'
+    '            in_s = not in_s\n'
+    '        elif ch == \'"\' and not in_s:\n'
+    '            in_d = not in_d\n'
+    "        elif not in_s and not in_d and ch == '#':\n"
+    "            return -1 if line[:2] == '#!' else i\n"
+    '    return -1\n'
+    '\n'
+    '\n'
+    'def _date_in_comment_generic(text: str):\n'
+    '    """Yield (lineno, snippet) for a date inside a #-comment (quote-aware)."""\n'
+    "    for idx, line in enumerate(text.split('\\n'), 1):\n"
+    '        cs = _comment_start(line)\n'
+    '        if cs >= 0 and _DATE.search(line[cs:]):\n'
+    '            yield idx, line[cs:].strip()[:80]\n'
+    '\n'
+    '\n'
+    'def _header_risk(raw: bytes, path: str):\n'
+    '    """A header crash-risk: a STRANDED file-BOM (PS1 byte-0 rule), or a header line\n'
+    '    ABOVE a shebang the file actually declares. NOT flagged: a U+FEFF inside a string\n'
+    '    literal (legit, e.g. BOM-stripping code), or a sourced script with no shebang."""\n'
+    "    if path.endswith('.ps1') and not raw.startswith(_BOM) and _BOM in raw[:256]:\n"
+    '        return "UTF-8 BOM stranded in PS1 head (must be byte 0 -- breaks irm|iex parse)"\n'
+    "    if path.endswith(('.sh', '.bash')):\n"
+    "        head = raw.decode('utf-8', 'ignore').split('\\n')[:40]\n"
+    "        sb = [i for i, l in enumerate(head) if l.startswith('#!')]\n"
+    '        if sb and sb[0] != 0:\n'
+    '            return "shebang not on line 1 (a header/comment is above it)"\n'
+    '    return None\n'
+    '\n'
+    '_PORT_PATTERNS = [\n'
+    "    re.compile(r'localhost:(\\d+)'),\n"
+    "    re.compile(r'127\\.0\\.0\\.1:(\\d+)'),\n"
+    "    re.compile(r':(\\d{4,5})\\b'),\n"
+    ']\n'
+    '\n'
+    '_IP_PATTERN = re.compile(\n'
+    "    r'\\b(?:[1-9]|\\d{2}|1\\d{2}|2[0-4]\\d|25[0-5])\\.(?:\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])\\.(?:\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])\\.(?:\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])\\b'\n"
+    ')\n'
+    '\n'
+    'def _is_routable_ip(ip_str: str) -> bool:\n'
+    '    if ip_str in ("127.0.0.1", "0.0.0.0"):\n'
+    '        return False\n'
+    "    parts = ip_str.split('.')\n"
+    '    if len(parts) != 4:\n'
+    '        return False\n'
+    '    try:\n'
+    '        p1, p2, p3, p4 = [int(p) for p in parts]\n'
+    '    except ValueError:\n'
+    '        return False\n'
+    '    if p1 == 10:\n'
+    '        return False\n'
+    '    if p1 == 172 and (16 <= p2 <= 31):\n'
+    '        return False\n'
+    '    if p1 == 192 and p2 == 168:\n'
+    '        return False\n'
+    '    if p1 == 100 and (64 <= p2 <= 127):\n'
+    '        return False\n'
+    '    return True\n'
+    '\n'
+    'def _anchor_pattern(pat: str) -> str:\n'
+    "    prefix = r'(?<!\\d)' if not pat.startswith('^') and not pat.startswith(r'\\b') and not pat.startswith(r'(?<!') else ''\n"
+    "    suffix = r'(?!\\d)' if not pat.endswith('$') and not pat.endswith(r'\\b') and not pat.endswith(r'(?!\\d)') and not pat.endswith(r'(?![0-9])') else ''\n"
+    '    return prefix + pat + suffix\n'
+    '\n'
+    '_UNIT_DIRECTIVE_PREFIXES = (\n'
+    "    'listenstream=', 'listendatagram=',\n"
+    "    'execstart=', 'execstartpre=', 'execstartpost=', 'execstop=',\n"
+    "    'exec=',\n"
+    "    'environment=',\n"
+    ')\n'
+    '\n'
+    'def _is_unit_directive_line(line: str, in_multiline: bool) -> tuple[bool, bool]:\n'
+    '    stripped = line.strip()\n'
+    "    if stripped.startswith('#') or stripped.startswith(';') or stripped.startswith('//'):\n"
+    '        return False, in_multiline\n'
+    '    lower = stripped.lower()\n'
+    '    is_directive_start = any(lower.startswith(p) for p in _UNIT_DIRECTIVE_PREFIXES)\n'
+    "    has_bind = '--bind' in stripped\n"
+    '    is_directive = is_directive_start or in_multiline or has_bind\n'
+    "    next_multiline = is_directive and stripped.endswith('\\\\')\n"
+    '    return is_directive, next_multiline\n'
+    '\n'
+    'def _check_ports_ips_py(text: str, filename: str, exempt_patterns: list[str]) -> list[tuple[int, str]]:\n'
+    '    violations = []\n'
+    '    exempt_rx = [re.compile(_anchor_pattern(pat)) for pat in exempt_patterns]\n'
+    '    try:\n'
+    '        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))\n'
+    '    except (tokenize.TokenError, IndentationError, SyntaxError):\n'
+    '        return []\n'
+    '    \n'
+    "    lines = text.split('\\n')\n"
+    '    for t in toks:\n'
+    '        if t.type == tokenize.COMMENT:\n'
+    '            continue\n'
+    '        if t.type == tokenize.STRING and t.string.startswith((\'"""\', "\'\'\'", \'r"""\', "r\'\'\'", \'u"""\', "u\'\'\'")):\n'
+    '            continue\n'
+    '            \n'
+    '        s = t.string\n'
+    '        ln = t.start[0]\n'
+    '        line = lines[ln - 1] if 1 <= ln <= len(lines) else ""\n'
+    '        \n'
+    '        is_line_exempt = False\n'
+    '        for rx in exempt_rx:\n'
+    '            if rx.search(line):\n'
+    '                is_line_exempt = True\n'
+    '                break\n'
+    '        if is_line_exempt:\n'
+    '            continue\n'
+    '            \n'
+    '        for pat in _PORT_PATTERNS:\n'
+    '            for m in pat.finditer(s):\n'
+    '                port_num_str = m.group(1)\n'
+    '                try:\n'
+    '                    port_num = int(port_num_str)\n'
+    '                except ValueError:\n'
+    '                    continue\n'
+    '                if not (1 <= port_num <= 65535):\n'
+    '                    continue\n'
+    '                \n'
+    '                start = m.start()\n'
+    '                end = m.end()\n'
+    "                if end < len(s) and s[end] == ']':\n"
+    '                    continue\n'
+    "                if start > 0 and s[start - 1] in ('[', '-', '+', ':', '/'):\n"
+    '                    continue\n'
+    '                \n'
+    '                violations.append((ln, m.group(0)))\n'
+    '                \n'
+    '        for m in _IP_PATTERN.finditer(s):\n'
+    '            ip_str = m.group(0)\n'
+    '            if _is_routable_ip(ip_str):\n'
+    '                violations.append((ln, ip_str))\n'
+    '                \n'
+    '    return violations\n'
+    '\n'
+    'def _check_ports_ips(text: str, filename: str, exempt_patterns: list[str]) -> list[tuple[int, str]]:\n'
+    '    violations = []\n'
+    "    lines = text.split('\\n')\n"
+    '    exempt_rx = [re.compile(_anchor_pattern(pat)) for pat in exempt_patterns]\n'
+    '    is_unit = filename.endswith(_UNIT_EXT)\n'
+    '    in_multiline = False\n'
+    '\n'
+    '    for idx, line in enumerate(lines, 1):\n'
+    '        stripped = line.strip()\n'
+    "        if stripped.startswith('#') or stripped.startswith('//') or stripped.startswith(';'):\n"
+    '            continue\n'
+    '        \n'
+    '        if is_unit:\n'
+    '            is_directive, in_multiline = _is_unit_directive_line(line, in_multiline)\n'
+    '            if not is_directive:\n'
+    '                continue\n'
+    '\n'
+    '        is_line_exempt = False\n'
+    '        for rx in exempt_rx:\n'
+    '            if rx.search(line):\n'
+    '                is_line_exempt = True\n'
+    '                break\n'
+    '        if is_line_exempt:\n'
+    '            continue\n'
+    '            \n'
+    '        code_part = line\n'
+    '        in_s = in_d = False\n'
+    '        for i, ch in enumerate(line):\n'
+    '            if ch == "\'" and not in_d:\n'
+    '                in_s = not in_s\n'
+    '            elif ch == \'"\' and not in_s:\n'
+    '                in_d = not in_d\n'
+    "            elif not in_s and not in_d and ch == '#':\n"
+    '                code_part = line[:i]\n'
+    '                break\n'
+    '                \n'
+    '        for pat in _PORT_PATTERNS:\n'
+    '            for m in pat.finditer(code_part):\n'
+    '                port_num_str = m.group(1)\n'
+    '                try:\n'
+    '                    port_num = int(port_num_str)\n'
+    '                except ValueError:\n'
+    '                    continue\n'
+    '                if not (1 <= port_num <= 65535):\n'
+    '                    continue\n'
+    '                    \n'
+    '                start = m.start()\n'
+    '                end = m.end()\n'
+    "                if end < len(code_part) and code_part[end] == ']':\n"
+    '                    continue\n'
+    "                if start > 0 and code_part[start - 1] in ('-', '+', ':', '['):\n"
+    '                    continue\n'
+    '                violations.append((idx, m.group(0)))\n'
+    '                \n'
+    '        for m in _IP_PATTERN.finditer(code_part):\n'
+    '            ip_str = m.group(0)\n'
+    '            if _is_routable_ip(ip_str):\n'
+    '                violations.append((idx, ip_str))\n'
+    '                \n'
+    '    return violations\n'
+    '\n'
+    'import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver\n'
+    '\n'
+    '\n'
+    'def _load_allowlist(roots):\n'
+    '    exempt_files = []\n'
+    '    exempt_patterns = []\n'
+    '    for r in roots:\n'
+    '        toml_path = os.path.join(r, "usr/share/mios/mios.toml")\n'
+    '        if os.path.isfile(toml_path):\n'
+    '            data = mios_toml.load_merged(layers=[toml_path])\n'
+    '            sec = mios_toml.section(data, "security.nohc_allowlist")\n'
+    '            exempt_files.extend(sec.get("exempt_files", []))\n'
+    '            exempt_patterns.extend(sec.get("exempt_patterns", []))\n'
+    '            break\n'
+    '    return exempt_files, exempt_patterns\n'
+    '\n'
+    'def scan(roots):\n'
+    '    violations = []\n'
+    '    scanned = 0\n'
+    '    exempt_files, exempt_patterns = _load_allowlist(roots)\n'
+    '    exempt_files_rx = [re.compile(pat) for pat in exempt_files]\n'
+    '    for root in roots:\n'
+    '        if os.path.isfile(root):\n'
+    '            items = [(os.path.dirname(root), os.path.basename(root), root)]\n'
+    '        else:\n'
+    '            items = []\n'
+    '            for dirpath, dirs, files in os.walk(root):\n'
+    "                dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'node_modules')]\n"
+    '                for fn in files:\n'
+    '                    items.append((dirpath, fn, os.path.join(dirpath, fn)))\n'
+    '        for dirpath, fn, p in items:\n'
+    "            rel = p.replace('\\\\', '/')\n"
+    '            if any(x in rel for x in _EXEMPT) or not fn.endswith(_CODE_EXT):\n'
+    '                continue\n'
+    '            try:\n'
+    "                raw = open(p, 'rb').read()\n"
+    '            except OSError:\n'
+    '                continue\n'
+    '            if not raw:\n'
+    '                continue\n'
+    '            scanned += 1\n'
+    '            hr = _header_risk(raw, fn)\n'
+    '            if hr:\n'
+    '                violations.append((p, 0, f"HEADER: {hr}"))\n'
+    "            text = raw.decode('utf-8-sig' if raw[:3] == _BOM else 'utf-8', 'ignore').replace('\\r\\n', '\\n')\n"
+    '            \n'
+    '            is_file_exempt = False\n'
+    '            for rx in exempt_files_rx:\n'
+    '                if rx.search(rel):\n'
+    '                    is_file_exempt = True\n'
+    '                    break\n'
+    '            \n'
+    "            if fn.endswith(('.py', '.sh', '.bash', '.ps1', '.psm1') + _UNIT_EXT) and not is_file_exempt:\n"
+    "                if fn.endswith('.py'):\n"
+    '                    for ln, snip in _check_ports_ips_py(text, fn, exempt_patterns):\n'
+    '                        violations.append((p, ln, f"HARDCODED-PORT/IP: {snip}"))\n'
+    '                else:\n'
+    '                    for ln, snip in _check_ports_ips(text, fn, exempt_patterns):\n'
+    '                        violations.append((p, ln, f"HARDCODED-PORT/IP: {snip}"))\n'
+    '                    \n'
+    "            if 'usr/share/mios/ventoy/autorun' in rel:\n"
+    "                for idx, line in enumerate(text.split('\\n'), 1):\n"
+    '                    if \'chpasswd\' in line and re.search(r\'echo\\s+["\\\'][a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+["\\\']\\s*\\|\\s*chpasswd\', line):\n'
+    '                        violations.append((p, idx, f"PLAINTEXT-CHPASSWD: {line.strip()[:80]}"))\n'
+    '                    \n'
+    '            # A GENERATED file is exempt from the timeless-comment rule: its\n'
+    '            # comments are PROJECTED from mios.toml `comment = "..."` values,\n'
+    '            # where a date is a value and legitimately exempt (the lint is\n'
+    '            # value-aware). It only becomes a #-comment once rendered, and a\n'
+    '            # "DO NOT EDIT" file cannot be hand-corrected -- the fix belongs\n'
+    "            # in mios.toml. Keyed off the file's own generated marker rather\n"
+    '            # than an allowlist, so it can never drift out of date.\n'
+    "            # Both tokens, and only in the file's own top banner -- a\n"
+    '            # GENERATOR mentions "DO NOT EDIT" in the header it EMITS, and\n'
+    '            # generators are authored files that must stay linted.\n'
+    "            _banner = '\\n'.join(text.splitlines()[:4])\n"
+    "            is_generated = 'GENERATED' in _banner and 'DO NOT EDIT' in _banner\n"
+    '            if not is_generated:\n'
+    "                if fn.endswith('.py'):\n"
+    '                    for ln, snip in _date_in_comment_py(text):\n'
+    '                        violations.append((p, ln, f"DATE-IN-COMMENT: {snip}"))\n'
+    '                    for ln, snip in _date_in_string_py(text):\n'
+    '                        violations.append((p, ln, f"DATE-IN-STRING: {snip}"))\n'
+    '                elif not fn.endswith(_UNIT_EXT):\n'
+    '                    for ln, snip in _date_in_comment_generic(text):\n'
+    '                        violations.append((p, ln, f"DATE-IN-COMMENT: {snip}"))\n'
+    '    return violations, scanned\n'
+    '\n'
+    '\n'
+    'def main(argv):\n'
+    "    roots = [a for a in argv[1:] if not a.startswith('--')] or ['.']\n"
+    "    soft = os.environ.get('MIOS_HARDCODE_LINT_SOFT', '0') == '1'\n"
+    '    missing = [r for r in roots if not os.path.exists(r)]\n'
+    '    if missing:\n'
+    "        sys.stderr.write('[mios-hardcode-lint] FAIL: root(s) do not exist: %s\\n'\n"
+    "                         % ', '.join(missing))\n"
+    '        return 1\n'
+    '    v, scanned = scan(roots)\n'
+    '    # An empty scan used to print PASS. The gate passes $ROOT in, so a wrong\n'
+    '    # or empty root linted nothing and still reported clean.\n'
+    '    if scanned == 0:\n'
+    "        sys.stderr.write('[mios-hardcode-lint] FAIL: scanned 0 files under %s -- '\n"
+    "                         'nothing was linted, so this is not a pass\\n' % ', '.join(roots))\n"
+    '        return 1\n'
+    '    if not v:\n'
+    "        print('[mios-hardcode-lint] PASS: %d file(s) scanned; no date-in-comment/string '\n"
+    "              '/ header crash-risk / port-IP hardcode.' % scanned)\n"
+    '        return 0\n'
+    '    for p, ln, msg in v[:60]:\n'
+    '        sys.stderr.write(f"    {p}:{ln}: {msg}\\n")\n'
+    '    if len(v) > 60:\n'
+    '        sys.stderr.write(f"    ... and {len(v) - 60} more\\n")\n'
+    '    sys.stderr.write(f"[mios-hardcode-lint] FAIL: {len(v)} NO-HARDCODE violation(s) "\n'
+    '                     "(strip dates/ports/IPs -> timeless comment/string / env vars; move a header below the shebang/BOM).\\n")\n'
+    '    if soft:\n'
+    '        sys.stderr.write("[mios-hardcode-lint] (MIOS_HARDCODE_LINT_SOFT=1 -> advisory, exit 0)\\n")\n'
+    '        return 0\n'
+    '    return 1\n'
+    '\n'
+    '\n'
+    "if __name__ == '__main__':\n"
+    '    sys.exit(main(sys.argv))\n'
+)
+
+
 _SSOT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
 
 # Detect Rust binary candidates
@@ -48,19 +470,29 @@ _RUST_CANDIDATES = [
     os.path.join(_ROOT, "src", "mios-rs", "target", "debug", "mios-hardcode-lint.exe"),
     os.path.join(_ROOT, "src", "mios-rs", "target", "debug", "mios-hardcode-lint"),
 ]
-_RUST_BIN = next((p for p in _RUST_CANDIDATES if os.path.isfile(p)), None)
+if "MIOS_HARDCODE_LINT_BIN" in os.environ:
+    _RUST_CANDIDATES = [os.environ["MIOS_HARDCODE_LINT_BIN"]]
+_RUST_BIN = next((p for p in _RUST_CANDIDATES if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+
+
+def oracle_command(args: list[str]) -> list[str]:
+    """Run the frozen reference as test data, independent of the native under test."""
+    library = os.path.join(_ROOT, "usr", "lib", "mios")
+    source = _ORACLE_SOURCE.replace(
+        "import ast\n", "import sys\nsys.path.insert(0, " + repr(library) + ")\nimport ast\n", 1)
+    return [sys.executable, "-c", source, *args]
 
 
 def run_oracle(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Runs the canonical Python oracle script."""
-    cmd = [sys.executable, _ORACLE_PATH] + args
+    cmd = oracle_command(args)
     return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
-def run_rust_binary(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str] | None:
-    """Runs the compiled Rust static binary if available."""
+def run_rust_binary(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Runs the required compiled Rust static binary."""
     if not _RUST_BIN:
-        return None
+        raise AssertionError("native mios-hardcode-lint is required for parity")
     cmd = [_RUST_BIN] + args
     return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
@@ -77,6 +509,13 @@ class TestCliFlagsAndInvocation(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_explicit_missing_binary_never_selects_an_installed_copy(self):
+        env = os.environ.copy()
+        env["MIOS_HARDCODE_LINT_BIN"] = os.path.join(self.tmpdir, "missing-native")
+        result = subprocess.run([sys.executable, __file__], env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("native mios-hardcode-lint is required", result.stderr)
 
     def test_cli_single_root_valid_clean(self):
         """Clean directory with one python file exits 0 and reports PASS."""
@@ -696,6 +1135,9 @@ class TestTwoSidedParityControls(unittest.TestCase):
 
 def main() -> int:
     """Runs all parity test cases with formatted reporting."""
+    if not _RUST_BIN:
+        print("native mios-hardcode-lint is required for parity", file=sys.stderr)
+        return 1
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
 
@@ -713,7 +1155,7 @@ def main() -> int:
     print("MiOS Hardcode-Lint Parity & Two-Sided Verification Test Suite")
     print(f"Total Test Cases: {total_tests}")
     print(f"Python Oracle: {_ORACLE_PATH}")
-    print(f"Rust Binary: {_RUST_BIN or 'Not compiled (skipping binary compare)'}")
+    print(f"Rust Binary: {_RUST_BIN or 'missing (required)'}")
     print("=" * 80)
 
     runner = unittest.TextTestRunner(verbosity=2)
