@@ -454,11 +454,14 @@ def test_namespace_tools_real_httpx_contract():
     from mios_mcp_schema import ClientToolProjection
     from mios_pipe.access import authn
     vision = importlib.import_module("mios_pipe.routing.vision")
+    lanes = importlib.import_module("mios_pipe.routing.lanes_resolver")
+    config = importlib.import_module("mios_pipe.kernel.config")
 
     async def exercise():
         requests = []
         streams = []
         mode = "normal"
+        expected_host, expected_model = "gpu.invalid", "gpu"
         body = {"model": "public", "stream": False, "store": False, "max_tokens": 71,
                 "parallel_tool_calls": True, "metadata": {"session_id": "fixture-session"},
                 "tool_choice": {"type": "function", "function": {"name": "search", "namespace": "beta"}},
@@ -503,15 +506,23 @@ def test_namespace_tools_real_httpx_contract():
             assert all(t["type"] == "function" for t in payload["tools"]), payload
             aliases = [t["function"]["name"] for t in payload["tools"]]
             assert len(set(aliases)) == 2
-            assert payload["model"] == "gpu" and payload["max_tokens"] == 71
+            assert request.url.host == expected_host and payload["model"] == expected_model, payload
+            assert payload["max_tokens"] == 71
             assert payload["store"] is False and payload["parallel_tool_calls"] is True
             assert payload["metadata"] == body["metadata"]
-            assert request.headers.get("x-node-key") == "gpu-key"
-            assert "authorization" not in request.headers
+            if expected_host == "gpu.invalid":
+                assert request.headers.get("x-node-key") == "gpu-key"
+                assert "authorization" not in request.headers
+            else:
+                assert request.headers.get("authorization") == "Bearer cpu-key"
+                assert "x-node-key" not in request.headers
             assert payload["tool_choice"]["function"]["name"] == aliases[1]
             assert payload["messages"][1]["tool_calls"][0]["function"]["name"] == aliases[0]
             assert payload["messages"][2]["tool_call_id"] == "prior"
             assert payload["tools"][0]["function"]["parameters"] == body["tools"][0]["tools"][0]["parameters"]
+            if mode == "raw-not-found":
+                return httpx.Response(404, json={"error": {"type": "invalid_request_error",
+                                                         "message": "selected model not found"}})
             if mode == "http-error":
                 return httpx.Response(503, json={"error": {"type": "server_error", "message": "loading"}})
             if mode == "unknown":
@@ -528,12 +539,17 @@ def test_namespace_tools_real_httpx_contract():
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
             async def get_client(): return client
+            pick_gpu = mock.AsyncMock(return_value=("http://gpu.invalid/v1", "gpu"))
             with mock.patch.multiple(vision, _get_client=get_client,
-                     _pick_tool_backend=mock.AsyncMock(return_value=("http://gpu.invalid/v1", "gpu")),
                      _client_tools_loop=mock.AsyncMock(side_effect=AssertionError("caller tools entered host execution")),
                      dispatch_mios_verb=mock.AsyncMock(side_effect=AssertionError("caller tool was executed locally"))), \
-                 mock.patch.multiple(authn, _BACKEND_KEY="cpu-key", _AUTH_HOSTPORTS={"cpu.invalid"},
-                     _AGENT_AUTH_BY_HOSTPORT={"gpu.invalid": "X-Node-Key: gpu-key"}):
+                 mock.patch.multiple(authn, _BACKEND_KEY="cpu-key", _AUTH_HOSTPORTS={"cpu.invalid", "configured.invalid"},
+                     _AGENT_AUTH_BY_HOSTPORT={"gpu.invalid": "X-Node-Key: gpu-key"}), \
+                 mock.patch.multiple(config, BACKEND="http://cpu.invalid/v1", BACKEND_MODEL="cpu"), \
+                 mock.patch.multiple(lanes, _pick_tool_backend=pick_gpu, _TOOL_BACKEND="http://cpu.invalid/v1",
+                     _TOOL_BACKEND_MODEL="cpu", _get_client=get_client,
+                     _toml_section=lambda section: {"agent_model": "public"}), \
+                 mock.patch.dict(__import__("os").environ, {}, clear=True):
                 response = await vision._client_tools_complete(body, False, "fixture", "public")
                 assert response.status_code == 200, response.body
                 reply = json.loads(response.body)
@@ -565,6 +581,30 @@ def test_namespace_tools_real_httpx_contract():
                     response = await vision._client_tools_complete(invalid, False, "fixture", "public")
                     assert response.status_code == 400 and len(requests) == before, response.body
                 print("ok: malformed schemas and unknown/duplicate namespaces fail before inference")
+                expected_host, expected_model = "cpu.invalid", "raw-caller-model"
+                raw = dict(body, model=expected_model)
+                before, picks = len(requests), pick_gpu.await_count
+                response = await vision._client_tools_complete(raw, False, "fixture", expected_model)
+                assert response.status_code == 200 and len(requests) == before + 1
+                assert pick_gpu.await_count == picks
+                print("ok: explicit raw namespace model stays exact on configured backend without GPU substitution")
+                mode = "raw-not-found"
+                before = len(requests)
+                response = await vision._client_tools_complete(raw, False, "fixture", expected_model)
+                assert response.status_code == 404 and len(requests) == before + 1
+                assert json.loads(requests[-1].content)["model"] == expected_model and pick_gpu.await_count == picks
+                print("ok: rejected raw namespace model preserves404 without retrying a different model")
+                mode = "normal"
+                expected_host, expected_model = "configured.invalid", "configured-model"
+                with mock.patch.multiple(config, BACKEND="http://configured.invalid/v1",
+                                         BACKEND_MODEL=expected_model), \
+                     mock.patch.dict(__import__("os").environ, {"MIOS_AGENT_PIPE_BACKEND": "http://configured.invalid/v1"}):
+                    before = len(requests)
+                    response = await vision._client_tools_complete(body, False, "fixture", "public")
+                    assert response.status_code == 200 and len(requests) == before + 1
+                    assert pick_gpu.await_count == picks
+                print("ok: explicit namespace backend selection and its model remain exact")
+                expected_host, expected_model = "gpu.invalid", "gpu"
                 mode = "unknown"
                 response = await vision._client_tools_complete(body, False, "fixture", "public")
                 assert response.status_code == 502, response.body

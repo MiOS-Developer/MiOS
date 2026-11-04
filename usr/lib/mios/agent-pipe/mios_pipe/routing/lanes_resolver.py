@@ -225,6 +225,17 @@ async def _pick_inference_backend(endpoint: str, model: str, *,
                     type(exc).__name__)
         return original
 
+async def _pick_client_inference_backend(requested_model=None) -> tuple:
+    """Resolve the public agent alias while preserving caller-selected model IDs."""
+    from mios_config import BACKEND, BACKEND_MODEL
+    agent_model = str((_toml_section("ai") or {}).get("agent_model") or "").strip()
+    explicit_model = bool(requested_model and requested_model != agent_model)
+    return await _pick_inference_backend(
+        BACKEND, str(requested_model) if explicit_model else BACKEND_MODEL,
+        endpoint_env=("MIOS_AGENT_PIPE_BACKEND",),
+        model_env=("MIOS_AGENT_PIPE_BACKEND_MODEL",), explicit_model=explicit_model)
+
+
 def _lane_resolver_current():
     """The live ``_LANE_RESOLVER`` singleton (None until first resolved). server.py's
     cluster-health route reads it through this getter because the global is REBOUND at

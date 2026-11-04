@@ -653,14 +653,14 @@ async def _client_namespace_tools_complete(body: dict, streaming: bool, chat_id:
     """Adapt caller-owned namespace tools without entering the host tool loop."""
     from mios_mcp_schema import ClientToolProjection, ClientToolSchemaError, ClientToolResponseError
     from mios_pipe.access.authn import _apply_outbound_auth
+    from mios_lanes_resolver import _pick_client_inference_backend
     try:
         projection = ClientToolProjection(body)
     except ClientToolSchemaError as exc:
         return _client_tools_error(str(exc), 400, param="tools", code="invalid_tool_schema")
-    request = projection.body
-    for key in ("mios_flags", "_allow_write", "num_ctx"):
-        request.pop(key, None)
-    endpoint, selected_model = await _pick_tool_backend()
+    request = {k: v for k, v in projection.body.items()
+               if k not in ("mios_flags", "_allow_write", "num_ctx")}
+    endpoint, selected_model = await _pick_client_inference_backend(body.get('model'))
     request["model"], request["stream"] = selected_model, bool(streaming)
     headers = {"Content-Type": "application/json"}
     _apply_outbound_auth(headers, endpoint)
