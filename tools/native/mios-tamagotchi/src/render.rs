@@ -186,7 +186,13 @@ impl Widget for SpriteWidget<'_> {
                         (Some(upper), Some(lower)) => {
                             fg = self.colors.ink(usize::from(upper));
                             bg = self.colors.ink(usize::from(lower));
-                            '▀'
+                            // Identical pixels use foreground coverage throughout the cell;
+                            // translucent terminal backgrounds must not add scan lines.
+                            if upper == lower {
+                                '█'
+                            } else {
+                                '▀'
+                            }
                         }
                         (Some(_), None) => '▀',
                         (None, Some(_)) => '▄',
@@ -234,6 +240,7 @@ pub struct RoomWidget<'a> {
     pub colors: &'a Colors,
     pub expression: crate::sprite::Expression,
     pub frame: usize,
+    pub position: (u16, u16),
 }
 
 impl Widget for RoomWidget<'_> {
@@ -360,16 +367,49 @@ impl Widget for RoomWidget<'_> {
                 10,
             );
         }
-        let body = Rect::new(
-            area.x + area.width / 4,
-            area.y + 1,
-            area.width / 2,
-            area.height.saturating_sub(2),
+        let margin = if area.height >= 12 { 1 } else { 0 };
+        let available_height = area.height.saturating_sub(2 * margin).max(1);
+        let available_width = (area.width / 2).max(1);
+        let (dx, dy) = self.renderer.packing();
+        let compact = self.sprite.downsample_to_fit(
+            available_width.saturating_mul(dx),
+            available_height.saturating_mul(dy),
         );
+        let sprite = &compact;
+        let scale = fit_scale(
+            sprite.width(),
+            sprite.height(),
+            available_width,
+            available_height,
+            self.renderer,
+            self.scale,
+        )
+        .unwrap_or(1);
+        let (columns, rows) = cell_size(sprite.width(), sprite.height(), scale, self.renderer);
+        let columns = (columns as u16).min(area.width);
+        let rows = (rows as u16).min(available_height);
+        let left = area.x
+            + ((u32::from(area.width.saturating_sub(columns))
+                * u32::from(self.position.0.min(1000)))
+                / 1000) as u16;
+        let top = area.y
+            + margin
+            + ((u32::from(available_height.saturating_sub(rows))
+                * u32::from(self.position.1.min(1000)))
+                / 1000) as u16;
+        let body = Rect::new(left, top, columns, rows);
+        // A small floor shadow anchors the volume without needing a graphics GPU.
+        let shadow_y = body.bottom().min(area.bottom().saturating_sub(1));
+        for x in left..left.saturating_add(columns).min(area.right()) {
+            if let Some(cell) = buf.cell_mut((x, shadow_y)) {
+                cell.set_char(if ascii { '.' } else { '▄' })
+                    .set_fg(self.colors.ink(6));
+            }
+        }
         SpriteWidget {
-            sprite: self.sprite,
+            sprite,
             renderer: self.renderer,
-            scale: self.scale,
+            scale,
             colors: self.colors,
         }
         .render(body, buf);
@@ -421,6 +461,9 @@ impl Widget for RoomWidget<'_> {
         };
         let x = area.x + (area.width.saturating_sub(effect.len() as u16)) / 2;
         let y = area.y;
+        if area.height <= 3 {
+            return;
+        }
         for (offset, ch) in effect.chars().enumerate() {
             if let Some(cell) = buf.cell_mut((x + offset as u16, y)) {
                 cell.set_char(ch).set_fg(self.colors.ink(7)).set_bg(wall);

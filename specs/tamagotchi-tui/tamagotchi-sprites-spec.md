@@ -1590,3 +1590,14 @@ Dot positions:
 ---
 
 *End of Document*
+
+### Voxel and compact-view implementation scope (tasks 3713–3715)
+
+The playable implementation adds CPU voxel geometry with depth-tested yaw,
+autonomous stage/needs/seeded-RNG wandering and facial reactions, plus selectable
+Auto/Full/Minimal terminal HUDs. Controllers navigate menus/HUD only, with
+connected/focused native Inputd prompts. Existing pixel-art views and read-only
+ASCII headless output remain available. Compact menus scroll; the smallest
+interactive layout is 20x8. These concrete features do not certify the broader
+future character catalogue, additional economy/social games, physical controller
+coverage, smartwatch browser integration or performance targets in this design.

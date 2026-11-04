@@ -122,6 +122,11 @@ pub enum Care {
 }
 
 impl Game {
+    /// A read-only seed for cosmetic simulation. Presentation keeps its own RNG
+    /// so animation cadence cannot change memory answers or saved gameplay state.
+    pub fn visual_seed(&self) -> u64 {
+        self.rng
+    }
     pub fn new(rules: &Rules, seed: u64) -> Self {
         Self {
             age_ticks: 0,

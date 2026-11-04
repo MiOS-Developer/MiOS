@@ -217,3 +217,47 @@ Run `cargo test -p mios-tamagotchi` and warning-fatal Clippy from `tools/native`
 Rust 1.89 or newer is required for standard-library file locking. The lockfile
 pins Ratatui 0.30.2 and Crossterm 0.29. Local musl/PTY verification does not certify
 execution on an ARM64 node, real Inputd ownership, or live image installation.
+
+### Focused controller prompts
+
+The game reads the native Inputd map and connected-device ownership in a bounded
+background probe. A controller hint is shown only when a connected controller
+belongs to this session and the compositor's focused terminal client has this
+game's pane selected. Detach, foreign focus, unreadable or stale evidence restores
+keyboard hints. Snapshot and demo commands never start controller probes.
+
+The quick-care dock, menus, sprite studio, memory answers and new-pet prompt use
+the resolved positional buttons and controller-family labels. With a focused
+controller, the mapped Back button opens the main menu from the room; choose
+Quit there. Keyboard Q still saves and quits. A controller's system buttons keep
+their native Inputd behavior: Start is not advertised as Pause, and a desktop
+stick that scrolls is not advertised as directional game input.
+
+Controller hints are presentation only. The app consumes the existing terminal
+key projection, never grabs evdev devices or changes desktop input ownership.
+The polling, timeout, stale-age and output limits are vendor settings under
+[tamagotchi]; graphics and menu settings continue to use the embedded sample
+configuration for the user-local trial.
+
+### Autonomous voxel view and compact HUD
+
+The default view is a CPU-rendered 3D voxel MiOS-Mon. Its volumetric body, face,
+limbs and care props rotate with depth occlusion. The classic 8-bit and detailed
+16-bit pixel views remain selectable. Graphics also chooses Auto, Full or Minimal
+HUD; CLI overrides are --view voxel|pixel and --hud auto|full|minimal.
+
+Pet walking and turning are autonomous, using a separate seeded visual RNG and
+active simulation decisions conditioned on life stage, health, energy and sleep.
+Eggs and dead pets do not walk. Pause, menus, memory challenges and care reactions
+stop locomotion. Rendering, controller navigation and repaint frequency never
+consume the saved gameplay RNG or manufacture age, needs, coins or memory wins.
+The controller operates menus and HUD actions only; it never steers the pet.
+
+Minimal HUD keeps the pet, stage/state, fullness (F), happiness (H), energy (E),
+health (+) and selected care action. Other needs are in Status. Auto switches
+below the configured width/height thresholds. At 20x8 or larger every menu choice
+scrolls into view, and new-pet confirmation stays visible. Smaller viewports retain
+safe quit. This cell-based layout works through console and remote-terminal
+transports, including terminal-based smartwatch webviews; it does not add a new
+browser server. Headless snapshots remain plain ASCII and do not require a GPU,
+display server, controller, writable save or animation clock.

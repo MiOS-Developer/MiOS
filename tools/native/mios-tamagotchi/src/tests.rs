@@ -259,3 +259,20 @@ fn inputd_projected_keys_navigate_without_release_or_repeat_toggles() {
         None
     );
 }
+
+#[test]
+fn equal_half_pixels_use_opaque_foreground_coverage() {
+    let sprite = Sprite::new(1, 2, vec![Some(1), Some(1)]).unwrap();
+    let colors = Colors::from_config(&config(), Depth::Rgb).unwrap();
+    let area = Rect::new(0, 0, 1, 1);
+    let mut buf = Buffer::empty(area);
+    SpriteWidget {
+        sprite: &sprite,
+        renderer: Renderer::HalfBlock,
+        scale: 1,
+        colors: &colors,
+    }
+    .render(area, &mut buf);
+    assert_eq!(buf[(0, 0)].symbol(), "█");
+    assert_eq!(buf[(0, 0)].fg, colors.palette[1]);
+}

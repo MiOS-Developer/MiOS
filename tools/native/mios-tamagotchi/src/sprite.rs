@@ -1,4 +1,4 @@
-// AI-hint: Validated indexed sprite and overflow-safe viewport fitting in terminal cells.
+// AI-hint: Indexed legacy sprites, solid CPU voxel rasterization and safe viewport fitting.
 // AI-related: render.rs, specs/tamagotchi-tui/tamagotchi-sprites-spec.md
 use crate::capabilities::Renderer;
 
@@ -38,6 +38,62 @@ pub struct Sprite {
 }
 
 impl Sprite {
+    /// CPU-only solid voxel seedling. Yaw is periodic; movement is supplied by
+    /// the simulation, never inferred from controller input in the renderer.
+    pub fn voxel(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+        yaw_degrees: u16,
+        walking: bool,
+    ) -> Self {
+        use crate::game::Stage;
+        let dead = stage == Stage::Dead || expression == Expression::Dead;
+        let stage = if dead { Stage::Dead } else { stage };
+        let expression = if dead { Expression::Dead } else { expression };
+        let model = VoxelModel::pet(stage, expression, style, frame % 4, walking);
+        model.rasterize(style, yaw_degrees, expression == Expression::Sleeping)
+    }
+
+    /// Fit using one rational scale and nearest-neighbor pixel centers. Integer
+    /// rounding costs at most one pixel per dimension; this never enlarges art.
+    /// An empty target area has a safe transparent sentinel.
+    pub fn downsample_to_fit(&self, max_width: u16, max_height: u16) -> Self {
+        if max_width == 0 || max_height == 0 || self.width == 0 || self.height == 0 {
+            return Self {
+                width: 1,
+                height: 1,
+                pixels: vec![None],
+            };
+        }
+        if self.width <= max_width && self.height <= max_height {
+            return self.clone();
+        }
+        let (sw, sh) = (u32::from(self.width), u32::from(self.height));
+        let (mw, mh) = (u32::from(max_width), u32::from(max_height));
+        let (numerator, denominator) = if mw * sh <= mh * sw {
+            (mw, sw)
+        } else {
+            (mh, sh)
+        };
+        let width = (sw * numerator / denominator).max(1) as u16;
+        let height = (sh * numerator / denominator).max(1) as u16;
+        let mut pixels = Vec::with_capacity(usize::from(width) * usize::from(height));
+        for y in 0..u32::from(height) {
+            let sy = ((2 * y + 1) * sh / (2 * u32::from(height))).min(sh - 1);
+            for x in 0..u32::from(width) {
+                let sx = ((2 * x + 1) * sw / (2 * u32::from(width))).min(sw - 1);
+                pixels.push(self.pixel(sx, sy, 1));
+            }
+        }
+        Self {
+            width,
+            height,
+            pixels,
+        }
+    }
+
     /// Original seedling pet art. The caller advances `frame` from its animation
     /// clock; this pure four-frame cycle never advances game time or reads a clock.
     /// Idle includes a blink, breathing and alternating walking feet.
@@ -600,6 +656,485 @@ impl Sprite {
     }
 }
 
+// A sparse integer lattice contains entire solid ellipsoids, including their
+// hidden interiors. Only exposed cube faces are projected. Front relief and the
+// rear seed seam therefore disappear naturally behind the body when it turns.
+#[derive(Default)]
+struct VoxelModel {
+    cells: std::collections::BTreeMap<(i32, i32, i32), u8>,
+}
+
+impl VoxelModel {
+    fn ellipsoid(&mut self, center: [f32; 3], radii: [f32; 3], color: u8) {
+        let [cx, cy, cz] = center;
+        let [rx, ry, rz] = radii;
+        for x in (cx - rx).floor() as i32..=(cx + rx).ceil() as i32 {
+            for y in (cy - ry).floor() as i32..=(cy + ry).ceil() as i32 {
+                for z in (cz - rz).floor() as i32..=(cz + rz).ceil() as i32 {
+                    let d = ((x as f32 - cx) / rx).powi(2)
+                        + ((y as f32 - cy) / ry).powi(2)
+                        + ((z as f32 - cz) / rz).powi(2);
+                    if d <= 1.0 {
+                        self.cells.insert((x, y, z), color);
+                    }
+                }
+            }
+        }
+    }
+
+    fn dot(&mut self, x: i32, y: i32, color: u8) {
+        if let Some(z) = self
+            .cells
+            .keys()
+            .filter(|&&(vx, vy, _)| vx == x && vy == y)
+            .map(|&(_, _, z)| z)
+            .max()
+        {
+            self.cells.insert((x, y, z + 1), color);
+        }
+    }
+
+    fn pet(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        phase: usize,
+        walking: bool,
+    ) -> Self {
+        use crate::game::Stage;
+        use Expression::*;
+        let detailed = style == SpriteStyle::SixteenBit;
+        let mut model = Self::default();
+        let p = phase as f32;
+        let (rx, ry, rz) = match (detailed, stage) {
+            (false, Stage::Egg) => (4.0, 5.0, 3.0),
+            (false, Stage::Baby) => (3.0, 2.8, 2.5),
+            (false, Stage::Child) => (4.0, 3.8, 3.0),
+            (false, _) => (4.4, 4.5, 3.5),
+            (true, Stage::Egg) => (5.5, 7.0, 4.5),
+            (true, Stage::Baby) => (4.5, 4.0, 3.5),
+            (true, Stage::Child) => (5.5, 5.5, 4.0),
+            (true, _) => (6.2, 6.5, 4.8),
+        };
+        let dead = stage == Stage::Dead;
+        let egg = stage == Stage::Egg;
+        let body = if egg {
+            4
+        } else if dead {
+            15
+        } else if expression == Sick {
+            11
+        } else {
+            1
+        };
+        model.ellipsoid([0.0, 0.0, 0.0], [rx, ry, rz], body);
+        // A rounded upper crown makes an egg, rather than a symmetric ball.
+        if egg {
+            model.ellipsoid([0.0, ry * 0.35, 0.0], [rx * 0.72, ry * 0.8, rz * 0.8], 4);
+            for (x, y) in [(-2, 2), (1, -2), (2, 3), (-1, -4)] {
+                model.dot(x, y, if detailed { 7 } else { 11 });
+            }
+            // Rear shell speckles are volumetric relief too.
+            model.ellipsoid([1.0, 1.0, -rz + 0.4], [1.3, 1.6, 1.0], 11);
+        } else {
+            if !dead {
+                // Cream bib, rear seed seam and a round tail establish front/back.
+                model.ellipsoid(
+                    [0.0, -ry * 0.36, rz * 0.72],
+                    [rx * 0.57, ry * 0.52, rz * 0.39],
+                    4,
+                );
+                model.ellipsoid([0.0, -1.0, -rz], [1.0, ry * 0.58, 0.8], 11);
+                model.ellipsoid([0.0, -ry * 0.55, -rz - 0.6], [1.6, 1.5, 1.6], 11);
+                if detailed {
+                    model.ellipsoid([0.0, -ry * 0.55, -rz - 1.4], [0.6, 0.6, 1.0], 7);
+                }
+                let raised = matches!(expression, Happy | Playful | Excited | Celebrate);
+                let hand_y = if raised { 1.5 + (p % 2.0) } else { -1.8 };
+                for sign in [-1.0, 1.0] {
+                    let front = if matches!(expression, Eating | Shy) {
+                        rz * 0.85
+                    } else {
+                        0.5
+                    };
+                    let side = if expression == Shy { rx * 0.65 } else { rx };
+                    model.ellipsoid([sign * side, hand_y, front], [1.2, 1.8, 1.4], 1);
+                }
+                // Feet alternate in both height and depth: a genuine 3D gait.
+                let gait = if walking && !matches!(expression, Sleeping | Sick) {
+                    [0.0, 1.0, 0.0, -1.0][phase]
+                } else {
+                    0.0
+                };
+                for sign in [-1.0, 1.0] {
+                    model.ellipsoid(
+                        [
+                            sign * rx * 0.52,
+                            -ry - 0.5 + (gait * sign).max(0.0),
+                            0.5 + gait * sign * 1.7,
+                        ],
+                        [
+                            if detailed { 1.6 } else { 1.0 },
+                            0.9,
+                            if detailed { 2.0 } else { 1.3 },
+                        ],
+                        14,
+                    );
+                }
+                if stage != Stage::Baby {
+                    // Growing leaves/ears are separate rounded volumes, not cards.
+                    model.ellipsoid([-1.0, ry + 0.8, 0.0], [0.8, 1.8, 0.8], 11);
+                    model.ellipsoid([-2.0, ry + 1.6, 0.0], [1.8, 0.9, 1.2], 11);
+                    if stage == Stage::Adult {
+                        model.ellipsoid([2.0, ry + 1.8, -0.4], [1.4, 1.8, 1.0], 11);
+                        for sign in [-1.0, 1.0] {
+                            model.ellipsoid([sign * rx * 0.75, ry * 0.8, -0.6], [1.4, 2.0, 1.5], 1);
+                        }
+                    }
+                    if detailed {
+                        model.ellipsoid([-2.0, ry + 1.8, 0.6], [1.0, 0.5, 0.6], 3);
+                    }
+                }
+            } else {
+                // Ghost scallops and a horizontal 3D halo.
+                for x in [-3.0, 0.0, 3.0] {
+                    model.ellipsoid([x, -ry + 0.2, 0.0], [1.5, 1.5, 2.0], 15);
+                }
+                for x in -3..=3 {
+                    for z in -2..=2 {
+                        let ring = (x * x) as f32 / 9.0 + (z * z) as f32 / 4.0;
+                        if (0.5..=1.4).contains(&ring) {
+                            model.cells.insert((x, ry as i32 + 3, z), 7);
+                        }
+                    }
+                }
+            }
+        }
+        let eye_y = if egg { 0 } else { (ry * 0.24) as i32 };
+        let eye_x = if detailed { 2 } else { 1 };
+        for sign in [-1, 1] {
+            let x = sign * eye_x;
+            match expression {
+                Sleeping | Shy => {
+                    model.dot(x, eye_y, 0);
+                    model.dot(x + sign, eye_y, 0);
+                }
+                Sick | Dead => {
+                    for dy in [-1, 1] {
+                        for dx in [-1, 1] {
+                            model.dot(x + dx, eye_y + dy, 0);
+                        }
+                    }
+                    model.dot(x, eye_y, 0);
+                }
+                Happy | Celebrate => {
+                    model.dot(x, eye_y + 1, 0);
+                    model.dot(x + sign, eye_y, 0);
+                }
+                _ => {
+                    model.dot(x, eye_y, 0);
+                    if detailed {
+                        model.dot(x, eye_y + 1, if expression == Excited { 7 } else { 2 });
+                        model.dot(x + sign, eye_y, 0);
+                    }
+                    if expression == Idle && phase == 2 {
+                        model.dot(x, eye_y + 1, body);
+                    }
+                }
+            }
+            let brow = match expression {
+                Angry => -sign,
+                Sad => sign,
+                Surprised => 0,
+                _ => 2,
+            };
+            if brow != 2 {
+                model.dot(x, eye_y + 2, 6);
+                model.dot(x + sign, eye_y + 2 + brow * sign, 6);
+            }
+            if !egg && !dead {
+                model.dot(x + sign, eye_y - 1, 5);
+                if detailed {
+                    model.dot(x + 2 * sign, eye_y - 1, 5);
+                }
+            }
+        }
+        let my = eye_y - 2;
+        model.dot(0, my, 6);
+        match expression {
+            Surprised | Hungry | Eating => {
+                model.dot(
+                    0,
+                    my - 1,
+                    if expression == Eating && phase.is_multiple_of(2) {
+                        5
+                    } else {
+                        0
+                    },
+                );
+                model.dot(-1, my, 6);
+                model.dot(1, my, 6);
+            }
+            Happy | Playful | Excited | Celebrate => {
+                model.dot(-1, my + 1, 6);
+                model.dot(1, my + 1, 6);
+                model.dot(0, my - 1, 5);
+            }
+            Sad | Angry | Sick | Dead => {
+                model.dot(-1, my - 1, 6);
+                model.dot(1, my - 1, 6);
+            }
+            _ => {}
+        }
+        if !dead {
+            let side = rx + 2.0;
+            match expression {
+                Sleeping => {
+                    model.ellipsoid([side, 4.0 + p * 0.6, 0.0], [1.0, 1.0, 1.0], 13);
+                    model.ellipsoid([0.0, -ry, -1.0], [rx + 0.6, 1.2, rz], 13);
+                }
+                Sick => {
+                    model.ellipsoid([side, 0.5, rz * 0.5], [0.6, 2.0, 0.6], 2);
+                    model.ellipsoid([side, -1.0, rz * 0.5], [0.9, 0.9, 0.9], 12);
+                }
+                Eating | Hungry => {
+                    let bite = if expression == Eating {
+                        phase as f32 * 0.3
+                    } else {
+                        0.0
+                    };
+                    model.ellipsoid(
+                        [side - bite, -1.5 + bite, rz * 0.8],
+                        [1.5 - bite * 0.4, 1.5, 1.3],
+                        8,
+                    );
+                    model.ellipsoid([side - bite, 0.2 + bite, rz * 0.8], [0.7, 0.8, 0.7], 11);
+                }
+                Cleaning => {
+                    model.ellipsoid([0.0, -ry, 0.0], [rx + 1.5, 1.6, rz + 0.8], 9);
+                    for (x, y, z) in [
+                        (-side, p - 1.0, 1.0),
+                        (side, 2.0 + p, -1.0),
+                        (2.0, -ry + 1.0, rz),
+                    ] {
+                        model.ellipsoid([x, y, z], [1.0, 1.0, 1.0], 13);
+                        if detailed {
+                            model.ellipsoid([x - 0.3, y + 0.4, z + 0.6], [0.6, 0.6, 0.6], 2);
+                        }
+                    }
+                }
+                Healing => {
+                    model.ellipsoid([side, 3.0, 0.0], [0.8, 2.0, 0.8], 12);
+                    model.ellipsoid([side, 3.0, 0.0], [1.8, 0.8, 0.8], 12);
+                    for x in 1..=3 {
+                        model.dot(x, -1, if x == 2 { 5 } else { 4 });
+                    }
+                }
+                Playful => {
+                    model.ellipsoid([side, -ry + 1.0 + p % 2.0, 1.0], [1.7, 1.7, 1.7], 8);
+                    model.ellipsoid([side, -ry + 1.3 + p % 2.0, 2.3], [0.7, 0.7, 0.7], 13);
+                }
+                Celebrate | Excited => {
+                    for sign in [-1.0, 1.0] {
+                        model.ellipsoid(
+                            [sign * side, ry * 0.6 + (p + sign).rem_euclid(3.0), 0.0],
+                            [0.7, 1.3, 0.7],
+                            7,
+                        );
+                        model.ellipsoid(
+                            [sign * side, ry * 0.6 + (p + sign).rem_euclid(3.0), 0.0],
+                            [1.3, 0.7, 0.7],
+                            12,
+                        );
+                    }
+                }
+                Sad => {
+                    model.ellipsoid([-rx * 0.6, -1.0 - p * 0.4, rz], [0.6, 1.2, 0.7], 9);
+                }
+                Shy => {
+                    model.ellipsoid([0.0, -2.5, rz + 1.0], [1.3, 1.0, 1.0], 5);
+                }
+                _ => {}
+            }
+        }
+        model
+    }
+}
+
+impl VoxelModel {
+    fn rasterize(&self, style: SpriteStyle, yaw: u16, sleeping: bool) -> Sprite {
+        let size: u16 = if style == SpriteStyle::EightBit {
+            24
+        } else {
+            32
+        };
+        let mut sprite = Sprite {
+            width: size,
+            height: size,
+            pixels: vec![None; usize::from(size) * usize::from(size)],
+        };
+        let mut depth = vec![f32::NEG_INFINITY; sprite.pixels.len()];
+        let angle = f32::from(yaw % 360).to_radians();
+        let (s, c) = angle.sin_cos();
+        let pitch: f32 = 0.32;
+        let (sp, cp) = pitch.sin_cos();
+        let pose: f32 = if sleeping { 0.75 } else { 0.0 };
+        let (sr, cr) = pose.sin_cos();
+        let transform = |[x, y, z]: [f32; 3]| {
+            let (x, y) = (cr * x - sr * y, sr * x + cr * y);
+            let (x, z) = (c * x + s * z, -s * x + c * z);
+            [x, cp * y - sp * z, sp * y + cp * z]
+        };
+        let project = |v: [f32; 3]| {
+            let [x, y, z] = transform(v);
+            [
+                f32::from(size) * 0.5 + x,
+                f32::from(size) * 0.57 - y + if sleeping { 1.0 } else { 0.0 },
+                z,
+            ]
+        };
+        // Unit cube quads. Neighbor culling eliminates interior surfaces; depth
+        // interpolation below resolves occlusion between all remaining faces.
+        const FACES: [([i32; 3], [[f32; 3]; 4]); 6] = [
+            (
+                [1, 0, 0],
+                [
+                    [0.5, -0.5, -0.5],
+                    [0.5, 0.5, -0.5],
+                    [0.5, 0.5, 0.5],
+                    [0.5, -0.5, 0.5],
+                ],
+            ),
+            (
+                [-1, 0, 0],
+                [
+                    [-0.5, -0.5, 0.5],
+                    [-0.5, 0.5, 0.5],
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, -0.5, -0.5],
+                ],
+            ),
+            (
+                [0, 1, 0],
+                [
+                    [-0.5, 0.5, -0.5],
+                    [-0.5, 0.5, 0.5],
+                    [0.5, 0.5, 0.5],
+                    [0.5, 0.5, -0.5],
+                ],
+            ),
+            (
+                [0, -1, 0],
+                [
+                    [-0.5, -0.5, 0.5],
+                    [-0.5, -0.5, -0.5],
+                    [0.5, -0.5, -0.5],
+                    [0.5, -0.5, 0.5],
+                ],
+            ),
+            (
+                [0, 0, 1],
+                [
+                    [-0.5, -0.5, 0.5],
+                    [0.5, -0.5, 0.5],
+                    [0.5, 0.5, 0.5],
+                    [-0.5, 0.5, 0.5],
+                ],
+            ),
+            (
+                [0, 0, -1],
+                [
+                    [0.5, -0.5, -0.5],
+                    [-0.5, -0.5, -0.5],
+                    [-0.5, 0.5, -0.5],
+                    [0.5, 0.5, -0.5],
+                ],
+            ),
+        ];
+        for (&(x, y, z), &material) in &self.cells {
+            for (normal, corners) in FACES {
+                if self
+                    .cells
+                    .contains_key(&(x + normal[0], y + normal[1], z + normal[2]))
+                {
+                    continue;
+                }
+                let n = transform(normal.map(|v| v as f32));
+                if n[2] <= 0.0 {
+                    continue;
+                }
+                let light = -0.45 * n[0] + 0.65 * n[1] + 0.45 * n[2];
+                let color = match material {
+                    1 if light < 0.15 => 11,
+                    1 if light > 0.65 => 3,
+                    4 if light < 0.15 => 14,
+                    4 if light > 0.65 => 2,
+                    11 if light > 0.65 => 1,
+                    15 if light < 0.15 => 13,
+                    _ => material,
+                };
+                let vertices = corners
+                    .map(|[dx, dy, dz]| project([x as f32 + dx, y as f32 + dy, z as f32 + dz]));
+                for indices in [[0, 1, 2], [0, 2, 3]] {
+                    raster_triangle(&mut sprite, &mut depth, indices.map(|i| vertices[i]), color);
+                }
+            }
+        }
+        sprite
+    }
+}
+
+fn raster_triangle(sprite: &mut Sprite, depth: &mut [f32], v: [[f32; 3]; 3], color: u8) {
+    let edge = |a: [f32; 3], b: [f32; 3], x: f32, y: f32| {
+        (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0])
+    };
+    let area = edge(v[0], v[1], v[2][0], v[2][1]);
+    if area.abs() < 0.00001 {
+        return;
+    }
+    let min_x = v
+        .iter()
+        .map(|p| p[0])
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        .max(0.0) as i32;
+    let max_x = v
+        .iter()
+        .map(|p| p[0])
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        .min(f32::from(sprite.width) - 1.0) as i32;
+    let min_y = v
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        .max(0.0) as i32;
+    let max_y = v
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        .min(f32::from(sprite.height) - 1.0) as i32;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let a = edge(v[1], v[2], px, py) / area;
+            let b = edge(v[2], v[0], px, py) / area;
+            let c = 1.0 - a - b;
+            if a < -0.0001 || b < -0.0001 || c < -0.0001 {
+                continue;
+            }
+            let z = a * v[0][2] + b * v[1][2] + c * v[2][2];
+            let i = y as usize * usize::from(sprite.width) + x as usize;
+            if z > depth[i] {
+                depth[i] = z;
+                sprite.pixels[i] = Some(color);
+            }
+        }
+    }
+}
+
 pub fn cell_size(width: u16, height: u16, scale: u16, renderer: Renderer) -> (u32, u32) {
     let (dx, dy) = renderer.packing();
     (
@@ -837,5 +1372,263 @@ mod animation_tests {
             );
         }
         assert!(serde_json::from_str::<SpriteStyle>("\"sixteen_bit\"").is_err());
+    }
+}
+
+#[cfg(test)]
+mod voxel_tests {
+    use super::*;
+    use crate::game::Stage;
+    const STAGES: [Stage; 5] = [
+        Stage::Egg,
+        Stage::Baby,
+        Stage::Child,
+        Stage::Adult,
+        Stage::Dead,
+    ];
+    const STYLES: [SpriteStyle; 2] = [SpriteStyle::EightBit, SpriteStyle::SixteenBit];
+    const MOODS: [Expression; 16] = [
+        Expression::Idle,
+        Expression::Happy,
+        Expression::Sad,
+        Expression::Angry,
+        Expression::Surprised,
+        Expression::Sleeping,
+        Expression::Sick,
+        Expression::Hungry,
+        Expression::Playful,
+        Expression::Shy,
+        Expression::Excited,
+        Expression::Eating,
+        Expression::Cleaning,
+        Expression::Healing,
+        Expression::Celebrate,
+        Expression::Dead,
+    ];
+
+    #[test]
+    fn voxel_all_stages_moods_and_rotations_are_bounded_indexed_and_transparent() {
+        for style in STYLES {
+            for stage in STAGES {
+                for mood in MOODS {
+                    for yaw in [0, 45, 90, 135, 180, 225, 270, 315] {
+                        let s = Sprite::voxel(stage, mood, style, usize::MAX, yaw, true);
+                        assert!(s.width <= 32 && s.height <= 32);
+                        assert!(
+                            s.pixels.iter().flatten().count() > 10,
+                            "{stage:?} {mood:?} {yaw}"
+                        );
+                        assert!(s.pixels.contains(&None));
+                        assert!(s.pixels.iter().flatten().all(|&c| c < 16));
+                        // No pose or rotating prop touches a canvas edge.
+                        for x in 0..u32::from(s.width) {
+                            assert_eq!(s.pixel(x, 0, 1), None);
+                            assert_eq!(s.pixel(x, u32::from(s.height) - 1, 1), None);
+                        }
+                        for y in 0..u32::from(s.height) {
+                            assert_eq!(s.pixel(0, y, 1), None);
+                            assert_eq!(s.pixel(u32::from(s.width) - 1, y, 1), None);
+                        }
+                        assert!(Sprite::new(s.width, s.height, s.pixels).is_ok());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn voxel_models_have_solid_depth_and_independent_style_geometry() {
+        for style in STYLES {
+            for stage in STAGES {
+                let m = VoxelModel::pet(stage, Expression::Idle, style, 0, false);
+                for z in -2..=2 {
+                    assert!(m.cells.contains_key(&(0, 0, z)));
+                }
+                assert!(m.cells.len() > 100);
+                assert!(m
+                    .cells
+                    .keys()
+                    .all(|&(x, y, z)| x.abs() <= 12 && y.abs() <= 12 && z.abs() <= 12));
+            }
+        }
+        let coarse = VoxelModel::pet(Stage::Adult, Expression::Idle, STYLES[0], 0, false);
+        let fine = VoxelModel::pet(Stage::Adult, Expression::Idle, STYLES[1], 0, false);
+        assert_ne!(coarse.cells, fine.cells);
+        assert!(fine.cells.len() > coarse.cells.len());
+        let small = Sprite::voxel(Stage::Adult, Expression::Idle, STYLES[0], 0, 45, false);
+        let detail = Sprite::voxel(Stage::Adult, Expression::Idle, STYLES[1], 0, 45, false);
+        assert_ne!(
+            small.pixels,
+            detail.downsample_to_fit(small.width, small.height).pixels
+        );
+    }
+
+    #[test]
+    fn voxel_front_side_back_and_growth_differ_and_yaw_wraps() {
+        for style in STYLES {
+            let mut stages = Vec::new();
+            for stage in STAGES {
+                let front = Sprite::voxel(stage, Expression::Idle, style, 0, 0, false);
+                let side = Sprite::voxel(stage, Expression::Idle, style, 0, 90, false);
+                let back = Sprite::voxel(stage, Expression::Idle, style, 0, 180, false);
+                assert_ne!(front.pixels, side.pixels, "{stage:?}");
+                assert_ne!(front.pixels, back.pixels, "{stage:?}");
+                assert_ne!(side.pixels, back.pixels, "{stage:?}");
+                for prior in &stages {
+                    assert_ne!(&front.pixels, prior);
+                }
+                stages.push(front.pixels);
+                for yaw in [0, 27, 90, 179, 359] {
+                    assert_eq!(
+                        Sprite::voxel(stage, Expression::Idle, style, usize::MAX, yaw, true).pixels,
+                        Sprite::voxel(stage, Expression::Idle, style, 3, yaw + 360, true).pixels,
+                    );
+                }
+                assert_eq!(
+                    Sprite::voxel(stage, Expression::Happy, style, 0, u16::MAX, false).pixels,
+                    Sprite::voxel(stage, Expression::Happy, style, 0, u16::MAX % 360, false).pixels,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn voxel_gait_is_three_dimensional_and_egg_dead_sleep_do_not_walk() {
+        for style in STYLES {
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                let frames: Vec<_> = (0..4)
+                    .map(|f| Sprite::voxel(stage, Expression::Idle, style, f, 45, true).pixels)
+                    .collect();
+                assert_ne!(frames[0], frames[1]);
+                assert_ne!(frames[1], frames[3]);
+                let a = VoxelModel::pet(stage, Expression::Idle, style, 0, true);
+                let b = VoxelModel::pet(stage, Expression::Idle, style, 1, true);
+                assert_ne!(a.cells, b.cells);
+            }
+            for stage in [Stage::Egg, Stage::Dead] {
+                for frame in 0..4 {
+                    assert_eq!(
+                        Sprite::voxel(stage, Expression::Idle, style, frame, 90, true).pixels,
+                        Sprite::voxel(stage, Expression::Idle, style, frame, 90, false).pixels,
+                    );
+                }
+            }
+            for frame in 0..4 {
+                assert_eq!(
+                    Sprite::voxel(Stage::Adult, Expression::Sleeping, style, frame, 0, true).pixels,
+                    Sprite::voxel(Stage::Adult, Expression::Sleeping, style, frame, 0, false)
+                        .pixels,
+                );
+            }
+            for mood in MOODS {
+                assert_eq!(
+                    Sprite::voxel(Stage::Dead, mood, style, 0, 45, true).pixels,
+                    Sprite::voxel(Stage::Adult, Expression::Dead, style, 0, 45, false).pixels,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn voxel_care_props_and_faces_change_both_art_and_animation() {
+        for style in STYLES {
+            for (i, mood) in MOODS.iter().enumerate() {
+                let s = Sprite::voxel(Stage::Adult, *mood, style, 0, 0, false);
+                for other in &MOODS[i + 1..] {
+                    assert_ne!(
+                        s.pixels,
+                        Sprite::voxel(Stage::Adult, *other, style, 0, 0, false).pixels,
+                        "{mood:?}/{other:?}"
+                    );
+                }
+            }
+            for mood in [
+                Expression::Sleeping,
+                Expression::Eating,
+                Expression::Cleaning,
+                Expression::Celebrate,
+            ] {
+                assert_ne!(
+                    Sprite::voxel(Stage::Adult, mood, style, 0, 45, false).pixels,
+                    Sprite::voxel(Stage::Adult, mood, style, 3, 45, false).pixels,
+                    "{style:?} {mood:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn voxel_depth_buffer_hides_the_far_surface_independent_of_draw_order() {
+        let make = || Sprite::new(4, 4, vec![None; 16]).unwrap();
+        let far = [[0.0, 0.0, -3.0], [4.0, 0.0, -3.0], [0.0, 4.0, -3.0]];
+        let near = far.map(|[x, y, _]| [x, y, 3.0]);
+        for reverse in [false, true] {
+            let mut s = make();
+            let mut z = vec![f32::NEG_INFINITY; 16];
+            let surfaces = if reverse {
+                [(near, 5), (far, 8)]
+            } else {
+                [(far, 8), (near, 5)]
+            };
+            for (triangle, color) in surfaces {
+                raster_triangle(&mut s, &mut z, triangle, color);
+            }
+            assert_eq!(s.pixel(0, 0, 1), Some(5));
+            assert_eq!(s.pixel(3, 3, 1), None);
+        }
+        let mut model = VoxelModel::default();
+        model.ellipsoid([0.0; 3], [3.0; 3], 1);
+        let back = model.rasterize(SpriteStyle::SixteenBit, 180, false);
+        model.cells.insert((0, 0, 4), 12);
+        assert_ne!(
+            model.rasterize(SpriteStyle::SixteenBit, 0, false).pixels,
+            back.pixels
+        );
+        assert_eq!(
+            model.rasterize(SpriteStyle::SixteenBit, 180, false).pixels,
+            back.pixels
+        );
+    }
+
+    #[test]
+    fn downsample_preserves_ratio_centers_transparency_and_never_enlarges() {
+        let pixels: Vec<_> = (0..32)
+            .map(|n| if n % 3 == 0 { None } else { Some(n % 16) })
+            .collect();
+        let s = Sprite::new(8, 4, pixels.clone()).unwrap();
+        assert_eq!(s.downsample_to_fit(99, 99).pixels, pixels);
+        let half = s.downsample_to_fit(4, 4);
+        assert_eq!((half.width, half.height), (4, 2));
+        for y in 0..2 {
+            for x in 0..4 {
+                assert_eq!(half.pixel(x, y, 1), s.pixel(x * 2 + 1, y * 2 + 1, 1));
+            }
+        }
+        for (w, h) in [(1, 1), (1, 20), (20, 1), (3, 2), (u16::MAX, 1)] {
+            let small = s.downsample_to_fit(w, h);
+            assert!(small.width <= w && small.height <= h);
+            assert!(small.width <= s.width && small.height <= s.height);
+            assert!((i32::from(small.width) * 4 - i32::from(small.height) * 8).abs() <= 8);
+            assert!(Sprite::new(small.width, small.height, small.pixels).is_ok());
+        }
+        for (w, h) in [(0, 0), (0, 5), (5, 0)] {
+            let empty = s.downsample_to_fit(w, h);
+            assert_eq!((empty.width, empty.height), (1, 1));
+            assert_eq!(empty.pixels, vec![None]);
+        }
+        let tiny = Sprite::new(1, 1, vec![Some(15)]).unwrap();
+        assert_eq!(
+            tiny.downsample_to_fit(u16::MAX, u16::MAX).pixels,
+            vec![Some(15)]
+        );
+        for style in STYLES {
+            for stage in STAGES {
+                let s = Sprite::voxel(stage, Expression::Idle, style, 0, 45, false);
+                for (w, h) in [(1, 1), (2, 1), (1, 2), (7, 3)] {
+                    let small = s.downsample_to_fit(w, h);
+                    assert!(small.width <= w && small.height <= h);
+                }
+            }
+        }
     }
 }

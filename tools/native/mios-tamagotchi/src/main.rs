@@ -4,11 +4,10 @@
 use clap::Parser;
 use mios_tamagotchi::{
     capabilities::{self, ColorMode, Renderer},
-    config::Config,
+    config::{Config, HudMode, ViewMode},
     game::{Care, Game},
     render::{snapshot, Colors},
     save::{self, Store},
-    sprite::Sprite,
     ui::{self, Ui},
 };
 use std::{
@@ -50,6 +49,12 @@ struct Args {
     /// Original low-resolution or detailed pixel-art sprite set.
     #[arg(long, value_enum)]
     sprite_style: Option<mios_tamagotchi::sprite::SpriteStyle>,
+    /// CPU voxel 3D or classic pixel sprites; headless output remains ASCII.
+    #[arg(long, value_enum)]
+    view: Option<ViewMode>,
+    /// Automatic, full, or minimal HUD for consoles and remote terminal views.
+    #[arg(long, value_enum)]
+    hud: Option<HudMode>,
 }
 fn main() -> ExitCode {
     match run(Args::parse()) {
@@ -78,6 +83,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(style) = args.sprite_style {
         config.sprite_style = style;
     }
+    if let Some(view) = args.view {
+        config.view_mode = view;
+    }
+    if let Some(hud) = args.hud {
+        config.hud_mode = hud;
+    }
     config.validate()?;
     if args.demo {
         return demo(&config);
@@ -99,15 +110,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| Game::new(&config.game, 1));
         let status = Ui::new(game.clone()).summary(&config.game);
         let snapshot_ui = Ui::configured(game.clone(), &config);
-        let art = snapshot(
-            &Sprite::animated(
-                game.stage(&config.game),
-                snapshot_ui.expression(&config.game, 0),
-                config.sprite_style,
-                0,
-            ),
-            &config,
-        )?;
+        let art = snapshot(&snapshot_ui.pet_sprite(&config.game, 0), &config)?;
         writeln!(io::stdout().lock(), "MiOS Tamagotchi\n{status}\n{art}\nSnapshot only; no clock or save writes. Use a terminal to play.")?;
         return Ok(());
     }
