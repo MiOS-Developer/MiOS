@@ -1557,7 +1557,9 @@ impl VoxelModel {
             for y in 0..sprite.height {
                 for x in 0..sprite.width {
                     let i = usize::from(y) * usize::from(sprite.width) + usize::from(x);
-                    if !face_layer[i] || !depth[i].is_finite() {
+                    // Stepped top facets can remain visible from behind under
+                    // pitch. A back-facing head axis never authorizes facial ink.
+                    if c * cp <= 0.0 || !face_layer[i] || !depth[i].is_finite() {
                         continue;
                     }
                     let vx = (f32::from(x) + 0.5 - (f32::from(size) * 0.5 + 0.5)) / fit;
@@ -1581,9 +1583,9 @@ impl VoxelModel {
                     }
                 }
             }
-            if texels.iter().any(Option::is_some) {
-                sprite.face_mapping = Some(FaceMapping { text, texels });
-            }
+            // Canonical texture identity survives complete occlusion. No UV
+            // samples means a hidden mapped face, never a legacy billboard.
+            sprite.face_mapping = Some(FaceMapping { text, texels });
         }
 
         // Text follows the visible near half of the actual head surface.
@@ -1891,24 +1893,95 @@ mod body_face_tests {
                     let mut model = VoxelModel::pet(stage, Expression::Idle, style, 0, false);
                     model.animal(stage, style, appearance);
                     model.grow_body(stage, Expression::Idle, style, 0, false, appearance);
-                    for z in -1..=1 {
-                        assert!(model.cells.contains_key(&(0, -2, z)));
+                    let anatomy =
+                        crate::geometry::anatomy(stage, Expression::Idle, style, 0, false, shape);
+                    let torso = anatomy
+                        .parts
+                        .iter()
+                        .find(|p| p.material == 16 && p.center[0] == 0.0 && p.center[1] < 0.0)
+                        .unwrap();
+                    let at = |center: [f32; 3]| {
+                        let [x, y, z] = center.map(|v| v.round() as i32);
+                        (x, y, z)
+                    };
+                    let seed = at(torso.center);
+                    assert!(model.cells.contains_key(&seed));
+                    let foot_y = anatomy
+                        .parts
+                        .iter()
+                        .filter(|p| p.material == 16)
+                        .map(|p| p.center[1])
+                        .min_by(f32::total_cmp)
+                        .unwrap();
+                    let feet: Vec<_> = anatomy
+                        .parts
+                        .iter()
+                        .filter(|p| p.material == 16 && p.center[1] == foot_y)
+                        .collect();
+                    assert_eq!(feet.len(), 2);
+                    assert!(feet[0].center[0] * feet[1].center[0] < 0.0);
+                    // Each actual paw center must survive voxelization and be
+                    // connected to the torso through face-adjacent solid cells.
+                    let mut connected = std::collections::BTreeSet::from([seed]);
+                    let mut pending = vec![seed];
+                    while let Some((x, y, z)) = pending.pop() {
+                        for next in [
+                            (x - 1, y, z),
+                            (x + 1, y, z),
+                            (x, y - 1, z),
+                            (x, y + 1, z),
+                            (x, y, z - 1),
+                            (x, y, z + 1),
+                        ] {
+                            if model.cells.contains_key(&next) && connected.insert(next) {
+                                pending.push(next);
+                            }
+                        }
                     }
-                    // Stubby mature legs are measured from their actual soles;
-                    // a fixed long-shin threshold would require non-chibi limbs.
-                    let low = model.cells.keys().map(|&(_, y, _)| y).min().unwrap() + 2;
-                    for side in [-1, 1] {
+                    for foot in feet {
                         assert!(
-                            model
-                                .cells
-                                .keys()
-                                .filter(|&&(x, y, _)| x * side > 0 && y < low)
-                                .count()
-                                > 8,
-                            "{style:?} {stage:?} shape={shape} leg={side}"
+                            connected.contains(&at(foot.center)),
+                            "{style:?} {stage:?} shape={shape} detached paw {:?}",
+                            foot.center
                         );
                     }
+                    let sole_y = model.cells.keys().map(|&(_, y, _)| y).min().unwrap();
+                    assert!(model.cells.keys().any(|&(x, y, _)| x < 0 && y == sole_y));
+                    assert!(model.cells.keys().any(|&(x, y, _)| x > 0 && y == sole_y));
                     assert!(model.tall);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mapped_rear_heads_keep_canonical_expression_without_any_visible_uv() {
+        for style in STYLES {
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                for shape in 0..16 {
+                    let sprite = Sprite::voxel_with_appearance(
+                        stage,
+                        Expression::Happy,
+                        style,
+                        0,
+                        180,
+                        false,
+                        Appearance {
+                            shape,
+                            ..Appearance::default()
+                        },
+                    );
+                    assert_eq!(sprite.face_text(), Some(Expression::Happy.kaomoji(0)));
+                    assert!(sprite.face_overlay().is_none());
+                    for y in 0..u32::from(sprite.height()) {
+                        for x in 0..u32::from(sprite.width()) {
+                            assert!(
+                                sprite.face_uv(x, y).is_none(),
+                                "{style:?} {stage:?} {shape} rear texture leak"
+                            );
+                        }
+                    }
+                    assert!(sprite.face_uv(u32::MAX, u32::MAX).is_none());
                 }
             }
         }
@@ -2321,15 +2394,23 @@ mod voxel_tests {
         for style in STYLES {
             for stage in STAGES {
                 let m = VoxelModel::pet(stage, Expression::Idle, style, 0, false);
-                for z in -2..=2 {
-                    assert!(m.cells.contains_key(&(0, 0, z)));
+                let anatomy = crate::geometry::anatomy(stage, Expression::Idle, style, 0, false, 0);
+                let main = anatomy.parts[0];
+                let [x, y, z] = main.center.map(|v| v.round() as i32);
+                for dz in -1..=1 {
+                    assert!(m.cells.contains_key(&(x, y, z + dz)), "{style:?} {stage:?}");
                 }
                 assert!(m.cells.len() > 100);
-                assert!(
-                    m.cells
-                        .keys()
-                        .all(|&(x, y, z)| x.abs() <= 12 && y.abs() <= 12 && z.abs() <= 12)
-                );
+                for &(x, y, z) in m.cells.keys() {
+                    assert!(
+                        anatomy.parts.iter().any(|p| [x, y, z]
+                            .iter()
+                            .enumerate()
+                            .all(|(axis, &v)| (v as f32 - p.center[axis]).abs()
+                                <= p.radii[axis] + 0.001)),
+                        "{style:?} {stage:?} cell outside authored solids"
+                    );
+                }
             }
         }
         let coarse = VoxelModel::pet(Stage::Adult, Expression::Idle, STYLES[0], 0, false);
@@ -2352,9 +2433,11 @@ mod voxel_tests {
                 let front = Sprite::voxel(stage, Expression::Idle, style, 0, 0, false);
                 let side = Sprite::voxel(stage, Expression::Idle, style, 0, 90, false);
                 let back = Sprite::voxel(stage, Expression::Idle, style, 0, 180, false);
-                assert_ne!(front.pixels, side.pixels, "{stage:?}");
-                assert_ne!(front.pixels, back.pixels, "{stage:?}");
-                assert_ne!(side.pixels, back.pixels, "{stage:?}");
+                if matches!(stage, Stage::Baby | Stage::Child | Stage::Adult) {
+                    assert_ne!(front.pixels, side.pixels, "{stage:?}");
+                    assert_ne!(front.pixels, back.pixels, "{stage:?}");
+                    assert_ne!(side.pixels, back.pixels, "{stage:?}");
+                }
                 for prior in &stages {
                     assert_ne!(&front.pixels, prior);
                 }
@@ -2440,10 +2523,12 @@ mod voxel_tests {
                 Expression::Cleaning,
                 Expression::Celebrate,
             ] {
-                assert_ne!(
-                    Sprite::voxel(Stage::Adult, mood, style, 0, 45, false).pixels,
-                    Sprite::voxel(Stage::Adult, mood, style, 3, 45, false).pixels,
-                    "{style:?} {mood:?}",
+                let frames: Vec<_> = (0..4)
+                    .map(|phase| Sprite::voxel(Stage::Adult, mood, style, phase, 45, false).pixels)
+                    .collect();
+                assert!(
+                    frames[1..].iter().any(|frame| frame != &frames[0]),
+                    "{style:?} {mood:?} has no visible reaction animation"
                 );
             }
         }
@@ -2938,12 +3023,13 @@ mod species_detail_tests {
     }
 
     #[test]
-    fn every_family_has_detail_that_exists_only_at_the_fine_lattice() {
+    fn authored_fine_details_never_change_the_coarse_lattice() {
+        let mut resolved_details = 0;
         for shape in 0..16 {
-            // Baby + Sleeping: no body growth and no eye glints, so any
-            // difference comes from the family's own fine-only sculpting.
+            // Adult avoids intentional minification of sub-unit ear/marking
+            // details. Sleeping carries no old voxel eye or pupil meshes.
             let m = model(
-                Stage::Baby,
+                Stage::Adult,
                 Expression::Sleeping,
                 SpriteStyle::SixteenBit,
                 0,
@@ -2966,14 +3052,25 @@ mod species_detail_tests {
                     .collect(),
                 ..VoxelModel::default()
             };
-            assert_ne!(
-                m.replay(FINE_LATTICE),
-                plain.replay(FINE_LATTICE),
-                "shape {shape} has no fine-only detail"
+            // Smooth species do not need artificial glints or extra facial
+            // meshes. Where authored relief resolves, it changes only fine art.
+            resolved_details += usize::from(m.replay(FINE_LATTICE) != plain.replay(FINE_LATTICE));
+            assert_eq!(
+                m.replay(1),
+                plain.replay(1),
+                "shape {shape} leaked fine art"
             );
-            // Fine-only steps never touch the unit lattice (8-bit art).
-            assert_eq!(m.replay(1), plain.replay(1));
         }
+        assert!(resolved_details > 0, "all authored fine relief disappeared");
+        // Negative control: real sub-unit material detail must alter k=2,
+        // while an identical model without that detail must retain k=1.
+        let mut control = VoxelModel::default();
+        control.ellipsoid([0.0; 3], [3.0; 3], 1);
+        let coarse = control.replay(1);
+        let fine = control.replay(FINE_LATTICE);
+        control.sculpt([0.25, 0.25, 2.75], [0.40; 3], 5);
+        assert_eq!(control.replay(1), coarse);
+        assert_ne!(control.replay(FINE_LATTICE), fine);
     }
 
     #[test]

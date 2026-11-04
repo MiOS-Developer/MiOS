@@ -112,7 +112,7 @@ impl Anatomy {
                 BODY,
             );
         }
-        self.detail([side * x, 11.5, 0.90], [width * 0.43, 1.05, 0.22], 5);
+        self.detail([side * x, 11.5, 0.90], [width * 0.43, 1.05, 0.50], 5);
     }
 
     fn nose(&mut self, center: [f32; 3], radii: [f32; 3], material: u8) {
@@ -218,10 +218,9 @@ fn compact_body(
     model.add([0.0, body_y, -0.15], [3.5, body_ry, 2.5], BODY);
     // A low, small belly spot; the clean forehead and neck have no markings.
     model.add([0.0, body_y - 0.5, 2.05], [1.7, 1.35, 0.55], ACCENT);
-    let can_walk =
-        walking && !baby && !matches!(expression, Expression::Sleeping | Expression::Dead);
+    let can_walk = walking && !matches!(expression, Expression::Sleeping | Expression::Dead);
     let gait = if can_walk {
-        [0.0, 0.45, 0.0, -0.45][phase]
+        [0.0, 1.25, 0.0, -1.25][phase]
     } else {
         0.0
     };
@@ -261,7 +260,7 @@ fn animal_head(model: &mut Anatomy, family: u8, variant: bool) {
         0 => {
             // Cat: wide cheeks, pointed ears and two small muzzle cushions.
             model.head(if variant {
-                [8.8, 5.8, 4.7]
+                [9.6, 5.8, 4.7]
             } else {
                 [8.4, 6.0, 4.5]
             });
@@ -274,7 +273,7 @@ fn animal_head(model: &mut Anatomy, family: u8, variant: bool) {
                 );
                 model.add([side * 1.15, 4.8, 4.2], [1.5, 0.90, 0.85], MUZZLE);
                 for y in [3.8, 4.5] {
-                    model.detail([side * 5.5, y, 3.5], [0.95, 0.13, 0.16], 4);
+                    model.detail([side * 5.5, y, 3.5], [0.95, 0.13, 0.45], 4);
                 }
             }
             // Three overlapping courses give a small downward triangular tip.
@@ -440,11 +439,11 @@ fn animal_tail(model: &mut Anatomy, family: u8, variant: bool) {
             // Pelvic curl stays below the jaw: no tall tail to fake head ratio.
             let curl: &[[f32; 3]] = if variant {
                 &[
-                    [2.5, -3.0, -2.0],
-                    [4.0, -3.0, -2.8],
-                    [5.4, -2.3, -3.0],
-                    [5.8, -0.9, -3.0],
-                    [4.8, -0.1, -3.0],
+                    [-2.5, -3.0, -2.0],
+                    [-4.0, -3.0, -2.8],
+                    [-5.4, -2.3, -3.0],
+                    [-5.8, -0.9, -3.0],
+                    [-4.8, -0.1, -3.0],
                 ]
             } else {
                 &[
@@ -739,6 +738,44 @@ mod tests {
                 15
             )
         );
+    }
+
+    #[test]
+    fn bundled_baby_and_older_paws_shuffle_at_both_style_scales() {
+        for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+            for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                let poses: Vec<_> = [0, 1, 3]
+                    .into_iter()
+                    .map(|phase| anatomy(stage, Expression::Idle, style, phase, true, 0))
+                    .collect();
+                assert_ne!(poses[0].parts, poses[1].parts);
+                assert_ne!(poses[1].parts, poses[2].parts);
+                let scale = match stage {
+                    Stage::Baby => 0.60,
+                    Stage::Child => 0.85,
+                    _ => 1.0,
+                } * if style == SpriteStyle::EightBit {
+                    0.65
+                } else {
+                    1.0
+                };
+                for side in [-1.0, 1.0] {
+                    let paw_z = |m: &Anatomy| {
+                        m.parts
+                            .iter()
+                            .find(|p| {
+                                (p.center[0] - side * 2.0 * scale).abs() < 0.0001
+                                    && (p.radii[2] - 1.8 * scale).abs() < 0.0001
+                                    && p.center[1] < -scale
+                            })
+                            .unwrap()
+                            .center[2]
+                    };
+                    assert!((paw_z(&poses[1]) - paw_z(&poses[0])).abs() >= 0.48);
+                    assert!((paw_z(&poses[1]) - paw_z(&poses[2])).abs() >= 0.96);
+                }
+            }
+        }
     }
 
     #[test]
