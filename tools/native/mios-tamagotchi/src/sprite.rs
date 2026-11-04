@@ -1793,22 +1793,47 @@ impl VoxelModel {
                 }
             }
         }
-        // Facing text belongs to the near half of the actual front head plane.
-        // An oblique camera sees one eye/mouth side; rear/edge-on cameras see none.
+        // Text follows the visible near half of the actual head surface.
+        // Near-side eye relief can occlude the center anchor at oblique angles.
         if c * cp > 0.20 {
-            if let Some((mut anchor, text)) = self.face {
-                let text = if c * cp > 0.78 {
+            if let Some((anchor, text)) = self.face {
+                let frontal = c * cp > 0.78;
+                let text = if frontal {
                     text
                 } else if s > 0.0 {
-                    anchor[0] -= 1.0;
                     &text[..3]
                 } else {
-                    anchor[0] += 1.0;
                     &text[2..]
                 };
-                let [x, y, z] = project(anchor);
-                let (x, y) = (x.floor() as i32, y.floor() as i32);
-                if x >= 0 && y >= 0 && x < i32::from(size) && y < i32::from(height) {
+                let offsets: &[f32] = if frontal {
+                    &[0.0]
+                } else if s > 0.0 {
+                    &[-1.0, -2.0, -3.0]
+                } else {
+                    &[1.0, 2.0, 3.0]
+                };
+                for offset in offsets {
+                    let mut point = anchor;
+                    point[0] += offset;
+                    if !frontal {
+                        let Some(z) = column_top(
+                            &self.cells,
+                            point[0].round() as i32,
+                            point[1].round() as i32,
+                        ) else {
+                            continue;
+                        };
+                        let surface = z as f32 + 0.5;
+                        if (surface - anchor[2]).abs() > 2.0 {
+                            continue;
+                        }
+                        point[2] = surface;
+                    }
+                    let [x, y, z] = project(point);
+                    let (x, y) = (x.floor() as i32, y.floor() as i32);
+                    if x < 0 || y < 0 || x >= i32::from(size) || y >= i32::from(height) {
+                        continue;
+                    }
                     let i = y as usize * usize::from(size) + x as usize;
                     if sprite.pixels[i].is_some() && (depth[i] - z).abs() <= 1.25 {
                         sprite.face_overlay = Some(FaceOverlay {
@@ -1816,10 +1841,12 @@ impl VoxelModel {
                             y: y as u16,
                             text,
                         });
+                        break;
                     }
                 }
             }
         }
+
         sprite
     }
 }

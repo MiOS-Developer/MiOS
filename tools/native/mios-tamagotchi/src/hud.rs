@@ -54,6 +54,18 @@ pub fn split(area: Rect, ratio: f64, columns: u16, portrait_percent: u16) -> Hud
         }
     }
 }
+pub fn counter(value: u32) -> String {
+    for (unit, suffix) in [(1_000_000_000, "G"), (1_000_000, "M"), (1_000, "K")] {
+        if value >= unit {
+            return format!(
+                "{}{suffix}{}",
+                value / unit,
+                if value % unit == 0 { "" } else { "+" }
+            );
+        }
+    }
+    value.to_string()
+}
 fn number(value: u8) -> String {
     if value == 100 {
         "*".into()
@@ -76,7 +88,7 @@ pub fn needs(game: &Game, width: u16, page: usize) -> String {
     match page % 3 {
         0 => format!("F{f}H{h}+{health}"),
         1 => format!("C{c}E{e}+{health}"),
-        _ => format!("$ {} W{}", game.coins, game.wins),
+        _ => format!("${}W{}", counter(game.coins), counter(game.wins)),
     }
 }
 #[cfg(test)]
@@ -130,9 +142,26 @@ mod tests {
         g.health = 100;
         let pages = (0..3).map(|p| needs(&g, 10, p)).collect::<Vec<_>>();
         let all = pages.join(" ");
-        for text in ["F96", "H74", "C98", "E87", "+*", "$ 10", "W0"] {
+        for text in ["F96", "H74", "C98", "E87", "+*", "$10", "W0"] {
             assert!(all.contains(text), "{all}");
         }
         assert!(pages.iter().all(|s| s.len() <= 10));
+    }
+}
+
+#[cfg(test)]
+mod large_counter_tests {
+    use super::*;
+    #[test]
+    fn valid_extreme_status_values_fit_micro_frames_without_hiding_needs() {
+        let c = crate::config::Config::sample().unwrap();
+        let mut g = Game::new(&c.game, 7);
+        g.coins = crate::game::MAX_COINS;
+        g.wins = u32::MAX;
+        for page in 0..3 {
+            assert!(needs(&g, 10, page).len() <= 10);
+        }
+        assert_eq!(counter(1_000_000), "1M");
+        assert_eq!(counter(1_001), "1K+");
     }
 }

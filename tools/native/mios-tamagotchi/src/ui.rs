@@ -1009,11 +1009,22 @@ impl Ui {
         } else {
             "L"
         };
-        let heading = if area.width < 28 {
-            format!("{} {}{clock} {face}", self.name(), &stage[..1])
+        let heading = if area.width < 16 {
+            format!(
+                "{} {}{clock}",
+                self.name().chars().take(5).collect::<String>(),
+                &stage[..1]
+            )
+        } else if area.width < 28 {
+            let name = self
+                .name()
+                .chars()
+                .take(usize::from(area.width.saturating_sub(11)))
+                .collect::<String>();
+            format!("{name} {}{clock} {face}", &stage[..1])
         } else {
             format!(
-                "{} / {} / {stage} {clock} {face} / {:?} {}%",
+                "PET ROOM {} {} {stage} {clock} {face} {:?} {}%",
                 self.name(),
                 self.current_character()
                     .map_or("pet", |c| c.species.as_str()),
@@ -1417,7 +1428,7 @@ impl Ui {
                 )
             } else {
                 format!(
-                    "Enter {} | O Menu\n+/- zoom 0 reset Z view",
+                    "[Enter] {} O Menu\n+/- zoom 0 reset Z view",
                     LABELS[self.selected]
                 )
             };
@@ -1476,7 +1487,10 @@ impl Ui {
                     ][self.selected]
                 )
             } else {
-                format!("Enter {} O Menu", LABELS[self.selected])
+                format!(
+                    "[Enter] {} O",
+                    ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected]
+                )
             };
             screen.render_widget(
                 Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
