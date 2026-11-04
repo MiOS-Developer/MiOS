@@ -1094,12 +1094,14 @@ def _run_native_unfinished_final_httpx():
     from mios_pipe.lifecycle import verity
     from unittest import mock
     raw = '<tool_call>{"name":"arbitrary_read","arguments":{"query":"facts"}}</tool_call>'
-    async def scenario(streaming=False, terminal=False, invalid_again=False, example=False):
+    async def scenario(streaming=False, terminal=False, invalid_again=False, example=False, structured=False):
         _base_configure({}, [], [])
         requests = []
         answer = "The verified source reports an observed result."
         if example:
             answer = "The literal syntax is " + chr(96) + raw + chr(96) + "."
+        if structured:
+            answer = json.dumps({"name": "ordinary-entity", "input": {"value": 42}})
         async def loop(client, endpoint, model, headers, messages, tools, timeout, push, **kwargs):
             if terminal: kwargs["terminal_response"]["content"] = raw
             return list(messages) + [{"role": "tool", "content": "The verified source reports an observed result."}]
@@ -1110,7 +1112,7 @@ def _run_native_unfinished_final_httpx():
             assert body["model"] == "m" and body["max_tokens"] == 8
             assert "tools" not in body and "tool_choice" not in body
             recovery = terminal or len(requests) > 1
-            content = answer if example or recovery and not invalid_again else raw
+            content = answer if example or structured or recovery and not invalid_again else raw
             if recovery:
                 assert body["messages"][0]["content"].endswith("Canonical final synthesis fixture")
                 assert any(m.get("role") == "tool" for m in body["messages"])
@@ -1146,13 +1148,14 @@ def _run_native_unfinished_final_httpx():
                 assert response.status_code == 503 and b"<tool_call>" not in response.body, response.body
             else:
                 assert _body_text(response) == answer, response.body
-        assert len(requests) == (1 if terminal or example else 2), requests
+        assert len(requests) == (1 if terminal or example or structured else 2), requests
         assert client.is_closed
     for streaming in (False, True):
         asyncio.run(scenario(streaming))
         asyncio.run(scenario(streaming, terminal=True))
         asyncio.run(scenario(streaming, invalid_again=True))
         asyncio.run(scenario(streaming, example=True))
+        asyncio.run(scenario(streaming, structured=True))
     print("native HTTPX final/terminal/streaming raw tool requests recover once without leaking; quoted syntax preserved: OK")
 
 

@@ -273,7 +273,7 @@ def _unfinished_tool_text(content: str, tools=None) -> bool:
         return False
     matches = list(_RESCUE_TOOLCALL_RE.finditer(text))
     matches += list(re.finditer(r"(?s)<function=[a-zA-Z0-9_.\-]+>.*?</function>", text))
-    def structural_calls(candidate):
+    def structural_calls(candidate, explicit_transport=False):
         try:
             rescued = _rescue_tool_calls(candidate, tools)
         except (AttributeError, TypeError):
@@ -291,7 +291,13 @@ def _unfinished_tool_text(content: str, tools=None) -> bool:
         for item in obj if isinstance(obj, list) else [obj]:
             if not isinstance(item, dict):
                 continue
-            fn = item.get("function") if isinstance(item.get("function"), dict) else item
+            nested = item.get("function")
+            transport_type = item.get("type")
+            strong = (explicit_transport or transport_type in ("function", "tool_call", "function_call")
+                      or isinstance(nested, dict) and transport_type is None)
+            if not strong:
+                continue  # ordinary structured data is not a protocol request
+            fn = nested if isinstance(nested, dict) else item
             name = fn.get("name") or fn.get("tool") or fn.get("tool_name")
             args = next((fn[key] for key in ("arguments", "args", "parameters", "input")
                          if key in fn), None)
@@ -302,7 +308,7 @@ def _unfinished_tool_text(content: str, tools=None) -> bool:
         spans = []
         for match in matches:
             candidate = match.group(1) if match.re is _RESCUE_TOOLCALL_RE else match.group()
-            if structural_calls(candidate):
+            if structural_calls(candidate, explicit_transport=True):
                 spans.append(match.span())
         if not spans:
             return False

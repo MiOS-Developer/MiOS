@@ -272,7 +272,7 @@ def _test_unfinished_final_protocol_shapes():
     xml = '<function=arbitrary_read><parameter=query>current facts</parameter></function>'
     for text in (raw, xml, 'The source was fetched.\n' + raw,
                  json.dumps({"name": "arbitrary_read", "arguments": {}})):
-        assert _unfinished_tool_text(text), text
+        assert _unfinished_tool_text(text, [{"function": {"name": "arbitrary_read"}}]), text
     tick = chr(96)
     for text in ("The measured result is 42.", "La réponse est vérifiée.",
                  tick * 3 + "xml\n" + raw + "\n" + tick * 3,
@@ -283,3 +283,26 @@ def _test_unfinished_final_protocol_shapes():
     print("unfinished final protocols rejected; prose and quoted/fenced/inline examples preserved: OK")
 
 _test_unfinished_final_protocol_shapes()
+
+
+def _test_bare_structured_data_is_not_unfinished_transport():
+    from mios_pipe.routing.toolexec import _unfinished_tool_text
+    import json
+    for field in ("input", "parameters", "arguments", "args"):
+        data = {"name": "ordinary-entity", field: {"value": 42}}
+        assert not _unfinished_tool_text(json.dumps(data)), data
+    assert not _unfinished_tool_text(json.dumps({
+        "type": "object", "name": "ordinary-entity", "input": "data"}))
+    assert not _unfinished_tool_text(json.dumps({"name": "ordinary-entity", "type": [], "input": "data"}))
+    known = {"name": "available_read", "arguments": {"query": "facts"}}
+    assert _unfinished_tool_text(json.dumps(known), [{"function": {"name": "available_read"}}])
+    for data in (
+        {"type": "function", "function": {"name": "unknown", "arguments": {}}},
+        {"type": "tool_call", "name": "unknown", "arguments": {}},
+        {"type": "function_call", "name": "unknown", "arguments": "{}"},
+        {"function": {"name": "unknown", "arguments": {}}}):
+        assert _unfinished_tool_text(json.dumps(data)), data
+    assert _unfinished_tool_text('<tool_call>{"name":"unknown","input":"data"}</tool_call>')
+    print("ordinary raw JSON entities preserved; known bare tools and explicit unknown transport envelopes rejected: OK")
+
+_test_bare_structured_data_is_not_unfinished_transport()

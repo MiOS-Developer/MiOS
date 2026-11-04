@@ -830,7 +830,7 @@ def _test_node_unfinished_final_recovery_httpx():
     from mios_pipe.lifecycle import verity
     from unittest import mock
     raw = '<tool_call>{"name":"arbitrary_read","arguments":{"query":"facts"}}</tool_call>'
-    async def scenario(terminal=False, invalid_again=False, example=False):
+    async def scenario(terminal=False, invalid_again=False, example=False, structured=False):
         _configure()
         actual.RR_ENABLE = False
         actual.SECONDARY_TOOL_LOOP = True
@@ -838,6 +838,8 @@ def _test_node_unfinished_final_recovery_httpx():
         answer = "The verified source reports an observed result."
         if example:
             answer = "The literal syntax is " + chr(96) + raw + chr(96) + "."
+        if structured:
+            answer = json.dumps({"name": "ordinary-entity", "input": {"value": 42}})
         async def loop(client, endpoint, model, headers, messages, tools, timeout, push, **kwargs):
             if terminal: kwargs["terminal_response"]["content"] = raw
             return list(messages) + [{"role": "tool", "content": "The verified source reports an observed result."}]
@@ -851,7 +853,7 @@ def _test_node_unfinished_final_recovery_httpx():
             if recovery:
                 assert body["messages"][0]["content"].endswith("Canonical final synthesis fixture")
                 assert any(m.get("role") == "tool" for m in body["messages"])
-            content = answer if example or recovery and not invalid_again else raw
+            content = answer if example or structured or recovery and not invalid_again else raw
             return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
         actual._v1_secondary_tool_loop = loop
         with mock.patch.object(verity, "_POLISH_SYSTEM", "Canonical final synthesis fixture"):
@@ -860,11 +862,12 @@ def _test_node_unfinished_final_recovery_httpx():
                     "child", CFG, {**BODY, "max_tokens": 8}, {}, client, prefer_cpu=False)
         assert name == "child"
         assert text == ("" if invalid_again else answer), (requests, text)
-        assert len(requests) == (1 if terminal or example else 2), requests
+        assert len(requests) == (1 if terminal or example or structured else 2), requests
     asyncio.run(scenario())
     asyncio.run(scenario(terminal=True))
     asyncio.run(scenario(invalid_again=True))
     asyncio.run(scenario(example=True))
+    asyncio.run(scenario(structured=True))
     print("node HTTPX final/terminal tool text recovers once from real evidence; invalid repeat fails; inline example survives: OK")
 
 _test_node_unfinished_final_recovery_httpx()
