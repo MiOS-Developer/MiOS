@@ -4,7 +4,7 @@
 set -euo pipefail
 
 root="${1:-.}"
-repo="$(python3 "$root/usr/libexec/mios/mios-toml-get" image machine_os_repo)"
+repo="$(MIOS_TOML_ROOT="$root" "${MIOS_TOML_GET:-$root/usr/libexec/mios/mios-toml-get}" image machine_os_repo)"
 out="$root/.artifacts/image-facts.json"
 install -d "$root/.artifacts"
 

@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/packages.sh"
 
-get() { MIOS_TOML_ROOT="$ROOT_DIR" python3 "$ROOT_DIR/usr/libexec/mios/mios-toml-get" "$@"; }
+get() { MIOS_TOML_ROOT="$ROOT_DIR" "${MIOS_TOML_GET:-$ROOT_DIR/usr/libexec/mios/mios-toml-get}" "$@"; }
 
 if [[ "$(get remote.rdp enabled false 2>/dev/null || echo false)" != true ]]; then
     mios_log "[remote.rdp].enabled=false: masking xrdp.service, xrdp-sesman.service"

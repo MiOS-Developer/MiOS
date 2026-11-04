@@ -38,7 +38,7 @@ done
 # the resolved version is build output (version manifest + SBOM), not SSOT.
 mios_log "Install and bake code-server"
 _src="$(cd "${SCRIPT_DIR}/.." && pwd)"
-_toml_get() { MIOS_TOML_ROOT="$_src" python3 "$_src/usr/libexec/mios/mios-toml-get" --vendor "$@"; }
+_toml_get() { MIOS_TOML_ROOT="$_src" "${MIOS_TOML_GET:-$_src/usr/libexec/mios/mios-toml-get}" --vendor "$@"; }
 # shellcheck source=automation/lib/upstream-latest.sh
 source "${SCRIPT_DIR}/lib/upstream-latest.sh"
 _cs_repo="https://github.com/coder/code-server.git"

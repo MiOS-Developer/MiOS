@@ -47,7 +47,7 @@ main() {
 
     root="$(mios_checkout)" || { echo "[mios-cloud] no MiOS checkout and the clone failed; no MiOS container this session"; return 0; }
     local budget
-    budget="${MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S:-$(MIOS_TOML_ROOT="$root" python3 "$root/usr/libexec/mios/mios-toml-get" deployment.cloud setup_budget_s)}"
+    budget="${MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S:-$(MIOS_TOML_ROOT="$root" "${MIOS_TOML_GET:-$root/usr/libexec/mios/mios-toml-get}" deployment.cloud setup_budget_s)}"
     timeout "$budget" bash "$root/.devcontainer/cloud-shell/bootstrap.sh" claude-code \
         || echo "[mios-cloud] MiOS provisioning did not finish; run: bash $root/.devcontainer/cloud-shell/bootstrap.sh claude-code"
 }

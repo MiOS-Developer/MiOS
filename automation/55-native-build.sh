@@ -6,7 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ "${1:-}" == --toolchain ]]; then
     fail() { echo "[55-native-build] ERROR: $*" >&2; exit 1; }
-    get() { MIOS_TOML_ROOT="$ROOT_DIR" python3 "$ROOT_DIR/usr/libexec/mios/mios-toml-get" --vendor "$@"; }
+    getter="${MIOS_TOML_GET:-$ROOT_DIR/usr/libexec/mios/mios-toml-get}"
+    [[ -x "$getter" ]] || fail "MiOS TOML getter must be staged before toolchain provisioning"
+    get() { MIOS_TOML_ROOT="$ROOT_DIR" "$getter" --vendor "$@"; }
     channel="$(get build.toolchain channel)"
     target="$(get build.native.linux.targets "$(uname -m)")"
     linker="$(get build.native.linux linker)"

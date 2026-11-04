@@ -17,7 +17,7 @@ command -v mios_log >/dev/null || mios_log() { printf '[71-bake-rdp-server] %s\n
 command -v mios_ok >/dev/null || mios_ok() { mios_log "OK: $*"; }
 command -v mios_err >/dev/null || mios_err() { mios_log "ERROR: $*"; }
 
-get() { MIOS_TOML_ROOT="$ROOT_DIR" python3 "$ROOT_DIR/usr/libexec/mios/mios-toml-get" --vendor "$@"; }
+get() { MIOS_TOML_ROOT="$ROOT_DIR" "${MIOS_TOML_GET:-$ROOT_DIR/usr/libexec/mios/mios-toml-get}" --vendor "$@"; }
 
 DESTDIR="${MIOS_RDP_DESTDIR:-}"
 OUT_DIR="$DESTDIR/usr/libexec/mios/rdp-native"

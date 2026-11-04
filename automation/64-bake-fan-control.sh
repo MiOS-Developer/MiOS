@@ -12,7 +12,7 @@ source "${SCRIPT_DIR}/lib/common.sh" 2>/dev/null || true
 # shellcheck source=automation/lib/upstream-latest.sh
 source "${SCRIPT_DIR}/lib/upstream-latest.sh"
 
-get() { MIOS_TOML_ROOT="$ROOT_DIR" python3 "$ROOT_DIR/usr/libexec/mios/mios-toml-get" --vendor "$@"; }
+get() { MIOS_TOML_ROOT="$ROOT_DIR" "${MIOS_TOML_GET:-$ROOT_DIR/usr/libexec/mios/mios-toml-get}" --vendor "$@"; }
 
 if [[ "$(get hardware.fan_control enabled 2>/dev/null || echo true)" == false ]]; then
     mios_log "fan control disabled in [hardware.fan_control]; skipping ventulusd"

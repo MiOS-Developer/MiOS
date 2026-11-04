@@ -13,11 +13,13 @@ import hashlib
 import json
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
 import tomllib
 import unittest
+from pathlib import Path
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BOOTSTRAP = os.path.join(ROOT, ".devcontainer/cloud-shell/bootstrap.sh")
@@ -117,7 +119,7 @@ class Harness(unittest.TestCase):
         self.stub("id", 'exit 1\n')
         # The real resolver, confined to the checkout's vendor SSOT and this test's host drop-ins.
         self.toml_get = os.path.join(self.tmp, "mios-toml-get")
-        _write(self.toml_get, f'#!/bin/sh\nexec python3 {TOML_GET} "$@"\n', 0o755)
+        _write(self.toml_get, f'#!/bin/sh\nexec {shlex.quote(TOML_GET)} "$@"\n', 0o755)
 
     def serve_model(self, payload=None, published_digest=None):
         payload = self.payload if payload is None else payload
@@ -513,6 +515,104 @@ class TestCloudScripts(unittest.TestCase):
                     self.assertIn(f"{want} GB needed", r.stderr)
                     self.assertIn(store, r.stderr)
 
+
+
+@unittest.skipIf(os.name == "nt", "POSIX build-entry execution contract")
+class TestGetterExecutableContract(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="mios-getter-exec-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.project = self.root / "selected source"
+        vendor = self.project / "usr/share/mios"
+        vendor.mkdir(parents=True)
+        (vendor / "mios.toml").write_text('[probe]\nvalue="selected-source"\n', encoding="utf-8")
+        self.cold = self.project / "usr/libexec/mios/mios-toml-get"
+        self.cold.parent.mkdir(parents=True)
+        shutil.copy2(TOML_GET, self.cold)
+        library = self.project / "usr/lib/mios"
+        library.mkdir(parents=True)
+        shutil.copy2(os.path.join(ROOT, "usr/lib/mios/mios_toml.py"), library / "mios_toml.py")
+        with open(BOOTSTRAP, encoding="utf-8") as stream:
+            text = stream.read()
+        self.ssot = re.search(r"(?ms)^ssot\(\) \{.*?^\}", text).group(0)
+        self.tools = self.root / "tools"
+        self.tools.mkdir()
+        self.interpreter_log = self.root / "python-called"
+        _write(str(self.tools / "python3"),
+               '#!/bin/sh\nprintf x >> "$MIOS_TEST_PYTHON_LOG"\n'
+               'exec "$MIOS_TEST_PYTHON" "$@"\n', 0o755)
+
+    def env(self, helper):
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("MIOS_")}
+        environment.update(MIOS_TOML_GET=str(helper), MIOS_TEST_ROOT=str(self.project),
+                           MIOS_VENDOR_TOML=str(self.project / "usr/share/mios/mios.toml"),
+                           MIOS_RESOLVER_NATIVE="0", MIOS_TEST_PYTHON=sys.executable,
+                           MIOS_TEST_PYTHON_LOG=str(self.interpreter_log),
+                           PATH=str(self.tools) + os.pathsep + environment["PATH"])
+        return environment
+
+    def query(self, helper):
+        script = 'set -euo pipefail\ndie() { echo "$*" >&2; exit 1; }\nROOT="$MIOS_TEST_ROOT"\n'
+        return subprocess.run(["bash", "-c", script + self.ssot + "\nssot --vendor probe value\n"],
+                              env=self.env(helper), text=True, capture_output=True, timeout=30)
+
+    def test_cold_python_shebang_and_hot_native_elf_are_both_executed(self):
+        cold = self.query(self.cold)
+        self.assertEqual((cold.returncode, cold.stdout), (0, "selected-source\n"), cold.stderr)
+        self.assertTrue(self.interpreter_log.exists(), "cold helper must use its own shebang")
+        self.interpreter_log.unlink()
+        native = (os.environ.get("MIOS_TEST_NATIVE_TOML_GET")
+                  or shutil.which("mios-toml-get")
+                  or "/usr/bin/mios-toml-get")
+        self.assertEqual(Path(native).read_bytes()[:4], b"\x7fELF",
+                         "an actual native ELF is required for the hot-helper control")
+        hot = self.root / "native getter"
+        shutil.copy2(native, hot)
+        result = self.query(hot)
+        self.assertEqual((result.returncode, result.stdout), (0, "selected-source\n"), result.stderr)
+        self.assertFalse(self.interpreter_log.exists(), "native helper must never be interpreted by Python")
+
+    def test_missing_explicit_helper_does_not_fall_back_to_the_host(self):
+        result = self.query(self.root / "missing-getter")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("getter", result.stderr)
+        self.assertFalse(self.interpreter_log.exists())
+
+    def test_phase49_requires_staged_getter_before_policy_or_download_work(self):
+        calls = self.root / "external-calls"
+        for name in ("cosign", "curl", "skopeo"):
+            _write(str(self.tools / name), f'#!/bin/sh\nprintf "{name}\\n" >> "{calls}"\nexit 1\n', 0o755)
+        environment = self.env(self.root / "missing-getter")
+        result = subprocess.run(["bash", os.path.join(ROOT, "automation/49-cosign-policy.sh")],
+                                env=environment, text=True, capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("getter must be staged before signing-policy work", result.stderr)
+        self.assertFalse(calls.exists(), "cold dependency failure must precede policy/download side effects")
+
+    def test_containerfile_stages_native_catalog_before_toolchain_and_phase_execution(self):
+        with open(os.path.join(ROOT, "Containerfile"), encoding="utf-8") as stream:
+            text = stream.read()
+        copy = text.index("COPY --from=rust-builder /out/usr/ /usr/")
+        self.assertLess(copy, text.index("bash /tmp/build/automation/55-native-build.sh --toolchain"))
+        self.assertLess(copy, text.index("CTX=/tmp/build /tmp/build/automation/build.sh"))
+        with open(SSOT, "rb") as stream:
+            native = tomllib.load(stream)["build"]["native"]
+        self.assertIn("mios-toml-get", native["categories"]["cli"]["binaries"])
+
+    def test_early_consumers_do_not_interpret_the_getter_as_python(self):
+        consumers = [
+            "automation/49-cosign-policy.sh", "automation/55-native-build.sh",
+            "automation/58-gnome-remote-desktop.sh", "automation/59-tools.sh",
+            "automation/64-bake-fan-control.sh", "automation/71-bake-rdp-server.sh",
+            "automation/72-hermes-agent.sh", ".devcontainer/cloud-shell/bootstrap.sh",
+            ".devcontainer/cloud-shell/claude-code-cloud.sh", "tools/fetch-image-facts.sh",
+            "tools/mirror-machine-os.sh",
+        ]
+        for relative in consumers:
+            with open(os.path.join(ROOT, relative), encoding="utf-8") as stream:
+                text = stream.read()
+            self.assertNotRegex(text, r'python3\s+["\'][^\n]*mios-toml-get', relative)
 
 if __name__ == "__main__":
     unittest.main()

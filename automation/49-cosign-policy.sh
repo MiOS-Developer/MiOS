@@ -8,6 +8,9 @@ set -euo pipefail
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
 
 source "$(dirname "$0")/lib/common.sh"
+_here_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_toml_get="${MIOS_TOML_GET:-$_here_root/usr/libexec/mios/mios-toml-get}"
+[[ -x "$_toml_get" ]] || die "MiOS TOML getter must be staged before signing-policy work"
 
 mios_log "Ensuring cosign + trust roots + policy.json"
 
@@ -19,7 +22,7 @@ if ! command -v cosign >/dev/null 2>&1; then
     source "$(dirname "$0")/lib/upstream-latest.sh"
     _here_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     COSIGN_RELEASE_URL="${MIOS_SECURITY_SIGSTORE_COSIGN_RELEASE_URL:?SSOT cosign release URL unresolved}"
-    COSIGN_MAJOR="$(MIOS_TOML_ROOT="$_here_root" python3 "$_here_root/usr/libexec/mios/mios-toml-get" --vendor security.sigstore cosign_major "" 2>/dev/null || true)"
+    COSIGN_MAJOR="$(MIOS_TOML_ROOT="$_here_root" "$_toml_get" --vendor security.sigstore cosign_major "")"
     case "$(uname -m)" in x86_64) _cosign_arch=amd64 ;; aarch64) _cosign_arch=arm64 ;; *) die "No cosign build for $(uname -m)" ;; esac
     mios_log "Resolving newest cosign release${COSIGN_MAJOR:+ (v${COSIGN_MAJOR} channel)}"
     _cosign_out="$(mios_cosign_fetch_latest "$COSIGN_RELEASE_URL" "$COSIGN_MAJOR" /usr/bin/cosign "$_cosign_arch")" \

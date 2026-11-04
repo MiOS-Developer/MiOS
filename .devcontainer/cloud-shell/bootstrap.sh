@@ -46,7 +46,9 @@ ssot() {
         [[ -x "$tool" ]] || die "native mios-toml-get is missing from the selected catalog"
         MIOS_TOML_ROOT="$ROOT" "$tool" "$@"
     else
-        MIOS_TOML_ROOT="$ROOT" python3 "$ROOT/usr/libexec/mios/mios-toml-get" "$@"
+        local tool="${MIOS_TOML_GET:-$ROOT/usr/libexec/mios/mios-toml-get}"
+        [[ -x "$tool" ]] || die "MiOS TOML getter must be staged before cloud setup"
+        MIOS_TOML_ROOT="$ROOT" "$tool" "$@"
     fi
 }
 need() {

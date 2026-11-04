@@ -8,7 +8,8 @@ set -euo pipefail
 main() (
     local root="${1:-.}"
     root="$(cd "$root" && pwd -P)"
-    local get="$root/usr/libexec/mios/mios-toml-get"
+    local get="${MIOS_TOML_GET:-$root/usr/libexec/mios/mios-toml-get}"
+    [[ -x "$get" ]] || { echo "[mirror-machine-os] native mios-toml-get is required" >&2; exit 1; }
     # A publisher reads the selected checkout, including when an installed
     # native getter or an unrelated host/user overlay is present.
     export MIOS_TOML_ROOT="$root"
@@ -16,9 +17,9 @@ main() (
     [[ -f "$MIOS_VENDOR_TOML" ]] || { echo "[mirror-machine-os] missing vendor SSOT: $MIOS_VENDOR_TOML" >&2; exit 1; }
 
     local repo tag mirror
-    repo="$(python3 "$get" --vendor image machine_os_repo)"
-    tag="$(python3 "$get" --vendor image machine_os_tag)"
-    mirror="${2:-$(python3 "$get" --vendor image machine_os_mirror)}"
+    repo="$("$get" --vendor image machine_os_repo)"
+    tag="$("$get" --vendor image machine_os_tag)"
+    mirror="${2:-$("$get" --vendor image machine_os_mirror)}"
     local src="$repo:$tag" dst="$mirror:$tag"
     if [[ -z "$repo" || -z "$tag" || -z "$mirror" || "$src$dst" == *[[:space:]]* ]]; then
         echo "[mirror-machine-os] image repository, mirror and tag must be nonempty references without whitespace" >&2
@@ -34,7 +35,7 @@ main() (
     fi
     if [[ $# -lt 2 ]]; then
         local ci_image
-        ci_image="$(python3 "$get" --vendor ci.fedora image)"
+        ci_image="$("$get" --vendor ci.fedora image)"
         if [[ "$ci_image" != "$dst" ]]; then
             echo "[mirror-machine-os] ci.fedora.image must equal machine_os_mirror:machine_os_tag ($dst)" >&2
             exit 1
