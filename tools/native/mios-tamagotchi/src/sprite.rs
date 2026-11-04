@@ -1255,81 +1255,83 @@ impl VoxelModel {
                 }
             }
         }
-        let eye_y = if egg { 0 } else { (ry * 0.24) as i32 };
-        let eye_x = if detailed { 2 } else { 1 };
-        for sign in [-1, 1] {
-            let x = sign * eye_x;
-            match expression {
-                Sleeping | Shy => {
-                    model.dot(x, eye_y, 0);
-                    model.dot(x + sign, eye_y, 0);
-                }
-                Sick | Dead => {
-                    for dy in [-1, 1] {
-                        for dx in [-1, 1] {
-                            model.dot(x + dx, eye_y + dy, 0);
-                        }
-                    }
-                    model.dot(x, eye_y, 0);
-                }
-                Happy | Celebrate => {
-                    model.dot(x, eye_y + 1, 0);
-                    model.dot(x + sign, eye_y, 0);
-                }
-                _ => {
-                    model.dot(x, eye_y, 0);
-                    if detailed {
-                        model.dot(x, eye_y + 1, if expression == Excited { 7 } else { 2 });
+        if !egg {
+            let eye_y = if egg { 0 } else { (ry * 0.24) as i32 };
+            let eye_x = if detailed { 2 } else { 1 };
+            for sign in [-1, 1] {
+                let x = sign * eye_x;
+                match expression {
+                    Sleeping | Shy => {
+                        model.dot(x, eye_y, 0);
                         model.dot(x + sign, eye_y, 0);
                     }
-                    if expression == Idle && phase == 2 {
-                        model.dot(x, eye_y + 1, body);
+                    Sick | Dead => {
+                        for dy in [-1, 1] {
+                            for dx in [-1, 1] {
+                                model.dot(x + dx, eye_y + dy, 0);
+                            }
+                        }
+                        model.dot(x, eye_y, 0);
+                    }
+                    Happy | Celebrate => {
+                        model.dot(x, eye_y + 1, 0);
+                        model.dot(x + sign, eye_y, 0);
+                    }
+                    _ => {
+                        model.dot(x, eye_y, 0);
+                        if detailed {
+                            model.dot(x, eye_y + 1, if expression == Excited { 7 } else { 2 });
+                            model.dot(x + sign, eye_y, 0);
+                        }
+                        if expression == Idle && phase == 2 {
+                            model.dot(x, eye_y + 1, body);
+                        }
+                    }
+                }
+                let brow = match expression {
+                    Angry => -sign,
+                    Sad => sign,
+                    Surprised => 0,
+                    _ => 2,
+                };
+                if brow != 2 {
+                    model.dot(x, eye_y + 2, 6);
+                    model.dot(x + sign, eye_y + 2 + brow * sign, 6);
+                }
+                if !egg && !dead {
+                    model.dot(x + sign, eye_y - 1, 5);
+                    if detailed {
+                        model.dot(x + 2 * sign, eye_y - 1, 5);
                     }
                 }
             }
-            let brow = match expression {
-                Angry => -sign,
-                Sad => sign,
-                Surprised => 0,
-                _ => 2,
-            };
-            if brow != 2 {
-                model.dot(x, eye_y + 2, 6);
-                model.dot(x + sign, eye_y + 2 + brow * sign, 6);
-            }
-            if !egg && !dead {
-                model.dot(x + sign, eye_y - 1, 5);
-                if detailed {
-                    model.dot(x + 2 * sign, eye_y - 1, 5);
+            let my = eye_y - 2;
+            model.dot(0, my, 6);
+            match expression {
+                Surprised | Hungry | Eating => {
+                    model.dot(
+                        0,
+                        my - 1,
+                        if expression == Eating && phase.is_multiple_of(2) {
+                            5
+                        } else {
+                            0
+                        },
+                    );
+                    model.dot(-1, my, 6);
+                    model.dot(1, my, 6);
                 }
+                Happy | Playful | Excited | Celebrate => {
+                    model.dot(-1, my + 1, 6);
+                    model.dot(1, my + 1, 6);
+                    model.dot(0, my - 1, 5);
+                }
+                Sad | Angry | Sick | Dead => {
+                    model.dot(-1, my - 1, 6);
+                    model.dot(1, my - 1, 6);
+                }
+                _ => {}
             }
-        }
-        let my = eye_y - 2;
-        model.dot(0, my, 6);
-        match expression {
-            Surprised | Hungry | Eating => {
-                model.dot(
-                    0,
-                    my - 1,
-                    if expression == Eating && phase.is_multiple_of(2) {
-                        5
-                    } else {
-                        0
-                    },
-                );
-                model.dot(-1, my, 6);
-                model.dot(1, my, 6);
-            }
-            Happy | Playful | Excited | Celebrate => {
-                model.dot(-1, my + 1, 6);
-                model.dot(1, my + 1, 6);
-                model.dot(0, my - 1, 5);
-            }
-            Sad | Angry | Sick | Dead => {
-                model.dot(-1, my - 1, 6);
-                model.dot(1, my - 1, 6);
-            }
-            _ => {}
         }
         if !dead {
             let side = rx + 2.0;
@@ -1941,6 +1943,11 @@ impl VoxelModel {
             dead: stage == Stage::Dead,
         });
         self.appearance = Some(appearance);
+        if stage == Stage::Egg {
+            // The species is inside its shell: no ears, muzzle, paws or face
+            // relief until the real hatch tick changes the life stage.
+            return;
+        }
         match appearance.shape % 8 {
             0 => {
                 // Neko: tapering cat ears, paired muzzle and a curled tail.
@@ -3091,9 +3098,9 @@ mod appearance_tests {
     ];
 
     #[test]
-    fn animal_families_and_both_variants_have_distinct_silhouettes_at_every_stage() {
+    fn hatched_animal_families_and_both_variants_have_distinct_silhouettes() {
         for style in STYLES {
-            for stage in STAGES {
+            for stage in STAGES.into_iter().filter(|stage| *stage != Stage::Egg) {
                 let mut silhouettes = std::collections::BTreeSet::new();
                 for shape in 0..16 {
                     let appearance = Appearance {
@@ -3659,6 +3666,66 @@ mod oblique_face_tests {
                         .face_overlay()
                         .is_none()
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod egg_shell_tests {
+    use super::*;
+    use crate::game::Stage;
+    #[test]
+    fn egg_keeps_a_closed_shell_without_species_limbs_or_facial_relief() {
+        for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            for yaw in [0, 45, 90, 180, 315] {
+                let base = Sprite::voxel_with_appearance(
+                    Stage::Egg,
+                    Expression::Idle,
+                    style,
+                    0,
+                    yaw,
+                    false,
+                    Appearance {
+                        shape: 0,
+                        body: 4,
+                        accent: 11,
+                    },
+                );
+                for shape in 0..16 {
+                    let egg = Sprite::voxel_with_appearance(
+                        Stage::Egg,
+                        Expression::Idle,
+                        style,
+                        0,
+                        yaw,
+                        true,
+                        Appearance {
+                            shape,
+                            body: 4,
+                            accent: 11,
+                        },
+                    );
+                    assert_eq!(
+                        base.pixels, egg.pixels,
+                        "species geometry must not leak through the shell"
+                    );
+                    assert!(egg.face_overlay().is_none());
+                }
+                let baby = Sprite::voxel_with_appearance(
+                    Stage::Baby,
+                    Expression::Idle,
+                    style,
+                    0,
+                    yaw,
+                    false,
+                    Appearance {
+                        shape: 0,
+                        body: 4,
+                        accent: 11,
+                    },
+                );
+                assert_ne!(base.pixels, baby.pixels);
             }
         }
     }

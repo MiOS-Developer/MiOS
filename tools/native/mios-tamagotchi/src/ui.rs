@@ -356,7 +356,7 @@ impl Ui {
     fn simulate_behavior(&mut self, config: &Config) {
         use crate::game::Stage;
         self.mobile_stage = !matches!(self.game.stage(&config.game), Stage::Egg | Stage::Dead);
-        if !self.game.paused && !self.overlay_open() {
+        if !self.game.paused && !self.overlay_open() && self.game.challenge.is_none() {
             self.thought_ticks = self.thought_ticks.saturating_add(1);
             if config.floating_thoughts
                 && self
@@ -2904,6 +2904,9 @@ pub fn run(
             }
             last_tick = Instant::now();
         }
+        if ui.game.challenge.is_some() && matches!(ui.native_request, Some(NativeKind::Thought)) {
+            ui.native_request = None;
+        }
         if let Some(kind) = ui.native_request.take() {
             let context = matches!(kind, NativeKind::Context);
             let mut request = ui.dialog_request(config, kind);
@@ -4049,5 +4052,36 @@ mod progression_training_navigation_review {
             assert_eq!(ui.menu, None);
             assert_eq!(ui.game, before);
         }
+    }
+}
+
+#[cfg(test)]
+mod memory_thought_interruption_tests {
+    use super::*;
+    #[test]
+    fn automatic_thoughts_cannot_steal_a_live_memory_round() {
+        let mut config = Config::sample().unwrap();
+        config.floating_thoughts = true;
+        let mut game = Game::new(&config.game, 734);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let mut ui = Ui::configured(game, &config);
+        ui.thought_ticks = config.thought_interval_ticks - 1;
+        ui.care(Care::Play, &config.game);
+        assert!(ui.game.challenge.is_some());
+        let before = ui.game.clone();
+        ui.simulate_behavior(&config);
+        assert!(
+            ui.native_request.is_none(),
+            "no automatic modal during a memory challenge"
+        );
+        assert_eq!(ui.game, before);
+        ui.game.challenge = None;
+        ui.simulate_behavior(&config);
+        assert!(
+            matches!(ui.native_request, Some(NativeKind::Thought)),
+            "idle automatic thoughts still work after the round"
+        );
     }
 }
