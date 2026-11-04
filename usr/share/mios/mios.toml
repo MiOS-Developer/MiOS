@@ -14843,7 +14843,7 @@ Environment = [
   "XDG_CACHE_HOME=${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i/cache"
 ]
 EnvironmentFile = "/run/mios/swarm/%i.env"
-Exec = "--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL} --ctx-size ${WORKER_CTX} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_ALIAS}"
+Exec = "--model /models/${WORKER_MODEL} --host 0.0.0.0 --port ${WORKER_PORT} --n-gpu-layers ${WORKER_NGL} --device CUDA0 --ctx-size ${WORKER_CTX} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}/%i --parallel 1 --cont-batching --jinja --alias ${WORKER_ALIAS}"
 Group = "${MIOS_SERVICES_LLAMACPP_GID:-827}"
 Image = "${MIOS_CUDA_IMAGE:-ghcr.io/mostlygeek/llama-swap:cuda}"
 Label = "org.opencontainers.image.title=mios-llm-worker-%i"
