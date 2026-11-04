@@ -1294,14 +1294,29 @@ impl Ui {
             room,
         );
         let hints = self.controller.as_ref().map_or_else(
-            || "Arrows: animal  Enter: adopt?\nEsc: keep current pet".into(),
+            || {
+                if controls.width < 28 {
+                    "Arrows Enter:new?\nEsc: keep pet".into()
+                } else {
+                    "Arrows: animal  Enter: adopt?\nEsc: keep current pet".into()
+                }
+            },
             |p| {
-                format!(
-                    "{}: animal [{}] adopt?\n[{}] keep current",
-                    p.navigate,
-                    tiny_button(&p.accept),
-                    tiny_button(&p.back)
-                )
+                if controls.width < 28 {
+                    format!(
+                        "{} {}:new?\n{}:keep",
+                        p.navigate,
+                        tiny_button(&p.accept),
+                        tiny_button(&p.back)
+                    )
+                } else {
+                    format!(
+                        "{}: animal [{}] adopt?\n[{}] keep current",
+                        p.navigate,
+                        tiny_button(&p.accept),
+                        tiny_button(&p.back)
+                    )
+                }
             },
         );
         screen.render_widget(
@@ -1316,7 +1331,7 @@ impl Ui {
             screen.render_widget(Clear, modal);
             let question = self
                 .adopt_character
-                .and_then(|id| self.catalogue.get(usize::from(id)))
+                .and_then(|id| self.catalogue.iter().find(|character| character.id == id))
                 .map_or_else(
                     || "Replace pet?".to_owned(),
                     |c| format!("Adopt {}?", c.name),
@@ -2413,6 +2428,42 @@ mod graphics_tests {
             .map(|c| c.symbol())
             .collect();
         assert!(text.contains("R R R"), "{text}");
+    }
+    #[test]
+    fn tiny_roster_exposes_adoption_and_unordered_catalogue_confirms_selected_identity() {
+        let (config, mut ui) = pet();
+        let saved = ui.game.clone();
+        ui.catalogue.reverse();
+        ui.open(Menu::Roster);
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("Enter:new?"), "{text}");
+        assert!(text.contains("Esc: keep pet"), "{text}");
+        ui.handle(key(KeyCode::Enter), &config.game);
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("Adopt Iwa?"), "{text}");
+        assert!(!text.contains("Adopt Mio?"), "{text}");
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.game, saved);
     }
     #[test]
     fn native_dialogue_hides_duplicate_inline_menu_without_hiding_the_pet_view() {
