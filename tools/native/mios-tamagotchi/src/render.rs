@@ -456,41 +456,40 @@ fn draw_front_face(
     }
     for (offset, glyph) in face.text.chars().enumerate() {
         if let Some(cell) = buf.cell_mut(((start + offset as i32) as u16, row as u16)) {
-            cell.set_char(glyph)
-                .set_fg(colors.ink(0))
-                .set_bg(colors.ink(4));
+            cell.set_char(glyph).set_fg(colors.ink(0));
         }
     }
     true
 }
 
-/// A code-native 3x5 stroke font. Only the sprite's authorized expression text
-/// selects glyphs; unsupported text retains the literal terminal treatment.
-fn face_glyph(glyph: u8) -> Option<[u8; 5]> {
+/// Thin 5x9 glyphs with a three-column side bearing. Parentheses are curves,
+/// not chevrons; eyes occupy the upper rows and the mouth has its own baseline.
+/// Geometry and texture resolution are independent of the terminal packing.
+fn face_glyph(glyph: u8) -> Option<[u8; 9]> {
     Some(match glyph {
-        b'(' => [1, 2, 4, 2, 1],
-        b')' => [4, 2, 1, 2, 4],
-        b'^' => [0, 2, 5, 0, 0],
-        b'_' => [0, 0, 0, 0, 7],
-        b'o' => [0, 2, 5, 5, 2],
-        b'O' => [2, 5, 5, 5, 2],
-        b'-' => [0, 0, 7, 0, 0],
-        b'T' => [7, 2, 2, 2, 2],
-        b';' => [0, 2, 0, 2, 4],
-        b'>' => [4, 2, 1, 2, 4],
-        b'<' => [1, 2, 4, 2, 1],
-        b'\'' => [1, 2, 0, 0, 0],
-        96 => [4, 2, 0, 0, 0],
-        b'=' => [0, 7, 0, 7, 0],
-        b'+' => [0, 2, 7, 2, 0],
-        b'@' => [2, 5, 7, 4, 3],
-        b'u' => [0, 0, 5, 5, 7],
-        b'~' => [0, 1, 7, 4, 0],
-        b'.' => [0, 0, 0, 2, 0],
-        b',' => [0, 0, 0, 2, 4],
-        b'*' => [2, 7, 2, 5, 0],
-        b'v' => [0, 0, 5, 5, 2],
-        b'x' => [0, 5, 2, 5, 0],
+        b'(' => [2, 4, 8, 16, 16, 16, 8, 4, 2],
+        b')' => [8, 4, 2, 1, 1, 1, 2, 4, 8],
+        b'^' => [0, 4, 10, 17, 0, 0, 0, 0, 0],
+        b'_' => [0, 0, 0, 0, 0, 0, 0, 0, 31],
+        b'o' => [0, 0, 14, 17, 17, 17, 14, 0, 0],
+        b'O' => [14, 17, 17, 17, 17, 17, 14, 0, 0],
+        b'-' => [0, 0, 0, 0, 31, 0, 0, 0, 0],
+        b'T' => [31, 4, 4, 4, 4, 4, 4, 0, 0],
+        b';' => [0, 4, 0, 0, 0, 4, 4, 8, 0],
+        b'>' => [16, 8, 4, 2, 1, 2, 4, 8, 16],
+        b'<' => [1, 2, 4, 8, 16, 8, 4, 2, 1],
+        b'\'' => [2, 2, 4, 0, 0, 0, 0, 0, 0],
+        96 => [8, 8, 4, 0, 0, 0, 0, 0, 0],
+        b'=' => [0, 0, 31, 0, 0, 31, 0, 0, 0],
+        b'+' => [0, 0, 4, 4, 31, 4, 4, 0, 0],
+        b'@' => [14, 17, 23, 21, 23, 16, 14, 0, 0],
+        b'u' => [0, 0, 17, 17, 17, 17, 14, 0, 0],
+        b'~' => [0, 0, 0, 8, 21, 2, 0, 0, 0],
+        b'.' => [0, 0, 0, 0, 0, 0, 0, 4, 0],
+        b',' => [0, 0, 0, 0, 0, 0, 4, 4, 8],
+        b'*' => [0, 0, 4, 21, 14, 21, 4, 0, 0],
+        b'v' => [0, 0, 17, 17, 10, 10, 4, 0, 0],
+        b'x' => [0, 0, 17, 10, 4, 10, 17, 0, 0],
         _ => return None,
     })
 }
@@ -507,36 +506,54 @@ impl FaceTexture {
             .then_some(Self { text })
     }
 
+    fn width(self) -> f64 {
+        (self.text.len() * 8 - 3) as f64
+    }
+
     fn bit(self, x: i32, y: i32) -> bool {
-        if x < 0 || !(0..5).contains(&y) {
+        if x < 0 || !(0..9).contains(&y) {
             return false;
         }
-        let glyph = x as usize / 4;
-        let column = x as usize % 4;
-        if column == 3 {
+        let glyph = x as usize / 8;
+        let column = x as usize % 8;
+        if column >= 5 {
             return false;
         }
         self.text
             .as_bytes()
             .get(glyph)
             .and_then(|b| face_glyph(*b))
-            .is_some_and(|rows| rows[y as usize] & (1 << (2 - column)) != 0)
+            .is_some_and(|rows| rows[y as usize] & (1 << (4 - column)) != 0)
     }
 
     fn sample(self, uv: [f64; 2], footprint: [f64; 2]) -> bool {
-        let width = (self.text.len() * 4 - 1) as f64;
-        let grid = [(width + 2.0) * uv[0] - 1.0, 7.0 * uv[1] - 1.0];
+        let grid = [(self.width() + 2.0) * uv[0] - 1.0, 11.0 * uv[1] - 1.0];
+        // Coverage, rather than ANY touched ink, keeps side bearings open.
+        // Capping the filter prevents minification from growing a solid face.
+        // Underresolved heads use independently surface-anchored terminal glyphs.
         let radius = [
-            (width + 2.0) * footprint[0].min(1.0) / 2.0,
-            7.0 * footprint[1].min(1.0) / 2.0,
+            ((self.width() + 2.0) * footprint[0].abs() / 2.0).clamp(0.025, 0.75),
+            (11.0 * footprint[1].abs() / 2.0).clamp(0.025, 0.75),
         ];
-        // The bounded atlas footprint retains thin punctuation in small Pet
-        // views. Glyph positions come only from the visible surface's UVs.
-        let left = ((grid[0] - radius[0]).floor() as i32).max(0);
-        let right = ((grid[0] + radius[0]).floor() as i32).min(width as i32 - 1);
-        let top = ((grid[1] - radius[1]).floor() as i32).max(0);
-        let bottom = ((grid[1] + radius[1]).floor() as i32).min(4);
-        (top..=bottom).any(|y| (left..=right).any(|x| self.bit(x, y)))
+        let left = (grid[0] - radius[0]).floor() as i32;
+        let right = (grid[0] + radius[0]).floor() as i32;
+        let top = (grid[1] - radius[1]).floor() as i32;
+        let bottom = (grid[1] + radius[1]).floor() as i32;
+        let mut coverage = 0.0;
+        for y in top..=bottom {
+            for x in left..=right {
+                if self.bit(x, y) {
+                    let overlap = |center: f64, radius: f64, start: i32| {
+                        ((center + radius).min(f64::from(start) + 1.0)
+                            - (center - radius).max(f64::from(start)))
+                        .max(0.0)
+                    };
+                    coverage += overlap(grid[0], radius[0], x)
+                        * overlap(grid[1], radius[1], y);
+                }
+            }
+        }
+        coverage / (4.0 * radius[0] * radius[1]) >= 0.4
     }
 
     fn bounds(sprite: &Sprite) -> Option<SolidBounds> {
@@ -570,8 +587,8 @@ fn valid_face_uv(sprite: &Sprite, x: u32, y: u32) -> Option<[f64; 2]> {
     }
 }
 
-/// The exact same inverse camera sample authorizes body color and face UV.
-/// No interpolation crosses a missing UV, nose, ear, or depth occluder.
+/// The same nearest material sample authorizes every interpolated UV.
+/// Derivatives refine ink within that pixel, never its depth/visibility mask.
 fn projected_face_uv(
     sprite: &Sprite,
     projection: Projection,
@@ -583,19 +600,106 @@ fn projected_face_uv(
     let neighbor = |x, y| {
         valid_face_uv(sprite, x, y)
             .filter(|next| (next[0] - uv[0]).abs() <= 0.25 && (next[1] - uv[1]).abs() <= 0.25)
-            .unwrap_or(uv)
     };
-    let horizontal = neighbor(sx + 1, sy);
-    let vertical = neighbor(sx, sy + 1);
-    let footprint = std::array::from_fn(|i| {
-        (horizontal[i] - uv[i]).abs() / projection.scale
-            + (vertical[i] - uv[i]).abs() / projection.scale_y
+    let derivative = |forward: Option<[f64; 2]>, backward: Option<[f64; 2]>| {
+        std::array::from_fn::<_, 2, _>(|i| match (forward, backward) {
+            (Some(a), Some(b)) => (a[i] - b[i]) / 2.0,
+            (Some(a), None) => a[i] - uv[i],
+            (None, Some(b)) => uv[i] - b[i],
+            _ => 0.0,
+        })
+    };
+    let horizontal = derivative(neighbor(sx + 1, sy), sx.checked_sub(1).and_then(|x| neighbor(x, sy)));
+    let vertical = derivative(neighbor(sx, sy + 1), sy.checked_sub(1).and_then(|y| neighbor(sx, y)));
+    let offset = [
+        (f64::from(x) + 0.5 - projection.left) / projection.scale - f64::from(sx) - 0.5,
+        (f64::from(y) + 0.5 - projection.top) / projection.scale_y - f64::from(sy) - 0.5,
+    ];
+    let refined = std::array::from_fn(|i| {
+        (uv[i] + horizontal[i] * offset[0] + vertical[i] * offset[1]).clamp(0.0, 1.0)
     });
-    Some((uv, footprint))
+    let footprint = std::array::from_fn(|i| {
+        horizontal[i].abs() / projection.scale + vertical[i].abs() / projection.scale_y
+    });
+    Some((refined, footprint))
+}
+
+/// Terminal-sized glyphs are a level of detail for an underresolved atlas.
+/// Each character finds its own visible head-local UV anchor. Its entire packed
+/// cell must be mapped head material, so a nose, ear or occluder wins outright.
+/// These anchors turn and roll with the head; no screen-axis string is stamped.
+fn draw_surface_glyphs(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+) -> bool {
+    let Some(texture) = FaceTexture::new(sprite) else {
+        return false;
+    };
+    let (dx, dy) = renderer.packing();
+    let mut used = Vec::new();
+    let mut painted = false;
+    for (index, glyph) in texture.text.bytes().enumerate() {
+        let target = [
+            (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0),
+            if index == texture.text.len() / 2 { 0.68 } else { 0.45 },
+        ];
+        let mut best = None;
+        let mut best_distance = f64::INFINITY;
+        for row in area.y..area.bottom() {
+            for col in area.x..area.right() {
+                if used.contains(&(col, row)) {
+                    continue;
+                }
+                let mut mean = [0.0; 2];
+                let mut complete = true;
+                for y in 0..dy {
+                    for x in 0..dx {
+                        let sample = projected_face_uv(
+                            sprite,
+                            projection,
+                            u32::from(col) * u32::from(dx) + u32::from(x),
+                            u32::from(row) * u32::from(dy) + u32::from(y),
+                        );
+                        if let Some((uv, _)) = sample {
+                            for i in 0..2 {
+                                mean[i] += uv[i] / f64::from(dx * dy);
+                            }
+                        } else {
+                            complete = false;
+                        }
+                    }
+                }
+                if !complete {
+                    continue;
+                }
+                let du = (mean[0] - target[0]) / (3.0 / (texture.width() + 2.0));
+                let dv = (mean[1] - target[1]) / 0.23;
+                let distance = du * du + dv * dv;
+                if distance <= 1.0 && distance < best_distance {
+                    best = Some((col, row));
+                    best_distance = distance;
+                }
+            }
+        }
+        if let Some(pos) = best {
+            if let Some(cell) = buf.cell_mut(pos) {
+                // Foreground only: terminal backgrounds may have separate tint
+                // or opacity. Gaps retain the species' original head material.
+                cell.set_char(char::from(glyph)).set_fg(colors.ink(0));
+                used.push(pos);
+                painted = true;
+            }
+        }
+    }
+    painted
 }
 
 /// Large expressions are textures on the actual head surface, transformed and
-/// occluded by the sprite's depth-tested UV map. Only tiny/legacy views use text.
+/// occluded by the sprite's depth-tested UV map, with glyph LOD on small heads.
 fn draw_camera_face(
     sprite: &Sprite,
     renderer: Renderer,
@@ -614,12 +718,19 @@ fn draw_camera_face(
     let Some(bounds) = FaceTexture::bounds(sprite) else {
         return false;
     };
-    // Foreshortening or minification never replaces a mapped surface with a
-    // screen-axis label. The atlas footprint and the separate caption handle
-    // underresolution; only the actual tiny viewport above uses literal text.
+    // Low detail uses independent UV anchors; fine detail samples the atlas.
+    // A severely minified/foreshortened surface keeps the separate HUD caption
+    // rather than forcing a five-character billboard into an unresolvable head.
     let (dx, dy) = renderer.packing();
     let (left, top) = projection.cell(bounds.left, bounds.top, renderer);
     let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
+    let columns = right - left;
+    let rows = bottom - top;
+    if columns >= texture.text.len() as f64 * 1.6
+        && (columns < texture.text.len() as f64 * 5.0 || rows < 4.5)
+    {
+        return draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
+    }
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let mut painted = false;
     for row in (top.floor() as i32).max(i32::from(area.y))
@@ -1940,6 +2051,91 @@ mod camera_tests {
             - points.iter().map(|p| p.1).min().unwrap()
             + 1;
         (width, height, points.len())
+    }
+
+    #[test]
+    fn thin_atlas_keeps_curved_parentheses_eyes_and_mouth_separate() {
+        let texture = FaceTexture { text: "(^_^)" };
+        let atlas: Vec<String> = (0..9)
+            .map(|y| (0..37).map(|x| if texture.bit(x, y) { '#' } else { ' ' }).collect())
+            .collect();
+        assert_eq!(atlas[0], "   #                             #   ");
+        // The same outer stem persists through three rows: a curve, not < or >.
+        assert!(atlas[3..6].iter().all(|row| row.starts_with('#') && row.ends_with('#')));
+        for glyph in 0..4 {
+            for x in glyph * 8 + 5..glyph * 8 + 8 {
+                for y in 0..9 {
+                    let uv = [(f64::from(x) + 1.5) / 39.0, (f64::from(y) + 1.5) / 11.0];
+                    assert!(!texture.sample(uv, [1.0 / 39.0, 1.0 / 11.0]),
+                        "ink bridged the side bearing at {x},{y}");
+                }
+            }
+        }
+        assert!(texture.bit(10, 1) && texture.bit(26, 1)); // two caret peaks
+        assert!((16..21).all(|x| texture.bit(x, 8))); // separate mouth baseline
+        assert!((16..21).all(|x| (0..8).all(|y| !texture.bit(x, y))));
+        assert_ne!(face_glyph(b'('), face_glyph(b'<'));
+        assert_ne!(face_glyph(b')'), face_glyph(b'>'));
+    }
+
+    #[test]
+    fn coverage_rejects_a_grazed_stroke_instead_of_dilating_it() {
+        let texture = FaceTexture { text: "(^_^)" };
+        let uv = |x: f64, y: f64| [(x + 1.0) / 39.0, (y + 1.0) / 11.0];
+        assert!(texture.sample(uv(10.5, 1.5), [0.0, 0.0]));
+        // The footprint touches the caret, but 90% of the sample is clear.
+        assert!(!texture.sample(uv(11.45, 1.5), [1.0 / 39.0, 0.5 / 11.0]));
+        for footprint in [[0.0; 2], [1.0 / 39.0, 1.0 / 11.0], [1.0; 2]] {
+            assert!(!texture.sample(uv(14.5, 4.5), footprint));
+            assert!(!texture.sample(uv(22.5, 4.5), footprint));
+        }
+    }
+
+    #[test]
+    fn phone_glyph_lod_is_legible_and_every_changed_cell_is_visible_head_material() {
+        let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Indexed).unwrap();
+        for yaw in [0, 45, 180, 315] {
+            let sprite = Sprite::voxel(Stage::Adult, Expression::Happy,
+                SpriteStyle::SixteenBit, 0, yaw, false);
+            for renderer in [Renderer::Ascii, Renderer::HalfBlock, Renderer::Quadrant, Renderer::Braille] {
+                let area = Rect::new(2, 2, 62, 30);
+                let bounds = SolidBounds::of(&sprite).unwrap();
+                let projection = Projection::camera(&sprite, bounds, area, renderer, 0, (500, 500),
+                    Camera { view: CameraView::Face, ..Camera::default() });
+                let mut before = Buffer::empty(Rect::new(0, 0, 66, 34));
+                draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+                let mut after = before.clone();
+                let painted = draw_surface_glyphs(&sprite, renderer, &colors, projection, area, &mut after);
+                let mut glyphs = Vec::new();
+                let (dx, dy) = renderer.packing();
+                for row in after.area.y..after.area.bottom() {
+                    for col in after.area.x..after.area.right() {
+                        assert_eq!(before[(col, row)].bg, after[(col, row)].bg);
+                        if before[(col, row)] != after[(col, row)] {
+                            assert!(area.contains((col, row).into()));
+                            glyphs.push(after[(col, row)].symbol().to_owned());
+                            for y in 0..dy {
+                                for x in 0..dx {
+                                    assert!(projected_face_uv(&sprite, projection,
+                                        u32::from(col) * u32::from(dx) + u32::from(x),
+                                        u32::from(row) * u32::from(dy) + u32::from(y)).is_some(),
+                                        "{renderer:?} yaw {yaw}: literal covered a nose/occluder");
+                                }
+                            }
+                        }
+                    }
+                }
+                if yaw == 0 {
+                    assert!(painted);
+                    assert_eq!(glyphs.len(), 5, "{renderer:?}: {glyphs:?}");
+                    assert_eq!(glyphs.iter().filter(|s| s.as_str() == "^").count(), 2);
+                    assert!(glyphs.iter().any(|s| s == "(") && glyphs.iter().any(|s| s == ")"));
+                    assert!(glyphs.iter().any(|s| s == "_"));
+                } else if yaw == 180 {
+                    assert!(!painted && glyphs.is_empty());
+                }
+            }
+        }
     }
 
     #[test]
