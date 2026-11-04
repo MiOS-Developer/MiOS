@@ -167,7 +167,6 @@ drift = [
   "mios-shell-session-gc.service",
   "mios-skills-miner.timer",
   "mios-suggestion-refresh.timer",
-  "mios-swarm-pack-firstboot.service",
   "mios-sys-env-refresh.timer",
   "mios-userdb-render.service",
   "mios-webtools-firstboot.service",
