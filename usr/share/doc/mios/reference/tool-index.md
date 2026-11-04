@@ -253,7 +253,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-subuid-alloc` | Deterministic /etc/subuid and /etc/subgid subordinate UID/GID allocator (task_421). |
 | `usr/libexec/mios/mios-suggestion-refresh` | Refreshes OWUI's ui.prompt_suggestions by analyzing MiOS state (kanban, daemon nudges, recent intents) via a refine model to generate 5-28 context-aware starter chips for the operator. |
 | `usr/libexec/mios/mios-summarize` | Provides tiered summarization (L0/L1/L2) via a local LLM on the CPU-bound light lane to generate concise abstracts and structured overviews for efficient document indexing and navigation. |
-| `usr/libexec/mios/mios-swarm-pack-firstboot` | Parses mios.toml to arm concurrent llama-server instances in swarm mode, enforcing vram_budget_mb limits to prevent OOM on shared GPUs and generating per-worker environment files in /run/mios/swarm/. |
+| `usr/libexec/mios/mios-swarm-pack-firstboot` | Arms declared dedicated CUDA nodes from the resolved SSOT, validates model containment and aggregate VRAM, and publishes per-instance environment only for ready OpenAI model identities. CPU/light and... |
 | `usr/libexec/mios/mios-sync-theme` | Regenerates the /etc/mios/theme/ bridge (theme.json + mios-theme.css) |
 | `usr/libexec/mios/mios-sync-to-root` | Applies the code-server / war-room workspace (an ext4 replica of the MiOS |
 | `usr/libexec/mios/mios-sync-toml` | Projects the canonical-owned, drift-prone sections of mios.toml into the two |

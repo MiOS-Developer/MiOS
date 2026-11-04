@@ -1,9 +1,9 @@
 {
   "format": "openai_strict_schema_v1",
   "total_files_scanned": 4129,
-  "total_metadata_entries": 3388,
-  "total_hints": 3382,
-  "total_functions_indexed": 2105,
+  "total_metadata_entries": 3387,
+  "total_hints": 3381,
+  "total_functions_indexed": 2107,
   "total_related_links": 6650,
   "entries": [
     {
@@ -10288,10 +10288,14 @@
     },
     {
       "path": "tests/test-swarm-pack-arming.sh",
-      "hint": "Two-sided test that mios-swarm-pack-firstboot creates a worker's slot dir before writing its .env, and arms no worker whose slot dir cannot be created.",
-      "related": [],
+      "hint": "Offline two-sided tests of dedicated GPU worker planning, per-instance environment, readiness, and real Quadlet Service environment propagation; no GPU or model inference.",
+      "related": [
+        "usr/libexec/mios/mios-swarm-pack-firstboot",
+        "usr/share/mios/mios.toml [nodes]",
+        "[containers.\"mios-llm-worker@\"]"
+      ],
       "functions": [],
-      "doc": "usr/share/doc/mios/manual/tests.md",
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -22222,12 +22226,8 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-selinux-init.service",
-      "hint": "Initializes the MiOS SELinux policy by executing /usr/libexec/mios/selinux-init during the sysinit stage to load security policies before system initialization.",
-      "related": [
-        "/usr/libexec/mios/selinux-init",
-        "local-fs.target",
-        "sysinit.target"
-      ],
+      "hint": "Reconciles upgrade-sensitive Cockpit SELinux policy before the legacy first-boot policy initialization.",
+      "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -22292,15 +22292,6 @@
     {
       "path": "usr/lib/systemd/system/mios-suggestion-refresh.timer",
       "hint": "Systemd timer that triggers mios-suggestion-refresh.service every 10 minutes to update OWUI starter chips based on current system state, kanban data, and recent user intents.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/system.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/systemd/system/mios-swarm-pack-firstboot.service",
-      "hint": "Systemd unit that executes mios-swarm-pack-firstboot to arm concurrent small-model worker units if gpu_profile is \"swarm\", enforcing VRAM budgets and provisioning GGUFs during the first boot sequence.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
@@ -28590,17 +28581,19 @@
     },
     {
       "path": "usr/libexec/mios/mios-swarm-pack-firstboot",
-      "hint": "Parses mios.toml to arm concurrent llama-server instances in swarm mode, enforcing vram_budget_mb limits to prevent OOM on shared GPUs and generating per-worker environment files in /run/mios/swarm/.",
+      "hint": "Arms declared dedicated CUDA nodes from the resolved SSOT, validates model containment and aggregate VRAM, and publishes per-instance environment only for ready OpenAI model identities. CPU/light and the heavy engine default are independent.",
       "related": [
-        "/usr/share/mios/llamacpp/models",
-        "/usr/share/mios/mios.toml",
-        "/etc/mios/mios.toml",
-        "mios-llm-worker",
-        "mios-swarm-pack"
+        "usr/share/mios/mios.toml [dispatch]",
+        "[nodes]",
+        "[containers.\"mios-llm-worker@\"]",
+        "usr/lib/mios/mios_toml.py",
+        "tests/test-swarm-pack-arming.sh"
       ],
       "functions": [
         "log",
-        "arm_worker"
+        "worker_ready",
+        "arm_worker",
+        "plan_workers"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -30108,7 +30101,7 @@
     },
     {
       "path": "usr/libexec/mios/selinux-init",
-      "hint": "Initializes MiOS-specific SELinux policy modules and persistent booleans from /usr/share/selinux/packages/mios/ during first boot, guarded by a sentinel file to ensure one-time execution.",
+      "hint": "Initializes MiOS-specific SELinux policy modules and persistent booleans from /usr/share/selinux/packages/mios/ during boot; Cockpit proxy policy and listener labels reconcile on upgrades before the legacy first-boot sentinel.",
       "related": [
         "/usr/lib/mios/paths.sh",
         "mios-selinux-init",
@@ -34709,7 +34702,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md",
-      "hint": "Chapter 10: Local Inference Lanes and llama.cpp. Covers how llama-swap handles hot swapping and KV paging on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies.",
+      "hint": "Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies.",
       "related": [],
       "functions": [],
       "doc": null,
