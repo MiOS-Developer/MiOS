@@ -4212,3 +4212,48 @@ development seats; no parent input device was moved or borrowed.
 
 MiOS-DEV exact-source builds and live acceptance receipts follow under:
  /home/mios/.local/state/mios/mios-mons-menu-input-live/
+
+Final source3732e2b5f75334dc2488ffc02e324075345a4a05 is a Rust2021
+formatting-only descendant of live-tested and peer-accepted01ab0144b399044ff9e88f93122058c843145a74.
+Final static musl SHA256b139a9078ea86f583dc5b71ee7d8013f2b27e8b63b5ae66ed80dabaa4d52be4c.
+Actual pinned rootless MiOS-DEV4CPU/4GiB passed282 unit+13CLI=295 scoped checks,
+Rust2021 format, warning-fatal Clippy, release and native staticPIE validation.
+Four broader gate diagnostic files still match clean1d65 baseline bytewise.
+No global CI cleanliness or physical-device acceptance is inferred.
+
+Source worker mios-mons-controller-prompts delivered sole input.rs change and
+read-only peer review of root's UI integration in actual habitat native heads
+%139 and%144, using its own addressed inbox. Root reviewed the input changes.
+The final closeout head%150 is inspecting final build and live receipts; it owns
+only its report and will close its own registration. No wrapper registered or
+acknowledged on the worker's behalf. Earlier bounded waits and failed proof
+directories remain available and are not represented as successes.
+
+All three actual localhost browser touchStart/touchEnd layouts passed complete
+menu traversal: watch20x9, portrait and landscape. Each has17 captures; all14
+Home choices are reachable, every submenu has painted previous/next, Gallery
+stage selectors work, and cancelling adoption preserves exact Mimo513 birth.
+Cursor-key harness initially omitted physical virtual-key codes for browser
+End/Home, and initially assumed literal Egg P in the condensed EP heading;
+corrected these test assumptions and retained both failed harness receipts.
+No application input rules were weakened.
+
+A real20x8 native tmux fixture ran ASCII/mono with DISPLAY,WAYLAND,HYPRLAND,
+XDG_RUNTIME_DIR,MIOS_NESTED_SEAT,TMUX andTMUX_PANE removed from its application
+environment. Raw CSI Home/End/PageUp/PageDown and SGR clicks navigated correctly,
+mouse release did not act, original birth was retained, Inputd reported no
+verified local session and kept keyboard fallback, and normal exit restored
+the parent shell with equal termios and exit0. Its disposable window closed;
+the existing Mio regression viewport was restored. This is headless terminal
+execution, not a physical-controller claim.
+
+Software tasks3748/3749 are complete. Tasks3730/3731 remain in progress for
+physical phone and multi-controller acceptance, with prior ownership preserved.
+Task3747 remains pending for the general MiOS-Tmux top-status pointer offset;
+only the dedicated game session uses statusoff. No daemon/global ownership
+policy, controller assignment, service, OS executable or live TOML was replaced.
+
+Summary: /home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json
+Main publication will be followed by atomic user-local installation, same-pane
+restart and final actual input/process verification. Post-push receipt:
+ /home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json

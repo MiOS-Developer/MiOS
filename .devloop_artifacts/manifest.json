@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T20:49:11.163567+00:00",
+  "last_updated": "2026-11-05T20:54:51.495724+00:00",
   "total_artifacts": 132,
   "artifacts": [
     {
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "46689364b58c14cb4bcdcb1041b38112aabe4c57f0270714cd34429fc65ba12c",
-      "size_bytes": 692511,
+      "sha256": "fc5ec3af455457b7431b81403e536cd6438b7e1b9f679c7097cbda0d16f0bc23",
+      "size_bytes": 695504,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -89,6 +89,12 @@
           "checks": 283,
           "receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-touch-browser-receipt.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
+        },
+        "mios_menu_input_verification": {
+          "source": "3732e2b5f75334dc2488ffc02e324075345a4a05",
+          "checks": 295,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
         }
       }
     },
@@ -198,8 +204,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "ebd4d1c980b3ed942bef3ccd7ed5be96275b1823c57d5f1b4f46a48d2b424eae",
-      "size_bytes": 552340,
+      "sha256": "90cc50973860844125f9fadc31ec03a0498221fa21fdded1415069eee3c3395d",
+      "size_bytes": 552336,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -228,14 +234,20 @@
           "checks": 283,
           "receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-touch-browser-receipt.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
+        },
+        "mios_menu_input_verification": {
+          "source": "3732e2b5f75334dc2488ffc02e324075345a4a05",
+          "checks": 295,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "3db43fb88227916d790e6320ec2e82f5ff19bd5db299f1ded4a99d226f9a13cd",
-      "size_bytes": 14632483,
+      "sha256": "e5a13585fa731e149e179101b489df34bfa2b527ecf273613b29967724d949c1",
+      "size_bytes": 14632240,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -264,6 +276,12 @@
           "checks": 283,
           "receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-touch-browser-receipt.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
+        },
+        "mios_menu_input_verification": {
+          "source": "3732e2b5f75334dc2488ffc02e324075345a4a05",
+          "checks": 295,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
         }
       }
     },
@@ -1547,6 +1565,12 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        },
+        "mios_menu_input_verification": {
+          "source": "3732e2b5f75334dc2488ffc02e324075345a4a05",
+          "checks": 295,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
         }
       },
       "sha256": "a8badcd8e761ae8fe0b6061398d97d6d4669b835024b52d5da3fb241ff499f8c",
@@ -1747,6 +1771,12 @@
           "checks": 283,
           "receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-touch-browser-receipt.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
+        },
+        "mios_menu_input_verification": {
+          "source": "3732e2b5f75334dc2488ffc02e324075345a4a05",
+          "checks": 295,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
         }
       },
       "sha256": "141d3a5d19eaa5ea3864cb0405a9b2e679c983ca97a2b8d2863a699df652c57f",
@@ -1891,6 +1921,12 @@
           "checks": 283,
           "receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-touch-browser-receipt.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
+        },
+        "mios_menu_input_verification": {
+          "source": "3732e2b5f75334dc2488ffc02e324075345a4a05",
+          "checks": 295,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
         }
       },
       "sha256": "f2c07dcf7842ecb938f2ae36325e6ece1719a22cd53c08d12c52bc633235f0fb",
