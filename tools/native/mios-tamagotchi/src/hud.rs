@@ -118,6 +118,21 @@ pub fn split(area: Rect, ratio: f64, columns: u16, portrait_percent: u16) -> Hud
         }
     }
 }
+/// A visible numbered window. Selection and every row remain inside the
+/// painted viewport after traversal or resize; numbers address only this page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuWindow {
+    pub start: usize,
+    pub count: usize,
+}
+pub fn menu_window(selected: usize, total: usize, rows: u16) -> MenuWindow {
+    let count = usize::from(rows).min(9).min(total);
+    let start = selected.min(total.saturating_sub(1))
+        .saturating_sub(count.saturating_sub(1))
+        .min(total.saturating_sub(count));
+    MenuWindow { start, count }
+}
+
 pub fn counter(value: u32) -> String {
     for (unit, suffix) in [(1_000_000_000, "G"), (1_000_000, "M"), (1_000, "K")] {
         if value >= unit {
@@ -411,5 +426,28 @@ mod large_counter_tests {
         }
         assert_eq!(counter(1_000_000), "1M");
         assert_eq!(counter(1_001), "1K+");
+    }
+}
+
+
+#[cfg(test)]
+mod menu_window_tests {
+    use super::*;
+    #[test]
+    fn every_selection_survives_resize_with_truthful_numbered_ranges() {
+        for total in [1, 2, 5, 14, 23, 64] {
+            for selected in 0..total {
+                for rows in [0, 1, 2, 4, 9, 24, u16::MAX] {
+                    let window = menu_window(selected, total, rows);
+                    assert!(window.count <= 9);
+                    assert!(window.start + window.count <= total);
+                    if rows > 0 {
+                        assert!(selected >= window.start);
+                        assert!(selected < window.start + window.count);
+                    }
+                }
+            }
+        }
+        assert_eq!(menu_window(0, 0, 8), MenuWindow { start: 0, count: 0 });
     }
 }

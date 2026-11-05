@@ -76,6 +76,7 @@ pub struct Ui {
     pub hud_mode: HudMode,
     camera_view: CameraView,
     camera_from_view: CameraView,
+    face_orbit_reference: u16,
     zoom_percent: u16,
     zoom_target: u16,
     zoom_origin: u16,
@@ -100,6 +101,8 @@ pub struct Ui {
     seed_edit_targets: RefCell<Vec<(Rect, SeedEdit)>>,
     menu_scroll: usize,
     menu_scroll_limit: Cell<usize>,
+    menu_visible_rows: Cell<usize>,
+    menu_total_lines: Cell<usize>,
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
     menu_number_count: Cell<usize>,
@@ -159,6 +162,7 @@ impl Ui {
             hud_mode: HudMode::Auto,
             camera_view: CameraView::Pet,
             camera_from_view: CameraView::Pet,
+            face_orbit_reference: 0,
             zoom_percent: 100,
             zoom_target: 100,
             zoom_origin: 100,
@@ -183,6 +187,8 @@ impl Ui {
             seed_edit_targets: RefCell::new(Vec::new()),
             menu_scroll: 0,
             menu_scroll_limit: Cell::new(512),
+            menu_visible_rows: Cell::new(1),
+            menu_total_lines: Cell::new(1),
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
             menu_number_count: Cell::new(0),
@@ -247,6 +253,7 @@ impl Ui {
         ui.orbit_degrees = ui.orbit_default;
         ui.orbit_origin = ui.orbit_default;
         ui.orbit_target = ui.orbit_default;
+        ui.face_orbit_reference = ui.orbit_default;
         ui.orbit_step = config.world.orbit_step_degrees;
         ui.world_enabled = config.world.enabled;
         ui.world_elevation = config.world.elevation_degrees;
@@ -455,6 +462,11 @@ impl Ui {
         if view != self.camera_view {
             self.camera_resize.set(None);
         }
+        if view == CameraView::Face && self.camera_view != CameraView::Face {
+            // Face begins at the front, then explicit orbit is relative to
+            // this entry. Zooming the same view must not recenter it.
+            self.face_orbit_reference = self.orbit_degrees;
+        }
         self.camera_from_view = self.camera_view;
         self.camera_view = view;
         self.zoom_origin = self.zoom_percent;
@@ -503,13 +515,15 @@ impl Ui {
         // Only explicitly selected Face framing looks toward the front. Tiny
         // automatic head cropping retains the real world orientation/occlusion.
         let world_yaw = (u32::from(yaw) + u32::from(self.orbit_degrees)) % 360;
+        let face_yaw = (i32::from(self.orbit_degrees)
+            - i32::from(self.face_orbit_reference)).rem_euclid(360);
         let from = if self.camera_from_view == CameraView::Face {
-            0
+            face_yaw
         } else {
             world_yaw as i32
         };
         let to = if self.camera_view == CameraView::Face {
-            0
+            face_yaw
         } else {
             world_yaw as i32
         };
@@ -832,6 +846,102 @@ impl Ui {
         }
     }
 
+    fn menu_panel(&self, title: &str, colors: &Colors, ascii: bool) -> Block<'static> {
+        let menu = self.menu.unwrap_or(Menu::Home);
+        let width = self.viewport.get().0;
+        let caption = if width < 30 {
+            format!("{} {}", self.detail_tag(), menu_title(menu))
+        } else if menu == Menu::Home {
+            format!("Home / {}", title.trim())
+        } else {
+            // Keep the immediate parent discoverable even when a long title
+            // needs the rest of the line.
+            let parent = self.menu_history.last().copied().unwrap_or(Menu::Home);
+            format!("{} / {}", menu_title(parent), title.trim())
+        };
+        panel("", colors, ascii).title(Line::from(caption))
+    }
+
+    fn suspend_native_targets(&self) {
+        if self.native_modal {
+            self.care_targets.borrow_mut().clear();
+            self.menu_targets.borrow_mut().clear();
+            self.control_targets.borrow_mut().clear();
+            self.seed_cursor_targets.borrow_mut().clear();
+            self.seed_edit_targets.borrow_mut().clear();
+        }
+    }
+
+    fn draw_menu_position(&self, screen: &mut Frame, colors: &Colors) {
+        let Some(menu) = self.menu else { return };
+        if self.native_modal || self.confirm_reset || screen.area().width < 12 {
+            return;
+        }
+        let text = if matches!(menu, Menu::Help | Menu::Status | Menu::Identity) {
+            let rows = self.menu_visible_rows.get().max(1);
+            let total = self.menu_total_lines.get().max(1);
+            let start = self.menu_scroll.min(self.menu_scroll_limit.get());
+            format!("L{}-{}/{}", start + 1, (start + rows).min(total), total)
+        } else if menu == Menu::Seed {
+            format!("Code {}/{} / Esc back", self.seed_entry.cursor(), self.seed_entry.text().len())
+        } else {
+            let total = self.menu_len(menu);
+            let selected = self.menu_selected.min(total.saturating_sub(1));
+            let start = self.menu_number_start.get();
+            let count = self.menu_number_count.get();
+            if count > 0 && !matches!(menu, Menu::Roster | Menu::Gallery) {
+                format!("{}/{} [{}-{}]", selected + 1, total, start + 1, start + count)
+            } else {
+                format!("{}/{}", selected + 1, total)
+            }
+        };
+        let area = screen.area();
+        let width = area.width.saturating_sub(2);
+        screen.render_widget(
+            Paragraph::new(text).style(Style::default().fg(colors.ink(7)).bg(colors.background)),
+            Rect::new(area.x + 1, area.bottom().saturating_sub(1), width, 1),
+        );
+    }
+
+    fn draw_talk_menu(&self, screen: &mut Frame, config: &Config, colors: &Colors, renderer: Renderer) {
+        let area = screen.area();
+        screen.render_widget(Clear, area);
+        let block = self.menu_panel(&format!("TALK / {} says", self.name()), colors, renderer == Renderer::Ascii);
+        let body = block.inner(area);
+        screen.render_widget(block, area);
+        let [words_area, list, controls] = Layout::vertical([
+            Constraint::Length(if body.height >= 12 { 4 } else { 1 }),
+            Constraint::Min(1),
+            Constraint::Length(2),
+        ]).areas(body);
+        self.dialog_area.set(words_area);
+        let words = wrap_dialogue(&self.words(config, false), usize::from(body.width.max(1)));
+        let rows = usize::from(words_area.height).max(1);
+        let start = self.dialog_page.min(words.len().saturating_sub(rows));
+        self.dialog_rows.set(rows);
+        self.dialog_line_count.set(words.len());
+        screen.render_widget(Paragraph::new(words.into_iter().skip(start).take(rows).map(Line::from).collect::<Vec<_>>())
+            .style(Style::default().fg(colors.ink(7))), words_area);
+        let entries = ["Read more", "Feed", "Memory", "Clean", "Rest", "Medicine", "Back"];
+        let window = crate::hud::menu_window(self.menu_selected, entries.len(), list.height);
+        self.menu_number_start.set(window.start);
+        self.menu_number_count.set(window.count);
+        for (row, index) in (window.start..window.start + window.count).enumerate() {
+            let target = Rect::new(list.x, list.y + row as u16, list.width, 1);
+            let selected = index == self.menu_selected;
+            let style = if selected {
+                Style::default().fg(colors.ink(0)).bg(colors.ink(7)).add_modifier(Modifier::BOLD)
+            } else { Style::default().fg(colors.ink(2)).bg(colors.background) };
+            screen.render_widget(Paragraph::new(format!("{}{} {}", if selected { ">" } else { " " }, row + 1, entries[index])).style(style), target);
+            self.menu_targets.borrow_mut().push((target, index));
+        }
+        self.menu_controls(controls);
+        let hint = if body.width < 17 {
+            format!("Ent:{}\nEsc:Back", ["More", "Feed", "Play", "Wash", "Rest", "Med", "Back"][self.menu_selected.min(6)])
+        } else { "Enter: Choose\nEsc: Back".into() };
+        screen.render_widget(Paragraph::new(hint).style(Style::default().fg(colors.ink(13))), controls);
+    }
+
     fn menu_controls(&self, area: Rect) {
         self.menu_footer.set(area);
         if area.height == 0 {
@@ -937,14 +1047,17 @@ impl Ui {
                     _ => format!("{accept}: {verb}"),
                 }
             };
-        let caption = frame_label(&accept_caption, accept_rect.width, self.frame / 20);
+        let caption = if accept_caption.chars().count() <= usize::from(accept_rect.width) {
+            accept_caption
+        } else {
+            // Exact remaps remain in Controls/Help. Use a truthful keyboard
+            // fallback when the complete mapped chord cannot fit.
+            format!("Ent {verb}")
+        };
         let visible = caption.len().min(usize::from(accept_rect.width)) as u16;
         screen.render_widget(Paragraph::new(caption).style(style), accept_rect);
         if visible > 0 {
-            self.control_targets.borrow_mut().push((
-                Rect::new(accept_rect.x, accept_rect.y, visible, 1),
-                Action::Accept,
-            ));
+            self.control_targets.borrow_mut().push((accept_rect, Action::Accept));
         }
         let mut back_x = area.x;
         if menu == Menu::Gallery && area.width >= 17 {
@@ -974,18 +1087,22 @@ impl Ui {
                 _ => format!("{back}: Back"),
             }
         };
-        let caption = frame_label(&back_caption, back_rect.width, self.frame / 20);
+        let caption = if back_caption.chars().count() <= usize::from(back_rect.width) {
+            back_caption
+        } else {
+            "Esc Back".into()
+        };
         let visible = caption.len().min(usize::from(back_rect.width)) as u16;
         screen.render_widget(Paragraph::new(caption).style(style), back_rect);
         if visible > 0 {
-            self.control_targets.borrow_mut().push((
-                Rect::new(back_rect.x, back_rect.y, visible, 1),
-                Action::Cancel,
-            ));
+            self.control_targets.borrow_mut().push((back_rect, Action::Cancel));
         }
     }
 
     fn click(&mut self, column: u16, row: u16, rules: &Rules) -> Effect {
+        if self.native_modal {
+            return Effect::Continue;
+        }
         let point = (column, row).into();
         if self.menu == Some(Menu::Seed) && !self.confirm_reset && self.seed_import_allowed {
             let edit = self
@@ -1046,10 +1163,20 @@ impl Ui {
                 Action::Quit => crossterm::event::KeyCode::Char('q'),
                 _ => return Effect::Continue,
             };
-            return self.handle(
+            let effect = self.handle(
                 KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
                 rules,
             );
+            if matches!(action, Action::Accept | Action::Confirm | Action::Cancel | Action::Menu | Action::Help | Action::Quit) {
+                // A second event before repaint cannot reuse an old modal
+                // accept target as ordinary-room care.
+                self.control_targets.borrow_mut().clear();
+                self.menu_targets.borrow_mut().clear();
+                self.care_targets.borrow_mut().clear();
+                self.seed_cursor_targets.borrow_mut().clear();
+                self.seed_edit_targets.borrow_mut().clear();
+            }
+            return effect;
         }
         if self.confirm_reset || self.native_modal {
             return Effect::Continue;
@@ -1063,13 +1190,17 @@ impl Ui {
                 .map(|(_, index)| *index);
             if let Some(index) = index {
                 self.menu_selected = index;
-                return self.handle(
+                let effect = self.handle(
                     KeyEvent::new(
                         crossterm::event::KeyCode::Enter,
                         crossterm::event::KeyModifiers::NONE,
                     ),
                     rules,
                 );
+                self.control_targets.borrow_mut().clear();
+                self.menu_targets.borrow_mut().clear();
+                self.care_targets.borrow_mut().clear();
+                return effect;
             }
             return Effect::Continue;
         }
@@ -1152,6 +1283,11 @@ impl Ui {
         ) {
             return Effect::Continue;
         }
+        if matches!(key.code, KeyCode::Char('q' | 'Q'))
+            && (self.viewport.get().0 < 10 || self.viewport.get().1 < 4)
+        {
+            return Effect::Quit;
+        }
         if key.code == KeyCode::Esc {
             self.seed_pending = None;
             self.back();
@@ -1199,6 +1335,11 @@ impl Ui {
     }
 
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
+        if self.native_modal {
+            // The external dialog owns menu/care input until its choice or
+            // inline fallback arrives. Preserve the universal quit shortcut.
+            return if action(key) == Some(Action::Quit) { Effect::Quit } else { Effect::Continue };
+        }
         if self.menu == Some(Menu::Seed) && !self.confirm_reset {
             return self.handle_seed_key(key);
         }
@@ -1218,7 +1359,7 @@ impl Ui {
             use crossterm::event::KeyCode;
             let step = self.menu_number_count.get().max(1);
             if matches!(menu, Menu::Status | Menu::Help | Menu::Identity) {
-                let rows = usize::from(self.viewport.get().1.saturating_sub(2)).clamp(1, 9);
+                let rows = self.menu_visible_rows.get().max(1);
                 let next = match key.code {
                     KeyCode::Home => Some(0),
                     KeyCode::End => Some(self.menu_scroll_limit.get()),
@@ -1290,6 +1431,13 @@ impl Ui {
             return Effect::Quit;
         }
         let (width, height) = self.viewport.get();
+        if (width < 10 || height < 4) && a == Action::Cancel {
+            self.confirm_reset = false;
+            self.seed_pending = None;
+            self.adopt_character = None;
+            self.back();
+            return Effect::Continue;
+        }
         if (width < 10 || height < 4)
             && !matches!(
                 a,
@@ -1864,6 +2012,7 @@ impl Ui {
         self.pet_area.set(Rect::default());
         self.dialog_area.set(Rect::default());
         self.seed_edit_targets.borrow_mut().clear();
+        self.seed_cursor_targets.borrow_mut().clear();
         self.care_targets.borrow_mut().clear();
         self.menu_targets.borrow_mut().clear();
         self.control_targets.borrow_mut().clear();
@@ -1891,14 +2040,16 @@ impl Ui {
                 .chars()
                 .take(usize::from(area.width.saturating_sub(15)))
                 .collect::<String>();
-            format!("{} {name} {}{clock} {face}", self.detail_tag(), &stage[..1])
+            format!("{} {name} {}{clock}{}", self.detail_tag(), &stage[..1],
+                if self.game.ill { " ILL" } else { "" })
         } else {
             format!(
-                "PET ROOM {} {} {} {stage} {clock} {face} {:?} {}% [/] {}deg",
+                "PET ROOM {} {} {} {stage} {clock} {face}{} {:?} {}% [/] {}deg",
                 self.detail_label(),
                 self.name(),
                 self.current_character()
                     .map_or("pet", |c| c.species.as_str()),
+                if self.game.ill { " ILL" } else { "" },
                 self.camera().view,
                 self.zoom_percent,
                 self.orbit_degrees
@@ -1952,6 +2103,13 @@ impl Ui {
             );
             return;
         }
+        if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
+            self.draw_menu(screen, menu, config, colors, renderer);
+            self.draw_menu_navigation(screen, colors);
+            self.draw_menu_position(screen, colors);
+            self.draw_reset(screen, colors, ascii);
+            return;
+        }
         if self.hud_mode == HudMode::Minimal
             || inner.width < 34
             || inner.height < 12
@@ -1965,6 +2123,7 @@ impl Ui {
             }
             self.draw_reset(screen, colors, ascii);
             self.draw_menu_navigation(screen, colors);
+            self.suspend_native_targets();
             return;
         }
         let [header, content, dialogue, dock] = Layout::vertical([
@@ -2208,6 +2367,7 @@ impl Ui {
         }
         self.draw_reset(screen, colors, ascii);
         self.draw_menu_navigation(screen, colors);
+        self.suspend_native_targets();
     }
     fn draw_minimal(
         &self,
@@ -2303,8 +2463,9 @@ impl Ui {
             } else if let Some(pad) = &self.controller {
                 let short =
                     ["Feed", "Play", "Wash", "Rest", "Med", "Paus", "Save", "New"][self.selected];
-                let first = if controls.width < 18 && (frame / 14).is_multiple_of(2) {
-                    format!("{}:{short}", tiny_button(&pad.accept))
+                let mapped = format!("{}:{short}", tiny_button(&pad.accept));
+                let first = if mapped.len() <= usize::from(controls.width) {
+                    mapped
                 } else {
                     format!("{} {short} Ent", SHORTCUTS[self.selected])
                 };
@@ -2858,12 +3019,14 @@ impl Ui {
         };
         if self.game.progress.hatched {
             for (index, stat) in self.game.progress.stats.iter().enumerate() {
-                pages.push(format!(
+                let stat = format!(
                     "{}L{}v{}",
                     ["Sw", "Fl", "Ru", "Pw", "St"][index],
                     stat.level,
                     stat.value
-                ));
+                );
+                let balance = format!("{}{} {stat}", "$", crate::hud::counter(self.game.coins));
+                pages.push(if balance.len() <= usize::from(width) { balance } else { stat });
             }
         }
         pages[frame / 28 % pages.len()].clone()
@@ -2876,11 +3039,7 @@ impl Ui {
         colors: &Colors,
         renderer: Renderer,
     ) {
-        let area = if screen.area().width < 40 || screen.area().height < 14 {
-            screen.area()
-        } else {
-            center(screen.area(), 66, 20)
-        };
+        let area = screen.area();
         screen.render_widget(Clear, area);
         let selected = self.menu_selected.min(5);
         let title = if area.width < 20 {
@@ -2892,7 +3051,7 @@ impl Ui {
                 self.name()
             )
         };
-        let block = panel(&title, colors, renderer == Renderer::Ascii);
+        let block = self.menu_panel(&title, colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
         screen.render_widget(block, area);
         let micro = inner.height < 10 || inner.width < 28;
@@ -2916,8 +3075,9 @@ impl Ui {
             .style(Style::default().fg(colors.ink(7))),
             header,
         );
-        let rows = usize::from(list.height);
-        let start = selected.saturating_sub(rows.saturating_sub(1));
+        let window = crate::hud::menu_window(selected, 6, list.height);
+        let rows = window.count;
+        let start = window.start;
         self.menu_number_start.set(start);
         self.menu_number_count.set(rows.min(6 - start));
         self.menu_controls(controls);
@@ -3054,18 +3214,14 @@ impl Ui {
         colors: &Colors,
         renderer: Renderer,
     ) {
-        let area = if screen.area().width < 40 || screen.area().height < 14 {
-            screen.area()
-        } else {
-            center(screen.area(), 66, 26)
-        };
+        let area = screen.area();
         screen.render_widget(Clear, area);
         let title = if area.width < 24 {
             format!("{} ITEMS", self.detail_tag())
         } else {
             format!("{} HABITAT / ITEMS", self.detail_label())
         };
-        let block = panel(&title, colors, renderer == Renderer::Ascii);
+        let block = self.menu_panel(&title, colors, renderer == Renderer::Ascii);
         let inner = block.inner(area);
         screen.render_widget(block, area);
         let micro = inner.width < 18 || inner.height <= 5;
@@ -3127,8 +3283,9 @@ impl Ui {
         }
         entries.push("0c NEXT THEME".into());
         entries.push("Back".into());
-        let rows = usize::from(list.height).clamp(1, 9);
-        let start = self.menu_selected.saturating_sub(rows - 1);
+        let window = crate::hud::menu_window(self.menu_selected, entries.len(), list.height);
+        let rows = window.count;
+        let start = window.start;
         self.menu_number_start.set(start);
         self.menu_number_count
             .set(rows.min(entries.len().saturating_sub(start)));
@@ -3140,11 +3297,9 @@ impl Ui {
             .take(rows)
             .map(|(index, text)| {
                 let selected = index == self.menu_selected;
-                let text = if micro {
-                    frame_label(text, list.width.saturating_sub(3), self.frame / 14)
-                } else {
-                    text.clone()
-                };
+                let text = text.chars()
+                    .take(usize::from(list.width.saturating_sub(3)))
+                    .collect::<String>();
                 self.menu_targets.borrow_mut().push((
                     Rect::new(list.x, list.y + (index - start) as u16, list.width, 1),
                     index,
@@ -3229,7 +3384,7 @@ impl Ui {
                 self.detail_label()
             )
         };
-        let block = panel(&title, colors, ascii).title_bottom(Line::from(frame_label(
+        let block = self.menu_panel(&title, colors, ascii).title_bottom(Line::from(frame_label(
             &format!("{} / {}", character.species, character.archetype),
             area.width.saturating_sub(2),
             self.frame / 14,
@@ -3238,7 +3393,7 @@ impl Ui {
         screen.render_widget(block, area);
         let compact = inner.width < 50 || inner.height < 16;
         let [header, info, room, controls] = Layout::vertical([
-            Constraint::Length(if micro { 0 } else { 1 }),
+            Constraint::Length(if micro && area.height <= 7 { 0 } else { 1 }),
             Constraint::Length(if micro {
                 0
             } else if compact {
@@ -3378,12 +3533,10 @@ impl Ui {
         self.care_targets.borrow_mut().clear();
         self.menu_targets.borrow_mut().clear();
         self.control_targets.borrow_mut().clear();
+        self.seed_cursor_targets.borrow_mut().clear();
+        self.seed_edit_targets.borrow_mut().clear();
         if let Some(code) = self.seed_pending {
-            let modal = if screen.area().width < 32 || screen.area().height < 12 {
-                screen.area()
-            } else {
-                center(screen.area(), 62, 9)
-            };
+            let modal = screen.area();
             screen.render_widget(Clear, modal);
             let block = panel(" NEW SEED? ", colors, ascii);
             let body = block.inner(modal);
@@ -3425,7 +3578,7 @@ impl Ui {
             self.menu_controls(controls);
             return;
         }
-        let modal = center(screen.area(), 62, 7);
+        let modal = screen.area();
         screen.render_widget(Clear, modal);
         let block = panel(" NEW PET? ", colors, ascii);
         let body = block.inner(modal);
@@ -3565,7 +3718,7 @@ impl Ui {
     fn draw_seed_entry(&self, screen: &mut Frame, colors: &Colors, renderer: Renderer) {
         let area = screen.area();
         screen.render_widget(Clear, area);
-        let block = panel(" ENTER CODE ", colors, renderer == Renderer::Ascii);
+        let block = self.menu_panel("ENTER CODE", colors, renderer == Renderer::Ascii);
         let body = block.inner(area);
         screen.render_widget(block, area);
         self.seed_cursor_targets.borrow_mut().clear();
@@ -3705,7 +3858,7 @@ impl Ui {
     ) {
         let area = screen.area();
         screen.render_widget(Clear, area);
-        let block = panel("I CODE", colors, renderer == Renderer::Ascii);
+        let block = self.menu_panel("I CODE", colors, renderer == Renderer::Ascii);
         let body = block.inner(area);
         screen.render_widget(block, area);
         if body.is_empty() {
@@ -3750,6 +3903,8 @@ impl Ui {
                 .saturating_sub(usize::from(available.max(1)))
                 .min(512),
         );
+        self.menu_visible_rows.set(usize::from(available));
+        self.menu_total_lines.set(wrapped.len());
         let start = self.menu_scroll.min(self.menu_scroll_limit.get());
         screen.render_widget(
             Paragraph::new(
@@ -3801,6 +3956,9 @@ impl Ui {
     ) {
         let ascii = renderer == Renderer::Ascii;
         if menu == Menu::Talk {
+            self.care_targets.borrow_mut().clear();
+            self.control_targets.borrow_mut().clear();
+            self.draw_talk_menu(screen, config, colors, renderer);
             return;
         }
         // Opaque menu owns all clicks; never activate care through its background.
@@ -3870,7 +4028,7 @@ impl Ui {
             } else {
                 format!(" SPRITE STUDIO / {} ", self.detail_label())
             };
-            let block = panel(&title, colors, ascii).title_bottom(Line::from(if micro {
+            let block = self.menu_panel(&title, colors, ascii).title_bottom(Line::from(if micro {
                 "<> mood ^v".to_string()
             } else {
                 "PREVIEW / pet unchanged".to_string()
@@ -3878,7 +4036,7 @@ impl Ui {
             let inner = block.inner(area);
             screen.render_widget(block, area);
             let [label, room, controls] = Layout::vertical([
-                Constraint::Length(if micro { 0 } else { 2 }),
+                Constraint::Length(if micro { u16::from(area.height > 7) } else { 2 }),
                 Constraint::Min(1),
                 Constraint::Length(2),
             ])
@@ -4017,9 +4175,9 @@ impl Ui {
                     "HUD / Automatic",
                     "HUD / Minimal",
                     "HUD / Full",
-                    "Camera / whole room",
-                    "Camera / pet body",
-                    "Camera / face close-up",
+                    "Camera / Room",
+                    "Camera / Mon body",
+                    "Camera / Face close-up",
                     "Zoom in (+)",
                     "Zoom out (-)",
                     "Reset zoom (0)",
@@ -4041,16 +4199,7 @@ impl Ui {
                 unreachable!("special menus draw their own view")
             }
         };
-        let extra = if matches!(menu, Menu::Status | Menu::Help) {
-            20
-        } else {
-            4
-        };
-        let modal = if screen.area().width < 32 || screen.area().height < 12 {
-            screen.area()
-        } else {
-            center(screen.area(), 64, (entries.len() + extra) as u16)
-        };
+        let modal = screen.area();
         screen.render_widget(Clear, modal);
         let menu_title = if menu == Menu::Graphics {
             if screen.area().width < 24 {
@@ -4069,7 +4218,7 @@ impl Ui {
         } else {
             format!("{} {title}", self.detail_label())
         };
-        let block = panel(&menu_title, colors, ascii);
+        let block = self.menu_panel(&menu_title, colors, ascii);
         let body = block.inner(modal);
         screen.render_widget(block, modal);
         let mut lines = Vec::new();
@@ -4139,13 +4288,15 @@ impl Ui {
                 "Wheel: zoom in the room; scroll choices in menus.",
                 "Menus freeze care time; animation keeps moving.",
                 "Compact HUD: *=100. Tiny frames page all needs.",
+                "Header E/B/C/A/D: Egg/Baby/Child/Adult/Dead.",
+                "P paused, R resting, L live; ILL needs medicine.",
                 "Touch [<][>] selects; Ent acts; Esc returns.",
                 "PgUp/PgDn pages. Home/End first/last.",
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
                 "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
                 "[ left / ] right: orbit; Graphics resets orbit only.",
                 "Fixed isometric elevation; no tilt controls.",
-                "Room/Pet follow world yaw; explicit Face looks front.",
+                "Room/Mon follow world yaw; Face starts front, then [/] orbits.",
                 "Camera controls never steer your pet.",
                 "Compact controller H- means Hold; labels match mapped buttons.",
                 "Graphics choices affect this session only.",
@@ -4176,18 +4327,18 @@ impl Ui {
         }
         let footer_rows = 2.min(body.height);
         let visible = usize::from(body.height.saturating_sub(footer_rows));
+        self.menu_visible_rows.set(visible);
         let mut page = Vec::new();
         if matches!(menu, Menu::Status | Menu::Help) {
+            self.menu_total_lines.set(lines.len());
             self.menu_scroll_limit
                 .set(lines.len().saturating_sub(visible.max(1)).min(512));
             let start = self.menu_scroll.min(self.menu_scroll_limit.get());
             page.extend(lines.into_iter().skip(start).take(visible));
         } else {
-            let visible = visible.min(9);
-            let start = self
-                .menu_selected
-                .saturating_sub(visible.saturating_sub(1))
-                .min(entries.len().saturating_sub(visible));
+            let window = crate::hud::menu_window(self.menu_selected, entries.len(), visible as u16);
+            let visible = window.count;
+            let start = window.start;
             self.menu_number_start.set(start);
             self.menu_number_count
                 .set(visible.min(entries.len().saturating_sub(start)));
@@ -4213,11 +4364,14 @@ impl Ui {
                     }
                 });
                 let prefix = format!("{}{} {key}", if selected { ">" } else { " " }, row + 1);
-                let label = frame_label(
-                    short,
-                    body.width.saturating_sub(prefix.len() as u16),
-                    self.frame / 14,
-                );
+                let short = if body.width < 32 {
+                    compact_menu_entry(menu, index).unwrap_or(short)
+                } else {
+                    short
+                };
+                let label = short.chars()
+                    .take(usize::from(body.width.saturating_sub(prefix.len() as u16)))
+                    .collect::<String>();
                 let text = format!("{prefix}{label}");
                 page.push(
                     Line::from(
@@ -4383,6 +4537,36 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
     }
 }
 
+fn menu_title(menu: Menu) -> &'static str {
+    match menu {
+        Menu::Home => "MAIN MENU",
+        Menu::Care => "CARE",
+        Menu::Games => "GAMES",
+        Menu::Status => "STATUS",
+        Menu::Graphics => "GRAPHICS",
+        Menu::Help => "HELP / CONTROLS",
+        Menu::Gallery => "SPRITE STUDIO",
+        Menu::Talk => "TALK",
+        Menu::Roster => "ROSTER",
+        Menu::Habitat => "HABITAT / ITEMS",
+        Menu::Training => "TRAINING",
+        Menu::Identity => "I CODE",
+        Menu::Seed => "ENTER CODE",
+    }
+}
+fn compact_menu_entry(menu: Menu, index: usize) -> Option<&'static str> {
+    match menu {
+        Menu::Home => ["Care", "Games", "Talk", "Roster", "Status", "Graphics",
+            "Sprite studio", "Help", "Save", "Quit", "Habitat/items", "Training", "Identity/code", "Import code"].get(index).copied(),
+        Menu::Graphics => ["Voxel 3D", "Pixel sprite", "8-bit Manual", "16-bit Manual",
+            "Half-block", "ASCII", "Quadrant", "Braille", "Sprite studio",
+            "HUD Auto", "HUD Minimal", "HUD Full", "Room", "Mon body", "Face close-up",
+            "Zoom in", "Zoom out", "Reset zoom", "Back", "Auto detail", "Orbit left", "Orbit right", "Reset orbit"].get(index).copied(),
+        Menu::Games if index == 0 => Some("Memory"),
+        _ => None,
+    }
+}
+
 fn frame_label(value: &str, width: u16, page: usize) -> String {
     let pages = wrap_dialogue(value, usize::from(width));
     pages
@@ -4404,21 +4588,23 @@ fn wrap_dialogue(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![String::new()];
     }
+    let cells = |text: &str| Line::from(text).width();
     let mut out = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        if !line.is_empty() && line.len() + 1 + word.len() > width {
+        if !line.is_empty() && cells(&line) + 1 + cells(word) > width {
             out.push(std::mem::take(&mut line));
         }
-        for chunk in word.as_bytes().chunks(width) {
-            let part = String::from_utf8_lossy(chunk);
-            if !line.is_empty() && line.len() + 1 + part.len() > width {
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        for glyph in word.chars() {
+            let glyph = glyph.to_string();
+            let glyph = if cells(&glyph) > width { "?".to_string() } else { glyph };
+            if cells(&line) + cells(&glyph) > width {
                 out.push(std::mem::take(&mut line));
             }
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str(&part);
+            line.push_str(&glyph);
         }
     }
     if !line.is_empty() {
@@ -4429,6 +4615,7 @@ fn wrap_dialogue(text: &str, width: usize) -> Vec<String> {
     }
     out
 }
+
 fn compact_button(value: &str) -> String {
     value
         .split(" / ")
@@ -7185,5 +7372,217 @@ mod seed_import_ui_regressions {
             "R/R1/RB"
         );
         assert_eq!(tiny_button("Sony: Hold Circle / Xbox: Tap B"), "H-O/B");
+    }
+}
+
+
+#[cfg(test)]
+mod console_shell_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    const MENUS: [Menu; 13] = [
+        Menu::Home, Menu::Care, Menu::Games, Menu::Status, Menu::Graphics,
+        Menu::Help, Menu::Gallery, Menu::Talk, Menu::Roster, Menu::Habitat,
+        Menu::Training, Menu::Identity, Menu::Seed,
+    ];
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 711);
+        for _ in 0..config.game.hatch_ticks { game.tick(&config.game); }
+        let ui = Ui::configured(game, &config);
+        (config, ui)
+    }
+    fn key(code: KeyCode) -> KeyEvent { KeyEvent::new(code, KeyModifiers::NONE) }
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16, renderer: Renderer) -> Vec<String> {
+        let colors = Colors::from_config(config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| ui.draw(frame, config, renderer, &colors, ui.frame, false)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height).map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect()).collect()
+    }
+    fn painted(lines: &[String], rect: Rect) -> String {
+        lines[usize::from(rect.y)].chars().skip(usize::from(rect.x)).take(usize::from(rect.width)).collect()
+    }
+
+    #[test]
+    fn all_thirteen_menu_shells_resize_in_ascii_mono_with_visible_selection_and_ranges() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        for menu in MENUS {
+            ui.open(menu);
+            let count = ui.menu_len(menu);
+            for selected in [0, count / 2, count - 1] {
+                ui.menu_selected = selected;
+                for (width, height) in [(20, 8), (32, 18), (80, 24), (20, 8)] {
+                    let lines = draw(&ui, &config, width, height, Renderer::Ascii);
+                    let text = lines.join("\n");
+                    assert!(text.is_ascii(), "{menu:?} {width}x{height}: {text}");
+                    assert!(lines[0].starts_with('+') && lines[0].ends_with('+'), "{text}");
+                    assert!(!lines[0].contains("PET ROOM"), "{text}");
+                    assert!(ui.care_targets.borrow().is_empty(), "{menu:?}");
+                    assert!(!lines[usize::from(height - 1)].trim_matches(['+', '-', ' ']).is_empty(), "{text}");
+                    let footer = ui.menu_footer.get();
+                    for (rect, _) in ui.menu_targets.borrow().iter() {
+                        assert!(rect.x >= 1 && rect.right() <= width - 1);
+                        assert!(rect.y >= 1 && rect.bottom() <= footer.y, "{menu:?}: {rect:?}");
+                    }
+                    if matches!(menu, Menu::Home | Menu::Care | Menu::Games | Menu::Graphics | Menu::Talk | Menu::Habitat | Menu::Training) {
+                        let (rect, _) = *ui.menu_targets.borrow().iter().find(|(_, index)| *index == selected)
+                            .unwrap_or_else(|| panic!("{menu:?} {width}x{height} selected {selected}: {text}"));
+                        assert!(painted(&lines, rect).starts_with('>'), "{text}");
+                        assert!(selected >= ui.menu_number_start.get());
+                        assert!(selected < ui.menu_number_start.get() + ui.menu_number_count.get());
+                        assert!(lines[usize::from(height - 1)].contains(&format!("{}/{}", selected + 1, count)), "{text}");
+                    }
+                }
+            }
+        }
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn essential_navigation_is_static_and_targets_match_painted_rows_across_frames() {
+        let (config, mut ui) = fixture();
+        ui.controller = Some(ControllerPrompts {
+            family: "Controller".into(), navigate: "Remapped shoulders".into(),
+            accept: "Sony: Hold D-pad Left / Xbox: Hold D-pad Right".into(),
+            back: "Sony: Hold Circle / Xbox: Hold B".into(),
+            next: "Tap West".into(), release: "Hold L3+R3".into(), quit: None,
+        });
+        for menu in MENUS.into_iter().filter(|menu| *menu != Menu::Seed) {
+            ui.open(menu);
+            let mut previous = None;
+            for frame in [0, 140, 940] {
+                ui.frame = frame;
+                let lines = draw(&ui, &config, 20, 8, Renderer::Ascii);
+                let controls = ui.control_targets.borrow().clone();
+                let snapshot = controls.iter().map(|(rect, action)| (*rect, *action, painted(&lines, *rect))).collect::<Vec<_>>();
+                for action in [Action::Previous, Action::Next, Action::Accept, Action::Cancel] {
+                    assert!(snapshot.iter().any(|(_, a, text)| *a == action && !text.trim().is_empty()), "{menu:?} {snapshot:?}");
+                }
+                if let Some(previous) = &previous { assert_eq!(&snapshot, previous, "{menu:?}"); }
+                previous = Some(snapshot);
+            }
+        }
+    }
+
+    #[test]
+    fn information_ranges_and_paging_use_actual_visible_lines_after_resize() {
+        let (config, mut ui) = fixture();
+        for menu in [Menu::Help, Menu::Status, Menu::Identity] {
+            ui.open(menu);
+            for (width, height) in [(20, 8), (32, 18), (80, 24), (20, 8)] {
+                draw(&ui, &config, width, height, Renderer::Ascii);
+                ui.handle(key(KeyCode::Home), &config.game);
+                let rows = ui.menu_visible_rows.get();
+                ui.handle(key(KeyCode::PageDown), &config.game);
+                assert_eq!(ui.menu_scroll, rows.min(ui.menu_scroll_limit.get()));
+                ui.handle(key(KeyCode::End), &config.game);
+                let lines = draw(&ui, &config, width, height, Renderer::Ascii);
+                let total = ui.menu_total_lines.get();
+                assert!(lines[usize::from(height - 1)].contains(&format!("/{total}")), "{lines:?}");
+                let text = lines.join("\n");
+                assert!(!text.contains("L0-"));
+                ui.handle(key(KeyCode::PageUp), &config.game);
+                assert_eq!(ui.menu_scroll, ui.menu_scroll_limit.get().saturating_sub(rows));
+            }
+        }
+    }
+
+    #[test]
+    fn old_accept_hitbox_cannot_charge_again_before_repaint_and_native_modal_owns_input() {
+        let (config, mut ui) = fixture();
+        ui.game.coins = config.game.feed_cost * 3;
+        ui.open(Menu::Care);
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let rect = ui.control_targets.borrow().iter().find(|(_, a)| *a == Action::Accept).unwrap().0;
+        let coins = ui.game.coins;
+        ui.click(rect.right() - 1, rect.y, &config.game);
+        assert_eq!(ui.game.coins, coins - config.game.feed_cost);
+        let after = ui.game.clone();
+        ui.click(rect.right() - 1, rect.y, &config.game);
+        assert_eq!(ui.game, after);
+        ui.native_modal = true;
+        draw(&ui, &config, 80, 24, Renderer::Ascii);
+        assert!(ui.care_targets.borrow().is_empty());
+        assert!(ui.menu_targets.borrow().is_empty());
+        assert!(ui.control_targets.borrow().is_empty());
+        ui.control_targets.borrow_mut().push((Rect::new(0, 0, 80, 24), Action::Pause));
+        ui.click(1, 1, &config.game);
+        for code in [KeyCode::Char('f'), KeyCode::Char('p'), KeyCode::Char('n'), KeyCode::Enter] {
+            ui.handle(key(code), &config.game);
+        }
+        assert_eq!(ui.game, after);
+        assert!(!ui.confirm_reset);
+        assert_eq!(ui.handle(key(KeyCode::Char('q')), &config.game), Effect::Quit);
+    }
+
+    #[test]
+    fn tiny_q_quits_and_escape_backs_out_of_every_inline_menu() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        for menu in MENUS {
+            ui.open(menu);
+            draw(&ui, &config, 8, 3, Renderer::Ascii);
+            assert_eq!(ui.handle(key(KeyCode::Char('q')), &config.game), Effect::Quit, "{menu:?}");
+            assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
+            assert_ne!(ui.menu, Some(menu), "{menu:?}");
+            assert!(!ui.confirm_reset);
+            assert_eq!(ui.game, game);
+        }
+    }
+
+    #[test]
+    fn face_orbit_is_relative_on_entry_zoom_preserves_it_and_exit_restores_world_yaw() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let position = (ui.position, ui.destination);
+        ui.camera_transition_frames = 8;
+        ui.camera_view = CameraView::Pet;
+        ui.camera_from_view = CameraView::Pet;
+        ui.yaw = 91;
+        ui.orbit_degrees = 350;
+        ui.orbit_target = 350;
+        ui.orbit_origin = 350;
+        ui.change_camera(CameraView::Face, 100);
+        ui.animate(8);
+        assert_eq!(ui.camera_yaw(ui.yaw), 0);
+        ui.orbit_step = 45;
+        ui.orbit_by(true);
+        ui.animate(12);
+        assert_eq!(ui.camera_yaw(ui.yaw), 22);
+        ui.animate(16);
+        assert_eq!(ui.camera_yaw(ui.yaw), 45);
+        ui.zoom_by(true);
+        ui.animate(24);
+        assert_eq!(ui.camera_yaw(ui.yaw), 45);
+        ui.change_camera(CameraView::Room, ui.zoom_target);
+        ui.animate(28);
+        let middle = ui.camera_yaw(ui.yaw);
+        ui.animate(32);
+        assert_eq!(ui.camera_yaw(ui.yaw), (ui.yaw + ui.orbit_degrees) % 360);
+        assert_ne!(middle, ui.camera_yaw(ui.yaw));
+        ui.change_camera(CameraView::Face, ui.zoom_target);
+        ui.animate(40);
+        assert_eq!(ui.camera_yaw(ui.yaw), 0, "reentry starts front");
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+        assert_eq!((ui.position, ui.destination), position);
+    }
+
+    #[test]
+    fn unicode_wrapping_preserves_text_and_counts_terminal_cells() {
+        for width in [2, 3, 8, 18] {
+            let lines = wrap_dialogue("éclair 猫猫 hello", width);
+            assert!(lines.iter().all(|line| Line::from(line.as_str()).width() <= width));
+            assert!(!lines.join("").contains('�'));
+            assert_eq!(lines.join("").replace(' ', ""), "éclair猫猫hello");
+        }
     }
 }
