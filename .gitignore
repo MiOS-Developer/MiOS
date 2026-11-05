@@ -624,6 +624,7 @@ usr/lib/NetworkManager/*
 !/usr/lib/NetworkManager/conf.d/
 usr/lib/NetworkManager/conf.d/*
 !/usr/lib/NetworkManager/conf.d/22-wifi-mac-addr.conf
+!/usr/lib/NetworkManager/conf.d/30-mios-tether-metric.conf
 !/usr/lib/NetworkManager/conf.d/99-nvme-nbft-no-ignore-carrier.conf
 !/usr/lib/NetworkManager/conf.d/rand_mac.conf
 !/usr/lib/NetworkManager/dispatcher.d/

@@ -1,0 +1,11 @@
+# AI-hint: Re-runs mios-tailscale-sync so the exit node follows [tailscale].exit_nodes as peers come and go.
+# AI-related: mios-tailscale-sync.service, timers.target
+[Unit]
+Description='MiOS' Tailscale SSOT sync schedule
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

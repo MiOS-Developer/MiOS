@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT.
-# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale
+# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale, mios-tailscale-sync.timer, test_mios_tailscale_sync.py
+# AI-functions: _load_config, find_tailscale, get_status, select_exit_node, build_set_cmd, sync_mesh
 """'MiOS' Tailscale mesh client synchronization daemon/helper.
 
 Derives Tailscale connection settings from layered mios.toml SSOT:
@@ -11,9 +12,15 @@ Derives Tailscale connection settings from layered mios.toml SSOT:
   accept_routes = true
   accept_dns = true
   advertise_routes = ""
+  exit_nodes = []               # ordered peer names/IPs; [] = leave exit node alone
+  exit_node_allow_lan_access = true
 
-If [tailscale].enabled is true, ensures tailscaled is active and applies
-configured mesh parameters.
+If [tailscale].enabled is true, applies the mesh parameters with `tailscale
+set` (which only touches the flags it names, unlike `up --reset`). The exit
+node is the first exit_nodes entry that is online and offers itself as one;
+when none qualifies the exit node is cleared, so egress falls back to the
+host's own default route instead of a dead peer. --dry-run prints the command
+without running it.
 """
 from __future__ import annotations
 import json
@@ -34,6 +41,12 @@ def _log(msg: str) -> None:
     print(f"[mios-tailscale-sync] {msg}", flush=True)
 
 
+def _as_list(value) -> list[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+    return [str(v).strip() for v in value or [] if str(v).strip()]
+
+
 def _load_config() -> dict:
     data = mios_toml.load_merged(layers=[VENDOR_TOML, HOST_TOML])
     ts = data.get("tailscale", {})
@@ -46,6 +59,8 @@ def _load_config() -> dict:
         "accept_routes": bool(ts.get("accept_routes", True)),
         "accept_dns": bool(ts.get("accept_dns", True)),
         "advertise_routes": str(ts.get("advertise_routes", "")),
+        "exit_nodes": _as_list(ts.get("exit_nodes", [])),
+        "exit_node_allow_lan_access": bool(ts.get("exit_node_allow_lan_access", True)),
         "headscale_domain": str(metal_mesh.get("headscale_domain", "mesh.mios.local")),
     }
 
@@ -69,7 +84,46 @@ def get_status() -> dict:
     return {}
 
 
-def sync_mesh() -> int:
+def _peer_names(peer: dict) -> set[str]:
+    names = {str(peer.get("HostName", "")).lower(),
+             str(peer.get("DNSName", "")).split(".")[0].lower()}
+    names.update(str(ip) for ip in peer.get("TailscaleIPs") or [])
+    return names - {""}
+
+
+def select_exit_node(status: dict, wanted: list[str]) -> tuple[str, str]:
+    """(tailscale IPv4, peer name) of the first usable preference, else ("", "")."""
+    peers = list((status.get("Peer") or {}).values())
+    for want in wanted:
+        match = [p for p in peers if want.lower() in _peer_names(p)]
+        if not match:
+            _log(f"exit node {want}: not in this tailnet")
+            continue
+        peer = match[0]
+        if not peer.get("Online"):
+            _log(f"exit node {want}: offline")
+        elif not peer.get("ExitNodeOption"):
+            _log(f"exit node {want}: online but not advertising an exit node")
+        else:
+            ips = [ip for ip in peer.get("TailscaleIPs") or [] if ":" not in ip]
+            if ips:
+                return ips[0], want
+            _log(f"exit node {want}: no Tailscale IPv4")
+    return "", ""
+
+
+def build_set_cmd(ts_bin: str, cfg: dict, exit_ip: str) -> list[str]:
+    cmd = [ts_bin, "set",
+           f"--accept-routes={str(cfg['accept_routes']).lower()}",
+           f"--accept-dns={str(cfg['accept_dns']).lower()}",
+           f"--advertise-routes={cfg['advertise_routes']}"]
+    if cfg["exit_nodes"]:
+        cmd.append(f"--exit-node={exit_ip}")
+        cmd.append(f"--exit-node-allow-lan-access={str(cfg['exit_node_allow_lan_access']).lower()}")
+    return cmd
+
+
+def sync_mesh(dry_run: bool = False) -> int:
     cfg = _load_config()
     if not cfg["enabled"]:
         _log("Tailscale is disabled in SSOT [tailscale].enabled=false")
@@ -77,32 +131,38 @@ def sync_mesh() -> int:
 
     ts_bin = find_tailscale()
     if not shutil.which(ts_bin) and not os.path.isfile(ts_bin):
-        _log(f"Warning: tailscale CLI binary not found on path")
+        _log("tailscale CLI binary not found on PATH")
         return 1
 
     status = get_status()
     backend_state = status.get("BackendState", "NoState")
     _log(f"Current Tailscale BackendState: {backend_state}")
+    if backend_state != "Running":
+        server = cfg["login_server"] or "Tailscale SaaS"
+        _log(f"not logged in; run: tailscale up --login-server={server}" if cfg["login_server"]
+             else f"not logged in to {server}; run: tailscale up")
+        return 0
 
-    cmd = [ts_bin, "up", "--reset"]
-    if cfg["login_server"]:
-        cmd.append(f"--login-server={cfg['login_server']}")
-    if cfg["accept_routes"]:
-        cmd.append("--accept-routes")
-    if cfg["accept_dns"]:
-        cmd.append("--accept-dns")
-    if cfg["advertise_routes"]:
-        cmd.append(f"--advertise-routes={cfg['advertise_routes']}")
+    exit_ip, exit_name = select_exit_node(status, cfg["exit_nodes"])
+    if cfg["exit_nodes"]:
+        _log(f"exit node: {exit_name} ({exit_ip})" if exit_ip
+             else "exit node: none usable -- cleared, egress via the host default route")
 
-    _log(f"Configured mesh params: login_server={cfg['login_server'] or 'Tailscale SaaS'} accept_routes={cfg['accept_routes']}")
-    return 0
+    cmd = build_set_cmd(ts_bin, cfg, exit_ip)
+    if dry_run:
+        print(" ".join(cmd))
+        return 0
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if res.returncode != 0:
+        _log(f"tailscale set failed ({res.returncode}): {res.stderr.strip()[:400]}")
+    return res.returncode
 
 
 def main() -> int:
     if "--status" in sys.argv:
         print(json.dumps(get_status(), indent=2))
         return 0
-    return sync_mesh()
+    return sync_mesh(dry_run="--dry-run" in sys.argv)
 
 
 if __name__ == "__main__":
