@@ -18,10 +18,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 |---|---|
 | pending | 1747 |
 | in_progress | 78 |
-| completed | 1871 |
+| completed | 1872 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3736 |
+| total | 3737 |
 
 0 record(s) carry at least one override.
 
@@ -4464,6 +4464,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3733` Shade voxel forms with species-bound colors and ASCII tonal shadows -- in_progress · owner mios-mons-navigation-worker · P1
 - `task_3734` Make font and viewport changes drive one global automatic detail mode -- completed · owner mios-mons-navigation-worker · P1
 - `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- completed · owner mios-mons-face-legibility-worker · P1
+- `task_3737` Expose the verified live MiOS-Mon build in the native tmux-os catalogue -- completed · owner mios-tamagotchi-live-coordinator · P1
 
 ## test-coverage
 

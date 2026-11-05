@@ -577,3 +577,25 @@ authenticated terminal interaction as distinct receipts. Loopback URLs on a
 phone refer to that phone; remote play uses an existing authenticated access
 route to the MiOS host. A local browser simulation does not certify a phone,
 physical controller, PowerShell runtime or another Blade.
+
+
+## Make a live user-local trial available in the native menu
+
+A binary installed under ~/.local/bin is not automatically the executable of
+the existing MiOS-Mons menu row. Inspect the normal user's mios-gen tui-spec
+mios-mons --root / --console 0 output and the actual native launcher before
+claiming that a live deployment is available from tmux-os.
+
+A temporary user fragment under ~/.config/mios/mios.d may redirect the existing
+terminal.tuis row to the verified user-local executable with --sample and a
+separate explicit menu-play save. Array layers replace the whole TUI list:
+preserve every other resolved row and its options, and retain the prior list
+for comparison. Do not replace the host monolith to install one application.
+Remove only that owned temporary fragment after normal image integration.
+
+The native launcher reads this catalogue at open time. Open Ctrl+B then Space,
+find MiOS-Mon under MiOS, and select the actual row. Verify the resulting process
+checksum, save path and visible game in the caller's own runtime. End a disposable
+menu verification run normally so it does not hold the operator's menu-play
+save lock; preserve existing live pets and nested launchers. An already running
+pet is resumed through its running window; do not remove its writer lock.

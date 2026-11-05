@@ -3986,3 +3986,28 @@ SHA2563c2f6712ac989bf622e3b5c8699d6afe7f28f09510396f722e0e39627178c1b8.
 Primary3708 and physical mobile/controller acceptance remain open; no fleet/ARM64/physical VT/watch certification or global clean CI
 is claimed. Scoped3725/3728/3734/3735/3736 complete. Software verification and live localhost
 trial are ready for the authorized main publication; physical follow-ups remain open.
+
+
+## 2026-11-05 · Live MiOS-Mon native menu correction
+
+Operator correctly reported that Git publication and a separately opened trial
+did not make the new build the normal tmux-os menu target. The live vendor row
+still named /usr/bin/mios-tamagotchi. Created only the normal user's owned
+/home/mios/.config/mios/mios.d/60-mios-mon-live.toml from the canonical TOML
+template; preserved every other resolved TUI row. The existing mios-mons row
+now labels MiOS-Mon and invokes the verified42aa user-local sample with --sample
+and /home/mios/.local/state/mios/tamagotchi-blade-sample/mios-menu-pet.json.
+No host monolith or system executable was replaced. Native fresh-process
+tui-spec and visible launcher both resolve the new entry.
+
+Selected actual row4 in the habitat's visible native launcher using verified
+client /dev/pts/65 native input. The resulting PID812866@25/%41 executable
+matched42aa and hatched genuine Tamo. Saved/paused and quit the owned menu test
+normally, preserving its state and freeing its writer for the operator's next
+menu launch. Existing RamoPID12447@19/%34 was restored visibly; original games,
+other windows and four independent nested launchers remain alive.
+
+Receipt: /home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json
+Actual menu/game PNGs and original catalogue snapshot are adjacent. The live
+menu path is Ctrl+B then Space, MiOS section, MiOS-Mon. This scoped follow-up
+is complete; image integration and physical device acceptance remain separate.

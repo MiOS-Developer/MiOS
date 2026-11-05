@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T02:16:50.358619+00:00",
+  "last_updated": "2026-11-05T02:28:47.626274+00:00",
   "total_artifacts": 128,
   "artifacts": [
     {
@@ -34,8 +34,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "3c3fd6c4e34c341893033069c02c75c8d6ee71c6a1fa5d46edab3f8ca0735b12",
-      "size_bytes": 678213,
+      "sha256": "001c3aaf43626487bd123beb4a7e56b6478a8777e3771eff4e1fc2b335b61025",
+      "size_bytes": 679748,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -56,7 +56,8 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
-        }
+        },
+        "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json"
       }
     },
     {
@@ -159,8 +160,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "792077c732e18f5c9d3c57009fef877f24788ae854c6020951b2c3b009a92fd1",
-      "size_bytes": 550444,
+      "sha256": "abb4c30d63280af02d4fc3d0db8721acc798f8ecd5ec3a5879daff05ca86cbab",
+      "size_bytes": 550591,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -169,14 +170,15 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
-        }
+        },
+        "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json"
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "94a48cf2ae353f1dbf06e7ecfee8a1eab2d297b639f697d1c88163db769da69a",
-      "size_bytes": 14614132,
+      "sha256": "9b7c315bc4750a5fcae94cdc56281099a3a2884a1c2e3bfc660f836d71b102c2",
+      "size_bytes": 14616288,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -185,7 +187,8 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
-        }
+        },
+        "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json"
       }
     },
     {
@@ -1706,10 +1709,11 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
-        }
+        },
+        "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json"
       },
-      "sha256": "b841c681778024472afbde756a9d23decad1e1700c499715ce1d9e88b8c377ae",
-      "size_bytes": 34256
+      "sha256": "e552a2b3a73072fda9217a4b853b71f574784e07ad6c1aa72e596091ece4f940",
+      "size_bytes": 35544
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
