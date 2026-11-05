@@ -4077,3 +4077,62 @@ window is already gone; no active source pane was killed by cleanup. Its
 geometry,UI and review reports are combined in readonly native session
 mios-agents-completed-2026-11-05, alongside the retained November4 archive.
 Receipt:mios-session-cleanup/mios-final-source-archive.json under the handoff root.
+
+## 2026-11-05 · In-game shared birth-code replay
+
+Tasks3743/3744 continue MiOS-Mon development on isolated source1d65d4f8e.
+Actual registered native participant mios-mons-seed-editor owned only the
+scaffolded pure seed_entry.rs model in its own worktree and visible habitat head
+@27/%123, independently receiving/acknowledging its relay messages. Delivered
+frozen module424bb385b70d868ecf73b2246215e177d75e5b35e4595debbe8e8e024380aeda,
+nine model tests, and concrete read-only UI findings. Root owned UI/integration,
+canonical tasks, MiOS-DEV builds and user-local installation.
+
+Final executable source5a197bba7763f6d84e742b0f956561cc503abdf8, SHA256
+f2a579d74fa24c464fc213defff8e48acd0e747b72c177a8827fa24e3131427f.
+Actual sourceRO, locked/offline Rust1.99.1 rootless MiOS-DEV4CPU/4GiB passed
+498 checks (267 pet unit,13CLI,198Inputd,4HTML,16portal), Clippy-Dwarnings and
+native static PIE validation. All four broader gate finding outputs match the
+clean current upstream1d65 baseline byte-for-byte; gates were not weakened.
+
+Applied independent review fixes:20x8 outer/18x6 inner confirmation accounting,
+wheel-aware mouse caret movement, stale seed clearing on every tiny/cancel/reset
+exit, valid Ctrl+C/Escape hints in the tiniest editor and immutable drafts behind
+confirmation. Direct code letters cannot trigger care/reset/quit while editing.
+Seeded creation requires two explicit Enter actions and starts paused; saved
+sessions refuse the import flow.
+
+Actual nested20x8 play verified typed qfpn as text, refusal of escaped clipboard
+data, grouped/lowercase code preview, cancellation retaining the original177
+birth and confirmed512 birth. Actual browser keyboard and ClipboardEvent replay
+passed portrait513 and watch515 at localhost8310. These are automated desktop
+and browser-emulation results, not physical phone/controller certification.
+Disposable PTYs verified normal Ctrl+C cleanup and invalid-CLI termios equality;
+the initial harness assumed whole rendered labels in ANSI diffs, corrected in
+the retained terminal helper without changing application code.
+
+User-local sample replacement was atomic with the previous d8f7 executable
+retained. The system executable f2a6 remains unchanged. Existing Tato@13 and
+Noya@12 windows/processes remain available; the new owned replay window@14/%34
+shares the same still-live PiP/localhost/SSH session and has no save path.
+Receipts: /home/mios/.local/state/mios/mios-mons-seed-entry-live/
+ - mios-proof-seed-entry-final/mios-artifact-receipt.json
+ - mios-seed-live-replay-acceptance.json
+ - mios-seed-browser-receipt.json
+ - mios-seed-terminal-restoration.json
+
+Final independent native review:
+ /home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-editor/final-review.json
+The reviewer matched all24 crate files to sourceRO build, recomputed installed
+and artifact f2a579 hashes, inspected actual native/browser watch and portrait
+PNGs and found no remaining actionable seed-editor issue. Its own direct
+/proc/644001/exe access was denied; root's independently recorded process hash
+supplies that narrower proof. Physical devices remain unverified. The same
+participant resumed its own registration for final review and self-unregistered;
+no second worker identity or foreign inbox/token was used.
+
+The operator now requires live installation after every main push and excludes
+PR pushes. This standing rule is recorded in .agents/COORDINATION.md. The current
+publication will be followed by an atomic reinstallation and a fresh owned live
+main preview, retaining the prior operator/adopted windows. Post-push receipt:
+ /home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json

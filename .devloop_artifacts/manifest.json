@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T17:37:07.956771+00:00",
-  "total_artifacts": 130,
+  "last_updated": "2026-11-05T18:47:41.203523+00:00",
+  "total_artifacts": 132,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "44758857fa6bdd616edd074b6cd18f0d4cf73e10fd26fe417a7e169e282aa636",
-      "size_bytes": 31205,
+      "sha256": "aff91bfd09a1f0ef93cb3712d688f1fe123e40c7b774217ceeb9a9e11f12fa15",
+      "size_bytes": 31351,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -34,14 +34,21 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       }
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "514adad10277b0ddbe2dbb5ca5ec221a1aa2bc425c6e557cf1a8b783b3b24d84",
-      "size_bytes": 684031,
+      "sha256": "eac791180a60d666e18363e0f07ae1aedc8992b251d8da200e8a8f86542dd30f",
+      "size_bytes": 687703,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -69,6 +76,13 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       }
     },
@@ -178,8 +192,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "119607293a822dcc3fae7a00da5619c680d82352458d4f267b698369ed7ba00e",
-      "size_bytes": 551250,
+      "sha256": "f22bed57ed58ef172370e44d4750d700726794eafebfb6856114116e29d94773",
+      "size_bytes": 551565,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -195,14 +209,21 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "7cfeae976ff5cca87d3e723159d9d86ffe6eded2d1b3618760e7f17447d5f84b",
-      "size_bytes": 14623142,
+      "sha256": "e614b7984e3caaba9fe033919a41f11d40713be458e0112757d460a5eaafe165",
+      "size_bytes": 14626133,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -218,6 +239,13 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       }
     },
@@ -1523,10 +1551,17 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       },
-      "sha256": "3abde2c664bf6a8ca1cfe9a538ec6248e139d01905e4733314e1295cc1b73a80",
-      "size_bytes": 544
+      "sha256": "bf2e60bfc59ea81045b6aec760473c73b5e3fc4611c10684821bf0d7ce16584e",
+      "size_bytes": 565
     },
     {
       "path": "tools/native/mios-tamagotchi/src/lighting.rs",
@@ -1681,10 +1716,17 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       },
-      "sha256": "2e1e08cbbb135bb2859768fbf84c61c384c22af43940378254d932d00c96fa0b",
-      "size_bytes": 221894
+      "sha256": "f42e152b88cbc92bc8781a9758d5aed624afc4de4622d2de89c559ea0f7bb382",
+      "size_bytes": 246597
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -1812,10 +1854,17 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       },
-      "sha256": "450afa48720cf5f547eb5beac3f8be421b2fb97aacc3c4ade3a869afec5f7093",
-      "size_bytes": 38337
+      "sha256": "192a856faae634877ad7fc2a0ebdcf7a8d7a281c5163d56d4ea6ad92b273b357",
+      "size_bytes": 40516
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
@@ -1862,6 +1911,38 @@
       },
       "sha256": "2f0a725937bd57523f485b36aaa4a2e71d709495caef0ee217e648f5218036fc",
       "size_bytes": 35604
+    },
+    {
+      "path": ".agents/COORDINATION.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-05T18:47:41.203523+00:00",
+      "metadata": {
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
+        }
+      },
+      "sha256": "aa6eb2e40f1d800aa48c18d08dc642094d5696fdf3fe36a8780c979e077cf4b3",
+      "size_bytes": 7503
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/seed_entry.rs",
+      "artifact_type": "source_code",
+      "created_at": "2026-11-05T18:47:41.203523+00:00",
+      "metadata": {
+        "mios_mon_seed_replay_verification": {
+          "source": "5a197bba7763f6d84e742b0f956561cc503abdf8",
+          "checks": 498,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-seed-handoff.json",
+          "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json",
+          "scope": "user-local x86_64; physical device/image acceptance remains separate"
+        }
+      },
+      "sha256": "424bb385b70d868ecf73b2246215e177d75e5b35e4595debbe8e8e024380aeda",
+      "size_bytes": 17857
     }
   ]
 }

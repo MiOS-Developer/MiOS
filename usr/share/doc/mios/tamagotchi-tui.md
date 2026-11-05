@@ -637,10 +637,46 @@ in vendor TOML and the configurator; no live TOML replacement is required.
 The user-local x86_64 trial from source f54b6b57ac5c5f40d030bf34cb2e28733a03efe9 passed482 scoped
 MiOS-DEV checks,warning-fatal Clippy and native static PIE validation. Actual
 nested/browser tests covered the rotating isometric room,short code replay,
-portrait/landscape and a20x8 code/menu. Automated live care and visible memory
+portrait/landscape and a 20x8 code/menu. Automated live care and visible memory
 answers reached a thriving adult without editing its age,needs,coins or stats.
 The normal user's MiOS-Mon menu row launches --sample without a save.
 
 Receipt: /home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json.
 This remains a development trial; physical controller/phone/VT/ARM64/fleet and
 OS-image acceptance are separate. Existing pet files are preserved.
+
+## Replay a shared birth code inside the game
+
+Use **K** or **Home / Import birth code** during save-free development play.
+Type a decimal seed or paste a compact/grouped M1 birth code. The editor accepts
+at most 21 ASCII characters; invalid checksums and control-bearing clipboard data
+are refused without changing the current pet. **Q/F/P/N** and other code letters
+are text while this field is focused. **Ctrl+C** still quits; **Escape** returns.
+
+**Enter** checks the code and opens a separate confirmation showing the complete
+compact code and generated name. **Enter** again creates that exact birth as a
+paused egg; **Escape** keeps the current pet. **P** resumes after confirmation.
+Menus freeze the simulation clock, so typing and previewing do not advance age
+or needs. This reproduces birth identity and hatch stats, not trained progress.
+
+For controller menu operation, Left/Right selects a payload character and
+Up/Down cycles its Base32 value. Accept checks/starts; Back keeps the pet. The
+onscreen hints use the current focused controller mappings. Mouse clicks position
+the caret and activate Check/Keep. Software routing is tested separately from
+physical controller ownership.
+
+The complete compact code and both confirmation actions fit a 20x8 terminal.
+Smaller views refuse confirmation; the tiny editor shows Escape/Back and Ctrl+C,
+rather than claiming that Q quits while it is an editable code character.
+Clipboard paste outside the focused editor is ignored. Bracketed paste and
+mouse capture are restored on normal exit.
+
+This development import is disabled for any session with a save path. Existing
+saved pets and seed-named progress files remain separate and cannot be replaced
+through this menu. Use --sample without --save or --save-dir to import a code.
+
+After an authorized main push, install the verified user-local sample live and
+verify its running preview against the published source. PR-branch pushes do
+not trigger this installation. Preserve adopted pet sessions; use an owned
+fresh preview rather than replacing their process. Retain a post-push receipt
+with the main revision, artifact source/checksum, installed path and live target.
