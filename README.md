@@ -7,6 +7,23 @@ This is the **system repository**. Its `usr/`, `etc/`, `var/`, and other FHS pat
 
 > MiOS is an active proof of concept. WSL2 and development VM runs are the observed environments described by the [thesis](usr/share/doc/mios/manual/thesis.md). Bare-metal, blade fleet, and edge mesh shapes are design targets under development, not claims of a completed deployment.
 
+
+## Install the MiOS skills
+
+The skills below are plain `SKILL.md` folders in this repository. Install them into an agent
+that takes `owner/repo`, a folder link, a `SKILL.md` link or an archive (ServerBox: Settings →
+Application → AI → Skills; anywhere the `npx skills add` convention works). Install the
+**folder**, never the whole repository — the repo is large:
+
+- Agent skills — `https://github.com/MiOS-Developer/MiOS/tree/main/.agents/skills/<name>`
+  with `<name>` one of `dev-loop`, `agents`, `artifacting`, `pipeline`, `source-command-loop-grill`
+  (or point at [`.../tree/main/.agents/skills`](https://github.com/MiOS-Developer/MiOS/tree/main/.agents/skills) and pick).
+- Hermes skills — `https://github.com/MiOS-Developer/MiOS/tree/main/usr/share/mios/hermes/skills/<name>`
+  with `<name>` one of `mios-environment`, `app-launch`, `find-files-and-apps`, `linux-control`,
+  `mios-skill-catalog`, `opencode-delegation`, `package-management`, `parallel-fanout`,
+  `self-improvement`, `windows-control`
+  (folder root: [`.../tree/main/usr/share/mios/hermes/skills`](https://github.com/MiOS-Developer/MiOS/tree/main/usr/share/mios/hermes/skills)).
+
 ## System shape
 
 ```text
