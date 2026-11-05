@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T19:40:08.809756+00:00",
+  "last_updated": "2026-11-05T19:42:11.624275+00:00",
   "total_artifacts": 132,
   "artifacts": [
     {
@@ -1725,8 +1725,8 @@
           "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       },
-      "sha256": "750fad527fb8ba35a39fb73bd409229a5815b8af449b41623fb1196aa1c0bcb3",
-      "size_bytes": 253602
+      "sha256": "5dea22f81af0d84a761a09522accb9fd0bbdb0a9314e8bf3971eaab0799d3023",
+      "size_bytes": 255542
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",

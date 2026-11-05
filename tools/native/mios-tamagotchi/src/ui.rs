@@ -6553,16 +6553,41 @@ mod seed_import_ui_regressions {
                 );
                 let targets = ui.seed_edit_targets.borrow().clone();
                 assert_eq!(targets.len(), 5);
-                for (area, _) in &targets {
-                    assert!(
-                        area.x >= 1 && area.right() <= w - 1 && area.y > 2 && area.bottom() < h - 2
-                    );
+                for ((area, _), label) in targets.iter().zip([
+                    "[<]",
+                    "[>]",
+                    "[-]",
+                    "[+]",
+                    if w < 25 { "[Clr]" } else { "[Clear]" },
+                ]) {
+                    assert!(area.x >= 1 && area.right() < w && area.y > 2 && area.bottom() < h - 2);
+                    let painted: String = text
+                        .chars()
+                        .skip(usize::from(area.y) * usize::from(w) + usize::from(area.x))
+                        .take(usize::from(area.width))
+                        .collect();
+                    assert_eq!(painted, label);
                 }
-                for index in [3, 1, 0, 2, 4] {
-                    let (area, _) = targets[index];
+                let code = MonCode::new(512).unwrap().compact();
+                ui.paste_seed(&code);
+                let tap = |ui: &mut Ui, index: usize| {
+                    let area = targets[index].0;
                     assert_eq!(ui.click(area.x, area.y, &config.game), Effect::Continue);
-                }
+                };
+                tap(&mut ui, 0);
+                assert_eq!(ui.seed_entry.cursor(), 16);
+                assert_eq!(ui.seed_entry.text(), code);
+                tap(&mut ui, 1);
+                assert_eq!(ui.seed_entry.cursor(), 17);
+                tap(&mut ui, 3);
+                assert_ne!(ui.seed_entry.text(), code);
+                assert_eq!(ui.seed_entry.cursor(), 16);
+                tap(&mut ui, 2);
+                assert_eq!(ui.seed_entry.text(), code);
+                tap(&mut ui, 4);
                 assert!(ui.seed_entry.text().is_empty());
+                assert_eq!(ui.seed_entry.cursor(), 0);
+                assert!(ui.seed_entry.error().is_none());
                 assert_eq!(ui.game, before);
                 assert_eq!((ui.zoom_target, ui.orbit_target, ui.camera_view), camera);
                 assert_eq!(ui.visual_rng, rng);
@@ -6647,15 +6672,28 @@ mod seed_import_ui_regressions {
         clear.kind = KeyEventKind::Press;
         ui.handle(clear, &config.game);
         assert!(ui.seed_entry.text().is_empty());
+        ui.paste_seed(&MonCode::new(512).unwrap().compact());
         draw(&ui, &config, 20, 8, Renderer::Ascii);
         assert_eq!(ui.seed_edit_targets.borrow().len(), 5);
+        let former_clear = ui.seed_edit_targets.borrow()[4].0;
+        let draft = ui.seed_entry.text().to_string();
+        let cursor = ui.seed_entry.cursor();
+        let camera = (ui.zoom_target, ui.orbit_target, ui.camera_view);
+        let rng = ui.visual_rng;
         draw(&ui, &config, 12, 5, Renderer::Ascii);
         assert!(ui.seed_edit_targets.borrow().is_empty());
+        ui.click(former_clear.x, former_clear.y, &config.game);
+        assert_eq!(ui.seed_entry.text(), draft);
+        assert_eq!(ui.seed_entry.cursor(), cursor);
         ui.seed_import_allowed = false;
-        ui.paste_seed("512");
         draw(&ui, &config, 20, 8, Renderer::Ascii);
         assert!(ui.seed_edit_targets.borrow().is_empty());
+        ui.click(former_clear.x, former_clear.y, &config.game);
         ui.handle(clear, &config.game);
+        assert_eq!(ui.seed_entry.text(), draft);
+        assert_eq!(ui.seed_entry.cursor(), cursor);
+        assert_eq!((ui.zoom_target, ui.orbit_target, ui.camera_view), camera);
+        assert_eq!(ui.visual_rng, rng);
         assert_eq!(ui.game, before);
         assert_eq!(
             ui.handle(
