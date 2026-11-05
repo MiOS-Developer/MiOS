@@ -359,6 +359,8 @@ enable mios-pgvector-optimize.timer
 disable mios-pgvector-optimize.service
 enable mios-podman-gc.timer
 disable mios-podman-gc.service
+enable mios-tailscale-sync.timer
+disable mios-tailscale-sync.service
 enable mios-podman-ps.timer
 disable mios-podman-ps.service
 enable mios-shell-session-gc.timer
