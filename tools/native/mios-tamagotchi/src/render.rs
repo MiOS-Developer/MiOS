@@ -868,6 +868,48 @@ fn projected_surface_uv(
     Some((refined, footprint))
 }
 
+type NativeHeadCell = ((u16, u16), [f64; 2], f64);
+type NativeGlyphCell = Option<((u16, u16), u8)>;
+
+/// Allocate mandatory eyes and mouth before optional punctuation. A parenthesis
+/// must never consume the only legal cell for a complete expression core.
+fn native_glyph_candidates(
+    texture: FaceTexture,
+    band: f64,
+    visible: &[NativeHeadCell],
+) -> Vec<NativeGlyphCell> {
+    let mut candidates = vec![None; texture.text.len()];
+    if candidates.len() < 3 {
+        return candidates;
+    }
+    let last = candidates.len() - 1;
+    let mut used = Vec::new();
+    let horizontal_tolerance = 3.0 / (texture.width() + 2.0);
+    for index in (1..last).chain([0, last]) {
+        let glyph = texture.text.as_bytes()[index];
+        let target_u = (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0);
+        let mut best = None;
+        let mut best_distance = f64::INFINITY;
+        for &(pos, uv, width) in visible {
+            if used.contains(&pos) {
+                continue;
+            }
+            let du = (uv[0] - target_u) / horizontal_tolerance.max(width * 0.55);
+            let dv = (uv[1] - band) / 0.16;
+            let distance = du * du + dv * dv;
+            if du.abs() <= 1.0 && dv.abs() <= 1.0 && distance < best_distance {
+                best = Some(pos);
+                best_distance = distance;
+            }
+        }
+        if let Some(pos) = best {
+            used.push(pos);
+        }
+        candidates[index] = best.map(|pos| (pos, glyph));
+    }
+    candidates
+}
+
 /// Terminal-sized glyphs are a level of detail for an underresolved atlas.
 /// Each character finds its own visible head-local UV anchor. Its entire packed
 /// cell must be mapped head material, so a nose, ear or occluder wins outright.
@@ -927,32 +969,7 @@ fn draw_surface_glyphs(
     bands.dedup_by(|a, b| (*a - *b).abs() < 0.001);
     let mut compact = None;
     for band in bands {
-        let mut used = Vec::new();
-        let mut candidates = Vec::new();
-        for (index, glyph) in texture.text.bytes().enumerate() {
-            let target_u = (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0);
-            let mut best = None;
-            let mut best_distance = f64::INFINITY;
-            for &(pos, uv, width) in &visible {
-                if used.contains(&pos) {
-                    continue;
-                }
-                // Native cells round anchor positions. At five columns half
-                // a cell exceeds an atlas glyph's UV radius; include that
-                // measured footprint without expanding visibility authority.
-                let du = (uv[0] - target_u) / horizontal_tolerance.max(width * 0.55);
-                let dv = (uv[1] - band) / 0.16;
-                let distance = du * du + dv * dv;
-                if du.abs() <= 1.0 && dv.abs() <= 1.0 && distance < best_distance {
-                    best = Some(pos);
-                    best_distance = distance;
-                }
-            }
-            if let Some(pos) = best {
-                used.push(pos);
-            }
-            candidates.push(best.map(|pos| (pos, glyph)));
-        }
+        let mut candidates = native_glyph_candidates(texture, band, &visible);
         // Collect first: never paint a missing-mouth or single-eye fragment.
         if candidates.len() < 3
             || candidates[1..candidates.len() - 1]
@@ -1002,11 +1019,10 @@ fn draw_camera_face(
     buf: &mut Buffer,
 ) -> bool {
     let area = area.intersection(buf.area);
-    if area.height <= 3 {
-        return draw_front_face(sprite, renderer, colors, projection, area, buf);
-    }
     let Some(texture) = FaceTexture::new(sprite) else {
-        return draw_front_face(sprite, renderer, colors, projection, area, buf);
+        // Mapped voxels never bypass depth authority, even in a tiny viewport.
+        return sprite.face_text().is_none()
+            && draw_front_face(sprite, renderer, colors, projection, area, buf);
     };
     let Some(head_bounds) = head_surface_bounds(sprite) else {
         return false;
@@ -1014,6 +1030,9 @@ fn draw_camera_face(
     let (head_left, _) = projection.cell(head_bounds.left, head_bounds.top, renderer);
     let (head_right, _) = projection.cell(head_bounds.right, head_bounds.bottom, renderer);
     let native_fits = head_right - head_left >= texture.text.len() as f64;
+    if area.height <= 3 {
+        return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
+    }
     let Some(bounds) = FaceTexture::bounds(sprite) else {
         return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     };
@@ -2615,9 +2634,10 @@ mod camera_tests {
     }
 
     #[test]
-    fn micro_face_uses_two_rows_for_a_real_front_head_without_a_caption() {
+    fn mapped_micro_faces_use_real_head_cells_and_keep_readable_cores_where_they_fit() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut readable_two_row_cases = 0;
         for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
             for height in [2, 3] {
                 let area = Rect::new(2, 3, 10, height);
@@ -2635,7 +2655,21 @@ mod camera_tests {
                             accent: 11,
                         },
                     );
-                    let face = sprite.face_overlay().expect("front-facing head");
+                    let canonical = sprite.face_text().expect("mapped front expression");
+                    let core = &canonical[1..4];
+                    let camera = Camera {
+                        view: CameraView::Face,
+                        ..Camera::default()
+                    };
+                    let projection = Projection::camera(
+                        &sprite,
+                        SolidBounds::of(&sprite).unwrap(),
+                        area,
+                        renderer,
+                        0,
+                        (500, 500),
+                        camera,
+                    );
                     let mut buf = Buffer::empty(Rect::new(0, 0, 14, 8));
                     RoomWidget {
                         detail: SpriteStyle::SixteenBit,
@@ -2646,23 +2680,144 @@ mod camera_tests {
                         expression: Expression::Idle,
                         frame: 0,
                         position: (500, 500),
-                        camera: Camera {
-                            view: CameraView::Face,
-                            ..Camera::default()
-                        },
+                        camera,
                         habitat: None,
                     }
                     .render(area, &mut buf);
-                    assert!(
-                        text(&buf, area).contains(face.text),
-                        "{renderer:?} shape {shape} height {height}"
-                    );
+                    let (dx, dy) = renderer.packing();
+                    let mut marks = Vec::new();
+                    for row in area.y..area.bottom() {
+                        for col in area.x..area.right() {
+                            let cell = &buf[(col, row)];
+                            if cell.modifier.contains(ratatui::style::Modifier::BOLD) {
+                                for y in 0..dy {
+                                    for x in 0..dx {
+                                        assert!(projected_head_uv(&sprite, projection,
+                                            u32::from(col) * u32::from(dx) + u32::from(x),
+                                            u32::from(row) * u32::from(dy) + u32::from(y)).is_some(),
+                                            "{renderer:?} shape{shape} height{height}: tiny text escaped head authority");
+                                    }
+                                }
+                                marks.push((col, cell.symbol().to_owned()));
+                            }
+                        }
+                    }
+                    marks.sort_by_key(|p| p.0);
+                    let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
+                    if !literal.is_empty() {
+                        assert!(literal == canonical || literal == core,
+                            "{renderer:?} shape{shape} height{height}: incomplete tiny expression {literal}");
+                        readable_two_row_cases += usize::from(height == 2);
+                    }
                     assert!(!text(&buf, area).contains("curious"));
                     assert_eq!(buf[(1, 3)].symbol(), " ");
                     assert_eq!(buf[(12, 3)].symbol(), " ");
                 }
             }
         }
+        assert!(
+            readable_two_row_cases > 0,
+            "real two-row head surfaces must exercise readable native cores"
+        );
+    }
+
+    #[test]
+    fn mapped_micro_occluders_never_receive_a_literal_face_and_legacy_tiny_text_still_works() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let sprite = Sprite::voxel_with_appearance(
+            Stage::Child,
+            Expression::Sick,
+            SpriteStyle::SixteenBit,
+            1,
+            0,
+            false,
+            Appearance {
+                shape: 14,
+                body: 9,
+                accent: 6,
+            },
+        );
+        let bounds = head_surface_bounds(&sprite).unwrap();
+        let (nose_x, nose_y) = (bounds.top as u32..bounds.bottom as u32)
+            .flat_map(|y| (bounds.left as u32..bounds.right as u32).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                sprite.pixel(x, y, 1) == Some(7) && valid_head_uv(&sprite, x, y).is_none()
+            })
+            .expect("actual bird beak must provide a positive opaque occlusion fixture");
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            let area = Rect::new(0, 0, 10, 2);
+            let (dx, dy) = renderer.packing();
+            let scale = 100.0 * f64::from(dx);
+            let projection = Projection {
+                left: 5.0 * f64::from(dx) - (f64::from(nose_x) + 0.5) * scale,
+                top: f64::from(dy)
+                    - (f64::from(nose_y) + 0.5) * scale * camera_pixel_aspect(renderer),
+                scale,
+                scale_y: scale * camera_pixel_aspect(renderer),
+            };
+            let mut before = Buffer::empty(area);
+            draw_projection(&sprite, renderer, &colors, projection, area, &mut before);
+            let mut after = before.clone();
+            assert!(!draw_camera_face(
+                &sprite, renderer, &colors, projection, area, &mut after
+            ));
+            assert_eq!(
+                after, before,
+                "{renderer:?}: a tiny beak crop must remain unpainted"
+            );
+        }
+        let legacy = Sprite::animated(Stage::Adult, Expression::Happy, SpriteStyle::EightBit, 0);
+        assert!(legacy.face_text().is_none());
+        let area = Rect::new(0, 0, 10, 2);
+        let projection = Projection::camera(
+            &legacy,
+            SolidBounds::of(&legacy).unwrap(),
+            area,
+            Renderer::Ascii,
+            0,
+            (500, 500),
+            Camera {
+                view: CameraView::Face,
+                ..Camera::default()
+            },
+        );
+        let mut buf = Buffer::empty(area);
+        assert!(draw_camera_face(
+            &legacy,
+            Renderer::Ascii,
+            &colors,
+            projection,
+            area,
+            &mut buf
+        ));
+        assert!(text(&buf, area).contains(Expression::Happy.kaomoji(0)));
+    }
+
+    #[test]
+    fn optional_parentheses_cannot_starve_a_three_cell_native_expression_core() {
+        let texture = FaceTexture { text: "(^_^)" };
+        let visible = [
+            ((1, 1), [0.20, 0.35], 0.22),
+            ((2, 1), [0.50, 0.35], 0.22),
+            ((3, 1), [0.70, 0.35], 0.22),
+        ];
+        let candidates = native_glyph_candidates(texture, 0.35, &visible);
+        assert_eq!(candidates[1], Some(((1, 1), b'^')));
+        assert_eq!(candidates[2], Some(((2, 1), b'_')));
+        assert_eq!(candidates[3], Some(((3, 1), b'^')));
+        assert!(candidates[0].is_none() && candidates[4].is_none());
+        let missing_mouth = [visible[0], visible[2]];
+        let incomplete = native_glyph_candidates(texture, 0.35, &missing_mouth);
+        assert!(
+            incomplete[1..4].iter().any(Option::is_none),
+            "two eye cells cannot masquerade as a complete expression core"
+        );
     }
 
     fn facial_marks(sprite: &Sprite, renderer: Renderer, head_columns: u16) -> (Buffer, Buffer) {
