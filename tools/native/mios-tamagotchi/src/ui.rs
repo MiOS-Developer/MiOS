@@ -7,7 +7,7 @@ use crate::{
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
     genetics::MonCode,
-    input::{Action, ControllerMonitor, ControllerPrompts, action},
+    input::{action, Action, ControllerMonitor, ControllerPrompts},
     render::{Camera, CameraView, Colors, HabitatView, RoomWidget},
     save::Store,
     seed_entry::{Edit as SeedEdit, SeedEntry},
@@ -18,11 +18,11 @@ use crossterm::event::{
     Event, KeyEvent, KeyEventKind, MouseButton, MouseEventKind,
 };
 use ratatui::{
-    DefaultTerminal, Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    DefaultTerminal, Frame,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -99,6 +99,7 @@ pub struct Ui {
     seed_cursor_targets: RefCell<Vec<(Rect, usize)>>,
     seed_edit_targets: RefCell<Vec<(Rect, SeedEdit)>>,
     menu_scroll: usize,
+    menu_scroll_limit: Cell<usize>,
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
     menu_number_count: Cell<usize>,
@@ -181,6 +182,7 @@ impl Ui {
             seed_cursor_targets: RefCell::new(Vec::new()),
             seed_edit_targets: RefCell::new(Vec::new()),
             menu_scroll: 0,
+            menu_scroll_limit: Cell::new(512),
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
             menu_number_count: Cell::new(0),
@@ -786,6 +788,7 @@ impl Ui {
         self.menu = Some(menu);
         self.menu_selected = 0;
         self.menu_scroll = 0;
+        self.menu_scroll_limit.set(512);
         self.menu_number_start.set(0);
         self.menu_number_count.set(0);
     }
@@ -793,6 +796,7 @@ impl Ui {
         self.menu = self.menu_history.pop();
         self.menu_selected = 0;
         self.menu_scroll = 0;
+        self.menu_scroll_limit.set(512);
         self.menu_number_start.set(0);
         self.menu_number_count.set(0);
     }
@@ -866,12 +870,24 @@ impl Ui {
         let verb = match menu {
             Menu::Roster => "new?",
             Menu::Training => "train",
-            Menu::Habitat => "use",
+            Menu::Habitat => {
+                if area.width >= 32 {
+                    "buy/place"
+                } else {
+                    "use"
+                }
+            }
             Menu::Gallery => "8/16",
             Menu::Talk => ["more", "feed", "memory", "clean", "rest", "med", "back"]
                 [self.menu_selected.min(6)],
             Menu::Identity | Menu::Status | Menu::Help => "back",
-            _ => "OK",
+            _ => {
+                if area.width >= 32 {
+                    "Choose"
+                } else {
+                    "OK"
+                }
+            }
         };
         let (accept, back) = self.controller.as_ref().map_or_else(
             || {
@@ -880,25 +896,47 @@ impl Ui {
                     "Esc".to_owned(),
                 )
             },
-            |pad| (tiny_button(&pad.accept), tiny_button(&pad.back)),
+            |pad| {
+                let accept = compact_button(&pad.accept);
+                let accept = if accept.len() + verb.len() + 2 <= usize::from(area.width - 7) {
+                    accept
+                } else {
+                    tiny_button(&pad.accept)
+                };
+                let back = compact_button(&pad.back);
+                let available =
+                    area.width
+                        .saturating_sub(if menu == Menu::Gallery { 7 } else { 0 });
+                let back = if back.len() + 6 <= usize::from(available) {
+                    back
+                } else {
+                    tiny_button(&pad.back)
+                };
+                (accept, back)
+            },
         );
         let accept_rect = Rect::new(area.x + 7, area.y, area.width - 7, 1);
-        let accept_caption = if area.width >= 32 && self.controller.is_some() {
-            format!("[{accept}] {verb}")
-        } else {
-            match menu {
-                Menu::Training | Menu::Habitat | Menu::Gallery => format!(
-                    "{} {verb}",
-                    if self.controller.is_none() {
-                        "Ent"
-                    } else {
-                        &accept
-                    }
-                ),
-                Menu::Roster => format!("{accept}:new?"),
-                _ => format!("{accept}: {verb}"),
-            }
-        };
+        let accept_caption =
+            if let Some(pad) = self.controller.as_ref().filter(|_| area.width >= 32) {
+                if menu == Menu::Habitat {
+                    format!("{}: buy/place", tiny_button(&pad.accept))
+                } else {
+                    format!("[{accept}] {verb}")
+                }
+            } else {
+                match menu {
+                    Menu::Training | Menu::Habitat | Menu::Gallery => format!(
+                        "{} {verb}",
+                        if self.controller.is_none() {
+                            "Ent"
+                        } else {
+                            &accept
+                        }
+                    ),
+                    Menu::Roster => format!("{accept}:new?"),
+                    _ => format!("{accept}: {verb}"),
+                }
+            };
         let caption = frame_label(&accept_caption, accept_rect.width, self.frame / 20);
         let visible = caption.len().min(usize::from(accept_rect.width)) as u16;
         screen.render_widget(Paragraph::new(caption).style(style), accept_rect);
@@ -921,8 +959,13 @@ impl Ui {
             back_x += 7;
         }
         let back_rect = Rect::new(back_x, area.bottom() - 1, area.right() - back_x, 1);
-        let back_caption = if area.width >= 32 && self.controller.is_some() {
-            format!("[{back}] Back")
+        let back_caption = if let Some(pad) = self.controller.as_ref().filter(|_| area.width >= 32)
+        {
+            if menu == Menu::Habitat {
+                format!("{}: Back / {}", tiny_button(&pad.back), pad.navigate)
+            } else {
+                format!("[{back}] Back / {}", pad.navigate)
+            }
         } else {
             match menu {
                 Menu::Roster => format!("{back}: keep pet"),
@@ -1178,9 +1221,18 @@ impl Ui {
                 let rows = usize::from(self.viewport.get().1.saturating_sub(2)).clamp(1, 9);
                 let next = match key.code {
                     KeyCode::Home => Some(0),
-                    KeyCode::End => Some(512),
-                    KeyCode::PageUp => Some(self.menu_scroll.saturating_sub(rows)),
-                    KeyCode::PageDown => Some(self.menu_scroll.saturating_add(rows).min(512)),
+                    KeyCode::End => Some(self.menu_scroll_limit.get()),
+                    KeyCode::PageUp => Some(
+                        self.menu_scroll
+                            .min(self.menu_scroll_limit.get())
+                            .saturating_sub(rows),
+                    ),
+                    KeyCode::PageDown => Some(
+                        self.menu_scroll
+                            .min(self.menu_scroll_limit.get())
+                            .saturating_add(rows)
+                            .min(self.menu_scroll_limit.get()),
+                    ),
                     _ => None,
                 };
                 if let Some(next) = next {
@@ -1508,10 +1560,17 @@ impl Ui {
             // This view never spends coins, resets, trains, pauses or steers.
             match action {
                 Action::Direction(Direction::Down | Direction::Right) | Action::Next => {
-                    self.menu_scroll = self.menu_scroll.saturating_add(1).min(512);
+                    self.menu_scroll = self
+                        .menu_scroll
+                        .min(self.menu_scroll_limit.get())
+                        .saturating_add(1)
+                        .min(self.menu_scroll_limit.get());
                 }
                 Action::Direction(Direction::Up | Direction::Left) | Action::Previous => {
-                    self.menu_scroll = self.menu_scroll.saturating_sub(1);
+                    self.menu_scroll = self
+                        .menu_scroll
+                        .min(self.menu_scroll_limit.get())
+                        .saturating_sub(1);
                 }
                 Action::Cancel | Action::Accept => self.back(),
                 Action::Save => return Effect::Save,
@@ -1558,11 +1617,18 @@ impl Ui {
         if matches!(menu, Menu::Status | Menu::Help) {
             match action {
                 Action::Direction(Direction::Down | Direction::Right) | Action::Next => {
-                    self.menu_scroll = self.menu_scroll.saturating_add(1).min(512);
+                    self.menu_scroll = self
+                        .menu_scroll
+                        .min(self.menu_scroll_limit.get())
+                        .saturating_add(1)
+                        .min(self.menu_scroll_limit.get());
                     return Effect::Continue;
                 }
                 Action::Direction(Direction::Up | Direction::Left) | Action::Previous => {
-                    self.menu_scroll = self.menu_scroll.saturating_sub(1);
+                    self.menu_scroll = self
+                        .menu_scroll
+                        .min(self.menu_scroll_limit.get())
+                        .saturating_sub(1);
                     return Effect::Continue;
                 }
                 _ => {}
@@ -3678,9 +3744,13 @@ impl Ui {
             .iter()
             .flat_map(|line| wrap_dialogue(line, usize::from(body.width)))
             .collect::<Vec<_>>();
-        let start = self
-            .menu_scroll
-            .min(wrapped.len().saturating_sub(usize::from(available.max(1))));
+        self.menu_scroll_limit.set(
+            wrapped
+                .len()
+                .saturating_sub(usize::from(available.max(1)))
+                .min(512),
+        );
+        let start = self.menu_scroll.min(self.menu_scroll_limit.get());
         screen.render_widget(
             Paragraph::new(
                 wrapped
@@ -4108,9 +4178,9 @@ impl Ui {
         let visible = usize::from(body.height.saturating_sub(footer_rows));
         let mut page = Vec::new();
         if matches!(menu, Menu::Status | Menu::Help) {
-            let start = self
-                .menu_scroll
-                .min(lines.len().saturating_sub(visible.max(1)));
+            self.menu_scroll_limit
+                .set(lines.len().saturating_sub(visible.max(1)).min(512));
+            let start = self.menu_scroll.min(self.menu_scroll_limit.get());
             page.extend(lines.into_iter().skip(start).take(visible));
         } else {
             let visible = visible.min(9);
@@ -4270,7 +4340,11 @@ fn selected_birth_seed(seed: u64, id: u8) -> u64 {
     }
     let selected = (seed & !0x107) | u64::from(id % 8) | (u64::from(id / 8) << 8);
     // Bit9 retains character0 while avoiding the forbidden zero birth code.
-    if selected == 0 { 512 } else { selected }
+    if selected == 0 {
+        512
+    } else {
+        selected
+    }
 }
 fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
     match menu {
@@ -4361,8 +4435,10 @@ fn compact_button(value: &str) -> String {
         .map(|label| {
             let label = label
                 .split_once(": ")
-                .filter(|(family, _)| {
-                    matches!(*family, "Sony" | "Xbox" | "Nintendo" | "Controller")
+                .filter(|(families, _)| {
+                    families
+                        .split('+')
+                        .all(|family| matches!(family, "Sony" | "Xbox" | "Nintendo" | "Controller"))
                 })
                 .map_or(label, |(_, binding)| binding);
             label.strip_prefix("Tap ").unwrap_or(label)
@@ -4581,7 +4657,7 @@ mod graphics_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -4700,14 +4776,12 @@ mod graphics_tests {
             terminal
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 5, false))
                 .unwrap();
-            assert!(
-                terminal
-                    .backend()
-                    .buffer()
-                    .content
-                    .iter()
-                    .all(|c| c.symbol().is_ascii())
-            );
+            assert!(terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .all(|c| c.symbol().is_ascii()));
         }
     }
     #[test]
@@ -4749,12 +4823,11 @@ mod graphics_tests {
             .collect();
         assert!(text.contains("Sprite studio"));
         assert!(text.contains("[Q] Quit"));
-        assert!(
-            ui.menu_targets
-                .borrow()
-                .iter()
-                .any(|(_, index)| *index == 9)
-        );
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, index)| *index == 9));
         assert_eq!(ui.handle(key(KeyCode::Enter), &config.game), Effect::Quit);
     }
     #[test]
@@ -5212,8 +5285,11 @@ mod graphics_tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text.contains("buy/place"), "{text}");
-        assert!(text.contains("Back / Tab"), "{text}");
+        assert!(text.contains("Ent use") && text.contains("PLACE"), "{text}");
+        assert!(
+            text.contains("[<][>]") && text.contains("Esc Back"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -5248,8 +5324,11 @@ mod graphics_tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text.contains("Read more"), "{text}");
-        assert!(text.contains("Back / Tab"), "{text}");
+        assert!(text.contains("Enter: More"), "{text}");
+        assert!(
+            text.contains("[<][>]") && text.contains("Back / Tab"),
+            "{text}"
+        );
         assert_eq!(ui.game, saved);
     }
 
@@ -5345,7 +5424,7 @@ mod progression_ui_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -5598,7 +5677,7 @@ mod progression_training_navigation_review {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -5689,7 +5768,7 @@ mod memory_thought_interruption_tests {
 mod portrait_density_tests {
     use super::*;
     use crate::capabilities::Depth;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
     #[test]
     fn tall_views_show_all_skills_needs_currency_and_controls_without_paging_them_away() {
         let config = Config::sample().unwrap();
@@ -5728,7 +5807,7 @@ mod direct_navigation_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -5889,12 +5968,11 @@ mod direct_navigation_regressions {
                 .find(|(_, action)| *action == Action::Quit)
                 .unwrap()
                 .0;
-            assert!(
-                ui.care_targets
-                    .borrow()
-                    .iter()
-                    .all(|(area, _)| area.intersection(target).is_empty())
-            );
+            assert!(ui
+                .care_targets
+                .borrow()
+                .iter()
+                .all(|(area, _)| area.intersection(target).is_empty()));
             assert_eq!(ui.click(target.x, target.y, &config.game), Effect::Quit);
             assert_eq!(ui.game, before);
         }
@@ -5945,7 +6023,7 @@ mod global_detail_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn fixture() -> (Config, Ui) {
         let mut config = Config::sample().unwrap();
@@ -6093,12 +6171,11 @@ mod global_detail_regressions {
         }
         let terminal = draw(&ui, &config, 12, 6);
         assert_eq!(ui.menu_selected, 19);
-        assert!(
-            ui.menu_targets
-                .borrow()
-                .iter()
-                .any(|(_, index)| *index == 19)
-        );
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, index)| *index == 19));
         assert!(text(&terminal).contains("Enter: OK") && text(&terminal).contains("Esc: Back"));
         ui.handle(key(KeyCode::Enter), &config.game);
         assert!(ui.automatic_detail());
@@ -6138,7 +6215,7 @@ mod world_camera_identity_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -6434,7 +6511,7 @@ mod seed_import_ui_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{backend::TestBackend, Terminal};
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -6974,9 +7051,10 @@ mod seed_import_ui_regressions {
         assert_eq!(ui.game, before);
         ui.handle(key(KeyCode::Esc), &config.game);
         ui.open(Menu::Gallery);
+        let original_stage = ui.gallery_stage;
         for (action, expected) in [
-            (Action::Direction(Direction::Up), 4),
-            (Action::Direction(Direction::Down), 0),
+            (Action::Direction(Direction::Up), (original_stage + 4) % 5),
+            (Action::Direction(Direction::Down), original_stage),
         ] {
             draw(&ui, &config, 20, 8, Renderer::Ascii);
             let rect = ui
@@ -7053,7 +7131,7 @@ mod seed_import_ui_regressions {
         ui.open(Menu::Home);
         let screen = draw(&ui, &config, 20, 8, Renderer::Ascii);
         assert!(
-            screen.contains("X/A: OK") && screen.contains("H-O/H-B: Back"),
+            screen.contains("Cross/A: OK") && screen.contains("H-O/H-B: Back"),
             "{screen}"
         );
         let old = ui
@@ -7068,13 +7146,40 @@ mod seed_import_ui_regressions {
         assert!(ui.control_targets.borrow().is_empty());
         ui.click(old.x, old.y, &config.game);
         assert_eq!(ui.game, before);
-        ui.ask_reset();
         draw(&ui, &config, 20, 8, Renderer::Ascii);
-        assert!(
-            !ui.control_targets
-                .borrow()
-                .iter()
-                .any(|(_, a)| matches!(a, Action::Next | Action::Previous))
+        ui.ask_reset();
+        assert!(ui.confirm_reset);
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(!ui
+            .control_targets
+            .borrow()
+            .iter()
+            .any(|(_, a)| matches!(a, Action::Next | Action::Previous)));
+    }
+    #[test]
+    fn information_touch_scroll_stops_at_content_and_reverses_immediately() {
+        let (config, mut ui) = fixture();
+        for menu in [Menu::Help, Menu::Status, Menu::Identity] {
+            ui.open(menu);
+            draw(&ui, &config, 20, 8, Renderer::Ascii);
+            let limit = ui.menu_scroll_limit.get();
+            assert!(limit > 0 && limit < 512);
+            for _ in 0..(limit + 8) {
+                ui.menu_input(Action::Next, &config.game);
+            }
+            assert_eq!(ui.menu_scroll, limit);
+            let last = draw(&ui, &config, 20, 8, Renderer::Ascii);
+            ui.menu_input(Action::Previous, &config.game);
+            assert_eq!(ui.menu_scroll, limit - 1);
+            let previous = draw(&ui, &config, 20, 8, Renderer::Ascii);
+            assert_ne!(last, previous);
+            ui.handle(key(KeyCode::End), &config.game);
+            assert_eq!(ui.menu_scroll, limit);
+        }
+        assert_eq!(
+            compact_button("Controller+Nintendo: R / Sony: R1 / Xbox: RB"),
+            "R/R1/RB"
         );
+        assert_eq!(tiny_button("Sony: Hold Circle / Xbox: Tap B"), "H-O/B");
     }
 }
