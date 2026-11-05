@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1747 |
-| in_progress | 82 |
-| completed | 1866 |
+| in_progress | 78 |
+| completed | 1871 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3735 |
+| total | 3736 |
 
 0 record(s) carry at least one override.
 
@@ -4454,16 +4454,16 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3722` Generate persistent thematic pet habitats with earned and purchased furniture -- completed · owner mios-mons-habitat-worker · P1
 - `task_3723` Make voxel animal identities legible at larger resolutions -- in_progress · owner mios-tamagotchi-live-coordinator · P1
 - `task_3724` Add framed zoom views and readable animated pet faces -- in_progress · owner mios-mons-camera-worker · P1
-- `task_3725` Verify readable MiOS-Mons zoom and animated facial states live -- in_progress · owner mios-mons-clarity-verifier · P1
+- `task_3725` Verify readable MiOS-Mons zoom and animated facial states live -- completed · owner mios-mons-clarity-verifier · P1
 - `task_3726` Generate names and hatch statistics with trainable levels and bound identity colors -- completed · owner mios-mons-progression-worker · P1
 - `task_3727` Render doll-like animal heads and true head-surface kaomoji textures -- in_progress · owner mios-mons-doll-geometry-worker · P1
-- `task_3728` Verify final MiOS-Mon writer exclusion and terminal failure paths -- in_progress · owner mios-tamagotchi-live-coordinator · P1
+- `task_3728` Verify final MiOS-Mon writer exclusion and terminal failure paths -- completed · owner mios-tamagotchi-live-coordinator · P1
 - `task_3729` Make phone-scale head-surface kaomoji readable at every zoom -- in_progress · owner mios-mons-face-legibility-worker · P1
 - `task_3730` Expose real Inputd bindings and direct keyboard mouse menu navigation -- in_progress · owner mios-mons-navigation-worker · P1
 - `task_3732` Expand readable kaomoji emotion cycles for MiOS-Mon -- in_progress · owner mios-tamagotchi-live-coordinator · P1
 - `task_3733` Shade voxel forms with species-bound colors and ASCII tonal shadows -- in_progress · owner mios-mons-navigation-worker · P1
-- `task_3734` Make font and viewport changes drive one global automatic detail mode -- in_progress · owner mios-mons-navigation-worker · P1
-- `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- in_progress · owner mios-mons-face-legibility-worker · P1
+- `task_3734` Make font and viewport changes drive one global automatic detail mode -- completed · owner mios-mons-navigation-worker · P1
+- `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- completed · owner mios-mons-face-legibility-worker · P1
 
 ## test-coverage
 
@@ -4784,3 +4784,4 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3717` Integrate native tmux floating dialogue and right-click menus with inline fallback -- completed · owner mios-tamagotchi-dialog-worker
 - `task_3718` Retain a live mobile play/debug session for MiOS-Mons -- in_progress · owner mios-tamagotchi-live-coordinator
 - `task_3719` Independently verify final animal roster, dialogue and mobile HUD build -- completed · owner mios-tamagotchi-final-verifier
+- `task_3736` Serve responsive MiOS-Mon browser play through authenticated localhost -- completed · owner mios-tamagotchi-live-coordinator

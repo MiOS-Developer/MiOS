@@ -3916,3 +3916,73 @@ Runtime evidence (local receipt path, SHA256):
 The standing goal remains open: full native 8B tool selection still fails; the complete native catalogue (37 declared binaries: 35 Linux and two Windows-only), fresh CI95, image builds and boot acceptance are not proved. The libexec budget remains 328/312 (16 migrations), and generic root-pull native publication remains unresolved. No reboot, service/compositor/input-daemon restart, controller certification or mobile-play certification is claimed.
 
 Count correction: earlier planning labels confused native build phase 55 with an artifact count. The source declares 37 binaries, of which 35 target Linux and two target Windows only. The verified five deployment binaries and their scoped receipts are unchanged.
+
+
+## 2026-11-05 · MiOS-Mon face, detail and localhost trial checkpoint
+
+Verified source82962b196402ac910e9142fccd91e31d18316174 in actual rootless
+MiOS-DEV4CPU/4GiB, source read-only, locked Rust1.99.1:224 pet+10 CLI+198 Inputd
++4 configurator+16 terminal-page checks =452 PASS. Warning-fatal Clippy, release
+and static PIE validation pass. The executable SHA256 is
+42aa2911dd070e8fcc67cf489464d5114f1713a7acf565cc041b16fac73686af.
+Its bytes equal the deployed d7d4bec045f1edc7648203ec6a64e9b3d6d8fcba app;
+continuing processes retain their actual launch-source identity. System executable
+f2a6ef9bdbbc51e658aa4e9bedc8d2ea5b880cc6608d32ec3bd1bc265bdbd774 unchanged.
+Four broader gates retain their pre-existing35/1/1/6 findings byte for byte.
+
+Six current sample processes on node mios, MiOS0.3.0 x86_64, are retained across
+four persistent pinned nested PiPs and user-local localhost play. Normal-user
+installation is /home/mios/.local/bin/mios-tamagotchi-sample with explicit
+independent save paths in the consolidated receipt. Native live Alacritty12pt
+153x26 AUTO16→24pt76x13 AUTO8→12pt153x26 AUTO16 proves global font-driven detail.
+Actual camera/zoom transitions and59 expressions from16 moods preserve paused
+Game state; tiny Bird12x6 now reserves a separate complete (+_+) face row.
+Eight current interactive-PTY/snapshot checks pass, including a real competing
+interactive writer refused before alternate screen, unchanged fixture/save bytes
+and termios restoration. These PTYs do not certify physical terminal hardware.
+
+| Route or seat | Continuing target | Scope |
+|---|---|---|
+| localhost8310 | mios-mon-localhost backend; mios-mon-local-play @9/%28 | Authenticated native ttyd user process, actual browser keyboard and reflow |
+| mios-mons-live | runtime200092, genuine Hiku tmux-os @3/%4; operator local play @9/%28 | Pinned parent PiP; separate saved pets |
+| mios-mons-shapes | runtime204092, tmux-os @6/%26 | Pinned parent PiP; preserved Haru |
+| mios-mons-verify | runtime238967, mios-mons-clarity-fixtures @38/%60 | Pinned parent PiP; paused Mio copy |
+| mios-mons-habitat | runtime252822, mios-mon-font-review @19/%34; adopted preview @16/%30 | Pinned parent PiP; paused Ramo and separate operator preview |
+| existing SSH | mios-mon-play in normal human tmux session | Attaches the same local game, one save writer |
+
+Native terminal page SHA25627d4abc0e98c492cdd6fb83288e76cffe2022bd6b49f0f85ca73060208449d76
+was projected inside DEV from verified pinned upstream html.h. Real browser
+CSS360x640/640x360/180x180 reflows correctly; actual native grim desktop captures
+show the full terminal top/header. CDP emulation screenshots crop the top despite
+correct DOM/buffer origins, so those images are retained as a capture limitation.
+Neither physical phone is attached. No ttyd Bash/PowerShell containers exist in
+the two inventoried Podman engines; PowerShell8320 is not live. External pinned
+ttyd is static ET_EXEC and does not pass the separate native static-PIE gate;
+its preserved failure must not be confused with the passing MiOS-Mon app.
+
+Source work and prior receipts from exited workers remain preserved in their
+isolated worktrees. Native recovery reviewer mios-mons-recovery-reviewer binds
+the actual outer human pane, not a claimed nested head. Original and adopted
+pets, all four launchers and ordinary tmux game/backend/browser windows survive
+helper cleanup. Coordinator retains launcher/session ownership. O opens menu,
+Esc backs, P pauses/resumes, +/- zooms,0 resets zoom,Z changes camera,D detail.
+The local operator has reset/played the browser pet; its current state is retained.
+
+Current evidence root: /home/mios/.local/state/mios/mios-mons-clarity-live
+- mios-proof-browser-responsive-final/mios-artifact-receipt.json
+- mios-responsive-live-handoff.json
+- mios-responsive-auto-{16-fine,8-coarse,16-restored}.json/png
+- /home/mios/.local/state/mios/mios-mons-responsive-terminal-checks/mios-final-failure-receipt.json
+- /home/mios/.local/state/mios/mios-mon-localhost-play/mios-native-responsive-receipt.json
+
+Current desktop/portrait/landscape/watch browser O/Escape navigation also passed,
+using the existing frozen Taya with exact save byte equality; no care/reset/save
+commands were sent. Native MAINMENU Enter/Esc frames are recorded in
+/home/mios/.local/state/mios/mios-mon-localhost-play/mios-browser-menu-current-receipt.json.
+Independent native reviewer accepted source/build/font and real viewport frames
+in /home/mios/.local/state/mios/mios-mons-recovery-review/mios-recovery-final-acceptance.json,
+SHA2563c2f6712ac989bf622e3b5c8699d6afe7f28f09510396f722e0e39627178c1b8.
+
+Primary3708 and physical mobile/controller acceptance remain open; no fleet/ARM64/physical VT/watch certification or global clean CI
+is claimed. Scoped3725/3728/3734/3735/3736 complete. Software verification and live localhost
+trial are ready for the authorized main publication; physical follow-ups remain open.

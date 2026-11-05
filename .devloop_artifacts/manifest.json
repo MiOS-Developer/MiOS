@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-02T17:51:18.463346+00:00",
-  "total_artifacts": 99,
+  "last_updated": "2026-11-05T02:16:50.358619+00:00",
+  "total_artifacts": 128,
   "artifacts": [
     {
       "path": ".gitignore",
       "artifact_type": "config",
-      "sha256": "3035709d301996b61da48b8f67bfbe16c101cc128e04a7e2765a94f24e7af05b",
-      "size_bytes": 29908,
+      "sha256": "6d3192823be1f384471165deb6ceb69f2f04f1035d930a2c8ae28cd8dd3ed418",
+      "size_bytes": 31062,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -21,14 +21,21 @@
         "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
         "camera_physical_client_verified": false,
         "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
-        "ci_registry_scoped_tests": 58
+        "ci_registry_scoped_tests": 58,
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
       }
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "fc4c163da60d565cfcb54e448668d930bac76214d2a33c6a8ac2075f4c0a12bd",
-      "size_bytes": 655548,
+      "sha256": "3c3fd6c4e34c341893033069c02c75c8d6ee71c6a1fa5d46edab3f8ca0735b12",
+      "size_bytes": 678213,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -42,7 +49,14 @@
         "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-native-result.json",
         "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
         "camera_physical_client_verified": false,
-        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json"
+        "camera_activation": "/var/lib/mios-build/rdp-delivery/mios-camera-obs-activation.json",
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
       }
     },
     {
@@ -74,8 +88,8 @@
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "d9844fa7a13b6aa88141eedf0c06dd96de7f75dc19d65b5ab0003553bb33278f",
-      "size_bytes": 1109830,
+      "sha256": "8d9d5858f83428c9eef1bdd53f6c1ea609839dce3da8c8f935010feb8ea0925e",
+      "size_bytes": 1145222,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -89,7 +103,14 @@
         "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
         "camera_physical_client_verified": false,
         "ci_registry_verification": "/.worktrees/mios-ci-registry/.work/mios-ci-registry-verification/receipt.json",
-        "ci_registry_scoped_tests": 58
+        "ci_registry_scoped_tests": 58,
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
       }
     },
     {
@@ -138,18 +159,34 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "02a19e56ba249f28f5c6eda4e91d5210024047f7dd9fa42ffc7de6330bd2ab1d",
-      "size_bytes": 544575,
+      "sha256": "792077c732e18f5c9d3c57009fef877f24788ae854c6020951b2c3b009a92fd1",
+      "size_bytes": 550444,
       "created_at": "2026-10-22T18:30:16.346142",
-      "metadata": {}
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "2e6ea1868725ad2f51909552245f46492eb5857e7cbddd63c947f6f6f40f3b75",
-      "size_bytes": 14515204,
+      "sha256": "94a48cf2ae353f1dbf06e7ecfee8a1eab2d297b639f697d1c88163db769da69a",
+      "size_bytes": 14614132,
       "created_at": "2026-10-22T18:30:16.381368",
-      "metadata": {}
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      }
     },
     {
       "path": "usr/share/mios/looking-glass/source/README.md",
@@ -585,8 +622,8 @@
       "path": "usr/share/mios/configurator/mios.html",
       "artifact_type": "config",
       "created_at": "2026-10-29T13:23:44.121085+00:00",
-      "sha256": "b305a42dcd88bdbd937aa7e78b1fbbaef66cc4a902d206d8242a7776189f6fdc",
-      "size_bytes": 450040,
+      "sha256": "bffc5101f791a4e1b9e664df1a246aba6b1348f14b49bef1ebed2ea360901f31",
+      "size_bytes": 519766,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "physical_capture_enabled": true,
@@ -597,7 +634,14 @@
         "file_verification": "/var/lib/mios-build/rdp-delivery/mios-storage-service-result.json",
         "camera_verification": "/var/lib/mios-build/rdp-delivery/mios-camera-normalized-native-result.json",
         "application_verification": "/var/lib/mios-build/mios-app-launch-health/verification.log",
-        "camera_physical_client_verified": false
+        "camera_physical_client_verified": false,
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
       }
     },
     {
@@ -1218,6 +1262,470 @@
       },
       "sha256": "f09e36274cc7aa730a0fe3e3020eb3be940415336853d35a93e3300e3ad4e99e",
       "size_bytes": 4505
+    },
+    {
+      "path": "specs/tamagotchi-tui/tamagotchi-sprites-spec.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "0929ab0dac90bb89d6fa83d5c287435579a75fba9fefcc70357c14c69bb06937",
+      "size_bytes": 45062
+    },
+    {
+      "path": "specs/tamagotchi-tui/tamagotchi-tui-plan.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "86a77710768c9fb07477728e96dac8fd22a4d15b41c70b82b2028b5364a39dc3",
+      "size_bytes": 32069
+    },
+    {
+      "path": "tools/native/mios-inputd/src/nested.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "b4857837942e30d42daea753038fcb14c662826e7cbe70e9327509ef2bc9928a",
+      "size_bytes": 16583
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/characters.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "40e3e1ee45a12010ae4949d56b7484681db28a214b20d9de066069f18deead74",
+      "size_bytes": 12851
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/config.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "d555a9c66a6dae98dac6100f0210bb0ff4980b86b6fedb080c56307ec58a3c99",
+      "size_bytes": 12725
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/dialogs.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "f8f2048d570a5fb64087ca43e97eee174ea6f0bfe7b001e14a4d20389e1e1b5e",
+      "size_bytes": 41419
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/game.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "6428390da432cba07bf7199f1188fa8c7572ce773df154ee425689819f1bb9b9",
+      "size_bytes": 12003
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/game_tests.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "bd4c3d9b37c59871cb7eebece8b2098b69741c88a220e44e56120fa82256d324",
+      "size_bytes": 9548
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/geometry.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "dc66bfc798a48a159c829d60a71073ca1aa03326f98b4a903a10969b7f92f028",
+      "size_bytes": 32747
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/habitat.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "c9da87635283b53ac8393f03af53d4baa76de70a832dd40427c45f6721ef15d3",
+      "size_bytes": 17427
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/hud.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "ab678be61f6df0ac4b7966b92ba1424780f56d0deb9259e51763fc6e16df0ae6",
+      "size_bytes": 13770
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/input.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "3d9c21e47450ab1e97e9d52b20c96cc73150487bcac486b7668b616ce7167e0e",
+      "size_bytes": 51236
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/lib.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "89f9975320706673d104a21965a9a46399fd2c51155d73b566e82e79ec061091",
+      "size_bytes": 509
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/lighting.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "82a47475f727dc2aa343643ac6bac4f917bea29e4df6aa3630da52beca3b6916",
+      "size_bytes": 10367
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/main.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "44022cd956689a68347c167e25e306433d9f998b462a780ae104ec91ca6932c0",
+      "size_bytes": 9308
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/progression.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "27cff684410685458e6eecebbb5d6b92f543e31b86bcf5745d360e9d22783fb4",
+      "size_bytes": 24579
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/render.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "43f822f2c0f362df78d59a9b833453f634df4c85bbe537a1742c2c15ad320584",
+      "size_bytes": 166694
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/save.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "4121225ea8157e39af887862e35c524ebf53932277376f657c0f08fb3bc71838",
+      "size_bytes": 21723
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/sprite.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "916f5e12afcffce5c1d2adb87365b5417672a9f00e8d57c1d082a7daa223fb80",
+      "size_bytes": 137471
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/tests.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "433c70582b91e0ed27241dd183fe95c6dc45831b3381a49c3d87627ed0de1506",
+      "size_bytes": 12755
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/ui.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "3ec14bccb942e19ad388d000a3b35234945346223fe437ee9333db7adaeab70c",
+      "size_bytes": 196353
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/tests/cli.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "d6d6f8ba8763c6dd640a254b856122d1eab0792a8d056b7b698a394d9eac8c3e",
+      "size_bytes": 14829
+    },
+    {
+      "path": "tools/test_configurator_security.py",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "d26dd45fd24ab13fdafdf227363c57d04fe2625c6372c5209c9faabcbbeda4f5",
+      "size_bytes": 10975
+    },
+    {
+      "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "dc6a6365820726d5745063196772cf2bc90a15f1e55fa2dfe8b55c67457a8571",
+      "size_bytes": 9570
+    },
+    {
+      "path": "usr/lib/mios/agent-pipe/test_mios_portal_edge.py",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "37e312a9abbd0b480eb99115b4f500fc54d9352a551b4708ddfec2151f853e46",
+      "size_bytes": 14813
+    },
+    {
+      "path": "usr/libexec/mios/mios-ttyd-launch",
+      "artifact_type": "code",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "40c57934aef589ae1668d09e54d68f6b0bdb7d0ca85e09cccf10bbe03e4a246c",
+      "size_bytes": 3802
+    },
+    {
+      "path": "usr/share/doc/mios/research/mios-tamagotchi-villager-model.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "c6d0ee10416dd599eb8a043068b87ed8b92ecf28db5d1c9ac73f48b8a4476cb1",
+      "size_bytes": 8457
+    },
+    {
+      "path": "usr/share/doc/mios/tamagotchi-tui.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "b841c681778024472afbde756a9d23decad1e1700c499715ce1d9e88b8c377ae",
+      "size_bytes": 34256
+    },
+    {
+      "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
+      "artifact_type": "config",
+      "created_at": "2026-11-05T02:14:10.229586+00:00",
+      "metadata": {
+        "mios_mon_verification": {
+          "source": "82962b196402ac910e9142fccd91e31d18316174",
+          "checks": 452,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
+          "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
+          "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        }
+      },
+      "sha256": "f59c2e828eb3267534c6cbc80a15dea5bee17d9142c5729c677e052d3f22bce8",
+      "size_bytes": 286
     }
   ]
 }

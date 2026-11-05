@@ -559,3 +559,21 @@ changing it scales every ASCII label and facial character together.
 When a restricted scene cannot fit a complete expression on visible head cells,
 it reserves a plain expression row below the cropped sprite. This inline fallback
 never grants permission to draw over a beak or occluder, and eggs remain faceless.
+
+
+## Browser viewport and user-local page trials
+
+The native ttyd page is generated from the pinned [ttyd] upstream source and
+validated against its projection golden. It declares a device-width viewport so
+phone-sized browsers resize terminal cells instead of shrinking a desktop layout.
+Browser zoom remains available. This page is shared by native terminal variants;
+its launcher does not imply that a terminal variant runs in a container.
+
+For a separate user-local trial, MIOS_TTYD_PAGE_PATH selects a readable generated
+page without replacing the host page or live TOML. An explicitly selected missing
+page fails before launching ttyd. The default continues to resolve [ttyd].page_path.
+Retain the source pin, projected page checksum, listener identity and actual
+authenticated terminal interaction as distinct receipts. Loopback URLs on a
+phone refer to that phone; remote play uses an existing authenticated access
+route to the MiOS host. A local browser simulation does not certify a phone,
+physical controller, PowerShell runtime or another Blade.
