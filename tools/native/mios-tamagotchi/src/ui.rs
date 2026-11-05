@@ -4548,9 +4548,15 @@ mod progression_ui_tests {
             if menu == Menu::Habitat {
                 assert!(text.contains(">"), "{text}");
             } else {
-                assert!(
-                    text.contains("(^_^)") || text.contains("(o_o)"),
-                    "{menu:?}: face scene missing: {text}"
+                // A two-row head may omit both parentheses at an occluding
+                // edge; its two eyes and mouth must still form one text run.
+                let core = ["^_^", "o_o"].into_iter().find(|face| text.contains(face));
+                assert!(core.is_some(), "{menu:?}: complete native face core missing: {text}");
+                let core = core.unwrap();
+                assert_eq!(
+                    text.contains(&format!("({core}")),
+                    text.contains(&format!("{core})")),
+                    "{menu:?}: a compact expression must keep both parentheses or neither: {text}"
                 );
             }
             ui.handle(key(KeyCode::Esc), &config.game);
