@@ -6998,7 +6998,11 @@ mod seed_import_ui_regressions {
                     .0;
                 ui.click(next.x, next.y, &config.game);
                 if matches!(menu, Menu::Status | Menu::Help | Menu::Identity) {
-                    assert_eq!(ui.menu_scroll, ui.menu_scroll_limit.get().min(1), "{menu:?} {w}x{h}");
+                    assert_eq!(
+                        ui.menu_scroll,
+                        ui.menu_scroll_limit.get().min(1),
+                        "{menu:?} {w}x{h}"
+                    );
                 } else {
                     assert_eq!(ui.menu_selected, 1, "{menu:?} {w}x{h}");
                 }

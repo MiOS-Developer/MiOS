@@ -108,9 +108,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
+        Arc,
     },
     time::{Duration, Instant},
 };
@@ -1285,27 +1285,21 @@ mod controller_tests {
         let start = Instant::now();
         assert!(query.command("/bin/sh", &["-c", "sleep 5"], None).is_none());
         assert!(start.elapsed() < Duration::from_secs(1));
-        assert!(
-            query
-                .command("/bin/sh", &["-c", "printf '%100s' x"], None)
-                .is_none()
-        );
+        assert!(query
+            .command("/bin/sh", &["-c", "printf '%100s' x"], None)
+            .is_none());
         assert!(query.command("/bin/sh", &["-c", "exit 1"], None).is_none());
-        assert!(
-            query
-                .json("/bin/sh", &["-c", "printf '{broken'"], None)
-                .is_none()
-        );
+        assert!(query
+            .json("/bin/sh", &["-c", "printf '{broken'"], None)
+            .is_none());
         assert_eq!(
             query.json("/bin/sh", &["-c", "printf '{\"ok\":true}'"], None),
             Some(json!({"ok":true}))
         );
         stop.store(true, Ordering::Relaxed);
-        assert!(
-            query
-                .command("/bin/sh", &["-c", "printf ok"], None)
-                .is_none()
-        );
+        assert!(query
+            .command("/bin/sh", &["-c", "printf ok"], None)
+            .is_none());
     }
 
     #[test]
@@ -1734,7 +1728,7 @@ mod controller_tests {
 
 #[cfg(test)]
 mod training_action_tests {
-    use super::{Action, action};
+    use super::{action, Action};
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     #[test]
     fn training_opens_on_either_case_without_accepting_other_modifiers() {
