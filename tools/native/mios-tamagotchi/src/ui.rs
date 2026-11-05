@@ -878,7 +878,7 @@ impl Ui {
                 }
             }
             Menu::Gallery => "8/16",
-            Menu::Talk => ["more", "feed", "memory", "clean", "rest", "med", "back"]
+            Menu::Talk => ["More", "feed", "memory", "clean", "rest", "med", "back"]
                 [self.menu_selected.min(6)],
             Menu::Identity | Menu::Status | Menu::Help => "back",
             _ => {
@@ -6998,9 +6998,9 @@ mod seed_import_ui_regressions {
                     .0;
                 ui.click(next.x, next.y, &config.game);
                 if matches!(menu, Menu::Status | Menu::Help | Menu::Identity) {
-                    assert_eq!(ui.menu_scroll, 1);
+                    assert_eq!(ui.menu_scroll, ui.menu_scroll_limit.get().min(1), "{menu:?} {w}x{h}");
                 } else {
-                    assert_eq!(ui.menu_selected, 1);
+                    assert_eq!(ui.menu_selected, 1, "{menu:?} {w}x{h}");
                 }
                 draw(&ui, &config, w, h, Renderer::Ascii);
                 let prev = ui

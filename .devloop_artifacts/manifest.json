@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T20:29:23.881697+00:00",
+  "last_updated": "2026-11-05T20:32:53.481368+00:00",
   "total_artifacts": 132,
   "artifacts": [
     {
@@ -1749,8 +1749,8 @@
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
         }
       },
-      "sha256": "aaf1dba8b5e4693de2c9db3d7a38facd53923a01248d245fc2754cedc5fa6878",
-      "size_bytes": 274970
+      "sha256": "b8c60b658ca090d886984637f88b1a7b6004485c31b8b79a519a28a2883ae2ed",
+      "size_bytes": 275042
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
