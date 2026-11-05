@@ -86,7 +86,11 @@ fi
 ARGS+=("-T" "xterm-256color")
 ARGS+=("-t" "titleFixed=MiOS ttyd [$VARIANT @ $BIND:$PORT]")
 ARGS+=("-t" "fontSize=${MIOS_TTYD_FONT_SIZE:-14}")
-TTYD_PAGE="$(_toml_get ttyd page_path || true)"
+TTYD_PAGE="${MIOS_TTYD_PAGE_PATH:-$(_toml_get ttyd page_path || true)}"
+if [[ -n "${MIOS_TTYD_PAGE_PATH:-}" && ! -r "$TTYD_PAGE" ]]; then
+    echo "Mios-ttyd-launch: explicit page is not readable" >&2
+    exit 2
+fi
 if [[ -n "$TTYD_PAGE" && -r "$TTYD_PAGE" ]]; then ARGS+=("-I" "$TTYD_PAGE"); fi  # baked by automation/41-services.sh
 
 read -r -a SHELL_ARGV <<< "$SHELL_CMD"
