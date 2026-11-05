@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T03:45:43.511813+00:00",
+  "last_updated": "2026-11-05T17:37:07.956771+00:00",
   "total_artifacts": 130,
   "artifacts": [
     {
@@ -29,14 +29,19 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       }
     },
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "001c3aaf43626487bd123beb4a7e56b6478a8777e3771eff4e1fc2b335b61025",
-      "size_bytes": 679748,
+      "sha256": "514adad10277b0ddbe2dbb5ca5ec221a1aa2bc425c6e557cf1a8b783b3b24d84",
+      "size_bytes": 684031,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -58,7 +63,13 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json"
+        "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json",
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       }
     },
     {
@@ -113,7 +124,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       }
     },
     {
@@ -162,8 +178,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "6e98e5516e4d7194bbd709bcea6a6ebbfe316922d4d7a3a30915b44c648fd88e",
-      "size_bytes": 551258,
+      "sha256": "119607293a822dcc3fae7a00da5619c680d82352458d4f267b698369ed7ba00e",
+      "size_bytes": 551250,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -174,14 +190,19 @@
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
         "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json",
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "632bc4d8ec3b3bcb888f05ece686c417641bdc0c23940821ef4919f9c065840e",
-      "size_bytes": 14622214,
+      "sha256": "7cfeae976ff5cca87d3e723159d9d86ffe6eded2d1b3618760e7f17447d5f84b",
+      "size_bytes": 14623142,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -192,7 +213,12 @@
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
         "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json",
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       }
     },
     {
@@ -649,7 +675,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       }
     },
     {
@@ -1347,7 +1378,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "525bfc9e6035e17ed964964e9520cca6a76a837b442e964fd2798df915776eb3",
       "size_bytes": 12883
@@ -1380,7 +1416,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "939bda704b0ee48266bc13c18620e330ccbe22978376bae2edd713166ab8b6a6",
       "size_bytes": 12508
@@ -1477,7 +1518,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "3abde2c664bf6a8ca1cfe9a538ec6248e139d01905e4733314e1295cc1b73a80",
       "size_bytes": 544
@@ -1510,7 +1556,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "b4273f02e343c4e16448e699d0fba2794c693b3ff00c44e77e3e903d19e661ab",
       "size_bytes": 12052
@@ -1527,7 +1578,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "f6d96dfeb8976696ad7335ad579611f8c5d4471ced078280b91fd6f1792b7f53",
       "size_bytes": 25283
@@ -1544,10 +1600,15 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
-      "sha256": "ba0ebf6b4f796e8dc5bce960ff614dcd37b1a42734641f989af8f11d0f5716f3",
-      "size_bytes": 181085
+      "sha256": "a7e20ba5e75a9b91f27deedbbb9a3a2da25c7fa7d78c1c8a66f2a52335d46be9",
+      "size_bytes": 185611
     },
     {
       "path": "tools/native/mios-tamagotchi/src/save.rs",
@@ -1577,10 +1638,15 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
-      "sha256": "c3163a9e4a4cc44199dbea68028728b6f8d7f6e79d67b91f8ee77be9f0a50342",
-      "size_bytes": 144636
+      "sha256": "d0c64c8a2f927b51d5801891f3da2f0782a85c5c60279d7783accab0b9982a5f",
+      "size_bytes": 146598
     },
     {
       "path": "tools/native/mios-tamagotchi/src/tests.rs",
@@ -1610,10 +1676,15 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
-      "sha256": "c8170eb6dfd25163e6358c7b90fe769a2355600c8002b0310190f5c8500993dd",
-      "size_bytes": 221600
+      "sha256": "2e1e08cbbb135bb2859768fbf84c61c384c22af43940378254d932d00c96fa0b",
+      "size_bytes": 221894
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -1627,7 +1698,12 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "45c7e302baf0a659483b190242f25972ae9dea77030b97fd7d44197dc2fc5c66",
       "size_bytes": 19604
@@ -1708,10 +1784,15 @@
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
-      "sha256": "3a9c170f5361c5a6a966ecdab93d61f8532d2923c3912bc815fd26b8edb8fe2e",
-      "size_bytes": 9188
+      "sha256": "1b9dcc17e4675060ec0abbe4baaea5d6ff5f5278e8db3ad9414b15a835a6a739",
+      "size_bytes": 9193
     },
     {
       "path": "usr/share/doc/mios/tamagotchi-tui.md",
@@ -1726,10 +1807,15 @@
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         },
         "mios_mon_menu_receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json",
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
-      "sha256": "cb54547534b68850e816e00a6cc1a3bbec2ba85944a5ee39040e5f99bd2b296e",
-      "size_bytes": 37558
+      "sha256": "450afa48720cf5f547eb5beac3f8be421b2fb97aacc3c4ade3a869afec5f7093",
+      "size_bytes": 38337
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
@@ -1752,7 +1838,12 @@
       "artifact_type": "source_code",
       "created_at": "2026-11-05T03:36:18.920220+00:00",
       "metadata": {
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
       "sha256": "9e167825a462c40229e5ff9092658501ac29562e90e13123800ac3e48eb02776",
       "size_bytes": 11755
@@ -1762,10 +1853,15 @@
       "artifact_type": "source_code",
       "created_at": "2026-11-05T03:36:18.920220+00:00",
       "metadata": {
-        "mios_mon_world_scope": "source candidate; final MiOS-DEV and live acceptance pending"
+        "mios_mon_world_scope": "verified user-local x86_64 development; physical fleet/device/image acceptance remains separate",
+        "mios_mon_world_verification": {
+          "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
+          "checks": 482,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        }
       },
-      "sha256": "bba753500fb6e8ed03e569de39d5bf973fa90384a3da62770112f3fde485b75d",
-      "size_bytes": 34853
+      "sha256": "2f0a725937bd57523f485b36aaa4a2e71d709495caef0ee217e648f5218036fc",
+      "size_bytes": 35604
     }
   ]
 }

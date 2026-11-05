@@ -69,7 +69,7 @@ from transport compatibility.
 
 ## Follow-up: bodies, faces and room identity
 
-Rechecked2026-11-04. Community Villager and Mystery Tour references continue
+Rechecked 2026-11-04. Community Villager and Mystery Tour references continue
 to distinguish personality dialogue pools, individual/hobby variation and
 species-first selection for that particular recruitment path. The Nintendo
 New Leaf interview endpoint returned502 during this recheck; retain its prior
@@ -147,8 +147,8 @@ MiOS-Mon implementation uses original voxel geometry and the existing earned
 furniture catalogue, with no imported game artwork.
 [Habbo Rooms](https://help.habbo.com/hc/en-us/articles/360011512640-Rooms)
 
-The fixed30-degree elevation with45-degree starting azimuth is our engineering
-choice for a2:1 diamond floor grid. Rotation changes azimuth only; the camera
+The fixed 30-degree elevation with 45-degree starting azimuth is our engineering
+choice for a 2:1 diamond floor grid. Rotation changes azimuth only; the camera
 follows the independently simulated Mon. Source tests and actual live viewport
 captures validate MiOS-Mon rather than treating the reference as implementation
-proof. Rechecked2026-11-04.
+proof. Rechecked 2026-11-04.

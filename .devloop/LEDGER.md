@@ -4011,3 +4011,69 @@ Receipt: /home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/m
 Actual menu/game PNGs and original catalogue snapshot are adjacent. The live
 menu path is Ctrl+B then Space, MiOS section, MiOS-Mon. This scoped follow-up
 is complete; image integration and physical device acceptance remain separate.
+
+## 2026-11-05 · Seed identities and rotating isometric world development
+
+Actual participant mios-mons-world-voxel used its verified habitat nested
+human head (@26/%42) and own relay inbox for sequential geometry and camera/UI
+assignments. The attempted separate camera registration hit the existing
+64-agent registry limit; it did not become a registered participant. Preserved
+its draft and stopped that head. Reused the registered world participant without
+changing admission or registry limits. Root alone owns canonical task updates,
+integration commits, builds, installation and publication.
+
+Geometry source delivered at2b869e9e; final UI source at6dc262ba. Root reviewed
+and integrated them, corrected viewport-relative pet height into world units,
+fixed compile fixtures, and applied the worker's independent findings for
+extra-hyphen code acceptance, generated snapshot voice, actual Room test coverage
+and faceless-egg authority. The final worker UI adds private catalogue refresh,
+16 selected-seed normalization and legacy-code handling. No worker ran Cargo on
+the host. Failed build receipts are retained alongside the subsequent checks.
+
+Source b934a4264f65a0e9fc9031ed458fe670f1dd31d1 is pinned in the isolated
+mios-mons-world-build worktree for actual MiOS-DEV verification. Save-free
+development and lossless version-one seed codes reproduce birth identity and
+hatch stats; optional mutable progress remains separate. All existing pet files
+and operator-adopted game processes are preserved. Live deployment/acceptance
+receipts will be recorded after verification rather than inferred from source.
+
+Completed-session cleanup receipt:
+ /home/mios/.local/state/mios/mios-mons-world-live/mios-session-cleanup/mios-session-cleanup-receipt.json
+Completed verified source panes and stale observers are grouped in native
+session mios-agents-completed-2026-11-04. Active worker, live game panes,
+worktrees, saves and registry lifecycle were retained.
+
+## 2026-11-05 · Verified voxel-world and seeded-identity live handoff
+
+Final executable source f54b6b57ac5c5f40d030bf34cb2e28733a03efe9; SHA256d8f7eae71d8400f6fc6f49a4db02b518c1b3274000690a8bc04792e35a1d07a9.
+Actual MiOS-DEV482 checks passed (251 pet unit,13CLI,198 Inputd,4HTML,16 portal),
+Clippy-Dwarnings and native static PIE passed. Broad gate findings match the
+previous baseline byte-for-byte. f54b6b57 fixes the reviewer's remaining mixed
+packed-cell foreground-plane overwrite and pre-roll sleeping-ground anchor,
+with native/atlas foreground-plane and posed-floor regression controls.
+
+Installed the separate user-local sample atomically with prior binaries retained.
+The owned user TUI catalogue entry is now save-free --sample; all other rows
+are preserved. Native tui-spec resolves the installed path. Native user-local
+ttyd Bash8310 serves the shared actual nested game, using the existing native
+authentication; no Bash/PowerShell container is claimed. Fixed its owned wrapper
+to use the installed ttyd's actual absolute path after PATH lookup failure.
+
+Actual browser input and nested grim captures verify code/menu at desktop,
+portrait,landscape and20x8 watch grids; no physical phone/watch result is inferred.
+Automated live native play reached a thriving adult at63 ticks with15 observed
+memory wins,full health and no edited needs/age/stat state. That game's window
+is retained. A separate fresh random-seed pet is paused for the operator in
+mios-mons-live @13/%33; code M19XXMCDP3CB87CR5; no save file.
+The shared window now sizes to the smallest client so the PiP is not cropped
+by a larger browser client. Nested launchers and original saves remain alive.
+
+Handoff/receipt: /home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json
+Human-readable table: /home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.md
+Primary3708 stays partial for physical controllers/phones/VT/fleet/ARM64.
+
+The finished native source head closed its own registration and its worker
+window is already gone; no active source pane was killed by cleanup. Its
+geometry,UI and review reports are combined in readonly native session
+mios-agents-completed-2026-11-05, alongside the retained November4 archive.
+Receipt:mios-session-cleanup/mios-final-source-archive.json under the handoff root.
