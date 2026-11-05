@@ -417,7 +417,11 @@ fn room(
             let xf = f32::from(x);
             let zf = f32::from(z);
             let gap = if fine { 0.022 } else { 0.035 };
-            let color = if pattern != 0 && (u64::from(x) + u64::from(z) + seed) % 4 == 0 {
+            let color = if pattern != 0
+                && seed
+                    .wrapping_add(u64::from(x) + u64::from(z))
+                    .is_multiple_of(4)
+            {
                 accent
             } else {
                 floor
@@ -449,7 +453,7 @@ fn room(
             continue;
         }
         let length = if side < 2 { d } else { w };
-        let door = (u64::from(side) + seed) % 3 == 0;
+        let door = seed.wrapping_add(u64::from(side)).is_multiple_of(3);
         let center = length * (0.4 + (seed.rotate_right(u32::from(side) * 7) % 20) as f32 / 100.);
         let half = if door { 0.57 } else { 0.75 };
         let a = (center - half).max(0.35);
@@ -869,6 +873,26 @@ mod tests {
             (120, 80),
         );
         assert_ne!(a.pixels, c.pixels);
+    }
+    #[test]
+    fn full_width_birth_seeds_cannot_overflow_room_patterns() {
+        let rules = WorldRules::default();
+        let habitat_rules = fixture();
+        for seed in [0, 1, u64::MAX - 2, u64::MAX - 1, u64::MAX] {
+            let state = Habitat {
+                seed,
+                theme: 0,
+                owned: 0,
+                placed: 0,
+            };
+            let frame = WorldFrame::render(
+                &rules,
+                Some(view(&state, &habitat_rules)),
+                camera(45),
+                (80, 50),
+            );
+            assert!(frame.pixels.iter().any(Option::is_some));
+        }
     }
     #[test]
     fn depth_buffer_retains_nearer_material_normal_and_contact_in_any_order() {
