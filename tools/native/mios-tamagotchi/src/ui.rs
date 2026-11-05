@@ -4451,7 +4451,14 @@ mod graphics_tests {
                 .iter()
                 .map(|c| c.symbol())
                 .collect();
-            assert!(text.contains(&config.characters[index].name));
+            let expected = if config.characters[index].id == saved.character {
+                crate::genetics::Profile::for_game(&saved, &config)
+                    .unwrap()
+                    .name
+            } else {
+                config.characters[index].name.clone()
+            };
+            assert!(text.contains(&expected), "{expected}: {text}");
             assert_eq!(ui.game, saved);
         }
         ui.destination = (900, 900);
