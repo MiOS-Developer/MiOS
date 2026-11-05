@@ -1151,3 +1151,5 @@ usr/share/mios/virtio/*.iso
 # Portable global MiOS skills export (operator-requested root directory)
 !/SKILLS/
 !/SKILLS/**
+
+!/tools/native/mios-tamagotchi/src/seed_entry.rs

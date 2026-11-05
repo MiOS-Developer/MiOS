@@ -30,3 +30,5 @@ pub mod lighting;
 pub mod world;
 
 pub mod genetics;
+
+pub mod seed_entry;

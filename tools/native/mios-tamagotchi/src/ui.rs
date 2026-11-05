@@ -6,14 +6,16 @@ use crate::{
     config::{Config, HudMode, ViewMode},
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
+    genetics::MonCode,
     input::{Action, ControllerMonitor, ControllerPrompts, action},
     render::{Camera, CameraView, Colors, HabitatView, RoomWidget},
     save::Store,
+    seed_entry::{Edit as SeedEdit, SeedEntry},
     sprite::{Appearance, Expression, Sprite, SpriteStyle},
 };
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind, MouseButton,
-    MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEvent, KeyEventKind, MouseButton, MouseEventKind,
 };
 use ratatui::{
     DefaultTerminal, Frame,
@@ -52,6 +54,7 @@ pub enum Menu {
     Habitat,
     Training,
     Identity,
+    Seed,
 }
 
 #[derive(Clone, Copy)]
@@ -89,6 +92,11 @@ pub struct Ui {
     world_enabled: bool,
     world_elevation: u16,
     genetic_config: Option<Config>,
+    seed_entry: SeedEntry,
+    seed_pending: Option<MonCode>,
+    seed_import_allowed: bool,
+    seed_message: String,
+    seed_cursor_targets: RefCell<Vec<(Rect, usize)>>,
     menu_scroll: usize,
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
@@ -164,6 +172,11 @@ impl Ui {
             world_enabled: false,
             world_elevation: 30,
             genetic_config: None,
+            seed_entry: SeedEntry::default(),
+            seed_pending: None,
+            seed_import_allowed: true,
+            seed_message: String::new(),
+            seed_cursor_targets: RefCell::new(Vec::new()),
             menu_scroll: 0,
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
@@ -812,6 +825,32 @@ impl Ui {
     }
     fn click(&mut self, column: u16, row: u16, rules: &Rules) -> Effect {
         let point = (column, row).into();
+        if self.menu == Some(Menu::Seed) && !self.confirm_reset {
+            let cursor = self
+                .seed_cursor_targets
+                .borrow()
+                .iter()
+                .find(|(area, _)| area.contains(point))
+                .map(|(_, index)| *index);
+            if let Some(cursor) = cursor {
+                for _ in 0..=self.seed_entry.text().len() {
+                    let previous = self.seed_entry.cursor();
+                    if previous == cursor {
+                        break;
+                    }
+                    self.seed_entry.edit(if previous < cursor {
+                        SeedEdit::Right
+                    } else {
+                        SeedEdit::Left
+                    });
+                    if self.seed_entry.cursor() == previous {
+                        break;
+                    }
+                }
+                return Effect::Continue;
+            }
+        }
+
         let control = self
             .control_targets
             .borrow()
@@ -904,7 +943,86 @@ impl Ui {
         };
         self.react(expression);
     }
+    fn open_seed(&mut self) {
+        self.seed_entry = SeedEntry::default();
+        self.seed_pending = None;
+        self.seed_message.clear();
+        self.open(Menu::Seed);
+    }
+    fn paste_seed(&mut self, text: &str) {
+        if self.menu == Some(Menu::Seed) && !self.confirm_reset && self.seed_import_allowed {
+            self.seed_message.clear();
+            self.seed_entry.paste(text);
+        }
+    }
+    fn handle_seed_key(&mut self, key: KeyEvent) -> Effect {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        if key.kind != KeyEventKind::Press {
+            return Effect::Continue;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return if key.code == KeyCode::Char('c') {
+                Effect::Quit
+            } else {
+                Effect::Continue
+            };
+        }
+        if key.modifiers.intersects(
+            KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
+        ) {
+            return Effect::Continue;
+        }
+        if key.code == KeyCode::Esc {
+            self.seed_pending = None;
+            self.back();
+            return Effect::Continue;
+        }
+        if !self.seed_import_allowed {
+            self.seed_message = "Saved pet protected; start --sample without --save.".into();
+            return Effect::Continue;
+        }
+        if self.reset_refused {
+            self.reset_refused = false;
+            if key.code == KeyCode::Enter {
+                return Effect::Continue;
+            }
+        }
+        if key.code == KeyCode::Enter {
+            let (w, h) = self.viewport.get();
+            if w < 18 || h < 6 {
+                self.seed_message = "Enlarge to20x8 to confirm.".into();
+            } else if let Some(code) = self.seed_entry.validate() {
+                self.seed_pending = Some(code);
+                self.confirm_reset = true;
+                self.adopt_character = None;
+                self.seed_message.clear();
+            }
+            return Effect::Continue;
+        }
+        let edit = match key.code {
+            KeyCode::Char(c) => Some(SeedEdit::Character(c)),
+            KeyCode::Left => Some(SeedEdit::Left),
+            KeyCode::Right => Some(SeedEdit::Right),
+            KeyCode::Up => Some(SeedEdit::Up),
+            KeyCode::Down => Some(SeedEdit::Down),
+            KeyCode::Backspace => Some(SeedEdit::Backspace),
+            KeyCode::Delete => Some(SeedEdit::Delete),
+            KeyCode::Home => Some(SeedEdit::Home),
+            KeyCode::End => Some(SeedEdit::End),
+            _ => None,
+        };
+        if let Some(edit) = edit {
+            self.seed_message.clear();
+            self.seed_entry.edit(edit);
+        }
+        Effect::Continue
+    }
+
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
+        if self.menu == Some(Menu::Seed) && !self.confirm_reset {
+            return self.handle_seed_key(key);
+        }
+
         // Orbit is UI-local so controller arrows retain care/menu/memory semantics.
         // Match input::action's modifier and press-only shortcut policy.
         if key.kind == KeyEventKind::Press
@@ -918,6 +1036,10 @@ impl Ui {
             && !self.confirm_reset
         {
             match key.code {
+                crossterm::event::KeyCode::Char('k' | 'K') => {
+                    self.open_seed();
+                    return Effect::Continue;
+                }
                 crossterm::event::KeyCode::Char('[') => {
                     self.orbit_by(false);
                     return Effect::Continue;
@@ -948,6 +1070,9 @@ impl Ui {
             )
         {
             self.confirm_reset = false;
+            self.seed_pending = None;
+            self.adopt_character = None;
+            self.reset_refused = true;
             self.notice = "Enlarge the viewport to confirm a new pet.".into();
             return Effect::Continue;
         }
@@ -957,9 +1082,11 @@ impl Ui {
                 return Effect::Continue;
             }
         }
-        if self.confirm_reset && (width < 18 || height < 6) {
+        let (confirm_width, confirm_height) = (18, 6);
+        if self.confirm_reset && (width < confirm_width || height < confirm_height) {
             self.confirm_reset = false;
             self.adopt_character = None;
+            self.seed_pending = None;
             self.reset_refused = true;
             self.notice = "Kept pet; confirmation no longer fits.".into();
             return Effect::Continue;
@@ -968,10 +1095,17 @@ impl Ui {
             match a {
                 Action::Accept | Action::Confirm => {
                     let selected = self.adopt_character.take();
-                    let random_seed = self.next_visual_random();
-                    let seed =
-                        selected.map_or(random_seed, |id| selected_birth_seed(random_seed, id));
+                    let imported = self.seed_pending.take();
+                    let seed = if let Some(code) = imported {
+                        code.seed()
+                    } else {
+                        let random_seed = self.next_visual_random();
+                        selected.map_or(random_seed, |id| selected_birth_seed(random_seed, id))
+                    };
                     self.game = Game::new(rules, seed);
+                    if imported.is_some() {
+                        self.game.paused = true;
+                    }
                     if let Some(character) = selected {
                         self.game.character = character;
                         if character >= 16 {
@@ -987,12 +1121,22 @@ impl Ui {
                     self.wander_ticks = 0;
                     self.refresh_catalogue();
                     self.confirm_reset = false;
-                    self.notice = "A new egg! The next save replaces the previous pet.".into();
+                    if let Some(code) = imported {
+                        self.menu = None;
+                        self.menu_history.clear();
+                        self.notice = format!(
+                            "New paused egg: {}. P resumes; I shares the code.",
+                            code.compact()
+                        );
+                    } else {
+                        self.notice = "A new egg! The next save replaces the previous pet.".into();
+                    }
                     self.react(Expression::Surprised);
                 }
                 Action::Cancel => {
                     self.confirm_reset = false;
                     self.adopt_character = None;
+                    self.seed_pending = None;
                     self.notice = "Kept your current pet.".into();
                 }
                 _ => {}
@@ -1141,6 +1285,22 @@ impl Ui {
             }
             return Effect::Continue;
         }
+        if menu == Menu::Seed {
+            let code = match action {
+                Action::Accept => crossterm::event::KeyCode::Enter,
+                Action::Cancel => crossterm::event::KeyCode::Esc,
+                Action::Next | Action::Direction(Direction::Down) => {
+                    crossterm::event::KeyCode::Down
+                }
+                Action::Previous | Action::Direction(Direction::Up) => {
+                    crossterm::event::KeyCode::Up
+                }
+                Action::Direction(Direction::Left) => crossterm::event::KeyCode::Left,
+                Action::Direction(Direction::Right) => crossterm::event::KeyCode::Right,
+                _ => return Effect::Continue,
+            };
+            return self.handle_seed_key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE));
+        }
         if menu == Menu::Roster {
             let count = self.catalogue.len().max(1);
             match action {
@@ -1226,12 +1386,12 @@ impl Ui {
             }
         }
         let count = match menu {
-            Menu::Home => 13,
+            Menu::Home => 14,
             Menu::Care => 5,
             Menu::Games => 2,
             Menu::Graphics => 23,
             Menu::Training => 6,
-            Menu::Status | Menu::Help | Menu::Identity => 1,
+            Menu::Status | Menu::Help | Menu::Identity | Menu::Seed => 1,
             Menu::Gallery => 16,
             Menu::Talk => 7,
             Menu::Roster => self.catalogue.len().max(1),
@@ -1277,7 +1437,8 @@ impl Ui {
                     9 => return Effect::Quit,
                     10 => self.open(Menu::Habitat),
                     11 => self.open(Menu::Training),
-                    _ => self.open(Menu::Identity),
+                    12 => self.open(Menu::Identity),
+                    _ => self.open_seed(),
                 },
                 Menu::Care => {
                     if self.menu_selected < 4 {
@@ -1340,7 +1501,7 @@ impl Ui {
                         }
                     }
                 }
-                Menu::Status | Menu::Help | Menu::Identity => self.back(),
+                Menu::Status | Menu::Help | Menu::Identity | Menu::Seed => self.back(),
                 Menu::Talk => {
                     if self.menu_selected == 0 {
                         let rows = self.dialog_rows.get().max(1);
@@ -1403,6 +1564,7 @@ impl Ui {
         Effect::Continue
     }
     fn ask_reset(&mut self) {
+        self.seed_pending = None;
         let (w, h) = self.viewport.get();
         if w < 18 || h < 6 {
             self.confirm_reset = false;
@@ -2959,6 +3121,53 @@ impl Ui {
         self.care_targets.borrow_mut().clear();
         self.menu_targets.borrow_mut().clear();
         self.control_targets.borrow_mut().clear();
+        if let Some(code) = self.seed_pending {
+            let modal = if screen.area().width < 32 || screen.area().height < 12 {
+                screen.area()
+            } else {
+                center(screen.area(), 62, 9)
+            };
+            screen.render_widget(Clear, modal);
+            let block = panel(" NEW SEED? ", colors, ascii);
+            let body = block.inner(modal);
+            screen.render_widget(block, modal);
+            let name = self
+                .genetic_config
+                .as_ref()
+                .and_then(|config| {
+                    let game = Game::new(&config.game, code.seed());
+                    crate::genetics::Profile::for_game(&game, config).map(|profile| profile.name)
+                })
+                .unwrap_or_else(|| "New Mon".into());
+            let controls = Rect::new(
+                body.x,
+                body.bottom().saturating_sub(2),
+                body.width,
+                body.height.min(2),
+            );
+            let info = Rect::new(body.x, body.y, body.width, body.height.saturating_sub(2));
+            screen.render_widget(
+                Paragraph::new(format!("{}\n{}\nNew paused egg", code.compact(), name))
+                    .style(Style::default().fg(colors.ink(2))),
+                info,
+            );
+            let hint = self.controller.as_ref().map_or_else(
+                || "Enter: Start\nEsc: Keep pet".into(),
+                |p| {
+                    format!(
+                        "{} Start\n{} Keep",
+                        tiny_button(&p.accept),
+                        tiny_button(&p.back)
+                    )
+                },
+            );
+            screen.render_widget(
+                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                controls,
+            );
+            self.menu_controls(controls);
+            return;
+        }
         let modal = center(screen.area(), 62, 7);
         screen.render_widget(Clear, modal);
         let block = panel(" NEW PET? ", colors, ascii);
@@ -3096,6 +3305,124 @@ impl Ui {
         (Some(profile.code), lines)
     }
 
+    fn draw_seed_entry(&self, screen: &mut Frame, colors: &Colors, renderer: Renderer) {
+        let area = screen.area();
+        screen.render_widget(Clear, area);
+        let block = panel(" ENTER CODE ", colors, renderer == Renderer::Ascii);
+        let body = block.inner(area);
+        screen.render_widget(block, area);
+        self.seed_cursor_targets.borrow_mut().clear();
+        if body.is_empty() {
+            return;
+        }
+        if !self.seed_import_allowed {
+            let lines = wrap_dialogue(
+                "Saved pet protected. Start --sample without --save to import a birth code.",
+                usize::from(body.width),
+            );
+            screen.render_widget(
+                Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
+                    .style(Style::default().fg(colors.ink(2))),
+                Rect::new(body.x, body.y, body.width, body.height.saturating_sub(1)),
+            );
+            let footer = Rect::new(body.x, body.bottom() - 1, body.width, 1);
+            screen.render_widget(
+                Paragraph::new("Esc: Back").style(Style::default().fg(colors.ink(13))),
+                footer,
+            );
+            self.control_targets
+                .borrow_mut()
+                .push((footer, Action::Cancel));
+            return;
+        }
+        let text = self.seed_entry.text();
+        let width = usize::from(body.width);
+        let cursor = self.seed_entry.cursor().min(text.len());
+        let start = cursor.saturating_sub(width.saturating_sub(1));
+        let row = body.y + u16::from(body.height > 1);
+        let mut spans = Vec::new();
+        for column in 0..width {
+            let index = start + column;
+            let glyph = text
+                .as_bytes()
+                .get(index)
+                .copied()
+                .map(char::from)
+                .unwrap_or(' ');
+            let style = Style::default().fg(colors.ink(7));
+            let style = if index == cursor {
+                style.add_modifier(Modifier::REVERSED)
+            } else {
+                style
+            };
+            spans.push(Span::styled(glyph.to_string(), style));
+            self.seed_cursor_targets.borrow_mut().push((
+                Rect::new(body.x + column as u16, row, 1, 1),
+                index.min(text.len()),
+            ));
+        }
+        if body.height > 1 {
+            screen.render_widget(
+                Paragraph::new("Paste / type code").style(Style::default().fg(colors.ink(2))),
+                Rect::new(body.x, body.y, body.width, 1),
+            );
+        }
+        screen.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect::new(body.x, row, body.width, 1),
+        );
+        if body.height >= 4 {
+            let message = self.seed_entry.error().unwrap_or(&self.seed_message);
+            screen.render_widget(
+                Paragraph::new(frame_label(message, body.width, self.frame / 20))
+                    .style(Style::default().fg(colors.ink(13))),
+                Rect::new(body.x, row + 1, body.width, 1),
+            );
+        }
+        if body.height >= 6 {
+            let nav = self.controller.as_ref().map_or_else(
+                || "^v char <> cursor".into(),
+                |p| format!("{} Edit", tiny_button(&p.navigate)),
+            );
+            screen.render_widget(
+                Paragraph::new(nav).style(Style::default().fg(colors.ink(13))),
+                Rect::new(body.x, body.bottom() - 3, body.width, 1),
+            );
+        }
+        let rows = body
+            .height
+            .saturating_sub(u16::from(body.height > 1) + 1)
+            .min(if body.height >= 5 { 2 } else { 1 });
+        if rows > 0 {
+            let footer = Rect::new(body.x, body.bottom() - rows, body.width, rows);
+            let hint = if rows == 1 {
+                "Esc: Keep pet".into()
+            } else {
+                self.controller.as_ref().map_or_else(
+                    || "Enter: Check\nEsc: Keep pet".into(),
+                    |p| {
+                        format!(
+                            "{} Check\n{} Keep",
+                            tiny_button(&p.accept),
+                            tiny_button(&p.back)
+                        )
+                    },
+                )
+            };
+            screen.render_widget(
+                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                footer,
+            );
+            if rows == 2 {
+                self.menu_controls(footer);
+            } else {
+                self.control_targets
+                    .borrow_mut()
+                    .push((footer, Action::Cancel));
+            }
+        }
+    }
+
     fn draw_identity(
         &self,
         screen: &mut Frame,
@@ -3174,7 +3501,7 @@ impl Ui {
                 tiny_button(&pad.back)
             )
         } else {
-            "Up/Down: More\nEsc: Back".into()
+            "Up/Down: More\nK Seed / Esc Back".into()
         };
         screen.render_widget(
             Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
@@ -3203,6 +3530,10 @@ impl Ui {
         self.control_targets.borrow_mut().clear();
         if menu == Menu::Identity {
             self.draw_identity(screen, config, colors, renderer);
+            return;
+        }
+        if menu == Menu::Seed {
+            self.draw_seed_entry(screen, colors, renderer);
             return;
         }
         if menu == Menu::Training {
@@ -3378,6 +3709,7 @@ impl Ui {
                     "Habitat / items",
                     "Training / stats",
                     "Identity / code",
+                    "Import birth code",
                 ],
             ),
             Menu::Care => (
@@ -3426,7 +3758,8 @@ impl Ui {
             | Menu::Roster
             | Menu::Habitat
             | Menu::Training
-            | Menu::Identity => {
+            | Menu::Identity
+            | Menu::Seed => {
                 unreachable!("special menus draw their own view")
             }
         };
@@ -3517,7 +3850,7 @@ impl Ui {
                 "L Training: Swim / Flight / Run / Power / Stamina.",
                 "Hatch rolls name, stats and aptitude. Care funds training.",
                 "Arrows / Tab select; Enter / Space activates.",
-                "O / F1 Menu  I Code  V Graphics  ? Help",
+                "O / F1 Menu  I Code  K Seed  V Graphics  ? Help",
                 "Esc: back/cancel; in the room, opens Home.",
                 "Q / Ctrl+C: save and quit, including tiny views.",
                 "1..9: activate the numbered visible menu row.",
@@ -3745,6 +4078,7 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
             Some("H"),
             Some("L"),
             Some("I"),
+            Some("K"),
         ]
         .get(index)
         .copied()
@@ -3855,13 +4189,14 @@ fn panel<'a>(title: &'a str, colors: &Colors, ascii: bool) -> Block<'a> {
 struct MouseCapture;
 impl MouseCapture {
     fn enable() -> io::Result<Self> {
-        crossterm::execute!(io::stdout(), EnableMouseCapture)?;
-        Ok(Self)
+        let capture = Self;
+        crossterm::execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste)?;
+        Ok(capture)
     }
 }
 impl Drop for MouseCapture {
     fn drop(&mut self) {
-        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+        let _ = crossterm::execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture);
     }
 }
 fn apply_effect(
@@ -3900,6 +4235,7 @@ pub fn run(
     game: Game,
 ) -> io::Result<()> {
     let mut ui = Ui::configured(game, config);
+    ui.seed_import_allowed = store.is_none();
     let mut controller = ControllerMonitor::new(config);
     let mut native = NativeDialogs::new(config);
     let _mouse = MouseCapture::enable()?;
@@ -3953,6 +4289,10 @@ pub fn run(
             let old_age = ui.game.age_ticks;
             let effect = match incoming {
                 Event::Key(key) => ui.handle(key, &config.game),
+                Event::Paste(text) => {
+                    ui.paste_seed(&text);
+                    Effect::Continue
+                }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => {
                     if ui.menu.is_some() {
                         ui.menu_input(Action::Previous, &config.game)
@@ -3974,6 +4314,9 @@ pub fn run(
                     }
                 }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Right) => {
+                    if ui.menu == Some(Menu::Seed) || ui.seed_pending.is_some() {
+                        continue;
+                    }
                     ui.open(Menu::Home);
                     ui.native_request = Some(NativeKind::Context);
                     Effect::Continue
@@ -5863,5 +6206,231 @@ mod birth_catalogue_regressions {
         assert_eq!(ui.game.genesis_seed, None);
         assert!(ui.identity_content(&config).0.is_none());
         assert!(ui.current_character().is_some());
+    }
+}
+
+#[cfg(test)]
+mod seed_import_ui_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 912);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let ui = Ui::configured(game, &config);
+        (config, ui)
+    }
+    fn draw(ui: &Ui, config: &Config, w: u16, h: u16, renderer: Renderer) -> String {
+        let colors = Colors::from_config(config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, config, renderer, &colors, 0, false))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+    #[test]
+    fn typing_care_and_quit_letters_is_editor_data_then_cancel_preserves_pet_and_rng() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        let rng = ui.visual_rng;
+        let position = ui.position;
+        ui.handle(key(KeyCode::Char('K')), &config.game);
+        for c in "qfpnsgcrm".chars() {
+            assert_eq!(
+                ui.handle(key(KeyCode::Char(c)), &config.game),
+                Effect::Continue
+            );
+        }
+        assert_eq!(ui.seed_entry.text(), "QFPNSGCRM");
+        assert_eq!(ui.game, before);
+        assert_eq!(ui.visual_rng, rng);
+        assert_eq!(ui.position, position);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert!(!ui.confirm_reset);
+        assert!(ui.seed_pending.is_none());
+        assert_eq!(ui.game, before);
+    }
+    #[test]
+    fn validated_code_requires_separate_confirmation_and_creates_the_exact_paused_birth() {
+        let (config, mut ui) = fixture();
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let before = ui.game.clone();
+        let rng = ui.visual_rng;
+        let code = MonCode::new(513).unwrap();
+        ui.handle(key(KeyCode::Char('K')), &config.game);
+        ui.paste_seed(&code.to_string());
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(ui.confirm_reset);
+        assert_eq!(ui.seed_pending, Some(code));
+        assert_eq!(ui.game, before);
+        assert_eq!(ui.visual_rng, rng);
+        let preview = draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(preview.contains(&code.compact()), "{preview}");
+        assert!(
+            preview.contains("Enter: Start") && preview.contains("Esc: Keep"),
+            "{preview}"
+        );
+        ui.handle(key(KeyCode::Enter), &config.game);
+        let mut expected = Game::new(&config.game, code.seed());
+        expected.paused = true;
+        assert_eq!(ui.game, expected);
+        assert!(ui.menu.is_none());
+        assert!(!ui.confirm_reset);
+        assert_eq!(
+            crate::genetics::Profile::for_game(&ui.game, &config)
+                .unwrap()
+                .code,
+            code.compact()
+        );
+    }
+    #[test]
+    fn cancel_confirmation_and_shrinking_viewport_never_create_an_unrelated_random_pet() {
+        let (config, mut ui) = fixture();
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let before = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.open_seed();
+        ui.paste_seed(&MonCode::new(177).unwrap().compact());
+        ui.handle(key(KeyCode::Enter), &config.game);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.game, before);
+        assert_eq!(ui.visual_rng, rng);
+        assert!(ui.seed_pending.is_none());
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(ui.confirm_reset);
+        draw(&ui, &config, 12, 6, Renderer::Ascii);
+        for _ in 0..3 {
+            ui.handle(key(KeyCode::Enter), &config.game);
+        }
+        assert_eq!(ui.game, before);
+        assert_eq!(ui.visual_rng, rng);
+        assert!(!ui.confirm_reset);
+        assert!(ui.seed_pending.is_none());
+    }
+    #[test]
+    fn releases_repeats_modified_keys_and_oversized_paste_do_not_escape_the_editor() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let mut event = key(KeyCode::Char('K'));
+            event.kind = kind;
+            ui.handle(event, &config.game);
+            assert!(ui.menu.is_none());
+        }
+        ui.open_seed();
+        ui.paste_seed(&MonCode::new(512).unwrap().compact());
+        let draft = ui.seed_entry.text().to_string();
+        ui.paste_seed(&"q".repeat(1_000_000));
+        assert_eq!(ui.seed_entry.text(), draft);
+        ui.paste_seed("\x1b[2J");
+        assert_eq!(ui.seed_entry.text(), draft);
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let mut event = key(KeyCode::Char('q'));
+            event.kind = kind;
+            assert_eq!(ui.handle(event, &config.game), Effect::Continue);
+        }
+        assert_eq!(ui.seed_entry.text(), draft);
+        assert_eq!(ui.game, before);
+        assert_eq!(
+            ui.handle(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                &config.game
+            ),
+            Effect::Quit
+        );
+    }
+    #[test]
+    fn saved_pets_are_protected_and_paste_outside_the_editor_is_ignored() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        ui.paste_seed("QFPN");
+        assert!(ui.seed_entry.text().is_empty());
+        ui.seed_import_allowed = false;
+        ui.open_seed();
+        ui.paste_seed(&MonCode::new(512).unwrap().compact());
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(!ui.confirm_reset);
+        assert_eq!(ui.game, before);
+        let t = draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(t.contains("Saved pet"), "{t}");
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.game, before);
+    }
+    #[test]
+    fn watch_editor_controller_wheel_mouse_and_confirmation_have_their_own_controls() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        ui.controller = Some(ControllerPrompts {
+            family: "fixture".into(),
+            navigate: "D-pad".into(),
+            accept: "A".into(),
+            back: "B".into(),
+            next: "R1".into(),
+            release: "Menu".into(),
+            quit: None,
+        });
+        ui.open(Menu::Home);
+        ui.menu_selected = 13;
+        ui.menu_input(Action::Accept, &config.game);
+        assert_eq!(ui.menu, Some(Menu::Seed));
+        ui.handle(key(KeyCode::Up), &config.game);
+        assert_eq!(ui.seed_entry.text().len(), 17);
+        ui.handle(key(KeyCode::Right), &config.game);
+        assert_eq!(ui.game, before);
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let wheel_target = ui.seed_cursor_targets.borrow()[3].0;
+        ui.click(wheel_target.x, wheel_target.y, &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 3);
+        ui.paste_seed(&MonCode::new(512).unwrap().compact());
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            let t = draw(&ui, &config, 20, 8, renderer);
+            assert!(
+                t.contains("M100000000000G0NK") && t.contains("A Check") && t.contains("B Keep"),
+                "{t}"
+            );
+        }
+        let (field, _) = ui.seed_cursor_targets.borrow()[3];
+        ui.click(field.x, field.y, &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 3);
+        let accept = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Accept)
+            .unwrap()
+            .0;
+        ui.click(accept.x, accept.y, &config.game);
+        assert!(ui.confirm_reset);
+        assert_eq!(ui.game, before);
+        let t = draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(t.contains("A Start") && t.contains("B Keep"), "{t}");
+        let cancel = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Cancel)
+            .unwrap()
+            .0;
+        ui.click(cancel.x, cancel.y, &config.game);
+        assert_eq!(ui.game, before);
+        assert!(!ui.confirm_reset);
     }
 }
