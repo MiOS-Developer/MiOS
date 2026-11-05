@@ -684,3 +684,10 @@ verify its running preview against the published source. PR-branch pushes do
 not trigger this installation. Preserve adopted pet sessions; use an owned
 fresh preview rather than replacing their process. Retain a post-push receipt
 with the main revision, artifact source/checksum, installed path and live target.
+
+The dedicated development session currently runs with its tmux status line
+disabled. Live browser testing exposed a top-status mouse offset: the web client
+emitted one row while the application received the previous row. Disabling
+status only in that owned game session restored exact painted-cell alignment.
+Task3747 tracks the general MiOS-Tmux fix; other sessions retain their settings.
+Browser watch/portrait automation verifies this route, not physical phones.

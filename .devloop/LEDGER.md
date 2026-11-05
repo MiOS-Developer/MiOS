@@ -4152,3 +4152,42 @@ deleted. The localhost8310 backend, native browser, SSH bridges and continuing
 nested launchers were preserved. Cleanup receipts:
  /home/mios/.local/state/mios/mios-mons-touch-live/mios-tmux-cleanup-receipt.json
  /home/mios/.local/state/mios/mios-mons-touch-live/mios-pet-cleanup-receipt.json
+
+Final executable sourcec37127bd1d098ac67c90f4c3ce2e8557952ba2a4, SHA256
+a3ca28dbcf0072189e89054e2eb84b8a85d8d1ec7343e04d4b269da632421c9d.
+Actual rootless MiOS-DEV4CPU/4GiB, locked/offline musl checks passed270 unit
+and13CLI tests, Clippy-Dwarnings and native staticPIE validation. Four broad
+gate finding files remain byte-identical to clean upstream1d65; no gates raised.
+The first fixture assumed one wheel edit made a valid checksum; corrected it
+to assert checksum refusal and restoration. Warning-fatal Clippy also required
+a simpler equivalent bounds assertion. All failed receipts remain archived.
+
+Native participant mios-mons-seed-editor reviewed exact source and build receipts
+using its own registration/token; root read and ACKed the addressed accepted
+result mios-mons-touch-final-review-c37127bd. The first resumed review lacked
+its separate private token-file path; its bounded report was preserved, the
+owned head closed, and its successor resumed the same identity with its own
+token. Root never registered or acknowledged on the child's behalf.
+The review's stronger per-button and protected-draft negative controls are in
+the final passing tests. Final review findings are empty within its stated scope.
+
+Actual native20x8 SGR/key tests passed Ctrl+U, character wheel, release filtering,
+Clear and cancellation preserving Mimo513. Actual localhost8310 browser clicks
+entered complete512/513 codes using only the wheel, checked/cancelled/cleared,
+and confirmed paused births through separate clicks at watch and portrait sizes.
+No physical phone/controller claim is made. Live input tracing exposed the
+MiOS-Tmux top-status row translation defect; disabling status only in the owned
+development game session makes emitted/received rows align. Task3747 remains
+pending for the general terminal correction. No global setting was changed.
+
+Build/native/browser/review receipts are under:
+ /home/mios/.local/state/mios/mios-mons-touch-live/
+The four existing development PiP parent windows remain mapped/pinned. Earlier
+menu and obsolete trial pets are now closed at the operator's explicit request;
+their prior success receipts and save files remain. This supersedes earlier
+handoff notes that those obsolete processes were kept running.
+
+This publication is followed by atomic user-local installation and a restart
+of only the owned main development preview in its same native pane. The dedicated
+game session retains status off and smallest-client sizing. Post-push receipt:
+ /home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json
