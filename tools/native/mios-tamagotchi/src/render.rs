@@ -1560,7 +1560,7 @@ impl Widget for RoomWidget<'_> {
             viewport,
             buf,
         );
-        draw_camera_face(
+        let face_painted = draw_camera_face(
             self.sprite,
             self.renderer,
             self.colors,
@@ -1568,6 +1568,42 @@ impl Widget for RoomWidget<'_> {
             viewport,
             buf,
         );
+        // Restricted views keep an explicit inline row below the cropped
+        // sprite when no complete depth-authorized facial text can fit.
+        // This is a caption pane, not permission to paint over a beak or rear.
+        if !face_painted && caption_rows == 0 && viewport.height != 0 {
+            let face = self
+                .sprite
+                .face_text()
+                .or_else(|| self.sprite.face_overlay().map(|face| face.text));
+            if let Some(face) = face.filter(|face| printable_face(face)) {
+                let face = if face.len() <= usize::from(viewport.width) {
+                    Some(face)
+                } else {
+                    face.get(1..face.len().saturating_sub(1))
+                        .filter(|core| core.len() <= usize::from(viewport.width))
+                };
+                if let Some(face) = face {
+                    let row = viewport.bottom() - 1;
+                    for column in viewport.x..viewport.right() {
+                        if let Some(cell) = buf.cell_mut((column, row)) {
+                            cell.set_char(' ')
+                                .set_fg(self.colors.ink(7))
+                                .set_bg(self.colors.ink(6));
+                            cell.modifier = ratatui::style::Modifier::empty();
+                        }
+                    }
+                    draw_caption(
+                        face,
+                        f64::from(viewport.x) + f64::from(viewport.width) / 2.0,
+                        i32::from(row),
+                        viewport,
+                        self.colors,
+                        buf,
+                    );
+                }
+            }
+        }
         if caption_rows != 0 {
             let mood = match self.expression {
                 Expression::Idle => "curious",
@@ -2940,6 +2976,101 @@ mod camera_tests {
                 .iter()
                 .all(Option::is_none),
             "a mirrored UV order must not become a forward-facing expression"
+        );
+    }
+
+    #[test]
+    fn tiny_bird_heads_keep_complete_native_or_separate_inline_expression_without_faking_egg_faces()
+    {
+        let colors = Colors::from_config(&Config::sample().unwrap(), Depth::Mono).unwrap();
+        let mut inline_cases = 0;
+        for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            for frame in 0..8 {
+                let sprite = Sprite::voxel_with_appearance(
+                    Stage::Child,
+                    Expression::Sick,
+                    style,
+                    frame,
+                    0,
+                    false,
+                    Appearance {
+                        shape: 14,
+                        body: 9,
+                        accent: 12,
+                    },
+                );
+                let canonical = sprite.face_text().unwrap();
+                let core = &canonical[1..canonical.len() - 1];
+                for renderer in [
+                    Renderer::Ascii,
+                    Renderer::HalfBlock,
+                    Renderer::Quadrant,
+                    Renderer::Braille,
+                ] {
+                    let area = Rect::new(2, 2, 10, 2);
+                    let mut buf = Buffer::empty(Rect::new(0, 0, 14, 6));
+                    RoomWidget {
+                        detail: style,
+                        sprite: &sprite,
+                        renderer,
+                        scale: 0,
+                        colors: &colors,
+                        expression: Expression::Sick,
+                        frame,
+                        position: (500, 500),
+                        camera: Camera {
+                            view: CameraView::Face,
+                            ..Camera::default()
+                        },
+                        habitat: None,
+                    }
+                    .render(area, &mut buf);
+                    let rendered = text(&buf, area);
+                    assert!(rendered.contains(canonical) || rendered.contains(core),
+                        "{style:?} {renderer:?} frame{frame}: complete eye/mouth core missing: {rendered}");
+                    if !buf
+                        .content
+                        .iter()
+                        .any(|cell| cell.modifier.contains(ratatui::style::Modifier::BOLD))
+                    {
+                        let row = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+                        let caption = text(&buf, row);
+                        assert!(caption.trim() == canonical || caption.trim() == core);
+                        assert!((area.x..area.right()).all(|x| buf[(x, row.y)].bg == colors.ink(6)));
+                        inline_cases += 1;
+                    }
+                    assert_eq!(buf[(1, 2)].symbol(), " ");
+                    assert_eq!(buf[(12, 2)].symbol(), " ");
+                }
+            }
+            let egg = Sprite::voxel(Stage::Egg, Expression::Idle, style, 0, 0, false);
+            assert!(egg.face_text().is_none());
+            let area = Rect::new(0, 0, 10, 2);
+            let mut buf = Buffer::empty(area);
+            RoomWidget {
+                detail: style,
+                sprite: &egg,
+                renderer: Renderer::Ascii,
+                scale: 0,
+                colors: &colors,
+                expression: Expression::Idle,
+                frame: 0,
+                position: (500, 500),
+                camera: Camera {
+                    view: CameraView::Face,
+                    ..Camera::default()
+                },
+                habitat: None,
+            }
+            .render(area, &mut buf);
+            assert!(
+                !text(&buf, area).contains("^_^"),
+                "closed eggs must not acquire a fallback face"
+            );
+        }
+        assert!(
+            inline_cases > 0,
+            "the real tiny beak fixture must exercise the separate inline row"
         );
     }
 

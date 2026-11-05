@@ -555,3 +555,7 @@ minimum packed-pixel dimensions and resize hysteresis. Graphics offers manual
 8-bit/16-bit choices and a return to Automatic. An explicit --sprite-style
 choice selects manual detail. Terminal font size is a client-wide setting, so
 changing it scales every ASCII label and facial character together.
+
+When a restricted scene cannot fit a complete expression on visible head cells,
+it reserves a plain expression row below the cropped sprite. This inline fallback
+never grants permission to draw over a beak or occluder, and eggs remain faceless.
