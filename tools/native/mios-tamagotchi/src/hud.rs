@@ -127,7 +127,8 @@ pub struct MenuWindow {
 }
 pub fn menu_window(selected: usize, total: usize, rows: u16) -> MenuWindow {
     let count = usize::from(rows).min(9).min(total);
-    let start = selected.min(total.saturating_sub(1))
+    let start = selected
+        .min(total.saturating_sub(1))
         .saturating_sub(count.saturating_sub(1))
         .min(total.saturating_sub(count));
     MenuWindow { start, count }
@@ -428,7 +429,6 @@ mod large_counter_tests {
         assert_eq!(counter(1_001), "1K+");
     }
 }
-
 
 #[cfg(test)]
 mod menu_window_tests {

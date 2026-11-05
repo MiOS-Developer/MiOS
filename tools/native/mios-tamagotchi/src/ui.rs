@@ -515,8 +515,8 @@ impl Ui {
         // Only explicitly selected Face framing looks toward the front. Tiny
         // automatic head cropping retains the real world orientation/occlusion.
         let world_yaw = (u32::from(yaw) + u32::from(self.orbit_degrees)) % 360;
-        let face_yaw = (i32::from(self.orbit_degrees)
-            - i32::from(self.face_orbit_reference)).rem_euclid(360);
+        let face_yaw =
+            (i32::from(self.orbit_degrees) - i32::from(self.face_orbit_reference)).rem_euclid(360);
         let from = if self.camera_from_view == CameraView::Face {
             face_yaw
         } else {
@@ -883,14 +883,24 @@ impl Ui {
             let start = self.menu_scroll.min(self.menu_scroll_limit.get());
             format!("L{}-{}/{}", start + 1, (start + rows).min(total), total)
         } else if menu == Menu::Seed {
-            format!("Code {}/{} / Esc back", self.seed_entry.cursor(), self.seed_entry.text().len())
+            format!(
+                "Code {}/{} / Esc back",
+                self.seed_entry.cursor(),
+                self.seed_entry.text().len()
+            )
         } else {
             let total = self.menu_len(menu);
             let selected = self.menu_selected.min(total.saturating_sub(1));
             let start = self.menu_number_start.get();
             let count = self.menu_number_count.get();
             if count > 0 && !matches!(menu, Menu::Roster | Menu::Gallery) {
-                format!("{}/{} [{}-{}]", selected + 1, total, start + 1, start + count)
+                format!(
+                    "{}/{} [{}-{}]",
+                    selected + 1,
+                    total,
+                    start + 1,
+                    start + count
+                )
             } else {
                 format!("{}/{}", selected + 1, total)
             }
@@ -903,26 +913,55 @@ impl Ui {
         );
     }
 
-    fn draw_talk_menu(&self, screen: &mut Frame, config: &Config, colors: &Colors, renderer: Renderer) {
+    fn draw_talk_menu(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+    ) {
         let area = screen.area();
         screen.render_widget(Clear, area);
-        let block = self.menu_panel(&format!("TALK / {} says", self.name()), colors, renderer == Renderer::Ascii);
+        let block = self.menu_panel(
+            &format!("TALK / {} says", self.name()),
+            colors,
+            renderer == Renderer::Ascii,
+        );
         let body = block.inner(area);
         screen.render_widget(block, area);
         let [words_area, list, controls] = Layout::vertical([
             Constraint::Length(if body.height >= 12 { 4 } else { 1 }),
             Constraint::Min(1),
             Constraint::Length(2),
-        ]).areas(body);
+        ])
+        .areas(body);
         self.dialog_area.set(words_area);
         let words = wrap_dialogue(&self.words(config, false), usize::from(body.width.max(1)));
         let rows = usize::from(words_area.height).max(1);
         let start = self.dialog_page.min(words.len().saturating_sub(rows));
         self.dialog_rows.set(rows);
         self.dialog_line_count.set(words.len());
-        screen.render_widget(Paragraph::new(words.into_iter().skip(start).take(rows).map(Line::from).collect::<Vec<_>>())
-            .style(Style::default().fg(colors.ink(7))), words_area);
-        let entries = ["Read more", "Feed", "Memory", "Clean", "Rest", "Medicine", "Back"];
+        screen.render_widget(
+            Paragraph::new(
+                words
+                    .into_iter()
+                    .skip(start)
+                    .take(rows)
+                    .map(Line::from)
+                    .collect::<Vec<_>>(),
+            )
+            .style(Style::default().fg(colors.ink(7))),
+            words_area,
+        );
+        let entries = [
+            "Read more",
+            "Feed",
+            "Memory",
+            "Clean",
+            "Rest",
+            "Medicine",
+            "Back",
+        ];
         let window = crate::hud::menu_window(self.menu_selected, entries.len(), list.height);
         self.menu_number_start.set(window.start);
         self.menu_number_count.set(window.count);
@@ -930,16 +969,38 @@ impl Ui {
             let target = Rect::new(list.x, list.y + row as u16, list.width, 1);
             let selected = index == self.menu_selected;
             let style = if selected {
-                Style::default().fg(colors.ink(0)).bg(colors.ink(7)).add_modifier(Modifier::BOLD)
-            } else { Style::default().fg(colors.ink(2)).bg(colors.background) };
-            screen.render_widget(Paragraph::new(format!("{}{} {}", if selected { ">" } else { " " }, row + 1, entries[index])).style(style), target);
+                Style::default()
+                    .fg(colors.ink(0))
+                    .bg(colors.ink(7))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(colors.ink(2)).bg(colors.background)
+            };
+            screen.render_widget(
+                Paragraph::new(format!(
+                    "{}{} {}",
+                    if selected { ">" } else { " " },
+                    row + 1,
+                    entries[index]
+                ))
+                .style(style),
+                target,
+            );
             self.menu_targets.borrow_mut().push((target, index));
         }
         self.menu_controls(controls);
         let hint = if body.width < 17 {
-            format!("Ent:{}\nEsc:Back", ["More", "Feed", "Play", "Wash", "Rest", "Med", "Back"][self.menu_selected.min(6)])
-        } else { "Enter: Choose\nEsc: Back".into() };
-        screen.render_widget(Paragraph::new(hint).style(Style::default().fg(colors.ink(13))), controls);
+            format!(
+                "Ent:{}\nEsc:Back",
+                ["More", "Feed", "Play", "Wash", "Rest", "Med", "Back"][self.menu_selected.min(6)]
+            )
+        } else {
+            "Enter: Choose\nEsc: Back".into()
+        };
+        screen.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+            controls,
+        );
     }
 
     fn menu_controls(&self, area: Rect) {
@@ -1057,7 +1118,9 @@ impl Ui {
         let visible = caption.len().min(usize::from(accept_rect.width)) as u16;
         screen.render_widget(Paragraph::new(caption).style(style), accept_rect);
         if visible > 0 {
-            self.control_targets.borrow_mut().push((accept_rect, Action::Accept));
+            self.control_targets
+                .borrow_mut()
+                .push((accept_rect, Action::Accept));
         }
         let mut back_x = area.x;
         if menu == Menu::Gallery && area.width >= 17 {
@@ -1095,7 +1158,9 @@ impl Ui {
         let visible = caption.len().min(usize::from(back_rect.width)) as u16;
         screen.render_widget(Paragraph::new(caption).style(style), back_rect);
         if visible > 0 {
-            self.control_targets.borrow_mut().push((back_rect, Action::Cancel));
+            self.control_targets
+                .borrow_mut()
+                .push((back_rect, Action::Cancel));
         }
     }
 
@@ -1167,7 +1232,15 @@ impl Ui {
                 KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
                 rules,
             );
-            if matches!(action, Action::Accept | Action::Confirm | Action::Cancel | Action::Menu | Action::Help | Action::Quit) {
+            if matches!(
+                action,
+                Action::Accept
+                    | Action::Confirm
+                    | Action::Cancel
+                    | Action::Menu
+                    | Action::Help
+                    | Action::Quit
+            ) {
                 // A second event before repaint cannot reuse an old modal
                 // accept target as ordinary-room care.
                 self.control_targets.borrow_mut().clear();
@@ -1338,7 +1411,11 @@ impl Ui {
         if self.native_modal {
             // The external dialog owns menu/care input until its choice or
             // inline fallback arrives. Preserve the universal quit shortcut.
-            return if action(key) == Some(Action::Quit) { Effect::Quit } else { Effect::Continue };
+            return if action(key) == Some(Action::Quit) {
+                Effect::Quit
+            } else {
+                Effect::Continue
+            };
         }
         if self.menu == Some(Menu::Seed) && !self.confirm_reset {
             return self.handle_seed_key(key);
@@ -2040,8 +2117,12 @@ impl Ui {
                 .chars()
                 .take(usize::from(area.width.saturating_sub(15)))
                 .collect::<String>();
-            format!("{} {name} {}{clock}{}", self.detail_tag(), &stage[..1],
-                if self.game.ill { " ILL" } else { "" })
+            format!(
+                "{} {name} {}{clock}{}",
+                self.detail_tag(),
+                &stage[..1],
+                if self.game.ill { " ILL" } else { "" }
+            )
         } else {
             format!(
                 "PET ROOM {} {} {} {stage} {clock} {face}{} {:?} {}% [/] {}deg",
@@ -3026,7 +3107,11 @@ impl Ui {
                     stat.value
                 );
                 let balance = format!("{}{} {stat}", "$", crate::hud::counter(self.game.coins));
-                pages.push(if balance.len() <= usize::from(width) { balance } else { stat });
+                pages.push(if balance.len() <= usize::from(width) {
+                    balance
+                } else {
+                    stat
+                });
             }
         }
         pages[frame / 28 % pages.len()].clone()
@@ -3297,7 +3382,8 @@ impl Ui {
             .take(rows)
             .map(|(index, text)| {
                 let selected = index == self.menu_selected;
-                let text = text.chars()
+                let text = text
+                    .chars()
                     .take(usize::from(list.width.saturating_sub(3)))
                     .collect::<String>();
                 self.menu_targets.borrow_mut().push((
@@ -3384,11 +3470,13 @@ impl Ui {
                 self.detail_label()
             )
         };
-        let block = self.menu_panel(&title, colors, ascii).title_bottom(Line::from(frame_label(
-            &format!("{} / {}", character.species, character.archetype),
-            area.width.saturating_sub(2),
-            self.frame / 14,
-        )));
+        let block = self
+            .menu_panel(&title, colors, ascii)
+            .title_bottom(Line::from(frame_label(
+                &format!("{} / {}", character.species, character.archetype),
+                area.width.saturating_sub(2),
+                self.frame / 14,
+            )));
         let inner = block.inner(area);
         screen.render_widget(block, area);
         let compact = inner.width < 50 || inner.height < 16;
@@ -4028,11 +4116,13 @@ impl Ui {
             } else {
                 format!(" SPRITE STUDIO / {} ", self.detail_label())
             };
-            let block = self.menu_panel(&title, colors, ascii).title_bottom(Line::from(if micro {
-                "<> mood ^v".to_string()
-            } else {
-                "PREVIEW / pet unchanged".to_string()
-            }));
+            let block = self
+                .menu_panel(&title, colors, ascii)
+                .title_bottom(Line::from(if micro {
+                    "<> mood ^v".to_string()
+                } else {
+                    "PREVIEW / pet unchanged".to_string()
+                }));
             let inner = block.inner(area);
             screen.render_widget(block, area);
             let [label, room, controls] = Layout::vertical([
@@ -4369,7 +4459,8 @@ impl Ui {
                 } else {
                     short
                 };
-                let label = short.chars()
+                let label = short
+                    .chars()
                     .take(usize::from(body.width.saturating_sub(prefix.len() as u16)))
                     .collect::<String>();
                 let text = format!("{prefix}{label}");
@@ -4556,12 +4647,51 @@ fn menu_title(menu: Menu) -> &'static str {
 }
 fn compact_menu_entry(menu: Menu, index: usize) -> Option<&'static str> {
     match menu {
-        Menu::Home => ["Care", "Games", "Talk", "Roster", "Status", "Graphics",
-            "Sprite studio", "Help", "Save", "Quit", "Habitat/items", "Training", "Identity/code", "Import code"].get(index).copied(),
-        Menu::Graphics => ["Voxel 3D", "Pixel sprite", "8-bit Manual", "16-bit Manual",
-            "Half-block", "ASCII", "Quadrant", "Braille", "Sprite studio",
-            "HUD Auto", "HUD Minimal", "HUD Full", "Room", "Mon body", "Face close-up",
-            "Zoom in", "Zoom out", "Reset zoom", "Back", "Auto detail", "Orbit left", "Orbit right", "Reset orbit"].get(index).copied(),
+        Menu::Home => [
+            "Care",
+            "Games",
+            "Talk",
+            "Roster",
+            "Status",
+            "Graphics",
+            "Sprite studio",
+            "Help",
+            "Save",
+            "Quit",
+            "Habitat/items",
+            "Training",
+            "Identity/code",
+            "Import code",
+        ]
+        .get(index)
+        .copied(),
+        Menu::Graphics => [
+            "Voxel 3D",
+            "Pixel sprite",
+            "8-bit Manual",
+            "16-bit Manual",
+            "Half-block",
+            "ASCII",
+            "Quadrant",
+            "Braille",
+            "Sprite studio",
+            "HUD Auto",
+            "HUD Minimal",
+            "HUD Full",
+            "Room",
+            "Mon body",
+            "Face close-up",
+            "Zoom in",
+            "Zoom out",
+            "Reset zoom",
+            "Back",
+            "Auto detail",
+            "Orbit left",
+            "Orbit right",
+            "Reset orbit",
+        ]
+        .get(index)
+        .copied(),
         Menu::Games if index == 0 => Some("Memory"),
         _ => None,
     }
@@ -4600,7 +4730,11 @@ fn wrap_dialogue(text: &str, width: usize) -> Vec<String> {
         }
         for glyph in word.chars() {
             let glyph = glyph.to_string();
-            let glyph = if cells(&glyph) > width { "?".to_string() } else { glyph };
+            let glyph = if cells(&glyph) > width {
+                "?".to_string()
+            } else {
+                glyph
+            };
             if cells(&line) + cells(&glyph) > width {
                 out.push(std::mem::take(&mut line));
             }
@@ -4638,16 +4772,6 @@ fn compact_button(value: &str) -> String {
         .replace("D-pad Right", "DR")
         .replace("Square", "[]")
         .replace("Triangle", "^")
-}
-fn center(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width.saturating_sub(2));
-    let height = height.min(area.height.saturating_sub(2));
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
 }
 fn panel<'a>(title: &'a str, colors: &Colors, ascii: bool) -> Block<'a> {
     let mut block = Block::default()
@@ -7375,7 +7499,6 @@ mod seed_import_ui_regressions {
     }
 }
 
-
 #[cfg(test)]
 mod console_shell_regressions {
     use super::*;
@@ -7384,27 +7507,49 @@ mod console_shell_regressions {
     use ratatui::{backend::TestBackend, Terminal};
 
     const MENUS: [Menu; 13] = [
-        Menu::Home, Menu::Care, Menu::Games, Menu::Status, Menu::Graphics,
-        Menu::Help, Menu::Gallery, Menu::Talk, Menu::Roster, Menu::Habitat,
-        Menu::Training, Menu::Identity, Menu::Seed,
+        Menu::Home,
+        Menu::Care,
+        Menu::Games,
+        Menu::Status,
+        Menu::Graphics,
+        Menu::Help,
+        Menu::Gallery,
+        Menu::Talk,
+        Menu::Roster,
+        Menu::Habitat,
+        Menu::Training,
+        Menu::Identity,
+        Menu::Seed,
     ];
     fn fixture() -> (Config, Ui) {
         let config = Config::sample().unwrap();
         let mut game = Game::new(&config.game, 711);
-        for _ in 0..config.game.hatch_ticks { game.tick(&config.game); }
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
         let ui = Ui::configured(game, &config);
         (config, ui)
     }
-    fn key(code: KeyCode) -> KeyEvent { KeyEvent::new(code, KeyModifiers::NONE) }
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
     fn draw(ui: &Ui, config: &Config, width: u16, height: u16, renderer: Renderer) -> Vec<String> {
         let colors = Colors::from_config(config, Depth::Mono).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| ui.draw(frame, config, renderer, &colors, ui.frame, false)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, renderer, &colors, ui.frame, false))
+            .unwrap();
         let buffer = terminal.backend().buffer();
-        (0..height).map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect()).collect()
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
     }
     fn painted(lines: &[String], rect: Rect) -> String {
-        lines[usize::from(rect.y)].chars().skip(usize::from(rect.x)).take(usize::from(rect.width)).collect()
+        lines[usize::from(rect.y)]
+            .chars()
+            .skip(usize::from(rect.x))
+            .take(usize::from(rect.width))
+            .collect()
     }
 
     #[test]
@@ -7421,22 +7566,55 @@ mod console_shell_regressions {
                     let lines = draw(&ui, &config, width, height, Renderer::Ascii);
                     let text = lines.join("\n");
                     assert!(text.is_ascii(), "{menu:?} {width}x{height}: {text}");
-                    assert!(lines[0].starts_with('+') && lines[0].ends_with('+'), "{text}");
+                    assert!(
+                        lines[0].starts_with('+') && lines[0].ends_with('+'),
+                        "{text}"
+                    );
                     assert!(!lines[0].contains("PET ROOM"), "{text}");
                     assert!(ui.care_targets.borrow().is_empty(), "{menu:?}");
-                    assert!(!lines[usize::from(height - 1)].trim_matches(['+', '-', ' ']).is_empty(), "{text}");
+                    assert!(
+                        !lines[usize::from(height - 1)]
+                            .trim_matches(['+', '-', ' '])
+                            .is_empty(),
+                        "{text}"
+                    );
                     let footer = ui.menu_footer.get();
                     for (rect, _) in ui.menu_targets.borrow().iter() {
-                        assert!(rect.x >= 1 && rect.right() <= width - 1);
-                        assert!(rect.y >= 1 && rect.bottom() <= footer.y, "{menu:?}: {rect:?}");
+                        assert!(rect.x >= 1 && rect.right() < width);
+                        assert!(
+                            rect.y >= 1 && rect.bottom() <= footer.y,
+                            "{menu:?}: {rect:?}"
+                        );
                     }
-                    if matches!(menu, Menu::Home | Menu::Care | Menu::Games | Menu::Graphics | Menu::Talk | Menu::Habitat | Menu::Training) {
-                        let (rect, _) = *ui.menu_targets.borrow().iter().find(|(_, index)| *index == selected)
-                            .unwrap_or_else(|| panic!("{menu:?} {width}x{height} selected {selected}: {text}"));
+                    if matches!(
+                        menu,
+                        Menu::Home
+                            | Menu::Care
+                            | Menu::Games
+                            | Menu::Graphics
+                            | Menu::Talk
+                            | Menu::Habitat
+                            | Menu::Training
+                    ) {
+                        let (rect, _) = *ui
+                            .menu_targets
+                            .borrow()
+                            .iter()
+                            .find(|(_, index)| *index == selected)
+                            .unwrap_or_else(|| {
+                                panic!("{menu:?} {width}x{height} selected {selected}: {text}")
+                            });
                         assert!(painted(&lines, rect).starts_with('>'), "{text}");
                         assert!(selected >= ui.menu_number_start.get());
                         assert!(selected < ui.menu_number_start.get() + ui.menu_number_count.get());
-                        assert!(lines[usize::from(height - 1)].contains(&format!("{}/{}", selected + 1, count)), "{text}");
+                        assert!(
+                            lines[usize::from(height - 1)].contains(&format!(
+                                "{}/{}",
+                                selected + 1,
+                                count
+                            )),
+                            "{text}"
+                        );
                     }
                 }
             }
@@ -7449,10 +7627,13 @@ mod console_shell_regressions {
     fn essential_navigation_is_static_and_targets_match_painted_rows_across_frames() {
         let (config, mut ui) = fixture();
         ui.controller = Some(ControllerPrompts {
-            family: "Controller".into(), navigate: "Remapped shoulders".into(),
+            family: "Controller".into(),
+            navigate: "Remapped shoulders".into(),
             accept: "Sony: Hold D-pad Left / Xbox: Hold D-pad Right".into(),
             back: "Sony: Hold Circle / Xbox: Hold B".into(),
-            next: "Tap West".into(), release: "Hold L3+R3".into(), quit: None,
+            next: "Tap West".into(),
+            release: "Hold L3+R3".into(),
+            quit: None,
         });
         for menu in MENUS.into_iter().filter(|menu| *menu != Menu::Seed) {
             ui.open(menu);
@@ -7461,11 +7642,26 @@ mod console_shell_regressions {
                 ui.frame = frame;
                 let lines = draw(&ui, &config, 20, 8, Renderer::Ascii);
                 let controls = ui.control_targets.borrow().clone();
-                let snapshot = controls.iter().map(|(rect, action)| (*rect, *action, painted(&lines, *rect))).collect::<Vec<_>>();
-                for action in [Action::Previous, Action::Next, Action::Accept, Action::Cancel] {
-                    assert!(snapshot.iter().any(|(_, a, text)| *a == action && !text.trim().is_empty()), "{menu:?} {snapshot:?}");
+                let snapshot = controls
+                    .iter()
+                    .map(|(rect, action)| (*rect, *action, painted(&lines, *rect)))
+                    .collect::<Vec<_>>();
+                for action in [
+                    Action::Previous,
+                    Action::Next,
+                    Action::Accept,
+                    Action::Cancel,
+                ] {
+                    assert!(
+                        snapshot
+                            .iter()
+                            .any(|(_, a, text)| *a == action && !text.trim().is_empty()),
+                        "{menu:?} {snapshot:?}"
+                    );
                 }
-                if let Some(previous) = &previous { assert_eq!(&snapshot, previous, "{menu:?}"); }
+                if let Some(previous) = &previous {
+                    assert_eq!(&snapshot, previous, "{menu:?}");
+                }
                 previous = Some(snapshot);
             }
         }
@@ -7485,11 +7681,17 @@ mod console_shell_regressions {
                 ui.handle(key(KeyCode::End), &config.game);
                 let lines = draw(&ui, &config, width, height, Renderer::Ascii);
                 let total = ui.menu_total_lines.get();
-                assert!(lines[usize::from(height - 1)].contains(&format!("/{total}")), "{lines:?}");
+                assert!(
+                    lines[usize::from(height - 1)].contains(&format!("/{total}")),
+                    "{lines:?}"
+                );
                 let text = lines.join("\n");
                 assert!(!text.contains("L0-"));
                 ui.handle(key(KeyCode::PageUp), &config.game);
-                assert_eq!(ui.menu_scroll, ui.menu_scroll_limit.get().saturating_sub(rows));
+                assert_eq!(
+                    ui.menu_scroll,
+                    ui.menu_scroll_limit.get().saturating_sub(rows)
+                );
             }
         }
     }
@@ -7500,7 +7702,13 @@ mod console_shell_regressions {
         ui.game.coins = config.game.feed_cost * 3;
         ui.open(Menu::Care);
         draw(&ui, &config, 20, 8, Renderer::Ascii);
-        let rect = ui.control_targets.borrow().iter().find(|(_, a)| *a == Action::Accept).unwrap().0;
+        let rect = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Accept)
+            .unwrap()
+            .0;
         let coins = ui.game.coins;
         ui.click(rect.right() - 1, rect.y, &config.game);
         assert_eq!(ui.game.coins, coins - config.game.feed_cost);
@@ -7512,14 +7720,24 @@ mod console_shell_regressions {
         assert!(ui.care_targets.borrow().is_empty());
         assert!(ui.menu_targets.borrow().is_empty());
         assert!(ui.control_targets.borrow().is_empty());
-        ui.control_targets.borrow_mut().push((Rect::new(0, 0, 80, 24), Action::Pause));
+        ui.control_targets
+            .borrow_mut()
+            .push((Rect::new(0, 0, 80, 24), Action::Pause));
         ui.click(1, 1, &config.game);
-        for code in [KeyCode::Char('f'), KeyCode::Char('p'), KeyCode::Char('n'), KeyCode::Enter] {
+        for code in [
+            KeyCode::Char('f'),
+            KeyCode::Char('p'),
+            KeyCode::Char('n'),
+            KeyCode::Enter,
+        ] {
             ui.handle(key(code), &config.game);
         }
         assert_eq!(ui.game, after);
         assert!(!ui.confirm_reset);
-        assert_eq!(ui.handle(key(KeyCode::Char('q')), &config.game), Effect::Quit);
+        assert_eq!(
+            ui.handle(key(KeyCode::Char('q')), &config.game),
+            Effect::Quit
+        );
     }
 
     #[test]
@@ -7529,7 +7747,11 @@ mod console_shell_regressions {
         for menu in MENUS {
             ui.open(menu);
             draw(&ui, &config, 8, 3, Renderer::Ascii);
-            assert_eq!(ui.handle(key(KeyCode::Char('q')), &config.game), Effect::Quit, "{menu:?}");
+            assert_eq!(
+                ui.handle(key(KeyCode::Char('q')), &config.game),
+                Effect::Quit,
+                "{menu:?}"
+            );
             assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
             assert_ne!(ui.menu, Some(menu), "{menu:?}");
             assert!(!ui.confirm_reset);
@@ -7539,7 +7761,7 @@ mod console_shell_regressions {
 
     #[test]
     fn face_orbit_is_relative_on_entry_zoom_preserves_it_and_exit_restores_world_yaw() {
-        let (config, mut ui) = fixture();
+        let (_, mut ui) = fixture();
         let game = ui.game.clone();
         let rng = ui.visual_rng;
         let position = (ui.position, ui.destination);
@@ -7580,7 +7802,9 @@ mod console_shell_regressions {
     fn unicode_wrapping_preserves_text_and_counts_terminal_cells() {
         for width in [2, 3, 8, 18] {
             let lines = wrap_dialogue("éclair 猫猫 hello", width);
-            assert!(lines.iter().all(|line| Line::from(line.as_str()).width() <= width));
+            assert!(lines
+                .iter()
+                .all(|line| Line::from(line.as_str()).width() <= width));
             assert!(!lines.join("").contains('�'));
             assert_eq!(lines.join("").replace(' ', ""), "éclair猫猫hello");
         }
