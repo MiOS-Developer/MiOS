@@ -1160,18 +1160,18 @@ impl Ui {
             return self.handle_seed_key(key);
         }
 
-        if !self.confirm_reset
-            && !self.native_modal
-            && key.kind != KeyEventKind::Release
-            && !key.modifiers.intersects(
-                crossterm::event::KeyModifiers::CONTROL
-                    | crossterm::event::KeyModifiers::ALT
-                    | crossterm::event::KeyModifiers::SUPER
-                    | crossterm::event::KeyModifiers::HYPER
-                    | crossterm::event::KeyModifiers::META,
-            )
-            && let Some(menu) = self.menu
-        {
+        if let Some(menu) = self.menu.filter(|_| {
+            !self.confirm_reset
+                && !self.native_modal
+                && key.kind != KeyEventKind::Release
+                && !key.modifiers.intersects(
+                    crossterm::event::KeyModifiers::CONTROL
+                        | crossterm::event::KeyModifiers::ALT
+                        | crossterm::event::KeyModifiers::SUPER
+                        | crossterm::event::KeyModifiers::HYPER
+                        | crossterm::event::KeyModifiers::META,
+                )
+        }) {
             use crossterm::event::KeyCode;
             let step = self.menu_number_count.get().max(1);
             if matches!(menu, Menu::Status | Menu::Help | Menu::Identity) {
