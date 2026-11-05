@@ -88,6 +88,7 @@ pub struct Ui {
     orbit_started: usize,
     world_enabled: bool,
     world_elevation: u16,
+    genetic_config: Option<Config>,
     menu_scroll: usize,
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
@@ -162,6 +163,7 @@ impl Ui {
             orbit_started: 0,
             world_enabled: false,
             world_elevation: 30,
+            genetic_config: None,
             menu_scroll: 0,
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
@@ -208,17 +210,7 @@ impl Ui {
     }
     pub fn configured(game: Game, config: &Config) -> Self {
         let mut ui = Self::new(game);
-        ui.catalogue = config.characters.clone();
-        for character in &mut ui.catalogue {
-            if let Ok((body, accent)) = config
-                .game
-                .training
-                .palette(character.shape, &character.archetype)
-            {
-                character.body = body;
-                character.accent = accent;
-            }
-        }
+        ui.genetic_config = Some(config.clone());
         ui.habitat_rules = Some(config.habitat.clone());
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
@@ -245,7 +237,33 @@ impl Ui {
             crate::game::Stage::Egg | crate::game::Stage::Dead
         );
         ui.reaction_frames = config.reaction_frames;
+        ui.refresh_catalogue();
         ui
+    }
+    fn refresh_catalogue(&mut self) {
+        let Some(config) = self.genetic_config.as_ref() else {
+            return;
+        };
+        self.catalogue = config.characters.clone();
+        for character in &mut self.catalogue {
+            if let Ok((body, accent)) = config
+                .game
+                .training
+                .palette(character.shape, &character.archetype)
+            {
+                character.body = body;
+                character.accent = accent;
+            }
+        }
+        if let Some(profile) = crate::genetics::Profile::for_game(&self.game, config) {
+            if let Some(base) = self
+                .catalogue
+                .iter_mut()
+                .find(|c| c.id == self.game.character)
+            {
+                *base = profile.character(base, config);
+            }
+        }
     }
     pub fn animate(&mut self, frame: usize) {
         let elapsed = frame.saturating_sub(self.frame).min(24);
@@ -949,10 +967,16 @@ impl Ui {
         if self.confirm_reset {
             match a {
                 Action::Accept | Action::Confirm => {
-                    let seed = self.next_visual_random();
+                    let selected = self.adopt_character.take();
+                    let random_seed = self.next_visual_random();
+                    let seed =
+                        selected.map_or(random_seed, |id| selected_birth_seed(random_seed, id));
                     self.game = Game::new(rules, seed);
-                    if let Some(character) = self.adopt_character.take() {
+                    if let Some(character) = selected {
                         self.game.character = character;
+                        if character >= 16 {
+                            self.game.genesis_seed = None;
+                        }
                     }
                     self.mobile_stage = false;
                     self.position = (500, 700);
@@ -961,6 +985,7 @@ impl Ui {
                     self.target_yaw = 0;
                     self.visual_rng = self.game.visual_seed().wrapping_add(1).max(1);
                     self.wander_ticks = 0;
+                    self.refresh_catalogue();
                     self.confirm_reset = false;
                     self.notice = "A new egg! The next save replaces the previous pet.".into();
                     self.react(Expression::Surprised);
@@ -3033,10 +3058,15 @@ impl Ui {
     }
     fn identity_content(&self, config: &Config) -> (Option<String>, Vec<String>) {
         let Some(profile) = crate::genetics::Profile::for_game(&self.game, config) else {
+            let reason = if self.game.genesis_seed.is_none() {
+                "No birth seed was stored for this existing pet."
+            } else {
+                "The selected pet does not match its original birth seed."
+            };
             return (
                 None,
                 vec![
-                    "No birth seed was stored for this existing pet.".into(),
+                    reason.into(),
                     "A reproducible code cannot be recovered or invented.".into(),
                     "Your pet and its saved progress are unchanged.".into(),
                 ],
@@ -3082,7 +3112,13 @@ impl Ui {
             return;
         }
         let (code, details) = self.identity_content(config);
-        let code = code.unwrap_or_else(|| "NO BIRTH SEED".into());
+        let code = code.unwrap_or_else(|| {
+            if self.game.genesis_seed.is_none() {
+                "NO BIRTH SEED".into()
+            } else {
+                "NO MATCHING CODE".into()
+            }
+        });
         // A 17-character code fits in the 18 inner cells of a 20-column watch.
         // Keep every character fixed on screen while only metadata scrolls.
         let chars = code.chars().collect::<Vec<_>>();
@@ -3684,6 +3720,14 @@ impl Ui {
             .join("\n");
         format!("{base}\n{stats}\nL: Training / care costs apply")
     }
+}
+fn selected_birth_seed(seed: u64, id: u8) -> u64 {
+    if id >= 16 {
+        return seed.max(1);
+    }
+    let selected = (seed & !0x107) | u64::from(id % 8) | (u64::from(id / 8) << 8);
+    // Bit9 retains character0 while avoiding the forbidden zero birth code.
+    if selected == 0 { 512 } else { selected }
 }
 fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
     match menu {
@@ -4897,7 +4941,9 @@ mod progression_ui_tests {
     }
     #[test]
     fn compact_auto_face_uses_the_scene_budget_and_micro_talk_clears_old_sprite_cells() {
-        let (config, mut ui) = pet();
+        let (mut config, ui) = pet();
+        config.camera_view = CameraView::Pet;
+        let mut ui = Ui::configured(ui.game, &config);
         draw(&ui, &config, 40, 12, 0);
         assert_eq!(ui.camera().view, CameraView::Face);
         assert_eq!(ui.pet_area.get().height, 6);
@@ -4940,7 +4986,9 @@ mod progression_ui_tests {
     }
     #[test]
     fn landscape_portrait_resize_blends_camera_without_resetting_zoom_or_game() {
-        let (config, mut ui) = pet();
+        let (mut config, ui) = pet();
+        config.camera_view = CameraView::Pet;
+        let mut ui = Ui::configured(ui.game, &config);
         ui.hud_mode = HudMode::Minimal;
         ui.game.paused = true;
         let saved = ui.game.clone();
@@ -5714,5 +5762,99 @@ mod world_camera_identity_regressions {
         assert_eq!(ui.menu, Some(Menu::Identity));
         assert_eq!(ui.game, game);
         assert_eq!(ui.visual_rng, rng);
+    }
+}
+
+#[cfg(test)]
+mod birth_catalogue_regressions {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    fn confirm(ui: &mut Ui, config: &Config, id: u8) {
+        ui.viewport.set((80, 24));
+        ui.adopt_character = Some(id);
+        ui.confirm_reset = true;
+        ui.handle(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &config.game,
+        );
+    }
+
+    #[test]
+    fn selected_birth_codes_preserve_all_original_species_and_zero_boundary() {
+        let config = Config::sample().unwrap();
+        assert_eq!(selected_birth_seed(1, 0), 512);
+        for seed in [1, 256, 257, u64::MAX] {
+            for id in 0..16 {
+                let selected = selected_birth_seed(seed, id);
+                assert_ne!(selected, 0);
+                let game = Game::new(&config.game, selected);
+                assert_eq!(game.character, id);
+                let profile = crate::genetics::Profile::for_game(&game, &config).unwrap();
+                assert_eq!(
+                    profile
+                        .code
+                        .parse::<crate::genetics::MonCode>()
+                        .unwrap()
+                        .seed(),
+                    selected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn confirmed_adoption_refreshes_generated_name_palette_personality_and_hobby() {
+        let config = Config::sample().unwrap();
+        for id in 0..16 {
+            let mut ui = Ui::configured(Game::new(&config.game, 1), &config);
+            confirm(&mut ui, &config, id);
+            assert!(!ui.confirm_reset);
+            assert_eq!(ui.game.character, id);
+            let profile = crate::genetics::Profile::for_game(&ui.game, &config).unwrap();
+            let current = ui.current_character().unwrap();
+            assert_eq!(current.name, profile.name);
+            assert_eq!(current.archetype, profile.archetype);
+            assert_eq!(current.hobby, profile.likes.join(" and "));
+            assert_eq!(ui.appearance().body, profile.body);
+            assert_eq!(ui.appearance().accent, profile.accent);
+            assert_eq!(ui.name(), profile.name);
+        }
+    }
+
+    #[test]
+    fn presentation_does_not_refresh_direct_catalogue_fixture_changes() {
+        let config = Config::sample().unwrap();
+        let mut ui = Ui::configured(Game::new(&config.game, 23), &config);
+        ui.game.paused = true;
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let index = ui
+            .catalogue
+            .iter()
+            .position(|c| c.id == ui.game.character)
+            .unwrap();
+        ui.catalogue[index].name = "Local fixture".into();
+        ui.catalogue[index].accent = 3;
+        ui.animate(8);
+        ui.pet_sprite(&config.game, 8);
+        assert_eq!(ui.current_character().unwrap().name, "Local fixture");
+        assert_eq!(ui.appearance().accent, 3);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn extended_roster_selection_does_not_claim_an_unreproducible_birth_code() {
+        let mut config = Config::sample().unwrap();
+        let mut extra = config.characters[0].clone();
+        extra.id = 16;
+        extra.name = "Extended fixture".into();
+        config.characters.push(extra);
+        let mut ui = Ui::configured(Game::new(&config.game, 23), &config);
+        confirm(&mut ui, &config, 16);
+        assert_eq!(ui.game.character, 16);
+        assert_eq!(ui.game.genesis_seed, None);
+        assert!(ui.identity_content(&config).0.is_none());
+        assert!(ui.current_character().is_some());
     }
 }

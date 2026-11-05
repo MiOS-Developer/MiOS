@@ -169,6 +169,9 @@ pub struct Profile {
 impl Profile {
     pub fn for_game(game: &Game, config: &Config) -> Option<Self> {
         let seed = game.genesis_seed?;
+        if game.progress.legacy || Progress::new(seed).origin_seed != game.progress.origin_seed {
+            return None;
+        }
         if game.character != ((seed % 8) + ((seed >> 8) % 2) * 8) as u8 {
             return None;
         }
@@ -316,6 +319,9 @@ mod tests {
         }
         assert!(combinations.len() > 100);
         let mut old = Game::new(&config.game, 1);
+        old.genesis_seed = Some(2);
+        assert!(old.validate().is_err());
+        assert!(Profile::for_game(&old, &config).is_none());
         old.genesis_seed = None;
         assert!(Profile::for_game(&old, &config).is_none());
     }

@@ -3836,3 +3836,37 @@ mod native_head_surface_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod world_depth_metadata_regressions {
+    use super::*;
+    #[test]
+    fn occupied_voxels_have_finite_ground_relative_depth_and_hidden_faces_have_no_uv() {
+        for yaw in [0, 45, 90, 180, 270, 315] {
+            let sprite = Sprite::voxel_with_camera(
+                crate::game::Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                [yaw, 30],
+                false,
+                Appearance::default(),
+            );
+            assert!(sprite.ground_pixel().unwrap().iter().all(|v| v.is_finite()));
+            let hidden = sprite.retain_visible_pixels(|_, _| false);
+            for y in 0..u32::from(sprite.height()) {
+                for x in 0..u32::from(sprite.width()) {
+                    assert_eq!(
+                        sprite.depth_pixels(x, y).is_some(),
+                        sprite.pixel(x, y, 1).is_some()
+                    );
+                    assert_eq!(hidden.pixel(x, y, 1), None);
+                    assert_eq!(hidden.depth_pixels(x, y), None);
+                    assert_eq!(hidden.face_uv(x, y), None);
+                    assert_eq!(hidden.head_uv(x, y), None);
+                }
+            }
+            assert!(hidden.face_overlay().is_none());
+        }
+    }
+}

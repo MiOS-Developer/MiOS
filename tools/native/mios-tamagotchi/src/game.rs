@@ -166,8 +166,13 @@ impl Game {
     pub fn validate_habitat(&self, habitat: &crate::habitat::HabitatRules) -> Result<(), String> {
         self.habitat.validate(self.wins, self.age_ticks, habitat)?;
         self.progress.validate()?;
-        if self.genesis_seed == Some(0) {
-            return Err("save contains a zero birth seed".into());
+        if self.genesis_seed.is_some_and(|seed| {
+            seed == 0
+                || (!self.progress.legacy
+                    && crate::progression::Progress::new(seed).origin_seed
+                        != self.progress.origin_seed)
+        }) {
+            return Err("save contains an invalid or inconsistent birth seed".into());
         }
         if self
             .progress
