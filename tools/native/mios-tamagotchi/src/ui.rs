@@ -6575,10 +6575,16 @@ mod seed_import_ui_regressions {
         let (config, mut ui) = fixture();
         let before = ui.game.clone();
         ui.open_seed();
+        let expected = MonCode::new(512).unwrap();
+        ui.paste_seed(&expected.compact());
         draw(&ui, &config, 20, 8, Renderer::Ascii);
         let plus = ui.seed_edit_targets.borrow()[3].0;
+        let minus = ui.seed_edit_targets.borrow()[2].0;
         ui.click(plus.x, plus.y, &config.game);
-        let expected = ui.seed_entry.validate().unwrap();
+        assert!(ui.seed_entry.validate().is_none());
+        assert_eq!(ui.game, before);
+        ui.click(minus.x, minus.y, &config.game);
+        assert_eq!(ui.seed_entry.validate(), Some(expected));
         let check = ui
             .control_targets
             .borrow()
