@@ -5,7 +5,11 @@
 # the negative control (default: the conf at git main); MIOS_UNIT_GEN a candidate mios-unit-gen for the mouse_terms
 # mechanism check. Never touches the operator's tmux servers (private -L sockets under a 0700 scratch TMUX_TMPDIR,
 # killed at the end).
+# --mouse-rows: app-independent raw SGR translation and painted-cell regression
+# for status off/top/bottom (one, two and five lines) and single/split panes.
+# MIOS_MOUSE_ROWS_RECEIPT_DIR retains client/pane byte traces and JSON evidence.
 import os, pty, select, shutil, subprocess, sys, tempfile, time
+import fcntl, json, re, shlex, struct, termios, tty
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,10 +27,12 @@ def check(name, ok, detail=''):
 class Client:
     """One pty tmux client (the first one starts the server with `conf`)."""
 
-    def __init__(self, env, argv):
+    def __init__(self, env, argv, size=None):
         self.out = b''
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
+            if size is not None:
+                fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack('HHHH', size[1], size[0], 0, 0))
             os.execvpe('tmux', argv, env)
         self.drain(1.2)
 
@@ -184,5 +190,188 @@ def main():
     return 0 if all(res) else 1
 
 
+# --mouse-rows: app-independent client -> tmux -> pane transport regression.
+# capture-pane cells and pane offsets are zero based. SGR client cells are one
+# based and INCLUDE the top status rows. tmux owns the inverse translation.
+def pane_cell_to_client(col, row, left, top, position, status_lines):
+    if min(col, row, left, top, status_lines) < 0:
+        raise ValueError('negative cell or status height')
+    return col + left + 1, row + top + (status_lines if position == 'top' else 0) + 1
+
+
+def mouse_probe(path):
+    """Paint a stable target; record application input without parsing it."""
+    saved = termios.tcgetattr(0)
+    try:
+        tty.setraw(0)
+        os.write(1, b'\x1b[?1003h\x1b[?1006h\x1b[2J\x1b[4;5HR3747')
+        Path(path + '.ready').touch()
+        with open(path, 'ab', buffering=0) as log:
+            while True:
+                data = os.read(0, 1024)
+                if not data or data == b'q':
+                    break
+                if data == b'd':
+                    os.write(1, b'\x1b[?1003l\x1b[?1006l')
+                    Path(path + '.disabled').touch()
+                    continue
+                log.write(data)
+    finally:
+        os.write(1, b'\x1b[?1003l\x1b[?1006l')
+        termios.tcsetattr(0, termios.TCSANOW, saved)
+    return 0
+
+
+def painted_cells(data, width=80, height=24):
+    """Decode ASCII target cells from the actual full tmux client redraw.
+
+    Only cursor/erase operations are needed for this stable ASCII fixture.
+    Retain the raw ANSI stream for independent terminal replay and audit.
+    This decoder never consults pane offsets or status geometry.
+    """
+    cells = [[' '] * width for _ in range(height)]
+    x = y = 0
+    saved = (0, 0)
+    tokens = re.findall(r'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][^\n]|\x1b.|[^\x1b]', data.decode('utf-8', errors='replace'))
+    for token in tokens:
+        if token.startswith('\x1b['):
+            nums = token[2:-1]
+            if any(c not in '0123456789;' for c in nums):
+                continue
+            a = [int(n or '0') for n in nums.split(';')]
+            n, op = a[0] or 1, token[-1]
+            if op in 'Hf':
+                y, x = n - 1, (a[1] or 1) - 1 if len(a) > 1 else 0
+            elif op == 'G': x = n - 1
+            elif op == 'd': y = n - 1
+            elif op == 'A': y -= n
+            elif op == 'B': y += n
+            elif op == 'C': x += n
+            elif op == 'D': x -= n
+            elif op == 'J' and a[0] == 2: cells = [[' '] * width for _ in range(height)]
+            elif op == 'K':
+                start, end = (0, width) if a[0] == 2 else (0, x + 1) if a[0] == 1 else (x, width)
+                cells[min(y, height - 1)][max(0, start):min(width, end)] = [' '] * max(0, min(width, end) - max(0, start))
+            elif op == 's': saved = (x, y)
+            elif op == 'u': x, y = saved
+            x, y = max(0, min(width - 1, x)), max(0, min(height - 1, y))
+        elif token == '\x1b7': saved = (x, y)
+        elif token == '\x1b8': x, y = saved
+        elif token.startswith('\x1b'): continue
+        elif token == '\r': x = 0
+        elif token == '\n': y = min(height - 1, y + 1)
+        elif token == '\b': x = max(0, x - 1)
+        elif token == '\t': x = min(width - 1, (x // 8 + 1) * 8)
+        elif token >= ' ':
+            cells[y][x] = token
+            x = min(width - 1, x + 1)
+    return [''.join(row) for row in cells]
+
+
+def mouse_rows_main():
+    """Use private sockets only; retain positive and wrong-client-row traces."""
+    if not shutil.which('tmux') or not CONF.is_file():
+        print('FAIL mouse rows require tmux and the generated MiOS configuration')
+        return 1
+    receipt_dir = os.environ.get('MIOS_MOUSE_ROWS_RECEIPT_DIR')
+    out = Path(receipt_dir or tempfile.mkdtemp(prefix='mios-mouse-row-receipts-'))
+    out.mkdir(parents=True, exist_ok=True)
+    receipt = {'tmux': subprocess.check_output(['tmux', '-V'], text=True).strip(),
+               'configuration': str(CONF), 'physical_input_tested': False, 'cases': []}
+    cases = [('off', 0), ('top', 1), ('bottom', 1), ('top', 2), ('bottom', 2), ('top', 5), ('bottom', 5)]
+    try:
+        for position, lines in cases:
+            for layout in ('single', 'vertical', 'horizontal'):
+                label = f'{position}-{lines}-{layout}'
+                with tempfile.TemporaryDirectory(prefix='mios-mouse-rows-') as tmp:
+                    env = {k: v for k, v in os.environ.items() if k not in ('TMUX', 'TMUX_PANE')}
+                    env.update(TMUX_TMPDIR=tmp, TERM='xterm-256color')
+                    prefix = ['tmux', '-L', 'mios-mouse-rows']
+                    def run(*args):
+                        return subprocess.check_output(prefix + list(args), env=env, text=True, timeout=8).rstrip('\n')
+                    client = None
+                    try:
+                        client = Client(env, prefix + ['-f', str(CONF), 'new-session', '-s', 'rows'], size=(80, 24))
+                        run('set', '-t', 'rows', 'status', 'on' if lines == 1 else str(lines) if lines else 'off')
+                        run('set', '-t', 'rows', 'status-position', position if position != 'off' else 'top')
+                        for index in range(lines):
+                            run('set', '-t', 'rows', f'status-format[{index}]', f'STATUS{index}')
+                        if layout != 'single':
+                            run('split-window', '-t', 'rows', '-v' if layout == 'vertical' else '-h', 'sleep 90')
+                        pane, left, top, pw, ph = run('display', '-p', '-t', 'rows', '#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}').split()
+                        left, top, pw, ph = map(int, (left, top, pw, ph))
+                        raw = Path(tmp) / 'input'
+                        command = shlex.join([sys.executable, str(Path(__file__).resolve()), '--mouse-probe', str(raw)])
+                        run('respawn-pane', '-k', '-t', pane, command)
+                        deadline = time.monotonic() + 5
+                        while not Path(str(raw) + '.ready').exists():
+                            if time.monotonic() > deadline: raise RuntimeError('mouse probe did not start')
+                            time.sleep(.02)
+                        client.take(.1)
+                        run('refresh-client', '-t', run('list-clients', '-F', '#{client_name}'))
+                        ansi = client.take(.2)
+                        screen = painted_cells(ansi)
+                        hits = [(r.index('R3747'), y) for y, r in enumerate(screen) if 'R3747' in r]
+                        expected = pane_cell_to_client(4, 3, left, top, position, lines)
+                        check(label + ': painted client cell', hits == [(expected[0] - 1, expected[1] - 1)], str(hits))
+                        capture = run('capture-pane', '-p', '-t', pane)
+                        check(label + ': painted pane cell', capture.splitlines()[3][4:9] == 'R3747')
+                        injected = bytearray()
+                        def click(x, y):
+                            payload = f'\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m'.encode()
+                            injected.extend(payload)
+                            os.write(client.fd, payload)
+                            client.drain(.12)
+                            return raw.read_bytes() if raw.exists() else b''
+                        received = click(*expected)
+                        want = b'\x1b[<0;5;4M\x1b[<0;5;4m'
+                        check(label + ': native translation exactly once', received == want, received.hex())
+                        wrong = None
+                        if lines and position == 'top':
+                            wrong = click(expected[0], expected[1] - lines)[len(received):]
+                            check(label + ': pre-subtracted client row misses target', want not in wrong, wrong.hex())
+                        before = raw.read_bytes()
+                        if lines:
+                            click(70, 1 if position == 'top' else 24)
+                            check(label + ': status does not become pane input', raw.read_bytes() == before)
+                        if layout != 'single':
+                            click(left if layout == 'horizontal' else expected[0], top if layout == 'vertical' else expected[1])
+                            check(label + ': split border does not become pane input', raw.read_bytes() == before)
+                        run('send-keys', '-t', pane, '-l', 'd')
+                        deadline = time.monotonic() + 3
+                        while not Path(str(raw) + '.disabled').exists():
+                            if time.monotonic() > deadline: raise RuntimeError('probe did not disable tracking')
+                            time.sleep(.02)
+                        client.drain(.1)
+                        check(label + ': application tracking is disabled', run('display', '-p', '-t', pane, '#{mouse_any_flag}') == '0')
+                        click(*expected)
+                        check(label + ': disabled tracking blocks mouse input', raw.read_bytes() == before)
+                        final = raw.read_bytes()
+                        (out / (label + '.client.ansi')).write_bytes(ansi)
+                        (out / (label + '.client-input.bin')).write_bytes(injected)
+                        (out / (label + '.pane-input.bin')).write_bytes(final)
+                        (out / (label + '.cells.txt')).write_text('\n'.join(screen) + '\n')
+                        (out / (label + '.pane.txt')).write_text(capture + '\n')
+                        receipt['cases'].append({'case': label, 'pane': pane, 'pane_geometry': [left, top, pw, ph],
+                            'pane_cell_zero_based': [4, 3], 'client_cell_one_based': list(expected),
+                            'painted_client_cells_zero_based': hits, 'received_hex': received.hex(),
+                            'pre_subtracted_received_hex': None if wrong is None else wrong.hex()})
+                    finally:
+                        if client is not None:
+                            try: run('kill-server')
+                            finally:
+                                client.reap()
+                                os.close(client.fd)
+    except Exception as error:
+        check('mouse row fixture exception', False, repr(error))
+        receipt['error'] = repr(error)
+    receipt.update(checks=len(res), passed_checks=sum(res), passed=bool(res) and all(res))
+    (out / 'mios-mouse-rows.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    print(f'{sum(res)}/{len(res)} mouse row checks passed; receipt {out}', flush=True)
+    return 0 if receipt['passed'] else 1
+
+
 if __name__ == '__main__':
-    sys.exit(main())
+    if sys.argv[1:2] == ['--mouse-probe']:
+        sys.exit(mouse_probe(sys.argv[2]))
+    sys.exit(mouse_rows_main() if sys.argv[1:] == ['--mouse-rows'] else main())

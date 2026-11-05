@@ -9,8 +9,8 @@ use ratatui::{
 
 use crate::{
     capabilities::{Depth, Renderer},
-    config::{Config, parse_rgb},
-    sprite::{Sprite, SpriteStyle, cell_size, fit_scale},
+    config::{parse_rgb, Config},
+    sprite::{cell_size, fit_scale, Sprite, SpriteStyle},
 };
 
 #[derive(Clone, Debug)]
@@ -368,7 +368,11 @@ fn paint_pixels(
             (Some(upper), Some(lower)) => {
                 fg = colors.ink(usize::from(upper));
                 bg = colors.ink(usize::from(lower));
-                if upper == lower { '█' } else { '▀' }
+                if upper == lower {
+                    '█'
+                } else {
+                    '▀'
+                }
             }
             (Some(_), None) => '▀',
             (None, Some(_)) => '▄',
@@ -1181,7 +1185,11 @@ fn draw_camera_face(
                     cell.set_bg(background);
                     if ink[0] {
                         let mark = if mono {
-                            if cell.symbol() == "@" { '#' } else { '@' }
+                            if cell.symbol() == "@" {
+                                '#'
+                            } else {
+                                '@'
+                            }
                         } else {
                             '#'
                         };
@@ -2281,12 +2289,10 @@ mod face_tests {
                     colors: &colors,
                 }
                 .render(Rect::new(2, 2, width, height), &mut buffer);
-                assert!(
-                    buffer
-                        .content
-                        .iter()
-                        .all(|c| !c.symbol().contains('\u{1b}'))
-                );
+                assert!(buffer
+                    .content
+                    .iter()
+                    .all(|c| !c.symbol().contains('\u{1b}')));
                 assert_eq!(buffer[(0, 0)].symbol(), " ");
                 assert_eq!(buffer[(99, 99)].symbol(), " ");
             }
@@ -2630,7 +2636,11 @@ mod camera_tests {
                     2,
                     0,
                     false,
-                    Appearance { shape, body: 1, accent: 11 },
+                    Appearance {
+                        shape,
+                        body: 1,
+                        accent: 11,
+                    },
                 );
                 let Some(_) = head_surface_bounds(&sprite) else {
                     panic!("shape{shape} {stage:?} must expose its real front head");
@@ -2653,8 +2663,17 @@ mod camera_tests {
                     for area in [Rect::new(3, 2, 20, 8), Rect::new(3, 2, 80, 24)] {
                         let projection = |solid, view| {
                             Projection::camera(
-                                &sprite, solid, area, renderer, 0, (500, 500),
-                                Camera { view, from_view: view, ..Camera::default() },
+                                &sprite,
+                                solid,
+                                area,
+                                renderer,
+                                0,
+                                (500, 500),
+                                Camera {
+                                    view,
+                                    from_view: view,
+                                    ..Camera::default()
+                                },
                             )
                         };
                         let normal = projection(bounds, CameraView::Face);
@@ -2665,14 +2684,18 @@ mod camera_tests {
                             (normal.left, tail.left),
                             (normal.top, tail.top),
                         ] {
-                            assert!((a - b).abs() < 0.000001,
-                                "{renderer:?} shape{shape} {stage:?}: tail changed face framing");
+                            assert!(
+                                (a - b).abs() < 0.000001,
+                                "{renderer:?} shape{shape} {stage:?}: tail changed face framing"
+                            );
                             assert!(a.is_finite());
                         }
                         // A control that must respond to whole-body bounds:
                         // fitting the Mon really does include its body/tail.
-                        assert!(projection(extended, CameraView::Pet).scale
-                            < projection(bounds, CameraView::Pet).scale);
+                        assert!(
+                            projection(extended, CameraView::Pet).scale
+                                < projection(bounds, CameraView::Pet).scale
+                        );
                     }
                 }
             }
@@ -2888,13 +2911,11 @@ mod camera_tests {
                     f64::from(front_face.y) + 0.5,
                     Renderer::HalfBlock,
                 );
-                assert!(
-                    text(
-                        &buf,
-                        Rect::new(area.x, face_y.floor() as u16, area.width, 1)
-                    )
-                    .contains(front_face.text)
-                );
+                assert!(text(
+                    &buf,
+                    Rect::new(area.x, face_y.floor() as u16, area.width, 1)
+                )
+                .contains(front_face.text));
                 assert!(rear.face_overlay().is_none());
                 let previous = buf.clone();
                 assert!(!draw_front_face(
@@ -3000,13 +3021,11 @@ mod camera_tests {
             .render(area, &mut buf);
             let caption = text(&buf, Rect::new(1, 8, 20, 1));
             assert!(caption.contains("munching"));
-            assert!(
-                caption.contains(
-                    sprite
-                        .face_overlay()
-                        .map_or(Expression::Eating.kaomoji(1), |f| f.text,)
-                )
-            );
+            assert!(caption.contains(
+                sprite
+                    .face_overlay()
+                    .map_or(Expression::Eating.kaomoji(1), |f| f.text,)
+            ));
         }
     }
 
@@ -3372,9 +3391,7 @@ mod camera_tests {
                         let row = Rect::new(area.x, area.bottom() - 1, area.width, 1);
                         let caption = text(&buf, row);
                         assert!(caption.trim() == canonical || caption.trim() == core);
-                        assert!(
-                            (area.x..area.right()).all(|x| buf[(x, row.y)].bg == colors.ink(6))
-                        );
+                        assert!((area.x..area.right()).all(|x| buf[(x, row.y)].bg == colors.ink(6)));
                         inline_cases += 1;
                     }
                     assert_eq!(buf[(1, 2)].symbol(), " ");
@@ -3469,11 +3486,9 @@ mod camera_tests {
             .collect();
         assert_eq!(atlas[0], "   #                             #   ");
         // The same outer stem persists through three rows: a curve, not < or >.
-        assert!(
-            atlas[3..6]
-                .iter()
-                .all(|row| row.starts_with('#') && row.ends_with('#'))
-        );
+        assert!(atlas[3..6]
+            .iter()
+            .all(|row| row.starts_with('#') && row.ends_with('#')));
         for glyph in 0..4 {
             for x in glyph * 8 + 5..glyph * 8 + 8 {
                 for y in 0..9 {
@@ -4332,13 +4347,11 @@ mod camera_tests {
                     .any(|(a, b)| a.symbol() != b.symbol()),
                 "{renderer:?}: monochrome face vanished into the body's glyph"
             );
-            assert!(
-                before
-                    .content
-                    .iter()
-                    .zip(&after.content)
-                    .all(|(a, b)| a.bg == b.bg)
-            );
+            assert!(before
+                .content
+                .iter()
+                .zip(&after.content)
+                .all(|(a, b)| a.bg == b.bg));
         }
     }
 
