@@ -1286,6 +1286,9 @@ impl Ui {
             return Effect::Continue;
         }
         if menu == Menu::Seed {
+            if self.confirm_reset {
+                return Effect::Continue;
+            }
             let code = match action {
                 Action::Accept => crossterm::event::KeyCode::Enter,
                 Action::Cancel => crossterm::event::KeyCode::Esc,
@@ -1678,6 +1681,21 @@ impl Ui {
         self.viewport.set((inner.width, inner.height));
         screen.render_widget(outer, area);
         if inner.width < 10 || inner.height < 4 {
+            if self.menu == Some(Menu::Seed) {
+                let hint = if inner.height < 2 {
+                    "^C".into()
+                } else {
+                    self.controller.as_ref().map_or_else(
+                        || "Esc back\n^C quit".into(),
+                        |p| format!("{} back\n^C quit", tiny_button(&p.back)),
+                    )
+                };
+                screen.render_widget(
+                    Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                    inner,
+                );
+                return;
+            }
             screen.render_widget(
                 Paragraph::new(format!(
                     "{} / {:?}\n{}\n{}",
@@ -6389,6 +6407,8 @@ mod seed_import_ui_regressions {
         ui.handle(key(KeyCode::Up), &config.game);
         assert_eq!(ui.seed_entry.text().len(), 17);
         ui.handle(key(KeyCode::Right), &config.game);
+        ui.handle(key(KeyCode::Right), &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 4);
         assert_eq!(ui.game, before);
         draw(&ui, &config, 20, 8, Renderer::Ascii);
         let wheel_target = ui.seed_cursor_targets.borrow()[3].0;
@@ -6432,5 +6452,44 @@ mod seed_import_ui_regressions {
         ui.click(cancel.x, cancel.y, &config.game);
         assert_eq!(ui.game, before);
         assert!(!ui.confirm_reset);
+    }
+    #[test]
+    fn modal_scroll_tiny_abort_and_unrelated_reset_cannot_consume_a_hidden_seed() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        let rng = ui.visual_rng;
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        ui.open_seed();
+        ui.paste_seed(&MonCode::new(512).unwrap().compact());
+        ui.handle(key(KeyCode::Enter), &config.game);
+        let draft = ui.seed_entry.text().to_string();
+        for action in [
+            Action::Next,
+            Action::Previous,
+            Action::Direction(Direction::Up),
+            Action::Direction(Direction::Down),
+        ] {
+            ui.menu_input(action, &config.game);
+            assert_eq!(ui.seed_entry.text(), draft);
+            assert_eq!(ui.seed_pending, Some(MonCode::new(512).unwrap()));
+        }
+        let tiny = draw(&ui, &config, 10, 5, Renderer::Ascii);
+        assert!(
+            tiny.contains("Esc back") && tiny.contains("^C quit"),
+            "{tiny}"
+        );
+        assert!(!tiny.contains("Q quits"));
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(!ui.confirm_reset);
+        assert!(ui.seed_pending.is_none());
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        ui.handle(key(KeyCode::Char('n')), &config.game);
+        assert!(ui.confirm_reset);
+        assert!(ui.seed_pending.is_none());
+        assert_eq!(ui.game, before);
+        assert_eq!(ui.visual_rng, rng);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.game, before);
     }
 }
