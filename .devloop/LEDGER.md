@@ -4191,3 +4191,24 @@ This publication is followed by atomic user-local installation and a restart
 of only the owned main development preview in its same native pane. The dedicated
 game session retains status off and smallest-client sizing. Post-push receipt:
  /home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json
+
+## 2026-11-05 · Complete menu and attached-controller input continuation
+
+Tasks3748/3749 extend3730/3731 without claiming their remaining physical
+acceptance. Native worker mios-mons-controller-prompts owns only input.rs in
+its isolated41519e8e base worktree; its independently registered habitat head
+uses its own relay token/inbox. Root owns ui.rs and canonical task publication.
+Delivered input file SHAa8badcd8e761ae8fe0b6061398d97d6d4669b835024b52d5da3fb241ff499f8c
+retains all verified eligible controller families and per-family resolved
+tap/hold labels. Root adds painted previous/next menu controls, Gallery stage
+buttons, and PageUp/PageDown/Home/End cursor navigation. All operations are
+draft/selection-only until an explicit accept.
+
+A preliminary actual CDP touchStart/touchEnd probe through the existing ttyd
+frontend passed complete watch/portrait wheel input against current installed
+41519e8e. No new web-input bridge was needed. This is browser touch emulation,
+not a physical phone result. No hardware controller is assigned to the four
+development seats; no parent input device was moved or borrowed.
+
+MiOS-DEV exact-source builds and live acceptance receipts follow under:
+ /home/mios/.local/state/mios/mios-mons-menu-input-live/

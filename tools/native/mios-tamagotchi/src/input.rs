@@ -535,37 +535,55 @@ fn family(name: &str) -> &'static str {
     }
 }
 
-fn connected(devices: &Json, seat: Option<&Seat>) -> Option<String> {
+fn connected(devices: &Json, seat: Option<&Seat>) -> Option<BTreeSet<&'static str>> {
+    // Registry structure is session evidence; malformed individual discovery
+    // rows are not. Reject an invalid registry, but do not let one bad or foreign
+    // device hide a different, fully verified controller later in the list.
+    let owned = if let Some(seat) = seat {
+        let name = seat.entry["seat"].as_str()?;
+        if name.is_empty() {
+            return None;
+        }
+        Some((name, seat.entry["devices"].as_array()?))
+    } else {
+        None
+    };
     let mut families = BTreeSet::new();
     for device in devices.as_array()? {
         if device["kind"] != "controller" {
             continue;
         }
-        device.get("assigned_to")?;
-        let name = device["name"].as_str()?;
-        let virtual_pad = device["virtual"].as_bool()?;
-        let eligible = if let Some(seat) = seat {
-            device["assigned_to"] == seat.entry["seat"]
-                && seat.entry["devices"].as_array()?.iter().any(|owned| {
-                    owned["path"] == device["path"]
-                        && owned["name"] == device["name"]
+        let (Some(assignment), Some(name), Some(path), Some(virtual_pad)) = (
+            device.get("assigned_to"),
+            device["name"].as_str(),
+            device["path"].as_str(),
+            device["virtual"].as_bool(),
+        ) else {
+            continue;
+        };
+        let Some(event) = path.strip_prefix("/dev/input/event") else {
+            continue;
+        };
+        if name.is_empty() || event.is_empty() || !event.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let eligible = if let Some((seat, devices)) = owned {
+            assignment.as_str() == Some(seat)
+                && devices.iter().any(|owned| {
+                    owned["path"].as_str() == Some(path)
+                        && owned["name"].as_str() == Some(name)
                         && owned["kind"] == "controller"
-                        && owned["virtual"] == device["virtual"]
+                        && owned["virtual"].as_bool() == Some(virtual_pad)
                         && (!virtual_pad || owned["spec"] == "virtual-pad")
                 })
         } else {
-            !virtual_pad && device["assigned_to"].is_null()
+            !virtual_pad && assignment.is_null()
         };
-        if eligible && !name.is_empty() && device["path"].as_str()?.starts_with("/dev/input/event")
-        {
+        if eligible {
             families.insert(family(name));
         }
     }
-    match families.len() {
-        0 => None,
-        1 => Some((*families.first()?).into()),
-        _ => Some("Controller".into()),
-    }
+    (!families.is_empty()).then_some(families)
 }
 
 fn detect(id: &Identity, query: &Query<'_>) -> Result<ControllerPrompts, &'static str> {
@@ -596,9 +614,9 @@ fn detect(id: &Identity, query: &Query<'_>) -> Result<ControllerPrompts, &'stati
             ),
         )
         .ok_or("Inputd: connected-device ownership unavailable.")?;
-    let family = connected(&devices, seat.as_ref())
+    let families = connected(&devices, seat.as_ref())
         .ok_or("Inputd: no connected controller assigned to this session.")?;
-    let prompts = resolve_prompts(&map, &context, tmux, &family)
+    let prompts = resolve_connected_prompts(&map, &context, tmux, &families)
         .ok_or("Inputd: current context has no usable terminal bindings.")?;
     // Refuse a focus transition during the multi-command sample.
     let after = query
@@ -833,6 +851,65 @@ fn resolve_prompts(
         release: format!("Hold {release}"),
         quit: binding_label(&bindings, "key:CTRL+c", family),
     })
+}
+
+// There is no active-device evidence in discovery. Resolve the actual map for
+// every eligible family and merge per action, never by choosing a preferred pad.
+fn resolve_connected_prompts(
+    map: &Json,
+    context: &Json,
+    tmux: bool,
+    families: &BTreeSet<&str>,
+) -> Option<ControllerPrompts> {
+    let prompts = families
+        .iter()
+        .map(|family| resolve_prompts(map, context, tmux, family))
+        .collect::<Option<Vec<_>>>()?;
+    if prompts.is_empty() {
+        return None;
+    }
+    let merged = |label: fn(&ControllerPrompts) -> &str| {
+        merge_prompt_labels(prompts.iter().map(|p| (p.family.as_str(), label(p))))
+    };
+    Some(ControllerPrompts {
+        family: prompts
+            .iter()
+            .map(|p| p.family.as_str())
+            .collect::<Vec<_>>()
+            .join(" + "),
+        navigate: merged(|p| &p.navigate)?,
+        accept: merged(|p| &p.accept)?,
+        back: merged(|p| &p.back)?,
+        next: merged(|p| &p.next)?,
+        release: merged(|p| &p.release)?,
+        quit: merge_prompt_labels(
+            prompts
+                .iter()
+                .filter_map(|p| p.quit.as_deref().map(|q| (p.family.as_str(), q))),
+        ),
+    })
+}
+
+fn merge_prompt_labels<'a>(labels: impl IntoIterator<Item = (&'a str, &'a str)>) -> Option<String> {
+    let mut groups: Vec<(Vec<&str>, &str)> = Vec::new();
+    for (family, label) in labels {
+        if let Some((families, _)) = groups.iter_mut().find(|(_, previous)| *previous == label) {
+            families.push(family);
+        } else {
+            groups.push((vec![family], label));
+        }
+    }
+    match groups.len() {
+        0 => None,
+        1 => Some(groups[0].1.into()),
+        _ => Some(
+            groups
+                .into_iter()
+                .map(|(families, label)| format!("{}: {label}", families.join("+")))
+                .collect::<Vec<_>>()
+                .join(" / "),
+        ),
+    }
 }
 
 /// An explicitly inherited, uniquely attached human client for native dialogues.
@@ -1114,11 +1191,11 @@ mod controller_tests {
         assert!(connected(&json!([host.clone(), clone.clone()]), Some(&seat())).is_none());
         assert_eq!(
             connected(&json!([host.clone(), clone, own.clone()]), Some(&seat())),
-            Some("Controller".into())
+            Some(BTreeSet::from(["Controller"]))
         );
         assert_eq!(
             connected(&json!([host, own.clone()]), None),
-            Some("Sony".into())
+            Some(BTreeSet::from(["Sony"]))
         );
         assert!(connected(&json!([own]), None).is_none());
         let foreign = pad(
@@ -1290,15 +1367,321 @@ mod controller_tests {
                 &json!([sony.clone(), xbox.clone(), foreign.clone()]),
                 Some(&own)
             ),
-            Some("Controller".into())
+            Some(BTreeSet::from(["Sony", "Xbox"]))
         );
         assert_eq!(
             connected(&json!([sony.clone(), foreign.clone()]), Some(&own)),
-            Some("Sony".into())
+            Some(BTreeSet::from(["Sony"]))
         );
         assert!(connected(&json!([foreign.clone()]), Some(&own)).is_none());
         own.entry["devices"] = json!([]);
         assert!(connected(&json!([sony, xbox, foreign]), Some(&own)).is_none());
+    }
+
+    #[test]
+    fn every_known_and_generic_family_combination_keeps_its_actual_actions() {
+        let cases = [
+            (
+                "Controller",
+                "Unidentified gamepad",
+                "South",
+                "East",
+                "West",
+            ),
+            ("Nintendo", "Nintendo Switch Pro", "B", "A", "Y"),
+            ("Sony", "Sony DualSense", "Cross", "Circle", "Square"),
+            ("Xbox", "Microsoft Xbox", "A", "B", "X"),
+        ];
+        for mask in 1usize..(1 << cases.len()) {
+            let selected: Vec<_> = cases
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << *i) != 0)
+                .map(|(_, case)| case)
+                .collect();
+            let devices: Vec<_> = selected
+                .iter()
+                .enumerate()
+                .map(|(i, (_, name, _, _, _))| {
+                    pad(&format!("/dev/input/event{i}"), name, false, Json::Null)
+                })
+                .collect();
+            let families = connected(&json!(devices), None).unwrap();
+            for tmux in [false, true] {
+                let prompts =
+                    resolve_connected_prompts(&map(), &context(), tmux, &families).unwrap();
+                assert_eq!(
+                    prompts.family,
+                    selected.iter().map(|c| c.0).collect::<Vec<_>>().join(" + ")
+                );
+                let expected = |index, gesture: &str| {
+                    let labels: Vec<_> = selected
+                        .iter()
+                        .map(|case| {
+                            let button = match index {
+                                0 => case.2,
+                                1 => case.3,
+                                _ => case.4,
+                            };
+                            if selected.len() == 1 {
+                                format!("{gesture} {button}")
+                            } else {
+                                format!("{}: {gesture} {button}", case.0)
+                            }
+                        })
+                        .collect();
+                    labels.join(" / ")
+                };
+                assert_eq!(prompts.accept, expected(0, "Tap"));
+                assert_eq!(prompts.back, expected(1, "Tap"));
+                assert_eq!(prompts.next, expected(2, "Tap"));
+                assert_eq!(prompts.quit.as_deref(), Some(expected(1, "Hold").as_str()));
+                assert_eq!(prompts.navigate, "D-pad");
+                assert_eq!(prompts.release, "Hold L3+R3");
+            }
+        }
+    }
+
+    #[test]
+    fn discovery_deduplicates_same_family_and_never_prefers_discovery_order() {
+        let sony = pad("/dev/input/event1", "Sony DualSense", false, Json::Null);
+        let other_sony = pad("/dev/input/event2", "DualShock", false, Json::Null);
+        let xbox = pad("/dev/input/event3", "Xbox", false, Json::Null);
+        let families = connected(
+            &json!([sony.clone(), other_sony.clone(), sony.clone()]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(families, BTreeSet::from(["Sony"]));
+        let p = resolve_connected_prompts(&map(), &context(), true, &families).unwrap();
+        assert_eq!(p.family, "Sony");
+        assert_eq!(p.accept, "Tap Cross");
+        for devices in [
+            json!([sony.clone(), other_sony.clone(), xbox.clone()]),
+            json!([xbox, other_sony, sony]),
+        ] {
+            let families = connected(&devices, None).unwrap();
+            let p = resolve_connected_prompts(&map(), &context(), true, &families).unwrap();
+            assert_eq!(p.family, "Sony + Xbox");
+            assert_eq!(p.accept, "Sony: Tap Cross / Xbox: Tap A");
+            assert_eq!(p.back, "Sony: Tap Circle / Xbox: Tap B");
+        }
+    }
+
+    #[test]
+    fn mixed_remaps_keep_tap_hold_and_group_only_identical_action_labels() {
+        let families = BTreeSet::from(["Controller", "Nintendo", "Sony", "Xbox"]);
+        let mut map = map();
+        let profile = &mut map["global"]["controller"]["nav"]["terminal_tmux"];
+        profile["BTN_SOUTH"] = json!("none");
+        profile["BTN_EAST"] = json!(["none", "key:ENTER"]);
+        profile["BTN_WEST"] = json!(["key:ESC", "none"]);
+        profile["BTN_TR"] = json!("key:TAB");
+        map["hypr3d"]["toggle_chord"] = json!(["BTN_SOUTH", "BTN_EAST"]);
+        let p = resolve_connected_prompts(&map, &context(), true, &families).unwrap();
+        assert_eq!(
+            p.accept,
+            "Controller: Hold East / Nintendo: Hold A / Sony: Hold Circle / Xbox: Hold B"
+        );
+        assert_eq!(
+            p.back,
+            "Controller: Tap West / Nintendo: Tap Y / Sony: Tap Square / Xbox: Tap X"
+        );
+        assert_eq!(p.next, "Controller+Nintendo: R / Sony: R1 / Xbox: RB");
+        assert_eq!(
+            p.release,
+            "Controller: Hold South+East / Nintendo: Hold B+A / Sony: Hold Cross+Circle / Xbox: Hold A+B"
+        );
+        assert!(p.quit.is_none());
+        assert_eq!(p.navigate, "D-pad");
+    }
+
+    #[test]
+    fn mixed_remapped_navigation_uses_real_direction_bindings_and_shared_labels() {
+        let families = BTreeSet::from(["Nintendo", "Sony", "Xbox"]);
+        let mut map = map();
+        let profile = &mut map["global"]["controller"]["nav"]["terminal_tmux"];
+        profile["BTN_DPAD_UP"] = json!("none");
+        profile["BTN_TR"] = json!(["none", "key:UP"]);
+        let p = resolve_connected_prompts(&map, &context(), true, &families).unwrap();
+        assert_eq!(
+            p.navigate,
+            "Nintendo: Hold R / D-pad Down / D-pad Left / D-pad Right / Sony: Hold R1 / D-pad Down / D-pad Left / D-pad Right / Xbox: Hold RB / D-pad Down / D-pad Left / D-pad Right"
+        );
+        assert!(!p.navigate.contains("LS"));
+        map["global"]["controller"]["nav"]["terminal_tmux"]["BTN_TR"] = json!("none");
+        assert!(resolve_connected_prompts(&map, &context(), true, &families).is_none());
+    }
+
+    #[test]
+    fn mixed_families_cannot_bypass_context_capture_or_profile_guards() {
+        let families = BTreeSet::from(["Controller", "Nintendo", "Sony", "Xbox"]);
+        for (field, value) in [
+            ("controller_owner", json!("foreign")),
+            ("context", json!("game")),
+            ("room_capture", json!(true)),
+            ("released", Json::Null),
+        ] {
+            let mut c = context();
+            c[field] = value;
+            assert!(resolve_connected_prompts(&map(), &c, true, &families).is_none());
+        }
+        let mut c = context();
+        c["context"] = json!("app-capture");
+        c["controller_owner"] = json!("app");
+        assert!(resolve_connected_prompts(&map(), &c, true, &families).is_some());
+        c["released"] = json!(true);
+        assert!(resolve_connected_prompts(&map(), &c, true, &families).is_none());
+        for path in [
+            vec!["global", "enabled"],
+            vec!["global", "controller", "enabled"],
+            vec!["global", "controller", "nav", "enabled"],
+        ] {
+            let mut map = map();
+            let mut value = &mut map;
+            for key in path {
+                value = &mut value[key];
+            }
+            *value = json!(false);
+            assert!(resolve_connected_prompts(&map, &context(), true, &families).is_none());
+        }
+        let mut map = map();
+        map["global"]["controller"]["nav"]["contexts"]["terminal"] = json!("vpad");
+        assert!(resolve_connected_prompts(&map, &context(), true, &families).is_none());
+        map["global"]["controller"]["nav"]["contexts"]["terminal"] = json!("missing");
+        assert!(resolve_connected_prompts(&map, &context(), true, &families).is_none());
+        for chord in [
+            json!([]),
+            json!(["BTN_SOUTH"]),
+            json!(["BTN_SOUTH", "BTN_SOUTH"]),
+            json!(["LS_UP", "BTN_THUMBR"]),
+            json!(["BTN_UNKNOWN", "BTN_THUMBR"]),
+        ] {
+            let mut map = self::map();
+            map["hypr3d"]["toggle_chord"] = chord;
+            assert!(resolve_connected_prompts(&map, &context(), true, &families).is_none());
+        }
+        assert!(
+            resolve_connected_prompts(&self::map(), &context(), true, &BTreeSet::new()).is_none()
+        );
+    }
+
+    #[test]
+    fn malformed_discovery_rows_do_not_hide_a_valid_controller() {
+        let valid = pad("/dev/input/event0", "Sony DualSense", false, Json::Null);
+        let mut malformed = vec![Json::Null, json!(1), json!({}), json!({"kind":"keyboard"})];
+        for (field, values) in [
+            ("name", vec![Json::Null, json!(3), json!("")]),
+            (
+                "path",
+                vec![
+                    Json::Null,
+                    json!(3),
+                    json!("/dev/input/event"),
+                    json!("/dev/input/eventx"),
+                    json!("/dev/input/event1/other"),
+                    json!("/dev/input/event-1"),
+                    json!("/dev/input/event1\n"),
+                ],
+            ),
+            ("virtual", vec![Json::Null, json!("false")]),
+            (
+                "assigned_to",
+                vec![json!(false), json!(0), json!("foreign-seat")],
+            ),
+        ] {
+            for value in values {
+                let mut bad = valid.clone();
+                bad[field] = value;
+                malformed.push(bad);
+            }
+        }
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove("assigned_to");
+        malformed.push(missing);
+        assert!(connected(&json!(malformed.clone()), None).is_none());
+        for bad in &malformed {
+            for devices in [json!([bad, valid.clone()]), json!([valid.clone(), bad])] {
+                assert_eq!(connected(&devices, None), Some(BTreeSet::from(["Sony"])));
+            }
+        }
+        let mut devices: Vec<_> = (0..64).flat_map(|_| malformed.iter().cloned()).collect();
+        devices.push(valid);
+        let families = connected(&json!(devices), None).unwrap();
+        assert_eq!(families, BTreeSet::from(["Sony"]));
+        assert!(resolve_connected_prompts(&map(), &context(), true, &families).is_some());
+        for invalid in [Json::Null, json!({}), json!("devices"), json!([])] {
+            assert!(connected(&invalid, None).is_none());
+        }
+    }
+
+    #[test]
+    fn mixed_nested_families_require_each_exact_registry_row_and_assignment() {
+        let sony = pad(
+            "/dev/input/event14",
+            "Sony DualSense",
+            false,
+            json!("own-seat"),
+        );
+        let xbox = pad("/dev/input/event15", "Xbox", false, json!("own-seat"));
+        let generic = pad(
+            "/dev/input/event16",
+            "Unidentified pad",
+            false,
+            json!("own-seat"),
+        );
+        let mut own = seat();
+        own.entry["devices"] = json!([sony.clone(), xbox.clone(), generic.clone()]);
+        let mut foreign = pad(
+            "/dev/input/event17",
+            "Nintendo Switch Pro",
+            false,
+            json!("foreign"),
+        );
+        // Even a registry match is insufficient without the live own assignment.
+        own.entry["devices"]
+            .as_array_mut()
+            .unwrap()
+            .push(foreign.clone());
+        let host = pad("/dev/input/event18", "Nintendo", false, Json::Null);
+        let discovered = json!([foreign.clone(), host, sony.clone(), xbox, generic]);
+        let families = connected(&discovered, Some(&own)).unwrap();
+        assert_eq!(families, BTreeSet::from(["Controller", "Sony", "Xbox"]));
+        let p = resolve_connected_prompts(&map(), &context(), true, &families).unwrap();
+        assert_eq!(
+            p.accept,
+            "Controller: Tap South / Sony: Tap Cross / Xbox: Tap A"
+        );
+        assert!(!p.family.contains("Nintendo"));
+        foreign["assigned_to"] = json!("own-seat");
+        foreign["name"] = json!("renamed Nintendo");
+        assert!(connected(&json!([foreign]), Some(&own)).is_none());
+        for (field, value) in [
+            ("path", json!("/dev/input/event99")),
+            ("name", json!("spoofed Sony")),
+            ("virtual", json!(true)),
+            ("kind", json!("keyboard")),
+        ] {
+            let mut mismatch = sony.clone();
+            mismatch[field] = value;
+            assert!(connected(&json!([mismatch]), Some(&own)).is_none());
+        }
+        for (field, value) in [
+            ("seat", Json::Null),
+            ("seat", json!("")),
+            ("devices", Json::Null),
+        ] {
+            let mut invalid = seat();
+            invalid.entry[field] = value;
+            assert!(connected(&json!([sony.clone()]), Some(&invalid)).is_none());
+        }
+        own.entry["devices"] = json!([Json::Null, {"kind":"controller"}, sony.clone()]);
+        let mut bad = sony.clone();
+        bad["name"] = Json::Null;
+        assert_eq!(
+            connected(&json!([bad, sony]), Some(&own)),
+            Some(BTreeSet::from(["Sony"]))
+        );
     }
 
     #[test]

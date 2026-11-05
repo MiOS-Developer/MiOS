@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 78 |
+| in_progress | 80 |
 | completed | 1881 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3747 |
+| total | 3749 |
 
 0 record(s) carry at least one override.
 
@@ -4474,6 +4474,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3744` Implement the bounded seed-code editor model and controller character wheel -- completed · owner mios-mons-seed-editor · P1 · size S
 - `task_3745` Make seed entry touch navigable in compact MiOS-Mon viewports -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 - `task_3746` Archive completed terminal sessions and retain only active development pets -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3748` Show all verified assigned controller-family bindings in MiOS-Mon prompts -- in_progress · owner mios-mons-controller-prompts · P1 · size M
+- `task_3749` Make complete MiOS-Mon menus navigable by touch and terminal cursor keys -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 
 ## terminal
 

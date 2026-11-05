@@ -691,3 +691,24 @@ emitted one row while the application received the previous row. Disabling
 status only in that owned game session restored exact painted-cell alignment.
 Task3747 tracks the general MiOS-Tmux fix; other sessions retain their settings.
 Browser watch/portrait automation verifies this route, not physical phones.
+
+## Complete menu touch and cursor navigation
+
+At 20x8 and larger, [<] and [>] select the previous and next menu option or
+scroll an information page. The painted accept control activates only the
+selected option; Back returns without buying, training or replacing a pet.
+The sprite studio also paints [^] and [v] for life-stage previews. These inputs
+remain menu operations; pet movement stays autonomous.
+
+Page Up/Down pages list selections or information text. Home/End selects the
+first/last list option or information page. Seed entry keeps its own caret
+Home/End behavior. Cursor keys and SGR mouse input use the same handlers in
+local terminals, SSH/tmux, browser terminals and headless PTYs; a redirected
+noninteractive invocation remains a read-only snapshot.
+
+When multiple verified controllers share the focused owned session, prompts
+retain each eligible family's actual resolved binding, such as Sony: Tap Cross /
+Xbox: Tap A. Identical actions are deduplicated. Tiny captions compact known
+family prefixes and button names while preserving Hold semantics. Unknown
+devices keep generic cardinal labels. Foreign/unassigned controllers do not
+contribute prompts. This does not certify physical phone-controller forwarding.

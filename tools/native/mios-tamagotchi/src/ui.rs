@@ -102,6 +102,7 @@ pub struct Ui {
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
     menu_number_count: Cell<usize>,
+    menu_footer: Cell<Rect>,
     pub sprite_style: SpriteStyle,
     presentation: Option<crate::hud::DetailRules>,
     effective_style: Cell<SpriteStyle>,
@@ -183,6 +184,7 @@ impl Ui {
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
             menu_number_count: Cell::new(0),
+            menu_footer: Cell::new(Rect::default()),
             sprite_style: SpriteStyle::EightBit,
             presentation: None,
             effective_style: Cell::new(SpriteStyle::EightBit),
@@ -811,7 +813,23 @@ impl Ui {
         }
         format!("[{}] {}", SHORTCUTS[self.selected], LABELS[self.selected])
     }
+    fn menu_len(&self, menu: Menu) -> usize {
+        match menu {
+            Menu::Home => 14,
+            Menu::Care => 5,
+            Menu::Games => 2,
+            Menu::Graphics => 23,
+            Menu::Training => 6,
+            Menu::Status | Menu::Help | Menu::Identity | Menu::Seed => 1,
+            Menu::Gallery => 16,
+            Menu::Talk => 7,
+            Menu::Roster => self.catalogue.len().max(1),
+            Menu::Habitat => self.habitat_rules.as_ref().map_or(2, |r| r.items.len() + 2),
+        }
+    }
+
     fn menu_controls(&self, area: Rect) {
+        self.menu_footer.set(area);
         if area.height == 0 {
             return;
         }
@@ -825,6 +843,105 @@ impl Ui {
             ));
         }
     }
+    fn draw_menu_navigation(&self, screen: &mut Frame, colors: &Colors) {
+        let Some(menu) = self.menu else { return };
+        let area = self.menu_footer.get().intersection(screen.area());
+        if self.confirm_reset
+            || self.native_modal
+            || menu == Menu::Seed
+            || area.width < 17
+            || area.height < 2
+        {
+            return;
+        }
+        // Replace the old whole-row targets with exactly the painted buttons.
+        self.control_targets.borrow_mut().clear();
+        screen.render_widget(Clear, area);
+        let style = Style::default().fg(colors.ink(13)).bg(colors.background);
+        for (offset, label, action) in [(0, "[<]", Action::Previous), (3, "[>]", Action::Next)] {
+            let rect = Rect::new(area.x + offset, area.y, 3, 1);
+            screen.render_widget(Paragraph::new(label).style(style), rect);
+            self.control_targets.borrow_mut().push((rect, action));
+        }
+        let verb = match menu {
+            Menu::Roster => "new?",
+            Menu::Training => "train",
+            Menu::Habitat => "use",
+            Menu::Gallery => "8/16",
+            Menu::Talk => ["more", "feed", "memory", "clean", "rest", "med", "back"]
+                [self.menu_selected.min(6)],
+            Menu::Identity | Menu::Status | Menu::Help => "back",
+            _ => "OK",
+        };
+        let (accept, back) = self.controller.as_ref().map_or_else(
+            || {
+                (
+                    if area.width >= 18 { "Enter" } else { "Ent" }.to_owned(),
+                    "Esc".to_owned(),
+                )
+            },
+            |pad| (tiny_button(&pad.accept), tiny_button(&pad.back)),
+        );
+        let accept_rect = Rect::new(area.x + 7, area.y, area.width - 7, 1);
+        let accept_caption = if area.width >= 32 && self.controller.is_some() {
+            format!("[{accept}] {verb}")
+        } else {
+            match menu {
+                Menu::Training | Menu::Habitat | Menu::Gallery => format!(
+                    "{} {verb}",
+                    if self.controller.is_none() {
+                        "Ent"
+                    } else {
+                        &accept
+                    }
+                ),
+                Menu::Roster => format!("{accept}:new?"),
+                _ => format!("{accept}: {verb}"),
+            }
+        };
+        let caption = frame_label(&accept_caption, accept_rect.width, self.frame / 20);
+        let visible = caption.len().min(usize::from(accept_rect.width)) as u16;
+        screen.render_widget(Paragraph::new(caption).style(style), accept_rect);
+        if visible > 0 {
+            self.control_targets.borrow_mut().push((
+                Rect::new(accept_rect.x, accept_rect.y, visible, 1),
+                Action::Accept,
+            ));
+        }
+        let mut back_x = area.x;
+        if menu == Menu::Gallery && area.width >= 17 {
+            for (offset, label, action) in [
+                (0, "[^]", Action::Direction(Direction::Up)),
+                (3, "[v]", Action::Direction(Direction::Down)),
+            ] {
+                let rect = Rect::new(area.x + offset, area.bottom() - 1, 3, 1);
+                screen.render_widget(Paragraph::new(label).style(style), rect);
+                self.control_targets.borrow_mut().push((rect, action));
+            }
+            back_x += 7;
+        }
+        let back_rect = Rect::new(back_x, area.bottom() - 1, area.right() - back_x, 1);
+        let back_caption = if area.width >= 32 && self.controller.is_some() {
+            format!("[{back}] Back")
+        } else {
+            match menu {
+                Menu::Roster => format!("{back}: keep pet"),
+                Menu::Talk => format!("{back}: Back / Tab"),
+                Menu::Training | Menu::Habitat | Menu::Gallery => format!("{back} Back"),
+                _ => format!("{back}: Back"),
+            }
+        };
+        let caption = frame_label(&back_caption, back_rect.width, self.frame / 20);
+        let visible = caption.len().min(usize::from(back_rect.width)) as u16;
+        screen.render_widget(Paragraph::new(caption).style(style), back_rect);
+        if visible > 0 {
+            self.control_targets.borrow_mut().push((
+                Rect::new(back_rect.x, back_rect.y, visible, 1),
+                Action::Cancel,
+            ));
+        }
+    }
+
     fn click(&mut self, column: u16, row: u16, rules: &Rules) -> Effect {
         let point = (column, row).into();
         if self.menu == Some(Menu::Seed) && !self.confirm_reset && self.seed_import_allowed {
@@ -874,6 +991,10 @@ impl Ui {
         if let Some(action) = control {
             let code = match action {
                 Action::Accept => crossterm::event::KeyCode::Enter,
+                Action::Previous => crossterm::event::KeyCode::BackTab,
+                Action::Next => crossterm::event::KeyCode::Tab,
+                Action::Direction(Direction::Up) => crossterm::event::KeyCode::Up,
+                Action::Direction(Direction::Down) => crossterm::event::KeyCode::Down,
                 Action::Confirm => crossterm::event::KeyCode::Char('y'),
                 Action::Cancel => crossterm::event::KeyCode::Esc,
                 Action::Menu => crossterm::event::KeyCode::Char('o'),
@@ -1037,6 +1158,49 @@ impl Ui {
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
         if self.menu == Some(Menu::Seed) && !self.confirm_reset {
             return self.handle_seed_key(key);
+        }
+
+        if !self.confirm_reset
+            && !self.native_modal
+            && key.kind != KeyEventKind::Release
+            && !key.modifiers.intersects(
+                crossterm::event::KeyModifiers::CONTROL
+                    | crossterm::event::KeyModifiers::ALT
+                    | crossterm::event::KeyModifiers::SUPER
+                    | crossterm::event::KeyModifiers::HYPER
+                    | crossterm::event::KeyModifiers::META,
+            )
+            && let Some(menu) = self.menu
+        {
+            use crossterm::event::KeyCode;
+            let step = self.menu_number_count.get().max(1);
+            if matches!(menu, Menu::Status | Menu::Help | Menu::Identity) {
+                let rows = usize::from(self.viewport.get().1.saturating_sub(2)).clamp(1, 9);
+                let next = match key.code {
+                    KeyCode::Home => Some(0),
+                    KeyCode::End => Some(512),
+                    KeyCode::PageUp => Some(self.menu_scroll.saturating_sub(rows)),
+                    KeyCode::PageDown => Some(self.menu_scroll.saturating_add(rows).min(512)),
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    self.menu_scroll = next;
+                    return Effect::Continue;
+                }
+            } else {
+                let last = self.menu_len(menu).saturating_sub(1);
+                let next = match key.code {
+                    KeyCode::Home => Some(0),
+                    KeyCode::End => Some(last),
+                    KeyCode::PageUp => Some(self.menu_selected.saturating_sub(step)),
+                    KeyCode::PageDown => Some(self.menu_selected.saturating_add(step).min(last)),
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    self.menu_selected = next;
+                    return Effect::Continue;
+                }
+            }
         }
 
         // Orbit is UI-local so controller arrows retain care/menu/memory semantics.
@@ -1404,18 +1568,7 @@ impl Ui {
                 _ => {}
             }
         }
-        let count = match menu {
-            Menu::Home => 14,
-            Menu::Care => 5,
-            Menu::Games => 2,
-            Menu::Graphics => 23,
-            Menu::Training => 6,
-            Menu::Status | Menu::Help | Menu::Identity | Menu::Seed => 1,
-            Menu::Gallery => 16,
-            Menu::Talk => 7,
-            Menu::Roster => self.catalogue.len().max(1),
-            Menu::Habitat => self.habitat_rules.as_ref().map_or(2, |r| r.items.len() + 2),
-        };
+        let count = self.menu_len(menu);
         match action {
             Action::Cancel => self.back(),
             Action::Previous | Action::Direction(Direction::Up | Direction::Left) => {
@@ -1649,6 +1802,7 @@ impl Ui {
         self.menu_targets.borrow_mut().clear();
         self.control_targets.borrow_mut().clear();
         self.menu_number_count.set(0);
+        self.menu_footer.set(Rect::default());
         let face = self.expression(&config.game, frame).kaomoji(frame);
         let stage = format!("{:?}", self.game.stage(&config.game));
         let clock = if self.game.paused {
@@ -1744,6 +1898,7 @@ impl Ui {
                 self.draw_menu(screen, menu, config, colors, renderer);
             }
             self.draw_reset(screen, colors, ascii);
+            self.draw_menu_navigation(screen, colors);
             return;
         }
         let [header, content, dialogue, dock] = Layout::vertical([
@@ -1986,6 +2141,7 @@ impl Ui {
             self.draw_menu(screen, menu, config, colors, renderer);
         }
         self.draw_reset(screen, colors, ascii);
+        self.draw_menu_navigation(screen, colors);
     }
     fn draw_minimal(
         &self,
@@ -3543,6 +3699,7 @@ impl Ui {
             body.width,
             footer_rows,
         );
+        self.menu_footer.set(footer);
         let hint = if footer_rows == 1 {
             "^v Esc".into()
         } else if let Some(pad) = &self.controller {
@@ -3912,6 +4069,8 @@ impl Ui {
                 "Wheel: zoom in the room; scroll choices in menus.",
                 "Menus freeze care time; animation keeps moving.",
                 "Compact HUD: *=100. Tiny frames page all needs.",
+                "Touch [<][>] selects; Ent acts; Esc returns.",
+                "PgUp/PgDn pages. Home/End first/last.",
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
                 "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
                 "[ left / ] right: orbit; Graphics resets orbit only.",
@@ -4198,8 +4357,18 @@ fn wrap_dialogue(text: &str, width: usize) -> Vec<String> {
 }
 fn compact_button(value: &str) -> String {
     value
-        .strip_prefix("Tap ")
-        .unwrap_or(value)
+        .split(" / ")
+        .map(|label| {
+            let label = label
+                .split_once(": ")
+                .filter(|(family, _)| {
+                    matches!(*family, "Sony" | "Xbox" | "Nintendo" | "Controller")
+                })
+                .map_or(label, |(_, binding)| binding);
+            label.strip_prefix("Tap ").unwrap_or(label)
+        })
+        .collect::<Vec<_>>()
+        .join("/")
         .replace("D-pad Up", "DU")
         .replace("D-pad Down", "DD")
         .replace("D-pad Left", "DL")
@@ -6701,6 +6870,211 @@ mod seed_import_ui_regressions {
                 &config.game
             ),
             Effect::Quit
+        );
+    }
+    #[test]
+    fn every_watch_menu_has_painted_touch_navigation_without_care_or_camera_actions() {
+        for menu in [
+            Menu::Home,
+            Menu::Care,
+            Menu::Games,
+            Menu::Graphics,
+            Menu::Training,
+            Menu::Habitat,
+            Menu::Roster,
+            Menu::Status,
+            Menu::Help,
+            Menu::Identity,
+            Menu::Gallery,
+            Menu::Talk,
+        ] {
+            let (config, mut ui) = fixture();
+            let before = ui.game.clone();
+            let camera = (ui.zoom_target, ui.orbit_target, ui.camera_view);
+            let rng = ui.visual_rng;
+            ui.open(menu);
+            for (w, h) in [(20, 8), (28, 24), (80, 24)] {
+                let screen = draw(&ui, &config, w, h, Renderer::Ascii);
+                let footer = ui.menu_footer.get();
+                for (action, label) in [(Action::Previous, "[<]"), (Action::Next, "[>]")] {
+                    let rect = ui
+                        .control_targets
+                        .borrow()
+                        .iter()
+                        .find(|(_, a)| *a == action)
+                        .unwrap_or_else(|| panic!("{menu:?} {w}x{h}: {screen}"))
+                        .0;
+                    let painted: String = screen
+                        .chars()
+                        .skip(usize::from(rect.y) * usize::from(w) + usize::from(rect.x))
+                        .take(usize::from(rect.width))
+                        .collect();
+                    assert_eq!(painted, label);
+                    assert!(footer.contains((rect.x, rect.y).into()));
+                }
+                let next = ui
+                    .control_targets
+                    .borrow()
+                    .iter()
+                    .find(|(_, a)| *a == Action::Next)
+                    .unwrap()
+                    .0;
+                ui.click(next.x, next.y, &config.game);
+                if matches!(menu, Menu::Status | Menu::Help | Menu::Identity) {
+                    assert_eq!(ui.menu_scroll, 1);
+                } else {
+                    assert_eq!(ui.menu_selected, 1);
+                }
+                draw(&ui, &config, w, h, Renderer::Ascii);
+                let prev = ui
+                    .control_targets
+                    .borrow()
+                    .iter()
+                    .find(|(_, a)| *a == Action::Previous)
+                    .unwrap()
+                    .0;
+                ui.click(prev.x, prev.y, &config.game);
+                assert_eq!(ui.menu_selected, 0);
+                assert_eq!(ui.menu_scroll, 0);
+                assert_eq!(ui.game, before);
+                assert_eq!((ui.zoom_target, ui.orbit_target, ui.camera_view), camera);
+                assert_eq!(ui.visual_rng, rng);
+            }
+        }
+    }
+
+    #[test]
+    fn touch_reaches_offscreen_home_choices_and_gallery_stages() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        ui.open(Menu::Home);
+        for index in 1..14 {
+            draw(&ui, &config, 20, 8, Renderer::Ascii);
+            let next = ui
+                .control_targets
+                .borrow()
+                .iter()
+                .find(|(_, a)| *a == Action::Next)
+                .unwrap()
+                .0;
+            ui.click(next.x, next.y, &config.game);
+            assert_eq!(ui.menu_selected, index);
+            assert_eq!(ui.game, before);
+        }
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let accept = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Accept)
+            .unwrap()
+            .0;
+        ui.click(accept.x, accept.y, &config.game);
+        assert_eq!(ui.menu, Some(Menu::Seed));
+        assert_eq!(ui.game, before);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        ui.open(Menu::Gallery);
+        for (action, expected) in [
+            (Action::Direction(Direction::Up), 4),
+            (Action::Direction(Direction::Down), 0),
+        ] {
+            draw(&ui, &config, 20, 8, Renderer::Ascii);
+            let rect = ui
+                .control_targets
+                .borrow()
+                .iter()
+                .find(|(_, a)| *a == action)
+                .unwrap()
+                .0;
+            ui.click(rect.x, rect.y, &config.game);
+            assert_eq!(ui.gallery_stage, expected);
+            assert_eq!(ui.game, before);
+        }
+    }
+
+    #[test]
+    fn terminal_paging_keys_are_navigation_only_and_seed_caret_keeps_its_contract() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.open(Menu::Graphics);
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let page = ui.menu_number_count.get();
+        ui.handle(key(KeyCode::PageDown), &config.game);
+        assert_eq!(ui.menu_selected, page);
+        ui.handle(key(KeyCode::End), &config.game);
+        assert_eq!(ui.menu_selected, 22);
+        ui.handle(key(KeyCode::PageUp), &config.game);
+        assert_eq!(ui.menu_selected, 22 - page);
+        ui.handle(key(KeyCode::Home), &config.game);
+        assert_eq!(ui.menu_selected, 0);
+        for kind in [KeyEventKind::Release, KeyEventKind::Press] {
+            let mut event = key(KeyCode::End);
+            event.kind = kind;
+            if kind == KeyEventKind::Press {
+                event.modifiers = KeyModifiers::CONTROL;
+            }
+            ui.handle(event, &config.game);
+            assert_eq!(ui.menu_selected, 0);
+        }
+        let mut repeat = key(KeyCode::PageDown);
+        repeat.kind = KeyEventKind::Repeat;
+        ui.handle(repeat, &config.game);
+        assert_eq!(ui.menu_selected, page);
+        ui.open(Menu::Help);
+        ui.handle(key(KeyCode::End), &config.game);
+        assert_eq!(ui.menu_scroll, 512);
+        ui.handle(key(KeyCode::PageUp), &config.game);
+        assert!(ui.menu_scroll < 512);
+        ui.handle(key(KeyCode::Home), &config.game);
+        assert_eq!(ui.menu_scroll, 0);
+        assert_eq!(ui.game, before);
+        assert_eq!(ui.visual_rng, rng);
+        ui.open_seed();
+        ui.paste_seed("512");
+        ui.handle(key(KeyCode::Home), &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 0);
+        ui.handle(key(KeyCode::End), &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 3);
+    }
+
+    #[test]
+    fn compact_touch_controls_keep_mapped_pad_labels_and_no_hidden_targets() {
+        let (config, mut ui) = fixture();
+        ui.controller = Some(ControllerPrompts {
+            family: "Sony / Xbox".into(),
+            navigate: "D-pad".into(),
+            accept: "Sony: Tap Cross / Xbox: Tap A".into(),
+            back: "Sony: Hold Circle / Xbox: Hold B".into(),
+            next: "Tap Square / Tap X".into(),
+            release: "Hold L3+R3".into(),
+            quit: None,
+        });
+        ui.open(Menu::Home);
+        let screen = draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(
+            screen.contains("X/A: OK") && screen.contains("H-O/H-B: Back"),
+            "{screen}"
+        );
+        let old = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Next)
+            .unwrap()
+            .0;
+        let before = ui.game.clone();
+        draw(&ui, &config, 8, 4, Renderer::Ascii);
+        assert!(ui.control_targets.borrow().is_empty());
+        ui.click(old.x, old.y, &config.game);
+        assert_eq!(ui.game, before);
+        ui.ask_reset();
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(
+            !ui.control_targets
+                .borrow()
+                .iter()
+                .any(|(_, a)| matches!(a, Action::Next | Action::Previous))
         );
     }
 }

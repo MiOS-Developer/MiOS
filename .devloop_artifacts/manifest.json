@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T19:56:31.098286+00:00",
+  "last_updated": "2026-11-05T20:19:40.408870+00:00",
   "total_artifacts": 132,
   "artifacts": [
     {
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "9e210b190378b4930285f000591c2f12745e035b88932b0cdef08a25db32a604",
-      "size_bytes": 691257,
+      "sha256": "46689364b58c14cb4bcdcb1041b38112aabe4c57f0270714cd34429fc65ba12c",
+      "size_bytes": 692511,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -198,8 +198,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "895be95655785e861732db76d4dd71796c2eddec290df3920eb817d632d7e758",
-      "size_bytes": 552023,
+      "sha256": "ebd4d1c980b3ed942bef3ccd7ed5be96275b1823c57d5f1b4f46a48d2b424eae",
+      "size_bytes": 552340,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -234,8 +234,8 @@
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "32e720f6f823287761ad601bcb204b6b294699cca64c92609dec8cd0c383b149",
-      "size_bytes": 14630045,
+      "sha256": "3db43fb88227916d790e6320ec2e82f5ff19bd5db299f1ded4a99d226f9a13cd",
+      "size_bytes": 14632483,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -1549,8 +1549,8 @@
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
         }
       },
-      "sha256": "3d9c21e47450ab1e97e9d52b20c96cc73150487bcac486b7668b616ce7167e0e",
-      "size_bytes": 51236
+      "sha256": "41813b2162bb9e698e28e3af4a377a899f0125f1daf57dbc020fe1318cb25a66",
+      "size_bytes": 66968
     },
     {
       "path": "tools/native/mios-tamagotchi/src/lib.rs",
@@ -1749,8 +1749,8 @@
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
         }
       },
-      "sha256": "5dea22f81af0d84a761a09522accb9fd0bbdb0a9314e8bf3971eaab0799d3023",
-      "size_bytes": 255542
+      "sha256": "f0725fe937b3300a8ed5c6234d240a6d89ccd6e48c2d3af27879a540af2e096a",
+      "size_bytes": 270828
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -1893,8 +1893,8 @@
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json"
         }
       },
-      "sha256": "af702188417d06e5291d8c0e9dfb2dc0138a4a48b08d4e403ce38394023bfb68",
-      "size_bytes": 41290
+      "sha256": "f2c07dcf7842ecb938f2ae36325e6ece1719a22cd53c08d12c52bc633235f0fb",
+      "size_bytes": 42524
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
