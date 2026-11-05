@@ -97,6 +97,7 @@ pub struct Ui {
     seed_import_allowed: bool,
     seed_message: String,
     seed_cursor_targets: RefCell<Vec<(Rect, usize)>>,
+    seed_edit_targets: RefCell<Vec<(Rect, SeedEdit)>>,
     menu_scroll: usize,
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
@@ -177,6 +178,7 @@ impl Ui {
             seed_import_allowed: true,
             seed_message: String::new(),
             seed_cursor_targets: RefCell::new(Vec::new()),
+            seed_edit_targets: RefCell::new(Vec::new()),
             menu_scroll: 0,
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
@@ -825,7 +827,18 @@ impl Ui {
     }
     fn click(&mut self, column: u16, row: u16, rules: &Rules) -> Effect {
         let point = (column, row).into();
-        if self.menu == Some(Menu::Seed) && !self.confirm_reset {
+        if self.menu == Some(Menu::Seed) && !self.confirm_reset && self.seed_import_allowed {
+            let edit = self
+                .seed_edit_targets
+                .borrow()
+                .iter()
+                .find(|(area, _)| area.contains(point))
+                .map(|(_, edit)| *edit);
+            if let Some(edit) = edit {
+                self.seed_message.clear();
+                self.seed_entry.edit(edit);
+                return Effect::Continue;
+            }
             let cursor = self
                 .seed_cursor_targets
                 .borrow()
@@ -961,11 +974,14 @@ impl Ui {
             return Effect::Continue;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
-            return if key.code == KeyCode::Char('c') {
-                Effect::Quit
-            } else {
-                Effect::Continue
-            };
+            if key.code == KeyCode::Char('c') {
+                return Effect::Quit;
+            }
+            if key.code == KeyCode::Char('u') && self.seed_import_allowed {
+                self.seed_message.clear();
+                self.seed_entry.edit(SeedEdit::Clear);
+            }
+            return Effect::Continue;
         }
         if key.modifiers.intersects(
             KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
@@ -1628,6 +1644,7 @@ impl Ui {
         self.select_detail(detail_scene, renderer);
         self.pet_area.set(Rect::default());
         self.dialog_area.set(Rect::default());
+        self.seed_edit_targets.borrow_mut().clear();
         self.care_targets.borrow_mut().clear();
         self.menu_targets.borrow_mut().clear();
         self.control_targets.borrow_mut().clear();
@@ -3330,6 +3347,7 @@ impl Ui {
         let body = block.inner(area);
         screen.render_widget(block, area);
         self.seed_cursor_targets.borrow_mut().clear();
+        self.seed_edit_targets.borrow_mut().clear();
         if body.is_empty() {
             return;
         }
@@ -3381,7 +3399,11 @@ impl Ui {
         }
         if body.height > 1 {
             screen.render_widget(
-                Paragraph::new("Paste / type code").style(Style::default().fg(colors.ink(2))),
+                Paragraph::new(self.controller.as_ref().map_or_else(
+                    || "Paste / type code".into(),
+                    |p| format!("{} Edit", tiny_button(&p.navigate)),
+                ))
+                .style(Style::default().fg(colors.ink(2))),
                 Rect::new(body.x, body.y, body.width, 1),
             );
         }
@@ -3397,15 +3419,26 @@ impl Ui {
                 Rect::new(body.x, row + 1, body.width, 1),
             );
         }
-        if body.height >= 6 {
-            let nav = self.controller.as_ref().map_or_else(
-                || "^v char <> cursor".into(),
-                |p| format!("{} Edit", tiny_button(&p.navigate)),
-            );
-            screen.render_widget(
-                Paragraph::new(nav).style(Style::default().fg(colors.ink(13))),
-                Rect::new(body.x, body.bottom() - 3, body.width, 1),
-            );
+        if body.height >= 6 && body.width >= 17 {
+            // Register exactly the painted buttons: no invisible targets in tiny panes.
+            let wide = body.width >= 23;
+            let buttons = [
+                ("[<]", SeedEdit::Left),
+                ("[>]", SeedEdit::Right),
+                ("[-]", SeedEdit::Down),
+                ("[+]", SeedEdit::Up),
+                (if wide { "[Clear]" } else { "[Clr]" }, SeedEdit::Clear),
+            ];
+            let mut x = body.x;
+            for (label, edit) in buttons {
+                let button = Rect::new(x, body.bottom() - 3, label.len() as u16, 1);
+                screen.render_widget(
+                    Paragraph::new(label).style(Style::default().fg(colors.ink(13))),
+                    button,
+                );
+                self.seed_edit_targets.borrow_mut().push((button, edit));
+                x += button.width + u16::from(wide);
+            }
         }
         let rows = body
             .height
@@ -6491,5 +6524,139 @@ mod seed_import_ui_regressions {
         assert_eq!(ui.visual_rng, rng);
         ui.handle(key(KeyCode::Esc), &config.game);
         assert_eq!(ui.game, before);
+    }
+    #[test]
+    fn seed_touch_controls_fit_watch_portrait_and_landscape_without_changing_the_pet() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        let camera = (ui.zoom_target, ui.orbit_target, ui.camera_view);
+        let rng = ui.visual_rng;
+        ui.open_seed();
+        for (w, h) in [(20, 8), (28, 18), (80, 24), (120, 12)] {
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                let text = draw(&ui, &config, w, h, renderer);
+                assert!(
+                    text.contains("[<]")
+                        && text.contains("[>]")
+                        && text.contains("[-]")
+                        && text.contains("[+]"),
+                    "{text}"
+                );
+                assert!(
+                    text.contains(if w < 25 { "[Clr]" } else { "[Clear]" }),
+                    "{text}"
+                );
+                let targets = ui.seed_edit_targets.borrow().clone();
+                assert_eq!(targets.len(), 5);
+                for (area, _) in &targets {
+                    assert!(
+                        area.x >= 1 && area.right() <= w - 1 && area.y > 2 && area.bottom() < h - 2
+                    );
+                }
+                for index in [3, 1, 0, 2, 4] {
+                    let (area, _) = targets[index];
+                    assert_eq!(ui.click(area.x, area.y, &config.game), Effect::Continue);
+                }
+                assert!(ui.seed_entry.text().is_empty());
+                assert_eq!(ui.game, before);
+                assert_eq!((ui.zoom_target, ui.orbit_target, ui.camera_view), camera);
+                assert_eq!(ui.visual_rng, rng);
+            }
+        }
+    }
+
+    #[test]
+    fn touch_editor_checks_cancels_and_starts_the_selected_birth() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        ui.open_seed();
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let plus = ui.seed_edit_targets.borrow()[3].0;
+        ui.click(plus.x, plus.y, &config.game);
+        let expected = ui.seed_entry.validate().unwrap();
+        let check = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Accept)
+            .unwrap()
+            .0;
+        ui.click(check.x, check.y, &config.game);
+        let preview = draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(preview.contains(&expected.compact()), "{preview}");
+        let draft = ui.seed_entry.text().to_string();
+        // A previously painted editor control is inert behind confirmation.
+        ui.click(plus.x, plus.y, &config.game);
+        assert_eq!(ui.seed_entry.text(), draft);
+        assert_eq!(ui.game, before);
+        let cancel = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Cancel)
+            .unwrap()
+            .0;
+        ui.click(cancel.x, cancel.y, &config.game);
+        assert_eq!(ui.game, before);
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let check = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Accept)
+            .unwrap()
+            .0;
+        ui.click(check.x, check.y, &config.game);
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        let start = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, a)| *a == Action::Accept)
+            .unwrap()
+            .0;
+        ui.click(start.x, start.y, &config.game);
+        assert_eq!(ui.game.genesis_seed, Some(expected.seed()));
+        assert!(ui.game.paused);
+        assert_eq!(ui.game.age_ticks, 0);
+    }
+
+    #[test]
+    fn seed_clear_is_press_only_and_hidden_touch_targets_are_discarded() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        ui.open_seed();
+        ui.paste_seed(&MonCode::new(512).unwrap().compact());
+        let mut clear = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            clear.kind = kind;
+            ui.handle(clear, &config.game);
+            assert!(!ui.seed_entry.text().is_empty());
+        }
+        clear.kind = KeyEventKind::Press;
+        ui.handle(clear, &config.game);
+        assert!(ui.seed_entry.text().is_empty());
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert_eq!(ui.seed_edit_targets.borrow().len(), 5);
+        draw(&ui, &config, 12, 5, Renderer::Ascii);
+        assert!(ui.seed_edit_targets.borrow().is_empty());
+        ui.seed_import_allowed = false;
+        ui.paste_seed("512");
+        draw(&ui, &config, 20, 8, Renderer::Ascii);
+        assert!(ui.seed_edit_targets.borrow().is_empty());
+        ui.handle(clear, &config.game);
+        assert_eq!(ui.game, before);
+        assert_eq!(
+            ui.handle(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                &config.game
+            ),
+            Effect::Quit
+        );
     }
 }

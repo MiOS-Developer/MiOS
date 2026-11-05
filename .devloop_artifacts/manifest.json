@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-05T18:47:41.203523+00:00",
+  "last_updated": "2026-11-05T19:37:36.889641+00:00",
   "total_artifacts": 132,
   "artifacts": [
     {
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "eac791180a60d666e18363e0f07ae1aedc8992b251d8da200e8a8f86542dd30f",
-      "size_bytes": 687703,
+      "sha256": "2b123207916ab3c838b024b6615670cc023df38483612d6da4c8af8f18f7bed9",
+      "size_bytes": 688688,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -192,8 +192,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "f22bed57ed58ef172370e44d4750d700726794eafebfb6856114116e29d94773",
-      "size_bytes": 551565,
+      "sha256": "9c819d019d77a39db16bed08a753a67c36ba04ba93810e445103aaf35ffa4245",
+      "size_bytes": 551875,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -222,8 +222,8 @@
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "e614b7984e3caaba9fe033919a41f11d40713be458e0112757d460a5eaafe165",
-      "size_bytes": 14626133,
+      "sha256": "dc8d76e75ac4b113a86d6e483610b8a168b48528b55f52303b45d5d3f0302415",
+      "size_bytes": 14628408,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -1725,8 +1725,8 @@
           "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       },
-      "sha256": "f42e152b88cbc92bc8781a9758d5aed624afc4de4622d2de89c559ea0f7bb382",
-      "size_bytes": 246597
+      "sha256": "86ab04ec3b38f5cce5a5b927338fbda9db81f375bf8484abb6f03d8045bb57b3",
+      "size_bytes": 253307
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -1863,8 +1863,8 @@
           "scope": "user-local x86_64; physical device/image acceptance remains separate"
         }
       },
-      "sha256": "192a856faae634877ad7fc2a0ebdcf7a8d7a281c5163d56d4ea6ad92b273b357",
-      "size_bytes": 40516
+      "sha256": "dc8a65488b621554453ff7a3772c6ec62969fd223118b74c1da3ce310193d22b",
+      "size_bytes": 40823
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",

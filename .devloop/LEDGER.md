@@ -4136,3 +4136,19 @@ PR pushes. This standing rule is recorded in .agents/COORDINATION.md. The curren
 publication will be followed by an atomic reinstallation and a fresh owned live
 main preview, retaining the prior operator/adopted windows. Post-push receipt:
  /home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json
+
+## 2026-11-05 · Compact touch seed entry and completed-session cleanup
+
+Task3745 adds visible draft-only caret, character-wheel and clear buttons at20x8
+through portrait and landscape viewports. Ctrl+U clears only a pressed editor
+draft; confirmation and saved sessions preserve their protections. Source and
+build receipts will pin the executable after actual MiOS-DEV verification.
+
+Task3746 inventory archived36 completed/idle sessions and46 windows, then the
+operator explicitly requested closing pets except development instances.
+Twelve obsolete/menu pets exited normally; four actual development pets remain
+in the existing live, shapes, verify and habitat PiPs. Save bytes were not
+deleted. The localhost8310 backend, native browser, SSH bridges and continuing
+nested launchers were preserved. Cleanup receipts:
+ /home/mios/.local/state/mios/mios-mons-touch-live/mios-tmux-cleanup-receipt.json
+ /home/mios/.local/state/mios/mios-mons-touch-live/mios-pet-cleanup-receipt.json

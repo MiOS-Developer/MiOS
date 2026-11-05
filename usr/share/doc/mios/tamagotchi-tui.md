@@ -661,9 +661,13 @@ or needs. This reproduces birth identity and hatch stats, not trained progress.
 
 For controller menu operation, Left/Right selects a payload character and
 Up/Down cycles its Base32 value. Accept checks/starts; Back keeps the pet. The
-onscreen hints use the current focused controller mappings. Mouse clicks position
-the caret and activate Check/Keep. Software routing is tested separately from
-physical controller ownership.
+onscreen hints use the current focused controller mappings. Mouse clicks or web
+terminal taps position the caret and activate Check/Keep. The visible [<]/[>]
+buttons move the caret, [-]/[+] cycle a character, and [Clear] (or [Clr] on a
+watch grid) clears the draft. Ctrl+U also clears the focused field. These controls
+fit 20x8, edit only the draft, and disappear behind confirmation or when the
+viewport cannot paint them. Software routing is tested separately from physical
+controller ownership.
 
 The complete compact code and both confirmation actions fit a 20x8 terminal.
 Smaller views refuse confirmation; the tiny editor shows Escape/Back and Ctrl+C,
