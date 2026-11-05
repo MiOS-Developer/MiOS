@@ -910,6 +910,65 @@ fn native_glyph_candidates(
     candidates
 }
 
+/// A two-row head needs a connected text run, otherwise body shading can
+/// look like an extra eye or mouth between its native facial characters.
+/// Every candidate is still a complete depth-authorized head cell, and both
+/// eye anchors must straddle the head's actual UV centre.
+fn native_micro_candidates(
+    texture: FaceTexture,
+    visible: &[NativeHeadCell],
+) -> Vec<NativeGlyphCell> {
+    let length = texture.text.len();
+    let empty = vec![None; length];
+    if length < 3 {
+        return empty;
+    }
+    let middle = length / 2;
+    let pitch = 8.0 / (texture.width() + 2.0);
+    for indices in [0..length, 1..length - 1] {
+        let mut best = None;
+        let mut best_score = f64::INFINITY;
+        for &(start, _, _) in visible {
+            let mut candidates = empty.clone();
+            let mut score = 0.0;
+            let mut previous: Option<[f64; 2]> = None;
+            let mut complete = true;
+            for (offset, index) in indices.clone().enumerate() {
+                let Some(column) = start.0.checked_add(offset as u16) else {
+                    complete = false;
+                    break;
+                };
+                let Some(&(_, uv, _)) =
+                    visible.iter().find(|(pos, _, _)| *pos == (column, start.1))
+                else {
+                    complete = false;
+                    break;
+                };
+                let target_u = (index as f64 * 8.0 + 3.5) / (texture.width() + 2.0);
+                if (uv[0] - target_u).abs() > pitch
+                    || (index < middle && uv[0] >= 0.5)
+                    || (index > middle && uv[0] <= 0.5)
+                    || previous.is_some_and(|p| uv[0] <= p[0] || (uv[1] - p[1]).abs() > 0.16)
+                {
+                    complete = false;
+                    break;
+                }
+                score += (uv[0] - target_u).powi(2) + (uv[1] - 0.35).powi(2);
+                previous = Some(uv);
+                candidates[index] = Some(((column, start.1), texture.text.as_bytes()[index]));
+            }
+            if complete && score < best_score {
+                best = Some(candidates);
+                best_score = score;
+            }
+        }
+        if let Some(candidates) = best {
+            return candidates;
+        }
+    }
+    empty
+}
+
 /// Terminal-sized glyphs are a level of detail for an underresolved atlas.
 /// Each character finds its own visible head-local UV anchor. Its entire packed
 /// cell must be mapped head material, so a nose, ear or occluder wins outright.
@@ -953,6 +1012,17 @@ fn draw_surface_glyphs(
                 visible.push(((col, row), mean, cell_width));
             }
         }
+    }
+    if area.height <= 3 {
+        let candidates = native_micro_candidates(texture, &visible);
+        let mut painted = false;
+        for (pos, glyph) in candidates.into_iter().flatten() {
+            if let Some(cell) = buf.cell_mut(pos) {
+                paint_face_character(cell, colors, char::from(glyph));
+                painted = true;
+            }
+        }
+        return painted;
     }
     let horizontal_tolerance = 3.0 / (texture.width() + 2.0);
     // Start with the upper face. A broad beak can consume a whole terminal
@@ -2817,6 +2887,59 @@ mod camera_tests {
         assert!(
             incomplete[1..4].iter().any(Option::is_none),
             "two eye cells cannot masquerade as a complete expression core"
+        );
+    }
+
+    #[test]
+    fn micro_text_runs_are_adjacent_and_cannot_bridge_occluders_or_reverse_head_uvs() {
+        let texture = FaceTexture { text: "(^_^)" };
+        let visible: Vec<NativeHeadCell> = (0..5)
+            .map(|index| {
+                (
+                    (index, 1),
+                    [(f64::from(index) * 8.0 + 3.5) / 39.0, 0.35],
+                    8.0 / 39.0,
+                )
+            })
+            .collect();
+        let complete = native_micro_candidates(texture, &visible);
+        assert_eq!(
+            complete
+                .iter()
+                .flatten()
+                .map(|(_, b)| char::from(*b))
+                .collect::<String>(),
+            "(^_^)"
+        );
+        let core = native_micro_candidates(texture, &visible[1..4]);
+        assert!(core[0].is_none() && core[4].is_none());
+        assert_eq!(
+            core.iter()
+                .flatten()
+                .map(|(_, b)| char::from(*b))
+                .collect::<String>(),
+            "^_^"
+        );
+        let interrupted: Vec<_> = visible
+            .iter()
+            .copied()
+            .filter(|(pos, _, _)| pos.0 != 2)
+            .collect();
+        assert!(
+            native_micro_candidates(texture, &interrupted)
+                .iter()
+                .all(Option::is_none),
+            "an unmapped nose cell must interrupt the whole text run"
+        );
+        let mut reversed = visible.clone();
+        for (index, (_, uv, _)) in reversed.iter_mut().enumerate() {
+            uv[0] = visible[4 - index].1[0];
+        }
+        assert!(
+            native_micro_candidates(texture, &reversed)
+                .iter()
+                .all(Option::is_none),
+            "a mirrored UV order must not become a forward-facing expression"
         );
     }
 
