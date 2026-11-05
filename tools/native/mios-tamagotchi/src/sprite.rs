@@ -1893,11 +1893,15 @@ impl VoxelModel {
 
         // Retain the winning surface's depth, scaled into sprite pixels so
         // the room compositor can compare it in the world's own camera units.
+        // Ground belongs to the posed body. Invert the roll when passing its
+        // post-pose vertical anchor through the common model transform.
         let ground_y = cells
             .keys()
-            .map(|&(_, y, _)| center_of(y) - 0.5 / kf)
+            .map(|&(x, y, _)| {
+                sr * center_of(x) + cr * center_of(y) - 0.5 / kf * (sr.abs() + cr.abs())
+            })
             .fold(f32::INFINITY, f32::min);
-        let [gx, gy, gz] = project([0.0, ground_y, 0.0]);
+        let [gx, gy, gz] = project([sr * ground_y, cr * ground_y, 0.0]);
         sprite.voxel_ground = Some([gx, gy].map(|v| (v * 256.0).round() as i32));
         sprite.voxel_depth = Some(
             depth
@@ -3867,6 +3871,46 @@ mod world_depth_metadata_regressions {
                 }
             }
             assert!(hidden.face_overlay().is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod posed_world_ground_regressions {
+    use super::*;
+    #[test]
+    fn standing_and_sleeping_surfaces_never_sink_below_the_world_floor() {
+        let (sp, cp) = 30.0_f64.to_radians().sin_cos();
+        for stage in [crate::game::Stage::Baby, crate::game::Stage::Adult] {
+            for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                for expression in [Expression::Happy, Expression::Sleeping] {
+                    for yaw in [0, 45, 90, 135, 180, 225, 270, 315] {
+                        let sprite = Sprite::voxel_with_camera(
+                            stage,
+                            expression,
+                            style,
+                            0,
+                            [yaw, 30],
+                            false,
+                            Appearance::default(),
+                        );
+                        let ground = sprite.ground_pixel().unwrap();
+                        let mut lowest = f64::INFINITY;
+                        for y in 0..u32::from(sprite.height()) {
+                            for x in 0..u32::from(sprite.width()) {
+                                if let Some(depth) = sprite.depth_pixels(x, y) {
+                                    let up = ground[1] - (f64::from(y) + 0.5);
+                                    lowest = lowest.min(cp * up + sp * depth);
+                                }
+                            }
+                        }
+                        assert!(
+                            lowest >= -0.05,
+                            "{stage:?} {style:?} {expression:?} {yaw}: {lowest}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

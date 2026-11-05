@@ -1354,6 +1354,39 @@ pub struct RoomWidget<'a> {
     pub habitat: Option<HabitatView<'a>>,
 }
 
+/// Restore compositor-owned cells after either native text or atlas face paint.
+/// A packed cell shared with the world has multiple colour planes; repainting
+/// just its visible head samples would destroy the foreground object's plane.
+fn draw_world_face(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    authority: (Rect, &[bool]),
+    buf: &mut Buffer,
+) -> bool {
+    let (viewport, owned) = authority;
+    let mut protected = Vec::new();
+    for row in viewport.y..viewport.bottom() {
+        for col in viewport.x..viewport.right() {
+            let index = usize::from(row - viewport.y) * usize::from(viewport.width)
+                + usize::from(col - viewport.x);
+            if !owned.get(index).copied().unwrap_or(false) {
+                if let Some(cell) = buf.cell((col, row)) {
+                    protected.push(((col, row), cell.clone()));
+                }
+            }
+        }
+    }
+    let painted = draw_camera_face(sprite, renderer, colors, projection, viewport, buf);
+    for (position, cell) in protected {
+        if let Some(target) = buf.cell_mut(position) {
+            *target = cell;
+        }
+    }
+    painted
+}
+
 impl RoomWidget<'_> {
     /// One orthographic camera and depth space for the entire voxel habitat.
     fn render_world_room(&self, area: Rect, buf: &mut Buffer, rules: &crate::world::WorldRules) {
@@ -1424,8 +1457,10 @@ impl RoomWidget<'_> {
                 y.saturating_sub(u32::from(viewport.y) * u32::from(dy)),
             )
         };
+        let mut pet_cells = vec![false; usize::from(viewport.width) * usize::from(viewport.height)];
         for row in viewport.y..viewport.bottom() {
             for col in viewport.x..viewport.right() {
+                let mut all_pet = true;
                 let mut pixels = [None; 8];
                 let mut surface = [None; 8];
                 for y in 0..dy {
@@ -1434,6 +1469,7 @@ impl RoomWidget<'_> {
                         let px = u32::from(col) * u32::from(dx) + u32::from(x);
                         let py = u32::from(row) * u32::from(dy) + u32::from(y);
                         let world = sample(px, py);
+                        let mut pet_wins = false;
                         if let Some(w) = world {
                             pixels[i] = Some(w.palette);
                             surface[i] = Some(SurfaceLight {
@@ -1447,14 +1483,18 @@ impl RoomWidget<'_> {
                                 if world
                                     .is_none_or(|w| f64::from(w.depth) <= depth_at(sx, sy) + 0.0001)
                                 {
+                                    pet_wins = true;
                                     pixels[i] = Some(index);
                                     surface[i] =
                                         projected_surface_light(self.sprite, projection, px, py);
                                 }
                             }
                         }
+                        all_pet &= pet_wins;
                     }
                 }
+                pet_cells[usize::from(row - viewport.y) * usize::from(viewport.width)
+                    + usize::from(col - viewport.x)] = all_pet;
                 if let Some(cell) = buf.cell_mut((col, row)) {
                     paint_lit_pixels(
                         self.renderer,
@@ -1493,12 +1533,12 @@ impl RoomWidget<'_> {
                 (x0..x1).all(|x| sample(x, y).is_none_or(|w| f64::from(w.depth) <= depth + 0.0001))
             })
         });
-        let face_painted = draw_camera_face(
+        let face_painted = draw_world_face(
             &face_sprite,
             self.renderer,
             self.colors,
             projection,
-            viewport,
+            (viewport, &pet_cells),
             buf,
         );
         let Some(face) = self.sprite.face_text() else {
@@ -4698,5 +4738,87 @@ mod voxel_world_integration_tests {
         assert_ne!(frames[0], frames[1]);
         assert_ne!(frames[1], frames[2]);
         assert_eq!(game, before);
+    }
+}
+
+#[cfg(test)]
+mod packed_world_face_regressions {
+    use super::*;
+    use crate::{
+        capabilities::Depth,
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+    #[test]
+    fn native_and_atlas_faces_preserve_both_orientations_of_world_owned_halfblock_cells() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let sprite = Sprite::voxel_with_camera(
+            Stage::Adult,
+            Expression::Happy,
+            SpriteStyle::SixteenBit,
+            0,
+            [0, 30],
+            false,
+            Appearance::default(),
+        );
+        for (w, h) in [(80, 30), (160, 90)] {
+            let area = Rect::new(0, 0, w, h);
+            let projection = Projection::camera(
+                &sprite,
+                SolidBounds::of(&sprite).unwrap(),
+                area,
+                Renderer::HalfBlock,
+                0,
+                (500, 500),
+                Camera {
+                    view: CameraView::Face,
+                    from_view: CameraView::Face,
+                    ..Camera::default()
+                },
+            );
+            for glyph in ['▀', '▄'] {
+                let mut original = Buffer::empty(area);
+                for cell in &mut original.content {
+                    cell.set_char(glyph).set_fg(Color::Red).set_bg(Color::Blue);
+                }
+                let mut all = original.clone();
+                let mut owners = vec![true; usize::from(w) * usize::from(h)];
+                assert!(draw_world_face(
+                    &sprite,
+                    Renderer::HalfBlock,
+                    &colors,
+                    projection,
+                    (area, &owners),
+                    &mut all
+                ));
+                let changed = all
+                    .content
+                    .iter()
+                    .zip(&original.content)
+                    .enumerate()
+                    .filter_map(|(i, (a, b))| (a != b).then_some(i))
+                    .take(16)
+                    .collect::<Vec<_>>();
+                assert!(!changed.is_empty());
+                for index in changed {
+                    owners[index] = false;
+                    let mut actual = original.clone();
+                    draw_world_face(
+                        &sprite,
+                        Renderer::HalfBlock,
+                        &colors,
+                        projection,
+                        (area, &owners),
+                        &mut actual,
+                    );
+                    assert_eq!(
+                        actual.content[index], original.content[index],
+                        "mixed cell {index}, {w}x{h}, {glyph}"
+                    );
+                    owners[index] = true;
+                }
+            }
+        }
     }
 }
