@@ -6,7 +6,7 @@
 defined -- by the resolver-rendered /etc/mios/install.env, not a literal.
 
 * the exports the resolver renders from the vendor mios.toml carry
-  MIOS_PORTS_MCP / MIOS_PORTS_MCP equal to [ports].mcp;
+  MIOS_PORTS_MCP equal to [ports].mcp;
 * mcp-server-runner's preamble, run under exactly that environment (ambient
   MIOS_* scrubbed), resolves MIOS_PORTS_MCP to that value;
 * neither the unit nor its [units."mios-mcp.service"] SSOT mirror assigns a
@@ -30,7 +30,7 @@ _ROOT = os.path.normpath(os.path.join(_HERE, "..", "..", ".."))
 _RUNNER = os.path.join(_ROOT, "usr", "libexec", "mios", "mcp-server-runner")
 _UNIT = os.path.join(_ROOT, "usr", "lib", "systemd", "system", "mios-mcp.service")
 _TOML = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
-_PORT_NAMES = ("MIOS_PORTS_MCP", "MIOS_PORTS_MCP", "MIOS_PORTS_MCP")
+_PORT_NAMES = ("MIOS_PORTS_MCP",)
 _LITERAL = re.compile(r"""^\s*Environment\s*=\s*"?(MIOS_\w*PORT\w*)=(\d+)""", re.MULTILINE)
 
 sys.path.insert(0, os.path.join(_ROOT, "usr", "lib", "mios"))
