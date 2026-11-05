@@ -1,0 +1,41 @@
+{
+  "explorer": {
+    "description": "Codebase reconnaissance and symbol discovery",
+    "servers": [
+      "mcp-server-filesystem",
+      "mcp-server-git",
+      "ast-grep-mcp"
+    ]
+  },
+  "architect": {
+    "description": "System design and documentation verification",
+    "servers": [
+      "mcp-lsp",
+      "ast-grep-mcp",
+      "context7-mcp"
+    ]
+  },
+  "builder": {
+    "description": "Feature implementation and local testing",
+    "servers": [
+      "mcp-server-filesystem",
+      "mcp-server-git",
+      "ast-grep-mcp"
+    ]
+  },
+  "critic": {
+    "description": "Multi-perspective static code review",
+    "servers": [
+      "mcp-lsp",
+      "mcp-server-git",
+      "ast-grep-mcp"
+    ]
+  },
+  "ui_verifier": {
+    "description": "Live browser testing and visual verification",
+    "servers": [
+      "playwright-mcp",
+      "mcp-server-git"
+    ]
+  }
+}

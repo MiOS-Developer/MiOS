@@ -1147,3 +1147,7 @@ usr/share/mios/virtio/*.iso
 # Seeded identities and isometric habitat renderer
 !/tools/native/mios-tamagotchi/src/genetics.rs
 !/tools/native/mios-tamagotchi/src/world.rs
+
+# Portable global MiOS skills export (operator-requested root directory)
+!/SKILLS/
+!/SKILLS/**

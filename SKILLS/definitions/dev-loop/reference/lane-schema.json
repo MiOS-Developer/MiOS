@@ -1,0 +1,107 @@
+{
+  "": "http://json-schema.org/draft-07/schema#",
+  "title": "DevLoopConfig",
+  "description": "Configuration schema for multi-harness DevLoop orchestration.",
+  "type": "object",
+  "properties": {
+    "objective": {
+      "type": "string",
+      "description": "High-level engineering task or goal to implement."
+    },
+    "base_branch": {
+      "type": "string",
+      "default": "main",
+      "description": "Base git branch to branch worktrees from and reconcile into."
+    },
+    "worktree_dir": {
+      "type": "string",
+      "default": ".worktrees",
+      "description": "Root directory under which worktrees are provisioned."
+    },
+    "terminal_layout": {
+      "type": "string",
+      "enum": [
+        "wt_grid",
+        "detached_ps",
+        "tmux_grid",
+        "detached_sh",
+        "headless_py"
+      ],
+      "default": "wt_grid",
+      "description": "Terminal session layout manager to launch."
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 3600,
+      "description": "Execution timeout per lane in seconds."
+    },
+    "lanes": {
+      "type": "array",
+      "minItems": 1,
+      "description": "List of concurrent execution lanes.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "Subsystem domain (e.g., backend, frontend, qa, security)."
+          },
+          "worker_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "description": "Unique identifier for the worker lane."
+          },
+          "harness": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "claude",
+              "cloudcode",
+              "gemini",
+              "spark",
+              "gemini-spark",
+              "codex",
+              "copilot",
+              "antigravity",
+              "opencode",
+              "cursor",
+              "custom"
+            ],
+            "description": "Agent harness CLI executing the worker commands."
+          },
+          "worktree": {
+            "type": "string",
+            "description": "Worktree path relative to repository root."
+          },
+          "command": {
+            "type": "string",
+            "description": "Primary task command or prompt passed to the harness."
+          },
+          "test_cmd": {
+            "type": "string",
+            "description": "Optional validation or test command executed after task completion."
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional environment variables injected into the worker process."
+          }
+        },
+        "required": [
+          "domain",
+          "worker_id",
+          "harness",
+          "worktree",
+          "command"
+        ]
+      }
+    }
+  },
+  "required": [
+    "objective",
+    "lanes"
+  ]
+}

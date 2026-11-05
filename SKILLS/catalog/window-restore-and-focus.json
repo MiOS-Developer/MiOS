@@ -1,0 +1,1 @@
+{"name":"window-restore-and-focus","description":"Restore a minimized/maximized window matching `title`, then focus it.","source":"import","status":"promoted","body":{"steps":[{"verb":"restore_window","args":{"title":"$title"}},{"verb":"focus_window","args":{"title":"$title","position":"as-is"}}],"params":["title"]}}
