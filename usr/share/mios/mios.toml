@@ -20039,7 +20039,7 @@ hud_mode = "auto"            # auto, full, minimal; also selectable in Graphics
 hud_minimal_width = 88       # automatic compact HUD below this terminal width
 hud_minimal_height = 28      # automatic compact HUD below this terminal height
 view_mode = "voxel"          # CPU voxel 3D; pixel keeps the original 8-bit / 16-bit sprite views
-camera_view = "pet"          # room, pet, face; closer views frame actual solid contents
+camera_view = "room"         # default isometric world follows the Mon; pet/face are explicit close-ups
 zoom_percent = 100           # camera magnification,50..400%; + / - and mouse wheel change it
 zoom_step_percent = 25       # one explicit zoom action,5..100 percentage points
 zoom_transition_frames = 8   # smooth camera/zoom interpolation,1..60 animation frames
@@ -20069,6 +20069,28 @@ light_direction = [-45, 65, 45] # view-space X/right Y/up Z/viewer, each-100..10
 ascii_ramp = ".:-=+*#%@"    # low-to-high density, printable ASCII; occupied surfaces remain visible
 
 # One shared interactive detail decision follows cell budget, font-driven resize and zoom.
+# AI-hint: Fixed isometric voxel room; only azimuth and framing change during play.
+# AI-related: tools/native/mios-tamagotchi/src/world.rs, render.rs, ui.rs
+# AI-hint: Version-one birth identity vocabulary; code replay uses the same generation settings.
+# AI-related: tools/native/mios-tamagotchi/src/genetics.rs
+[tamagotchi.genetics]
+likes = ["gardening", "stargazing", "puddles", "shells", "music", "picnics", "clouds", "puzzles", "snow", "lanterns", "stories", "flowers"]
+dislikes = ["loud noises", "muddy paws", "bitter food", "untidy rooms", "cold rain", "being rushed", "empty plates", "bright lights"]
+traits = ["curious", "patient", "bold", "gentle", "tidy", "dreamy", "mischievous", "steady"]
+tropes = ["tiny guardian", "sleepy scholar", "garden friend", "shy performer", "puddle explorer", "star dreamer", "cozy host", "determined rookie"]
+
+[tamagotchi.world]
+enabled = true
+width_tiles = 8
+depth_tiles = 8
+wall_height = 4
+pet_height_percent = 65
+default_yaw_degrees = 45
+orbit_step_degrees = 45
+elevation_degrees = 30
+follow_percent = 100
+backdrop = 6
+
 [tamagotchi.presentation]
 automatic = true
 min_width = 64           # minimum packed-raster width for detailed mode
@@ -20582,6 +20604,7 @@ name_ends = ["mo", "ri", "na", "ku", "po", "li", "to", "ya"]
 species_colors = [4, 8, 14, 15, 14, 11, 7, 1]
 hatch_min = 8
 hatch_max = 24
+hatch_bonus = 4 # Seeded aptitude and starting-value bonus; capped at100.
 max_level = 99
 xp_base = 12
 xp_per_level = 4

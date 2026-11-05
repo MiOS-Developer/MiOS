@@ -401,3 +401,37 @@ mod progression_legacy_snapshot_review {
         }
     }
 }
+
+#[test]
+fn portable_birth_codes_replay_ascii_snapshots_without_writing_saves() {
+    let scratch=tempfile::tempdir().unwrap();
+    let exe=env!("CARGO_BIN_EXE_mios-tamagotchi");
+    let first=Command::new(exe).env_clear().args(["--sample","--seed","123456789","--snapshot"]).output().unwrap();
+    assert!(first.status.success(),"{}",String::from_utf8_lossy(&first.stderr));
+    let text=String::from_utf8(first.stdout.clone()).unwrap();
+    let code=text.lines().find_map(|line|line.strip_prefix("Birth code: ")).unwrap().split_whitespace().next().unwrap();
+    assert_eq!(code.len(),17);
+    let second=Command::new(exe).env_clear().args(["--sample","--seed",code,"--snapshot"]).output().unwrap();
+    assert_eq!(first.stdout,second.stdout);
+    let directory=scratch.path().join("optional");
+    let result=Command::new(exe).env_clear().args(["--sample","--seed",code,"--save-dir"]).arg(&directory).arg("--snapshot").output().unwrap();
+    assert!(result.status.success());
+    assert!(!directory.exists(),"read-only snapshot must not create progress directory");
+    assert!(first.stdout.is_ascii()&&!first.stdout.contains(&27));
+}
+#[test]
+fn bad_birth_codes_and_conflicting_save_options_fail_before_rendering() {
+    let exe=env!("CARGO_BIN_EXE_mios-tamagotchi");
+    for args in [
+        vec!["--sample","--seed","0"],
+        vec!["--sample","--seed","M1-XXXX-XXXX-XXXX-XXX"],
+        vec!["--sample","--save-dir","unused"],
+        vec!["--sample","--seed","1","--save-dir","unused","--save","unused.json"],
+        vec!["--demo","--seed","1"],
+    ] {
+        let result=Command::new(exe).env_clear().args(args).output().unwrap();
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        assert!(!result.stderr.contains(&27));
+    }
+}

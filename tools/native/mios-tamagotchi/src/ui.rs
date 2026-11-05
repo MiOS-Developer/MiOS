@@ -6,7 +6,7 @@ use crate::{
     config::{Config, HudMode, ViewMode},
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
     game::{Care, Direction, Game, Rules},
-    input::{action, Action, ControllerMonitor, ControllerPrompts},
+    input::{Action, ControllerMonitor, ControllerPrompts, action},
     render::{Camera, CameraView, Colors, HabitatView, RoomWidget},
     save::Store,
     sprite::{Appearance, Expression, Sprite, SpriteStyle},
@@ -16,11 +16,11 @@ use crossterm::event::{
     MouseEventKind,
 };
 use ratatui::{
+    DefaultTerminal, Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    DefaultTerminal, Frame,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -51,6 +51,7 @@ pub enum Menu {
     Roster,
     Habitat,
     Training,
+    Identity,
 }
 
 #[derive(Clone, Copy)]
@@ -79,6 +80,14 @@ pub struct Ui {
     camera_transition_frames: usize,
     camera_started: usize,
     camera_blend: u16,
+    orbit_degrees: u16,
+    orbit_target: u16,
+    orbit_origin: u16,
+    orbit_default: u16,
+    orbit_step: u16,
+    orbit_started: usize,
+    world_enabled: bool,
+    world_elevation: u16,
     menu_scroll: usize,
     menu_history: Vec<Menu>,
     menu_number_start: Cell<usize>,
@@ -145,6 +154,14 @@ impl Ui {
             camera_transition_frames: 8,
             camera_started: 0,
             camera_blend: 100,
+            orbit_degrees: 0,
+            orbit_target: 0,
+            orbit_origin: 0,
+            orbit_default: 0,
+            orbit_step: 45,
+            orbit_started: 0,
+            world_enabled: false,
+            world_elevation: 30,
             menu_scroll: 0,
             menu_history: Vec::new(),
             menu_number_start: Cell::new(0),
@@ -215,6 +232,13 @@ impl Ui {
         ui.zoom_origin = config.zoom_percent;
         ui.zoom_step = config.zoom_step_percent;
         ui.camera_transition_frames = config.zoom_transition_frames;
+        ui.orbit_default = config.world.default_yaw_degrees % 360;
+        ui.orbit_degrees = ui.orbit_default;
+        ui.orbit_origin = ui.orbit_default;
+        ui.orbit_target = ui.orbit_default;
+        ui.orbit_step = config.world.orbit_step_degrees;
+        ui.world_enabled = config.world.enabled;
+        ui.world_elevation = config.world.elevation_degrees;
         ui.wander_speed = config.wander_speed;
         ui.mobile_stage = !matches!(
             ui.game.stage(&config.game),
@@ -251,6 +275,16 @@ impl Ui {
         self.zoom_percent = (i32::from(self.zoom_origin)
             + (i32::from(self.zoom_target) - i32::from(self.zoom_origin)) * eased / 100)
             .clamp(50, 400) as u16;
+        let t = frame
+            .saturating_sub(self.orbit_started)
+            .saturating_mul(100)
+            .checked_div(self.camera_transition_frames.max(1))
+            .unwrap_or(100)
+            .min(100) as i32;
+        let eased = t * t * (300 - 2 * t) / 10000;
+        let turn = (i32::from(self.orbit_target) - i32::from(self.orbit_origin) + 540) % 360 - 180;
+        self.orbit_degrees =
+            (i32::from(self.orbit_origin) + turn * eased / 100).rem_euclid(360) as u16;
         self.frame = frame;
     }
     pub fn effective_style(&self) -> SpriteStyle {
@@ -367,6 +401,7 @@ impl Ui {
                     from_view: from,
                     view: to,
                     zoom_percent: self.zoom_percent,
+                    orbit_degrees: self.orbit_degrees,
                     transition_percent: (t * t * (300 - 2 * t) / 10000) as u16,
                 };
             }
@@ -374,6 +409,7 @@ impl Ui {
         Camera {
             view: effective(self.camera_view),
             zoom_percent: self.zoom_percent,
+            orbit_degrees: self.orbit_degrees,
             from_view: effective(self.camera_from_view),
             transition_percent: self.camera_blend,
         }
@@ -389,7 +425,7 @@ impl Ui {
         self.camera_started = self.frame;
         self.camera_blend = 0;
         self.notice = format!(
-            "{:?} view / {}% zoom. + - zoom, 0 reset, Z view.",
+            "{:?} view / {}% zoom. +/- zoom, 0 zoom only, Z view, [/] orbit.",
             view, self.zoom_target
         );
     }
@@ -409,21 +445,39 @@ impl Ui {
         };
         self.change_camera(next, self.zoom_target);
     }
+    fn change_orbit(&mut self, target: u16) {
+        self.orbit_origin = self.orbit_degrees;
+        self.orbit_target = target % 360;
+        self.orbit_started = self.frame;
+        self.notice = format!(
+            "Orbit {} deg. [ left / ] right; Graphics resets orbit. 0 resets zoom only.",
+            self.orbit_target
+        );
+    }
+    fn orbit_by(&mut self, clockwise: bool) {
+        let delta = i32::from(self.orbit_step % 360);
+        self.change_orbit(
+            (i32::from(self.orbit_target) + if clockwise { delta } else { -delta }).rem_euclid(360)
+                as u16,
+        );
+    }
     fn camera_yaw(&self, yaw: u16) -> u16 {
-        // The camera orbits toward the face; pet simulation orientation is untouched.
-        let camera = self.camera();
-        let from = if camera.from_view == CameraView::Face {
+        // World and sprite use the same x'=cos(yaw)*x+sin(yaw)*z transform.
+        // Only explicitly selected Face framing looks toward the front. Tiny
+        // automatic head cropping retains the real world orientation/occlusion.
+        let world_yaw = (u32::from(yaw) + u32::from(self.orbit_degrees)) % 360;
+        let from = if self.camera_from_view == CameraView::Face {
             0
         } else {
-            i32::from(yaw)
+            world_yaw as i32
         };
-        let to = if camera.view == CameraView::Face {
+        let to = if self.camera_view == CameraView::Face {
             0
         } else {
-            i32::from(yaw)
+            world_yaw as i32
         };
         let turn = (to - from + 540) % 360 - 180;
-        (from + turn * i32::from(camera.transition_percent) / 100).rem_euclid(360) as u16
+        (from + turn * i32::from(self.camera_blend) / 100).rem_euclid(360) as u16
     }
     fn can_move(&self) -> bool {
         self.mobile_stage
@@ -503,6 +557,17 @@ impl Ui {
                 pose,
             )
             .recolored(self.appearance().body, self.appearance().accent),
+            ViewMode::Voxel if self.world_enabled && self.camera_view == CameraView::Room => {
+                Sprite::voxel_with_camera(
+                    self.game.stage(rules),
+                    expression,
+                    self.effective_style(),
+                    pose,
+                    [self.camera_yaw(self.yaw), self.world_elevation],
+                    self.walking(),
+                    self.appearance(),
+                )
+            }
             ViewMode::Voxel => Sprite::voxel_with_appearance(
                 self.game.stage(rules),
                 expression,
@@ -568,10 +633,19 @@ impl Ui {
                     "says"
                 }
             ),
-            text: self.words(
-                config,
-                matches!(kind, NativeKind::Thought | NativeKind::Context),
-            ),
+            text: {
+                let words = self.words(
+                    config,
+                    matches!(kind, NativeKind::Thought | NativeKind::Context),
+                );
+                if matches!(kind, NativeKind::Context) {
+                    format!(
+                        "{words}\nCamera: [ / ] orbit; Graphics resets orbit. 0 resets zoom only."
+                    )
+                } else {
+                    words
+                }
+            },
             choices: if matches!(kind, NativeKind::Context) {
                 vec![
                     Choice::Listen,
@@ -813,6 +887,30 @@ impl Ui {
         self.react(expression);
     }
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
+        // Orbit is UI-local so controller arrows retain care/menu/memory semantics.
+        // Match input::action's modifier and press-only shortcut policy.
+        if key.kind == KeyEventKind::Press
+            && !key.modifiers.intersects(
+                crossterm::event::KeyModifiers::CONTROL
+                    | crossterm::event::KeyModifiers::ALT
+                    | crossterm::event::KeyModifiers::SUPER
+                    | crossterm::event::KeyModifiers::HYPER
+                    | crossterm::event::KeyModifiers::META,
+            )
+            && !self.confirm_reset
+        {
+            match key.code {
+                crossterm::event::KeyCode::Char('[') => {
+                    self.orbit_by(false);
+                    return Effect::Continue;
+                }
+                crossterm::event::KeyCode::Char(']') => {
+                    self.orbit_by(true);
+                    return Effect::Continue;
+                }
+                _ => {}
+            }
+        }
         let Some(a) = action(key) else {
             return Effect::Continue;
         };
@@ -918,7 +1016,7 @@ impl Ui {
                 return Effect::Continue;
             }
             Action::Status => {
-                self.open(Menu::Status);
+                self.open(Menu::Identity);
                 return Effect::Continue;
             }
             Action::Graphics => {
@@ -1038,6 +1136,21 @@ impl Ui {
             }
             return Effect::Continue;
         }
+        if menu == Menu::Identity {
+            // This view never spends coins, resets, trains, pauses or steers.
+            match action {
+                Action::Direction(Direction::Down | Direction::Right) | Action::Next => {
+                    self.menu_scroll = self.menu_scroll.saturating_add(1).min(512);
+                }
+                Action::Direction(Direction::Up | Direction::Left) | Action::Previous => {
+                    self.menu_scroll = self.menu_scroll.saturating_sub(1);
+                }
+                Action::Cancel | Action::Accept => self.back(),
+                Action::Save => return Effect::Save,
+                _ => {}
+            }
+            return Effect::Continue;
+        }
         if menu == Menu::Gallery {
             match action {
                 Action::Save => {
@@ -1088,12 +1201,12 @@ impl Ui {
             }
         }
         let count = match menu {
-            Menu::Home => 12,
+            Menu::Home => 13,
             Menu::Care => 5,
             Menu::Games => 2,
-            Menu::Graphics => 20,
+            Menu::Graphics => 23,
             Menu::Training => 6,
-            Menu::Status | Menu::Help => 1,
+            Menu::Status | Menu::Help | Menu::Identity => 1,
             Menu::Gallery => 16,
             Menu::Talk => 7,
             Menu::Roster => self.catalogue.len().max(1),
@@ -1138,7 +1251,8 @@ impl Ui {
                     }
                     9 => return Effect::Quit,
                     10 => self.open(Menu::Habitat),
-                    _ => self.open(Menu::Training),
+                    11 => self.open(Menu::Training),
+                    _ => self.open(Menu::Identity),
                 },
                 Menu::Care => {
                     if self.menu_selected < 4 {
@@ -1180,6 +1294,9 @@ impl Ui {
                     16 => self.zoom_by(false),
                     17 => self.change_camera(self.camera_view, 100),
                     19 => self.toggle_detail(),
+                    20 => self.orbit_by(false),
+                    21 => self.orbit_by(true),
+                    22 => self.change_orbit(self.orbit_default),
                     _ => self.back(),
                 },
                 Menu::Training => {
@@ -1198,7 +1315,7 @@ impl Ui {
                         }
                     }
                 }
-                Menu::Status | Menu::Help => self.back(),
+                Menu::Status | Menu::Help | Menu::Identity => self.back(),
                 Menu::Talk => {
                     if self.menu_selected == 0 {
                         let rows = self.dialog_rows.get().max(1);
@@ -1350,13 +1467,14 @@ impl Ui {
             format!("{} {name} {}{clock} {face}", self.detail_tag(), &stage[..1])
         } else {
             format!(
-                "PET ROOM {} {} {} {stage} {clock} {face} {:?} {}%",
+                "PET ROOM {} {} {} {stage} {clock} {face} {:?} {}% [/] {}deg",
                 self.detail_label(),
                 self.name(),
                 self.current_character()
                     .map_or("pet", |c| c.species.as_str()),
                 self.camera().view,
-                self.zoom_percent
+                self.zoom_percent,
+                self.orbit_degrees
             )
         };
         let compact = self.hud_mode == HudMode::Minimal
@@ -1489,9 +1607,10 @@ impl Ui {
         };
         let expression = self.expression(&config.game, frame);
         let room_title = format!(
-            " {:?} {}% / {:?} {} ",
+            " {:?} {}% [/] {}deg / {:?} {} ",
             self.camera_view,
             self.zoom_percent,
+            self.orbit_degrees,
             expression,
             expression.kaomoji(frame)
         );
@@ -1502,6 +1621,7 @@ impl Ui {
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
+                world: Some(&config.world),
                 detail: self.effective_style(),
                 camera: self.camera(),
                 sprite: &sprite,
@@ -1673,6 +1793,7 @@ impl Ui {
         let expression = self.expression(&config.game, frame);
         screen.render_widget(
             RoomWidget {
+                world: Some(&config.world),
                 detail: self.effective_style(),
                 camera: self.camera(),
                 sprite: &sprite,
@@ -1871,11 +1992,12 @@ impl Ui {
         if landscape && budget >= 18 {
             let expression = self.expression(&config.game, frame);
             lines.push(Line::from(format!(
-                "{:?} {} / {:?} {}%",
+                "{:?} {} / {:?} {}% / orbit {}deg",
                 expression,
                 expression.kaomoji(frame),
                 self.camera().view,
-                self.zoom_percent
+                self.zoom_percent,
+                self.orbit_degrees
             )));
         }
         lines.push(Line::from(if info.width < 28 {
@@ -2026,7 +2148,7 @@ impl Ui {
                 |pad| format!("{} / O Menu", compact_button(&pad.back)),
             ));
             lines.push("? Help / Q Quit".into());
-            lines.push("+/- 0 Z / H L V T B".into());
+            lines.push("+/- 0 Z [/] / I Code H L V T B".into());
             let status = wrap_dialogue(&self.controller_status, usize::from(info.width));
             lines.extend(status.into_iter().take(3));
             lines
@@ -2050,7 +2172,7 @@ impl Ui {
                 care_rows[1].join("  "),
                 navigation,
                 menu,
-                "+/- 0 Z / T Talk B Roster H Items L Train V Graphics".into(),
+                "+/- 0 Z [/] orbit / I Code T Talk B Roster H Items L Train V Graphics".into(),
                 frame_label(&self.controller_status, info.width, frame / 28),
             ]
         } else if let Some(pad) = &self.controller {
@@ -2720,6 +2842,20 @@ impl Ui {
                 self.frame,
             )
             .recolored(character.body, character.accent),
+            ViewMode::Voxel if self.world_enabled && self.camera_view == CameraView::Room => {
+                Sprite::voxel_with_camera(
+                    crate::game::Stage::Adult,
+                    expression,
+                    self.effective_style(),
+                    self.frame,
+                    [
+                        self.camera_yaw(((self.frame * 3) % 360) as u16),
+                        self.world_elevation,
+                    ],
+                    false,
+                    appearance,
+                )
+            }
             ViewMode::Voxel => Sprite::voxel_with_appearance(
                 crate::game::Stage::Adult,
                 expression,
@@ -2732,6 +2868,7 @@ impl Ui {
         };
         screen.render_widget(
             RoomWidget {
+                world: Some(&config.world),
                 detail: self.effective_style(),
                 camera: self.camera(),
                 sprite: &sprite,
@@ -2894,6 +3031,125 @@ impl Ui {
             area,
         );
     }
+    fn identity_content(&self, config: &Config) -> (Option<String>, Vec<String>) {
+        let Some(profile) = crate::genetics::Profile::for_game(&self.game, config) else {
+            return (
+                None,
+                vec![
+                    "No birth seed was stored for this existing pet.".into(),
+                    "A reproducible code cannot be recovered or invented.".into(),
+                    "Your pet and its saved progress are unchanged.".into(),
+                ],
+            );
+        };
+        let mut lines = vec![
+            format!("Name: {}", profile.name),
+            format!("Species: {}", profile.species),
+            format!("Personality: {}", profile.archetype),
+            format!("Trait: {}", profile.trait_label),
+            format!("Trope: {}", profile.trope),
+            format!("Likes: {}", profile.likes.join(", ")),
+            format!("Dislikes: {}", profile.dislikes.join(", ")),
+            format!("Bonus: {}", profile.bonus_stat),
+            format!("Colors: body {} / accent {}", profile.body, profile.accent),
+            "Birth stats (current training is in Status):".into(),
+        ];
+        for (index, stat) in profile.hatch_stats.iter().enumerate() {
+            lines.push(format!(
+                "{}: {} / aptitude {}",
+                crate::progression::TrainingRules::label(index),
+                stat.value,
+                stat.grade()
+            ));
+        }
+        lines.push("This code reproduces birth identity, not current care or a save.".into());
+        (Some(profile.code), lines)
+    }
+
+    fn draw_identity(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        colors: &Colors,
+        renderer: Renderer,
+    ) {
+        let area = screen.area();
+        screen.render_widget(Clear, area);
+        let block = panel("I CODE", colors, renderer == Renderer::Ascii);
+        let body = block.inner(area);
+        screen.render_widget(block, area);
+        if body.is_empty() {
+            return;
+        }
+        let (code, details) = self.identity_content(config);
+        let code = code.unwrap_or_else(|| "NO BIRTH SEED".into());
+        // A 17-character code fits in the 18 inner cells of a 20-column watch.
+        // Keep every character fixed on screen while only metadata scrolls.
+        let chars = code.chars().collect::<Vec<_>>();
+        let code_lines = chars
+            .chunks(usize::from(body.width.max(1)))
+            .map(|part| Line::from(part.iter().collect::<String>()))
+            .collect::<Vec<_>>();
+        let footer_rows = if body.height >= 5 { 2 } else { 1 };
+        let code_rows = (code_lines.len() as u16).min(body.height.saturating_sub(footer_rows));
+        screen.render_widget(
+            Paragraph::new(code_lines).style(
+                Style::default()
+                    .fg(colors.ink(7))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Rect::new(body.x, body.y, body.width, code_rows),
+        );
+        let available = body
+            .height
+            .saturating_sub(code_rows)
+            .saturating_sub(footer_rows);
+        let wrapped = details
+            .iter()
+            .flat_map(|line| wrap_dialogue(line, usize::from(body.width)))
+            .collect::<Vec<_>>();
+        let start = self
+            .menu_scroll
+            .min(wrapped.len().saturating_sub(usize::from(available.max(1))));
+        screen.render_widget(
+            Paragraph::new(
+                wrapped
+                    .into_iter()
+                    .skip(start)
+                    .take(usize::from(available))
+                    .map(Line::from)
+                    .collect::<Vec<_>>(),
+            )
+            .style(Style::default().fg(colors.ink(2))),
+            Rect::new(body.x, body.y + code_rows, body.width, available),
+        );
+        let footer = Rect::new(
+            body.x,
+            body.bottom().saturating_sub(footer_rows),
+            body.width,
+            footer_rows,
+        );
+        let hint = if footer_rows == 1 {
+            "^v Esc".into()
+        } else if let Some(pad) = &self.controller {
+            format!(
+                "{} More\n{} Back",
+                tiny_button(&pad.navigate),
+                tiny_button(&pad.back)
+            )
+        } else {
+            "Up/Down: More\nEsc: Back".into()
+        };
+        screen.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+            footer,
+        );
+        self.control_targets.borrow_mut().push((
+            Rect::new(footer.x, footer.bottom().saturating_sub(1), footer.width, 1),
+            Action::Cancel,
+        ));
+    }
+
     fn draw_menu(
         &self,
         screen: &mut Frame,
@@ -2909,6 +3165,10 @@ impl Ui {
         // Opaque menu owns all clicks; never activate care through its background.
         self.care_targets.borrow_mut().clear();
         self.control_targets.borrow_mut().clear();
+        if menu == Menu::Identity {
+            self.draw_identity(screen, config, colors, renderer);
+            return;
+        }
         if menu == Menu::Training {
             self.draw_training(screen, config, colors, renderer);
             return;
@@ -2994,6 +3254,20 @@ impl Ui {
                     Sprite::animated(stage, expression, self.effective_style(), self.frame)
                         .recolored(self.appearance().body, self.appearance().accent)
                 }
+                ViewMode::Voxel if self.world_enabled && self.camera_view == CameraView::Room => {
+                    Sprite::voxel_with_camera(
+                        stage,
+                        expression,
+                        self.effective_style(),
+                        self.frame,
+                        [
+                            self.camera_yaw(((self.frame * 3) % 360) as u16),
+                            self.world_elevation,
+                        ],
+                        false,
+                        self.appearance(),
+                    )
+                }
                 ViewMode::Voxel => Sprite::voxel_with_appearance(
                     stage,
                     expression,
@@ -3006,6 +3280,7 @@ impl Ui {
             };
             screen.render_widget(
                 RoomWidget {
+                    world: Some(&config.world),
                     detail: self.effective_style(),
                     camera: self.camera(),
                     sprite: &sprite,
@@ -3066,6 +3341,7 @@ impl Ui {
                     "Quit",
                     "Habitat / items",
                     "Training / stats",
+                    "Identity / code",
                 ],
             ),
             Menu::Care => (
@@ -3103,10 +3379,18 @@ impl Ui {
                     "Reset zoom (0)",
                     "Back",
                     "Automatic detail / D toggle",
+                    "Orbit left ([)",
+                    "Orbit right (])",
+                    "Reset orbit / default azimuth",
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
-            Menu::Gallery | Menu::Talk | Menu::Roster | Menu::Habitat | Menu::Training => {
+            Menu::Gallery
+            | Menu::Talk
+            | Menu::Roster
+            | Menu::Habitat
+            | Menu::Training
+            | Menu::Identity => {
                 unreachable!("special menus draw their own view")
             }
         };
@@ -3126,10 +3410,11 @@ impl Ui {
                 format!("V {}", self.detail_tag())
             } else {
                 format!(
-                    " GRAPHICS / {} / {:?} {}% ",
+                    " GRAPHICS / {} / {:?} {}% / orbit {}deg ",
                     self.detail_label(),
                     self.camera_view,
-                    self.zoom_target
+                    self.zoom_target,
+                    self.orbit_target
                 )
             }
         } else if screen.area().width < 24 {
@@ -3196,11 +3481,11 @@ impl Ui {
                 "L Training: Swim / Flight / Run / Power / Stamina.",
                 "Hatch rolls name, stats and aptitude. Care funds training.",
                 "Arrows / Tab select; Enter / Space activates.",
-                "O / F1 Menu  I Status  V Graphics  ? Help",
+                "O / F1 Menu  I Code  V Graphics  ? Help",
                 "Esc: back/cancel; in the room, opens Home.",
                 "Q / Ctrl+C: save and quit, including tiny views.",
                 "1..9: activate the numbered visible menu row.",
-                "0 always resets zoom; arrows still answer memory.",
+                "0 resets zoom only; arrows still answer memory.",
                 "Click an action/menu row to choose it.",
                 "Click the pet: Talk. Right-click: Home/context.",
                 "Click footer Choose/Back or O Menu / ? Help.",
@@ -3209,7 +3494,10 @@ impl Ui {
                 "Compact HUD: *=100. Tiny frames page all needs.",
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
                 "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
-                "Room / Pet / Face cameras never steer your pet.",
+                "[ left / ] right: orbit; Graphics resets orbit only.",
+                "Fixed isometric elevation; no tilt controls.",
+                "Room/Pet follow world yaw; explicit Face looks front.",
+                "Camera controls never steer your pet.",
                 "Compact controller H- means Hold; labels match mapped buttons.",
                 "Graphics choices affect this session only.",
                 "",
@@ -3404,7 +3692,7 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
             Some("G"),
             Some("T"),
             Some("B"),
-            Some("I"),
+            None,
             Some("V"),
             None,
             Some("?"),
@@ -3412,6 +3700,7 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
             Some("Q"),
             Some("H"),
             Some("L"),
+            Some("I"),
         ]
         .get(index)
         .copied()
@@ -3424,6 +3713,8 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
             17 => Some("0"),
             18 => Some("Esc"),
             19 => Some("D"),
+            20 => Some("["),
+            21 => Some("]"),
             _ => None,
         },
         _ => None,
@@ -3548,7 +3839,8 @@ fn apply_effect(
                 ui.notice = "Saved locally.".into();
                 *last_save = Instant::now();
             } else {
-                ui.notice = "Sample mode: no save file is written.".into();
+                ui.open(Menu::Identity);
+                ui.notice = "No save file is written. I Code shows this pet's identity.".into();
             }
         }
         Effect::Continue => {}
@@ -3682,7 +3974,7 @@ mod graphics_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -3801,12 +4093,14 @@ mod graphics_tests {
             terminal
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 5, false))
                 .unwrap();
-            assert!(terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .all(|c| c.symbol().is_ascii()));
+            assert!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .all(|c| c.symbol().is_ascii())
+            );
         }
     }
     #[test]
@@ -3848,11 +4142,12 @@ mod graphics_tests {
             .collect();
         assert!(text.contains("Sprite studio"));
         assert!(text.contains("[Q] Quit"));
-        assert!(ui
-            .menu_targets
-            .borrow()
-            .iter()
-            .any(|(_, index)| *index == 9));
+        assert!(
+            ui.menu_targets
+                .borrow()
+                .iter()
+                .any(|(_, index)| *index == 9)
+        );
         assert_eq!(ui.handle(key(KeyCode::Enter), &config.game), Effect::Quit);
     }
     #[test]
@@ -4207,6 +4502,8 @@ mod graphics_tests {
     #[test]
     fn camera_controls_interpolate_without_steering_or_mutating_pet() {
         let (config, mut ui) = pet();
+        ui.camera_view = CameraView::Pet;
+        ui.camera_from_view = CameraView::Pet;
         let saved = ui.game.clone();
         let position = ui.position;
         let yaw = ui.yaw;
@@ -4434,7 +4731,7 @@ mod progression_ui_tests {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -4551,7 +4848,10 @@ mod progression_ui_tests {
                 // A two-row head may omit both parentheses at an occluding
                 // edge; its two eyes and mouth must still form one text run.
                 let core = ["^_^", "o_o"].into_iter().find(|face| text.contains(face));
-                assert!(core.is_some(), "{menu:?}: complete native face core missing: {text}");
+                assert!(
+                    core.is_some(),
+                    "{menu:?}: complete native face core missing: {text}"
+                );
                 let core = core.unwrap();
                 assert_eq!(
                     text.contains(&format!("({core}")),
@@ -4680,7 +4980,7 @@ mod progression_training_navigation_review {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -4771,7 +5071,7 @@ mod memory_thought_interruption_tests {
 mod portrait_density_tests {
     use super::*;
     use crate::capabilities::Depth;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
     #[test]
     fn tall_views_show_all_skills_needs_currency_and_controls_without_paging_them_away() {
         let config = Config::sample().unwrap();
@@ -4810,7 +5110,7 @@ mod direct_navigation_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -4971,11 +5271,12 @@ mod direct_navigation_regressions {
                 .find(|(_, action)| *action == Action::Quit)
                 .unwrap()
                 .0;
-            assert!(ui
-                .care_targets
-                .borrow()
-                .iter()
-                .all(|(area, _)| area.intersection(target).is_empty()));
+            assert!(
+                ui.care_targets
+                    .borrow()
+                    .iter()
+                    .all(|(area, _)| area.intersection(target).is_empty())
+            );
             assert_eq!(ui.click(target.x, target.y, &config.game), Effect::Quit);
             assert_eq!(ui.game, before);
         }
@@ -5026,7 +5327,7 @@ mod global_detail_regressions {
     use super::*;
     use crate::capabilities::Depth;
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn fixture() -> (Config, Ui) {
         let mut config = Config::sample().unwrap();
@@ -5174,11 +5475,12 @@ mod global_detail_regressions {
         }
         let terminal = draw(&ui, &config, 12, 6);
         assert_eq!(ui.menu_selected, 19);
-        assert!(ui
-            .menu_targets
-            .borrow()
-            .iter()
-            .any(|(_, index)| *index == 19));
+        assert!(
+            ui.menu_targets
+                .borrow()
+                .iter()
+                .any(|(_, index)| *index == 19)
+        );
         assert!(text(&terminal).contains("Enter: OK") && text(&terminal).contains("Esc: Back"));
         ui.handle(key(KeyCode::Enter), &config.game);
         assert!(ui.automatic_detail());
@@ -5210,5 +5512,207 @@ mod global_detail_regressions {
         assert_eq!(ui.effective_style(), SpriteStyle::SixteenBit);
         ui.manual_style(SpriteStyle::EightBit);
         assert_eq!(ui.game, game);
+    }
+}
+
+#[cfg(test)]
+mod world_camera_identity_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 711);
+        game.paused = true;
+        let ui = Ui::configured(game, &config);
+        (config, ui)
+    }
+    fn draw(ui: &Ui, config: &Config, renderer: Renderer, width: u16, height: u16) -> String {
+        let colors = Colors::from_config(config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, renderer, &colors, 0, false))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn orbit_crosses_zero_smoothly_and_preserves_game_habitat_rng_and_position() {
+        let (config, mut ui) = fixture();
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        ui.camera_transition_frames = 8;
+        ui.orbit_degrees = 350;
+        ui.orbit_target = 350;
+        ui.orbit_origin = 350;
+        ui.orbit_step = 45;
+        ui.yaw = 73;
+        let game = ui.game.clone();
+        let position = ui.position;
+        let rng = ui.visual_rng;
+        assert_eq!(ui.camera_yaw(ui.yaw), 63);
+        ui.handle(key(KeyCode::Char(']')), &config.game);
+        assert_eq!(ui.orbit_target, 35);
+        assert_eq!(ui.orbit_degrees, 350);
+        ui.animate(4);
+        assert_eq!(ui.orbit_degrees, 12);
+        ui.animate(8);
+        assert_eq!(ui.orbit_degrees, 35);
+        ui.handle(key(KeyCode::Char('[')), &config.game);
+        ui.animate(16);
+        assert_eq!(ui.orbit_degrees, 350);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.position, position);
+        assert_eq!(ui.visual_rng, rng);
+        assert_eq!(ui.yaw, 73);
+    }
+
+    #[test]
+    fn graphics_orbit_and_zoom_resets_are_separate_read_only_actions() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.open(Menu::Graphics);
+        ui.menu_selected = 21;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        let orbit = ui.orbit_target;
+        ui.handle(key(KeyCode::Char('+')), &config.game);
+        ui.handle(key(KeyCode::Char('0')), &config.game);
+        assert_eq!(ui.orbit_target, orbit);
+        assert_eq!(ui.zoom_target, 100);
+        ui.handle(key(KeyCode::Char('+')), &config.game);
+        let zoom = ui.zoom_target;
+        ui.menu_selected = 22;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.orbit_target, ui.orbit_default);
+        assert_eq!(ui.zoom_target, zoom);
+        ui.menu_selected = 20;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(
+            ui.orbit_target,
+            (i32::from(ui.orbit_default) - i32::from(ui.orbit_step)).rem_euclid(360) as u16
+        );
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn orbit_ignores_release_repeat_modified_input_and_reset_confirmation() {
+        let (config, mut ui) = fixture();
+        let orbit = ui.orbit_target;
+        let game = ui.game.clone();
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            let mut event = key(KeyCode::Char(']'));
+            event.kind = kind;
+            ui.handle(event, &config.game);
+        }
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+        ] {
+            ui.handle(KeyEvent::new(KeyCode::Char(']'), modifiers), &config.game);
+        }
+        ui.confirm_reset = true;
+        ui.handle(key(KeyCode::Char(']')), &config.game);
+        assert_eq!(ui.orbit_target, orbit);
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn identity_keeps_complete_code_visible_on_watch_and_all_packed_renderers() {
+        let (config, mut ui) = fixture();
+        let profile = crate::genetics::Profile::for_game(&ui.game, &config).unwrap();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.handle(key(KeyCode::Char('I')), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Identity));
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            for (width, height) in [(20, 8), (32, 48), (80, 24), (96, 30)] {
+                for scroll in [0, 2, 10, 512] {
+                    ui.menu_scroll = scroll;
+                    let text = draw(&ui, &config, renderer, width, height);
+                    assert!(text.contains(&profile.code), "{width}x{height}: {text}");
+                    if renderer == Renderer::Ascii {
+                        assert!(text.is_ascii());
+                    }
+                }
+            }
+        }
+        for (width, height) in [(12, 6), (10, 4), (2, 2)] {
+            draw(&ui, &config, Renderer::Ascii, width, height);
+            assert_eq!(
+                ui.handle(key(KeyCode::Char('q')), &config.game),
+                Effect::Quit
+            );
+        }
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn identity_metadata_comes_from_same_birth_profile_and_legacy_never_invents_code() {
+        let (config, mut ui) = fixture();
+        let profile = crate::genetics::Profile::for_game(&ui.game, &config).unwrap();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let (code, details) = ui.identity_content(&config);
+        assert_eq!(code.as_deref(), Some(profile.code.as_str()));
+        let text = details.join("\n");
+        for value in [
+            &profile.name,
+            &profile.species,
+            &profile.archetype,
+            &profile.trait_label,
+            &profile.trope,
+            &profile.bonus_stat,
+        ] {
+            assert!(text.contains(value));
+        }
+        for value in profile.likes.iter().chain(&profile.dislikes) {
+            assert!(text.contains(value));
+        }
+        ui.open(Menu::Identity);
+        for code in ['p', 'n', 'f', 'c', 'm', 'r', 'g'] {
+            ui.handle(key(KeyCode::Char(code)), &config.game);
+            assert_eq!(ui.menu, Some(Menu::Identity));
+            assert!(!ui.confirm_reset);
+        }
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+        ui.game.genesis_seed = None;
+        assert!(ui.identity_content(&config).0.is_none());
+        let text = draw(&ui, &config, Renderer::Ascii, 20, 8);
+        assert!(text.contains("No birth seed"), "{text}");
+        assert!(!text.contains(&profile.code));
+    }
+
+    #[test]
+    fn save_free_save_action_opens_identity_without_writing_or_changing_game() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let effect = ui.handle(key(KeyCode::Char('s')), &config.game);
+        assert_eq!(effect, Effect::Save);
+        assert!(!apply_effect(effect, &mut ui, None, &mut Instant::now()).unwrap());
+        assert_eq!(ui.menu, Some(Menu::Identity));
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
     }
 }

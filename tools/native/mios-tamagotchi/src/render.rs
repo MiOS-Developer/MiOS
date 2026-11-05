@@ -9,8 +9,8 @@ use ratatui::{
 
 use crate::{
     capabilities::{Depth, Renderer},
-    config::{parse_rgb, Config},
-    sprite::{cell_size, fit_scale, Sprite, SpriteStyle},
+    config::{Config, parse_rgb},
+    sprite::{Sprite, SpriteStyle, cell_size, fit_scale},
 };
 
 #[derive(Clone, Debug)]
@@ -131,6 +131,8 @@ pub enum CameraView {
 /// Presentation only; camera interpolation never changes pet simulation.
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
+    /// World azimuth; elevation remains fixed to the isometric SSOT angle.
+    pub orbit_degrees: u16,
     pub view: CameraView,
     pub zoom_percent: u16,
     pub from_view: CameraView,
@@ -140,6 +142,7 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self {
+            orbit_degrees: 45,
             view: CameraView::Pet,
             zoom_percent: 100,
             from_view: CameraView::Pet,
@@ -350,11 +353,7 @@ fn paint_pixels(
             (Some(upper), Some(lower)) => {
                 fg = colors.ink(usize::from(upper));
                 bg = colors.ink(usize::from(lower));
-                if upper == lower {
-                    '█'
-                } else {
-                    '▀'
-                }
+                if upper == lower { '█' } else { '▀' }
             }
             (Some(_), None) => '▀',
             (None, Some(_)) => '▄',
@@ -1167,11 +1166,7 @@ fn draw_camera_face(
                     cell.set_bg(background);
                     if ink[0] {
                         let mark = if mono {
-                            if cell.symbol() == "@" {
-                                '#'
-                            } else {
-                                '@'
-                            }
+                            if cell.symbol() == "@" { '#' } else { '@' }
                         } else {
                             '#'
                         };
@@ -1346,6 +1341,7 @@ pub struct HabitatView<'a> {
 }
 
 pub struct RoomWidget<'a> {
+    pub world: Option<&'a crate::world::WorldRules>,
     pub sprite: &'a Sprite,
     pub detail: SpriteStyle,
     pub renderer: Renderer,
@@ -1358,11 +1354,207 @@ pub struct RoomWidget<'a> {
     pub habitat: Option<HabitatView<'a>>,
 }
 
+impl RoomWidget<'_> {
+    /// One orthographic camera and depth space for the entire voxel habitat.
+    fn render_world_room(&self, area: Rect, buf: &mut Buffer, rules: &crate::world::WorldRules) {
+        use crate::world::{WorldCamera, WorldFrame};
+        let caption = u16::from(area.height >= 4);
+        let viewport = Rect::new(
+            area.x,
+            area.y,
+            area.width,
+            area.height.saturating_sub(caption),
+        );
+        if viewport.width == 0 || viewport.height == 0 {
+            return;
+        }
+        let (dx, dy) = self.renderer.packing();
+        let aspect = camera_pixel_aspect(self.renderer);
+        let frame = WorldFrame::render(
+            rules,
+            self.habitat,
+            WorldCamera {
+                yaw_degrees: self.camera.orbit_degrees,
+                zoom_percent: self.camera.zoom_percent,
+                position: self.position,
+                pixel_aspect: aspect as f32,
+                detail: self.detail,
+            },
+            (
+                viewport.width.saturating_mul(dx),
+                viewport.height.saturating_mul(dy),
+            ),
+        );
+        let backdrop = self.colors.ink(usize::from(rules.backdrop));
+        for row in area.y..area.bottom() {
+            for col in area.x..area.right() {
+                if let Some(cell) = buf.cell_mut((col, row)) {
+                    cell.set_char(' ')
+                        .set_bg(backdrop)
+                        .set_fg(self.colors.ink(7));
+                    cell.modifier = ratatui::style::Modifier::empty();
+                }
+            }
+        }
+        let Some(bounds) = SolidBounds::of(self.sprite) else {
+            return;
+        };
+        let scale_y = (f64::from(frame.pet_height_pixels) / bounds.height()).max(0.00001);
+        let scale = scale_y / aspect;
+        let ground = self
+            .sprite
+            .ground_pixel()
+            .unwrap_or([(bounds.left + bounds.right) / 2.0, bounds.bottom]);
+        let projection = Projection {
+            left: f64::from(viewport.x) * f64::from(dx) + f64::from(frame.pet_anchor[0])
+                - ground[0] * scale,
+            top: f64::from(viewport.y) * f64::from(dy) + f64::from(frame.pet_anchor[1])
+                - ground[1] * scale_y,
+            scale,
+            scale_y,
+        };
+        let depth_at = |sx, sy| {
+            f64::from(frame.pet_anchor[2])
+                + self.sprite.depth_pixels(sx, sy).unwrap_or(0.0) * scale
+                    / f64::from(frame.scale.max(0.00001))
+        };
+        let sample = |x: u32, y: u32| {
+            frame.sample(
+                x.saturating_sub(u32::from(viewport.x) * u32::from(dx)),
+                y.saturating_sub(u32::from(viewport.y) * u32::from(dy)),
+            )
+        };
+        for row in viewport.y..viewport.bottom() {
+            for col in viewport.x..viewport.right() {
+                let mut pixels = [None; 8];
+                let mut surface = [None; 8];
+                for y in 0..dy {
+                    for x in 0..dx {
+                        let i = usize::from(y * dx + x);
+                        let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                        let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                        let world = sample(px, py);
+                        if let Some(w) = world {
+                            pixels[i] = Some(w.palette);
+                            surface[i] = Some(SurfaceLight {
+                                normal: w.normal,
+                                occlusion: w.occlusion,
+                                edge: false,
+                            });
+                        }
+                        if let Some((sx, sy)) = projection.source_pixel(self.sprite, px, py) {
+                            if let Some(index) = self.sprite.pixel(sx, sy, 1) {
+                                if world
+                                    .is_none_or(|w| f64::from(w.depth) <= depth_at(sx, sy) + 0.0001)
+                                {
+                                    pixels[i] = Some(index);
+                                    surface[i] =
+                                        projected_surface_light(self.sprite, projection, px, py);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(cell) = buf.cell_mut((col, row)) {
+                    paint_lit_pixels(
+                        self.renderer,
+                        self.colors,
+                        pixels,
+                        surface,
+                        [false; 8],
+                        cell,
+                    );
+                }
+            }
+        }
+        // Facial text requires an entirely visible source cell. Body samples
+        // use exact packed-pixel depth above; this conservative mask prevents
+        // a native glyph from painting through a foreground table or lamp.
+        let face_sprite = self.sprite.retain_visible_pixels(|sx, sy| {
+            let x0 = (projection.left + f64::from(sx) * scale)
+                .floor()
+                .max(f64::from(viewport.x) * f64::from(dx)) as u32;
+            let x1 = (projection.left + f64::from(sx + 1) * scale)
+                .ceil()
+                .min(f64::from(viewport.right()) * f64::from(dx))
+                .max(0.0) as u32;
+            let y0 = (projection.top + f64::from(sy) * scale_y)
+                .floor()
+                .max(f64::from(viewport.y) * f64::from(dy)) as u32;
+            let y1 = (projection.top + f64::from(sy + 1) * scale_y)
+                .ceil()
+                .min(f64::from(viewport.bottom()) * f64::from(dy))
+                .max(0.0) as u32;
+            if x0 >= x1 || y0 >= y1 {
+                return false;
+            }
+            let depth = depth_at(sx, sy);
+            (y0..y1).all(|y| {
+                (x0..x1).all(|x| sample(x, y).is_none_or(|w| f64::from(w.depth) <= depth + 0.0001))
+            })
+        });
+        let face_painted = draw_camera_face(
+            &face_sprite,
+            self.renderer,
+            self.colors,
+            projection,
+            viewport,
+            buf,
+        );
+        let face = self
+            .sprite
+            .face_text()
+            .unwrap_or_else(|| self.expression.kaomoji(self.frame));
+        if caption != 0 {
+            draw_caption(
+                face,
+                f64::from(area.x) + f64::from(area.width) / 2.0,
+                i32::from(area.bottom() - 1),
+                area,
+                self.colors,
+                buf,
+            );
+        } else if !face_painted && printable_face(face) {
+            let text = if face.len() <= usize::from(area.width) {
+                Some(face)
+            } else {
+                face.get(1..face.len().saturating_sub(1))
+                    .filter(|s| s.len() <= usize::from(area.width))
+            };
+            if let Some(text) = text {
+                let row = area.bottom() - 1;
+                for col in area.x..area.right() {
+                    if let Some(cell) = buf.cell_mut((col, row)) {
+                        cell.set_char(' ')
+                            .set_bg(backdrop)
+                            .set_fg(self.colors.ink(7));
+                    }
+                }
+                draw_caption(
+                    text,
+                    f64::from(area.x) + f64::from(area.width) / 2.0,
+                    i32::from(row),
+                    area,
+                    self.colors,
+                    buf,
+                );
+            }
+        }
+    }
+}
+
 impl Widget for RoomWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use crate::sprite::Expression;
         let area = area.intersection(buf.area);
         if area.width == 0 || area.height == 0 {
+            return;
+        }
+        if let Some(rules) = self
+            .world
+            .filter(|rules| rules.enabled && self.camera.view == CameraView::Room)
+        {
+            self.render_world_room(area, buf, rules);
             return;
         }
         let ascii = self.renderer == Renderer::Ascii;
@@ -2035,10 +2227,12 @@ mod face_tests {
                     colors: &colors,
                 }
                 .render(Rect::new(2, 2, width, height), &mut buffer);
-                assert!(buffer
-                    .content
-                    .iter()
-                    .all(|c| !c.symbol().contains('\u{1b}')));
+                assert!(
+                    buffer
+                        .content
+                        .iter()
+                        .all(|c| !c.symbol().contains('\u{1b}'))
+                );
                 assert_eq!(buffer[(0, 0)].symbol(), " ");
                 assert_eq!(buffer[(99, 99)].symbol(), " ");
             }
@@ -2155,6 +2349,7 @@ mod habitat_tests {
         let colors = Colors::from_config(config, Depth::Indexed).unwrap();
         let mut buffer = Buffer::empty(Rect::new(0, 0, 90, 34));
         RoomWidget {
+            world: None,
             detail: SpriteStyle::EightBit,
             sprite: &sprite,
             renderer: Renderer::HalfBlock,
@@ -2200,6 +2395,7 @@ mod habitat_tests {
             let sprite = Sprite::voxel(Stage::Child, Expression::Idle, detail, 0, 0, false);
             let mut buf = Buffer::empty(Rect::new(0, 0, 82, 28));
             RoomWidget {
+                world: None,
                 detail,
                 sprite: &sprite,
                 renderer: Renderer::HalfBlock,
@@ -2407,6 +2603,7 @@ mod camera_tests {
                     &sprite,
                     renderer,
                     Camera {
+                        orbit_degrees: 45,
                         view: CameraView::Face,
                         from_view: CameraView::Room,
                         transition_percent,
@@ -2455,6 +2652,7 @@ mod camera_tests {
                     }
                     let baseline = buf.clone();
                     RoomWidget {
+                        world: None,
                         detail: SpriteStyle::SixteenBit,
                         sprite: &sprite,
                         renderer,
@@ -2545,6 +2743,7 @@ mod camera_tests {
                     0,
                     (500, 500),
                     Camera {
+                        orbit_degrees: 45,
                         view: CameraView::Face,
                         ..Camera::default()
                     },
@@ -2574,11 +2773,13 @@ mod camera_tests {
                     f64::from(front_face.y) + 0.5,
                     Renderer::HalfBlock,
                 );
-                assert!(text(
-                    &buf,
-                    Rect::new(area.x, face_y.floor() as u16, area.width, 1)
-                )
-                .contains(front_face.text));
+                assert!(
+                    text(
+                        &buf,
+                        Rect::new(area.x, face_y.floor() as u16, area.width, 1)
+                    )
+                    .contains(front_face.text)
+                );
                 assert!(rear.face_overlay().is_none());
                 let previous = buf.clone();
                 assert!(!draw_front_face(
@@ -2620,6 +2821,7 @@ mod camera_tests {
                 0,
                 (500, 500),
                 Camera {
+                    orbit_degrees: 45,
                     view: CameraView::Face,
                     ..Camera::default()
                 },
@@ -2665,6 +2867,7 @@ mod camera_tests {
             );
             let mut buf = Buffer::empty(Rect::new(0, 0, 22, 10));
             RoomWidget {
+                world: None,
                 detail: SpriteStyle::SixteenBit,
                 sprite: &sprite,
                 renderer: Renderer::Ascii,
@@ -2682,11 +2885,13 @@ mod camera_tests {
             .render(area, &mut buf);
             let caption = text(&buf, Rect::new(1, 8, 20, 1));
             assert!(caption.contains("munching"));
-            assert!(caption.contains(
-                sprite
-                    .face_overlay()
-                    .map_or(Expression::Eating.kaomoji(1), |f| f.text,)
-            ));
+            assert!(
+                caption.contains(
+                    sprite
+                        .face_overlay()
+                        .map_or(Expression::Eating.kaomoji(1), |f| f.text,)
+                )
+            );
         }
     }
 
@@ -2710,6 +2915,7 @@ mod camera_tests {
                 let area = Rect::new(0, 0, 40, 12);
                 let mut buf = Buffer::empty(area);
                 RoomWidget {
+                    world: None,
                     detail: SpriteStyle::SixteenBit,
                     sprite: &sprite,
                     renderer: Renderer::Ascii,
@@ -2764,6 +2970,7 @@ mod camera_tests {
                     let canonical = sprite.face_text().expect("mapped front expression");
                     let core = &canonical[1..4];
                     let camera = Camera {
+                        orbit_degrees: 45,
                         view: CameraView::Face,
                         ..Camera::default()
                     };
@@ -2778,6 +2985,7 @@ mod camera_tests {
                     );
                     let mut buf = Buffer::empty(Rect::new(0, 0, 14, 8));
                     RoomWidget {
+                        world: None,
                         detail: SpriteStyle::SixteenBit,
                         sprite: &sprite,
                         renderer,
@@ -2798,10 +3006,16 @@ mod camera_tests {
                             if cell.modifier.contains(ratatui::style::Modifier::BOLD) {
                                 for y in 0..dy {
                                     for x in 0..dx {
-                                        assert!(projected_head_uv(&sprite, projection,
-                                            u32::from(col) * u32::from(dx) + u32::from(x),
-                                            u32::from(row) * u32::from(dy) + u32::from(y)).is_some(),
-                                            "{renderer:?} shape{shape} height{height}: tiny text escaped head authority");
+                                        assert!(
+                                            projected_head_uv(
+                                                &sprite,
+                                                projection,
+                                                u32::from(col) * u32::from(dx) + u32::from(x),
+                                                u32::from(row) * u32::from(dy) + u32::from(y)
+                                            )
+                                            .is_some(),
+                                            "{renderer:?} shape{shape} height{height}: tiny text escaped head authority"
+                                        );
                                     }
                                 }
                                 marks.push((col, cell.symbol().to_owned()));
@@ -2811,8 +3025,10 @@ mod camera_tests {
                     marks.sort_by_key(|p| p.0);
                     let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
                     if !literal.is_empty() {
-                        assert!(literal == canonical || literal == core,
-                            "{renderer:?} shape{shape} height{height}: incomplete tiny expression {literal}");
+                        assert!(
+                            literal == canonical || literal == core,
+                            "{renderer:?} shape{shape} height{height}: incomplete tiny expression {literal}"
+                        );
                         readable_two_row_cases += usize::from(height == 2);
                     }
                     assert!(!text(&buf, area).contains("curious"));
@@ -2889,6 +3105,7 @@ mod camera_tests {
             0,
             (500, 500),
             Camera {
+                orbit_degrees: 45,
                 view: CameraView::Face,
                 ..Camera::default()
             },
@@ -3010,6 +3227,7 @@ mod camera_tests {
                     let area = Rect::new(2, 2, 10, 2);
                     let mut buf = Buffer::empty(Rect::new(0, 0, 14, 6));
                     RoomWidget {
+                        world: None,
                         detail: style,
                         sprite: &sprite,
                         renderer,
@@ -3019,6 +3237,7 @@ mod camera_tests {
                         frame,
                         position: (500, 500),
                         camera: Camera {
+                            orbit_degrees: 45,
                             view: CameraView::Face,
                             ..Camera::default()
                         },
@@ -3026,8 +3245,10 @@ mod camera_tests {
                     }
                     .render(area, &mut buf);
                     let rendered = text(&buf, area);
-                    assert!(rendered.contains(canonical) || rendered.contains(core),
-                        "{style:?} {renderer:?} frame{frame}: complete eye/mouth core missing: {rendered}");
+                    assert!(
+                        rendered.contains(canonical) || rendered.contains(core),
+                        "{style:?} {renderer:?} frame{frame}: complete eye/mouth core missing: {rendered}"
+                    );
                     if !buf
                         .content
                         .iter()
@@ -3036,7 +3257,9 @@ mod camera_tests {
                         let row = Rect::new(area.x, area.bottom() - 1, area.width, 1);
                         let caption = text(&buf, row);
                         assert!(caption.trim() == canonical || caption.trim() == core);
-                        assert!((area.x..area.right()).all(|x| buf[(x, row.y)].bg == colors.ink(6)));
+                        assert!(
+                            (area.x..area.right()).all(|x| buf[(x, row.y)].bg == colors.ink(6))
+                        );
                         inline_cases += 1;
                     }
                     assert_eq!(buf[(1, 2)].symbol(), " ");
@@ -3048,6 +3271,7 @@ mod camera_tests {
             let area = Rect::new(0, 0, 10, 2);
             let mut buf = Buffer::empty(area);
             RoomWidget {
+                world: None,
                 detail: style,
                 sprite: &egg,
                 renderer: Renderer::Ascii,
@@ -3057,6 +3281,7 @@ mod camera_tests {
                 frame: 0,
                 position: (500, 500),
                 camera: Camera {
+                    orbit_degrees: 45,
                     view: CameraView::Face,
                     ..Camera::default()
                 },
@@ -3129,9 +3354,11 @@ mod camera_tests {
             .collect();
         assert_eq!(atlas[0], "   #                             #   ");
         // The same outer stem persists through three rows: a curve, not < or >.
-        assert!(atlas[3..6]
-            .iter()
-            .all(|row| row.starts_with('#') && row.ends_with('#')));
+        assert!(
+            atlas[3..6]
+                .iter()
+                .all(|row| row.starts_with('#') && row.ends_with('#'))
+        );
         for glyph in 0..4 {
             for x in glyph * 8 + 5..glyph * 8 + 8 {
                 for y in 0..9 {
@@ -3224,6 +3451,7 @@ mod camera_tests {
                     0,
                     (500, 500),
                     Camera {
+                        orbit_degrees: 45,
                         view: CameraView::Face,
                         ..Camera::default()
                     },
@@ -3324,8 +3552,10 @@ mod camera_tests {
                 marks.sort_by_key(|p| p.0);
                 let literal: String = marks.iter().map(|p| p.1).collect();
                 if !literal.is_empty() {
-                    assert!(matches!(literal.as_str(), "^_^" | "(^_^)"),
-                        "{renderer:?} {columns} cells: missing eye/mouth or unbalanced parentheses: {literal}");
+                    assert!(
+                        matches!(literal.as_str(), "^_^" | "(^_^)"),
+                        "{renderer:?} {columns} cells: missing eye/mouth or unbalanced parentheses: {literal}"
+                    );
                     core_cases += 1;
                 }
             }
@@ -3405,8 +3635,10 @@ mod camera_tests {
                     }
                     chars.sort_by_key(|p| p.0);
                     let literal: String = chars.iter().map(|p| p.1.as_str()).collect();
-                    assert!(matches!(literal.as_str(), "^_^" | "(^_^)"),
-                        "{width}x{height} {renderer:?} {view:?} zoom50 needs native eyes/mouth with balanced optional parentheses: {literal}");
+                    assert!(
+                        matches!(literal.as_str(), "^_^" | "(^_^)"),
+                        "{width}x{height} {renderer:?} {view:?} zoom50 needs native eyes/mouth with balanced optional parentheses: {literal}"
+                    );
                 }
             }
         }
@@ -3454,8 +3686,10 @@ mod camera_tests {
                     }
                     marks.sort_by_key(|p| p.0);
                     let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
-                    assert!(literal == canonical || literal == core,
-                        "actual bird child Sick {style:?} frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}");
+                    assert!(
+                        literal == canonical || literal == core,
+                        "actual bird child Sick {style:?} frame{frame} {renderer:?} head{columns}: missing native eye/mouth or lone bracket: {literal}"
+                    );
                 }
             }
         }
@@ -3514,8 +3748,12 @@ mod camera_tests {
                                 &mut before,
                             );
                             let mut after = before.clone();
-                            assert!(draw_camera_face(&sprite, renderer, &colors, projection, area, &mut after),
-                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core");
+                            assert!(
+                                draw_camera_face(
+                                    &sprite, renderer, &colors, projection, area, &mut after
+                                ),
+                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: no complete native core"
+                            );
                             let mut marks = Vec::new();
                             for y in 0..area.height {
                                 for x in 0..area.width {
@@ -3527,8 +3765,10 @@ mod camera_tests {
                             }
                             marks.sort_by_key(|p| p.0);
                             let literal: String = marks.iter().map(|p| p.1.as_str()).collect();
-                            assert!(literal == canonical || literal == core,
-                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}");
+                            assert!(
+                                literal == canonical || literal == core,
+                                "bird child Sick {style:?} frame{frame} {renderer:?} {view:?} zoom{zoom} width{width}: {literal}"
+                            );
                         }
                     }
                 }
@@ -3788,6 +4028,7 @@ mod camera_tests {
                         }
                         let before = buf.clone();
                         RoomWidget {
+                            world: None,
                             detail: SpriteStyle::SixteenBit,
                             sprite: &sprite,
                             renderer,
@@ -3955,6 +4196,7 @@ mod camera_tests {
                 0,
                 (500, 500),
                 Camera {
+                    orbit_degrees: 45,
                     view: CameraView::Face,
                     ..Camera::default()
                 },
@@ -3973,11 +4215,13 @@ mod camera_tests {
                     .any(|(a, b)| a.symbol() != b.symbol()),
                 "{renderer:?}: monochrome face vanished into the body's glyph"
             );
-            assert!(before
-                .content
-                .iter()
-                .zip(&after.content)
-                .all(|(a, b)| a.bg == b.bg));
+            assert!(
+                before
+                    .content
+                    .iter()
+                    .zip(&after.content)
+                    .all(|(a, b)| a.bg == b.bg)
+            );
         }
     }
 
@@ -4079,6 +4323,7 @@ mod camera_tests {
                     0,
                     (500, 500),
                     Camera {
+                        orbit_degrees: 45,
                         view: CameraView::Face,
                         zoom_percent: 200,
                         ..Camera::default()
@@ -4177,10 +4422,16 @@ mod camera_tests {
                             if before[(col, row)] != after[(col, row)] {
                                 for y in 0..dy {
                                     for x in 0..dx {
-                                        assert!(projected_head_uv(&sprite, projection,
-                                            u32::from(col) * u32::from(dx) + u32::from(x),
-                                            u32::from(row) * u32::from(dy) + u32::from(y)).is_some(),
-                                            "{renderer:?} yaw{yaw}: minified glyph escaped visible head material");
+                                        assert!(
+                                            projected_head_uv(
+                                                &sprite,
+                                                projection,
+                                                u32::from(col) * u32::from(dx) + u32::from(x),
+                                                u32::from(row) * u32::from(dy) + u32::from(y)
+                                            )
+                                            .is_some(),
+                                            "{renderer:?} yaw{yaw}: minified glyph escaped visible head material"
+                                        );
                                     }
                                 }
                                 marks.push((col, row, after[(col, row)].symbol().to_owned()));
@@ -4200,8 +4451,10 @@ mod camera_tests {
                     .iter()
                     .map(|(x, y, glyph)| (x - 10, *y, glyph.clone()))
                     .collect();
-                assert_eq!(moved, expected,
-                    "{renderer:?} yaw{yaw}: native glyphs must move with the head, never a fixed screen label");
+                assert_eq!(
+                    moved, expected,
+                    "{renderer:?} yaw{yaw}: native glyphs must move with the head, never a fixed screen label"
+                );
                 let mut rear_before = Buffer::empty(area);
                 draw_projection(&rear, renderer, &colors, projection, area, &mut rear_before);
                 let mut rear_after = rear_before.clone();
@@ -4326,5 +4579,116 @@ mod camera_tests {
             cell.symbol(),
             braille([true, false, false, true, false, true, false, false]).to_string()
         );
+    }
+}
+
+#[cfg(test)]
+mod voxel_world_integration_tests {
+    use super::*;
+    use crate::{
+        capabilities::Depth,
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+        world::WorldRules,
+    };
+    #[test]
+    fn all_world_orbits_and_packings_stay_inside_offset_viewport() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            for (width, height) in [(1, 1), (4, 2), (12, 6), (20, 8), (80, 24), (35, 55)] {
+                let full = Rect::new(0, 0, width + 6, height + 6);
+                let area = Rect::new(3, 3, width, height);
+                for yaw in [0, 45, 90, 135, 180, 225, 270, 315] {
+                    let sprite = Sprite::voxel_with_camera(
+                        Stage::Adult,
+                        Expression::Happy,
+                        SpriteStyle::EightBit,
+                        0,
+                        [yaw, 30],
+                        false,
+                        Appearance::default(),
+                    );
+                    let mut buf = Buffer::empty(full);
+                    for cell in &mut buf.content {
+                        cell.set_char('!');
+                    }
+                    RoomWidget {
+                        sprite: &sprite,
+                        renderer,
+                        colors: &colors,
+                        expression: Expression::Happy,
+                        detail: SpriteStyle::EightBit,
+                        frame: 0,
+                        position: (500, 700),
+                        camera: Camera {
+                            orbit_degrees: yaw,
+                            ..Camera::default()
+                        },
+                        habitat: None,
+                        world: Some(&WorldRules::default()),
+                    }
+                    .render(area, &mut buf);
+                    for row in full.y..full.bottom() {
+                        for col in full.x..full.right() {
+                            if !area.contains((col, row).into()) {
+                                assert_eq!(buf[(col, row)].symbol(), "!");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn camera_rotation_changes_real_room_geometry_without_touching_game() {
+        let config = Config::sample().unwrap();
+        let game = crate::game::Game::new(&config.game, 903);
+        let before = game.clone();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let area = Rect::new(0, 0, 80, 30);
+        let mut frames = Vec::new();
+        for yaw in [45, 135, 225, 315] {
+            let sprite = Sprite::voxel_with_camera(
+                Stage::Baby,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                [yaw, 30],
+                false,
+                Appearance::default(),
+            );
+            let mut buf = Buffer::empty(area);
+            RoomWidget {
+                sprite: &sprite,
+                renderer: Renderer::HalfBlock,
+                colors: &colors,
+                expression: Expression::Happy,
+                detail: SpriteStyle::SixteenBit,
+                frame: 0,
+                position: (300, 700),
+                camera: Camera {
+                    orbit_degrees: yaw,
+                    ..Camera::default()
+                },
+                habitat: Some(HabitatView {
+                    state: &game.habitat,
+                    rules: &config.habitat,
+                    wins: game.wins,
+                    age: game.age_ticks,
+                }),
+                world: Some(&config.world),
+            }
+            .render(area, &mut buf);
+            frames.push(buf);
+        }
+        assert_ne!(frames[0], frames[1]);
+        assert_ne!(frames[1], frames[2]);
+        assert_eq!(game, before);
     }
 }

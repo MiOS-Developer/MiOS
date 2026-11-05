@@ -3394,6 +3394,46 @@
           <option value="pet">Pet body</option>
           <option value="face">Face close-up</option>
         </select>
+<p>Isometric room: fixed30 degree elevation, rotatable azimuth, follows the autonomous Mon.</p>
+<label for="f-mon-tamagotchi-world-width_tiles">Room width in tiles</label>
+<input type="number" id="f-mon-tamagotchi-world-width_tiles" data-inherit="true" data-key="tamagotchi.world.width_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
+
+<label for="f-mon-tamagotchi-world-depth_tiles">Room depth in tiles</label>
+<input type="number" id="f-mon-tamagotchi-world-depth_tiles" data-inherit="true" data-key="tamagotchi.world.depth_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
+
+<label for="f-mon-tamagotchi-world-wall_height">Wall height in tiles</label>
+<input type="number" id="f-mon-tamagotchi-world-wall_height" data-inherit="true" data-key="tamagotchi.world.wall_height" data-type="int" placeholder="Inherit vendor" min="2" max="8" step="1">
+
+<label for="f-mon-tamagotchi-world-pet_height_percent">Pet height relative to wall (%)</label>
+<input type="number" id="f-mon-tamagotchi-world-pet_height_percent" data-inherit="true" data-key="tamagotchi.world.pet_height_percent" data-type="int" placeholder="Inherit vendor" min="10" max="150" step="1">
+
+<label for="f-mon-tamagotchi-world-default_yaw_degrees">Starting world orbit (degrees)</label>
+<input type="number" id="f-mon-tamagotchi-world-default_yaw_degrees" data-inherit="true" data-key="tamagotchi.world.default_yaw_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="359" step="1">
+
+<label for="f-mon-tamagotchi-world-orbit_step_degrees">Orbit step (degrees)</label>
+<input type="number" id="f-mon-tamagotchi-world-orbit_step_degrees" data-inherit="true" data-key="tamagotchi.world.orbit_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="180" step="1">
+
+<label for="f-mon-tamagotchi-world-elevation_degrees">Isometric elevation (fixed)</label>
+<input type="number" id="f-mon-tamagotchi-world-elevation_degrees" data-inherit="true" data-key="tamagotchi.world.elevation_degrees" data-type="int" placeholder="Inherit vendor" min="30" max="30" step="1">
+
+<label for="f-mon-tamagotchi-world-follow_percent">Camera follow (%)</label>
+<input type="number" id="f-mon-tamagotchi-world-follow_percent" data-inherit="true" data-key="tamagotchi.world.follow_percent" data-type="int" placeholder="Inherit vendor" min="0" max="100" step="1">
+
+<label for="f-mon-tamagotchi-world-backdrop">Backdrop palette index</label>
+<input type="number" id="f-mon-tamagotchi-world-backdrop" data-inherit="true" data-key="tamagotchi.world.backdrop" data-type="int" placeholder="Inherit vendor" min="0" max="15" step="1">
+
+<label for="f-mon-world-enabled">Voxel room</label><select id="f-mon-world-enabled" data-inherit="true" data-key="tamagotchi.world.enabled" data-type="bool"><option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Legacy room</option></select>
+
+<label for="f-mon-genetics-likes">Likes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-likes" data-inherit="true" data-key="tamagotchi.genetics.likes" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-genetics-dislikes">Dislikes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-dislikes" data-inherit="true" data-key="tamagotchi.genetics.dislikes" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-genetics-traits">Trait vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-traits" data-inherit="true" data-key="tamagotchi.genetics.traits" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-genetics-tropes">Character trope vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-tropes" data-inherit="true" data-key="tamagotchi.genetics.tropes" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-tamagotchi-game-training-hatch_bonus">Seeded hatch bonus</label>
+<input type="number" id="f-mon-tamagotchi-game-training-hatch_bonus" data-inherit="true" data-key="tamagotchi.game.training.hatch_bonus" data-type="int" placeholder="Inherit vendor" min="0" max="20" step="1">
         <label for="f-mon-tamagotchi-hud-mode">HUD layout</label>
         <select id="f-mon-tamagotchi-hud-mode" data-inherit="true" data-key="tamagotchi.hud_mode">
           <option value="">Inherit vendor</option>

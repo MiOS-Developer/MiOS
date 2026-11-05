@@ -41,6 +41,8 @@ pub struct Config {
     pub view_mode: ViewMode,
     pub voxel_lighting: crate::lighting::VoxelLighting,
     pub camera_view: crate::render::CameraView,
+    pub world: crate::world::WorldRules,
+    pub genetics: crate::genetics::GeneticsRules,
     pub zoom_percent: u16,
     pub zoom_step_percent: u16,
     pub zoom_transition_frames: usize,
@@ -138,6 +140,8 @@ impl Config {
         self.game.validate()?;
         self.voxel_lighting.validate()?;
         self.presentation.validate()?;
+        self.world.validate()?;
+        self.genetics.validate()?;
         self.habitat.validate()?;
         if !(1000..=600_000).contains(&self.dialog_timeout_ms)
             || !(50..=2000).contains(&self.dialog_query_timeout_ms)

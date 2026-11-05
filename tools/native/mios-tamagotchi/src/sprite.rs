@@ -155,6 +155,9 @@ pub struct Sprite {
     face_overlay: Option<FaceOverlay>,
     face_mapping: Option<FaceMapping>,
     surface_shading: Option<Vec<[i8; 4]>>,
+    // Q8 packed-pixel camera depth relative to the physical ground anchor.
+    voxel_depth: Option<Vec<i32>>,
+    voxel_ground: Option<[i32; 2]>,
 }
 
 impl Sprite {
@@ -212,6 +215,53 @@ impl Sprite {
         ))
     }
 
+    /// Camera depth in source-pixel units. Transparent and legacy pixel
+    /// sprites have no depth; a missing sample never wins room occlusion.
+    pub fn depth_pixels(&self, x: u32, y: u32) -> Option<f64> {
+        self.pixel(x, y, 1)?;
+        let value = *self
+            .voxel_depth
+            .as_ref()?
+            .get(y as usize * usize::from(self.width) + x as usize)?;
+        (value != i32::MIN).then_some(f64::from(value) / 256.0)
+    }
+
+    pub fn ground_pixel(&self) -> Option<[f64; 2]> {
+        self.voxel_ground.map(|p| p.map(|v| f64::from(v) / 256.0))
+    }
+
+    /// Conservative visibility for native facial glyphs. Occluded voxels lose
+    /// BOTH color and head authorization; room furniture cannot acquire eyes.
+    pub fn retain_visible_pixels(&self, mut visible: impl FnMut(u32, u32) -> bool) -> Self {
+        let mut result = self.clone();
+        for y in 0..u32::from(self.height) {
+            for x in 0..u32::from(self.width) {
+                let i = y as usize * usize::from(self.width) + x as usize;
+                if result.pixels[i].is_some() && !visible(x, y) {
+                    result.pixels[i] = None;
+                    if let Some(m) = result.face_mapping.as_mut() {
+                        m.texels[i] = None;
+                        m.head_texels[i] = None;
+                    }
+                    if let Some(m) = result.voxel_depth.as_mut() {
+                        m[i] = i32::MIN;
+                    }
+                    if let Some(m) = result.surface_shading.as_mut() {
+                        m[i] = [0; 4];
+                    }
+                }
+            }
+        }
+        if result.face_overlay.is_some_and(|f| {
+            result
+                .pixel(u32::from(f.center_x), u32::from(f.y), 1)
+                .is_none()
+        }) {
+            result.face_overlay = None;
+        }
+        result
+    }
+
     /// CPU-only solid voxel seedling. Yaw is periodic; movement is supplied by
     /// the simulation, never inferred from controller input in the renderer.
     pub fn voxel(
@@ -244,6 +294,40 @@ impl Sprite {
         walking: bool,
         appearance: Appearance,
     ) -> Self {
+        Self::voxel_with_view(
+            stage,
+            expression,
+            style,
+            frame,
+            [yaw_degrees, 0],
+            walking,
+            appearance,
+        )
+    }
+
+    /// Use the world's same yaw and fixed elevation, preserving actual head
+    /// surfaces, depth, kaomoji UVs and the physical floor contact anchor.
+    pub fn voxel_with_camera(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+        camera: [u16; 2],
+        walking: bool,
+        appearance: Appearance,
+    ) -> Self {
+        Self::voxel_with_view(stage, expression, style, frame, camera, walking, appearance)
+    }
+
+    fn voxel_with_view(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+        camera: [u16; 2],
+        walking: bool,
+        appearance: Appearance,
+    ) -> Self {
         use crate::game::Stage;
         let dead = stage == Stage::Dead || expression == Expression::Dead;
         let stage = if dead { Stage::Dead } else { stage };
@@ -257,7 +341,16 @@ impl Sprite {
             appearance.bounded(),
         );
         model.attach_face(stage, expression, style, frame);
-        model.rasterize(style, yaw_degrees, expression == Expression::Sleeping)
+        model.rasterize(
+            style,
+            camera[0],
+            expression == Expression::Sleeping,
+            if camera[1] == 0 {
+                0.32
+            } else {
+                f32::from(camera[1].clamp(1, 89)).to_radians()
+            },
+        )
     }
 
     /// Palette-only fallback for the existing pixel artwork. Preserve eyes,
@@ -288,6 +381,8 @@ impl Sprite {
                 face_overlay: None,
                 face_mapping: None,
                 surface_shading: None,
+                voxel_depth: None,
+                voxel_ground: None,
             };
         }
         if self.width <= max_width && self.height <= max_height {
@@ -341,6 +436,28 @@ impl Sprite {
             }
             mapped
         });
+        let voxel_depth = self.voxel_depth.as_ref().map(|samples| {
+            let mut mapped = Vec::with_capacity(usize::from(width) * usize::from(height));
+            for y in 0..u32::from(height) {
+                let sy = ((2 * y + 1) * sh / (2 * u32::from(height))).min(sh - 1);
+                for x in 0..u32::from(width) {
+                    let sx = ((2 * x + 1) * sw / (2 * u32::from(width))).min(sw - 1);
+                    let d = samples[sy as usize * usize::from(self.width) + sx as usize];
+                    mapped.push(if d == i32::MIN {
+                        d
+                    } else {
+                        (i64::from(d) * i64::from(width) / i64::from(self.width)) as i32
+                    });
+                }
+            }
+            mapped
+        });
+        let voxel_ground = self.voxel_ground.map(|[x, y]| {
+            [
+                (i64::from(x) * i64::from(width) / i64::from(self.width)) as i32,
+                (i64::from(y) * i64::from(height) / i64::from(self.height)) as i32,
+            ]
+        });
         let face_overlay = self.face_overlay.map(|face| FaceOverlay {
             center_x: (u32::from(face.center_x) * u32::from(width) / sw).min(u32::from(width) - 1)
                 as u16,
@@ -354,6 +471,8 @@ impl Sprite {
             face_overlay,
             face_mapping,
             surface_shading,
+            voxel_depth,
+            voxel_ground,
         }
     }
 
@@ -499,6 +618,8 @@ impl Sprite {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
             pixels: rows
                 .iter()
                 .flat_map(|row| row.bytes())
@@ -931,6 +1052,8 @@ impl Sprite {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
         })
     }
 
@@ -974,6 +1097,8 @@ impl Sprite {
             pixels,
             face_mapping: None,
             surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
             face_overlay: Some(FaceOverlay {
                 center_x: 4,
                 y: 3,
@@ -1003,6 +1128,8 @@ impl Sprite {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
         }
     }
 
@@ -1032,6 +1159,8 @@ impl Sprite {
             }),
             face_mapping: None,
             surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
         }
     }
 }
@@ -1453,7 +1582,7 @@ impl VoxelModel {
         }
     }
 
-    fn rasterize(&self, style: SpriteStyle, yaw: u16, sleeping: bool) -> Sprite {
+    fn rasterize(&self, style: SpriteStyle, yaw: u16, sleeping: bool, pitch: f32) -> Sprite {
         // The detailed style re-samples the model at FINE_LATTICE cells per unit
         // on a canvas twice as wide, so one fine cell still maps to about one
         // pixel. The 8-bit style keeps its unit lattice and canvas unchanged.
@@ -1487,13 +1616,14 @@ impl VoxelModel {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
         };
         sprite.surface_shading = Some(vec![[0; 4]; sprite.pixels.len()]);
         let mut depth = vec![f32::NEG_INFINITY; sprite.pixels.len()];
         let mut face_layer = vec![false; sprite.pixels.len()];
         let angle = f32::from(yaw % 360).to_radians();
         let (s, c) = angle.sin_cos();
-        let pitch: f32 = 0.32;
         let (sp, cp) = pitch.sin_cos();
         let pose: f32 = if sleeping { 0.75 } else { 0.0 };
         let (sr, cr) = pose.sin_cos();
@@ -1761,6 +1891,27 @@ impl VoxelModel {
             }
         }
 
+        // Retain the winning surface's depth, scaled into sprite pixels so
+        // the room compositor can compare it in the world's own camera units.
+        let ground_y = cells
+            .keys()
+            .map(|&(_, y, _)| center_of(y) - 0.5 / kf)
+            .fold(f32::INFINITY, f32::min);
+        let [gx, gy, gz] = project([0.0, ground_y, 0.0]);
+        sprite.voxel_ground = Some([gx, gy].map(|v| (v * 256.0).round() as i32));
+        sprite.voxel_depth = Some(
+            depth
+                .iter()
+                .map(|z| {
+                    if z.is_finite() {
+                        ((z - gz) * fit * 256.0).round() as i32
+                    } else {
+                        i32::MIN
+                    }
+                })
+                .collect(),
+        );
+
         sprite
     }
 }
@@ -1953,9 +2104,11 @@ mod body_face_tests {
                     "(x_x)"
                 );
             }
-            assert!(Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
-                .face_overlay()
-                .is_none());
+            assert!(
+                Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
+                    .face_overlay()
+                    .is_none()
+            );
         }
     }
 
@@ -1985,11 +2138,7 @@ mod body_face_tests {
                 // Clear air between two feet proves that the lower half is not
                 // a stretched, continuously filled head silhouette.
                 let feet_y = if style == SpriteStyle::EightBit {
-                    if stage == Stage::Adult {
-                        15
-                    } else {
-                        14
-                    }
+                    if stage == Stage::Adult { 15 } else { 14 }
                 } else if stage == Stage::Adult {
                     30
                 } else {
@@ -2145,17 +2294,19 @@ mod body_face_tests {
                     assert_eq!(anchor.text, Expression::Happy.kaomoji(usize::MAX));
                     assert!(anchor.center_x < front.width && anchor.y < front.height);
                     for yaw in [90, 135, 180, 225, 270] {
-                        assert!(Sprite::voxel_with_appearance(
-                            stage,
-                            Expression::Happy,
-                            style,
-                            usize::MAX,
-                            yaw,
-                            false,
-                            appearance
-                        )
-                        .face_overlay()
-                        .is_none());
+                        assert!(
+                            Sprite::voxel_with_appearance(
+                                stage,
+                                Expression::Happy,
+                                style,
+                                usize::MAX,
+                                yaw,
+                                false,
+                                appearance
+                            )
+                            .face_overlay()
+                            .is_none()
+                        );
                     }
                 }
             }
@@ -2163,15 +2314,19 @@ mod body_face_tests {
         let mut model = VoxelModel::default();
         model.ellipsoid([0.0; 3], [3.0; 3], 1);
         model.face = Some(([0.0, 0.0, 3.5], "(o_o)"));
-        assert!(model
-            .rasterize(SpriteStyle::SixteenBit, 0, false)
-            .face_overlay()
-            .is_some());
+        assert!(
+            model
+                .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
+                .face_overlay()
+                .is_some()
+        );
         model.ellipsoid([0.0, 0.0, 8.0], [3.0; 3], 8);
-        assert!(model
-            .rasterize(SpriteStyle::SixteenBit, 0, false)
-            .face_overlay()
-            .is_none());
+        assert!(
+            model
+                .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
+                .face_overlay()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2203,10 +2358,12 @@ mod body_face_tests {
                 assert!(s.downsample_to_fit(0, 5).face_overlay().is_none());
             }
         }
-        assert!(Sprite::new(1, 1, vec![Some(1)])
-            .unwrap()
-            .face_overlay()
-            .is_none());
+        assert!(
+            Sprite::new(1, 1, vec![Some(1)])
+                .unwrap()
+                .face_overlay()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2277,9 +2434,11 @@ mod animation_tests {
             );
         }
         for index in [16, 17, u8::MAX] {
-            assert!(Sprite::new(1, 1, vec![Some(index)])
-                .unwrap_err()
-                .contains("palette"));
+            assert!(
+                Sprite::new(1, 1, vec![Some(index)])
+                    .unwrap_err()
+                    .contains("palette")
+            );
         }
         assert!(Sprite::new(256, 256, vec![Some(15); 65536]).is_ok());
         for (width, height) in [(0, 1), (1, 0), (257, 1), (1, 257), (u16::MAX, u16::MAX)] {
@@ -2699,14 +2858,18 @@ mod voxel_tests {
         }
         let mut model = VoxelModel::default();
         model.ellipsoid([0.0; 3], [3.0; 3], 1);
-        let back = model.rasterize(SpriteStyle::SixteenBit, 180, false);
+        let back = model.rasterize(SpriteStyle::SixteenBit, 180, false, 0.32);
         model.cells.insert((0, 0, 4), 12);
         assert_ne!(
-            model.rasterize(SpriteStyle::SixteenBit, 0, false).pixels,
+            model
+                .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
+                .pixels,
             back.pixels
         );
         assert_eq!(
-            model.rasterize(SpriteStyle::SixteenBit, 180, false).pixels,
+            model
+                .rasterize(SpriteStyle::SixteenBit, 180, false, 0.32)
+                .pixels,
             back.pixels
         );
     }
@@ -2992,12 +3155,13 @@ mod appearance_tests {
                     }
                 }
             }
-            assert!(s
-                .recolored(255, 254)
-                .pixels
-                .iter()
-                .flatten()
-                .all(|&c| c < 16));
+            assert!(
+                s.recolored(255, 254)
+                    .pixels
+                    .iter()
+                    .flatten()
+                    .all(|&c| c < 16)
+            );
             assert_eq!(s.pixels, before);
         }
     }
@@ -3312,9 +3476,10 @@ mod species_detail_tests {
                         .unwrap_or_else(|| panic!("{stage:?} {shape} {mood:?} lost its face"));
                     assert_eq!(face.text, mood.kaomoji(0));
                     // The anchor sits on an opaque head pixel in the upper body.
-                    assert!(s
-                        .pixel(u32::from(face.center_x), u32::from(face.y), 1)
-                        .is_some());
+                    assert!(
+                        s.pixel(u32::from(face.center_x), u32::from(face.y), 1)
+                            .is_some()
+                    );
                     if stage != Stage::Baby {
                         assert!(face.y < s.height / 2);
                     }
@@ -3663,9 +3828,11 @@ mod native_head_surface_tests {
                 }
             }
         }
-        assert!(Sprite::new(1, 1, vec![Some(9)])
-            .unwrap()
-            .head_uv(0, 0)
-            .is_none());
+        assert!(
+            Sprite::new(1, 1, vec![Some(9)])
+                .unwrap()
+                .head_uv(0, 0)
+                .is_none()
+        );
     }
 }

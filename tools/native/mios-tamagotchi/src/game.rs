@@ -99,6 +99,8 @@ pub struct Challenge {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Game {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis_seed: Option<u64>,
     #[serde(default)]
     pub character: u8,
     #[serde(default)]
@@ -139,6 +141,7 @@ impl Game {
         Self {
             // Select an animal family, then one of its two original individuals.
             // This does not consume the memory game's saved RNG stream.
+            genesis_seed: (seed != 0).then_some(seed),
             character: ((seed % 8) + ((seed >> 8) % 2) * 8) as u8,
             habitat: crate::habitat::Habitat::new(seed),
             progress: crate::progression::Progress::new(seed),
@@ -163,6 +166,9 @@ impl Game {
     pub fn validate_habitat(&self, habitat: &crate::habitat::HabitatRules) -> Result<(), String> {
         self.habitat.validate(self.wins, self.age_ticks, habitat)?;
         self.progress.validate()?;
+        if self.genesis_seed == Some(0) {
+            return Err("save contains a zero birth seed".into());
+        }
         if self
             .progress
             .last_train_tick

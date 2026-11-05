@@ -599,3 +599,35 @@ checksum, save path and visible game in the caller's own runtime. End a disposab
 menu verification run normally so it does not hold the operator's menu-play
 save lock; preserve existing live pets and nested launchers. An already running
 pet is resumed through its running window; do not remove its writer lock.
+
+## Portable development identities and voxel rooms
+
+Development play is save-free with mios-tamagotchi --sample. A fresh nonzero64-bit
+seed generates species, name, personality, species-bound main colour,
+personality accent, trait, trope, likes/dislikes, habitat and hatch statistics.
+Press I (or Home / Birth code) for its compact17-character M1 code. The panel
+keeps the complete code visible at20x8. Copy it as ordinary ASCII over SSH,
+web terminals or text messages, then replay with --sample --seed CODE.
+Decimal seeds are also accepted: --sample --seed 123456789 --snapshot.
+
+The version-one code losslessly encodes the seed with a copying-error checksum;
+it is not a digest of a save, a secret or a container for trained progress.
+Reproduction requires matching generation settings (embedded --sample provides
+the pinned vendor rules). S opens the code panel during save-free play.
+Optional --save-dir DIR --seed CODE stores mutable progress as
+DIR/COMPACT_CODE.json; explicit --save PATH is still supported. A supplied
+seed must match an existing save. Legacy pets with unknown original seeds are
+preserved and do not receive an invented reproduction code.
+
+Hatch preview values are labelled previews. They become actual statistics only
+when the simulation hatches the egg. One seed-selected skill receives the
+configured hatch bonus; normal training still consumes care resources and XP.
+Reading or sharing an identity never advances age or either gameplay RNG.
+
+The default Room camera uses a depth-rendered tiled voxel floor, cutaway walls
+and solid placed furnishings. Its elevation stays at30 degrees; [ and ] orbit
+the world with a smooth shortest-path transition. Graphics offers orbit and
+reset controls. The camera follows the Mon's autonomous movement. Pet and Face
+close-ups remain available, along with ASCII/8-bit/tiny-terminal fallbacks.
+World size, follow, orbit, identity vocabulary and hatch bonus are configured
+in vendor TOML and the configurator; no live TOML replacement is required.

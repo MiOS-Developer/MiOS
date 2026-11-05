@@ -15,6 +15,7 @@ pub struct TrainingRules {
     pub personality_colors: BTreeMap<String, u8>,
     pub hatch_min: u16,
     pub hatch_max: u16,
+    pub hatch_bonus: u16,
     pub max_level: u8,
     pub xp_base: u32,
     pub xp_per_level: u32,
@@ -67,6 +68,7 @@ impl TrainingRules {
         if self.hatch_min == 0
             || self.hatch_min > self.hatch_max
             || self.hatch_max > 100
+            || self.hatch_bonus > 20
             || !(1..=99).contains(&self.max_level)
             || !(1..=10_000).contains(&self.xp_base)
             || self.xp_per_level > 10_000
@@ -166,6 +168,12 @@ impl Progress {
         }
     }
 
+    pub fn birth_preview(seed: u64, rules: &TrainingRules) -> Self {
+        let mut birth = Self::new(seed);
+        birth.hatch(rules);
+        birth
+    }
+
     pub fn legacy(seed: u64) -> Self {
         Self {
             legacy: true,
@@ -224,6 +232,11 @@ impl Progress {
                 aptitude,
                 ..Stat::default()
             };
+        }
+        if !self.legacy && rules.hatch_bonus > 0 {
+            let stat = &mut self.stats[crate::genetics::bonus_index(self.origin_seed)];
+            stat.value = stat.value.saturating_add(rules.hatch_bonus).min(100);
+            stat.aptitude = stat.aptitude.saturating_add(1).min(4);
         }
         if !self.legacy {
             let start = self.draw(rules.name_starts.len() as u32) as usize;
@@ -365,7 +378,13 @@ mod tests {
             assert_eq!(a.visual_seed(), seed);
             assert!(a.progress.hatched);
             assert!(a.progress.stats.iter().all(|s| {
-                (r.training.hatch_min..=r.training.hatch_max).contains(&s.value) && s.aptitude <= 4
+                (r.training.hatch_min
+                    ..=r.training
+                        .hatch_max
+                        .saturating_add(r.training.hatch_bonus)
+                        .min(100))
+                    .contains(&s.value)
+                    && s.aptitude <= 4
             }));
             let once = a.clone();
             a.prepare_progress(&r).unwrap();

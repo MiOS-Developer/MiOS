@@ -7,6 +7,7 @@ use mios_tamagotchi::{
     config::{Config, HudMode, ViewMode},
     dialogs::{self, Choice, DialogMode},
     game::{Care, Game},
+    genetics::{MonCode, Profile},
     render::{CameraView, Colors, snapshot},
     save::{self, Store},
     ui::{self, Ui},
@@ -41,6 +42,12 @@ struct Args {
     /// Explicit per-node/per-instance save file; default is the user's state home.
     #[arg(long)]
     save: Option<PathBuf>,
+    /// Recreate a birth identity from a short M1 code or nonzero decimal seed.
+    #[arg(long, conflicts_with_all=["demo","dialog","dialog_reply"])]
+    seed: Option<MonCode>,
+    /// Optional progress directory: uses the compact birth code as the filename.
+    #[arg(long, requires="seed", conflicts_with_all=["save","ephemeral","demo","dialog","dialog_reply"])]
+    save_dir: Option<PathBuf>,
     #[arg(long, value_enum)]
     renderer: Option<Renderer>,
     #[arg(long, value_enum)]
@@ -126,12 +133,20 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         return demo(&config);
     }
     let caps = capabilities::detect(config.renderer, config.color);
-    let ephemeral = args.ephemeral || (args.sample && args.save.is_none());
+    let requested_seed = args.seed.map(MonCode::seed);
+    let explicit_path = args.save.or_else(|| {
+        args.save_dir.map(|dir| {
+            dir.join(format!(
+                "{}.json",
+                args.seed.expect("seed required by clap").compact()
+            ))
+        })
+    });
+    let ephemeral = args.ephemeral || (args.sample && explicit_path.is_none());
     let path = if ephemeral {
         None
     } else {
-        args.save
-            .or_else(|| save::default_path(&config.state_directory).ok())
+        explicit_path.or_else(|| save::default_path(&config.state_directory).ok())
     };
     if args.snapshot || !caps.interactive {
         let mut game = if let Some(p) = &path {
@@ -139,7 +154,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             None
         }
-        .unwrap_or_else(|| Game::new(&config.game, 1));
+        .unwrap_or_else(|| Game::new(&config.game, requested_seed.unwrap_or(1)));
+        verify_requested_seed(&game, requested_seed)?;
         game.prepare_progress(&config.game)?;
         if !config.characters.iter().any(|c| c.id == game.character) {
             return Err("saved character is missing from this catalogue".into());
@@ -180,6 +196,38 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             snapshot_ui.name(),
             snapshot_ui.name()
         )?;
+        if let Some(profile) = Profile::for_game(&game, &config) {
+            writeln!(
+                io::stdout().lock(),
+                "Birth code: {} ({})\n{} | {} | {} | {}\nLikes: {} | Dislikes: {} | Bonus: {}\nCode recreates birth; trained progress is separate.",
+                profile.code,
+                args.seed
+                    .unwrap_or(MonCode::new(game.genesis_seed.expect("profile has seed"))?),
+                profile.name,
+                profile.species,
+                profile.archetype,
+                profile.trait_label,
+                profile.likes.join(", "),
+                profile.dislikes.join(", "),
+                profile.bonus_stat
+            )?;
+            if !game.progress.hatched {
+                for (index, stat) in profile.hatch_stats.iter().enumerate() {
+                    writeln!(
+                        io::stdout().lock(),
+                        "Hatch preview {}: {} / aptitude {}",
+                        mios_tamagotchi::progression::TrainingRules::label(index),
+                        stat.value,
+                        stat.grade()
+                    )?;
+                }
+            }
+        } else {
+            writeln!(
+                io::stdout().lock(),
+                "Birth code unavailable for this legacy or selected pet."
+            )?;
+        }
         if game.progress.hatched {
             for (index, stat) in game.progress.stats.iter().enumerate() {
                 writeln!(
@@ -200,16 +248,20 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err("No writable state home: use --save PATH, --ephemeral or --sample".into());
     }
     let store = path.as_deref().map(Store::open).transpose()?;
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let seed = requested_seed.unwrap_or_else(|| {
+        (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64)
+            .max(1)
+    });
     let mut game = store
         .as_ref()
         .map(|store| store.load_with_rules(&config.habitat))
         .transpose()?
         .flatten()
         .unwrap_or_else(|| Game::new(&config.game, seed));
+    verify_requested_seed(&game, requested_seed)?;
     game.prepare_progress(&config.game)?;
     // Validate before entering raw mode; an existing corrupt save is never silently replaced.
     game.validate_habitat(&config.habitat)?;
@@ -227,6 +279,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             game,
         )
     })?;
+    Ok(())
+}
+fn verify_requested_seed(game: &Game, requested: Option<u64>) -> Result<(), String> {
+    if requested.is_some() && game.genesis_seed != requested {
+        return Err("Requested birth code does not match this save (or its legacy birth seed is unknown); use a separate path".into());
+    }
     Ok(())
 }
 fn demo(config: &Config) -> Result<(), Box<dyn std::error::Error>> {

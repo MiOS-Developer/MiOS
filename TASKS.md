@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1747 |
-| in_progress | 78 |
+| pending | 1749 |
+| in_progress | 81 |
 | completed | 1872 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3737 |
+| total | 3742 |
 
 0 record(s) carry at least one override.
 
@@ -4465,6 +4465,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3734` Make font and viewport changes drive one global automatic detail mode -- completed · owner mios-mons-navigation-worker · P1
 - `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- completed · owner mios-mons-face-legibility-worker · P1
 - `task_3737` Expose the verified live MiOS-Mon build in the native tmux-os catalogue -- completed · owner mios-tamagotchi-live-coordinator · P1
+- `task_3738` Render a rotating isometric voxel habitat around MiOS-Mon -- in_progress · owner mios-tamagotchi-live-coordinator · P1
+- `task_3739` Add discoverable world orbit camera controls and follow framing -- in_progress · owner mios-mons-world-voxel · P1
+- `task_3740` Implement deterministic depth-rendered voxel room geometry -- in_progress · owner mios-mons-world-voxel · P1
+- `task_3741` Group completed source agent sessions by date without losing live pets -- pending · owner mios-tamagotchi-live-coordinator
+- `task_3742` Generate portable seeded Mon identities for save-free development -- pending · owner mios-tamagotchi-live-coordinator
 
 ## test-coverage
 

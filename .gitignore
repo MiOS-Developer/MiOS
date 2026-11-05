@@ -1143,3 +1143,7 @@ usr/share/mios/virtio/*.iso
 !/tools/native/mios-tamagotchi/src/geometry.rs
 
 !/tools/native/mios-tamagotchi/src/lighting.rs
+
+# Seeded identities and isometric habitat renderer
+!/tools/native/mios-tamagotchi/src/genetics.rs
+!/tools/native/mios-tamagotchi/src/world.rs
