@@ -84,6 +84,9 @@ impl FromStr for MonCode {
         } else {
             return Err("Expected decimal seed or M1-XXXX-XXXX-XXXX-XXX birth code".into());
         };
+        if digits.len() != 15 {
+            return Err("Mon code must contain fifteen payload characters".into());
+        }
         let mut value = 0u128;
         for mut c in digits.bytes() {
             c = match c {
@@ -276,6 +279,14 @@ mod tests {
             assert!(text.parse::<MonCode>().is_err(), "{text:?}");
         }
         assert_eq!("123".parse::<MonCode>().unwrap().seed(), 123);
+        let mut extra_hyphen = MonCode::new(1).unwrap().to_string().into_bytes();
+        extra_hyphen[3] = b'-';
+        assert!(
+            String::from_utf8(extra_hyphen)
+                .unwrap()
+                .parse::<MonCode>()
+                .is_err()
+        );
     }
     #[test]
     fn birth_identity_is_pure_diverse_and_independent_of_game_clock() {

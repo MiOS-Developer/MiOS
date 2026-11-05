@@ -138,3 +138,17 @@ New Leaf developer interview again returned 502. Prior citations remain
 historical evidence. Actual live cat front/oblique/side/rear appearance is a
 separate acceptance gate; unit coverage or roster screenshots alone do not
 override the operator's rejected graphics.
+
+## Isometric room framing
+
+Habbo's official room guide describes floor-plan selection, wallpaper/floor
+changes and furniture ownership. This supplies the room-design reference; the
+MiOS-Mon implementation uses original voxel geometry and the existing earned
+furniture catalogue, with no imported game artwork.
+[Habbo Rooms](https://help.habbo.com/hc/en-us/articles/360011512640-Rooms)
+
+The fixed30-degree elevation with45-degree starting azimuth is our engineering
+choice for a2:1 diamond floor grid. Rotation changes azimuth only; the camera
+follows the independently simulated Mon. Source tests and actual live viewport
+captures validate MiOS-Mon rather than treating the reference as implementation
+proof. Rechecked2026-11-04.

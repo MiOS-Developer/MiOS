@@ -164,6 +164,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         let status = snapshot_ui.summary(&config.game);
         let art = snapshot(&snapshot_ui.pet_sprite(&config.game, 0), &config)?;
         let character = mios_tamagotchi::characters::character(&config.characters, game.character);
+        let generated = Profile::for_game(&game, &config).map(|p| p.character(character, &config));
+        let character = generated.as_ref().unwrap_or(character);
         let thought = mios_tamagotchi::characters::thought(character, &game, &config.game, 0);
         let speech = mios_tamagotchi::characters::speech(character, &game, &config.game, 0);
         game.validate_habitat(&config.habitat)?;

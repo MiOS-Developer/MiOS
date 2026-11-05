@@ -1501,10 +1501,9 @@ impl RoomWidget<'_> {
             viewport,
             buf,
         );
-        let face = self
-            .sprite
-            .face_text()
-            .unwrap_or_else(|| self.expression.kaomoji(self.frame));
+        let Some(face) = self.sprite.face_text() else {
+            return;
+        };
         if caption != 0 {
             draw_caption(
                 face,
@@ -2662,6 +2661,7 @@ mod camera_tests {
                         frame: 1,
                         position: (1000, 0),
                         camera: Camera {
+                            orbit_degrees: 45,
                             view,
                             zoom_percent: 400,
                             ..Camera::default()
@@ -3612,6 +3612,7 @@ mod camera_tests {
                         0,
                         (500, 500),
                         Camera {
+                            orbit_degrees: 45,
                             view,
                             from_view: view,
                             zoom_percent: 50,
@@ -3732,6 +3733,7 @@ mod camera_tests {
                                 0,
                                 (500, 500),
                                 Camera {
+                                    orbit_degrees: 45,
                                     view,
                                     from_view: view,
                                     zoom_percent: zoom,
@@ -4620,6 +4622,7 @@ mod voxel_world_integration_tests {
                     }
                     RoomWidget {
                         sprite: &sprite,
+                        scale: 1,
                         renderer,
                         colors: &colors,
                         expression: Expression::Happy,
@@ -4628,6 +4631,8 @@ mod voxel_world_integration_tests {
                         position: (500, 700),
                         camera: Camera {
                             orbit_degrees: yaw,
+                            view: CameraView::Room,
+                            from_view: CameraView::Room,
                             ..Camera::default()
                         },
                         habitat: None,
@@ -4666,6 +4671,7 @@ mod voxel_world_integration_tests {
             let mut buf = Buffer::empty(area);
             RoomWidget {
                 sprite: &sprite,
+                scale: 1,
                 renderer: Renderer::HalfBlock,
                 colors: &colors,
                 expression: Expression::Happy,
@@ -4674,6 +4680,8 @@ mod voxel_world_integration_tests {
                 position: (300, 700),
                 camera: Camera {
                     orbit_degrees: yaw,
+                    view: CameraView::Room,
+                    from_view: CameraView::Room,
                     ..Camera::default()
                 },
                 habitat: Some(HabitatView {

@@ -911,7 +911,7 @@ mod tests {
             owned: 0,
             placed: 0,
         };
-        let triangles = |v| {
+        fn triangles(v: HabitatView<'_>) -> usize {
             room(
                 8.,
                 8.,
@@ -922,7 +922,7 @@ mod tests {
             )
             .triangles
             .len()
-        };
+        }
         let base = triangles(view(&state, &rules));
         state.placed = 255;
         assert_eq!(triangles(view(&state, &rules)), base);
