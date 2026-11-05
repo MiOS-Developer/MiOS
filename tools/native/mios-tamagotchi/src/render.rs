@@ -231,14 +231,29 @@ impl Projection {
                 let cy = face.map_or(bounds.top + bounds.height() * 0.28, |f| {
                     f64::from(f.y) + 0.5
                 });
-                // Retain the upper silhouette and ears around the actual face,
-                // while the lower body extends beyond this closer framing.
-                frame.left = cx - bounds.width() * 0.55;
-                frame.right = cx + bounds.width() * 0.55;
-                frame.top = bounds.top - bounds.height() * 0.025;
-                frame.bottom = (cy + bounds.height() * 0.18)
-                    .max(bounds.top + bounds.height() * 0.38)
-                    .min(bounds.bottom);
+                if let Some(head) = head_surface_bounds(sprite) {
+                    // The close-up belongs to the actual visible head. A wide
+                    // tail or a tall torso must never make its face smaller.
+                    // Keep the ears above the head without fitting the body.
+                    let padding_x = head.width() * 0.15;
+                    let padding_y = head.height() * 0.10;
+                    frame = SolidBounds {
+                        left: head.left - padding_x,
+                        right: head.right + padding_x,
+                        top: bounds.top.min(head.top - padding_y),
+                        bottom: (head.bottom + padding_y).min(bounds.bottom),
+                    };
+                } else {
+                    // Legacy pixels, eggs and rear silhouettes may have no
+                    // mapped head surface. Their upper silhouette stays usable
+                    // without manufacturing a face or changing occlusion.
+                    frame.left = cx - bounds.width() * 0.55;
+                    frame.right = cx + bounds.width() * 0.55;
+                    frame.top = bounds.top - bounds.height() * 0.025;
+                    frame.bottom = (cy + bounds.height() * 0.18)
+                        .max(bounds.top + bounds.height() * 0.38)
+                        .min(bounds.bottom);
+                }
             }
             let fit = (width / frame.width()).min(height / (frame.height() * pixel_aspect));
             let base = if fixed_scale == 0 {
@@ -2601,6 +2616,66 @@ mod camera_tests {
                 .filter(|&y| (0..area.width).any(|x| frames[0][(x, y)].symbol() != " "))
                 .count();
             assert!(rows >= 22, "{renderer:?}: {rows}");
+        }
+    }
+
+    #[test]
+    fn face_closeup_fits_head_not_tail_or_torso_across_species_and_renderers() {
+        for shape in 0..16 {
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                let sprite = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    2,
+                    0,
+                    false,
+                    Appearance { shape, body: 1, accent: 11 },
+                );
+                let Some(_) = head_surface_bounds(&sprite) else {
+                    panic!("shape{shape} {stage:?} must expose its real front head");
+                };
+                let bounds = SolidBounds::of(&sprite).unwrap();
+                // Model an arbitrarily wide tail and long torso in the solid
+                // bounds. The visible mapped head remains exactly the same.
+                let extended = SolidBounds {
+                    left: bounds.left - 100.0,
+                    right: bounds.right + 100.0,
+                    bottom: bounds.bottom + 100.0,
+                    ..bounds
+                };
+                for renderer in [
+                    Renderer::Ascii,
+                    Renderer::HalfBlock,
+                    Renderer::Quadrant,
+                    Renderer::Braille,
+                ] {
+                    for area in [Rect::new(3, 2, 20, 8), Rect::new(3, 2, 80, 24)] {
+                        let projection = |solid, view| {
+                            Projection::camera(
+                                &sprite, solid, area, renderer, 0, (500, 500),
+                                Camera { view, from_view: view, ..Camera::default() },
+                            )
+                        };
+                        let normal = projection(bounds, CameraView::Face);
+                        let tail = projection(extended, CameraView::Face);
+                        for (a, b) in [
+                            (normal.scale, tail.scale),
+                            (normal.scale_y, tail.scale_y),
+                            (normal.left, tail.left),
+                            (normal.top, tail.top),
+                        ] {
+                            assert!((a - b).abs() < 0.000001,
+                                "{renderer:?} shape{shape} {stage:?}: tail changed face framing");
+                            assert!(a.is_finite());
+                        }
+                        // A control that must respond to whole-body bounds:
+                        // fitting the Mon really does include its body/tail.
+                        assert!(projection(extended, CameraView::Pet).scale
+                            < projection(bounds, CameraView::Pet).scale);
+                    }
+                }
+            }
         }
     }
 
