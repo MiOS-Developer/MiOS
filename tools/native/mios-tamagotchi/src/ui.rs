@@ -1836,6 +1836,25 @@ impl Ui {
     }
 
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
+        // Inputd's vertical stick aliases navigate ordinary menus. Preview
+        // cameras keep their pan controls; text entry, confirmation and native
+        // dialogs retain their own input ownership. A release/repeat never acts.
+        if key.kind == KeyEventKind::Press
+            && key.modifiers == crossterm::event::KeyModifiers::ALT
+            && !self.native_modal
+            && !self.confirm_reset
+            && !self.camera_scope()
+            && self.menu.is_some_and(|menu| menu != Menu::Seed)
+        {
+            let direction = match key.code {
+                crossterm::event::KeyCode::Char('8') => Some(Direction::Up),
+                crossterm::event::KeyCode::Char('2') => Some(Direction::Down),
+                _ => None,
+            };
+            if let Some(direction) = direction {
+                return self.menu_input(Action::Direction(direction), rules);
+            }
+        }
         let mut camera_key = key;
         camera_key.kind = KeyEventKind::Press;
         if let Some(command) = crate::input::camera_action(camera_key, self.menu.is_none()) {
@@ -9542,5 +9561,140 @@ mod camera_rig_regressions {
             .unwrap();
         assert!(ui.pet_area.get().height < 14);
         assert_eq!(ui.game, game);
+    }
+}
+
+#[cfg(test)]
+mod controller_alias_precedence_tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        (config.clone(), Ui::configured(game, &config))
+    }
+
+    fn alias(digit: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(digit), KeyModifiers::ALT)
+    }
+
+    #[test]
+    fn menu_stick_aliases_open_games_and_return_without_changing_pet_or_camera() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        let game = ui.game.clone();
+        let rig = (
+            ui.camera_pan_target.get(),
+            ui.camera_tilt_target,
+            ui.orbit_degrees,
+            ui.zoom_target,
+        );
+        ui.handle(alias('2'), &config.game);
+        assert_eq!(ui.menu_selected, 1);
+        assert_eq!(ui.menu, Some(Menu::Home));
+        ui.handle(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.menu, Some(Menu::Games));
+        ui.handle(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.menu, Some(Menu::Home));
+        ui.handle(alias('2'), &config.game);
+        ui.handle(alias('8'), &config.game);
+        assert_eq!(ui.menu_selected, 0);
+        assert_eq!(ui.game, game);
+        assert_eq!(
+            (
+                ui.camera_pan_target.get(),
+                ui.camera_tilt_target,
+                ui.orbit_degrees,
+                ui.zoom_target
+            ),
+            rig
+        );
+    }
+
+    #[test]
+    fn ordinary_menus_accept_only_vertical_press_aliases() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        for menu in [
+            Menu::Home,
+            Menu::Care,
+            Menu::Games,
+            Menu::Graphics,
+            Menu::Training,
+            Menu::Habitat,
+        ] {
+            ui.open(menu);
+            ui.handle(alias('2'), &config.game);
+            assert_eq!(ui.menu_selected, 1, "{menu:?}");
+            ui.handle(alias('8'), &config.game);
+            assert_eq!(ui.menu_selected, 0, "{menu:?}");
+            for digit in ['1', '3', '4', '5', '6', '7', '9'] {
+                ui.handle(alias(digit), &config.game);
+                assert_eq!(ui.menu_selected, 0, "{menu:?} Alt{digit}");
+            }
+            for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+                let mut key = alias('2');
+                key.kind = kind;
+                ui.handle(key, &config.game);
+                assert_eq!(ui.menu_selected, 0);
+            }
+            let mut foreign = alias('2');
+            foreign.modifiers |= KeyModifiers::CONTROL;
+            ui.handle(foreign, &config.game);
+            assert_eq!(ui.menu_selected, 0);
+            assert_eq!(ui.camera_pan_target.get(), (0, 0));
+            assert_eq!(ui.game, game);
+        }
+    }
+
+    #[test]
+    fn preview_pan_remains_camera_owned_and_seed_reset_memory_are_isolated() {
+        let (config, mut ui) = fixture();
+        for menu in [Menu::Roster, Menu::Gallery] {
+            ui.open(menu);
+            let selection = ui.menu_selected;
+            let pan = ui.camera_pan_target.get();
+            ui.handle(alias('2'), &config.game);
+            assert_ne!(ui.camera_pan_target.get(), pan, "{menu:?}");
+            assert_eq!(ui.menu_selected, selection);
+            ui.camera_command(crate::input::CameraCommand::Reset);
+        }
+        ui.menu = None;
+        ui.viewport.set((80, 24));
+        ui.ask_reset();
+        assert!(ui.confirm_reset);
+        let game = ui.game.clone();
+        for digit in ['8', '2'] {
+            ui.handle(alias(digit), &config.game);
+            assert!(ui.confirm_reset);
+            assert_eq!(ui.game, game);
+        }
+        ui.confirm_reset = false;
+        ui.open_seed();
+        let entry = format!("{:?}", ui.seed_entry);
+        for digit in ['8', '2'] {
+            ui.handle(alias(digit), &config.game);
+            assert_eq!(format!("{:?}", ui.seed_entry), entry);
+            assert_eq!(ui.game, game);
+        }
+        ui.menu = None;
+        ui.game.paused = false;
+        ui.care(Care::Play, &config.game);
+        assert!(ui.game.challenge.is_some());
+        let challenge = ui.game.clone();
+        for digit in ['8', '2'] {
+            ui.handle(alias(digit), &config.game);
+            assert_eq!(ui.game, challenge);
+        }
     }
 }
