@@ -466,15 +466,7 @@ impl Ui {
         if (dimensions.0 < 28 || dimensions.1 < 10)
             && matches!(view, CameraView::Room | CameraView::Pet)
         {
-            if self
-                .genetic_config
-                .as_ref()
-                .is_some_and(|config| self.game.stage(&config.game) == crate::game::Stage::Egg)
-            {
-                CameraView::Pet
-            } else {
-                CameraView::Face
-            }
+            CameraView::Face
         } else {
             view
         }
@@ -952,12 +944,6 @@ impl Ui {
             Menu::Home if index == 8 && self.seed_import_allowed => {
                 Some("This development pet has no save path. Share its birth code.")
             }
-            Menu::Home if index == 9 && !self.seed_import_allowed => {
-                Some("Save current progress and leave the game.")
-            }
-            Menu::Home if index == 13 && !self.seed_import_allowed => {
-                Some("Birth-code import is disabled while a saved pet is open.")
-            }
             Menu::Home => [
                 "Feed, clean, rest or treat the Mon.",
                 "Play a memory round to earn coins and happiness.",
@@ -1132,7 +1118,10 @@ impl Ui {
             let target = Rect::new(list.x, list.y + row as u16, list.width, 1);
             let selected = index == self.menu_selected;
             let style = if selected {
-                selected_style(colors)
+                Style::default()
+                    .fg(colors.ink(0))
+                    .bg(colors.ink(7))
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(colors.ink(2)).bg(colors.background)
             };
@@ -2466,7 +2455,10 @@ impl Ui {
                     LABELS[i]
                 };
                 let style = if self.selected == i {
-                    selected_style(colors)
+                    Style::default()
+                        .fg(colors.ink(0))
+                        .bg(colors.ink(7))
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(colors.ink(2)).bg(colors.ink(6))
                 };
@@ -3316,7 +3308,10 @@ impl Ui {
                     index - start + 1
                 );
                 Line::from(text).style(if index == selected {
-                    selected_style(colors)
+                    Style::default()
+                        .fg(colors.ink(0))
+                        .bg(colors.ink(7))
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(colors.ink(2))
                 })
@@ -3509,7 +3504,10 @@ impl Ui {
                     index - start + 1
                 ))
                 .style(if selected {
-                    selected_style(colors)
+                    Style::default()
+                        .fg(colors.ink(0))
+                        .bg(colors.ink(7))
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(colors.ink(2))
                 })
@@ -4581,7 +4579,10 @@ impl Ui {
                             .collect::<String>(),
                     )
                     .style(if selected {
-                        selected_style(colors)
+                        Style::default()
+                            .fg(colors.ink(0))
+                            .bg(colors.ink(7))
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(colors.ink(2))
                     }),
@@ -4716,19 +4717,6 @@ fn selected_birth_seed(seed: u64, id: u8) -> u64 {
         selected
     }
 }
-fn selected_style(colors: &Colors) -> Style {
-    if colors.ink(0) == ratatui::style::Color::Reset
-        && colors.ink(13) == ratatui::style::Color::Reset
-    {
-        Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default()
-            .fg(colors.background)
-            .bg(colors.ink(13))
-            .add_modifier(Modifier::BOLD)
-    }
-}
-
 fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
     match menu {
         Menu::Home => [
