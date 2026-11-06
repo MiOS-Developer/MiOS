@@ -2416,8 +2416,8 @@ impl Ui {
                 && (area.width < config.hud_minimal_width
                     || area.height < config.hud_minimal_height))
         {
-            self.draw_minimal(screen, config, renderer, colors, frame, inner);
             self.redraw_heading(screen, config, colors, ascii);
+            self.draw_minimal(screen, config, renderer, colors, frame, inner);
             if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
                 self.draw_menu(screen, menu, config, colors, renderer);
             }
@@ -2518,8 +2518,8 @@ impl Ui {
         let border = panel(&room_title, colors, ascii);
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
-        self.set_scene(room_inner);
         self.redraw_heading(screen, config, colors, ascii);
+        self.set_scene(room_inner);
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
