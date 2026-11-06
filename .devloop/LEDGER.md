@@ -4426,3 +4426,45 @@ were requests, while their actual headers were150/250 because repeated key
 presses were filtered; those historical captures are preserved, and new
 separately spaced keypresses assert the actual zoom before capture. No claim of
 physical phone, controller, VT, ARM64, fleet or image acceptance follows.
+
+## MiOS-Mon bounded HUD acceptance and fresh CI replay
+
+Sourceef699f02c's live save-free Mimo513 passed the complete9case production
+touch matrix again: watch/portrait/landscape by top/bottom/off status,1314
+exact SGR presses, no CSS injection. Actual tap-to-focus typed M1 and Cancel
+retained the birth identity. The20x8 ASCII/mono PTY controls and normal terminal
+restoration passed. Sequential single-key zoom captures now wait for smooth
+interpolation to settle and assert actual100/200/300/400 headers; the earlier
+800ms-only assertion failed at194while approaching200 and remains archived.
+
+In the same visible PiP, automated UI-only care and observed three-arrow memory
+answers produced6wins and normal Baby/Child/Adult progression in124.95real
+seconds, without state/RNG edits. Actual Status pages show age63,33coins,
+fullness98,happiness84,hygiene100,energy98,health100,healthy and paused. The
+adult development pet remains running in its owned nested window. This does not
+close task3754's enlarged-face visual defects, hardware or fleet acceptance.
+
+The new HUD checks also ran against the previous implementation in an isolated
+fresh-target negative fixtureabfe2e8d3:11selected checks pass and exactly3 fail
+for saved wording, tinyEgg framing and mono selection. The wrapper incorrectly
+expected4passing checks; its exit1 and raw output remain unchanged. A separate
+read-only receipt verifies actual11pass/3expectedfail,cargo101 and clean source.
+Tasks3750/3752/3753 are complete for their bounded implementation scopes;
+task3754 remains open for tracked-face scaling, intermediate ASCII and framing.
+
+After the host's independently approved clock correction, a completely empty
+target replay in actual rootless MiOS-DEV verified combined eb99387bd: both
+workspace cargo fmt checks, nativeCI Clippy excludingwallpaperd, systemworkspace
+Clippy,421mios-gen tests and322config/gate tests pass; sourceclean before/after.
+The existing PowerShell runtime is mounted read-only at/mios-powershell; explicit
+scratchHOME/cache prevents source pollution. Earlier read-only-fixture, stale
+generatedROADMAP, missingruntime mount and runtime-cache artifacts are preserved;
+their harness corrections did not weaken product checks. Four broader failing
+gate streams still match the published baseline, so this is not globalCI green.
+
+Receipts:
+ /home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json
+ /home/mios/.local/state/mios/mios-mons-face-live/mios-live-natural-play-receipt.json
+ /home/mios/.local/state/mios/mios-mons-face-live/mios-adult-status-receipt.json
+ /home/mios/.local/state/mios/mios-mons-input-completion/mios-hud-negative-receipt.json
+ /home/mios/.local/state/mios/mios-mons-input-completion/mios-ci-six-fresh-result.json
