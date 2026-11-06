@@ -10474,11 +10474,12 @@ piper              = 8179     # mios-piper: Piper streaming TTS engine (audio ba
 stale_fallbacks = []
 
 # Allocated ports nothing references yet. SHRINK-ONLY (gate: check_ports_bound).
-# Per-key reasons: TASKS.jsonl task_261. chrome_cdp_worker's only binder is an
-# `Environment=` literal in a shipped .service -- systemd does not expand ${} in
-# Environment=, and the [units] block that WOULD render the placeholder is inert
-# until task_267 makes mios-unit-gen faithful.
-unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
+# Per-key reasons: TASKS.jsonl task_261. ai_legacy (mios-ai-legacy-forward.service
+# ExecStart) and chrome_cdp_worker (hermes-worker.service) left once their units
+# named MIOS_PORTS_<KEY>. chrome_cdp_worker's binder is an `Environment=` line,
+# which systemd does not expand; that is a binding-correctness question (shared
+# with llm_heavy in the same unit) this register does not measure.
+unbound = ["field_live_chat"]
 
 [ports.categories.edge]
 base    = 8050
