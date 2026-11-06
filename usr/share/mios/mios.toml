@@ -204,6 +204,9 @@ ConditionPathExists = "/usr/bin/tailscale"
 [units."mios-tailscale-sync.service".Service]
 Type = "oneshot"
 ExecStart = "/usr/libexec/mios/mios-tailscale-sync"
+# [tailscale.exit_node_health].state lives here between timer runs.
+RuntimeDirectory = "mios-tailscale-sync"
+RuntimeDirectoryPreserve = "yes"
 
 [units."mios-tailscale-sync.timer".Unit]
 comment = "# AI-hint: Re-runs mios-tailscale-sync so the exit node follows [tailscale].exit_nodes as peers come and go.\n# AI-related: mios-tailscale-sync.service, timers.target"
@@ -11348,6 +11351,22 @@ advertise_routes = ""
 # Set per host in /etc/mios/mios.toml -- peer names are not a vendor default.
 exit_nodes = []
 exit_node_allow_lan_access = true
+
+# Keep an exit node only while its path is not worse than the host's own
+# uplink. Each mios-tailscale-sync run pings `probe` through the exit node and,
+# in parallel, directly through the lowest-metric default route. Loss decides
+# when the paths differ by more than max_extra_loss_pct points; otherwise the
+# exit node may add at most max_extra_rtt_ms. A failing exit node cools down
+# for cooldown_s (recorded in `state`) while the next preference is tried.
+[tailscale.exit_node_health]
+enabled            = true
+probe              = "1.1.1.1"
+count              = 10
+interval_s         = 0.2
+max_extra_loss_pct = 10
+max_extra_rtt_ms   = 150
+cooldown_s         = 1800
+state              = "/run/mios-tailscale-sync/exit-health.json"
 
 # Per-vendor enable gate for the [gpu.cdi.<vendor>] wiring above. false here
 # keeps a vendor's CDI spec on disk but stops mios-gpu-passthrough from wiring
