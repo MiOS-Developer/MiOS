@@ -496,10 +496,8 @@ fn silhouette_color(
 /// material surface keeps that surface as its background color and gains a
 /// ramp glyph whose density follows the surface's own shadow. Lit faces stay
 /// clean, so the overlay never adds coverage, edges, faces or features.
-#[allow(clippy::too_many_arguments)]
 fn texture_voxel_cell(
-    renderer: Renderer,
-    lighting: &crate::lighting::VoxelLighting,
+    style: (Renderer, &crate::lighting::VoxelLighting),
     pixels: [Option<u8>; 8],
     surface: [Option<SurfaceLight>; 8],
     flat_ink: [bool; 8],
@@ -507,6 +505,7 @@ fn texture_voxel_cell(
     shaded: [Option<Color>; 8],
     cell: &mut ratatui::buffer::Cell,
 ) {
+    let (renderer, lighting) = style;
     let (dx, dy) = renderer.packing();
     let count = usize::from(dx * dy);
     let Some(source) = surface[0].and_then(|s| s.texture) else {
@@ -690,13 +689,13 @@ fn paint_lit_pixels(
                 _ => {}
             }
             texture_voxel_cell(
-                renderer, lighting, pixels, surface, flat_ink, brightness, shaded, cell,
+                (renderer, lighting), pixels, surface, flat_ink, brightness, shaded, cell,
             );
         }
         Renderer::Quadrant | Renderer::Braille => {
             cell.set_fg(shaded[first].unwrap());
             texture_voxel_cell(
-                renderer, lighting, pixels, surface, flat_ink, brightness, shaded, cell,
+                (renderer, lighting), pixels, surface, flat_ink, brightness, shaded, cell,
             );
         }
     }
