@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1747 |
-| in_progress | 81 |
+| in_progress | 84 |
 | completed | 1889 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3757 |
+| total | 3760 |
 
 0 record(s) carry at least one override.
 
@@ -4484,6 +4484,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3754` Keep tracked Kaomoji eyes and mouths legible across face zoom and detail modes -- completed · owner mios-claude-continuation · P1 · size L
 - `task_3755` Preserve camera continuity during rapid resize and refresh framing labels in the same frame -- in_progress · owner mios-claude-continuation · P2 · size M
 - `task_3757` Widen shaded voxel faces and preserve expressions at oblique and profile views -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3758` Add a shared camera rig across live pet and preview views -- in_progress · owner mios-claude-continuation · P1 · size L
+- `task_3759` Route focused pet camera input through verified Inputd app profiles -- in_progress · owner mios-claude-continuation · P1 · size L
+- `task_3760` Make voxel faces and surface details readable across terminal scales -- in_progress · owner mios-claude-continuation · P1 · size L
 
 ## terminal
 
