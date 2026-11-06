@@ -16,8 +16,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1749 |
-| in_progress | 85 |
+| pending | 1748 |
+| in_progress | 86 |
 | completed | 1890 |
 | incomplete | 19 |
 | cancelled | 21 |
@@ -2657,7 +2657,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 - `task_3761` Bound MiOS-Mon per-instance idle cost and controller context polling -- in_progress · owner mios-claude-continuation · P1 · size L
 - `task_3762` Design and implement authoritative local and remote MiOS-Mon multiplayer hosting -- in_progress · owner mios-claude-continuation · P1 · size L
-- `task_3763` Keep essential pet needs visible in compact portrait HUDs -- pending · owner mios-claude-continuation · P1 · size M
+- `task_3763` Keep essential pet needs visible in compact portrait HUDs -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3764` Activate verified Inputd app profiles with accurate focused controls and a reversible live upgrade -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L · depends_on task_3759
 
 ## WS-MIOSSYS
