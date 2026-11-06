@@ -3,8 +3,9 @@
 #          - Defect 0: Global Keybinds Active (dock owns typing while open; generated drawer escapes bypass inhibition).
 #          - Defect 1: Full Liquid Glass Surfaces (Search's body is the one shared GlassSurface with its defaults -- no
 #            per-surface radius, fill, outline or hard-coded colour/opacity, none set later by a state, transition,
-#            animation or Binding, no tint layer of its own and no local GlassSurface component, with planted negative
-#            controls; the centralized specular rim; compositor blur).
+#            animation or Binding, no tint layer or second GlassSurface of its own, no alias exposing its glass, no
+#            window tint behind it and no local GlassSurface component, with planted negative controls; the
+#            centralized specular rim; compositor blur).
 #          - Defect 2: Phosh OSK Virtual Keyboard (embedded in 220px slot, Phosh header, direct targetInput typing + sendshortcut IPC, D-Bus unfold).
 #          - Defect 3: Maximize Workarea Bounds [0, 44, 0, 72] & TopBar Deconfliction (exclusiveZone 36px, fullscreen >= 2, tmux-os unoccluded).
 #          - Defect 4: Rounded Corner UI Highlights (Glass.radius / innerRadius / pillRadius, zero square highlights).
@@ -286,15 +287,16 @@ def qml_objects(code: str) -> list[tuple[str, str, int, int]]:
     return out
 
 
-def glass_setter_errors(s: str, code: str, body: int, ident: str) -> list[str]:
-    """A PropertyChanges, PropertyAction, Binding or animation anywhere in the file that sets a glass-owned property
-    or the colour of the body (`target: <id>` with the property named, Qt 6's `<id>.radius: ...`, `X on radius`)."""
-    problems, owned = [], GLASS_OWNED + ("color",)
+def glass_setter_props(s: str, code: str, opener: int, ident: str) -> list[tuple[str, str]]:
+    """(setter type, property) for each property of the object at `opener` (id `ident`) that a PropertyChanges,
+    PropertyAction, Binding or animation anywhere in the file sets: `target: <id>` with the property named, Qt 6's
+    `<id>.radius: ...`, or `X on radius` inside the object."""
+    out = []
     aimed_at = re.compile(r"\b%s\b" % re.escape(ident)) if ident else None
     for kind, on, op, parent in qml_objects(code):
         if not SETTER.fullmatch(kind):
             continue
-        props = [on] if on and parent == body else []
+        props = [on] if on and parent == opener else []
         own = [(n, e) for n, e, child in qml_statements(s, code, op) if child < 0]
         aimed = bool(aimed_at) and not on and any(n in ("target", "targets") and aimed_at.search(e) for n, e in own)
         for n, e in own:
@@ -304,19 +306,20 @@ def glass_setter_errors(s: str, code: str, body: int, ident: str) -> list[str]:
                 props += re.findall(r"[\w.]+", e)
             elif aimed and kind.endswith("PropertyChanges") and n not in ("target", "explicit", "restoreEntryValues"):
                 props.append(n)
-        problems += [f"Search.qml overrides the shared glass of {ident or 'its body'} in a {kind}: {p}"
-                     for p in props if p.split(".")[0] in owned]
-    return problems
+        out += [(kind, p) for p in props]
+    return out
 
 
-def glass_layer_errors(s: str, code: str, opener: int, direct: bool) -> list[str]:
+def glass_layer_errors(s: str, code: str, opener: int, direct: bool, body: int = -1) -> list[str]:
     """Children of `opener` that paint a layer of their own on the glass: anything but a GlassSurface that paints (a
     painter type, or a colour or Gradient on anything but text) and is shaped (any radius) or fills its parent, also
-    behind a non-painting child that fills it (a wrapper Item, the content Column). Such a layer's hard-coded colour
-    is a defect too, as is any hard-coded colour on `opener`'s own children when `direct`."""
+    behind a non-painting child that fills it (a wrapper Item, the content Column). A GlassSurface other than `body`
+    that fills its parent is a second glass stacked on the one surface (a row or chip highlight is sized to itself).
+    Such a layer's hard-coded colour is a defect too, as is any hard-coded colour on `opener`'s own children when
+    `direct`."""
     problems = []
     for kind, _, op in qml_statements(s, code, opener):
-        if op < 0:
+        if op < 0 or op == body:
             continue
         stmts = qml_statements(s, code, op)
         own = {n: e for n, e, child in stmts if child < 0}
@@ -328,9 +331,12 @@ def glass_layer_errors(s: str, code: str, opener: int, direct: bool) -> list[str
         fills = "anchors.fill" in own or bool(re.search(r"\.width\b", own.get("width", ""))
                                                and re.search(r"\.height\b", own.get("height", "")))
         layer = base != "GlassSurface" and paints and (shaped or fills)
+        stacked = base == "GlassSurface" and fills
         if layer:
             problems.append(f"Search.qml paints a {kind} of its own on the shared glass")
-        if layer or direct:
+        if stacked:
+            problems.append(f"Search.qml stacks another {kind} on the shared glass")
+        if layer or stacked or direct:
             problems += [f"Search.qml hard-codes a colour on the shared glass: {kind} {n}: {e}"
                          for n, e in colours if HARD_CODED.search(e)]
         if base != "GlassSurface" and not paints and fills:
@@ -376,11 +382,27 @@ def search_glass_errors(s: str) -> list[str]:
         problems.append(f"Search.qml reassigns the shared glass of {ident} at runtime")
     if ident and re.search(r"\bBinding\s*\{[^{}]*\btarget:\s*%s\b" % re.escape(ident), code):
         problems.append(f"Search.qml rebinds the shared glass of {ident}")
-    problems += glass_setter_errors(s, code, opener, ident)
+    problems += [f"Search.qml overrides the shared glass of {ident or 'its body'} in a {setter}: {prop}"
+                 for setter, prop in glass_setter_props(s, code, opener, ident)
+                 if prop.split(".")[0] in GLASS_OWNED + ("color",)]
+    # an alias hands the body's glass to whoever instantiates Search (`Search { glassRadius: 14 }` in shell.qml)
+    if ident:
+        problems += [f"Search.qml exposes the shared glass of {ident} for override: property alias {m.group(1)}: "
+                     f"{ident}.{m.group(2)}"
+                     for m in re.finditer(r"\bproperty\s+alias\s+(\w+)\s*:\s*%s\.((?:%s|color)\b[\w.]*)"
+                                          % (re.escape(ident), "|".join(GLASS_OWNED)), code)]
     problems += glass_layer_errors(s, code, opener, True)
-    problems += glass_layer_errors(s, code, root.end() - 1, False)
+    problems += glass_layer_errors(s, code, root.end() - 1, False, opener)
+    # the window itself stays transparent: a colour there tints every pixel behind the glass, set in place, at
+    # runtime or later by a state, transition or animation
+    window = next((expr for name, expr, child in top if name == "id" and child < 0), "")
     problems += [f"Search.qml tints its window behind the shared glass: color: {expr}"
                  for name, expr, child in top if name == "color" and child < 0 and expr != '"transparent"']
+    if window and re.search(r"\b%s\.color\b(?:\.\w+)?\s*=(?!=)" % re.escape(window), code):
+        problems.append("Search.qml tints its window behind the shared glass at runtime")
+    problems += [f"Search.qml tints its window behind the shared glass in a {setter}: {prop}"
+                 for setter, prop in glass_setter_props(s, code, root.end() - 1, window)
+                 if prop.split(".")[0] == "color"]
     return problems
 
 
@@ -757,10 +779,30 @@ class TestGuiShellUnify(unittest.TestCase):
             ("hard-coded tint on a nested GlassSurface", fill,
              fill + '        GlassSurface { anchors.fill: parent; color: "#33000000" }\n',
              'Search.qml hard-codes a colour on the shared glass: GlassSurface color: "#33000000"'),
+            ("hard-coded chip on the body", fill,
+             fill + '        GlassSurface { width: searchWindow.theme.appIcon; height: width; color: "#33000000" }\n',
+             'Search.qml hard-codes a colour on the shared glass: GlassSurface color: "#33000000"'),
             ("tint beside the body in the window", ipc, "    Rectangle { anchors.fill: parent; color: %s }\n" % token + ipc,
              layer),
+            # a second glass on the one surface: a filling GlassSurface in the body or beside it, token-coloured
+            ("filling GlassSurface tint in the body", fill,
+             fill + "        GlassSurface {\n            anchors.fill: parent\n"
+                    "            color: %s\n        }\n" % token,
+             "Search.qml stacks another GlassSurface on the shared glass"),
+            ("second GlassSurface beside the body in the window", ipc,
+             "    GlassSurface { width: parent.width; height: parent.height; color: %s }\n" % token + ipc,
+             "Search.qml stacks another GlassSurface on the shared glass"),
+            ("alias handing the body's radius to the caller", window,
+             window + "    property alias glassRadius: box.radius\n",
+             "Search.qml exposes the shared glass of box for override: property alias glassRadius: box.radius"),
             ("window tint behind the glass", window, "    color: Qt.rgba(0, 0, 0, 0.3)\n",
              "Search.qml tints its window behind the shared glass: color: Qt.rgba(0, 0, 0, 0.3)"),
+            ("window tint by a state", ipc,
+             "    states: State { when: searchWindow.query.length > 0; "
+             "PropertyChanges { target: searchWindow; color: %s } }\n" % token + ipc,
+             "Search.qml tints its window behind the shared glass in a PropertyChanges: color"),
+            ("window tint at runtime", window, window + "    Component.onCompleted: searchWindow.color = %s\n" % token,
+             "Search.qml tints its window behind the shared glass at runtime"),
             ("local GlassSurface component", head,
              '    component GlassSurface: Rectangle { radius: 14; color: "#cc101014" }\n' + head,
              "Search.qml shadows the shared GlassSurface with a local component"),
@@ -775,7 +817,8 @@ class TestGuiShellUnify(unittest.TestCase):
                 for problem in (problems,) if isinstance(problems, str) else problems:
                     self.assertIn(problem, found)
         # not overrides: a commented-out one, a state on another object's colour or on a property the glass does not
-        # own, the body's anchors in grouped form; and a child row's own concentric radius is not the body's
+        # own, the body's anchors in grouped form, a chip highlight sized to itself, an alias of the input's text, a
+        # state on the window's width; and a child row's own concentric radius is not the body's
         for label, anchor, replacement in (
                 ("commented-out override", head, head + "        // radius: 14\n"),
                 ("state on another object's colour", fill,
@@ -783,7 +826,15 @@ class TestGuiShellUnify(unittest.TestCase):
                         "color: searchWindow.theme.accent } }\n"),
                 ("state on a property the glass does not own", fill,
                  fill + "        states: State { when: true; PropertyChanges { target: box; clip: false } }\n"),
-                ("grouped anchors", head, head.replace("anchors.fill: parent", "anchors { fill: parent }"))):
+                ("grouped anchors", head, head.replace("anchors.fill: parent", "anchors { fill: parent }")),
+                ("chip highlight sized to itself", fill,
+                 fill + "        GlassSurface { width: searchWindow.theme.appIcon; height: width; color: "
+                        "searchWindow.theme.withAlpha(searchWindow.theme.accent, "
+                        "searchWindow.theme.selectionOpacity) }\n"),
+                ("alias of the input's text", window, window + "    property alias queryText: input.text\n"),
+                ("state on the window's width", ipc,
+                 "    states: State { when: true; PropertyChanges { target: searchWindow; "
+                 "implicitWidth: searchWindow.theme.searchWidth } }\n" + ipc)):
             with self.subTest(label):
                 mutated = source.replace(anchor, replacement, 1)
                 self.assertNotEqual(mutated, source)
