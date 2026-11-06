@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Exercises headless Flatpak installation, failure propagation and browser defaults with a real private D-Bus session and isolated command fixtures. The default browser is MiOS-Portal (native Gecko, not a Flatpak): the SSOT names it in every default-browser key, no [[desktop.apps]] browser carries default=true, and the real resolvers (mios-app-type, mios-launch, mios-open-url) dispatch to it. The freedesktop layer agrees: gio and xdg-mime, in isolated XDG dirs holding exported Zen/Epiphany/Firefox Flatpaks and Fedora's vendor mimeapps lists, resolve http/https/html to mios-portal.desktop through the projected etc/xdg/mimeapps.list. The session copies of the shipped entries Exec executable stubs inside the fixture (GLib skips an entry whose program is missing) and differ from the shipped bytes in nothing else, so the result never depends on the host's installed mios-portal, mios-flatpak-run or flatpak; a separate check requires the tree itself to ship the portal's Exec program as an executable file. Twelve planted regressions fail that guard (Zen named or listed first, stray gnome-/hyprland-mimeapps.list, MIME types moved, no %u, Hidden=true, a [Removed Associations] line, the pre-portal layer) and three fail the shipped-program check.
+# AI-hint: Headless Flatpak bake and default-browser tests: MiOS-Portal is the SSOT, resolver and freedesktop default (gio/xdg-mime over fixture-stubbed entries, never host programs), the tree ships its Exec program, and each planted regression fails.
 # AI-related: automation/61-flatpak-bake.sh, etc/xdg/mimeapps.list, usr/share/applications/mios-portal.desktop, usr/bin/mios-portal, tools/native/mios-browser/src/main.rs, usr/libexec/mios/mios-hermes-browser, usr/libexec/mios/mios-app-type, usr/libexec/mios/mios-launch, usr/libexec/mios/mios-open-url, usr/share/mios/mios.toml
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -218,11 +218,9 @@ ships_program_bare_name() { sed -i -E 's|^Exec=/[^ ]*/|Exec=|' "$1/usr/share/app
 ships_plant program_missing "Execs $PORTAL_PROG, which the tree does not ship as an executable file"
 ships_plant program_not_executable "Execs $PORTAL_PROG, which the tree does not ship as an executable file"
 ships_plant program_bare_name "Execs '${PORTAL_PROG##*/}', not an absolute path"
-# GLib (gio, xdg-open, the OpenURI portal) skips an entry whose Exec or TryExec program is not an
-# executable file, so a session that copied the entries verbatim would test the host's installed
-# mios-portal, mios-flatpak-run and flatpak rather than the tree. fd_stub <entries dir> <session dir>
-# <fixture> copies each entry with its program replaced by an executable stub: an absolute program P
-# becomes <fixture>/stub/P, a PATH name N <fixture>/stub-path/N. No other byte changes.
+# fd_stub <entries dir> <session dir> <fixture>: GLib skips an entry whose Exec/TryExec program is not
+# executable, so each copy runs a stub (absolute P: <fixture>/stub/P; PATH name N: <fixture>/stub-path/N)
+# and the host's installed programs never decide the result. No other byte changes.
 fd_stub() {
     local src="$1" dst="$2" stub="$3/stub" bare="$3/stub-path" f prog
     mkdir -p "$dst"
@@ -253,11 +251,9 @@ fd_session() {
     fd_stub "$1/shipped/applications" "$1/usr/share/applications" "$1" \
         && fd_stub "$1/exports" "$1/flatpak/share/applications" "$1"
 }
-# fd_fixture <dir> <applications dir> [etc/xdg dir]: a session's XDG dirs. <dir>/shipped holds the
-# tree's entries byte for byte; plants edit them there, and every Exec, %u, MimeType and Hidden check
-# reads them. <dir>/exports holds what `flatpak install` exports for Zen, Epiphany and Firefox. Data
-# dirs are in Fedora's flatpak profile order (user exports, system exports, /usr/share); the system dir
-# also holds the two vendor lists Fedora's RPMs put next to MiOS's launchers.
+# fd_fixture <dir> <applications dir> [etc/xdg dir]: a session's XDG dirs. <dir>/shipped keeps the tree's
+# entries byte for byte (plants and the static checks use it); <dir>/exports holds Flatpak's Zen, Epiphany
+# and Firefox exports. Data dirs follow Fedora's flatpak order, and /usr/share holds its two vendor lists.
 fd_fixture() {
     local r="$1" app type
     case "$r" in *[!A-Za-z0-9/._-]*) echo "FAIL fixture path $r would need Exec quoting; use a plain TMPDIR" >&2; exit 1 ;; esac
