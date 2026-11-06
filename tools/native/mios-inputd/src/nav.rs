@@ -1,6 +1,6 @@
-// AI-hint: Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules and the Linux console byte translation of a key: stroke.
+// AI-hint: Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.
 // AI-related: usr/share/mios/mios.toml [keybindings.global.controller.nav], tools/native/mios-inputd/src/router.rs, docs/design/mios-global-bindings-final.md (section 3)
-// AI-functions: NavConfig::from_value, NavConfig::profile_name, NavConfig::text, parse_key_chord, stroke, keysym, vt_bytes, validate_tmux
+// AI-functions: NavConfig::from_value, NavConfig::profile_name, NavConfig::app_profile, NavConfig::text, parse_key_chord, stroke, keysym, vt_bytes, validate_tmux
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -123,6 +123,24 @@ impl Value {
 }
 pub type Profile = BTreeMap<Input, Value>;
 
+/// One verified foreground app (`[nav.apps.<name>]`, protocol P1): while the focused terminal's foreground process
+/// (or an explicit route's pane) runs one of `exe`, its base context selects `contexts[base]` instead of the base
+/// profile. A camera app gets axis-separable, repeating stick flicks and its own repeat table (P5).
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct NavApp {
+    /// System binaries (root-owned): absolute canonical paths, compared to `/proc/<pid>/exe` of the foreground
+    /// group leader. A listed symlink, or a path below a symlinked directory, never matches.
+    pub exe: Vec<String>,
+    /// Per-user candidates registered in the layered TOML (normally the user tier): the same exact canonical match,
+    /// but owned by the bridge's own uid. Absent = none. Never a basename or pattern.
+    pub user_exe: Vec<String>,
+    pub camera: bool,
+    /// Base context ("terminal" or "console") -> profile name (or its `_tmux` / `_plain` pair).
+    pub contexts: BTreeMap<String, String>,
+    /// input -> (delay_ms, rate_ms); camera apps only. The only place a right-stick flick may repeat.
+    pub repeat: BTreeMap<Input, (u64, u64)>,
+}
+
 /// The resolved nav projection. `profiles` already has every `inherits` chain applied.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct NavConfig {
@@ -135,17 +153,153 @@ pub struct NavConfig {
     /// Sockets (tmux -L names) whose clients count as a MiOS tmux client for the `<name>_tmux` profile.
     pub tmux_sockets: Vec<String>,
     pub profiles: BTreeMap<String, Profile>,
+    /// P1: re-verify the focused terminal's foreground app at most this often (0 without `apps`).
+    pub app_poll_ms: u64,
+    /// P1: the bound of one tmux or /proc verification, and of the one-shot `context` query (0 without `apps`).
+    pub app_query_timeout_ms: u64,
+    pub apps: BTreeMap<String, NavApp>,
+    /// Why the app layer was rejected (it is then empty); the base navigation is unaffected.
+    pub app_error: Option<String>,
 }
-const RESERVED: [&str; 6] = [
+const RESERVED: [&str; 9] = [
     "enabled",
     "flick_on",
     "flick_off",
     "contexts",
     "repeat",
     "tmux_sockets",
+    "apps",
+    "app_poll_ms",
+    "app_query_timeout_ms",
 ];
+/// The base contexts an app layer may refine (P2): a terminal window (captured or not) and the Linux console.
+pub const APP_CONTEXTS: [&str; 2] = ["terminal", "console"];
 /// Inputs the ownership contract or the room owns wherever a compositor runs; a desktop profile may not claim them.
 const CONTRACT: [&str; 5] = ["BTN_NORTH", "BTN_TL", "BTN_TR", "BTN_START", "TOGGLE_CHORD"];
+
+/// `[delay_ms, rate_ms]` of one repeat row (the bounds of [nav.repeat] and every app repeat table).
+fn repeat_pair(pair: &toml::Value, what: &str) -> Result<(u64, u64), String> {
+    let a = pair
+        .as_array()
+        .filter(|a| a.len() == 2)
+        .ok_or_else(|| format!("{what} is [delay_ms, rate_ms]"))?;
+    let n = |i: usize| {
+        a[i].as_integer()
+            .filter(|v| *v > 0)
+            .map(|v| v as u64)
+            .ok_or_else(|| format!("{what}: positive integers"))
+    };
+    let (delay, rate) = (n(0)?, n(1)?);
+    if !(50..=5000).contains(&delay) || !(16..=5000).contains(&rate) {
+        return Err(format!("{what}: delay 50..=5000 ms, rate 16..=5000 ms"));
+    }
+    Ok((delay, rate))
+}
+/// P2: an app's exe is absolute, with no empty, `.` or `..` component (the canonical /proc exe is compared to it).
+fn exe_path_ok(p: &str) -> bool {
+    p.len() <= 4096
+        && !p.chars().any(char::is_control)
+        && p.strip_prefix('/').is_some_and(|rest| {
+            rest.split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+        })
+}
+/// The structure of one `[nav.apps.<name>]` table (P2); its profiles are checked once every profile is resolved.
+fn parse_app(name: &str, body: &toml::Value) -> Result<NavApp, String> {
+    if name.is_empty()
+        || name.len() > 32
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
+        return Err(format!(
+            "nav.apps: app name {name:?} must be [a-z0-9_]{{1,32}}"
+        ));
+    }
+    let what = format!("nav.apps.{name}");
+    let t = body
+        .as_table()
+        .ok_or_else(|| format!("{what} must be a table"))?;
+    if let Some(k) = t
+        .keys()
+        .find(|k| !["exe", "user_exe", "camera", "contexts", "repeat"].contains(&k.as_str()))
+    {
+        return Err(format!(
+            "{what}.{k}: unknown key (exe, user_exe, camera, contexts, repeat)"
+        ));
+    }
+    let paths = |key: &str, min: usize| -> Result<Vec<String>, String> {
+        let Some(v) = t.get(key) else {
+            return if min == 0 {
+                Ok(vec![])
+            } else {
+                Err(format!("{what}.{key}: 1 to 8 absolute paths"))
+            };
+        };
+        v.as_array()
+            .filter(|a| (min..=8).contains(&a.len()))
+            .ok_or_else(|| format!("{what}.{key}: {min} to 8 absolute paths"))?
+            .iter()
+            .map(|e| {
+                e.as_str()
+                    .filter(|p| exe_path_ok(p))
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        format!("{what}.{key}: {e} is not an absolute path without empty, . or .. components")
+                    })
+            })
+            .collect()
+    };
+    let (exe, user_exe) = (paths("exe", 1)?, paths("user_exe", 0)?);
+    let camera = t
+        .get("camera")
+        .and_then(toml::Value::as_bool)
+        .ok_or_else(|| format!("{what}.camera must be a boolean"))?;
+    let mut contexts = BTreeMap::new();
+    for (context, profile) in t
+        .get("contexts")
+        .and_then(toml::Value::as_table)
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| format!("{what}.contexts: base context -> profile (terminal, console)"))?
+    {
+        if !APP_CONTEXTS.contains(&context.as_str()) {
+            return Err(format!(
+                "{what}.contexts.{context}: an app refines only the terminal or console context"
+            ));
+        }
+        let p = profile
+            .as_str()
+            .ok_or_else(|| format!("{what}.contexts.{context} must name a profile"))?;
+        contexts.insert(context.clone(), p.to_owned());
+    }
+    let mut repeat = BTreeMap::new();
+    if let Some(r) = t.get("repeat") {
+        if !camera {
+            return Err(format!(
+                "{what}.repeat: only a camera app (camera = true) has its own repeat table"
+            ));
+        }
+        for (input, pair) in r
+            .as_table()
+            .ok_or_else(|| format!("{what}.repeat must be a table"))?
+        {
+            let i = Input::parse(input).map_err(|e| format!("{what}.repeat.{input}: {e}"))?;
+            if i == Input::ToggleChord {
+                return Err(format!(
+                    "{what}.repeat.{input}: the toggle chord never repeats"
+                ));
+            }
+            repeat.insert(i, repeat_pair(pair, &format!("{what}.repeat.{input}"))?);
+        }
+    }
+    Ok(NavApp {
+        exe,
+        user_exe,
+        camera,
+        contexts,
+        repeat,
+    })
+}
 
 /// What validation needs from the rest of the SSOT.
 pub struct Ctx<'a> {
@@ -205,29 +359,19 @@ impl NavConfig {
         if let Some(r) = t.get("repeat") {
             for (input, pair) in r.as_table().ok_or("nav.repeat must be a table")? {
                 let i = Input::parse(input)?;
-                if matches!(i, Input::Stick { right: true, .. }) || matches!(i, Input::ToggleChord)
-                {
+                if matches!(i, Input::Stick { right: true, .. }) {
+                    // P2: the one relaxation of the RS rule lives in a camera app's own table.
                     return Err(format!(
-                        "nav.repeat.{input}: right-stick flicks and the toggle chord never repeat"
+                        "nav.repeat.{input}: right-stick flicks repeat only inside a camera app ([nav.apps.<name>].repeat); they never repeat from [nav.repeat]"
                     ));
                 }
-                let a = pair
-                    .as_array()
-                    .filter(|a| a.len() == 2)
-                    .ok_or_else(|| format!("nav.repeat.{input} is [delay_ms, rate_ms]"))?;
-                let n = |i: usize| {
-                    a[i].as_integer()
-                        .filter(|v| *v > 0)
-                        .map(|v| v as u64)
-                        .ok_or_else(|| format!("nav.repeat.{input}: positive integers"))
-                };
-                let (delay, rate) = (n(0)?, n(1)?);
-                if !(50..=5000).contains(&delay) || !(16..=5000).contains(&rate) {
+                if i == Input::ToggleChord {
                     return Err(format!(
-                        "nav.repeat.{input}: delay 50..=5000 ms, rate 16..=5000 ms"
+                        "nav.repeat.{input}: the toggle chord never repeats"
                     ));
                 }
-                cfg.repeat.insert(i, (delay, rate));
+                cfg.repeat
+                    .insert(i, repeat_pair(pair, &format!("nav.repeat.{input}"))?);
             }
         }
         if let Some(s) = t.get("tmux_sockets") {
@@ -338,41 +482,129 @@ impl NavConfig {
                 }
                 continue;
             }
-            let names = cfg.candidates(p);
-            if names.is_empty() {
-                return Err(format!(
-                    "nav.contexts.{context}: no profile {p} (or {p}_tmux and {p}_plain)"
-                ));
+            cfg.context_profiles(context, p, &format!("nav.contexts.{context}"))?;
+        }
+        // Backward compatibility: an invalid app layer is reported and dropped; the base navigation stays live.
+        if let Err(e) = cfg.load_apps(t) {
+            cfg.app_failed(e);
+        }
+        let _ = ctx.deadzone;
+        Ok(cfg)
+    }
+    /// P1/P2: the app layer (`app_poll_ms`, `app_query_timeout_ms`, `[apps.<name>]`), checked against the resolved
+    /// profiles. No private defaults (Law 7): an app table needs both timing values.
+    fn load_apps(&mut self, t: &toml::value::Table) -> Result<(), String> {
+        let ms = |k: &str, range: std::ops::RangeInclusive<u64>| -> Result<Option<u64>, String> {
+            match t.get(k) {
+                None => Ok(None),
+                Some(v) => v
+                    .as_integer()
+                    .and_then(|i| u64::try_from(i).ok())
+                    .filter(|i| range.contains(i))
+                    .map(Some)
+                    .ok_or_else(|| {
+                        format!(
+                            "nav.{k}: an integer in {}..={} ms",
+                            range.start(),
+                            range.end()
+                        )
+                    }),
             }
-            for n in names {
-                for (input, value) in &cfg.profiles[&n] {
-                    let name = input.name();
-                    if context == "shell" {
-                        // A focused shell layer owns the keyboard; no window capture or host command behind it.
+        };
+        let (poll, query) = (
+            ms("app_poll_ms", 50..=2000)?,
+            ms("app_query_timeout_ms", 20..=1000)?,
+        );
+        if let (Some(p), Some(q)) = (poll, query) {
+            if q > p {
+                return Err("nav.app_query_timeout_ms must not exceed nav.app_poll_ms".into());
+            }
+        }
+        let mut apps = BTreeMap::new();
+        if let Some(a) = t.get("apps") {
+            for (name, body) in a.as_table().ok_or("nav.apps must be a table")? {
+                apps.insert(name.clone(), parse_app(name, body)?);
+            }
+        }
+        if apps.is_empty() {
+            return Ok(());
+        }
+        let (Some(poll), Some(query)) = (poll, query) else {
+            return Err("nav.apps needs nav.app_poll_ms and nav.app_query_timeout_ms".into());
+        };
+        for (app, a) in &apps {
+            for (context, p) in &a.contexts {
+                // P2: an app profile obeys exactly the rules of the base context it refines.
+                let names = self.context_profiles(
+                    context,
+                    p,
+                    &format!("nav.apps.{app}.contexts.{context}"),
+                )?;
+                if !a.camera {
+                    continue;
+                }
+                for n in names {
+                    for (input, value) in &self.profiles[&n] {
+                        if !matches!(input, Input::Stick { .. }) {
+                            continue;
+                        }
                         for action in value.actions() {
                             if action != "none" && !action.starts_with("key:") {
                                 return Err(format!(
-                                    "nav.{n}.{name}: shell navigation uses key: or none"
+                                    "nav.{n}.{}: a camera app's stick rows are key: or none (nav.apps.{app}.camera), not {action}",
+                                    input.name()
                                 ));
                             }
                         }
-                    } else if context == "console" {
-                        // I3 (C-23): no compositor, shell or room on a VT: only projections that reach a VT.
-                        for a in value.actions() {
-                            if !console_capable(a) {
-                                return Err(format!("nav.{n}.{name}: {a} cannot reach a VT (console rows use key:, tmux:, mios:graphical-vt, pointer:cursor or none)"));
-                            }
-                        }
-                    } else if CONTRACT.contains(&name.as_str())
-                        && value != &Value::Press("none".into())
-                    {
-                        return Err(format!("nav.{n}.{name}: owned by the capture contract or the room wherever a compositor runs ({context})"));
                     }
                 }
             }
         }
-        let _ = ctx.deadzone;
-        Ok(cfg)
+        (self.app_poll_ms, self.app_query_timeout_ms, self.apps) = (poll, query, apps);
+        Ok(())
+    }
+    /// Drop the app layer and keep the reason (reported by `check`, `map` and the bridge log). The base navigation,
+    /// which an older binary already validated, keeps working: an app row can never disable a controller.
+    pub fn app_failed(&mut self, error: String) {
+        self.apps.clear();
+        self.app_poll_ms = 0;
+        self.app_query_timeout_ms = 0;
+        self.app_error = Some(error);
+    }
+    /// The per-context rules for the profile(s) one context name selects; returns those profile names.
+    fn context_profiles(&self, context: &str, p: &str, what: &str) -> Result<Vec<String>, String> {
+        let names = self.candidates(p);
+        if names.is_empty() {
+            return Err(format!(
+                "{what}: no profile {p} (or {p}_tmux and {p}_plain)"
+            ));
+        }
+        for n in &names {
+            for (input, value) in &self.profiles[n] {
+                let name = input.name();
+                if context == "shell" {
+                    // A focused shell layer owns the keyboard; no window capture or host command behind it.
+                    for action in value.actions() {
+                        if action != "none" && !action.starts_with("key:") {
+                            return Err(format!(
+                                "nav.{n}.{name}: shell navigation uses key: or none"
+                            ));
+                        }
+                    }
+                } else if context == "console" {
+                    // I3 (C-23): no compositor, shell or room on a VT: only projections that reach a VT.
+                    for a in value.actions() {
+                        if !console_capable(a) {
+                            return Err(format!("nav.{n}.{name}: {a} cannot reach a VT (console rows use key:, tmux:, mios:graphical-vt, pointer:cursor or none)"));
+                        }
+                    }
+                } else if CONTRACT.contains(&name.as_str()) && value != &Value::Press("none".into())
+                {
+                    return Err(format!("nav.{n}.{name}: owned by the capture contract or the room wherever a compositor runs ({context})"));
+                }
+            }
+        }
+        Ok(names)
     }
     /// The profiles a context name can select: the profile itself, or its `_tmux` / `_plain` pair.
     fn candidates(&self, p: &str) -> Vec<String> {
@@ -395,10 +627,21 @@ impl NavConfig {
         if p == "vpad" {
             return None;
         }
+        Some(self.resolve(p, tmux))
+    }
+    /// A profile name, or the `_tmux` / `_plain` half of its pair.
+    fn resolve(&self, p: &str, tmux: bool) -> String {
         if self.profiles.contains_key(p) {
-            return Some(p.clone());
+            return p.to_owned();
         }
-        Some(format!("{p}_{}", if tmux { "tmux" } else { "plain" }))
+        format!("{p}_{}", if tmux { "tmux" } else { "plain" })
+    }
+    /// P4: the profile a verified foreground `app` selects in the base `context`. None when the app does not refine
+    /// that context, or when the base context itself has no navigation (nav disabled, unmapped or "vpad").
+    pub fn app_profile(&self, app: &str, context: &str, tmux: bool) -> Option<String> {
+        self.profile_name(context, tmux)?;
+        let p = self.apps.get(app)?.contexts.get(context)?;
+        Some(self.resolve(p, tmux))
     }
     /// Every action a nav profile can fire, for the bridge's unresolved-action check.
     pub fn actions(&self) -> BTreeSet<String> {
@@ -423,6 +666,45 @@ impl NavConfig {
                     format!("{p}_tmux (tmux client) / {p}_plain")
                 }
             );
+        }
+        if let Some(e) = &self.app_error {
+            out += &format!("\nForeground apps disabled (the base profiles apply): {e}\n");
+        }
+        if !self.apps.is_empty() {
+            out += &format!(
+                "\nForeground apps (verified every {} ms, one query at most {} ms; the base profile applies otherwise):\n",
+                self.app_poll_ms, self.app_query_timeout_ms
+            );
+        }
+        for (name, app) in &self.apps {
+            out += &format!(
+                "  {name:<16} exe {}{}{}\n",
+                app.exe.join(" "),
+                if app.user_exe.is_empty() {
+                    String::new()
+                } else {
+                    format!("  user_exe {}", app.user_exe.join(" "))
+                },
+                if app.camera { "  camera" } else { "" }
+            );
+            for (context, p) in &app.contexts {
+                out += &format!(
+                    "    {context:<14} {}\n",
+                    if self.profiles.contains_key(p) {
+                        p.clone()
+                    } else {
+                        format!("{p}_tmux (tmux client) / {p}_plain")
+                    }
+                );
+            }
+            if !app.repeat.is_empty() {
+                let rows: Vec<String> = app
+                    .repeat
+                    .iter()
+                    .map(|(i, (d, r))| format!("{} {d}/{r}", i.name()))
+                    .collect();
+                out += &format!("    {:<14} {}\n", "repeat ms", rows.join(", "));
+            }
         }
         for (name, profile) in &self.profiles {
             out += &format!("\n[{name}]\n");
@@ -657,6 +939,9 @@ pub fn vt_bytes(chord: &KeyChord) -> Option<Vec<u8>> {
         107 => Some(b"\x1b[4~"),
         104 => Some(b"\x1b[5~"),
         109 => Some(b"\x1b[6~"),
+        // The keysyms are words (minus, equal); the `us` console keymap delivers the characters.
+        12 => Some(if shift { b"_" } else { b"-" }),
+        13 => Some(if shift { b"+" } else { b"=" }),
         _ => None,
     };
     let fkey = (59..=68).chain([87, 88]).position(|k| k == chord.key);
@@ -863,6 +1148,269 @@ mod tests {
         );
     }
     #[test]
+    fn app_layer_tables_parse_and_select_camera_profiles() {
+        let (cfg, _) = crate::config::tests::fixture_mon();
+        let nav = &cfg.controller.nav;
+        assert_eq!((nav.app_poll_ms, nav.app_query_timeout_ms), (250, 150));
+        let mon = &nav.apps["mon"];
+        assert!(mon.camera);
+        assert_eq!(mon.exe, ["/usr/bin/mios-tamagotchi"]);
+        let rs_up = Input::Stick {
+            right: true,
+            dir: Dir::Up,
+        };
+        assert_eq!(mon.repeat[&rs_up], (200, 70), "P2: RS repeats here only");
+        assert_eq!(mon.repeat[&Input::Button(0x139)], (250, 90));
+        for (context, tmux, want) in [
+            ("terminal", true, "mon_tmux"),
+            ("terminal", false, "mon_plain"),
+            ("console", true, "mon_console_tmux"),
+            ("console", false, "mon_console_plain"),
+        ] {
+            assert_eq!(nav.app_profile("mon", context, tmux).as_deref(), Some(want));
+        }
+        assert_eq!(nav.app_profile("mon", "desktop-2d", false), None);
+        assert_eq!(nav.app_profile("unknown", "terminal", true), None);
+        let p = &nav.profiles["mon_tmux"];
+        assert_eq!(
+            p[&Input::Stick {
+                right: false,
+                dir: Dir::Left
+            }],
+            Value::Press("key:ALT+4".into())
+        );
+        assert_eq!(p[&rs_up], Value::Press("key:ALT+3".into()));
+        assert_eq!(p[&Input::Button(0x13e)], Value::Press("key:ALT+5".into()));
+        assert_eq!(
+            p[&Input::Button(BTN_DPAD_UP)],
+            Value::Press("key:UP".into()),
+            "the D-pad is inherited"
+        );
+        assert_eq!(
+            p[&Input::Button(0x13c)],
+            Value::Press("tmux:menu".into()),
+            "Guide is inherited"
+        );
+        assert!(
+            !p.contains_key(&Input::Button(0x13b)),
+            "Start stays contract"
+        );
+        // P0: a base context mapped to vpad has no navigation, so no app layer either.
+        let (vpad, _) = crate::config::tests::try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["contexts"]["terminal"] = "vpad".into();
+        })
+        .unwrap();
+        assert_eq!(
+            vpad.controller.nav.app_profile("mon", "terminal", true),
+            None
+        );
+        // The vendor SSOT without the app tables (the feature off) parses as before.
+        let (off, _) = crate::config::tests::try_fixture_nav_with(|v| {
+            let nav = v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap();
+            nav.retain(|k, _| !k.starts_with("app") && !k.starts_with("mon_"));
+        })
+        .unwrap();
+        assert!(off.controller.nav.apps.is_empty());
+        assert_eq!(off.controller.nav.app_poll_ms, 0);
+        let text = nav.text(500);
+        assert!(
+            text.contains("Foreground apps (verified every 250 ms, one query at most 150 ms")
+                && text.contains("mon              exe /usr/bin/mios-tamagotchi  camera")
+                && text.contains("terminal       mon_tmux (tmux client) / mon_plain")
+                && text
+                    .contains("console        mon_console_tmux (tmux client) / mon_console_plain")
+                && text.contains("RS_UP 200/70"),
+            "{text}"
+        );
+    }
+    /// P2, every violation with its message (each guard has a planted negative in the commit body). A base-navigation
+    /// violation rejects the policy; an app-layer violation drops only the app layer and reports why.
+    #[test]
+    fn app_layer_validation_rejects_every_p2_violation() {
+        let rejected =
+            |r: Result<(crate::config::GlobalConfig, crate::config::LegacyConfig), String>| match r
+            {
+                Err(e) => e,
+                Ok((c, _)) => {
+                    let nav = &c.controller.nav;
+                    assert!(
+                        nav.app_error.is_none() || nav.apps.is_empty(),
+                        "a rejected app layer never stays live"
+                    );
+                    nav.app_error.clone().unwrap_or_default()
+                }
+            };
+        let set = |path: &[&str], val: toml::Value| {
+            rejected(crate::config::tests::try_fixture_mon_with(|v| {
+                let mut t = &mut v["keybindings"]["global"]["controller"]["nav"];
+                for p in &path[..path.len() - 1] {
+                    t = &mut t[*p];
+                }
+                t.as_table_mut()
+                    .unwrap()
+                    .insert(path[path.len() - 1].into(), val);
+            }))
+        };
+        let arr = |v: &[&str]| toml::Value::Array(v.iter().map(|s| (*s).into()).collect());
+        let pair = || toml::Value::Array(vec![200.into(), 70.into()]);
+        let ctx = |k: &str, p: &str| {
+            let mut t = toml::value::Table::new();
+            t.insert(k.into(), p.into());
+            toml::Value::Table(t)
+        };
+        for (path, val, why) in [
+            (
+                vec!["apps", "mon", "exe"],
+                arr(&["usr/bin/mios-tamagotchi"]),
+                "not an absolute path",
+            ),
+            (
+                vec!["apps", "mon", "exe"],
+                arr(&["/usr/../bin/x"]),
+                "not an absolute path",
+            ),
+            (
+                vec!["apps", "mon", "exe"],
+                arr(&["/usr//bin/x"]),
+                "not an absolute path",
+            ),
+            (vec!["apps", "mon", "exe"], arr(&[]), "1 to 8"),
+            (vec!["apps", "mon", "exe"], arr(&["/a"; 9]), "1 to 8"),
+            (
+                vec!["apps", "mon", "contexts"],
+                ctx("desktop-3d", "mon"),
+                "only the terminal or console",
+            ),
+            (
+                vec!["apps", "mon", "contexts"],
+                ctx("shell", "mon"),
+                "only the terminal or console",
+            ),
+            (
+                vec!["apps", "mon", "contexts"],
+                ctx("app-capture", "mon"),
+                "only the terminal or console",
+            ),
+            (
+                vec!["apps", "mon", "contexts"],
+                ctx("terminal", "missing"),
+                "no profile missing",
+            ),
+            (
+                vec!["mon_tmux", "RS_UP"],
+                "tmux:focus up".into(),
+                "camera app's stick rows are key: or none",
+            ),
+            (
+                vec!["mon_plain", "LS_UP"],
+                "pointer:wheel-up".into(),
+                "camera app's stick rows are key: or none",
+            ),
+            (
+                vec!["mon_console_plain", "BTN_SOUTH"],
+                "hypr:movefocus left".into(),
+                "cannot reach a VT",
+            ),
+            (
+                vec!["mon_tmux", "BTN_START"],
+                "key:ENTER".into(),
+                "capture contract",
+            ),
+            (
+                vec!["apps", "mon", "camera"],
+                false.into(),
+                "only a camera app",
+            ),
+            (
+                vec!["apps", "mon", "camera"],
+                "yes".into(),
+                "camera must be a boolean",
+            ),
+            (
+                vec!["apps", "mon", "repeat", "TOGGLE_CHORD"],
+                pair(),
+                "toggle chord never repeats",
+            ),
+            (
+                vec!["apps", "mon", "repeat", "RS_UP"],
+                toml::Value::Array(vec![49.into(), 70.into()]),
+                "delay 50..=5000",
+            ),
+            (vec!["apps", "mon", "launcher"], "x".into(), "unknown key"),
+            (
+                vec!["apps", "Mon"],
+                toml::Value::Table(Default::default()),
+                "[a-z0-9_]{1,32}",
+            ),
+            (
+                vec!["app_poll_ms"],
+                49.into(),
+                "app_poll_ms: an integer in 50..=2000",
+            ),
+            (
+                vec!["app_poll_ms"],
+                2001.into(),
+                "app_poll_ms: an integer in 50..=2000",
+            ),
+            (
+                vec!["app_query_timeout_ms"],
+                19.into(),
+                "app_query_timeout_ms: an integer in 20..=1000",
+            ),
+            (
+                vec!["app_query_timeout_ms"],
+                1001.into(),
+                "app_query_timeout_ms: an integer in 20..=1000",
+            ),
+            (
+                vec!["app_query_timeout_ms"],
+                300.into(),
+                "must not exceed nav.app_poll_ms",
+            ),
+            (
+                vec!["app_poll_ms"],
+                900.into(),
+                "must stay below controller.context_stale_ms",
+            ),
+            (
+                vec!["repeat", "RS_UP"],
+                pair(),
+                "right-stick flicks repeat only inside a camera app ([nav.apps.<name>].repeat)",
+            ),
+            (
+                vec!["repeat", "TOGGLE_CHORD"],
+                pair(),
+                "toggle chord never repeats",
+            ),
+        ] {
+            let e = set(&path, val);
+            assert!(e.contains(why), "{path:?}: {e}");
+        }
+        let e = rejected(crate::config::tests::try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .remove("app_poll_ms");
+        }));
+        assert!(e.contains("needs nav.app_poll_ms"), "{e}");
+        // Positive halves: the same app with RS repeat (camera) and app settings without any app.
+        let (c, _) = crate::config::tests::try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["apps"]["mon"]["repeat"]["RS_LEFT"] =
+                pair();
+        })
+        .unwrap();
+        assert!(c.controller.nav.app_error.is_none() && c.controller.nav.apps.contains_key("mon"));
+        assert!(crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .insert("app_poll_ms".into(), 250.into());
+        })
+        .is_ok_and(|(c, _)| c.controller.nav.apps.is_empty()));
+    }
+    #[test]
     fn vt_bytes_follow_the_linux_console_keymap() {
         let b = |s: &str| vt_bytes(&parse_key_chord(s).unwrap());
         assert_eq!(b("ENTER").unwrap(), b"\r");
@@ -891,6 +1439,13 @@ mod tests {
         );
         assert_eq!(b("t").unwrap(), b"t");
         assert_eq!(b("SHIFT+t").unwrap(), b"T");
+        // The camera's Alt forms reach a VT as Meta (ESC-prefixed) characters.
+        assert_eq!(b("MINUS").unwrap(), b"-");
+        assert_eq!(b("EQUAL").unwrap(), b"=");
+        assert_eq!(b("ALT+MINUS").unwrap(), b"\x1b-");
+        assert_eq!(b("ALT+EQUAL").unwrap(), b"\x1b=");
+        assert_eq!(b("ALT+4").unwrap(), b"\x1b4");
+        assert_eq!(b("ALT+z").unwrap(), b"\x1bz");
     }
     #[test]
     fn a_stroke_releases_everything_it_presses() {
