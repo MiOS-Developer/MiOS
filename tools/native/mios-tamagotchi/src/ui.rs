@@ -71,6 +71,13 @@ enum NativeKind {
     Thought,
     Context,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SceneSubject {
+    Live(u64),
+    Roster(usize),
+    Studio,
+}
+
 pub struct Ui {
     pub game: Game,
     pub selected: usize,
@@ -130,6 +137,9 @@ pub struct Ui {
     viewport: Cell<(u16, u16)>,
     camera_viewport: Cell<(u16, u16)>,
     camera_stage: Cell<Option<Stage>>,
+    camera_subject: Cell<Option<SceneSubject>>,
+    camera_subject_cut: Cell<bool>,
+    pet_generation: u64,
     camera_resize: Cell<Option<(CameraView, CameraView, usize)>>,
     position: (u16, u16),
     destination: (u16, u16),
@@ -217,6 +227,9 @@ impl Ui {
             viewport: Cell::new((u16::MAX, u16::MAX)),
             camera_viewport: Cell::new((u16::MAX, u16::MAX)),
             camera_stage: Cell::new(None),
+            camera_subject: Cell::new(None),
+            camera_subject_cut: Cell::new(false),
+            pet_generation: 0,
             camera_resize: Cell::new(None),
             position: (500, 700),
             destination: (500, 700),
@@ -501,21 +514,24 @@ impl Ui {
         )
     }
     fn set_scene(&self, area: Rect) {
-        // Inline previews paint their own scene after clearing the live room.
-        // Do not let that hidden room restart the preview's camera each frame.
-        if !self.native_modal
-            && (self.menu == Some(Menu::Gallery)
-                || (self.menu == Some(Menu::Roster) && !self.catalogue.is_empty()))
-        {
-            return;
-        }
-        self.set_scene_for_stage(area, self.live_stage());
+        self.set_scene_for_stage(
+            area,
+            self.live_stage(),
+            SceneSubject::Live(self.pet_generation),
+        );
     }
-    fn set_scene_for_stage(&self, area: Rect, stage: Option<Stage>) {
+    fn set_scene_for_stage(&self, area: Rect, stage: Option<Stage>, subject: SceneSubject) {
         self.pet_area.set(area);
         let dimensions = (area.width, area.height);
         let previous = self.camera_viewport.replace(dimensions);
         let previous_stage = self.camera_stage.replace(stage);
+        if self.camera_subject.replace(Some(subject)) != Some(subject) {
+            // Previews and replacement pets are different subjects. Their first
+            // frame must not inherit a hatch, resize or manual-view blend.
+            self.camera_resize.set(None);
+            self.camera_subject_cut.set(true);
+            return;
+        }
         if previous != (u16::MAX, u16::MAX) {
             let from = Self::view_for_stage(self.camera_view, previous, previous_stage);
             let to = Self::view_for_stage(self.camera_view, dimensions, stage);
@@ -549,11 +565,20 @@ impl Ui {
             view: effective(self.camera_view),
             zoom_percent: self.zoom_percent,
             orbit_degrees: self.orbit_degrees,
-            from_view: effective(self.camera_from_view),
-            transition_percent: self.camera_blend,
+            from_view: if self.camera_subject_cut.get() {
+                effective(self.camera_view)
+            } else {
+                effective(self.camera_from_view)
+            },
+            transition_percent: if self.camera_subject_cut.get() {
+                100
+            } else {
+                self.camera_blend
+            },
         }
     }
     fn change_camera(&mut self, view: CameraView, zoom: u16) {
+        self.camera_subject_cut.set(false);
         if view != self.camera_view {
             self.camera_resize.set(None);
         }
@@ -654,7 +679,6 @@ impl Ui {
         self.visual_rng
     }
     fn simulate_behavior(&mut self, config: &Config) {
-        use crate::game::Stage;
         self.mobile_stage = !matches!(self.game.stage(&config.game), Stage::Egg | Stage::Dead);
         if !self.game.paused && !self.overlay_open() && self.game.challenge.is_none() {
             self.thought_ticks = self.thought_ticks.saturating_add(1);
@@ -1753,6 +1777,7 @@ impl Ui {
                         selected.map_or(random_seed, |id| selected_birth_seed(random_seed, id))
                     };
                     self.game = Game::new(rules, seed);
+                    self.pet_generation = self.pet_generation.wrapping_add(1);
                     if imported.is_some() {
                         self.game.paused = true;
                     }
@@ -2017,10 +2042,11 @@ impl Ui {
                     self.menu_selected = (self.menu_selected + 1) % 16
                 }
                 Action::Direction(Direction::Up) => {
-                    self.gallery_stage = (self.gallery_stage + 4) % 5
+                    self.gallery_stage =
+                        (self.gallery_stage + PREVIEW_STAGES.len() - 1) % PREVIEW_STAGES.len()
                 }
                 Action::Direction(Direction::Down) => {
-                    self.gallery_stage = (self.gallery_stage + 1) % 5
+                    self.gallery_stage = (self.gallery_stage + 1) % PREVIEW_STAGES.len()
                 }
                 Action::Accept => {
                     self.manual_style(match self.effective_style() {
@@ -2501,7 +2527,7 @@ impl Ui {
                 let style = if self.selected == i {
                     selected_style(colors)
                 } else {
-                    Style::default().fg(colors.ink(2)).bg(colors.ink(6))
+                    Style::default().fg(colors.ink(7)).bg(colors.ink(0))
                 };
                 let caption = format!("[{}] {label}", shortcuts[i]);
                 let width = if i % 4 == 3 {
@@ -3657,7 +3683,11 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(2))),
             info,
         );
-        self.set_scene_for_stage(room, Some(Stage::Adult));
+        self.set_scene_for_stage(
+            room,
+            Some(Stage::Adult),
+            SceneSubject::Roster(self.menu_selected),
+        );
         let expression = Expression::Happy;
         let appearance = Appearance {
             shape: character.shape,
@@ -4277,7 +4307,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(7))),
                 label,
             );
-            self.set_scene_for_stage(room, Some(stage));
+            self.set_scene_for_stage(room, Some(stage), SceneSubject::Studio);
             let sprite = match self.view_mode {
                 ViewMode::Pixel => {
                     Sprite::animated(stage, expression, self.effective_style(), self.frame)
@@ -4743,8 +4773,10 @@ fn selected_birth_seed(seed: u64, id: u8) -> u64 {
     }
 }
 fn selected_style(colors: &Colors) -> Style {
-    if colors.ink(0) == ratatui::style::Color::Reset
-        && colors.ink(13) == ratatui::style::Color::Reset
+    if colors
+        .palette
+        .iter()
+        .all(|color| *color == ratatui::style::Color::Reset)
     {
         Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
     } else {
@@ -8315,6 +8347,7 @@ mod console_shell_regressions {
         let game = ui.game.clone();
         draw(&ui, &config, 20, 10, Renderer::Ascii);
         assert_eq!(ui.camera_stage.get(), Some(Stage::Baby));
+        assert_eq!(ui.camera_subject.get(), Some(SceneSubject::Live(0)));
         assert_eq!(ui.camera().view, CameraView::Face);
         assert!(ui.pet_area.get().width > 0);
         assert_eq!(ui.game, game);
@@ -8401,6 +8434,183 @@ mod console_shell_regressions {
                 assert_ne!(buffer[(column, 1)].bg, cell.bg);
             }
             ui.handle(key(KeyCode::Down), &config.game);
+        }
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn tiny_preview_subject_switches_use_their_own_framing_on_the_first_frame() {
+        let config = Config::sample().unwrap();
+        for live_egg in [false, true] {
+            for menu in [Menu::Roster, Menu::Gallery] {
+                let (_, base) = fixture();
+                let mut ui = Ui::configured(base.game, &config);
+                if live_egg {
+                    ui.game.age_ticks = 0;
+                }
+                ui.camera_view = CameraView::Room;
+                ui.camera_from_view = CameraView::Room;
+                ui.camera_transition_frames = 8;
+                let live = if live_egg {
+                    CameraView::Pet
+                } else {
+                    CameraView::Face
+                };
+                draw(&ui, &config, 20, 10, Renderer::Ascii);
+                assert_eq!(ui.camera().view, live);
+                let game = ui.game.clone();
+                let rng = ui.visual_rng;
+                ui.frame = 16;
+                ui.open(menu);
+                ui.gallery_stage = 0;
+                draw(&ui, &config, 20, 10, Renderer::Ascii);
+                let preview = if menu == Menu::Gallery {
+                    CameraView::Pet
+                } else {
+                    CameraView::Face
+                };
+                let camera = ui.camera();
+                assert_eq!(
+                    (camera.from_view, camera.view, camera.transition_percent),
+                    (preview, preview, 100),
+                    "{live_egg} {menu:?}: entry"
+                );
+                assert!(ui.camera_resize.get().is_none());
+                if menu == Menu::Gallery {
+                    // A life-stage change within the same Studio subject still eases.
+                    ui.gallery_stage = 1;
+                    ui.frame += 1;
+                    draw(&ui, &config, 20, 10, Renderer::Ascii);
+                    let camera = ui.camera();
+                    assert_eq!(
+                        (camera.from_view, camera.view, camera.transition_percent),
+                        (CameraView::Pet, CameraView::Face, 0)
+                    );
+                }
+                ui.handle(key(KeyCode::Esc), &config.game);
+                draw(&ui, &config, 20, 10, Renderer::Ascii);
+                let camera = ui.camera();
+                assert_eq!(
+                    (camera.from_view, camera.view, camera.transition_percent),
+                    (live, live, 100),
+                    "{live_egg} {menu:?}: return"
+                );
+                assert!(ui.camera_resize.get().is_none());
+                assert_eq!(ui.game, game);
+                assert_eq!(ui.visual_rng, rng);
+            }
+        }
+    }
+
+    #[test]
+    fn new_pet_subject_clears_the_dead_pets_face_framing_before_its_first_draw() {
+        let (config, mut ui) = fixture();
+        ui.game.health = 0;
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        draw(&ui, &config, 20, 10, Renderer::Ascii);
+        assert_eq!(ui.game.stage(&config.game), Stage::Dead);
+        assert_eq!(ui.camera().view, CameraView::Face);
+        let previous = ui.camera_subject.get();
+        ui.frame = 16;
+        ui.handle(key(KeyCode::Char('n')), &config.game);
+        assert!(ui.confirm_reset);
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert!(!ui.confirm_reset);
+        assert_eq!(ui.game.stage(&config.game), Stage::Egg);
+        draw(&ui, &config, 20, 10, Renderer::Ascii);
+        assert_ne!(ui.camera_subject.get(), previous);
+        let camera = ui.camera();
+        assert_eq!(
+            (camera.from_view, camera.view, camera.transition_percent),
+            (CameraView::Pet, CameraView::Pet, 100)
+        );
+        assert!(ui.camera_resize.get().is_none());
+    }
+
+    #[test]
+    fn changing_subject_discards_a_manual_camera_blend_but_new_requests_still_ease() {
+        let (config, mut ui) = fixture();
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        ui.camera_transition_frames = 8;
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.frame = 16;
+        ui.change_camera(CameraView::Face, 100);
+        assert_eq!(ui.camera().transition_percent, 0);
+        ui.open(Menu::Roster);
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        let camera = ui.camera();
+        assert_eq!(
+            (camera.from_view, camera.view, camera.transition_percent),
+            (CameraView::Face, CameraView::Face, 100)
+        );
+        // A new camera request belongs to the displayed subject.
+        ui.change_camera(CameraView::Pet, 100);
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        let camera = ui.camera();
+        assert_eq!(
+            (camera.from_view, camera.view, camera.transition_percent),
+            (CameraView::Face, CameraView::Pet, 0)
+        );
+        let next = ui.frame + 4;
+        ui.animate(next);
+        assert!((1..100).contains(&ui.camera().transition_percent));
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn four_color_live_dock_keeps_all_care_labels_readable_when_selection_moves() {
+        let (mut config, mut ui) = fixture();
+        config.palette = ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"]
+            .map(String::from)
+            .to_vec();
+        config.background = "#0f380f".into();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        ui.hud_mode = HudMode::Full;
+        let game = ui.game.clone();
+        let mut terminal = Terminal::new(TestBackend::new(80, 32)).unwrap();
+        let luminance = |color: ratatui::style::Color| {
+            let ratatui::style::Color::Rgb(r, g, b) = color else {
+                panic!("RGB fixture changed color depth");
+            };
+            let linear = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        };
+        for _ in 0..2 {
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let targets = ui.care_targets.borrow();
+            assert_eq!(targets.len(), 8);
+            let selected = targets
+                .iter()
+                .find(|(_, index)| *index == ui.selected)
+                .unwrap()
+                .0;
+            for (rect, index) in targets.iter() {
+                let cell = &buffer[(rect.x, rect.y)];
+                assert_eq!(cell.symbol(), "[");
+                let (a, b) = (luminance(cell.fg), luminance(cell.bg));
+                let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(contrast >= 4.5, "dock{index}: contrast{contrast}");
+                if *index != ui.selected {
+                    assert_ne!(cell.bg, buffer[(selected.x, selected.y)].bg);
+                }
+            }
+            drop(targets);
+            ui.handle(key(KeyCode::Tab), &config.game);
         }
         assert_eq!(ui.game, game);
     }
