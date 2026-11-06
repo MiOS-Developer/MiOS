@@ -228,9 +228,12 @@ _auth_posture() {
 
     local gaps=""
     [[ "$require" == "1" ]] || gaps="[security].api_require_auth is off"
-    if [[ "$bind" == "off" ]]; then
+    # Only enforce binds the owner to the authenticated key (the bind-mode owner,
+    # mios_pipe.context.grounding._client_env): verify only logs a mismatch, and
+    # any other value (the vendor "audit" among them) degrades to off there.
+    if [[ "$bind" != "enforce" ]]; then
         [[ -z "$gaps" ]] || gaps="${gaps}; "
-        gaps="${gaps}[security].principal_bind_mode is off"
+        gaps="${gaps}[security].principal_bind_mode is ${bind}, not enforce"
     fi
     if [[ -z "$gaps" ]]; then
         printf 'armed\t%s\tauth required, principal bound (%s)' "$ep" "$bind"

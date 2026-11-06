@@ -434,7 +434,11 @@ async def run():
     print("REAL_ASGI_ERROR_AND_DISCONNECT_PASS")
 asyncio.run(run())
 '''
-    result = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True, timeout=15)
+    # `-c` puts the working directory first on sys.path, not this file's directory, so the
+    # child imports this fixture and mios_pipe only when it runs here (run-suites.sh runs
+    # every suite from the repository root).
+    result = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True, timeout=15,
+                            cwd=os.path.dirname(os.path.abspath(__file__)))
     check("real ASGI preserves errors and cancels blocked upstream on disconnect",
           result.returncode == 0 and "REAL_ASGI_ERROR_AND_DISCONNECT_PASS" in result.stdout,
           result.stderr if result.returncode else "ASGI 2.4, exact SSE error + DONE, HTTPX/admission cleanup")

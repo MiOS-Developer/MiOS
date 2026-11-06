@@ -17,16 +17,20 @@ _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 _SCRIPT = os.path.join(_ROOT, "tools", "audit-image-provisioning.py")
 _TOML = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
 
+# Scopes a plant to the [branding] table: [windows.xbox.settings.display] has
+# its own living_wallpaper key, which an unscoped pattern also matched.
+_BRANDING = r'(^\[branding\]\n(?:(?!\[).*\n)*?)'
+
 # (case name, pattern, replacement, item the failure must name)
 PLANTS = [
     ("version-malformed",
      r'^(mios_version\s*=\s*)"[^"]*"', r'\1"not-a-version"',
      "[meta].mios_version"),
     ("wallpaper-not-bool",
-     r'^(living_wallpaper\s*=\s*)true\b', r'\1"yes"',
+     _BRANDING + r'^(living_wallpaper\s*=\s*)true\b', r'\1\2"yes"',
      "[branding].living_wallpaper"),
     ("wallpaper-absent",
-     r'^living_wallpaper\s*=.*\n', "",
+     _BRANDING + r'^living_wallpaper\s*=.*\n', r'\1',
      "[branding].living_wallpaper"),
     ("budget-non-positive",
      r'^(runner_disk_budget_gb\s*=\s*)\d+', r'\g<1>0',

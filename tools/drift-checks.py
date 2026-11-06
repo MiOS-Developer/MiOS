@@ -1460,6 +1460,10 @@ def check_drift_build_catalog() -> int:
         temp_ctx_dir = "/tmp/mios-drift-ctx-test"
         os.makedirs(temp_ctx_dir, exist_ok=True)
         os.environ["MIOS_BUILD_CTX"] = temp_ctx_dir
+        # The materializer also writes build_phases.json beside TOML_PATH (else MIOS_TOML,
+        # the tracked SSOT dir); aim it at the scratch ctx so the check never rewrites the tree.
+        saved_toml_path = os.environ.get("TOML_PATH")
+        os.environ["TOML_PATH"] = os.path.join(temp_ctx_dir, "mios.toml")
 
         mat_globals = {"__name__": "__main__", "psycopg": mock_psycopg, "__file__": materialize_path}
         try:
@@ -1469,6 +1473,11 @@ def check_drift_build_catalog() -> int:
             if e.code != 0:
                 print(f"Materialize script exited with code {e.code}")
                 sys.exit(1)
+        finally:
+            if saved_toml_path is None:
+                os.environ.pop("TOML_PATH", None)
+            else:
+                os.environ["TOML_PATH"] = saved_toml_path
 
         import tomllib
 

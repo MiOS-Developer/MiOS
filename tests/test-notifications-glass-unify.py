@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -155,7 +156,14 @@ class TestNotificationsGlassUnify(unittest.TestCase):
         self.assertIn("function recordHistory(entry)", content)
         self.assertIn("function clearHistory()", content)
         self.assertIn("function removeHistory(id)", content)
-        self.assertIn("top-center", content, "Default position must be top-center")
+        # Placement (operator ruling: [desktop.notifications] position is "island" -- every notification grows out of
+        # the status island, top centre): before the SSOT is read the fallback is "island", never "top-center".
+        pos = re.search(r"readonly property string position:\s*([^\n]+)", content)
+        self.assertIsNotNone(pos, "NotifModel.qml must declare readonly property string position")
+        literals = re.findall(r'"([^"]*)"', pos.group(1).split("//", 1)[0])
+        self.assertTrue(literals, f"NotifModel position has no literal fallback: {pos.group(1)}")
+        self.assertEqual(literals[-1], "island", f"Default position must be island: {pos.group(1)}")
+        self.assertNotIn("top-center", content, "NotifModel.qml must not spell the placement top-center")
 
     def test_m2_notification_center_component(self):
         """Positive: NotificationCenter.qml exists and renders persistent history with specular GlassSurface delegates."""
@@ -172,7 +180,8 @@ class TestNotificationsGlassUnify(unittest.TestCase):
         self.assertIn("GlassSurface", content)
 
     def test_m2_mios_toml_position_default(self):
-        """Positive: mios.toml sets [desktop.notifications] position default to 'top-center'."""
+        """Positive: mios.toml sets [desktop.notifications] position to 'island' (operator ruling: notifications grow
+        out of the status island, top centre). Negative: the 'top-center' spelling is gone."""
         toml_path = os.path.join(ROOT, "usr/share/mios/mios.toml")
         with open(toml_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -180,8 +189,11 @@ class TestNotificationsGlassUnify(unittest.TestCase):
         sec_match = re.search(r"\[desktop\.notifications\][^\[]+", content)
         self.assertIsNotNone(sec_match, "[desktop.notifications] section not found")
         sec_body = sec_match.group(0)
-        self.assertIn('position            = "top-center"', sec_body)
-        self.assertNotIn('position            = "island"', sec_body)
+        self.assertIn('position            = "island"', sec_body)
+        self.assertNotIn('"top-center"', sec_body)
+        with open(toml_path, "rb") as f:
+            parsed = tomllib.load(f)
+        self.assertEqual(parsed["desktop"]["notifications"]["position"], "island")
 
     def test_m2_theme_bridge_exposure(self):
         """Positive: quickshell-Theme.qml.tmpl and Theme.qml expose notificationPosition."""
@@ -191,6 +203,10 @@ class TestNotificationsGlassUnify(unittest.TestCase):
             with open(p, "r", encoding="utf-8") as f:
                 c = f.read()
             self.assertIn("notificationPosition", c, f"notificationPosition not exposed in {path_suffix}")
+        # The bridge's fallback is the SSOT key itself (rendered to "island"), never a hand-typed spelling.
+        with open(os.path.join(ROOT, "usr/share/mios/theme/templates/quickshell-Theme.qml.tmpl"), encoding="utf-8") as f:
+            tmpl = f.read()
+        self.assertIn('property string notificationPosition: "@MIOS:desktop.notifications.position@"', tmpl)
 
     # ---------------------------------------------------------------------------------------------
     # 3. Milestone 3: Steam Notification Bridge & Hyprland Rules
