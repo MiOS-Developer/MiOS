@@ -700,6 +700,14 @@ or add the real pane/status offsets before converting it to screen pixels.
 Historical trial receipts are retained. Automated terminal/browser evidence
 does not certify a physical phone or controller.
 
+A separate application race occurs when multiple clients use tmux's latest
+window size: a click can arrive before the corresponding resize event. Before
+hit-testing a left click, the game compares the current terminal size with its
+last painted frame and redraws if needed. This rebuilds targets for the tapping
+client's size without changing mouse coordinates or applying a second offset.
+Browser checks also retain actual emitted SGR bytes and reject a client refit
+that invalidates a previously measured touch position.
+
 ## Complete menu touch and cursor navigation
 
 At 20x8 and larger, [<] and [>] select the previous and next menu option or

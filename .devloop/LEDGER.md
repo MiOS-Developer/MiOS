@@ -4288,3 +4288,42 @@ viewports. The installed separate sample remains b139 until final acceptance.
 Receipts: /home/mios/.local/state/mios/mios-mons-input-completion/
 (mios-console-artifact.json, mios-controller-readable-human-result.json,
 mios-headless-console/, mios-browser-console-coordinates-watch-top/).
+
+## MiOS-Mon verified resize and live-route continuation
+
+Exact source7afa8035787929661f4c361af613ff3a6ea13e0e passes293 unit and13CLI
+checks (306 total), Rust2021 format, warning-fatal Clippy, release and static
+artifact validation in rootless podman-MiOS-DEV-mios-mons-resize-verified.
+Static musl artifact SHA256:
+ba5d2d3743b1a47e767650fecef247abb9b4fd07be4ce368b428b3fa2c3b4cc7.
+The four wider failing gates remain byte-identical to clean fbc1a259 baseline.
+
+Task3747 has two distinct findings. Browser capture could resize xterm before
+a touch; a geometry guard classifies that fixture error. Separately, an actual
+application click can arrive before its Resize event after tmux switches to the
+clicking client's size. Compare the current terminal size and repaint hitboxes
+before hit-testing that click. Two meaningful regressions cover the repaired
+path and stale-target negative control; no global row offset was introduced.
+
+The local registered coding participant delivered the complete ui.rs change
+in its isolated mios-mons-touch-back worktree. Root retained that history and
+adopted its source with neutral integration messages, then fixed a test setup
+that sent numbered navigation before the first Home paint. All failed build
+and browser receipts remain available.
+
+The old four PiPs and SSH bridge disappeared during interruptions. A newly
+admitted --no-devices development PiP now exists at seat mios-mons-console,
+runtime /run/user/1000/mios-nested-desktop-250199, parent0x55b22d56eb40 and
+served WAYLAND-1. Its persistent launcher is owned by the coordinator in
+mios-mon-console-dev. Verified candidate7afa803 runs in window@2/pane%2 with
+save-free Mimo513, paused after ordinary hatch. Authenticated localhost8310
+uses the native user-local ttyd Bash launcher, not a claimed container.
+The coding worker now exclusively owns live browser input for the nine-cell
+watch/portrait/landscape by top/bottom/off status matrix. Physical phones and
+current hardware controller acceptance are not inferred from that automation.
+The installed sample remains b139 until successful acceptance and main push.
+
+Receipts: /home/mios/.local/state/mios/mios-mons-input-completion/
+ mios-resize-artifact.json, mios-resize-verified/,
+ mios-console-current-preview.json, mios-console-current-localhost.json,
+ mios-camera-live-defaults/, mios-touch-back-result.json.
