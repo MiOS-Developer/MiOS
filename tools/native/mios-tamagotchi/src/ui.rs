@@ -2518,8 +2518,8 @@ impl Ui {
         let border = panel(&room_title, colors, ascii);
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
-        self.set_scene(room_inner);
         self.redraw_heading(screen, config, colors, ascii);
+        self.set_scene(room_inner);
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
