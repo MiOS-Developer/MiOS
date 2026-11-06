@@ -3104,7 +3104,7 @@ impl Ui {
         // background so no terminal default (light or dark) shows through.
         screen.render_widget(
             Paragraph::new(hint_lines.join("\n"))
-                .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
+                .style(Style::default().fg(colors.ink(7))),
             footer,
         );
         self.info_footer.set(footer);
