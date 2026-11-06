@@ -167,7 +167,6 @@ drift = [
   "mios-shell-session-gc.service",
   "mios-skills-miner.timer",
   "mios-suggestion-refresh.timer",
-  "mios-swarm-pack-firstboot.service",
   "mios-sys-env-refresh.timer",
   "mios-userdb-render.service",
   "mios-webtools-firstboot.service",
@@ -192,6 +191,31 @@ Description = "Weekly Podman Cleanup"
 OnCalendar = "weekly"
 Persistent = "true"
 [units."mios-podman-gc.timer".Install]
+WantedBy = "timers.target"
+
+[units."mios-tailscale-sync.service".Unit]
+comment = "# AI-hint: Oneshot that applies SSOT [tailscale] to the live node with `tailscale set` and fails the exit node over along [tailscale].exit_nodes.\n# AI-related: /usr/libexec/mios/mios-tailscale-sync, mios-tailscale-sync.timer, tailscaled.service"
+Description = "'MiOS' Tailscale SSOT sync and exit-node failover"
+After = ["tailscaled.service", "network-online.target"]
+Wants = ["network-online.target"]
+ConditionPathExists = "/usr/bin/tailscale"
+
+[units."mios-tailscale-sync.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/libexec/mios/mios-tailscale-sync"
+# [tailscale.exit_node_health].state lives here between timer runs.
+RuntimeDirectory = "mios-tailscale-sync"
+RuntimeDirectoryPreserve = "yes"
+
+[units."mios-tailscale-sync.timer".Unit]
+comment = "# AI-hint: Re-runs mios-tailscale-sync so the exit node follows [tailscale].exit_nodes as peers come and go.\n# AI-related: mios-tailscale-sync.service, timers.target"
+Description = "'MiOS' Tailscale SSOT sync schedule"
+
+[units."mios-tailscale-sync.timer".Timer]
+OnBootSec = "1min"
+OnUnitActiveSec = "2min"
+
+[units."mios-tailscale-sync.timer".Install]
 WantedBy = "timers.target"
 
 [units."mios-ai-firstboot.timer".Unit]
@@ -4056,6 +4080,10 @@ max_agents = 64
 max_pending = 1024
 max_message_bytes = 32768
 max_receipts = 4096
+# Saved state.json budget, in bytes. mios-agent-relay drops the oldest received
+# receipts to stay within it, refuses a send when only queued mail is left over
+# it, and the observer (MiOS AI agent view) reads registries up to this size.
+max_state_bytes = 2097152
 
 [mcp.agents.observation]
 refresh_s = 2
@@ -11315,6 +11343,31 @@ login_server = ""
 accept_routes = true
 accept_dns = true
 advertise_routes = ""
+# Ordered exit-node preference (peer HostName, MagicDNS name or Tailscale IP).
+# mios-tailscale-sync routes through the first one that is online AND offers
+# itself as an exit node (e.g. a USB-tethered phone running "Run as exit
+# node"), and clears the exit node when none qualifies. [] = leave it alone.
+# Set per host in /etc/mios/mios.toml -- peer names are not a vendor default.
+exit_nodes = []
+exit_node_allow_lan_access = true
+
+# Exit nodes as a standby failover. Each mios-tailscale-sync run pings `probe`
+# directly through the lowest-metric default route; while that loses at most
+# max_extra_loss_pct and no exit node is active, exit nodes stay on standby
+# (switching one in changes the public IP and drops open connections).
+# Otherwise the candidate is applied and probed against the direct path: loss
+# decides when the paths differ by more than max_extra_loss_pct points, else
+# the exit node may add at most max_extra_rtt_ms. A failing exit node cools
+# down for cooldown_s (recorded in `state`) while the next preference is tried.
+[tailscale.exit_node_health]
+enabled            = true
+probe              = "1.1.1.1"
+count              = 10
+interval_s         = 0.2
+max_extra_loss_pct = 10
+max_extra_rtt_ms   = 150
+cooldown_s         = 300
+state              = "/run/mios-tailscale-sync/exit-health.json"
 
 # Per-vendor enable gate for the [gpu.cdi.<vendor>] wiring above. false here
 # keeps a vendor's CDI spec on disk but stops mios-gpu-passthrough from wiring
@@ -18084,7 +18137,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 676
+max_tracked_mb    = 678
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.

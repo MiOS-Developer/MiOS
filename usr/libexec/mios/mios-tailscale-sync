@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT.
-# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale
+# AI-hint: Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.
+# AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale, mios-tailscale-sync.timer, test_mios_tailscale_sync.py
+# AI-functions: _load_config, _health_config, find_tailscale, get_status, select_exit_node, build_set_cmd, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh
 """'MiOS' Tailscale mesh client synchronization daemon/helper.
 
 Derives Tailscale connection settings from layered mios.toml SSOT:
@@ -11,31 +12,79 @@ Derives Tailscale connection settings from layered mios.toml SSOT:
   accept_routes = true
   accept_dns = true
   advertise_routes = ""
+  exit_nodes = []               # ordered peer names/IPs; [] = leave exit node alone
+  exit_node_allow_lan_access = true
+  [tailscale.exit_node_health]  # probe, count, interval_s, max_extra_loss_pct,
+                                # max_extra_rtt_ms, cooldown_s, state
 
-If [tailscale].enabled is true, ensures tailscaled is active and applies
-configured mesh parameters.
+If [tailscale].enabled is true, applies the mesh parameters with `tailscale
+set` (which only touches the flags it names, unlike `up --reset`). The exit
+node is the first exit_nodes entry that is online, offers itself as one and
+is not cooling down; when none qualifies the exit node is cleared, so egress
+falls back to the host's own default route instead of a dead peer.
+
+With [tailscale.exit_node_health] enabled, exit nodes are a standby failover.
+Every run first probes the host's own lowest-metric default route; while it
+loses at most max_extra_loss_pct and no exit node is active, the exit nodes
+stay on standby -- switching one in just to measure it would change the
+public IP and drop open connections. Otherwise the candidate is applied and
+the probe runs through it and, in parallel, directly. An exit node that loses
+clearly more, or matches the loss but adds more than max_extra_rtt_ms, is put
+on cooldown and the next preference is tried. --dry-run prints the command
+without running it or probing.
 """
 from __future__ import annotations
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
 import mios_toml  # noqa: E402
 
-VENDOR_TOML = "/usr/share/mios/mios.toml"
-HOST_TOML = "/etc/mios/mios.toml"
+_HEALTH_KEYS = ("probe", "count", "interval_s", "max_extra_loss_pct",
+                "max_extra_rtt_ms", "cooldown_s", "state")
 
 
 def _log(msg: str) -> None:
     print(f"[mios-tailscale-sync] {msg}", flush=True)
 
 
+def _as_list(value) -> list[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+    return [str(v).strip() for v in value or [] if str(v).strip()]
+
+
+def _health_config(ts: dict) -> dict | None:
+    """The exit-node health gate from SSOT, or None when disabled/incomplete."""
+    health = ts.get("exit_node_health") or {}
+    if not health.get("enabled"):
+        return None
+    missing = [k for k in _HEALTH_KEYS if health.get(k) in (None, "")]
+    if missing:
+        _log(f"exit-node health gate off: [tailscale.exit_node_health] lacks {', '.join(missing)}")
+        return None
+    try:
+        return {"probe": str(health["probe"]), "count": int(health["count"]),
+                "interval_s": float(health["interval_s"]),
+                "max_extra_loss_pct": float(health["max_extra_loss_pct"]),
+                "max_extra_rtt_ms": float(health["max_extra_rtt_ms"]),
+                "cooldown_s": int(health["cooldown_s"]), "state": str(health["state"])}
+    except (TypeError, ValueError) as e:
+        _log(f"exit-node health gate off: invalid [tailscale.exit_node_health] ({e})")
+        return None
+
+
 def _load_config() -> dict:
-    data = mios_toml.load_merged(layers=[VENDOR_TOML, HOST_TOML])
+    # Tier-major layers with their mios.d drop-ins (Law 13); MIOS_*_TOML retarget them.
+    data = mios_toml.load_merged(layers=mios_toml.layer_paths())
     ts = data.get("tailscale", {})
     hs = data.get("headscale", {})
     metal_mesh = data.get("metal", {}).get("mesh", {})
@@ -46,6 +95,9 @@ def _load_config() -> dict:
         "accept_routes": bool(ts.get("accept_routes", True)),
         "accept_dns": bool(ts.get("accept_dns", True)),
         "advertise_routes": str(ts.get("advertise_routes", "")),
+        "exit_nodes": _as_list(ts.get("exit_nodes", [])),
+        "exit_node_allow_lan_access": bool(ts.get("exit_node_allow_lan_access", True)),
+        "health": _health_config(ts),
         "headscale_domain": str(metal_mesh.get("headscale_domain", "mesh.mios.local")),
     }
 
@@ -69,7 +121,132 @@ def get_status() -> dict:
     return {}
 
 
-def sync_mesh() -> int:
+def _peer_names(peer: dict) -> set[str]:
+    names = {str(peer.get("HostName", "")).lower(),
+             str(peer.get("DNSName", "")).split(".")[0].lower()}
+    names.update(str(ip) for ip in peer.get("TailscaleIPs") or [])
+    return names - {""}
+
+
+def select_exit_node(status: dict, wanted: list[str],
+                     skip: frozenset[str] = frozenset()) -> tuple[str, str]:
+    """(tailscale IPv4, peer name) of the first usable preference not in
+    `skip` (exit nodes cooling down), else ("", "")."""
+    peers = list((status.get("Peer") or {}).values())
+    for want in wanted:
+        match = [p for p in peers if want.lower() in _peer_names(p)]
+        if not match:
+            _log(f"exit node {want}: not in this tailnet")
+            continue
+        peer = match[0]
+        if not peer.get("Online"):
+            _log(f"exit node {want}: offline")
+        elif not peer.get("ExitNodeOption"):
+            _log(f"exit node {want}: online but not advertising an exit node")
+        else:
+            ips = [ip for ip in peer.get("TailscaleIPs") or [] if ":" not in ip]
+            if not ips:
+                _log(f"exit node {want}: no Tailscale IPv4")
+            elif ips[0] in skip:
+                _log(f"exit node {want}: cooling down after a failed health check")
+            else:
+                return ips[0], want
+    return "", ""
+
+
+def build_set_cmd(ts_bin: str, cfg: dict, exit_ip: str) -> list[str]:
+    cmd = [ts_bin, "set",
+           f"--accept-routes={str(cfg['accept_routes']).lower()}",
+           f"--accept-dns={str(cfg['accept_dns']).lower()}",
+           f"--advertise-routes={cfg['advertise_routes']}"]
+    if cfg["exit_nodes"]:
+        cmd.append(f"--exit-node={exit_ip}")
+        cmd.append(f"--exit-node-allow-lan-access={str(cfg['exit_node_allow_lan_access']).lower()}")
+    return cmd
+
+
+def probe(health: dict, interface: str = "") -> tuple[float, float]:
+    """(loss %, average RTT ms) pinging the probe; through `interface` when
+    given (SO_BINDTODEVICE skips Tailscale's exit-node table), else through
+    whatever route is active. A failed probe is (100, inf)."""
+    cmd = ["ping", "-n", "-q", "-c", str(health["count"]), "-i", str(health["interval_s"]), "-W", "2"]
+    if interface:
+        cmd += ["-I", interface]
+    cmd.append(health["probe"])
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             timeout=health["count"] * health["interval_s"] + 15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 100.0, math.inf
+    loss = re.search(r"([\d.]+)% packet loss", out)
+    rtt = re.search(r"= [\d.]+/([\d.]+)/", out)
+    return (float(loss.group(1)) if loss else 100.0), (float(rtt.group(1)) if rtt else math.inf)
+
+
+def direct_interface() -> str:
+    """The host's own uplink: the lowest-metric main-table default route."""
+    try:
+        res = subprocess.run(["ip", "-j", "route", "show", "table", "main", "default"],
+                             capture_output=True, text=True, timeout=10)
+        routes = json.loads(res.stdout or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return ""
+    routes = [r for r in routes if r.get("dev")]
+    return min(routes, key=lambda r: r.get("metric", 0))["dev"] if routes else ""
+
+
+def exit_is_worse(direct: tuple[float, float], via_exit: tuple[float, float], health: dict) -> bool:
+    """Loss decides when the paths differ by more than max_extra_loss_pct;
+    otherwise the exit node may add at most max_extra_rtt_ms."""
+    (d_loss, d_rtt), (e_loss, e_rtt) = direct, via_exit
+    margin = health["max_extra_loss_pct"]
+    if e_loss + margin < d_loss:
+        return False
+    if e_loss > d_loss + margin:
+        return True
+    return e_rtt > d_rtt + health["max_extra_rtt_ms"]
+
+
+def _cooldowns(health: dict, now: float) -> dict[str, float]:
+    try:
+        with open(health["state"]) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {ip: until for ip, until in state.items()
+            if isinstance(until, (int, float)) and until > now}
+
+
+def _save_cooldowns(health: dict, cooling: dict[str, float]) -> None:
+    path = health["state"]
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(cooling, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        _log(f"could not record exit-node cooldown in {path}: {e}")
+
+
+def _active_exit_ip(status: dict) -> str:
+    """The Tailscale IPv4 of the exit node in use, else ""."""
+    ips = (status.get("ExitNodeStatus") or {}).get("TailscaleIPs") or []
+    return next((ip.split("/")[0] for ip in ips if ":" not in ip), "")
+
+
+def _apply(cmd: list[str]) -> int:
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if res.returncode != 0:
+        _log(f"tailscale set failed ({res.returncode}): {res.stderr.strip()[:400]}")
+    return res.returncode
+
+
+def _fmt(path: tuple[float, float]) -> str:
+    return f"{path[0]:.0f}% loss, {path[1]:.0f} ms"
+
+
+def sync_mesh(dry_run: bool = False) -> int:
     cfg = _load_config()
     if not cfg["enabled"]:
         _log("Tailscale is disabled in SSOT [tailscale].enabled=false")
@@ -77,32 +254,59 @@ def sync_mesh() -> int:
 
     ts_bin = find_tailscale()
     if not shutil.which(ts_bin) and not os.path.isfile(ts_bin):
-        _log(f"Warning: tailscale CLI binary not found on path")
+        _log("tailscale CLI binary not found on PATH")
         return 1
 
     status = get_status()
     backend_state = status.get("BackendState", "NoState")
     _log(f"Current Tailscale BackendState: {backend_state}")
+    if backend_state != "Running":
+        server = cfg["login_server"] or "Tailscale SaaS"
+        _log(f"not logged in; run: tailscale up --login-server={server}" if cfg["login_server"]
+             else f"not logged in to {server}; run: tailscale up")
+        return 0
 
-    cmd = [ts_bin, "up", "--reset"]
-    if cfg["login_server"]:
-        cmd.append(f"--login-server={cfg['login_server']}")
-    if cfg["accept_routes"]:
-        cmd.append("--accept-routes")
-    if cfg["accept_dns"]:
-        cmd.append("--accept-dns")
-    if cfg["advertise_routes"]:
-        cmd.append(f"--advertise-routes={cfg['advertise_routes']}")
-
-    _log(f"Configured mesh params: login_server={cfg['login_server'] or 'Tailscale SaaS'} accept_routes={cfg['accept_routes']}")
-    return 0
+    health = cfg["health"] if cfg["exit_nodes"] else None
+    now = time.time()
+    cooling = _cooldowns(health, now) if health else {}
+    if health and not dry_run and not _active_exit_ip(status):
+        uplink = direct_interface()
+        direct = probe(health, uplink) if uplink else (100.0, math.inf)
+        if direct[0] <= health["max_extra_loss_pct"]:
+            _log(f"direct uplink {uplink} healthy ({_fmt(direct)}) -- exit nodes on standby")
+            return _apply(build_set_cmd(ts_bin, cfg, ""))
+        _log(f"direct uplink {uplink or 'none'} degraded ({_fmt(direct)}) -- trying exit nodes")
+    while True:
+        exit_ip, exit_name = select_exit_node(status, cfg["exit_nodes"], frozenset(cooling))
+        if cfg["exit_nodes"]:
+            _log(f"exit node: {exit_name} ({exit_ip})" if exit_ip
+                 else "exit node: none usable -- cleared, egress via the host default route")
+        cmd = build_set_cmd(ts_bin, cfg, exit_ip)
+        if dry_run:
+            print(" ".join(cmd))
+            return 0
+        rc = _apply(cmd)
+        if rc != 0 or not (health and exit_ip):
+            return rc
+        uplink = direct_interface()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            direct = pool.submit(probe, health, uplink) if uplink else None
+            via_exit = pool.submit(probe, health).result()
+            direct = direct.result() if direct else (100.0, math.inf)
+        _log(f"health {exit_name}: via exit {_fmt(via_exit)}; direct via {uplink or 'none'} {_fmt(direct)}")
+        is_worse = exit_is_worse(direct, via_exit, health)
+        if not is_worse:
+            return 0
+        _log(f"exit node {exit_name}: worse than the direct uplink -- cooling down {health['cooldown_s']} s")
+        cooling[exit_ip] = now + health["cooldown_s"]
+        _save_cooldowns(health, cooling)
 
 
 def main() -> int:
     if "--status" in sys.argv:
         print(json.dumps(get_status(), indent=2))
         return 0
-    return sync_mesh()
+    return sync_mesh(dry_run="--dry-run" in sys.argv)
 
 
 if __name__ == "__main__":

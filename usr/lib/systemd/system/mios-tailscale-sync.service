@@ -1,0 +1,14 @@
+# AI-hint: Oneshot that applies SSOT [tailscale] to the live node with `tailscale set` and fails the exit node over along [tailscale].exit_nodes.
+# AI-related: /usr/libexec/mios/mios-tailscale-sync, mios-tailscale-sync.timer, tailscaled.service
+[Unit]
+Description='MiOS' Tailscale SSOT sync and exit-node failover
+After=tailscaled.service
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/usr/bin/tailscale
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/mios/mios-tailscale-sync
+RuntimeDirectory=mios-tailscale-sync
+RuntimeDirectoryPreserve=yes
