@@ -251,7 +251,7 @@ echo 'PASS gio and xdg-mime resolve http, https and html to mios-portal.desktop 
 # fd_plant <name> <expected guard finding>: plant_<name> mutates a copy of the shipped layer.
 fd_plant() {
     local name="$1" expect="$2" out
-    rm -rf "$FDT/$name"
+    rm -rf "${FDT:?}/${name:?}"
     fd_fixture "$FDT/$name" "$ROOT/usr/share/applications" "$ROOT/etc/xdg"
     "plant_$name" "$FDT/$name"
     if out="$(fd_guard "$FDT/$name")"; then
