@@ -5,7 +5,7 @@ use crate::{
     characters::{self, Character},
     config::{Config, HudMode, ViewMode},
     dialogs::{Choice, DialogEvent, DialogRequest, NativeDialogs},
-    game::{Care, Direction, Game, Rules},
+    game::{Care, Direction, Game, Rules, Stage},
     genetics::MonCode,
     input::{action, Action, ControllerMonitor, ControllerPrompts},
     render::{Camera, CameraView, Colors, HabitatView, RoomWidget},
@@ -31,6 +31,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+const PREVIEW_STAGES: [Stage; 5] = [
+    Stage::Egg,
+    Stage::Baby,
+    Stage::Child,
+    Stage::Adult,
+    Stage::Dead,
+];
 const SHORTCUTS: [&str; 8] = ["F", "G", "C", "R", "M", "P", "S", "N"];
 const LABELS: [&str; 8] = [
     "Feed", "Memory", "Clean", "Rest", "Medicine", "Pause", "Save", "New pet",
@@ -122,6 +129,7 @@ pub struct Ui {
     reaction_frames: usize,
     viewport: Cell<(u16, u16)>,
     camera_viewport: Cell<(u16, u16)>,
+    camera_stage: Cell<Option<Stage>>,
     camera_resize: Cell<Option<(CameraView, CameraView, usize)>>,
     position: (u16, u16),
     destination: (u16, u16),
@@ -208,6 +216,7 @@ impl Ui {
             reaction_frames: 0,
             viewport: Cell::new((u16::MAX, u16::MAX)),
             camera_viewport: Cell::new((u16::MAX, u16::MAX)),
+            camera_stage: Cell::new(None),
             camera_resize: Cell::new(None),
             position: (500, 700),
             destination: (500, 700),
@@ -462,15 +471,20 @@ impl Ui {
             format!("{} / D toggles automatic detail.", self.detail_label())
         };
     }
-    fn effective_view(&self, view: CameraView, dimensions: (u16, u16)) -> CameraView {
+    fn live_stage(&self) -> Option<Stage> {
+        self.genetic_config
+            .as_ref()
+            .map(|config| self.game.stage(&config.game))
+    }
+    fn view_for_stage(
+        view: CameraView,
+        dimensions: (u16, u16),
+        stage: Option<Stage>,
+    ) -> CameraView {
         if (dimensions.0 < 28 || dimensions.1 < 10)
             && matches!(view, CameraView::Room | CameraView::Pet)
         {
-            if self
-                .genetic_config
-                .as_ref()
-                .is_some_and(|config| self.game.stage(&config.game) == crate::game::Stage::Egg)
-            {
+            if stage == Some(Stage::Egg) {
                 CameraView::Pet
             } else {
                 CameraView::Face
@@ -479,13 +493,32 @@ impl Ui {
             view
         }
     }
+    fn effective_view(&self, view: CameraView, dimensions: (u16, u16)) -> CameraView {
+        Self::view_for_stage(
+            view,
+            dimensions,
+            self.camera_stage.get().or_else(|| self.live_stage()),
+        )
+    }
     fn set_scene(&self, area: Rect) {
+        // Inline previews paint their own scene after clearing the live room.
+        // Do not let that hidden room restart the preview's camera each frame.
+        if !self.native_modal
+            && (self.menu == Some(Menu::Gallery)
+                || (self.menu == Some(Menu::Roster) && !self.catalogue.is_empty()))
+        {
+            return;
+        }
+        self.set_scene_for_stage(area, self.live_stage());
+    }
+    fn set_scene_for_stage(&self, area: Rect, stage: Option<Stage>) {
         self.pet_area.set(area);
         let dimensions = (area.width, area.height);
         let previous = self.camera_viewport.replace(dimensions);
+        let previous_stage = self.camera_stage.replace(stage);
         if previous != (u16::MAX, u16::MAX) {
-            let from = self.effective_view(self.camera_view, previous);
-            let to = self.effective_view(self.camera_view, dimensions);
+            let from = Self::view_for_stage(self.camera_view, previous, previous_stage);
+            let to = Self::view_for_stage(self.camera_view, dimensions, stage);
             if from != to {
                 self.camera_resize.set(Some((from, to, self.frame)));
             }
@@ -3624,7 +3657,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(2))),
             info,
         );
-        self.set_scene(room);
+        self.set_scene_for_stage(room, Some(Stage::Adult));
         let expression = Expression::Happy;
         let appearance = Appearance {
             shape: character.shape,
@@ -4201,15 +4234,8 @@ impl Ui {
                 Expression::Celebrate,
                 Expression::Dead,
             ];
-            let stages = [
-                crate::game::Stage::Egg,
-                crate::game::Stage::Baby,
-                crate::game::Stage::Child,
-                crate::game::Stage::Adult,
-                crate::game::Stage::Dead,
-            ];
             let expression = expressions[self.menu_selected % expressions.len()];
-            let stage = stages[self.gallery_stage % stages.len()];
+            let stage = PREVIEW_STAGES[self.gallery_stage % PREVIEW_STAGES.len()];
             let area = screen.area();
             screen.render_widget(Clear, area);
             let micro = area.width < 18 || area.height <= 7;
@@ -4251,7 +4277,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(7))),
                 label,
             );
-            self.set_scene(room);
+            self.set_scene_for_stage(room, Some(stage));
             let sprite = match self.view_mode {
                 ViewMode::Pixel => {
                     Sprite::animated(stage, expression, self.effective_style(), self.frame)
@@ -4723,8 +4749,8 @@ fn selected_style(colors: &Colors) -> Style {
         Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
     } else {
         Style::default()
-            .fg(colors.background)
-            .bg(colors.ink(13))
+            .fg(colors.ink(0))
+            .bg(colors.ink(7))
             .add_modifier(Modifier::BOLD)
     }
 }
@@ -8190,7 +8216,7 @@ mod console_shell_regressions {
     }
 
     #[test]
-    fn tiny_room_keeps_the_whole_unhatched_egg_in_pet_framing() {
+    fn tiny_room_uses_pet_framing_for_an_unhatched_egg_at_default_zoom() {
         let config = Config::sample().unwrap();
         let game = Game::new(&config.game, 513);
         let mut ui = Ui::configured(game.clone(), &config);
@@ -8228,6 +8254,154 @@ mod console_shell_regressions {
         assert!(terminal.backend().buffer()[(1, 2)]
             .modifier
             .contains(Modifier::REVERSED));
+        assert_eq!(ui.game, game);
+    }
+    #[test]
+    fn tiny_preview_pixels_and_framing_follow_the_drawn_stage_not_the_live_pet() {
+        let (mut config, _) = fixture();
+        config.world.enabled = false;
+        for menu in [Menu::Roster, Menu::Gallery] {
+            for (width, height) in [(20, 10), (12, 6)] {
+                let (_, base) = fixture();
+                let mut views = [
+                    Ui::configured(base.game.clone(), &config),
+                    Ui::configured(base.game.clone(), &config),
+                ];
+                views[1].game.age_ticks = 0;
+                let mut scenes = Vec::new();
+                for ui in &mut views {
+                    ui.camera_view = CameraView::Room;
+                    ui.camera_from_view = CameraView::Room;
+                    ui.open(menu);
+                    ui.gallery_stage = 0;
+                    let game = ui.game.clone();
+                    let rng = ui.visual_rng;
+                    draw(ui, &config, width, height, Renderer::Ascii);
+                    ui.frame += ui.camera_transition_frames + 1;
+                    let lines = draw(ui, &config, width, height, Renderer::Ascii);
+                    let scene = ui.pet_area.get();
+                    assert!(scene.width > 0 && scene.height > 0);
+                    assert_eq!(
+                        ui.camera().view,
+                        if menu == Menu::Gallery {
+                            CameraView::Pet
+                        } else {
+                            CameraView::Face
+                        },
+                        "{menu:?} {width}x{height}"
+                    );
+                    scenes.push(
+                        (scene.y..scene.bottom())
+                            .map(|y| painted(&lines, Rect::new(scene.x, y, scene.width, 1)))
+                            .collect::<Vec<_>>(),
+                    );
+                    assert_eq!(ui.game, game);
+                    assert_eq!(ui.visual_rng, rng);
+                }
+                assert_eq!(scenes[0], scenes[1], "{menu:?} {width}x{height}");
+                assert!(scenes[0].iter().any(|row| !row.trim().is_empty()));
+            }
+        }
+    }
+
+    #[test]
+    fn native_preview_modal_keeps_the_visible_live_scene_context() {
+        let (config, mut ui) = fixture();
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        ui.open(Menu::Gallery);
+        ui.gallery_stage = 0;
+        ui.native_modal = true;
+        let game = ui.game.clone();
+        draw(&ui, &config, 20, 10, Renderer::Ascii);
+        assert_eq!(ui.camera_stage.get(), Some(Stage::Baby));
+        assert_eq!(ui.camera().view, CameraView::Face);
+        assert!(ui.pet_area.get().width > 0);
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn automatic_hatch_and_resize_transitions_start_from_the_previous_drawn_stage() {
+        let config = Config::sample().unwrap();
+        for next in [Rect::new(0, 0, 20, 8), Rect::new(0, 0, 18, 7)] {
+            let mut ui = Ui::configured(Game::new(&config.game, 513), &config);
+            ui.camera_view = CameraView::Room;
+            ui.camera_from_view = CameraView::Room;
+            ui.camera_transition_frames = 8;
+            ui.set_scene(Rect::new(0, 0, 20, 8));
+            assert_eq!(ui.camera().view, CameraView::Pet);
+            for _ in 0..config.game.hatch_ticks {
+                ui.game.tick(&config.game);
+            }
+            let game = ui.game.clone();
+            let rng = ui.visual_rng;
+            ui.frame = 16;
+            ui.set_scene(next);
+            let start = ui.camera();
+            assert_eq!(
+                (start.from_view, start.view),
+                (CameraView::Pet, CameraView::Face)
+            );
+            assert_eq!(start.transition_percent, 0);
+            ui.frame = 20;
+            ui.set_scene(next);
+            let middle = ui.camera();
+            assert_eq!(
+                (middle.from_view, middle.view),
+                (CameraView::Pet, CameraView::Face)
+            );
+            assert!((1..100).contains(&middle.transition_percent));
+            ui.frame = 24;
+            ui.set_scene(next);
+            assert_eq!(ui.camera().transition_percent, 100);
+            assert_eq!(ui.game, game);
+            assert_eq!(ui.visual_rng, rng);
+        }
+    }
+
+    #[test]
+    fn four_color_menu_selection_keeps_readable_contrast_when_navigation_moves() {
+        let (mut config, mut ui) = fixture();
+        config.palette = ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"]
+            .map(String::from)
+            .to_vec();
+        config.background = "#0f380f".into();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        ui.open(Menu::Home);
+        let game = ui.game.clone();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let luminance = |color: ratatui::style::Color| {
+            let ratatui::style::Color::Rgb(r, g, b) = color else {
+                panic!("RGB fixture changed color depth");
+            };
+            let linear = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        };
+        for (row, label) in [(1, "Care"), (2, "Games")] {
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let line = (0..80)
+                .map(|x| buffer[(x, row)].symbol())
+                .collect::<String>();
+            let column = line.find(label).expect("selected label is visible") as u16;
+            let cell = &buffer[(column, row)];
+            let (a, b) = (luminance(cell.fg), luminance(cell.bg));
+            let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(contrast >= 4.5, "{label}: selected contrast {contrast}");
+            if row == 2 {
+                assert_ne!(buffer[(column, 1)].bg, cell.bg);
+            }
+            ui.handle(key(KeyCode::Down), &config.game);
+        }
         assert_eq!(ui.game, game);
     }
 }
