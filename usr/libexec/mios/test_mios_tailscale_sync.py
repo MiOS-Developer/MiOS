@@ -49,8 +49,10 @@ def load_sync(path: str):
     return mod
 
 
-def run_sync(script: str, toml: str, peers: dict, state: str = "Running") -> list[str]:
-    """Run `script` under a fake tailscale; return the argv lines `set` recorded."""
+def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
+             host_dropin: str = "") -> list[str]:
+    """Run `script` under a fake tailscale; return the argv lines `set` recorded.
+    `host_dropin` becomes a host-tier mios.d fragment over the vendor layer."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = os.path.join(tmp, "bin")
         os.mkdir(bindir)
@@ -64,6 +66,11 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running") -> lis
         vendor = os.path.join(tmp, "vendor.toml")
         with open(vendor, "w") as f:
             f.write(toml)
+        host_d = os.path.join(tmp, "host.d")
+        os.mkdir(host_d)
+        if host_dropin:
+            with open(os.path.join(host_d, "60-tailscale.toml"), "w") as f:
+                f.write(host_dropin)
         log = os.path.join(tmp, "set.log")
         driver = (
             "import sys\n"
@@ -72,12 +79,17 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running") -> lis
             f"l = importlib.machinery.SourceFileLoader('s', {script!r})\n"
             "m = importlib.util.module_from_spec(importlib.util.spec_from_loader('s', l))\n"
             "l.exec_module(m)\n"
+            # Only the pre-fix script reads these; the fix resolves the env layers.
             f"m.VENDOR_TOML = {vendor!r}\n"
             f"m.HOST_TOML = {os.path.join(tmp, 'absent.toml')!r}\n"
             "sys.exit(m.main())\n")
         env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
         # The fake shadows any real tailscale; /usr/bin:/bin only serve its cat.
-        env.update(PATH=bindir + ":/usr/bin:/bin", FAKE_STATUS=status, FAKE_LOG=log)
+        env.update(PATH=bindir + ":/usr/bin:/bin", FAKE_STATUS=status, FAKE_LOG=log,
+                   MIOS_VENDOR_TOML=vendor, MIOS_VENDOR_TOML_D=os.path.join(tmp, "vendor.d"),
+                   MIOS_HOST_TOML=os.path.join(tmp, "absent.toml"), MIOS_HOST_TOML_D=host_d,
+                   MIOS_USER_TOML=os.path.join(tmp, "absent-user.toml"),
+                   MIOS_USER_TOML_D=os.path.join(tmp, "user.d"))
         subprocess.run([sys.executable, "-I", "-c", driver], env=env,
                        capture_output=True, text=True, timeout=30)
         if not os.path.exists(log):
@@ -105,6 +117,19 @@ def check_applies(script: str) -> str | None:
            "--exit-node=100.122.33.108 --exit-node-allow-lan-access=true"
     if calls != [want]:
         return f"applied {calls!r}, expected [{want!r}]"
+    return None
+
+
+_LOADER = "mios_toml.load_merged(layers=mios_toml.layer_paths())"
+_MONOLITHS_ONLY = 'mios_toml.load_merged(layers=[os.environ["MIOS_VENDOR_TOML"], os.environ["MIOS_HOST_TOML"]])'
+
+
+def check_host_dropin(script: str) -> str | None:
+    """None when a host mios.d fragment's exit_nodes reach `tailscale set`."""
+    peers = {"a": _peer("kabu", "100.89.218.102", True, True)}
+    calls = run_sync(script, _BASE, peers, host_dropin='[tailscale]\nexit_nodes = ["kabu"]\n')
+    if len(calls) != 1 or "--exit-node=100.89.218.102" not in calls[0]:
+        return f"host mios.d drop-in ignored: applied {calls!r}"
     return None
 
 
@@ -141,6 +166,23 @@ class TestTailscaleSync(unittest.TestCase):
         for want in ("pixel-7-pro", "PIXEL-7-PRO", "100.122.33.108"):
             self.assertEqual(mod.select_exit_node(status, [want])[0], "100.122.33.108", want)
         self.assertEqual(mod.select_exit_node(status, ["absent"]), ("", ""))
+
+    def test_host_dropin_sets_exit_nodes(self) -> None:
+        self.assertIsNone(check_host_dropin(_SCRIPT))
+
+    def test_negative_monolith_only_loader_misses_dropin(self) -> None:
+        with open(_SCRIPT) as f:
+            source = f.read()
+        self.assertEqual(source.count(_LOADER), 1)
+        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
+                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
+            f.write(source.replace(_LOADER, _MONOLITHS_ONLY))
+        try:
+            defect = check_host_dropin(f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertIsNotNone(defect)
+        self.assertIn("drop-in ignored", defect)
 
     def test_negative_pre_fix_script_never_applies(self) -> None:
         old = subprocess.run(["git", "-C", _ROOT, "show",
