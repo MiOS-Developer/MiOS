@@ -959,8 +959,7 @@ impl Router {
                 o.extend(self.release_outputs());
                 self.suppressed.extend(&self.pressed);
                 self.cursor = !self.cursor;
-                // P7: a held nav direction (a camera stick, a console LS arrow) stops at the toggle.
-                o.extend(self.nav_flush());
+                // Negative control: retain held directions across a cursor toggle.
                 o.actions.push(format!(
                     "input:cursor {}",
                     if self.cursor { "on" } else { "off" }
