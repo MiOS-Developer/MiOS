@@ -20,10 +20,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 _AI_NAME = r"\w*(?:endpoint|model)\w*"
 _LITERAL_AI_DEFAULTS = (
     # ${NAME:-lit} ${NAME-lit} ${NAME:=lit} ${NAME=lit}, where lit is neither empty
-    # nor itself an expansion ("$(...)" / "${...}" / "$VAR").
-    re.compile(r"\$\{(" + _AI_NAME + r")(:?[-=])(?![\"']?\$)(?![\"']*\})", re.IGNORECASE),
-    # NAME=lit, bare or after export/local/declare/readonly, and as --name=lit.
-    re.compile(r"(?<![\w$])(" + _AI_NAME + r")=(?!=)(?![\"']?\$)(?![\"']*(?:[\s;&|)]|$))",
+    # nor itself an expansion ("$(...)" / "${...}" / "$VAR"). A "$" followed by a
+    # quote is not an expansion but a literal: ANSI-C $'lit' or locale $"lit".
+    re.compile(r"\$\{(" + _AI_NAME + r")(:?[-=])(?![\"']?\$(?![\"']))(?![\"']*\})", re.IGNORECASE),
+    # NAME=lit and NAME+=lit, bare or after export/local/declare/readonly, and as --name=lit.
+    re.compile(r"(?<![\w$])(" + _AI_NAME + r")\+?=(?!=)(?![\"']?\$(?![\"']))(?![\"']*(?:[\s;&|)]|$))",
                re.IGNORECASE | re.MULTILINE),
 )
 
@@ -359,6 +360,10 @@ class TestAgyAgentPipeline(unittest.TestCase):
             "export MIOS_AI_ENDPOINT='http://literal.invalid/v1'",
             'local model="literal-model"',
             "agy --model=literal-model",
+            "export MIOS_AI_ENDPOINT=$'http://literal.invalid/v1'",
+            'MODEL="${MODEL:-$\'literal-model\'}"',
+            'MODEL=$"literal-model"',
+            "MIOS_AI_MODEL+=literal-model",
         ]
         for line in planted:
             self.assertTrue(_literal_ai_defaults(line), f"scan missed a literal default: {line}")
@@ -373,6 +378,7 @@ class TestAgyAgentPipeline(unittest.TestCase):
             '[[ $MODEL == "$want" ]]',
             "MODEL=",
             'MODEL=""; ENDPOINT=$(_mios_env MIOS_AI_ENDPOINT)',
+            "MODEL+=$suffix",
         ]
         for line in legitimate:
             self.assertEqual(_literal_ai_defaults(line), [], f"scan flagged a non-literal: {line}")
