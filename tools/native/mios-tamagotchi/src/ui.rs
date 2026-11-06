@@ -2739,7 +2739,7 @@ impl Ui {
                 )
             };
             screen.render_widget(
-                Paragraph::new(hint.clone()).style(Style::default().fg(colors.ink(7))),
+                Paragraph::new(hint.clone()).style(Style::default().fg(colors.ink(13))),
                 controls,
             );
             self.care_targets.borrow_mut().push((
