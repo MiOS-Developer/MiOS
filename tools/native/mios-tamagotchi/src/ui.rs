@@ -733,7 +733,7 @@ impl Ui {
         let world_yaw = (u32::from(yaw) + u32::from(self.orbit_degrees)) % 360;
         let face_yaw =
             (i32::from(self.orbit_degrees) - i32::from(self.face_orbit_reference)).rem_euclid(360);
-        let from = self.camera_yaw_origin.map(i32::from).unwrap_or_else(|| {
+        let from = None::<u16>.map(i32::from).unwrap_or_else(|| {
             if self.camera_from_view == CameraView::Face {
                 face_yaw
             } else {

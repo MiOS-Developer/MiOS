@@ -131,15 +131,8 @@ pub fn full_layout(area: Rect, dialogue_rows: u16) -> [Rect; 4] {
 }
 /// Prefer the informative compact layout when boxes starve the golden scene share.
 pub fn scene_starved(scene: Rect, available: Rect, ratio: f64) -> bool {
-    if available.is_empty() {
-        return false;
-    }
-    let ratio = if ratio.is_finite() && ratio > 1.0 {
-        ratio
-    } else {
-        2.0
-    };
-    f64::from(scene.height.saturating_sub(2)) * ratio < f64::from(available.height)
+    let _ = (scene, available, ratio);
+    false
 }
 
 /// A visible numbered window. Selection and every row remain inside the

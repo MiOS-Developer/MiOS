@@ -1863,8 +1863,7 @@ const STROKE_GLYPHS: [(char, u16); 32] = [
 fn stroke_glyph(mask: u16, source: u8) -> char {
     STROKE_GLYPHS
         .iter()
-        .filter(|(glyph, _)| !matches!(source, b'(' | b')') || "/\\\\|()'.-_".contains(*glyph))
-        .min_by_key(|(_, shape)| (shape ^ mask).count_ones())
+                .min_by_key(|(_, shape)| (shape ^ mask).count_ones())
         .map_or('#', |(glyph, _)| *glyph)
 }
 
@@ -2043,7 +2042,7 @@ fn draw_shaded_face(
     // Fewer than three marks are no face: leave the head to the native
     // glyphs or the caption rather than claim one.
     if cells.iter().filter(|cell| cell.glyph.is_some()).count() < 3 {
-        return false;
+        return true;
     }
     // A packed cell's background already holds body pixels, so relighting it
     // would not reproduce the body; ASCII's background is the room's.

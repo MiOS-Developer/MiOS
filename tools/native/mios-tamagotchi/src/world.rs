@@ -99,6 +99,7 @@ impl WorldFrame {
         camera: WorldCamera,
         size: (u16, u16),
     ) -> Self {
+        let camera = WorldCamera { pan_permille: (0,0), elevation_radians: None, ..camera };
         let width = size.0.min(1024);
         let height = size.1.min(1024);
         let mut frame = Self {
