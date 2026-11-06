@@ -9417,6 +9417,9 @@ blade.requires.mios-policy-arbiter  MIOS_BLADE_REQUIRES_MIOS_POLICY_ARBITER
 blade.requires.mios-attest  MIOS_BLADE_REQUIRES_MIOS_ATTEST
 blade.requires.mios-registry  MIOS_BLADE_REQUIRES_MIOS_REGISTRY
 blade.requires.mios-thermald  MIOS_BLADE_REQUIRES_MIOS_THERMALD
+blade.requires.mios-power-sampler  MIOS_BLADE_REQUIRES_MIOS_POWER_SAMPLER
+blade.requires.ventulusd  MIOS_BLADE_REQUIRES_VENTULUSD
+blade.requires.mios-fhs-sync  MIOS_BLADE_REQUIRES_MIOS_FHS_SYNC
 blade.requires.mios-wol-proxy  MIOS_BLADE_REQUIRES_MIOS_WOL_PROXY
 blade.requires.mios-embed-backfill  MIOS_BLADE_REQUIRES_MIOS_EMBED_BACKFILL
 blade.requires.mios-forge-firstboot  MIOS_BLADE_REQUIRES_MIOS_FORGE_FIRSTBOOT

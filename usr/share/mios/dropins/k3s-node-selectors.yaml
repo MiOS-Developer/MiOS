@@ -110,6 +110,13 @@ services:
       - key: "mios.capability/service-plane"
         operator: "Exists"
         effect: "NoSchedule"
+  mios-fhs-sync:
+    nodeSelector:
+      mios.capability/service-plane: "true"
+    tolerations:
+      - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
   mios-finetune-serve:
     nodeSelector:
       mios.capability/service-plane: "true"
@@ -318,6 +325,13 @@ services:
       - key: "mios.capability/service-plane"
         operator: "Exists"
         effect: "NoSchedule"
+  mios-power-sampler:
+    nodeSelector:
+      mios.capability/service-plane: "true"
+    tolerations:
+      - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
   mios-powerd:
     nodeSelector:
       mios.capability/service-plane: "true"
@@ -442,6 +456,13 @@ services:
         operator: "Exists"
         effect: "NoSchedule"
   miosd:
+    nodeSelector:
+      mios.capability/service-plane: "true"
+    tolerations:
+      - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+  ventulusd:
     nodeSelector:
       mios.capability/service-plane: "true"
     tolerations:
