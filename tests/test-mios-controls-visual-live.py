@@ -11,10 +11,12 @@ Run it inside the shared nested-session lock:
   MIOS_LIVE_NESTED=1 MIOS_CONTROLS=<candidate> MIOS_TEST_ROOT=<worktree> \\
     flock /home/mios/mios-desktop-work-1/nested.lock python3 tests/test-mios-controls-visual-live.py
 """
+import atexit
 import hashlib
 import json
 import os
 import select
+import shutil
 import signal
 import struct
 import subprocess
@@ -28,7 +30,13 @@ sys.path.insert(0, str(HERE / 'tests' / 'fixtures' / 'mios-controls'))
 from fixture_pad import FixturePad  # noqa: E402
 
 ROOT = Path(os.environ.get('MIOS_TEST_ROOT', HERE))
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-controls-visual-live-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 BIN = os.environ.get('MIOS_CONTROLS', '/usr/bin/mios-controls')
 GEN = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 USER_TIER = Path.home() / '.config/mios/mios.toml'
@@ -410,7 +418,7 @@ def main():
         check('nested compositor gone', not (n.desc and Path(f"/proc/{n.desc['compositor_pid']}").exists()))
     passed = sum(1 for r in results if r[1])
     (OUT / 'results.json').write_text(json.dumps([{'name': a, 'pass': b, 'detail': c} for a, b, c in results], indent=1))
-    log(f'{passed}/{len(results)} passed; evidence in {OUT}')
+    log(f'{passed}/{len(results)} passed; evidence in {OUT_NOTE}')
     return 0 if passed == len(results) else 1
 
 

@@ -5,7 +5,7 @@
 # launcher (default /usr/bin/mios-gen), MIOS_VENDOR_TOML = SSOT (default: this tree's), MIOS_TMUX_CONF = generated
 # tmux conf (default: this tree's), MIOS_LIVE_OUT = evidence directory. The primary compositor only receives
 # send_key_state events addressed to OUR nested window; each nested Hyprland is SIGTERMed at the end.
-import json, os, re, signal, subprocess, sys, tempfile, time
+import atexit, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +13,13 @@ CAND = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 OLD = os.environ.get('MIOS_GEN_OLD', '/usr/bin/mios-gen')
 SSOT = os.environ.get('MIOS_VENDOR_TOML', str(ROOT / 'usr/share/mios/mios.toml'))
 CONF = Path(os.environ.get('MIOS_TMUX_CONF', ROOT / 'usr/share/mios/tmux/mios-keys.tmux.conf'))
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-g1-live-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 results = []
 
 
@@ -308,7 +314,7 @@ def main():
     check('postflight primary unchanged (pid, portal, output scales)', (pid2, portal2, scales2) == (pid, portal, scales), f'{pid2} {portal2} {scales2}')
     passed = sum(1 for r in results if r[1])
     (OUT / 'results.json').write_text(json.dumps([{'name': a, 'pass': b, 'detail': c} for a, b, c in results], indent=1))
-    print(f'{passed}/{len(results)} passed  (evidence: {OUT})')
+    print(f'{passed}/{len(results)} passed  (evidence: {OUT_NOTE})')
     return 0 if passed == len(results) else 1
 
 

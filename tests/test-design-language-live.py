@@ -18,6 +18,7 @@
 Optional: MIOS_DESIGN_TREE (tree whose SSOT, mios-sync-theme and Quickshell are under test; default this tree),
 MIOS_QUICKSHELL (default /usr/bin/quickshell 0.2.1), MIOS_LIVE_OUT (evidence directory), MIOS_DESIGN_LABEL (file prefix),
 MIOS_DESIGN_3D=0 (skip the Hypr3D room), MIOS_DESIGN_EXPECT_FAIL=1 (negative control: exit 0 when alignment fails)."""
+import atexit
 import json
 import os
 import shutil
@@ -38,7 +39,13 @@ QS_DIR = TREE / 'usr/share/mios/quickshell'
 SSOT = TREE / 'usr/share/mios/mios.toml'
 SYNC = TREE / 'usr/libexec/mios/mios-sync-theme'
 LABEL = os.environ.get('MIOS_DESIGN_LABEL', 'tree')
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-design-live-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 OUT.mkdir(parents=True, exist_ok=True)
 QS = os.environ.get('MIOS_QUICKSHELL', '/usr/bin/quickshell')
 GEN = os.environ.get('MIOS_GEN_BIN', '/usr/bin/mios-gen')   # a tree whose SSOT carries design references needs its own mios-gen
@@ -503,7 +510,7 @@ def main():
         print(f"NEGATIVE CONTROL {'PASS' if ok else 'FAIL'}: alignment checks fail on this tree" if ok else
               'NEGATIVE CONTROL FAIL: the tree passed the alignment checks')
         sys.exit(0 if ok else 1)
-    print(f'{len(results) - len(failed)}/{len(results)} passed; evidence {OUT}')
+    print(f'{len(results) - len(failed)}/{len(results)} passed; evidence {OUT_NOTE}')
     sys.exit(1 if failed else 0)
 
 

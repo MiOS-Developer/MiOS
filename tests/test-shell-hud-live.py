@@ -15,6 +15,7 @@
 Optional: MIOS_QUICKSHELL (default /usr/bin/quickshell), MIOS_QS_QML (default this tree's Nested.qml),
 MIOS_QS_OLD_QML (negative control QML without the scroll-volume IPC, default /usr/share/mios/quickshell/Nested.qml),
 MIOS_LIVE_OUT (evidence directory: screenshots, shell logs, result.json)."""
+import atexit
 import json
 import os
 import shutil
@@ -30,7 +31,13 @@ if os.environ.get('MIOS_LIVE_NESTED') != '1':
     sys.exit(0)
 
 TREE = Path(__file__).resolve().parents[1]
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-hud-live-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 OUT.mkdir(parents=True, exist_ok=True)
 QS = os.environ.get('MIOS_QUICKSHELL', '/usr/bin/quickshell')
 QML = os.environ.get('MIOS_QS_QML', str(TREE / 'usr/share/mios/quickshell/Nested.qml'))
@@ -495,7 +502,7 @@ def main():
             launcher.wait(timeout=15)
         except subprocess.TimeoutExpired:
             launcher.terminate()
-    print(f'evidence: {OUT}')
+    print(f'evidence: {OUT_NOTE}')
 
 
 main()

@@ -10,11 +10,17 @@
 #     [MIOS_PIP_GRAVITY_TRACE=1 [MIOS_PIP_GRAVITY_PREFIX=<pre-fix candidate>]] \
 #     python3 tests/test-pip-behaviours-live.py
 # Without MIOS_NESTED_RUNTIME the test launches its own `mios-gen nested-session --layout pip` and stops it at the end.
-import json, os, signal, subprocess, sys, tempfile, time, tomllib
+import atexit, json, os, shutil, signal, subprocess, sys, tempfile, time, tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-pip-behaviours-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 NEW = os.environ.get('MIOS_PIP_GRAVITY', '/usr/libexec/mios/mios-pip-gravity')
 OLD = os.environ.get('MIOS_PIP_GRAVITY_OLD', '')
 SSOT = os.environ.get('MIOS_VENDOR_TOML', str(REPO / 'usr/share/mios/mios.toml'))
@@ -611,7 +617,7 @@ def main():
             check('nested runtime cleaned up', not nest.dir.exists())
         check('primary compositor and portal mounts unchanged', primary_state() == p0, f'{p0} -> {primary_state()}')
     n = sum(1 for r in results if r[1])
-    print(f'{n}/{len(results)} passed; artifacts in {OUT}')
+    print(f'{n}/{len(results)} passed; artifacts in {OUT_NOTE}')
     return 0 if n == len(results) else 1
 
 

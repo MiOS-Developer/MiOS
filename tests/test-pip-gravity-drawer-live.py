@@ -4,10 +4,15 @@
 # Live: does opening the app drawer (the dock morphing into a full pane) move or resize a PiP? Runs PiP gravity
 # against an owned nested MiOS PiP session: first the installed binary (negative control: reproduces the bug), then the
 # candidate (must hold the PiP still). The primary compositor is untouched.
-import json, os, signal, subprocess, sys, tempfile, time
+import atexit, json, os, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-pip-drawer-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
 OLD = os.environ.get('MIOS_PIP_GRAVITY_OLD', '')
 NEW = os.environ.get('MIOS_PIP_GRAVITY', '/usr/bin/mios-pip-gravity')
 SSOT = os.environ.get('MIOS_VENDOR_TOML', str(Path(__file__).resolve().parents[1] / 'usr/share/mios/mios.toml'))

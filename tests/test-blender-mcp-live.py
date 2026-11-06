@@ -3,10 +3,12 @@
 # AI-related: tests/test-blender-mcp-real.py, usr/lib/mios/mios_mcp_federation.py, usr/libexec/mios/mios-mcp-server, usr/share/doc/mios/blender-mcp.md, tools/native/mios-gen/src/nested_session.rs
 
 import asyncio
+import atexit
 import base64
 import importlib.util
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -19,7 +21,13 @@ _spec = importlib.util.spec_from_file_location("blender_mcp_real", HERE / "test-
 real = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(real)  # re-execs into the SDK interpreter when needed
 
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get("MIOS_LIVE_OUT"))
 OUT = Path(os.environ.get("MIOS_LIVE_OUT") or tempfile.mkdtemp(prefix="mios-blender-live-"))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else "removed at exit; set MIOS_LIVE_OUT=<dir> to keep it"
 OUT.mkdir(mode=0o700, parents=True, exist_ok=True)
 LAUNCHER = os.environ.get("MIOS_GEN", "/usr/bin/mios-gen")
 check, text, listening = real.check, real.text, real.listening
@@ -161,7 +169,7 @@ def main():
         check("nested runtime cleaned up", not runtime.exists())
         check("primary compositor unchanged", sh(["pgrep", "-x", "Hyprland", "-o"]).stdout.strip() == primary)
     failed = [n for n, ok in real.results if not ok]
-    print(f"{len(real.results) - len(failed)}/{len(real.results)} passed; evidence {OUT}")
+    print(f"{len(real.results) - len(failed)}/{len(real.results)} passed; evidence {OUT_NOTE}")
     return 1 if failed else 0
 
 
