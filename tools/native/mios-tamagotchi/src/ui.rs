@@ -132,6 +132,8 @@ pub struct Ui {
     pub renderer: Option<Renderer>,
     pub controller: Option<ControllerPrompts>,
     controller_status: String,
+    controller_camera: Option<String>,
+    controller_menu_navigation: Option<String>,
     frame: usize,
     reaction: Option<Expression>,
     reaction_until: usize,
@@ -237,6 +239,8 @@ impl Ui {
             detail_ready: Cell::new(false),
             renderer: None,
             controller: None,
+            controller_camera: None,
+            controller_menu_navigation: None,
             controller_status: "Inputd: checking local focus and assigned pad.".into(),
             frame: 0,
             reaction: None,
@@ -779,6 +783,39 @@ impl Ui {
             .unwrap_or(base(self.camera_from_view));
         from + (to - from) * f32::from(self.camera_blend) / 100.0
     }
+    fn menu_navigation_scope(&self) -> bool {
+        !self.native_modal
+            && !self.confirm_reset
+            && !self.camera_scope()
+            && self.menu.is_some_and(|menu| menu != Menu::Seed)
+    }
+
+    fn controller_navigation(&self, pad: &ControllerPrompts) -> String {
+        if self.menu_navigation_scope() {
+            if let Some(menu) = &self.controller_menu_navigation {
+                return format!("{} + {menu}", pad.navigate);
+            }
+        }
+        pad.navigate.clone()
+    }
+
+    fn controller_description(&self) -> String {
+        if self.controller.is_none() {
+            return self.controller_status.clone();
+        }
+        let hint = if self.camera_scope() {
+            self.controller_camera.as_deref()
+        } else if self.menu_navigation_scope() {
+            self.controller_menu_navigation.as_deref()
+        } else {
+            None
+        };
+        hint.map_or_else(
+            || self.controller_status.clone(),
+            |hint| format!("{} {hint}", self.controller_status),
+        )
+    }
+
     fn camera_scope(&self) -> bool {
         !self.confirm_reset
             && !self.native_modal
@@ -1566,9 +1603,13 @@ impl Ui {
         let back_caption = if let Some(pad) = self.controller.as_ref().filter(|_| area.width >= 32)
         {
             if menu == Menu::Habitat {
-                format!("{}: Back / {}", tiny_button(&pad.back), pad.navigate)
+                format!(
+                    "{}: Back / {}",
+                    tiny_button(&pad.back),
+                    self.controller_navigation(pad)
+                )
             } else {
-                format!("[{back}] Back / {}", pad.navigate)
+                format!("[{back}] Back / {}", self.controller_navigation(pad))
             }
         } else {
             match menu {
@@ -1580,6 +1621,8 @@ impl Ui {
         };
         let caption = if back_caption.chars().count() <= usize::from(back_rect.width) {
             back_caption
+        } else if self.controller.is_some() {
+            format!("{back}: Back")
         } else {
             "Esc Back".into()
         };
@@ -2802,7 +2845,9 @@ impl Ui {
         let navigation = if let Some(pad) = &self.controller {
             format!(
                 "{} [{}] Act [{}] Menu / ? Help / Q Quit",
-                pad.navigate, pad.accept, pad.back
+                self.controller_navigation(pad),
+                pad.accept,
+                pad.back
             )
         } else {
             "O Menu Esc Back ? Help | Arrows/Tab Enter | Q Quit".into()
@@ -2812,7 +2857,7 @@ impl Ui {
             Line::from(if self.game.paused {
                 "P Resume / care paused / ? Help".to_owned()
             } else {
-                self.controller_status.clone()
+                self.controller_description()
             })
             .style(Style::default().fg(colors.ink(7))),
         );
@@ -2860,7 +2905,11 @@ impl Ui {
                     challenge.entered,
                     self.controller.as_ref().map_or_else(
                         || "Arrows repeat. Escape cancels. P pauses.".to_owned(),
-                        |pad| format!("{} repeat. [{}] Cancel.", pad.navigate, pad.back)
+                        |pad| format!(
+                            "{} repeat. [{}] Cancel.",
+                            self.controller_navigation(pad),
+                            pad.back
+                        )
                     )
                 )
             };
@@ -3203,7 +3252,7 @@ impl Ui {
         }
         if budget.saturating_sub(lines.len()) >= 2 {
             lines.extend(
-                wrap_dialogue(&self.controller_status, usize::from(info.width))
+                wrap_dialogue(&self.controller_description(), usize::from(info.width))
                     .into_iter()
                     .take(2)
                     .map(Line::from),
@@ -3257,7 +3306,11 @@ impl Ui {
                 || "Arrows/Tab select".into(),
                 |pad| {
                     frame_label(
-                        &format!("{} / {} Next", pad.navigate, compact_button(&pad.next)),
+                        &format!(
+                            "{} / {} Next",
+                            self.controller_navigation(pad),
+                            compact_button(&pad.next)
+                        ),
                         info.width,
                         frame / 28,
                     )
@@ -3269,7 +3322,7 @@ impl Ui {
             ));
             lines.push("? Help / Q Quit".into());
             lines.push("+/- 0 Z [/] / I Code H L V T B".into());
-            let status = wrap_dialogue(&self.controller_status, usize::from(info.width));
+            let status = wrap_dialogue(&self.controller_description(), usize::from(info.width));
             lines.extend(status.into_iter().take(3));
             lines
         } else if expanded_controls {
@@ -3281,7 +3334,12 @@ impl Ui {
                         format!("Arrows/Tab / {selected_segment} / Q Quit")
                     }
                 },
-                |pad| format!("{} / {selected_segment} / Q Quit", pad.navigate),
+                |pad| {
+                    format!(
+                        "{} / {selected_segment} / Q Quit",
+                        self.controller_navigation(pad)
+                    )
+                },
             );
             let menu = self.controller.as_ref().map_or_else(
                 || "O Menu / Esc Back / ? Help".to_string(),
@@ -3293,7 +3351,7 @@ impl Ui {
                 navigation,
                 menu,
                 "+/- 0 Z [/] orbit / I Code T Talk B Roster H Items L Train V Graphics".into(),
-                frame_label(&self.controller_status, info.width, frame / 28),
+                frame_label(&self.controller_description(), info.width, frame / 28),
             ]
         } else if let Some(pad) = &self.controller {
             vec![
@@ -4448,7 +4506,7 @@ impl Ui {
         } else if let Some(pad) = &self.controller {
             format!(
                 "{} More\n{} Back",
-                tiny_button(&pad.navigate),
+                tiny_button(&self.controller_navigation(pad)),
                 tiny_button(&pad.back)
             )
         } else {
@@ -4626,7 +4684,9 @@ impl Ui {
             } else if let Some(pad) = &self.controller {
                 format!(
                     "{}: reaction / life stage\n[{}] 8-bit / 16-bit   [{}] Return",
-                    pad.navigate, pad.accept, pad.back
+                    self.controller_navigation(pad),
+                    pad.accept,
+                    pad.back
                 )
             } else {
                 "Left/Right: reaction   Up/Down: life stage\nEnter/Space: 8-bit / 16-bit   Esc: return".into()
@@ -4746,7 +4806,7 @@ impl Ui {
                     .map(|s| Line::from(s.to_owned())),
             );
             lines.push(Line::from("Offline time is frozen. Saves stay local."));
-            lines.push(Line::from(self.controller_status.clone()));
+            lines.push(Line::from(self.controller_description()));
             lines.push(Line::from(""));
         } else if menu == Menu::Help {
             lines.push(Line::from(format!(
@@ -4760,12 +4820,14 @@ impl Ui {
             lines.push(Line::from(
                 "Viewport, font cells and zoom select one shared scene/face style.",
             ));
-            lines.push(Line::from(self.controller_status.clone()));
+            lines.push(Line::from(self.controller_description()));
             if let Some(pad) = &self.controller {
                 lines.push(Line::from(format!("{} / focused controller", pad.family)));
                 lines.push(Line::from(format!(
                     "{} Select [{}] Choose  [{}] Back",
-                    pad.navigate, pad.accept, pad.back
+                    self.controller_navigation(pad),
+                    pad.accept,
+                    pad.back
                 )));
                 lines.push(Line::from(format!(
                     "[{}] Next action. Back in the room opens Menu.",
@@ -4777,6 +4839,10 @@ impl Ui {
                 )));
                 if let Some(quit) = &pad.quit {
                     lines.push(Line::from(format!("{quit}: Quit (mapped Ctrl+C)")));
+                }
+                if let Some(hint) = &self.controller_camera {
+                    lines.push(Line::from("In Room/Pet/Face and preview camera views:"));
+                    lines.push(Line::from(hint.clone()));
                 }
                 lines.push(Line::from(
                     "Pad chooses menus/care/camera; never moves the pet.",
@@ -4932,7 +4998,9 @@ impl Ui {
             } else {
                 format!(
                     "{} [{}] Choose / 1..9 rows\n[{}] Back / Q Quit / ? Help",
-                    pad.navigate, pad.accept, pad.back
+                    self.controller_navigation(pad),
+                    pad.accept,
+                    pad.back
                 )
             }
         } else if body.width < 32 {
@@ -5367,6 +5435,8 @@ pub fn run(
             (animation.elapsed().as_millis() / u128::from(config.animation_frame_ms)) as usize;
         ui.animate(frame);
         ui.controller = controller.poll();
+        ui.controller_camera = controller.camera();
+        ui.controller_menu_navigation = controller.menu_navigation();
         ui.controller_status = controller.status().to_owned();
         let mut drawn = terminal
             .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?
@@ -9695,6 +9765,79 @@ mod controller_alias_precedence_tests {
         for digit in ['8', '2'] {
             ui.handle(alias(digit), &config.game);
             assert_eq!(ui.game, challenge);
+        }
+    }
+}
+
+#[cfg(test)]
+mod controller_hint_scope_tests {
+    use super::*;
+    use crate::capabilities::Depth;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let game = Game::new(&config.game, 513);
+        let mut ui = Ui::configured(game, &config);
+        ui.controller = Some(ControllerPrompts {
+            family: "Sony".into(),
+            navigate: "D-pad".into(),
+            accept: "Cross".into(),
+            back: "Circle".into(),
+            next: "R1".into(),
+            release: "Hold L1+R1".into(),
+            quit: None,
+        });
+        ui.controller_camera = Some("LS pan RS orbit/tilt L2/R2 zoom R3 reset".into());
+        ui.controller_menu_navigation = Some("LS Up/Down".into());
+        ui.controller_status = "Inputd: assigned pad focused here.".into();
+        (config, ui)
+    }
+
+    #[test]
+    fn controller_hint_roles_follow_menu_camera_and_dialog_ownership() {
+        let (_config, mut ui) = fixture();
+        assert!(ui.controller_description().contains("LS pan"));
+        ui.open(Menu::Home);
+        assert_eq!(
+            ui.controller_navigation(ui.controller.as_ref().unwrap()),
+            "D-pad + LS Up/Down"
+        );
+        assert!(ui.controller_description().contains("LS Up/Down"));
+        assert!(!ui.controller_description().contains("LS pan"));
+        ui.open(Menu::Roster);
+        assert!(ui.controller_description().contains("LS pan"));
+        assert_eq!(
+            ui.controller_navigation(ui.controller.as_ref().unwrap()),
+            "D-pad"
+        );
+        ui.native_modal = true;
+        assert!(!ui.controller_description().contains("LS pan"));
+        assert!(!ui.controller_description().contains("LS Up/Down"));
+        ui.native_modal = false;
+        ui.open(Menu::Seed);
+        assert!(!ui.controller_description().contains("LS Up/Down"));
+        ui.menu = None;
+        ui.controller = None;
+        assert!(!ui.controller_description().contains("LS pan"));
+    }
+
+    #[test]
+    fn narrow_focused_menus_keep_the_actual_back_button() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        for width in [34, 40, 59] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            let area = ui.menu_footer.get();
+            let bottom = (area.x..area.right())
+                .map(|x| terminal.backend().buffer()[(x, area.bottom() - 1)].symbol())
+                .collect::<String>();
+            assert!(bottom.contains("Circle"), "{width}: {bottom}");
+            assert!(!bottom.contains("Esc Back"), "{width}: {bottom}");
         }
     }
 }
