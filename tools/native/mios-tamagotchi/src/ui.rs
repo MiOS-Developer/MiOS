@@ -362,13 +362,64 @@ impl Ui {
     fn detail_tag(&self) -> String {
         format!(
             "{}{}",
+            if self.automatic_detail() { "A" } else { "M" },
             if self.effective_style() == SpriteStyle::EightBit {
                 8
             } else {
                 16
-            },
-            if self.automatic_detail() { "A" } else { "M" }
+            }
         )
+    }
+    fn room_heading(&self, width: u16, rules: &Rules) -> String {
+        let budget = usize::from(width.saturating_sub(2));
+        if budget == 0 {
+            return String::new();
+        }
+        let stage = format!("{:?}", self.game.stage(rules));
+        let clock = if self.game.paused {
+            "P"
+        } else if self.game.sleeping {
+            "R"
+        } else {
+            "L"
+        };
+        let mode = self.detail_tag();
+        let compact = budget < 16;
+        let stage = if compact { &stage[..1] } else { stage.as_str() };
+        let illness = if self.game.ill {
+            if compact {
+                "I"
+            } else {
+                " ILL"
+            }
+        } else {
+            ""
+        };
+        let tail = format!("{stage} {clock}{illness}");
+        let mode_budget = if compact { mode.len() + 1 } else { 0 };
+        let name_budget =
+            budget.saturating_sub(Line::from(tail.as_str()).width() + 1 + mode_budget);
+        if name_budget == 0 {
+            return frame_label(&format!("{stage}{clock}{illness} {mode}"), budget as u16, 0);
+        }
+        let name = frame_label(self.name(), name_budget as u16, 0);
+        let mut heading = format!("{name} {tail}");
+        let species = self
+            .current_character()
+            .map(|c| c.species.as_str())
+            .unwrap_or("pet");
+        for extra in [
+            mode,
+            format!("{:?} {}%", self.camera().view, self.zoom_percent),
+            format!("[/] {}deg", self.orbit_degrees),
+            species.to_owned(),
+        ] {
+            let candidate = format!("{heading} {extra}");
+            if Line::from(candidate.as_str()).width() <= budget {
+                heading = candidate;
+            }
+        }
+        heading
     }
     fn select_detail(&self, scene: Rect, renderer: Renderer) {
         let style = self
@@ -412,7 +463,9 @@ impl Ui {
         };
     }
     fn effective_view(&self, view: CameraView, dimensions: (u16, u16)) -> CameraView {
-        if (dimensions.0 < 28 || dimensions.1 < 10) && view == CameraView::Pet {
+        if (dimensions.0 < 28 || dimensions.1 < 10)
+            && matches!(view, CameraView::Room | CameraView::Pet)
+        {
             CameraView::Face
         } else {
             view
@@ -849,18 +902,113 @@ impl Ui {
 
     fn menu_panel(&self, title: &str, colors: &Colors, ascii: bool) -> Block<'static> {
         let menu = self.menu.unwrap_or(Menu::Home);
-        let width = self.viewport.get().0;
+        let width = usize::from(self.viewport.get().0);
+        let mode = self.detail_tag();
         let caption = if width < 30 {
-            format!("{} {}", self.detail_tag(), menu_title(menu))
+            format!("{mode} {}", menu_title(menu))
         } else if menu == Menu::Home {
-            format!("Home / {}", title.trim())
+            format!("{} [{mode}]", menu_title(menu))
         } else {
-            // Keep the immediate parent discoverable even when a long title
-            // needs the rest of the line.
             let parent = self.menu_history.last().copied().unwrap_or(Menu::Home);
-            format!("{} / {}", menu_title(parent), title.trim())
+            let parent = if parent == Menu::Home {
+                "Home"
+            } else {
+                menu_title(parent)
+            };
+            let raw = title.replace(&self.detail_label(), "");
+            let clean = raw
+                .split_whitespace()
+                .filter(|word| *word != mode)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let clean = clean.trim_matches(|c: char| c == '/' || c.is_whitespace());
+            let title =
+                if matches!(menu, Menu::Talk | Menu::Roster | Menu::Gallery) && !clean.is_empty() {
+                    clean
+                } else {
+                    menu_title(menu)
+                };
+            let breadcrumb = format!("{parent} > {title} [{mode}]");
+            if Line::from(breadcrumb.as_str()).width() <= width {
+                breadcrumb
+            } else {
+                format!("{} [{mode}]", menu_title(menu))
+            }
         };
         panel("", colors, ascii).title(Line::from(caption))
+    }
+
+    fn menu_description(&self, menu: Menu) -> Option<&'static str> {
+        let index = self.menu_selected;
+        match menu {
+            Menu::Home if index == 8 && self.seed_import_allowed => {
+                Some("This development pet has no save path. Share its birth code.")
+            }
+            Menu::Home => [
+                "Feed, clean, rest or treat the Mon.",
+                "Play a memory round to earn coins and happiness.",
+                "Read thoughts and choose a conversation prompt.",
+                "Inspect other Mons. Adoption requires confirmation.",
+                "Review needs, health, growth and trained stats.",
+                "Choose the renderer, detail, HUD and camera.",
+                "Preview expressions and life stages without changing your pet.",
+                "Read controls, Inputd status and terminal help.",
+                "Write progress to the explicit local save path.",
+                "Leave the game. Progress needs an explicit save path.",
+                "Decorate the room with earned or purchased items.",
+                "Train the hatched Mon's stats using care and coins.",
+                "Read the birth identity, traits and shareable code.",
+                "Enter a birth code. Keep the current pet until confirmed.",
+            ]
+            .get(index)
+            .copied(),
+            Menu::Care if index == 2 && self.game.sleeping => {
+                Some("Wake the Mon and resume its normal activity.")
+            }
+            Menu::Care => [
+                "Feed the Mon to restore fullness.",
+                "Wash the Mon to restore hygiene.",
+                "Rest restores energy while the clock runs.",
+                "Treat illness. Review the Mon's health in Status.",
+                "Return to the previous menu.",
+            ]
+            .get(index)
+            .copied(),
+            Menu::Games => [
+                "Remember three arrows, then repeat them to earn rewards.",
+                "Return to the previous menu.",
+            ]
+            .get(index)
+            .copied(),
+            Menu::Graphics => [
+                "Render the autonomous Mon and its voxel environment.",
+                "Use a classic pixel sprite without changing the pet.",
+                "Choose compact 8-bit detail manually.",
+                "Choose detailed 16-bit sprites manually.",
+                "Pack two vertical pixels into each terminal cell.",
+                "Use plain ASCII shading for restricted terminals.",
+                "Pack a two-by-two pixel grid into each cell.",
+                "Use Braille dot packing where the terminal supports it.",
+                "Inspect expressions and stages in the sprite studio.",
+                "Let the HUD adapt to the viewport's cell budget.",
+                "Keep a compact scene and essential status controls.",
+                "Show the expanded status and care dashboard.",
+                "Frame the isometric room; tiny views focus the Mon.",
+                "Frame the Mon's body and species features.",
+                "Frame the head. Orbit to inspect its tracked face.",
+                "Move the camera closer without changing pet stats.",
+                "Move the camera farther away without changing pet stats.",
+                "Restore 100 percent zoom; preserve the chosen orbit.",
+                "Return to the previous menu.",
+                "Toggle detail that follows viewport size and zoom.",
+                "Orbit left around the Mon. This does not steer it.",
+                "Orbit right around the Mon. This does not steer it.",
+                "Restore the configured isometric azimuth.",
+            ]
+            .get(index)
+            .copied(),
+            _ => None,
+        }
     }
 
     fn suspend_native_targets(&self) {
@@ -2096,47 +2244,7 @@ impl Ui {
         self.control_targets.borrow_mut().clear();
         self.menu_number_count.set(0);
         self.menu_footer.set(Rect::default());
-        let face = self.expression(&config.game, frame).kaomoji(frame);
-        let stage = format!("{:?}", self.game.stage(&config.game));
-        let clock = if self.game.paused {
-            "P"
-        } else if self.game.sleeping {
-            "R"
-        } else {
-            "L"
-        };
-        let heading = if area.width < 16 {
-            format!(
-                "{} {} {}{clock}",
-                self.detail_tag(),
-                self.name().chars().take(3).collect::<String>(),
-                &stage[..1]
-            )
-        } else if area.width < 28 {
-            let name = self
-                .name()
-                .chars()
-                .take(usize::from(area.width.saturating_sub(15)))
-                .collect::<String>();
-            format!(
-                "{} {name} {}{clock}{}",
-                self.detail_tag(),
-                &stage[..1],
-                if self.game.ill { " ILL" } else { "" }
-            )
-        } else {
-            format!(
-                "PET ROOM {} {} {} {stage} {clock} {face}{} {:?} {}% [/] {}deg",
-                self.detail_label(),
-                self.name(),
-                self.current_character()
-                    .map_or("pet", |c| c.species.as_str()),
-                if self.game.ill { " ILL" } else { "" },
-                self.camera().view,
-                self.zoom_percent,
-                self.orbit_degrees
-            )
-        };
+        let heading = self.room_heading(area.width, &config.game);
         let compact = self.hud_mode == HudMode::Minimal
             || area.width < config.hud_minimal_width
             || area.height < config.hud_minimal_height;
@@ -2215,7 +2323,6 @@ impl Ui {
             Constraint::Length(6),
         ])
         .areas(inner);
-        let style = self.detail_label();
         let clock = if self.game.paused {
             "PAUSED"
         } else if self.overlay_open() {
@@ -2236,14 +2343,14 @@ impl Ui {
             Paragraph::new(vec![
                 Line::from(vec![
                     Span::styled(
-                        format!(" {} ", self.name()),
+                        format!(" {clock} "),
                         Style::default()
                             .fg(colors.ink(0))
                             .bg(colors.ink(3))
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(format!(
-                        "  {style} {} / {clock} / {status}",
+                        "  {} / {status}",
                         if self.view_mode == ViewMode::Voxel {
                             "VOXEL 3D"
                         } else {
@@ -4330,7 +4437,7 @@ impl Ui {
             lines.push(Line::from(
                 "D toggles Auto detail; Graphics 8/16 chooses Manual.",
             ));
-            lines.push(Line::from("8A/16A means Auto; 8M/16M means Manual."));
+            lines.push(Line::from("A8/A16 means Auto; M8/M16 means Manual."));
             lines.push(Line::from(
                 "Viewport, font cells and zoom select one shared scene/face style.",
             ));
@@ -4526,6 +4633,24 @@ impl Ui {
                 body.height.saturating_sub(footer_rows),
             ),
         );
+        if let Some(description) = self.menu_description(menu) {
+            let spare = body
+                .height
+                .saturating_sub(footer_rows)
+                .saturating_sub(self.menu_number_count.get() as u16);
+            if spare > 0 && body.width > 0 {
+                let lines = wrap_dialogue(description, usize::from(body.width))
+                    .into_iter()
+                    .take(usize::from(spare))
+                    .map(Line::from)
+                    .collect::<Vec<_>>();
+                let rows = lines.len() as u16;
+                screen.render_widget(
+                    Paragraph::new(lines).style(Style::default().fg(colors.ink(13))),
+                    Rect::new(body.x, controls.y.saturating_sub(rows), body.width, rows),
+                );
+            }
+        }
         screen.render_widget(
             Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
             controls,
@@ -6522,11 +6647,7 @@ mod global_detail_regressions {
                         64
                     }
                 );
-                let mode = if width < 24 {
-                    ui.detail_tag()
-                } else {
-                    ui.detail_label()
-                };
+                let mode = ui.detail_tag();
                 assert!(
                     text(&terminal).contains(&mode),
                     "{width}x{height} {menu:?}: {}",
@@ -6601,7 +6722,7 @@ mod global_detail_regressions {
         assert!(ui.automatic_detail());
         let terminal = draw(&ui, &config, 12, 6);
         assert_eq!(ui.effective_style(), SpriteStyle::EightBit);
-        assert!(text(&terminal).contains("8A"));
+        assert!(text(&terminal).contains("A8"));
         ui.handle(key(KeyCode::Char('D')), &config.game);
         assert!(!ui.automatic_detail());
         ui.handle(key(KeyCode::Char('d')), &config.game);
@@ -7917,5 +8038,93 @@ mod console_shell_regressions {
             assert!(!lines.join("").contains('�'));
             assert_eq!(lines.join("").replace(' ', ""), "éclair猫猫hello");
         }
+    }
+    #[test]
+    fn headers_prioritize_name_stage_and_health_before_optional_rendering_details() {
+        let (config, mut ui) = fixture();
+        ui.game.paused = true;
+        ui.game.ill = true;
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        for hud in [HudMode::Auto, HudMode::Minimal, HudMode::Full] {
+            ui.hud_mode = hud;
+            for (width, height) in [(20, 10), (32, 18), (43, 34), (65, 21), (120, 40)] {
+                let lines = draw(&ui, &config, width, height, Renderer::Ascii);
+                let heading = &lines[0];
+                assert!(
+                    heading.contains("Baby") && heading.contains(" P") && heading.contains("ILL"),
+                    "{width}x{height} {hud:?}: {heading}"
+                );
+                assert!(heading.contains(ui.name()), "{heading}");
+                assert!(
+                    !heading.contains("AUTO") && !heading.contains("PET ROOM"),
+                    "{heading}"
+                );
+                assert!(heading.matches(&ui.detail_tag()).count() <= 1, "{heading}");
+            }
+        }
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn menu_descriptions_use_spare_cells_without_becoming_hidden_actions() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        draw(&ui, &config, 80, 24, Renderer::Ascii);
+        ui.handle(key(KeyCode::Enter), &config.game);
+        let lines = draw(&ui, &config, 80, 24, Renderer::Ascii);
+        assert!(
+            lines[0].contains("Home > CARE") && !lines[0].contains("AUTO"),
+            "{}",
+            lines[0]
+        );
+        let (row, line) = lines
+            .iter()
+            .enumerate()
+            .find(|(_, line)| line.contains("restore fullness"))
+            .expect("care description");
+        assert_eq!(ui.menu_number_count.get(), 5);
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let column = line.find("restore fullness").unwrap() as u16;
+        ui.click(column, row as u16, &config.game);
+        assert_eq!(ui.menu, Some(Menu::Care));
+        assert_eq!(ui.menu_selected, 0);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+        let tiny = draw(&ui, &config, 20, 8, Renderer::Ascii).join("\n");
+        assert!(!tiny.contains("restore fullness"), "{tiny}");
+        assert!(
+            tiny.contains("Enter: OK") && tiny.contains("Esc: Back"),
+            "{tiny}"
+        );
+        let back = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Cancel)
+            .unwrap()
+            .0;
+        ui.click(back.x, back.y, &config.game);
+        assert_eq!(ui.menu, Some(Menu::Home));
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn tiny_room_views_focus_the_mon_then_restore_the_preferred_room_without_state_changes() {
+        let (config, mut ui) = fixture();
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        draw(&ui, &config, 20, 10, Renderer::Ascii);
+        assert_eq!(ui.camera().view, CameraView::Face);
+        assert_eq!(ui.camera_view, CameraView::Room);
+        draw(&ui, &config, 120, 40, Renderer::Ascii);
+        assert_eq!(ui.camera().view, CameraView::Room);
+        assert_eq!(ui.camera_view, CameraView::Room);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
     }
 }
