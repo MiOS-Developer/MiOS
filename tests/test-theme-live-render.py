@@ -64,7 +64,7 @@ class TestThemeLiveRender(unittest.TestCase):
             (gtk / "gtk.css").write_text("label { font-weight: bold; }\n")
             (gtk / "settings.ini").write_text("[Settings]\ngtk-enable-animations=false\n")
             data = {"desktop": {"hyprland": {"config": {"decoration": {"rounding": 28}}}},
-                    "appearance": {"gtk_theme": "operator-dark"}, "theme": {
+                    "appearance": {"gtk_theme": "operator-dark", "icon_theme": "Operator-Icons"}, "theme": {
                 "font": {"family": "Operator Font", "size": 14},
                 "cursor_linux": {"theme": "Operator-Cursor", "size": 32}}}
             expand = lambda value: str(home) + value[1:] if value.startswith("~") else value
@@ -80,6 +80,7 @@ class TestThemeLiveRender(unittest.TestCase):
             settings = configparser.ConfigParser()
             settings.read(gtk / "settings.ini")
             self.assertEqual(settings["Settings"]["gtk-font-name"], "Operator Font 14")
+            self.assertEqual(settings["Settings"]["gtk-icon-theme-name"], "Operator-Icons")  # [appearance].icon_theme
             self.assertEqual(settings["Settings"]["gtk-cursor-theme-size"], "32")
             self.assertEqual(settings["Settings"]["gtk-enable-animations"], "false")
             self.assertTrue((host / "gtk-3.0/mios-colors.css").is_file())
