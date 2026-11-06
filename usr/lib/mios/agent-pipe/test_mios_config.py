@@ -612,8 +612,169 @@ a = 1
             self.assertEqual(response.status_code, 401)
 
 
+try:
+    import tomllib as tl
+except ImportError:
+    import tomli as tl  # type: ignore
+
+
+class TestRestoreRedacted(unittest.TestCase):
+    """restore_redacted: the redaction marker means "unchanged" (C3)."""
+
+    def test_marker_takes_the_live_value_or_is_dropped(self):
+        from mios_pipe.kernel.config import REDACTED, restore_redacted
+        self.assertEqual(REDACTED, "<redacted>")
+        live = {"portal": {"password": "live-pw", "user": "op"},
+                "remotes": [{"name": "a", "github_token": "ghp_a"},
+                            {"name": "b", "github_token": "ghp_b"}],
+                "env": {"list": ["x"]}}
+        posted = {"portal": {"password": REDACTED, "secret": REDACTED, "user": "edited"},
+                  "remotes": [{"name": "a", "github_token": REDACTED},
+                              {"name": "b", "github_token": REDACTED},
+                              {"name": "c", "github_token": REDACTED}],
+                  "env": {"list": [REDACTED, REDACTED, "kept"]},
+                  "ai": {"api_key": REDACTED}}
+        self.assertEqual(restore_redacted(posted, live), {
+            "portal": {"password": "live-pw", "user": "edited"},
+            "remotes": [{"name": "a", "github_token": "ghp_a"},
+                        {"name": "b", "github_token": "ghp_b"},
+                        {"name": "c"}],
+            "env": {"list": ["x", "kept"]},
+            "ai": {}})
+        self.assertEqual(restore_redacted({"ai": {"api_key": REDACTED, "endpoint": "e"}}, None),
+                         {"ai": {"endpoint": "e"}})
+        self.assertEqual(posted["portal"]["password"], REDACTED, "the input is not mutated")
+
+
+class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
+    """POST /portal/config end to end on temp vendor/host/user tiers: the lossless
+    {"toml": ...} JSON envelope, raw TOML, and an echoed redaction marker (C3).
+    HOME, XDG_CONFIG_HOME and MIOS_USER_TOML all point at the temp user tier, so
+    no live tier is read or written."""
+
+    VENDOR = ('[identity]\nmios_user = "vendor-user"\nusername = "user"\n\n'
+              '[ports]\nagent_pipe = 8640\n\n'
+              '[portal]\nconfig_max_body_bytes = 2097152\npassword = ""\nsecret = ""\n\n'
+              '[ai]\napi_key = ""\nendpoint = "vendor"\n')
+    HOST = '[portal]\nsecret = "host-tier-cookie-secret"\n'
+    USER = '[portal]\npassword = "user-tier-portal-pw"\n\n[ai]\napi_key = "user-tier-api-key"\n'
+
+    def setUp(self):
+        if not HAS_DEPS:
+            raise unittest.SkipTest(f"Missing test dependencies: {DEP_ERROR}")
+        import shutil
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.user = os.path.join(self.tmp, ".config", "mios", "mios.toml")
+        for name, text in (("vendor.toml", self.VENDOR), ("host.toml", self.HOST)):
+            with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        env = patch.dict(os.environ, {
+            "HOME": self.tmp, "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config"),
+            "MIOS_VENDOR_TOML": os.path.join(self.tmp, "vendor.toml"),
+            "MIOS_VENDOR_TOML_D": os.path.join(self.tmp, "vendor.d"),
+            "MIOS_HOST_TOML": os.path.join(self.tmp, "host.toml"),
+            "MIOS_HOST_TOML_D": os.path.join(self.tmp, "host.d"),
+            "MIOS_USER_TOML": self.user,
+            "MIOS_USER_TOML_D": os.path.join(self.tmp, "user.d"),
+            "MIOS_RESOLVER_NATIVE": "0", "MIOS_DB_AUTHORITATIVE": "0"})
+        env.start()
+        self.addCleanup(env.stop)
+        for var in ("MIOS_TOML", "MIOS_TOML_ROOT"):
+            os.environ.pop(var, None)
+        for p in (patch("mios_db_config.is_db_authoritative", return_value=False),
+                  patch("mios_pipe.routing.portal._portal_authed", return_value=True),
+                  patch("fastapi.BackgroundTasks.add_task")):
+            p.start()
+            self.addCleanup(p.stop)
+        mios_toml.clear_cache()
+        self.addCleanup(mios_toml.clear_cache)
+        self.client = TestClient(server.app)
+
+    def tier(self):
+        try:
+            with open(self.user, encoding="utf-8") as fh:
+                return fh.read()
+        except FileNotFoundError:
+            return None
+
+    def plant_user_tier(self):
+        os.makedirs(os.path.dirname(self.user), exist_ok=True)
+        with open(self.user, "w", encoding="utf-8") as fh:
+            fh.write(self.USER)
+        mios_toml.clear_cache()
+
+    def served(self):
+        response = self.client.get("/portal/config")
+        self.assertEqual(response.status_code, 200)
+        return response.text
+
+    def redacted_echo(self):
+        """What a save echoing miosd's redacted GET carries."""
+        from mios_pipe.kernel.config import REDACTED, to_toml
+        echo = tl.loads(self.served())
+        echo["portal"].update(password=REDACTED, secret=REDACTED)
+        echo["ai"]["api_key"] = REDACTED
+        return to_toml(echo)
+
+    def post(self, body, content_type):
+        return self.client.post("/portal/config", content=body,
+                                headers={"Content-Type": content_type})
+
+    def test_json_envelope_saves_the_toml_text(self):
+        edited = self.served().replace('username = "user"', 'username = "envelope-op"')
+        response = self.post(json.dumps({"toml": edited}), "application/json; charset=utf-8")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(tl.loads(self.tier()), {"identity": {"username": "envelope-op"}})
+
+    def test_raw_toml_is_still_accepted(self):
+        edited = self.served().replace('username = "user"', 'username = "raw-op"')
+        for content_type in ("application/toml", "text/plain"):
+            response = self.post(edited, content_type)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(tl.loads(self.tier()), {"identity": {"username": "raw-op"}})
+
+    def test_a_bad_envelope_writes_nothing(self):
+        self.plant_user_tier()
+        served = self.served()
+        for body in ("not json", json.dumps({"config": tl.loads(served)}), json.dumps({"toml": 5}),
+                     json.dumps(["toml", served])):
+            response = self.post(body, "application/json")
+            self.assertEqual(response.status_code, 400, body[:60])
+            self.assertIn("envelope", response.json()["error"])
+        response = self.post(json.dumps({"toml": "[broken_section\nx = 1\n"}), "application/json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid TOML", response.json()["error"])
+        self.assertEqual(self.tier(), self.USER)
+
+    def test_an_echoed_marker_keeps_the_user_tier_secrets(self):
+        self.plant_user_tier()
+        edited = self.redacted_echo().replace('username = "user"', 'username = "echo-op"')
+        response = self.post(json.dumps({"toml": edited}), "application/json")
+        self.assertEqual(response.status_code, 200, response.text)
+        text = self.tier()
+        self.assertNotIn("<redacted>", text)
+        self.assertNotIn("host-tier-cookie-secret", text, "a lower-tier secret was copied up")
+        self.assertEqual(tl.loads(text), {"identity": {"username": "echo-op"},
+                                          "portal": {"password": "user-tier-portal-pw"},
+                                          "ai": {"api_key": "user-tier-api-key"}})
+        live = mios_toml.load_merged()
+        self.assertEqual((live["portal"]["password"], live["portal"]["secret"], live["ai"]["api_key"]),
+                         ("user-tier-portal-pw", "host-tier-cookie-secret", "user-tier-api-key"))
+
+    def test_a_no_edit_echo_writes_nothing_beyond_what_changed(self):
+        for content_type in ("application/json", "application/toml"):
+            echo = self.redacted_echo()
+            body = json.dumps({"toml": echo}) if content_type == "application/json" else echo
+            response = self.post(body, content_type)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(self.tier(), "", content_type)
+
+
 def _run_extra_config_write():
-    return _run_cases(TestDeltaConfigWrite, TestConfigWrite)
+    return _run_cases(TestDeltaConfigWrite, TestConfigWrite, TestRestoreRedacted,
+                      TestPortalConfigEnvelopeAndRedaction)
 
 
 

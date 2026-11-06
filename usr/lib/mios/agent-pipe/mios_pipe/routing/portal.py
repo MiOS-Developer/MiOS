@@ -8,6 +8,7 @@ import base64
 import glob
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -1292,12 +1293,28 @@ async def get_portal_config(request: Request):
 @portal_router.post("/portal/config")
 async def post_portal_config(request: Request, background_tasks: BackgroundTasks):
     """POST /portal/config -> Receive replacement TOML, write to USER TOML layer,
-    and trigger db-config re-seeding in background."""
+    and trigger db-config re-seeding in background.
+
+    The body is raw TOML, or (Content-Type: application/json) the lossless
+    envelope {"toml": "<text>"} that miosd's config server also accepts."""
     if not _portal_authed(request):
         return JSONResponse({"error": "auth required"}, status_code=401)
 
     body_bytes = await request.body()
-    toml_text = body_bytes.decode("utf-8")
+    content_type = request.headers.get("content-type", "")
+    if content_type.split(";")[0].strip().lower() == "application/json":
+        try:
+            envelope = json.loads(body_bytes.decode("utf-8"))
+        except Exception as e:
+            log.warning("Invalid JSON posted to /portal/config: %s", e)
+            envelope = None
+        toml_text = envelope.get("toml") if isinstance(envelope, dict) else None
+        if not isinstance(toml_text, str):
+            return JSONResponse(
+                {"error": 'Invalid JSON envelope: expected {"toml": "<text>"}'},
+                status_code=400)
+    else:
+        toml_text = body_bytes.decode("utf-8")
 
     try:
         import tomllib as _toml
@@ -1329,7 +1346,7 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
                             status_code=422)
 
     try:
-        write_user_config(parsed_config)
+        write_user_config(parsed_config, live_config=live_config)
 
         background_tasks.add_task(run_db_reseed_bg)
 

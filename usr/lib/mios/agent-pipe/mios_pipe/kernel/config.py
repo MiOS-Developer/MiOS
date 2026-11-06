@@ -446,8 +446,43 @@ def validate_config(toml_text: str, live_config: dict = None):
 
     return (len(errors) == 0, errors)
 
-def write_user_config(cfg: dict, dest_path: str = None) -> None:
-    """Atomically write the dictionary to the user-layer config file."""
+# What miosd's GET /portal/config serves in place of every secret value.
+REDACTED = "<redacted>"
+
+def restore_redacted(posted, live):
+    """A save that echoes a redacted GET carries REDACTED where each secret
+    was. The marker means "unchanged": it takes back the live value at the same
+    path (so the delta keeps a user-tier secret and drops a lower-tier one), and
+    with no live value there it is dropped. The marker itself is never written
+    over portal.password, portal.secret, ai.api_key or any other secret."""
+    if isinstance(posted, dict):
+        out = {}
+        for k, v in posted.items():
+            has_live = isinstance(live, dict) and k in live
+            if isinstance(v, str) and v == REDACTED:
+                if has_live:
+                    out[k] = live[k]
+                continue
+            out[k] = restore_redacted(v, live[k] if has_live else None)
+        return out
+    if isinstance(posted, list):
+        out = []
+        for i, item in enumerate(posted):
+            has_live = isinstance(live, list) and i < len(live)
+            if isinstance(item, str) and item == REDACTED:
+                if has_live:
+                    out.append(live[i])
+                continue
+            out.append(restore_redacted(item, live[i] if has_live else None))
+        return out
+    return posted
+
+def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None) -> None:
+    """Atomically write the dictionary to the user-layer config file.
+
+    live_config is the merged config the save was made against; redaction
+    markers in cfg resolve against it before the diff (restore_redacted)."""
+    cfg = restore_redacted(cfg, live_config)
     base_cfg = {}
     try:
         import sys

@@ -95,7 +95,7 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
         config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])))
         toml = SimpleNamespace(load_merged=Mock(return_value={}))
         scope = handlers(PORTAL, ["get_portal_config", "post_portal_config"], _portal_authed=lambda request: True, run_db_reseed_bg=lambda: None)
-        request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"))
+        request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"), headers={})
         background = SimpleNamespace(add_task=Mock())
         with patch.dict(sys.modules, {"mios_toml": toml, "mios_pipe.kernel.config": config}):
             self.assert_redacted(await scope["get_portal_config"](request), 500)
@@ -104,6 +104,10 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await scope["get_portal_config"](request)).content, "resolved TOML")
             request.body.return_value = ("invalid = " + MARKER).encode()
             self.assert_redacted(await scope["post_portal_config"](request, background), 400)
+            request.headers = {"content-type": "application/json"}
+            request.body.return_value = ("{" + MARKER).encode()
+            self.assert_redacted(await scope["post_portal_config"](request, background), 400)
+            request.headers = {}
             config.write_user_config.assert_not_called()
             request.body.return_value = b"[identity]\nusername='mios'\n"
             config.write_user_config.side_effect = RuntimeError(MARKER)

@@ -1,204 +1,189 @@
 #!/usr/bin/env bash
-# AI-hint: Automated CI verification test suite for miosd embedded Rust SSOT configurator engine (mios.html & /portal/config).
+# AI-hint: Contract suite for miosd's config server (mios.html & /portal/config): login-gated GET, lossless {"toml"} saves, redaction markers never written, delta-only user tier.
 # AI-related: src/mios-rs/miosd/src/lib.rs, usr/share/mios/configurator/mios.html, usr/share/mios/mios.toml
+#
+# Tiers. The CANDIDATE tier runs against MIOS_MIOSD_BIN, a MiOS-DEV tree build of
+# this checkout, and alone decides the exit status. With MIOS_MIOSD_BIN unset it is
+# NOT RUN and the suite exits 77, which tests/run-suites.sh counts as a failure:
+# the installed binary never certifies the candidate. The INSTALLED-COMPAT tier
+# reports how the installed /usr/libexec/mios/miosd fares against the same
+# contract; it is informational and never gates. This suite never builds (no
+# cargo), binds a free ephemeral port, and runs every server on temp host/user
+# tiers with a per-run session token, so no live tier, token or port is touched.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-MIOSD="${REPO_ROOT}/src/mios-rs/target/debug/miosd"
-if [[ ! -x "$MIOSD" ]]; then
-    if [[ -x "${REPO_ROOT}/src/mios-rs/target/release/miosd" ]]; then
-        MIOSD="${REPO_ROOT}/src/mios-rs/target/release/miosd"
-    elif [[ -x "/usr/libexec/mios/miosd" ]]; then
-        MIOSD="/usr/libexec/mios/miosd"
-    else
-        echo "Building miosd for testing..."
-        (cd "${REPO_ROOT}/src/mios-rs" && cargo build -p miosd)
-    fi
-fi
-
-TMP_DIR=""
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HTML_PATH="${REPO_ROOT}/usr/share/mios/configurator/mios.html"
+INSTALLED=/usr/libexec/mios/miosd
+TMP_DIR="$(mktemp -d)"
 SERVER_PID=""
 
-cleanup() {
-    if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
+stop_server() {
+    if [[ -n "$SERVER_PID" ]]; then
         kill "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
-    fi
-    if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
-        rm -rf "$TMP_DIR"
+        SERVER_PID=""
     fi
 }
-trap cleanup EXIT
-TMP_DIR="$(mktemp -d)"
+trap 'stop_server; rm -rf "$TMP_DIR"' EXIT
 
-TEST_PORT=8788
-TEST_PROFILE="${TMP_DIR}/test_profile.toml"
-HTML_PATH="${REPO_ROOT}/usr/share/mios/configurator/mios.html"
+# run_tier <label> <miosd>: one hermetic config-server, the whole contract against it.
+run_tier() {
+    local label=$1 bin=$2 d="$TMP_DIR/$1" port token rc=0
+    mkdir -p "$d/run" "$d/xdg"
+    # A lower-tier secret the GET must hide and a save must never copy upward.
+    printf '[portal]\nsecret = "host-tier-cookie-secret"\n' > "$d/host.toml"
+    port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+    token="cfg-test-$(od -An -tx8 -N8 /dev/urandom | tr -d ' \n')"
+    env -u MIOS_CONFIG_BIND_ADDR -u MIOS_TOML -u MIOS_VENDOR_TOML -u MIOS_VENDOR_TOML_D \
+        -u MIOS_TOML_ROOT -u MIOS_PORTAL_TOKEN -u MIOS_ACCOUNTS_DB_BACKED \
+        MIOS_ROOT="$REPO_ROOT" MIOS_CONFIGURATOR_HTML="$HTML_PATH" \
+        MIOS_HOST_TOML="$d/host.toml" MIOS_HOST_TOML_D="$d/host.d" \
+        MIOS_USER_TOML="$d/user.toml" MIOS_USER_TOML_D="$d/user.d" \
+        XDG_CONFIG_HOME="$d/xdg" XDG_RUNTIME_DIR="$d/run" MIOS_PORTAL_SESSION_TOKEN="$token" \
+        "$bin" config-server --port "$port" > "$d/server.log" 2>&1 &
+    SERVER_PID=$!
+    python3 - "$label" "$port" "$token" "$d" <<'PY' || rc=$?
+import http.client, json, os, sys, time, tomllib
 
-pass=0
-fail=0
+label, port, token, d = sys.argv[1:]
+origin, user = f"http://127.0.0.1:{port}", os.path.join(d, "user.toml")
+fails = 0
 
-_pass() {
-    echo "  [PASS] $1"
-    pass=$((pass + 1))
-}
+def check(ok, what):
+    global fails
+    fails += not ok
+    print(f"  [{label}] [{'PASS' if ok else 'FAIL'}] {what}", flush=True)
 
-_fail() {
-    echo "  [FAIL] $1" >&2
-    fail=$((fail + 1))
-}
+def call(method, path, body=None, headers=()):
+    c = http.client.HTTPConnection("127.0.0.1", int(port), timeout=10)
+    c.request(method, path, body=body, headers=dict(headers))
+    r = c.getresponse()
+    out = r.status, {k.lower(): v for k, v in r.getheaders()}, r.read().decode("utf-8", "replace")
+    c.close()
+    return out
 
-echo "[test-configurator-server] === MiOS Embedded Rust SSOT Engine & Configurator Server Test Suite ==="
+def field(body, key):
+    try:
+        return json.loads(body).get(key)
+    except (ValueError, AttributeError):
+        return None
 
-# Test 1: Configurator HTML asset existence
-echo "[test-configurator-server] Test 1: Configurator HTML asset validation"
-if [[ -f "$HTML_PATH" ]]; then
-    _pass "Configurator HTML asset found at $HTML_PATH"
-    if grep -q "<!DOCTYPE html>" "$HTML_PATH" && grep -q "mios" "$HTML_PATH"; then
-        _pass "Configurator HTML contains valid HTML5 doctype and MiOS bindings"
-    else
-        _fail "Configurator HTML structure invalid"
-    fi
-else
-    _fail "Configurator HTML asset missing: $HTML_PATH"
-fi
+def tier_text():
+    return open(user, encoding="utf-8").read() if os.path.exists(user) else None
 
-# Test 2: Spawn miosd config-server
-echo "[test-configurator-server] Test 2: Starting embedded Rust config-server on port ${TEST_PORT}"
-MIOS_ROOT="$REPO_ROOT" \
-MIOS_CONFIGURATOR_HTML="$HTML_PATH" \
-MIOS_USER_TOML="$TEST_PROFILE" \
-"$MIOSD" config-server --port "$TEST_PORT" > "${TMP_DIR}/server.log" 2>&1 &
-SERVER_PID=$!
-
-READY=0
-for _ in {1..20}; do
-    if curl -s "http://127.0.0.1:${TEST_PORT}/health" | grep -q "miosd-config-server"; then
-        READY=1
+for _ in range(50):
+    try:
+        st, _, body = call("GET", "/health")
         break
-    fi
-    sleep 0.2
-done
+    except OSError:
+        time.sleep(0.2)
+else:
+    st, body = 0, ""
+check(st == 200 and '"status":"ok"' in body and '"engine":"miosd-config-server"' in body,
+      f"GET /health answers on free port {port}")
+if st != 200:
+    print(open(os.path.join(d, "server.log"), encoding="utf-8", errors="replace").read())
+    sys.exit(1)
+auth = {"Authorization": f"Bearer {token}"}
+post_headers = {**auth, "Origin": origin, "Content-Type": "application/json"}
 
-if [[ "$READY" -eq 1 ]]; then
-    _pass "Embedded Rust config-server started and responding on port ${TEST_PORT}"
-else
-    cat "${TMP_DIR}/server.log" >&2
-    _fail "Embedded Rust config-server failed to bind within 4 seconds"
-    exit 1
-fi
+def save(text, headers=post_headers):
+    return call("POST", "/portal/config", json.dumps({"toml": text}).encode(), headers)
 
-# Test 3: Health check endpoint
-echo "[test-configurator-server] Test 3: Health endpoint verification (GET /health)"
-HEALTH_RESP="$(curl -s "http://127.0.0.1:${TEST_PORT}/health")"
-if echo "$HEALTH_RESP" | grep -q '"status":"ok"' && echo "$HEALTH_RESP" | grep -q '"engine":"miosd-config-server"'; then
-    _pass "GET /health returned JSON with engine status OK"
-else
-    _fail "GET /health returned unexpected response: $HEALTH_RESP"
-fi
+st, _, _ = call("HEAD", "/health")
+check(st == 200, "HEAD /health is 200")
+st, h, _ = call("GET", "/")
+check(st == 302 and h.get("location") == "/configure", "GET / redirects to /configure")
+st, _, _ = call("GET", "/configure")
+check(st == 403, f"GET /configure without a session is 403 (HTTP {st})")
+st, h, body = call("GET", f"/configure?token={token}")
+check(st == 200 and "<!DOCTYPE html>" in body and "mios_portal=" in h.get("set-cookie", ""),
+      "GET /configure?token= serves mios.html and sets the session cookie")
 
-# Test 4: HEAD method support
-echo "[test-configurator-server] Test 4: HEAD method verification"
-HEAD_CODE="$(curl -s -o /dev/null -w "%{http_code}" -I "http://127.0.0.1:${TEST_PORT}/health")"
-if [[ "$HEAD_CODE" == "200" ]]; then
-    _pass "HEAD /health returned HTTP 200 OK"
-else
-    _fail "HEAD /health returned HTTP $HEAD_CODE"
-fi
+# GATING: GET and HEAD /portal/config honour [portal].require_login like /configure.
+for method in ("GET", "HEAD"):
+    st, _, body = call(method, "/portal/config")
+    check(st == 403 and "[identity]" not in body,
+          f"{method} /portal/config without a session is 403 (HTTP {st})")
+st, _, served = call("GET", "/portal/config", headers=auth)
+check(st == 200 and "[identity]" in served,
+      f"GET /portal/config with the session serves the layered TOML ({len(served)} bytes)")
+check("host-tier-cookie-secret" not in served and '"<redacted>"' in served,
+      "GET redacts the planted host-tier secret with the <redacted> marker")
 
-# Test 5: Root path redirect
-echo "[test-configurator-server] Test 5: Root path redirection (GET / -> /configure)"
-REDIRECT_HEADER="$(curl -s -I "http://127.0.0.1:${TEST_PORT}/")"
-if echo "$REDIRECT_HEADER" | grep -iq "Location: /configure"; then
-    _pass "GET / correctly redirects to /configure (302 Found)"
-else
-    _fail "GET / did not issue Location: /configure redirect"
-fi
+# DELTA-ONLY + C3: a no-edit save of the echo (markers and all) writes nothing.
+st, _, body = save(served)
+check(st == 200 and field(body, "bytes") == 0 and tier_text() == "",
+      f"a no-edit save of the GET echo writes nothing (HTTP {st}: {body[:160]!r}, tier {tier_text()!r:.160})")
 
-# Test 6: Serving mios.html
-echo "[test-configurator-server] Test 6: Serving configurator HTML (GET /configure)"
-curl -s "http://127.0.0.1:${TEST_PORT}/configure" -o "${TMP_DIR}/test_cfg.html"
-if [[ -s "${TMP_DIR}/test_cfg.html" ]] && grep -q "<!DOCTYPE html>" "${TMP_DIR}/test_cfg.html"; then
-    _pass "GET /configure returned full mios.html contents ($(wc -c < "${TMP_DIR}/test_cfg.html") bytes)"
-else
-    _fail "GET /configure did not return valid HTML content"
-fi
-
-# Test 7: Layered TOML retrieval (GET /portal/config)
-echo "[test-configurator-server] Test 7: Layered TOML SSOT endpoint (GET /portal/config)"
-curl -s "http://127.0.0.1:${TEST_PORT}/portal/config" -o "${TMP_DIR}/test_portal.toml"
-if [[ -s "${TMP_DIR}/test_portal.toml" ]] && (grep -q "\[identity\]" "${TMP_DIR}/test_portal.toml" || grep -q "\[meta\]" "${TMP_DIR}/test_portal.toml"); then
-    _pass "GET /portal/config returned valid layered TOML from SSOT ($(wc -c < "${TMP_DIR}/test_portal.toml") bytes)"
-else
-    _fail "GET /portal/config did not return expected TOML sections"
-fi
-
-# Test 8: Positive Control - Save an edit into the user tier (POST /portal/config)
-# The configurator posts the whole live config back with its edits; the save
-# keeps only what differs from the lower tiers. MIOS_USER_TOML points the user
-# tier at the test's temp dir so the runner's own ~/.config is never touched.
-echo "[test-configurator-server] Test 8: Save an edit into the user tier (POST /portal/config)"
-VALID_PAYLOAD="${TMP_DIR}/edited.toml"
-curl -s "http://127.0.0.1:${TEST_PORT}/portal/config" | python3 -c '
-import sys
-lines = sys.stdin.read().split("\n")
+# C3: user-tier secrets survive a save that echoed their redaction.
+with open(user, "w", encoding="utf-8") as fh:
+    fh.write('[portal]\npassword = "user-tier-portal-pw"\n\n[ai]\napi_key = "user-tier-api-key"\n')
+st, _, served = call("GET", "/portal/config", headers=auth)
+check(st == 200 and "user-tier-portal-pw" not in served and "user-tier-api-key" not in served,
+      "GET redacts the planted user-tier secrets")
+lines = served.split("\n")
 start = lines.index("[identity]")
-for i in range(start + 1, len(lines)):
-    if lines[i].startswith("["):
-        sys.exit("no username in [identity]")
-    if lines[i].startswith("username = "):
-        lines[i] = "username = \"test-operator\""
-        break
-print("\n".join(lines), end="")
-' > "$VALID_PAYLOAD"
+end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("[")), len(lines))
+lines[next(j for j in range(start + 1, end) if lines[j].startswith("username = "))] = 'username = "test-operator"'
+st, _, body = save("\n".join(lines))
+text = tier_text() or ""
+tier = tomllib.loads(text)
+check(st == 200 and tier.get("identity", {}).get("username") == "test-operator",
+      f"an edited echo saved as {{\"toml\": ...}} persists the edit (HTTP {st}: {body[:160]!r})")
+check(tier.get("portal", {}).get("password") == "user-tier-portal-pw"
+      and tier.get("ai", {}).get("api_key") == "user-tier-api-key",
+      f"user-tier portal.password and ai.api_key keep their real values ({text[:200]!r})")
+check("<redacted>" not in text and "host-tier-cookie-secret" not in text,
+      "neither the marker nor a lower-tier secret reaches the user tier")
+check("ports" not in tier, "unchanged [ports] stay in the lower tiers")
 
-SAVE_RESP="$(curl -s -w "\n%{http_code}" -X POST \
-    -H "Content-Type: application/toml" \
-    --data-binary "@${VALID_PAYLOAD}" \
-    "http://127.0.0.1:${TEST_PORT}/portal/config")"
+# Negative controls: none of these may write.
+st, _, _ = save('[broken_section\nmissing_bracket = "invalid"\n')
+check(st == 422, f"malformed TOML inside the envelope is 422 (HTTP {st})")
+st, _, _ = save("\n".join(lines), {**post_headers, "Origin": "http://evil.example"})
+check(st == 403, f"a cross-origin save is 403 (HTTP {st})")
+st, _, _ = save("\n".join(lines), {"Origin": origin, "Content-Type": "application/json"})
+check(st == 403, f"a save without the session is 403 (HTTP {st})")
+check(tier_text() == text, "the rejected saves left the user tier byte-identical")
+print(f"  [{label}] {fails} failed", flush=True)
+sys.exit(1 if fails else 0)
+PY
+    stop_server
+    return "$rc"
+}
 
-HTTP_STATUS="$(echo "$SAVE_RESP" | tail -n1)"
-BODY_RESP="$(echo "$SAVE_RESP" | sed '$d')"
-
-if [[ "$HTTP_STATUS" == "200" ]] && [[ -f "$TEST_PROFILE" ]]; then
-    _pass "POST /portal/config succeeded with HTTP 200 and created $TEST_PROFILE"
-    if grep -q "test-operator" "$TEST_PROFILE"; then
-        _pass "Persisted user tier contains the edited value"
-    else
-        _fail "Persisted user tier missing the edited value"
-    fi
-    if grep -q '^\[ports\]' "$TEST_PROFILE"; then
-        _fail "Unchanged [ports] were copied into the user tier"
-    else
-        _pass "Only the edit was persisted; unchanged sections stay in lower tiers"
-    fi
+status=0
+echo "[test-configurator-server] static: configurator asset"
+if [[ -f "$HTML_PATH" ]] && grep -q "<!DOCTYPE html>" "$HTML_PATH" && grep -q "mios" "$HTML_PATH"; then
+    echo "  [PASS] $HTML_PATH is an HTML5 document with MiOS bindings"
 else
-    _fail "POST /portal/config failed with HTTP $HTTP_STATUS: $BODY_RESP"
+    echo "  [FAIL] configurator asset missing or not HTML5: $HTML_PATH" >&2
+    status=1
 fi
 
-# Test 9: Negative Control - Reject invalid TOML syntax
-echo "[test-configurator-server] Test 9: Reject invalid TOML syntax (negative control)"
-INVALID_PAYLOAD='[broken_section
-missing_bracket = "invalid"
-'
-
-ERR_RESP="$(curl -s -w "\n%{http_code}" -X POST \
-    -H "Content-Type: application/toml" \
-    --data-binary "$INVALID_PAYLOAD" \
-    "http://127.0.0.1:${TEST_PORT}/portal/config")"
-
-ERR_STATUS="$(echo "$ERR_RESP" | tail -n1)"
-if [[ "$ERR_STATUS" == "422" ]]; then
-    _pass "POST /portal/config rejected malformed TOML with HTTP 422 Unprocessable Entity"
-else
-    _fail "POST /portal/config accepted malformed TOML (HTTP $ERR_STATUS, expected 422)"
+if [[ -x "$INSTALLED" && "$(readlink -f "$INSTALLED")" != "$(readlink -f "${MIOS_MIOSD_BIN:-/nonexistent}")" ]]; then
+    echo "[test-configurator-server] installed-compat tier: $INSTALLED (informational; never gates)"
+    if run_tier installed-compat "$INSTALLED"; then
+        echo "  [installed-compat] COMPATIBLE with the current contract"
+    else
+        echo "  [installed-compat] NOT COMPATIBLE with the current contract (an older image binary)"
+    fi
 fi
 
-echo "[test-configurator-server] === Test Results: $pass passed, $fail failed ==="
-if [[ $fail -gt 0 ]]; then
+if [[ -z "${MIOS_MIOSD_BIN:-}" ]]; then
+    echo "[test-configurator-server] candidate tier NOT RUN: set MIOS_MIOSD_BIN to a MiOS-DEV tree build of this checkout" >&2
+    exit 77
+fi
+if [[ ! -x "$MIOS_MIOSD_BIN" ]]; then
+    echo "[test-configurator-server] FAIL: MIOS_MIOSD_BIN=$MIOS_MIOSD_BIN is not an executable" >&2
     exit 1
 fi
-
-echo "[test-configurator-server] SUCCESS: All $pass tests passed (100% success)."
+echo "[test-configurator-server] candidate tier: $MIOS_MIOSD_BIN"
+run_tier candidate "$MIOS_MIOSD_BIN" || status=1
+if [[ "$status" -ne 0 ]]; then
+    echo "[test-configurator-server] FAIL: the candidate does not meet the contract" >&2
+    exit 1
+fi
+echo "[test-configurator-server] SUCCESS: the candidate meets the contract"

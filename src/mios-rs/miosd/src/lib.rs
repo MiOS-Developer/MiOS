@@ -854,18 +854,21 @@ pub mod server {
         toml::to_string(&merged).map_err(|e| format!("the merged config did not serialize: {e}"))
     }
 
+    /// What GET /portal/config serves in place of every secret value.
+    pub const REDACTED: &str = "<redacted>";
+
     pub fn redact_secrets(merged: &mut toml::Value) {
         if let Some(portal) = merged.get_mut("portal").and_then(toml::Value::as_table_mut) {
             if portal.contains_key("password") {
                 portal.insert(
                     "password".to_string(),
-                    toml::Value::String("<redacted>".to_string()),
+                    toml::Value::String(REDACTED.to_string()),
                 );
             }
             if portal.contains_key("secret") {
                 portal.insert(
                     "secret".to_string(),
-                    toml::Value::String("<redacted>".to_string()),
+                    toml::Value::String(REDACTED.to_string()),
                 );
             }
         }
@@ -874,7 +877,7 @@ pub mod server {
             if ai.contains_key("api_key") {
                 ai.insert(
                     "api_key".to_string(),
-                    toml::Value::String("<redacted>".to_string()),
+                    toml::Value::String(REDACTED.to_string()),
                 );
             }
         }
@@ -909,7 +912,7 @@ pub mod server {
                                 .is_some_and(|stripped| stripped.eq_ignore_ascii_case(k))
                     });
                     if matches_secret {
-                        *v = toml::Value::String("<redacted>".to_string());
+                        *v = toml::Value::String(REDACTED.to_string());
                     } else {
                         redact_table_recursive(v, secret_keys);
                     }
@@ -919,6 +922,50 @@ pub mod server {
                 for item in arr {
                     redact_table_recursive(item, secret_keys);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    /// A save that echoes GET /portal/config carries [`REDACTED`] where each
+    /// secret was. That marker means "unchanged": it takes back the live value
+    /// GET hid, so the delta keeps a user-tier secret and drops a lower-tier
+    /// one. With no live value at that path the marker is dropped. Either way
+    /// the marker itself is never written over portal.password, portal.secret,
+    /// ai.api_key or any other redacted key.
+    pub fn restore_redacted(posted: &mut toml::Value, live: Option<&toml::Value>) {
+        match posted {
+            toml::Value::Table(table) => {
+                let keys: Vec<String> = table.keys().cloned().collect();
+                for k in keys {
+                    let live_v = live.and_then(|l| l.get(k.as_str()));
+                    if table.get(&k).and_then(toml::Value::as_str) == Some(REDACTED) {
+                        match live_v {
+                            Some(v) => {
+                                table.insert(k, v.clone());
+                            }
+                            None => {
+                                table.remove(&k);
+                            }
+                        }
+                    } else if let Some(v) = table.get_mut(&k) {
+                        restore_redacted(v, live_v);
+                    }
+                }
+            }
+            toml::Value::Array(items) => {
+                let live_items = live.and_then(toml::Value::as_array);
+                let mut kept = Vec::with_capacity(items.len());
+                for (i, mut item) in std::mem::take(items).into_iter().enumerate() {
+                    let live_item = live_items.and_then(|l| l.get(i));
+                    if item.as_str() == Some(REDACTED) {
+                        kept.extend(live_item.cloned());
+                        continue;
+                    }
+                    restore_redacted(&mut item, live_item);
+                    kept.push(item);
+                }
+                *items = kept;
             }
             _ => {}
         }
@@ -1088,14 +1135,17 @@ pub mod server {
 
     /// Persist a configurator save into the user tier: only what differs from
     /// vendor..host.d (ports derived), written atomically -- the same contract as
-    /// agent-pipe's write_user_config. Returns the path and bytes written.
+    /// agent-pipe's write_user_config. Redaction markers are restored before
+    /// the diff (see [`restore_redacted`]). Returns the path and bytes written.
     pub fn save_user_tier(
         config: &ConfigServerConfig,
         body: &str,
     ) -> Result<(PathBuf, usize), String> {
-        let posted = body
+        let mut posted = body
             .parse::<toml::Value>()
             .map_err(|e| format!("Invalid TOML: {e}"))?;
+        let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false).ok();
+        restore_redacted(&mut posted, live.as_ref());
         let base = mios_resolver::resolve_below_user(config.ssot_root.as_deref())
             .map_err(|e| format!("the lower tiers did not resolve: {e}"))?;
         let delta = mios_resolver::merge::diff_against(&posted, &base)
@@ -1225,14 +1275,23 @@ pub mod server {
                 r
             }
 
+            // The same [portal].require_login gate as /configure and POST: the
+            // layered config is not served to an unauthenticated caller.
             ("GET", "/portal/config") | ("HEAD", "/portal/config") => {
-                match read_layered_toml(config) {
-                    Ok(toml_data) => sec_resp(HttpResponse::toml(200, "OK", toml_data)),
-                    Err(e) => sec_resp(HttpResponse::json(
-                        500,
-                        "Internal Server Error",
-                        serde_json::json!({ "errors": [e] }).to_string(),
-                    )),
+                if config.require_login && !is_authenticated(req, config) {
+                    sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                        "text/plain",
+                        b"Forbidden: Missing or invalid session token".to_vec(),
+                    ))
+                } else {
+                    match read_layered_toml(config) {
+                        Ok(toml_data) => sec_resp(HttpResponse::toml(200, "OK", toml_data)),
+                        Err(e) => sec_resp(HttpResponse::json(
+                            500,
+                            "Internal Server Error",
+                            serde_json::json!({ "errors": [e] }).to_string(),
+                        )),
+                    }
                 }
             }
 
@@ -1815,9 +1874,29 @@ agent_pipe = 8700
                 session_token: Some("valid-session-token-abc".to_string()),
             };
 
-            // 1. Positive GET: Redacts all secret values
+            // 1. Negative GET: require_login gates the layered config itself.
             let mut get_headers = HashMap::new();
             get_headers.insert("host".to_string(), "localhost:8700".to_string());
+            let anon_req = HttpRequest {
+                method: "GET".to_string(),
+                path: "/portal/config".to_string(),
+                query: None,
+                headers: get_headers.clone(),
+                body: Vec::new(),
+            };
+            let anon_resp = handle_request(&anon_req, &config);
+            assert_eq!(anon_resp.status_code, 403);
+            let anon_body = String::from_utf8_lossy(&anon_resp.body);
+            assert!(
+                !anon_body.contains("[identity]") && !anon_body.contains("initial_user"),
+                "an unauthenticated GET served the config: {anon_body}"
+            );
+
+            // 2. Positive GET (session cookie): redacts all secret values
+            get_headers.insert(
+                "cookie".to_string(),
+                "mios_portal=valid-session-token-abc".to_string(),
+            );
             let get_req = HttpRequest {
                 method: "GET".to_string(),
                 path: "/portal/config".to_string(),
@@ -1855,7 +1934,7 @@ agent_pipe = 8700
                 "GET /portal/config should contain redacted placeholder: {get_body}"
             );
 
-            // 2. Positive POST: Same-origin JSON POST with session cookie succeeds and persists edits
+            // 3. Positive POST: Same-origin JSON POST with session cookie succeeds and persists edits
             let mut post_headers = HashMap::new();
             post_headers.insert("host".to_string(), "localhost:8700".to_string());
             post_headers.insert("origin".to_string(), "http://localhost:8700".to_string());
@@ -1897,6 +1976,296 @@ agent_pipe = 8700
                 saved_content.contains("updated_operator"),
                 "Persisted user toml does not contain updated_operator: {saved_content}"
             );
+        }
+
+        fn request(
+            method: &str,
+            path: &str,
+            query: Option<&str>,
+            headers: &[(&str, &str)],
+            body: &[u8],
+        ) -> HttpRequest {
+            HttpRequest {
+                method: method.to_string(),
+                path: path.to_string(),
+                query: query.map(str::to_string),
+                headers: headers
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                body: body.to_vec(),
+            }
+        }
+
+        fn gated_config(root: &Path, user: PathBuf, require_login: bool) -> ConfigServerConfig {
+            ConfigServerConfig {
+                bind_addr: "127.0.0.1:8700".to_string(),
+                html_path: root.join("mios.html"),
+                user_toml_path: user,
+                max_body_bytes: 1 << 20,
+                ssot_root: Some(root.to_path_buf()),
+                allowlist_hosts: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+                require_login,
+                session_token: Some("gate-token-7f3a".to_string()),
+            }
+        }
+
+        #[test]
+        fn config_server_get_portal_config_requires_login_like_configure() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            fs::create_dir_all(root.join("usr/share/mios")).unwrap_or_else(|e| panic!("{}", e));
+            fs::write(
+                root.join("usr/share/mios/mios.toml"),
+                "[identity]\nmios_user = \"gate-user\"\n[ports]\na = 1\n",
+            )
+            .unwrap_or_else(|e| panic!("{}", e));
+            let config = gated_config(root, root.join("u.toml"), true);
+            let host = ("host", "localhost:8700");
+
+            for method in ["GET", "HEAD"] {
+                for (headers, query) in [
+                    (vec![host], None),
+                    (vec![host, ("cookie", "mios_portal=wrong")], None),
+                    (vec![host, ("authorization", "Bearer wrong")], None),
+                    (vec![host], Some("token=wrong")),
+                ] {
+                    let resp = handle_request(
+                        &request(method, "/portal/config", query, &headers, b""),
+                        &config,
+                    );
+                    assert_eq!(resp.status_code, 403, "{method} {headers:?} {query:?}");
+                    let body = String::from_utf8_lossy(&resp.body);
+                    assert!(
+                        !body.contains("gate-user"),
+                        "{method} without a valid session served the config: {body}"
+                    );
+                    if method == "HEAD" {
+                        assert!(resp.body.is_empty(), "HEAD carried a body: {body}");
+                    }
+                }
+                for (headers, query) in [
+                    (vec![host, ("cookie", "mios_portal=gate-token-7f3a")], None),
+                    (
+                        vec![host, ("authorization", "Bearer gate-token-7f3a")],
+                        None,
+                    ),
+                    (vec![host, ("x-portal-token", "gate-token-7f3a")], None),
+                    (vec![host], Some("token=gate-token-7f3a")),
+                ] {
+                    let resp = handle_request(
+                        &request(method, "/portal/config", query, &headers, b""),
+                        &config,
+                    );
+                    assert_eq!(resp.status_code, 200, "{method} {headers:?} {query:?}");
+                    if method == "GET" {
+                        assert!(String::from_utf8_lossy(&resp.body).contains("gate-user"));
+                    } else {
+                        assert!(resp.body.is_empty());
+                    }
+                }
+            }
+
+            // require_login = false opens it, exactly as it opens /configure.
+            let open = gated_config(root, root.join("u.toml"), false);
+            let resp = handle_request(&request("GET", "/portal/config", None, &[host], b""), &open);
+            assert_eq!(resp.status_code, 200);
+        }
+
+        #[test]
+        fn restore_redacted_takes_the_live_value_or_drops_the_marker() {
+            let live: toml::Value = r#"
+[portal]
+password = "live-pw"
+user = "op"
+[[remotes]]
+name = "a"
+github_token = "ghp_live_a"
+[[remotes]]
+name = "b"
+github_token = "ghp_live_b"
+[env]
+list = ["x"]
+"#
+            .parse()
+            .unwrap_or_else(|e| panic!("{e}"));
+            let mut posted: toml::Value = r#"
+[portal]
+password = "<redacted>"
+secret = "<redacted>"
+user = "edited"
+[[remotes]]
+name = "a"
+github_token = "<redacted>"
+[[remotes]]
+name = "b"
+github_token = "<redacted>"
+[[remotes]]
+name = "c"
+github_token = "<redacted>"
+[env]
+list = ["<redacted>", "<redacted>", "kept"]
+"#
+            .parse()
+            .unwrap_or_else(|e| panic!("{e}"));
+            restore_redacted(&mut posted, Some(&live));
+            assert_eq!(posted["portal"]["password"].as_str(), Some("live-pw"));
+            assert!(posted["portal"].get("secret").is_none(), "{posted}");
+            assert_eq!(posted["portal"]["user"].as_str(), Some("edited"));
+            assert_eq!(
+                posted["remotes"][0]["github_token"].as_str(),
+                Some("ghp_live_a")
+            );
+            assert_eq!(
+                posted["remotes"][1]["github_token"].as_str(),
+                Some("ghp_live_b")
+            );
+            assert_eq!(posted["remotes"][2]["name"].as_str(), Some("c"));
+            assert!(
+                posted["remotes"][2].get("github_token").is_none(),
+                "{posted}"
+            );
+            let list: Vec<&str> = posted["env"]["list"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{posted}"))
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect();
+            assert_eq!(list, ["x", "kept"]);
+            assert!(!toml::to_string(&posted)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .contains(REDACTED));
+
+            // No live config at all: every marker is dropped, nothing else is.
+            let mut orphan: toml::Value = "[ai]\napi_key = \"<redacted>\"\nendpoint = \"e\"\n"
+                .parse()
+                .unwrap_or_else(|e| panic!("{e}"));
+            restore_redacted(&mut orphan, None);
+            assert!(orphan["ai"].get("api_key").is_none());
+            assert_eq!(orphan["ai"]["endpoint"].as_str(), Some("e"));
+        }
+
+        #[test]
+        fn config_server_save_echoing_the_redacted_get_never_writes_the_marker() {
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
+            let root = tmp_dir.path();
+            fs::create_dir_all(root.join("usr/share/mios")).unwrap_or_else(|e| panic!("{}", e));
+            fs::create_dir_all(root.join("etc/mios")).unwrap_or_else(|e| panic!("{}", e));
+            fs::write(
+                root.join("usr/share/mios/mios.toml"),
+                r#"
+[identity]
+mios_user = "echo-user"
+[portal]
+require_login = true
+password = "vendor-portal-pw"
+secret = ""
+[ai]
+api_key = "vendor-api-key"
+endpoint = "vendor"
+[security.secret_keys]
+keys = ["MIOS_GITHUB_TOKEN"]
+[[remotes]]
+name = "origin"
+github_token = "ghp_vendor_array"
+[ports]
+a = 1
+"#,
+            )
+            .unwrap_or_else(|e| panic!("{}", e));
+            fs::write(
+                root.join("etc/mios/mios.toml"),
+                "[ai]\napi_key = \"host-api-key\"\n",
+            )
+            .unwrap_or_else(|e| panic!("{}", e));
+            let user = root.join("home/.config/mios/mios.toml");
+            let config = gated_config(root, user.clone(), true);
+            let cookie = ("cookie", "mios_portal=gate-token-7f3a");
+            let host = ("host", "localhost:8700");
+
+            let secrets = [
+                "vendor-portal-pw",
+                "vendor-api-key",
+                "host-api-key",
+                "ghp_vendor_array",
+            ];
+
+            let get = handle_request(
+                &request("GET", "/portal/config", None, &[host, cookie], b""),
+                &config,
+            );
+            assert_eq!(get.status_code, 200);
+            let served = String::from_utf8_lossy(&get.body).to_string();
+            for secret in secrets {
+                assert!(!served.contains(secret), "GET leaked {secret}: {served}");
+            }
+            assert!(served.contains(REDACTED));
+
+            let post = |toml_text: &str| {
+                let body = serde_json::json!({ "toml": toml_text }).to_string();
+                handle_request(
+                    &request(
+                        "POST",
+                        "/portal/config",
+                        None,
+                        &[
+                            host,
+                            cookie,
+                            ("origin", "http://localhost:8700"),
+                            ("content-type", "application/json"),
+                        ],
+                        body.as_bytes(),
+                    ),
+                    &config,
+                )
+            };
+
+            // A no-edit save of the echo writes nothing: every marker resolves
+            // to the live value, which equals the tiers below the user tier.
+            let unchanged = post(&served);
+            assert_eq!(
+                unchanged.status_code,
+                200,
+                "{}",
+                String::from_utf8_lossy(&unchanged.body)
+            );
+            let reply: serde_json::Value =
+                serde_json::from_slice(&unchanged.body).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(reply["bytes"].as_u64(), Some(0), "{reply}");
+            assert_eq!(
+                fs::read_to_string(&user).unwrap_or_else(|e| panic!("{e}")),
+                ""
+            );
+
+            // One edit in the echo persists exactly that edit.
+            let edited = served.replace("mios_user = \"echo-user\"", "mios_user = \"echo-edited\"");
+            assert_ne!(edited, served);
+            let saved = post(&edited);
+            assert_eq!(
+                saved.status_code,
+                200,
+                "{}",
+                String::from_utf8_lossy(&saved.body)
+            );
+            let text = fs::read_to_string(&user).unwrap_or_else(|e| panic!("{e}"));
+            assert!(
+                !text.contains(REDACTED),
+                "the marker reached the user tier: {text}"
+            );
+            for secret in secrets {
+                assert!(
+                    !text.contains(secret),
+                    "{secret} was copied into the user tier: {text}"
+                );
+            }
+            let tier: toml::Value = text.parse().unwrap_or_else(|e| panic!("{e}: {text}"));
+            assert_eq!(tier["identity"]["mios_user"].as_str(), Some("echo-edited"));
+            for unchanged_table in ["portal", "ai", "remotes", "ports", "security"] {
+                assert!(
+                    tier.get(unchanged_table).is_none(),
+                    "{unchanged_table}: {text}"
+                );
+            }
         }
 
         #[test]
