@@ -74,7 +74,7 @@ enum NativeKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SceneSubject {
     Live(u64),
-    Roster(usize),
+    Roster,
     Studio,
 }
 
@@ -647,6 +647,9 @@ impl Ui {
         } else {
             world_yaw as i32
         };
+        if self.camera_subject_cut.get() {
+            return to as u16;
+        }
         let turn = (to - from + 540) % 360 - 180;
         (from + turn * i32::from(self.camera_blend) / 100).rem_euclid(360) as u16
     }
@@ -1215,7 +1218,7 @@ impl Ui {
             "Enter: Choose\nEsc: Back".into()
         };
         screen.render_widget(
-            Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
             controls,
         );
     }
@@ -1249,7 +1252,7 @@ impl Ui {
         // Replace the old whole-row targets with exactly the painted buttons.
         self.control_targets.borrow_mut().clear();
         screen.render_widget(Clear, area);
-        let style = Style::default().fg(colors.ink(13)).bg(colors.background);
+        let style = Style::default().fg(colors.ink(7)).bg(colors.background);
         for (offset, label, action) in [(0, "[<]", Action::Previous), (3, "[>]", Action::Next)] {
             let rect = Rect::new(area.x + offset, area.y, 3, 1);
             screen.render_widget(Paragraph::new(label).style(style), rect);
@@ -2339,7 +2342,7 @@ impl Ui {
                     )
                 };
                 screen.render_widget(
-                    Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                    Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
                     inner,
                 );
                 return;
@@ -2558,14 +2561,14 @@ impl Ui {
         } else {
             "O Menu Esc Back ? Help | Arrows/Tab Enter | Q Quit".into()
         };
-        lines.push(Line::from(navigation.clone()).style(Style::default().fg(colors.ink(13))));
+        lines.push(Line::from(navigation.clone()).style(Style::default().fg(colors.ink(7))));
         lines.push(
             Line::from(if self.game.paused {
                 "P Resume / care paused / ? Help".to_owned()
             } else {
                 self.controller_status.clone()
             })
-            .style(Style::default().fg(colors.ink(13))),
+            .style(Style::default().fg(colors.ink(7))),
         );
         screen.render_widget(Paragraph::new(lines), actions);
         if actions.height > 2 {
@@ -2739,7 +2742,7 @@ impl Ui {
                 )
             };
             screen.render_widget(
-                Paragraph::new(hint.clone()).style(Style::default().fg(colors.ink(13))),
+                Paragraph::new(hint.clone()).style(Style::default().fg(colors.ink(7))),
                 controls,
             );
             self.care_targets.borrow_mut().push((
@@ -3050,7 +3053,7 @@ impl Ui {
             ]
         };
         screen.render_widget(
-            Paragraph::new(hint_lines.join("\n")).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hint_lines.join("\n")).style(Style::default().fg(colors.ink(7))),
             footer,
         );
         let action_row = if narrow_controls {
@@ -3239,10 +3242,10 @@ impl Ui {
                 } else {
                     format!("[{back}] Back / Tab")
                 })
-                .style(Style::default().fg(colors.ink(13))),
+                .style(Style::default().fg(colors.ink(7))),
             );
         } else if !compact && lines.len() < usize::from(body.height) {
-            lines.push(Line::from(self.notice.clone()).style(Style::default().fg(colors.ink(13))));
+            lines.push(Line::from(self.notice.clone()).style(Style::default().fg(colors.ink(7))));
         }
         screen.render_widget(
             Paragraph::new(lines).style(Style::default().fg(colors.ink(2)).bg(colors.background)),
@@ -3459,7 +3462,7 @@ impl Ui {
             },
         );
         screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(7))),
             controls,
         );
     }
@@ -3515,7 +3518,7 @@ impl Ui {
             header,
         );
         screen.render_widget(
-            Paragraph::new(self.notice.clone()).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(self.notice.clone()).style(Style::default().fg(colors.ink(7))),
             notice,
         );
         let mut entries = Vec::new();
@@ -3601,7 +3604,7 @@ impl Ui {
             },
         );
         screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(7))),
             controls,
         );
     }
@@ -3683,11 +3686,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(2))),
             info,
         );
-        self.set_scene_for_stage(
-            room,
-            Some(Stage::Adult),
-            SceneSubject::Roster(self.menu_selected),
-        );
+        self.set_scene_for_stage(room, Some(Stage::Adult), SceneSubject::Roster);
         let expression = Expression::Happy;
         let appearance = Appearance {
             shape: character.shape,
@@ -3782,7 +3781,7 @@ impl Ui {
             },
         );
         screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hints).style(Style::default().fg(colors.ink(7))),
             controls,
         );
         self.menu_controls(controls);
@@ -3833,7 +3832,7 @@ impl Ui {
                 },
             );
             screen.render_widget(
-                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
                 controls,
             );
             self.menu_controls(controls);
@@ -3868,7 +3867,7 @@ impl Ui {
             |pad| format!("[{}] New pet / Y\n[{}] Keep / Esc", pad.accept, pad.back),
         );
         screen.render_widget(
-            Paragraph::new(prompt).style(Style::default().fg(colors.ink(13)).bg(colors.background)),
+            Paragraph::new(prompt).style(Style::default().fg(colors.ink(7)).bg(colors.background)),
             controls,
         );
         self.menu_controls(controls);
@@ -3999,7 +3998,7 @@ impl Ui {
             );
             let footer = Rect::new(body.x, body.bottom() - 1, body.width, 1);
             screen.render_widget(
-                Paragraph::new("Esc: Back").style(Style::default().fg(colors.ink(13))),
+                Paragraph::new("Esc: Back").style(Style::default().fg(colors.ink(7))),
                 footer,
             );
             self.control_targets
@@ -4051,7 +4050,7 @@ impl Ui {
             let message = self.seed_entry.error().unwrap_or(&self.seed_message);
             screen.render_widget(
                 Paragraph::new(frame_label(message, body.width, self.frame / 20))
-                    .style(Style::default().fg(colors.ink(13))),
+                    .style(Style::default().fg(colors.ink(7))),
                 Rect::new(body.x, row + 1, body.width, 1),
             );
         }
@@ -4069,7 +4068,7 @@ impl Ui {
             for (label, edit) in buttons {
                 let button = Rect::new(x, body.bottom() - 3, label.len() as u16, 1);
                 screen.render_widget(
-                    Paragraph::new(label).style(Style::default().fg(colors.ink(13))),
+                    Paragraph::new(label).style(Style::default().fg(colors.ink(7))),
                     button,
                 );
                 self.seed_edit_targets.borrow_mut().push((button, edit));
@@ -4097,7 +4096,7 @@ impl Ui {
                 )
             };
             screen.render_widget(
-                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
                 footer,
             );
             if rows == 2 {
@@ -4198,7 +4197,7 @@ impl Ui {
             "Up/Down: More\nK Seed / Esc Back".into()
         };
         screen.render_widget(
-            Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
             footer,
         );
         self.control_targets.borrow_mut().push((
@@ -4378,7 +4377,7 @@ impl Ui {
                 "Left/Right: reaction   Up/Down: life stage\nEnter/Space: 8-bit / 16-bit   Esc: return".into()
             };
             screen.render_widget(
-                Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+                Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
                 controls,
             );
             self.menu_controls(controls);
@@ -4701,13 +4700,13 @@ impl Ui {
                     .collect::<Vec<_>>();
                 let rows = lines.len() as u16;
                 screen.render_widget(
-                    Paragraph::new(lines).style(Style::default().fg(colors.ink(13))),
+                    Paragraph::new(lines).style(Style::default().fg(colors.ink(7))),
                     Rect::new(body.x, controls.y.saturating_sub(rows), body.width, rows),
                 );
             }
         }
         screen.render_widget(
-            Paragraph::new(hint).style(Style::default().fg(colors.ink(13))),
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
             controls,
         );
         self.menu_controls(controls);
@@ -8610,8 +8609,116 @@ mod console_shell_regressions {
                 }
             }
             drop(targets);
+            let previous_selection = ui.selected;
             ui.handle(key(KeyCode::Tab), &config.game);
+            assert_ne!(ui.selected, previous_selection);
         }
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn subject_camera_cut_includes_voxel_yaw_and_roster_cursor_keeps_new_camera_requests() {
+        let (config, mut ui) = fixture();
+        ui.camera_view = CameraView::Pet;
+        ui.camera_from_view = CameraView::Pet;
+        ui.camera_transition_frames = 8;
+        ui.yaw = 91;
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let world_yaw = (ui.yaw + ui.orbit_degrees) % 360;
+        ui.frame = 16;
+        ui.change_camera(CameraView::Face, 100);
+        assert_ne!(ui.camera_yaw(ui.yaw), 0);
+        ui.open(Menu::Roster);
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        assert_eq!(ui.camera().transition_percent, 100);
+        assert_eq!(ui.camera_yaw(ui.yaw), 0);
+        ui.change_camera(CameraView::Pet, 100);
+        ui.handle(key(KeyCode::Down), &config.game);
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        assert_eq!(ui.camera().transition_percent, 0);
+        ui.animate(20);
+        assert!((1..100).contains(&ui.camera().transition_percent));
+        assert!((1..world_yaw).contains(&ui.camera_yaw(ui.yaw)));
+        ui.handle(key(KeyCode::Esc), &config.game);
+        draw(&ui, &config, 80, 32, Renderer::Ascii);
+        assert_eq!(ui.camera_yaw(ui.yaw), world_yaw);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn four_color_navigation_hints_stay_readable_in_live_and_menu_layouts() {
+        let (mut config, mut ui) = fixture();
+        config.palette = ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"]
+            .map(String::from)
+            .to_vec();
+        config.background = "#0f380f".into();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let game = ui.game.clone();
+        let luminance = |color: ratatui::style::Color| {
+            let ratatui::style::Color::Rgb(r, g, b) = color else {
+                panic!("RGB fixture changed depth");
+            };
+            let linear = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        };
+        let mut checked = 0;
+        for menu in [
+            None,
+            Some(Menu::Home),
+            Some(Menu::Graphics),
+            Some(Menu::Gallery),
+        ] {
+            for (width, height) in [(20, 10), (80, 32)] {
+                ui.menu = menu;
+                ui.hud_mode = HudMode::Full;
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let mut case_checked = 0;
+                for y in 0..height {
+                    let line = (0..width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>();
+                    for label in [
+                        "O Menu",
+                        "Esc Back",
+                        "Esc: Back",
+                        "Enter: OK",
+                        "Esc: return",
+                        "Esc: back",
+                    ] {
+                        if let Some(x) = line.find(label) {
+                            let cell = &buffer[(x as u16, y)];
+                            let (a, b) = (luminance(cell.fg), luminance(cell.bg));
+                            let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                            assert!(
+                                contrast >= 4.5,
+                                "{menu:?} {width}x{height} {label}: contrast{contrast}"
+                            );
+                            checked += 1;
+                            case_checked += 1;
+                        }
+                    }
+                }
+                assert!(
+                    case_checked > 0,
+                    "{menu:?} {width}x{height}: no visible hint inspected"
+                );
+            }
+        }
+        assert!(checked >= 8);
         assert_eq!(ui.game, game);
     }
 }
