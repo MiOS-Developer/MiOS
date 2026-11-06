@@ -290,6 +290,9 @@ impl ControllerMonitor {
     /// protocol P9): None unless Inputd verified a camera app for this focus.
     /// Same freshness rule as `poll`; never grants ownership or waits.
     pub fn camera(&self) -> Option<String> {
+        if let Ok(sample) = self.result.try_recv() {
+            return sample.camera;
+        }
         self.fresh_sample().and_then(|sample| sample.camera.clone())
     }
 
