@@ -492,6 +492,8 @@ class tpf_TestRealTree(unittest.TestCase):
 """Tests for the allocated-but-unbound port gate."""
 
 import os
+import subprocess
+import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -549,6 +551,51 @@ class tpb_TestClassify(unittest.TestCase):
     def test_whitespace_entries_are_ignored(self):
         self.assertEqual(tpb_mod.pb_classify(tpb_data({"a": 1, "b": 2}, [" b ", ""]), {"a"}), [])
 
+class tpb_TestRustLookups(unittest.TestCase):
+    # The shape miosd rde.rs reads [ports].devpod_agent with.
+    BOUND = ('if let Some(ports_tab) = doc.get("ports").and_then(|v| v.as_table()) {\n'
+             '    if let Some(p) = ports_tab.get("devpod_agent").and_then(|v| v.as_integer()) {}\n'
+             '}\n')
+
+    def test_a_binding_of_the_ports_table_indexed_by_a_key_counts(self):
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(self.BOUND), {"devpod_agent"})
+
+    def test_a_multiline_binding_counts(self):
+        src = 'let ports = parsed\n    .get("ports")\n    .and_then(|p| p.as_table())?;\nports.get("guacd");\n'
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), {"guacd"})
+
+    def test_a_chained_lookup_counts(self):
+        src = 'merged.get("ports").and_then(|p| p.get("redis"))'
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), {"redis"})
+
+    def test_the_same_key_on_another_table_binds_nothing(self):
+        # NEGATIVE: the key name alone is not a [ports] read.
+        src = self.BOUND.replace('doc.get("ports")', 'doc.get("rde")')
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set())
+        src = 'let Some(rde_tab) = doc.get("rde"); rde_tab.get("devpod_agent");'
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set())
+
+    def test_a_lookup_before_the_table_is_bound_binds_nothing(self):
+        src = 'ports_tab.get("devpod_agent");\nlet Some(ports_tab) = doc.get("ports");\n'
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set())
+
+    def test_a_lookup_only_in_the_test_module_binds_nothing(self):
+        src = 'fn main() {}\n#[cfg(test)]\nmod tests {\n' + self.BOUND + '}\n'
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set())
+
+    def test_rust_integration_tests_and_other_languages_bind_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            for rel in ("crate/tests/it.rs", "src/consumer.py", "src/consumer.rs"):
+                os.makedirs(os.path.join(root, os.path.dirname(rel)), exist_ok=True)
+                with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                    fh.write(self.BOUND.replace("devpod_agent", os.path.basename(rel).split(".")[0]))
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "-C", root, "add", "-A"], check=True)
+            found = tpb_mod.pb_referenced_ports(root, {"it", "consumer"})
+        # Only src/consumer.rs is a Rust consumer; the .py file and the
+        # integration test name no MIOS_PORT_ variable and are not consumers.
+        self.assertEqual(found, {"consumer"})
+
 class tpb_TestSkipSurfaces(unittest.TestCase):
     def test_ssot_and_docs_cannot_prove_a_binding(self):
         # A port mentioned only where ports are DESCRIBED is still unbound.
@@ -579,6 +626,22 @@ class tpb_TestShippedTree(unittest.TestCase):
         ref = tpb_mod.pb_referenced_ports(tpb__ROOT, tpb_mod.pb_port_keys(self.real))
         for k in ("guacd", "redis", "pxe_hub_api", "forge_ssh"):
             self.assertIn(k, ref, k)
+
+    def test_devpod_agent_is_bound_by_its_rust_consumer_not_the_register(self):
+        # miosd rde reads [ports].devpod_agent by key; that read is what binds
+        # the port, so it never needs a [ports].unbound entry.
+        self.assertNotIn("devpod_agent", tpb_mod.pb_register(self.real))
+        with open(os.path.join(tpb__ROOT, "src/mios-rs/miosd/src/rde.rs"),
+                  encoding="utf-8") as fh:
+            rde = fh.read()
+        self.assertIn("devpod_agent", tpb_mod.pb_rust_port_lookups(rde))
+        # NEGATIVE: the same consumer reading the key off another table would
+        # leave the port bound by nothing, and the gate must then fail.
+        moved = rde.replace('.get("ports")', '.get("rde_ports")')
+        self.assertNotIn("devpod_agent", tpb_mod.pb_rust_port_lookups(moved))
+        ref = tpb_mod.pb_referenced_ports(tpb__ROOT, tpb_mod.pb_port_keys(self.real))
+        self.assertTrue(any("'devpod_agent'" in v for v in tpb_mod.pb_classify(
+            self.real, ref - {"devpod_agent"})))
 
 
 import importlib.util

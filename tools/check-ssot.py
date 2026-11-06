@@ -627,8 +627,31 @@ def pb__tracked_files(root: str) -> list:
                          capture_output=True, text=True, check=False).stdout
     return [f for f in out.split("\n") if f and not f.startswith(pb_SKIP_PREFIXES)]
 
+# A Rust consumer that reads a key straight out of the merged SSOT's [ports]
+# table binds that port as surely as one that reads MIOS_PORTS_<KEY>, but names
+# no variable. Two idioms count: a binding of the table that is then indexed
+# by a string literal (`let Some(t) = doc.get("ports")...; t.get("key")`), and
+# a chain that indexes it in the same expression
+# (`.get("ports").and_then(|p| p.get("key"))`). A key read from any other
+# table, or only inside the #[cfg(test)] module, binds nothing.
+pb__RS_TABLE = re.compile(
+    r"\blet\s+(?:Some\(\s*)?(\w+)\s*\)?\s*=\s*\w+\s*\.get\(\s*\"ports\"\s*\)")
+pb__RS_CHAIN = re.compile(
+    r"\.get\(\s*\"ports\"\s*\)\s*\.and_then\(\s*\|(\w+)\|\s*\1\s*"
+    r"\.get\(\s*\"([a-z0-9_]+)\"\s*\)")
+
+def pb_rust_port_lookups(body: str) -> set:
+    """[ports] keys a Rust source reads by name outside its test module."""
+    body = body.split("#[cfg(test)]", 1)[0]
+    found = {m.group(2) for m in pb__RS_CHAIN.finditer(body)}
+    for m in pb__RS_TABLE.finditer(body):
+        lookup = re.compile(r"\b%s\s*\.get\(\s*\"([a-z0-9_]+)\"\s*\)" % re.escape(m.group(1)))
+        found |= {k.group(1) for k in lookup.finditer(body, m.end())}
+    return found
+
 def pb_referenced_ports(root: str, keys: set) -> set:
-    """Port keys whose MIOS_PORT_<KEY> appears in a file that could bind or dial it."""
+    """Port keys whose MIOS_PORT_<KEY> appears in a file that could bind or dial
+    it, or that a Rust consumer reads from the [ports] table directly."""
     wanted = {k.upper(): k for k in keys}
     pattern = re.compile(r"\bMIOS_(?:PORTS?)_([A-Z0-9_]+)\b")
     found = set()
@@ -643,6 +666,8 @@ def pb_referenced_ports(root: str, keys: set) -> set:
             key = wanted.get(m.group(1))
             if key:
                 found.add(key)
+        if rel.endswith(".rs") and "/tests/" not in "/" + rel:
+            found |= pb_rust_port_lookups(body) & keys
     return found
 
 def pb_classify(data: dict, referenced: set) -> list:
