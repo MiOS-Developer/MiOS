@@ -387,8 +387,10 @@ The compact HUD puts identity, stage, expression and needs into the viewport
 frame. Its landscape sidebar and portrait stack derive proportions from the
 existing [mcp.tmux.workspace] golden_ratio, resource_min_columns and
 portrait_ratio_percent SSOT fields. Tiny frames page needs; *=100 exactly.
-At smartwatch-sized12x6 clients the default Pet view adapts to a frontal Face
-view, with short selected-action and Menu prompts. Native tmux popups are used
+At smartwatch-sized 12x6 clients, Pet and Room framing adapt to a frontal
+Face view, with short selected-action and Menu prompts. Unhatched eggs retain
+whole-pet framing because they have no face surface. The selected larger view
+returns when the client grows. Native tmux popups are used
 only when the verified focused client fits; smaller clients use paged inline
 menus/dialogue. Reset requires a readable confirmation and cancels after a
 resize that hides it.
@@ -534,6 +536,9 @@ uses the same source pixel for material, face mapping and shading. Species and
 personality palette indices remain unchanged. The renderer shades their actual
 colors, and ASCII views use a tonal character ramp; monochrome retains its
 uncolored output. Facial ink stays separate from body illumination.
+Silhouettes use visible screen edges as well as model edges, retaining contrast
+against the room at larger zooms. Magnified, shaded body surfaces gain sparse
+ASCII texture; face glyphs, occluders and room cells retain their own rendering.
 
 The layered [tamagotchi.voxel_lighting] table and MiOS configurator control the
 ambient and directional light, contact shade, silhouette edge shade, view-space
@@ -549,6 +554,9 @@ and character previews. It responds to the actual terminal cell grid, renderer
 packing and camera zoom. Enlarging the terminal font reduces the available
 cells and selects coarse detail; restoring space selects finer detail. The HUD
 and menus reflow within that same viewport and show the effective mode.
+Frame headers use A8/A16 for automatic detail and M8/M16 for manual detail,
+reserving space for the pet name, stage, pause/death and illness indicators.
+At 12 cells wide, the stage is abbreviated and the detail badge appears once.
 
 The layered [tamagotchi.presentation] table owns automatic selection, the
 minimum packed-pixel dimensions and resize hysteresis. Graphics offers manual
@@ -800,3 +808,13 @@ birth identity, trained statistics and progress saves.
 The current simulation follows one local Mon. Large-room and multiplayer
 transport work must preserve this separation and the existing per-seat Inputd
 ownership contract; the camera controls do not establish network play.
+
+
+## Menu descriptions and constrained terminals
+
+Home, Care, Games and Graphics show a description when the frame has spare
+rows. Descriptions occupy only unused space above the controls, so adding one
+does not move a menu choice or create another touch target. Saved pets describe
+Quit as saving progress and keep birth-code import protected. Monochrome menus
+use reverse-video selection; colored menus select contrasting foreground and
+background colors from the active terminal palette.

@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
-| in_progress | 80 |
+| pending | 1747 |
+| in_progress | 82 |
 | completed | 1885 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3753 |
+| total | 3754 |
 
 0 record(s) carry at least one override.
 
@@ -4479,7 +4479,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3750` Overhaul the complete MiOS-Mon HUD and menus for consoles and remote viewports -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
 - `task_3751` Frame face close-ups around the Mon head and expose orbiting camera perspectives -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3752` Improve Mon silhouettes and voxel texture shading across terminal scales -- in_progress · owner mios-claude-continuation · P1 · size L
-- `task_3753` Condense HUD headers and expose contextual menu descriptions -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3753` Condense HUD headers and expose contextual menu descriptions -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3754` Keep tracked Kaomoji eyes and mouths legible across face zoom and detail modes -- in_progress · owner mios-claude-continuation · P1 · size L
 
 ## terminal
 

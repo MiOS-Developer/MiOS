@@ -4391,3 +4391,38 @@ Acceptance receipts under /home/mios/.local/state/mios/mios-mons-input-completio
  mios-resize-race-confirmed/, mios-headless-resize-stable/,
  mios-resize-artifact.json, mios-browser-pointer-artifact.json.
 The final main/live identities are recorded in mios-post-main-live.json.
+
+## MiOS-Mon crate formatting and live HUD review
+
+The complete game crate now follows workspace Rust2021 formatting in the
+standalone format-only commit2547e614. The local coding participant independently
+reproduced all ten formatted files; no game-format change from c7970dde was
+blindly merged. The original six non-game CI commits through e737e341 are
+integrated by7d38043bb; newer non-game/chrony work remains in its owner's lane.
+
+Source ef699f02c combines compact essential-first frame headers, spare-row menu
+descriptions, saved-mode description corrections, tiny unhatched-Egg framing,
+monochrome reverse selection, screen-space outlines and shaded body ASCII texture.
+It also adopts e039f89ed's proportional face atlas and connected native expression
+run. Locked rootless MiOS-DEV passed307unit+13CLI tests, full-crate formatting,
+all-targets Clippy-Dwarnings, release and static artifact checks. Exact candidate
+SHA256 eadf989d589a5a570f0cc67f2486db757beda644b6f18afe1102873f489132ab.
+Four broader gate diagnostic streams remain identical to the published baseline.
+
+The live candidate runs normally hatched Mimo513, paused, with no save in the
+existing visible mios-mons-console PiP and authenticated native ttyd localhost8310.
+Its separate descriptor and current receipts are under
+/home/mios/.local/state/mios/mios-mons-face-live/. The original installed ba5d
+release remains available in the retained published window until the next
+verified main publication and immediate live installation.
+A20x8 ASCII/mono PTY with graphical identity removed passed actual CSI/SGR
+navigation, release filtering, retained birth identity and before/after stty
+equality with normal exit0. Current browser matrix and additional zoom captures
+are still running; their receipts, not this intermediate note, establish results.
+
+Large-face visual acceptance is still open: the first color captures showed
+connected small text but unclear enlarged facial ink. Initial filenames200/400
+were requests, while their actual headers were150/250 because repeated key
+presses were filtered; those historical captures are preserved, and new
+separately spaced keypresses assert the actual zoom before capture. No claim of
+physical phone, controller, VT, ARM64, fleet or image acceptance follows.
