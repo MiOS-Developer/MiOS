@@ -549,7 +549,8 @@ impl Ui {
             // An unchanged target keeps the blend already in flight untouched.
             if target != old_target {
                 let _ = current;
-                self.camera_resize.set(Some((old_target.one_hot(), target, self.frame)));
+                self.camera_resize
+                    .set(Some((old_target.one_hot(), target, self.frame)));
             }
         }
     }
