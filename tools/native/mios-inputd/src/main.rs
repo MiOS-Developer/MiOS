@@ -306,11 +306,10 @@ fn run() -> Result<(), String> {
             serde_json::json!({"lua":mios_inputd::runtime::context_lua(&global),"executed":false})
         ),
         Operation::Context { lua: false } => {
-            let c = mios_inputd::runtime::context(&global)?;
             println!(
                 "{}",
-                serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture,"released":c.released,"controller_owner":if mios_inputd::router::Router::owns_controller(&c.name) {"app"} else {"mios"}})
-            );
+                mios_inputd::runtime::context_report(&global, &legacy)?
+            )
         }
         Operation::Window { mode } => {
             let (address, class) = mios_inputd::runtime::window_transaction(&mode, &global, None)?;
@@ -372,7 +371,21 @@ fn run() -> Result<(), String> {
                 Event(mios_inputd::router::Event),
                 Tick { tick_ms: u64 },
                 Context { context: String },
+                App(AppStep),
             }
+            /// P9: {"app": "mon"} or {"app": null}: the foreground app the context worker verified for the focus.
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct AppStep {
+                app: serde_json::Value,
+            }
+            let app_name = |v: &serde_json::Value| -> Result<Option<String>, String> {
+                match v {
+                    serde_json::Value::Null => Ok(None),
+                    serde_json::Value::String(s) => Ok(Some(s.clone())),
+                    _ => Err("replay app: a [nav.apps] name or null".into()),
+                }
+            };
             #[derive(serde::Deserialize)]
             struct Input {
                 context: String,
@@ -390,6 +403,9 @@ fn run() -> Result<(), String> {
                 tmux_client: Option<String>,
                 #[serde(default)]
                 analog_triggers: bool,
+                /// P9: the verified foreground app of the initial focus.
+                #[serde(default)]
+                app: Option<String>,
             }
             let mut text = String::new();
             std::io::stdin()
@@ -433,6 +449,8 @@ fn run() -> Result<(), String> {
             router.analog_triggers = input.analog_triggers;
             router.tmux = client.is_some();
             router.set_context(&input.context);
+            let target = router.target().cloned();
+            router.set_app(input.app.as_deref(), target.as_ref());
             let mut output = mios_inputd::router::Output::default();
             let mut now = 1000u64;
             for event in input.events {
@@ -460,6 +478,11 @@ fn run() -> Result<(), String> {
                         Some((format!("0x{context}"), 1)),
                         false,
                     )),
+                    Step::App(step) => {
+                        let app = app_name(&step.app)?;
+                        let target = router.target().cloned();
+                        output.extend(router.set_app(app.as_deref(), target.as_ref()));
+                    }
                 }
             }
             // The router clamps one tick to 100 ms (a stalled loop never jumps), so a longer replay clock advances in
@@ -484,12 +507,12 @@ fn run() -> Result<(), String> {
                 .collect();
             println!(
                 "{}",
-                serde_json::json!({"output":output,"pad":router.pad,"cursor":router.cursor,"profile":router.nav_profile(),"resolved":resolved,"executed":false})
+                serde_json::json!({"output":output,"pad":router.pad,"cursor":router.cursor,"profile":router.nav_profile(),"app":router.app(),"camera":router.camera(),"resolved":resolved,"executed":false})
             );
         }
         Operation::Check => println!(
             "{}",
-            serde_json::json!({"valid":true,"bindings":global.bindings.len(),"controller":global.controller.enabled,"exclusive_grab":global.controller.exclusive_grab,"unresolved_actions":unresolved_actions(&global)})
+            serde_json::json!({"valid":true,"bindings":global.bindings.len(),"controller":global.controller.enabled,"exclusive_grab":global.controller.exclusive_grab,"unresolved_actions":unresolved_actions(&global),"nav_apps":global.controller.nav.apps.keys().collect::<Vec<_>>(),"nav_app_error":global.controller.nav.app_error})
         ),
         #[cfg(target_os = "linux")]
         Operation::Observe { device, seconds }
