@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-06T18:53:57.022749+00:00",
-  "total_artifacts": 143,
+  "last_updated": "2026-11-06T20:25:12.175346+00:00",
+  "total_artifacts": 148,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "a200d92a95ea9f79f3b774ffe943f110deb908121cde7c4cb2b0ff39d62854dd",
-      "size_bytes": 725642,
+      "sha256": "19bddbeedfb496a85565614ca6386b8103482ec1003de1d35b9b9749a68959a8",
+      "size_bytes": 730605,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -162,6 +162,17 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
         }
       }
     },
@@ -291,8 +302,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "67082ebde61c9460a73b27c002175a2e175c4a9e4260ed8c439f8e59ceb4d1d3",
-      "size_bytes": 554545,
+      "sha256": "3ad9cc2a510e890c2d35fb9450210123fb8c1bc2f28b0fe5a61465a274f49dfc",
+      "size_bytes": 554760,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -394,14 +405,25 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "5593fb153b10ecb350f63d2bcd1ddd7e47b10528ade0b39b5c54465d62e7405b",
-      "size_bytes": 14662254,
+      "sha256": "96daf3cc9f8139d9e079bd1845e33c3ddbc626bf38b19d649e025295f1f9ef18",
+      "size_bytes": 14665852,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -503,6 +525,17 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
         }
       }
     },
@@ -652,8 +685,8 @@
     {
       "path": "src/mios-rs/mios-gate/src/keybinds.rs",
       "artifact_type": "code",
-      "sha256": "e4db160a0599a4ff09793b9ba5a2fa4e82dedb84ebc5812b280ce3cf1a2ff6db",
-      "size_bytes": 84872,
+      "sha256": "cb5744eaf0f9d5ee3b3d4e212c2466b9062a833709027b61cd35c4c40717c245",
+      "size_bytes": 100222,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
@@ -671,6 +704,17 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
         }
       }
     },
@@ -768,26 +812,48 @@
     {
       "path": "tools/native/mios-inputd/src/main.rs",
       "artifact_type": "code",
-      "sha256": "51bc69599d0d957d1ba3d4e1c3a98f8556caa1b69c8a3e51dec63fd09c21eb57",
-      "size_bytes": 5223,
+      "sha256": "ca44b283151f9ead1bd96da5ce6a1cee0b78d57d1f8ebef0a2be7f289c73a2ac",
+      "size_bytes": 27676,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
-        "physical_capture_enabled": false
+        "physical_capture_enabled": false,
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
       }
     },
     {
       "path": "tools/native/mios-inputd/src/config.rs",
       "artifact_type": "code",
-      "sha256": "fdbbd952365ddc1297f178399d0384668e746bf1de7520e937ffc0f6f7933f7c",
-      "size_bytes": 24913,
+      "sha256": "8d543e83dcb73a46db68fdb0a42e2bcbeaea33e3cc2bb61ec8924088289df9d5",
+      "size_bytes": 83740,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-inputd/verification.json",
         "physical_capture_enabled": false,
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
         "checkpoint_at": "2026-10-29T21:46:29.751732+00:00",
-        "candidate_status": "mixed_live_and_packaged_see_handoff"
+        "candidate_status": "mixed_live_and_packaged_see_handoff",
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
       }
     },
     {
@@ -805,29 +871,51 @@
     {
       "path": "tools/native/mios-inputd/src/router.rs",
       "artifact_type": "code",
-      "sha256": "fca379cb589393bba7d525690c38d4b3bd802ef88a2723930056beb17ce03acc",
-      "size_bytes": 43963,
+      "sha256": "9b65a685ea7f27a3b59d73d9167e8009ad32f3a9025ed90cf68e4edb179a9cea",
+      "size_bytes": 231383,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
         "physical_capture_enabled": false,
         "candidate_status": "mixed_live_and_packaged_see_handoff",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00",
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
       }
     },
     {
       "path": "tools/native/mios-inputd/src/runtime.rs",
       "artifact_type": "code",
-      "sha256": "c52bd5be22fa3b8adbb48b0c650d67d053ae6f8e2c1bfa4f7d125c3662e8a031",
-      "size_bytes": 38511,
+      "sha256": "c894c590ef766a509400c944aeb6f29710cf5650ecd02332239177b6d7cc7bc9",
+      "size_bytes": 249305,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/mios-shader-mode-state/verification.json",
         "physical_capture_enabled": false,
         "candidate_status": "mixed_live_and_packaged_see_handoff",
         "handoff": "/docs/design/mios-desktop-continuation-handoff.md",
-        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00"
+        "checkpoint_at": "2026-10-29T21:46:29.751732+00:00",
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
       }
     },
     {
@@ -2853,9 +2941,20 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
         }
       },
-      "sha256": "41cb67ce93768df7e47b0be1afdd7773e420dc2846af453cd8e2c6035b666e56",
+      "sha256": "da3fce947864675d598c14c6de10ddfc37d76079cd09c9f0c240a2ffd800a8bd",
       "size_bytes": 163128
     },
     {
@@ -2928,10 +3027,21 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
         }
       },
-      "sha256": "521698975d5aed4917ab2239e673087487071a12fe3e8a648a1ab0873f63cdc6",
-      "size_bytes": 3370108
+      "sha256": "4aef336e959a3b63c22679ed2192b4616d5acf4a1109b799fd6f1802886dd425",
+      "size_bytes": 3382665
     },
     {
       "path": "usr/share/mios/referenced_names.txt",
@@ -3113,6 +3223,106 @@
       },
       "sha256": "98ce9470be550796bb68b124e66a5c90131fe5818dc50df1dafb2056c089c9ee",
       "size_bytes": 964142
+    },
+    {
+      "path": "docs/design/mios-global-bindings-final.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-06T20:25:12.175346+00:00",
+      "metadata": {
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
+      },
+      "sha256": "573f18aea478a0f44a949bdea66accfdf347dd0dffcab90dfa423a6e3112fb8d",
+      "size_bytes": 59740
+    },
+    {
+      "path": "docs/design/mios-global-bindings-tests.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-06T20:25:12.175346+00:00",
+      "metadata": {
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
+      },
+      "sha256": "97e814c5acb65e3c41407d2396fc7e5d59a7711aafaf2d4e3b3eafd8321002d6",
+      "size_bytes": 23526
+    },
+    {
+      "path": "tools/native/mios-inputd/src/nav.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-06T20:25:12.175346+00:00",
+      "metadata": {
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
+      },
+      "sha256": "79bf55b1d5c7c63c8f5991b274c4862bfdf6fa0bd4101382b65f017d5c242d45",
+      "size_bytes": 58090
+    },
+    {
+      "path": "tools/native/mios-inputd/src/sessions.rs",
+      "artifact_type": "code",
+      "created_at": "2026-11-06T20:25:12.175346+00:00",
+      "metadata": {
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
+      },
+      "sha256": "09ad8ade1708a9eb3d736e824c68a7e06d36822132d207ca0efadfa7a15a896f",
+      "size_bytes": 29545
+    },
+    {
+      "path": "usr/share/mios/ai/v1/metadata.json",
+      "artifact_type": "code",
+      "created_at": "2026-11-06T20:25:12.175346+00:00",
+      "metadata": {
+        "mios_mon_inputd_source_integration": {
+          "source": "3b73dc04c0e16b9fe3319465885808839b9e5139",
+          "MiOS_DEV_checks": 886,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json",
+          "inputd_sha256": "72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538",
+          "gate_sha256": "9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11",
+          "game_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
+          "completed_task": 3759,
+          "followup_task": 3764
+        }
+      },
+      "sha256": "eb8083d24df6c8aa5c345425dd7bbfefd2f2ac0482e2ad63896aa68dedb16145",
+      "size_bytes": 1639968
     }
   ]
 }

@@ -3,7 +3,7 @@
   "total_files_scanned": 4252,
   "total_metadata_entries": 3429,
   "total_hints": 3423,
-  "total_functions_indexed": 2134,
+  "total_functions_indexed": 2135,
   "total_related_links": 6844,
   "entries": [
     {
@@ -13345,7 +13345,7 @@
     },
     {
       "path": "tools/native/mios-inputd/src/nav.rs",
-      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules and the Linux console byte translation of a key: stroke.",
+      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.",
       "related": [
         "usr/share/mios/mios.toml [keybindings.global.controller.nav]",
         "tools/native/mios-inputd/src/router.rs",
@@ -13354,6 +13354,7 @@
       "functions": [
         "NavConfig::from_value",
         "NavConfig::profile_name",
+        "NavConfig::app_profile",
         "NavConfig::text",
         "parse_key_chord",
         "stroke",
