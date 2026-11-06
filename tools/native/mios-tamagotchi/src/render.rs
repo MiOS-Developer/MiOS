@@ -390,6 +390,14 @@ struct SurfaceLight {
     normal: [f32; 3],
     occlusion: u8,
     edge: bool,
+    /// The visible silhouette ends beside this packed pixel on screen, at
+    /// whatever magnification the camera chose (source edges alone thicken
+    /// when zoomed in and vanish when the Mon is shrunk).
+    screen_edge: bool,
+    /// Source pixel inside one uniform material, away from the head that
+    /// carries the face and from small features (eyes, noses, blush): only
+    /// these samples may carry the ASCII shading texture.
+    texture: Option<(u32, u32)>,
 }
 
 fn projected_surface_light(
@@ -410,11 +418,119 @@ fn projected_surface_light(
             .and_then(|y| sprite.pixel(sx, y, 1))
             .is_none()
         || sprite.pixel(sx, sy + 1, 1).is_none();
+    // Screen neighbours before the buffer origin are cropped, not empty.
+    let empty_on_screen = |px: Option<u32>, py: Option<u32>| {
+        px.zip(py)
+            .is_some_and(|(px, py)| projection.sample(sprite, px, py).is_none())
+    };
+    let screen_edge = empty_on_screen(x.checked_sub(1), Some(y))
+        || empty_on_screen(x.checked_add(1), Some(y))
+        || empty_on_screen(Some(x), y.checked_sub(1))
+        || empty_on_screen(Some(x), y.checked_add(1));
+    let index = sprite.pixel(sx, sy, 1);
+    let same_material = |nx: Option<u32>, ny: Option<u32>| {
+        nx.zip(ny)
+            .is_some_and(|(nx, ny)| sprite.pixel(nx, ny, 1) == index)
+    };
+    let interior = same_material(sx.checked_sub(1), Some(sy))
+        && same_material(sx.checked_add(1), Some(sy))
+        && same_material(Some(sx), sy.checked_sub(1))
+        && same_material(Some(sx), sy.checked_add(1));
+    let texture = (interior && sprite.head_uv(sx, sy).is_none()).then_some((sx, sy));
     Some(SurfaceLight {
         normal,
         occlusion,
-        edge,
+        edge: edge || screen_edge,
+        screen_edge,
+        texture,
     })
+}
+
+/// Perceived luminance0..=255 of a terminal color; None for the terminal's
+/// own default color, whose actual value is unknown.
+fn luminance(color: Color) -> Option<u32> {
+    terminal_rgb(color)
+        .map(|[r, g, b]| (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000)
+}
+
+/// Keep a silhouette sample distinct from the scene behind it. Bounded: only
+/// screen-edge samples reach here, and their lit color changes only when it
+/// would quantize too close to the background. The required separation is the
+/// configured outline strength. Candidates: outline ink, the lighting model's
+/// own brightest/darkest rims, then the Mon's own palette (a 16-color console
+/// can collapse a dark body and every rim of it to the scene's black); first
+/// adequate one wins, else the most separated.
+fn silhouette_color(
+    lighting: &crate::lighting::VoxelLighting,
+    colors: &Colors,
+    lit: Color,
+    base: Color,
+    scene: Color,
+) -> Color {
+    let Some(scene_luma) = luminance(scene) else {
+        return lit;
+    };
+    let separation = |color: Color| luminance(color).map_or(0, |luma| luma.abs_diff(scene_luma));
+    let minimum = u32::from(lighting.outline_percent.min(100)) * 255 / 100;
+    let adequate = |color: Color| color != scene && separation(color) >= minimum;
+    if adequate(lit) {
+        return lit;
+    }
+    let rims = [
+        colors.ink(0),
+        shade_terminal_color(lighting, base, 180),
+        shade_terminal_color(lighting, base, 0),
+    ];
+    let candidates = || rims.into_iter().chain(colors.palette.iter().copied());
+    candidates()
+        .find(|color| adequate(*color))
+        .or_else(|| {
+            std::iter::once(lit)
+                .chain(candidates())
+                .max_by_key(|color| separation(*color))
+        })
+        .unwrap_or(lit)
+}
+
+/// Sparse ASCII shading over magnified voxels: a cell that shows one uniform
+/// material surface keeps that surface as its background color and gains a
+/// ramp glyph whose density follows the surface's own shadow. Lit faces stay
+/// clean, so the overlay never adds coverage, edges, faces or features.
+#[allow(clippy::too_many_arguments)]
+fn texture_voxel_cell(
+    renderer: Renderer,
+    lighting: &crate::lighting::VoxelLighting,
+    pixels: [Option<u8>; 8],
+    surface: [Option<SurfaceLight>; 8],
+    flat_ink: [bool; 8],
+    brightness: [Option<u16>; 8],
+    shaded: [Option<Color>; 8],
+    cell: &mut ratatui::buffer::Cell,
+) {
+    let (dx, dy) = renderer.packing();
+    let count = usize::from(dx * dy);
+    let Some(source) = surface[0].and_then(|s| s.texture) else {
+        return;
+    };
+    let uniform = (0..count).all(|i| {
+        pixels[i].is_some()
+            && pixels[i] == pixels[0]
+            && !flat_ink[i]
+            && surface[i].is_some_and(|s| !s.screen_edge && s.texture == Some(source))
+    });
+    let (Some(value), Some(body)) = (brightness[0], shaded[0]) else {
+        return;
+    };
+    let darkness = 100u16.saturating_sub(value);
+    let threshold = lighting.outline_percent.min(99);
+    if !uniform || darkness <= threshold {
+        return;
+    }
+    let level = (darkness - threshold) * 180 / (100 - threshold);
+    let ink = shade_terminal_color(lighting, body, value);
+    cell.set_char(lighting.glyph(level))
+        .set_fg(ink)
+        .set_bg(body);
 }
 
 /// Canonical terminal palette decoding; shade RGB without swapping skin hues.
@@ -500,6 +616,12 @@ fn paint_lit_pixels(
     flat_ink: [bool; 8],
     cell: &mut ratatui::buffer::Cell,
 ) {
+    // The scene behind this cell, before the Mon paints over it.
+    let scene = if cell.bg == Color::Reset {
+        colors.background
+    } else {
+        cell.bg
+    };
     paint_pixels(renderer, colors, pixels, cell);
     let Some(lighting) = colors.lighting.as_ref().filter(|light| light.enabled) else {
         return;
@@ -516,39 +638,66 @@ fn paint_lit_pixels(
             if flat_ink[i] {
                 base
             } else {
-                brightness[i].map_or(base, |value| shade_terminal_color(lighting, base, value))
+                let lit =
+                    brightness[i].map_or(base, |value| shade_terminal_color(lighting, base, value));
+                if surface[i].is_some_and(|s| s.screen_edge) {
+                    silhouette_color(lighting, colors, lit, base, scene)
+                } else {
+                    lit
+                }
             }
         })
     });
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
+    // Monochrome has only glyphs: the visible silhouette takes the densest
+    // ramp glyph so the Mon's boundary never fades into faint shading.
+    let mono_edge = mono
+        && (0..8).any(|i| {
+            pixels[i].is_some() && !flat_ink[i] && surface[i].is_some_and(|s| s.screen_edge)
+        });
+    let ramp_glyph = |value: u16| {
+        if mono_edge {
+            lighting.glyph(180)
+        } else {
+            lighting.glyph(value)
+        }
+    };
     match renderer {
         Renderer::Ascii | Renderer::Auto => {
             if let Some(value) = brightness[first].filter(|_| !flat_ink[first]) {
-                cell.set_char(lighting.glyph(value));
+                cell.set_char(ramp_glyph(value));
             }
             cell.set_fg(shaded[first].unwrap());
         }
         Renderer::HalfBlock if mono => {
             if let Some(value) = brightness[first].filter(|_| !flat_ink[first]) {
-                cell.set_char(lighting.glyph(value));
+                cell.set_char(ramp_glyph(value));
             }
         }
-        Renderer::HalfBlock => match (shaded[0], shaded[1]) {
-            (Some(upper), Some(lower)) => {
-                cell.set_char(if upper == lower { '█' } else { '▀' })
-                    .set_fg(upper)
-                    .set_bg(lower);
+        Renderer::HalfBlock => {
+            match (shaded[0], shaded[1]) {
+                (Some(upper), Some(lower)) => {
+                    cell.set_char(if upper == lower { '█' } else { '▀' })
+                        .set_fg(upper)
+                        .set_bg(lower);
+                }
+                (Some(upper), None) => {
+                    cell.set_char('▀').set_fg(upper);
+                }
+                (None, Some(lower)) => {
+                    cell.set_char('▄').set_fg(lower);
+                }
+                _ => {}
             }
-            (Some(upper), None) => {
-                cell.set_char('▀').set_fg(upper);
-            }
-            (None, Some(lower)) => {
-                cell.set_char('▄').set_fg(lower);
-            }
-            _ => {}
-        },
+            texture_voxel_cell(
+                renderer, lighting, pixels, surface, flat_ink, brightness, shaded, cell,
+            );
+        }
         Renderer::Quadrant | Renderer::Braille => {
             cell.set_fg(shaded[first].unwrap());
+            texture_voxel_cell(
+                renderer, lighting, pixels, surface, flat_ink, brightness, shaded, cell,
+            );
         }
     }
 }
@@ -1499,6 +1648,8 @@ impl RoomWidget<'_> {
                                 normal: w.normal,
                                 occlusion: w.occlusion,
                                 edge: false,
+                                screen_edge: false,
+                                texture: None,
                             });
                         }
                         if let Some((sx, sy)) = projection.source_pixel(self.sprite, px, py) {
@@ -1976,6 +2127,8 @@ mod voxel_lighting_tests {
             normal,
             occlusion,
             edge,
+            screen_edge: false,
+            texture: None,
         })
     }
 
@@ -4908,5 +5061,433 @@ mod packed_world_face_regressions {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod legible_silhouette_tests {
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+
+    fn light() -> crate::lighting::VoxelLighting {
+        let mut light = Config::sample().unwrap().voxel_lighting;
+        light.enabled = true;
+        light
+    }
+
+    fn sample(
+        normal: [f32; 3],
+        occlusion: u8,
+        screen_edge: bool,
+        texture: Option<(u32, u32)>,
+    ) -> Option<SurfaceLight> {
+        Some(SurfaceLight {
+            normal,
+            occlusion,
+            edge: screen_edge,
+            screen_edge,
+            texture,
+        })
+    }
+
+    fn one(surface: Option<SurfaceLight>) -> [Option<SurfaceLight>; 8] {
+        let mut samples = [None; 8];
+        samples[0] = surface;
+        samples
+    }
+
+    #[test]
+    fn dark_silhouettes_stay_distinct_from_the_scene_and_interiors_keep_their_light() {
+        let light = light();
+        let minimum = u32::from(light.outline_percent) * 255 / 100;
+        let normal = [0.0, -1.0, 0.0];
+        let pixels = [Some(1), None, None, None, None, None, None, None];
+        for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi] {
+            // A dark body over the vendor scene: the low-contrast defect case.
+            let mut palette = Config::sample()
+                .unwrap()
+                .palette
+                .iter()
+                .map(|text| quantize(parse_rgb(text).unwrap(), depth))
+                .collect::<Vec<_>>();
+            palette[1] = quantize([0x2A, 0x26, 0x40], depth);
+            let colors = Colors {
+                palette,
+                background: quantize([0x11, 0x18, 0x27], depth),
+                lighting: Some(light.clone()),
+            };
+            let scene = luminance(colors.background).unwrap();
+            let unguarded =
+                shade_terminal_color(&light, colors.ink(1), light.brightness(normal, 60, true));
+            assert!(
+                luminance(unguarded).unwrap().abs_diff(scene) < minimum,
+                "{depth:?}: the fixture must reproduce the defect without the silhouette rule"
+            );
+            let mut edge = ratatui::buffer::Cell::default();
+            paint_lit_pixels(
+                Renderer::Ascii,
+                &colors,
+                pixels,
+                one(sample(normal, 60, true, None)),
+                [false; 8],
+                &mut edge,
+            );
+            assert!(
+                luminance(edge.fg).unwrap().abs_diff(scene) >= minimum,
+                "{depth:?}: silhouette {:?} against scene {:?}",
+                edge.fg,
+                colors.background
+            );
+            assert_ne!(edge.fg, colors.background);
+            let mut interior = ratatui::buffer::Cell::default();
+            paint_lit_pixels(
+                Renderer::Ascii,
+                &colors,
+                pixels,
+                one(sample(normal, 60, false, None)),
+                [false; 8],
+                &mut interior,
+            );
+            assert_eq!(
+                interior.fg,
+                shade_terminal_color(&light, colors.ink(1), light.brightness(normal, 60, false)),
+                "{depth:?}: only silhouette samples may change"
+            );
+        }
+    }
+
+    #[test]
+    fn monochrome_silhouettes_use_the_densest_ramp_glyph() {
+        let light = light();
+        let colors = Colors {
+            palette: vec![Color::Reset; 2],
+            background: Color::Reset,
+            lighting: Some(light.clone()),
+        };
+        let normal = [0.0, -1.0, 0.0];
+        let pixels = [Some(1), None, None, None, None, None, None, None];
+        let dense = light.glyph(180).to_string();
+        let faint = light
+            .glyph(light.brightness(normal, 100, false))
+            .to_string();
+        assert_ne!(
+            faint, dense,
+            "the shadowed fixture must be faint off the edge"
+        );
+        for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+            let paint = |screen_edge: bool, ink: [bool; 8]| {
+                let mut cell = ratatui::buffer::Cell::default();
+                paint_lit_pixels(
+                    renderer,
+                    &colors,
+                    pixels,
+                    one(sample(normal, 100, screen_edge, None)),
+                    ink,
+                    &mut cell,
+                );
+                cell.symbol().to_string()
+            };
+            assert_eq!(paint(true, [false; 8]), dense, "{renderer:?} silhouette");
+            assert_eq!(paint(false, [false; 8]), faint, "{renderer:?} interior");
+            let mut ink = [false; 8];
+            ink[0] = true;
+            assert_ne!(
+                paint(true, ink),
+                dense,
+                "{renderer:?}: face ink keeps its own glyph"
+            );
+        }
+    }
+
+    #[test]
+    fn magnified_uniform_voxels_gain_shadow_texture_only_where_shaded() {
+        let light = light();
+        let colors = Colors {
+            palette: vec![Color::Rgb(12, 16, 24), Color::Rgb(120, 80, 40)],
+            background: Color::Rgb(1, 2, 3),
+            lighting: Some(light.clone()),
+        };
+        let ramp: Vec<char> = light.ascii_ramp.chars().collect();
+        let textured = |symbol: &str| symbol.chars().next().is_some_and(|c| ramp.contains(&c));
+        let shadow = [0.0, -1.0, 0.0];
+        let lit = [-0.45, 0.65, 0.45];
+        for renderer in [Renderer::HalfBlock, Renderer::Quadrant, Renderer::Braille] {
+            let (dx, dy) = renderer.packing();
+            let count = usize::from(dx * dy);
+            let full: [Option<u8>; 8] = std::array::from_fn(|i| (i < count).then_some(1));
+            let voxel = |normal: [f32; 3], occlusion: u8, texture: Option<(u32, u32)>| {
+                let samples: [Option<SurfaceLight>; 8] = std::array::from_fn(|i| {
+                    if i < count {
+                        sample(normal, occlusion, false, texture)
+                    } else {
+                        None
+                    }
+                });
+                samples
+            };
+            let paint =
+                |pixels: [Option<u8>; 8], surface: [Option<SurfaceLight>; 8], ink: [bool; 8]| {
+                    let mut cell = ratatui::buffer::Cell::default();
+                    paint_lit_pixels(renderer, &colors, pixels, surface, ink, &mut cell);
+                    cell
+                };
+            let cell = paint(full, voxel(shadow, 80, Some((4, 4))), [false; 8]);
+            assert!(
+                textured(cell.symbol()),
+                "{renderer:?}: shaded voxel {:?}",
+                cell.symbol()
+            );
+            let body =
+                shade_terminal_color(&light, colors.ink(1), light.brightness(shadow, 80, false));
+            assert_eq!(
+                cell.bg, body,
+                "{renderer:?}: the surface stays the cell background"
+            );
+            assert_ne!(
+                cell.fg, cell.bg,
+                "{renderer:?}: the shading glyph is visible"
+            );
+            // Negative controls: each missing permission leaves the voxel clean.
+            let mut mixed = voxel(shadow, 80, Some((4, 4)));
+            mixed[count - 1] = sample(shadow, 80, false, Some((4, 5)));
+            let mut partial = full;
+            partial[count - 1] = None;
+            let mut edge = voxel(shadow, 80, Some((4, 4)));
+            edge[0] = sample(shadow, 80, true, Some((4, 4)));
+            for (label, cell) in [
+                (
+                    "lit face",
+                    paint(full, voxel(lit, 0, Some((4, 4))), [false; 8]),
+                ),
+                (
+                    "protected head",
+                    paint(full, voxel(shadow, 80, None), [false; 8]),
+                ),
+                (
+                    "face ink",
+                    paint(full, voxel(shadow, 80, Some((4, 4))), [true; 8]),
+                ),
+                ("two source pixels", paint(full, mixed, [false; 8])),
+                (
+                    "partial coverage",
+                    paint(partial, voxel(shadow, 80, Some((4, 4))), [false; 8]),
+                ),
+                ("silhouette", paint(full, edge, [false; 8])),
+            ] {
+                assert!(
+                    !textured(cell.symbol()),
+                    "{renderer:?} {label}: {:?}",
+                    cell.symbol()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_species_keeps_a_bounded_visible_silhouette_and_texture_never_reaches_faces() {
+        let config = Config::sample().unwrap();
+        let dense = light().glyph(180).to_string();
+        let ramp: Vec<char> = light().ascii_ramp.chars().collect();
+        let mut textured_somewhere = false;
+        for shape in 0..16 {
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                let appearance = Appearance {
+                    shape,
+                    body: shape,
+                    accent: (shape + 5) % 16,
+                };
+                let sprite = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    0,
+                    false,
+                    appearance,
+                );
+                let bounds = SolidBounds::of(&sprite).unwrap();
+                for (width, height, zoom_percent) in
+                    [(10, 4, 100), (20, 9, 100), (48, 24, 100), (48, 24, 400)]
+                {
+                    for renderer in [
+                        Renderer::Ascii,
+                        Renderer::HalfBlock,
+                        Renderer::Quadrant,
+                        Renderer::Braille,
+                    ] {
+                        for depth in [Depth::Mono, Depth::Ansi, Depth::Rgb] {
+                            let label = format!(
+                                "shape {shape} {stage:?} {width}x{height}@{zoom_percent} {renderer:?} {depth:?}"
+                            );
+                            let colors = Colors::from_config(&config, depth).unwrap();
+                            let area = Rect::new(2, 1, width, height);
+                            let whole = Rect::new(0, 0, width + 4, height + 2);
+                            let mut buf = Buffer::empty(whole);
+                            for y in whole.y..whole.bottom() {
+                                for x in whole.x..whole.right() {
+                                    if !area.contains((x, y).into()) {
+                                        buf[(x, y)].set_char('!');
+                                    }
+                                }
+                            }
+                            let baseline = buf.clone();
+                            let projection = Projection::camera(
+                                &sprite,
+                                bounds,
+                                area,
+                                renderer,
+                                0,
+                                (500, 500),
+                                Camera {
+                                    zoom_percent,
+                                    ..Camera::default()
+                                },
+                            );
+                            draw_projection(&sprite, renderer, &colors, projection, area, &mut buf);
+                            for y in whole.y..whole.bottom() {
+                                for x in whole.x..whole.right() {
+                                    if !area.contains((x, y).into()) {
+                                        assert_eq!(
+                                            buf[(x, y)],
+                                            baseline[(x, y)],
+                                            "{label}: bounded"
+                                        );
+                                    }
+                                }
+                            }
+                            let occupied = |x: u16, y: u16| buf[(x, y)].symbol() != " ";
+                            assert!(
+                                (area.y..area.bottom())
+                                    .any(|y| (area.x..area.right()).any(|x| occupied(x, y))),
+                                "{label}: the Mon must be visible"
+                            );
+                            let (dx, dy) = renderer.packing();
+                            for y in area.y..area.bottom() {
+                                for x in area.x..area.right() {
+                                    if depth == Depth::Mono
+                                        && renderer == Renderer::Ascii
+                                        && occupied(x, y)
+                                    {
+                                        let boundary = [
+                                            (x.wrapping_sub(1), y),
+                                            (x + 1, y),
+                                            (x, y.wrapping_sub(1)),
+                                            (x, y + 1),
+                                        ]
+                                        .into_iter()
+                                        .any(|(nx, ny)| {
+                                            area.contains((nx, ny).into()) && !occupied(nx, ny)
+                                        });
+                                        let lit = projected_surface_light(
+                                            &sprite,
+                                            projection,
+                                            u32::from(x),
+                                            u32::from(y),
+                                        )
+                                        .is_some();
+                                        if boundary && lit {
+                                            assert_eq!(
+                                                buf[(x, y)].symbol(),
+                                                dense,
+                                                "{label}: mono boundary at {x},{y}"
+                                            );
+                                        }
+                                    }
+                                    let symbol = buf[(x, y)].symbol();
+                                    let shaded =
+                                        symbol.chars().next().is_some_and(|c| ramp.contains(&c));
+                                    if renderer == Renderer::Ascii
+                                        || depth == Depth::Mono
+                                        || !shaded
+                                    {
+                                        continue;
+                                    }
+                                    textured_somewhere = true;
+                                    for sy in 0..dy {
+                                        for sx in 0..dx {
+                                            let px = u32::from(x) * u32::from(dx) + u32::from(sx);
+                                            let py = u32::from(y) * u32::from(dy) + u32::from(sy);
+                                            let (ux, uy) = projection
+                                                .source_pixel(&sprite, px, py)
+                                                .unwrap_or_else(|| panic!("{label}: texture outside the Mon at {x},{y}"));
+                                            let index = sprite.pixel(ux, uy, 1);
+                                            assert!(
+                                                index.is_some(),
+                                                "{label}: texture outside the Mon at {x},{y}"
+                                            );
+                                            assert!(
+                                                sprite.head_uv(ux, uy).is_none(),
+                                                "{label}: texture on the protected face at {x},{y}"
+                                            );
+                                            for (nx, ny) in [
+                                                (ux.wrapping_sub(1), uy),
+                                                (ux + 1, uy),
+                                                (ux, uy.wrapping_sub(1)),
+                                                (ux, uy + 1),
+                                            ] {
+                                                assert_eq!(
+                                                    sprite.pixel(nx, ny, 1),
+                                                    index,
+                                                    "{label}: texture on a feature at {x},{y}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // The overlay may not reveal a face the camera cannot see.
+            let rear = Sprite::voxel_with_appearance(
+                Stage::Adult,
+                Expression::Happy,
+                SpriteStyle::SixteenBit,
+                0,
+                180,
+                false,
+                Appearance {
+                    shape,
+                    body: shape,
+                    accent: (shape + 5) % 16,
+                },
+            );
+            // (RoomWidget's separate mood caption may name the mood; only the
+            // body and face paint are under test here.)
+            for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+                let area = Rect::new(0, 0, 48, 24);
+                let mut buf = Buffer::empty(area);
+                let projection = Projection::camera(
+                    &rear,
+                    SolidBounds::of(&rear).unwrap(),
+                    area,
+                    renderer,
+                    0,
+                    (500, 500),
+                    Camera {
+                        view: CameraView::Face,
+                        from_view: CameraView::Face,
+                        zoom_percent: 400,
+                        ..Camera::default()
+                    },
+                );
+                draw_projection(&rear, renderer, &colors, projection, area, &mut buf);
+                draw_front_face(&rear, renderer, &colors, projection, area, &mut buf);
+                let text: String = buf.content.iter().map(|c| c.symbol()).collect();
+                assert!(
+                    !text.contains(Expression::Happy.kaomoji(0)),
+                    "shape {shape} {renderer:?}: rear view revealed the face"
+                );
+            }
+        }
+        assert!(
+            textured_somewhere,
+            "magnified views must show shadow texture"
+        );
     }
 }
