@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided contract test suite verifying the comprehensive fix for all 6 GUI/Shell defects:
 #          - Defect 0: Global Keybinds Active (dock owns typing while open; generated drawer escapes bypass inhibition).
-#          - Defect 1: Full Liquid Glass Surfaces (glass backgrounds, border rims, specular highlights, compositor blur).
+#          - Defect 1: Full Liquid Glass Surfaces (Search's body is the one shared GlassSurface with its defaults -- no
+#            per-surface radius, fill, outline or hard-coded colour/opacity, with planted negative controls; the
+#            centralized specular rim; compositor blur).
 #          - Defect 2: Phosh OSK Virtual Keyboard (embedded in 220px slot, Phosh header, direct targetInput typing + sendshortcut IPC, D-Bus unfold).
 #          - Defect 3: Maximize Workarea Bounds [0, 44, 0, 72] & TopBar Deconfliction (exclusiveZone 36px, fullscreen >= 2, tmux-os unoccluded).
 #          - Defect 4: Rounded Corner UI Highlights (Glass.radius / innerRadius / pillRadius, zero square highlights).
@@ -181,19 +183,118 @@ assert(not recorded['alt+f2'].flags.dont_inhibit and not recorded['alt+f2'].flag
 
 
 # ---- Defect 1: Full Liquid Glass Surfaces & Compositor Blur ----------------------------------------------------------
+# The operator's unified-glass rule: ONE QML glass component (GlassSurface) for every surface, no per-surface variants.
+# GlassSurface owns a body's shape and colour -- radius Glass.corner(min(w, h)), fill Glass.fill, no outline (the rim
+# is hyprglass' fresnel). A body that sets any of these itself (or an Item opacity over them) is a per-surface variant.
+GLASS_OWNED = ("radius", "power", "hairline", "borderColor", "border", "specular", "specularColor", "rimColor",
+               "opacity")
+# A colour or opacity written into the QML instead of read from the design tokens.
+HARD_CODED = re.compile(r"#[0-9a-fA-F]{3,8}\b|\bQt\.(?:rgba|rgb|hsla|hsva|hsl|hsv|lighter|darker|tint|alpha)\s*\("
+                        r"|\"[A-Za-z]+\"|(?<![\w.])\d*\.?\d+(?![\w.])")
+
+
+def qml_code(text: str) -> str:
+    """`text` with comments blanked and string contents replaced by `x` (same length), for structural scanning."""
+    out, i, n = list(text), 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out[i:j] = " " * (j - i)
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out[i:j] = ["\n" if c == "\n" else " " for c in text[i:j]]
+            i = j
+        elif text[i] in "\"'`":
+            j = i + 1
+            while j < n and text[j] != text[i]:
+                j += 2 if text[j] == "\\" else 1
+            out[i + 1:min(j, n)] = "x" * (min(j, n) - i - 1)
+            i = j + 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+def qml_statements(text: str, code: str, opener: int) -> list[tuple[str, str, int]]:
+    """The object at `opener` ('{')'s own statements as (name, expression, child opener or -1): its own property
+    assignments and child objects, never those of a nested object or JS block. A child object's name is its type."""
+    stmts, cur, depth = [], [], 0
+    for i in range(opener + 1, len(code)):
+        c = code[i]
+        if c == "{":
+            if depth == 0:
+                cur.append(i)
+            depth += 1
+        elif c == "}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0:
+            if c in "\n;":
+                stmts.append(cur)
+                cur = []
+            else:
+                cur.append(i)
+    stmts.append(cur)
+    out = []
+    for idx in stmts:
+        # the source text minus comments (blanked in `code`), string contents kept
+        src = "".join(text[i] for i in idx if not (code[i] == " " and text[i] != " ")).strip()
+        child = idx[-1] if idx and code[idx[-1]] == "{" else -1
+        if child >= 0:
+            m = re.match(r"(?:[\w.]+\s*:\s*)?([A-Z][\w.]*)\s*\{$", src)
+            if m:
+                out.append((m.group(1), "", child))
+            continue
+        m = re.match(r"(?:(?:readonly|required|default)\s+)*(?:property\s+[\w<>.]+\s+)?([A-Za-z_][\w.]*)\s*:\s*(.*)$", src)
+        if m:
+            out.append((m.group(1), m.group(2).strip(), -1))
+    return out
+
+
+def search_glass_errors(s: str) -> list[str]:
+    """Search's body is the one shared GlassSurface with its defaults: the GlassSurface filling the window, no
+    radius/outline/opacity of its own, its fill the shared Glass.fill, nothing hard-coded, nothing assigned later."""
+    code = qml_code(s)
+    root = re.search(r"\b[A-Z][\w.]*\s*\{", code)
+    if not root:
+        return ["Search.qml has no root object"]
+    body = next(((kind, op) for kind, _, op in qml_statements(s, code, root.end() - 1)
+                 if op >= 0 and ("anchors.fill", "parent", -1) in qml_statements(s, code, op)), None)
+    if not body:
+        return ["Search.qml has no window-filling glass body"]
+    kind, opener = body
+    problems = []
+    if kind != "GlassSurface":
+        problems.append(f"Search.qml body is a {kind}, not the shared GlassSurface")
+    own = qml_statements(s, code, opener)
+    ident = next((expr for name, expr, _ in own if name == "id"), "")
+    for name, expr, _ in own:
+        prop = name.split(".")[0]
+        if prop in GLASS_OWNED:
+            problems.append(f"Search.qml overrides the shared glass {name}: {expr}")
+        if prop == "color" and expr != "Glass.fill":
+            problems.append(f"Search.qml replaces the shared Glass.fill with {expr}")
+        if prop in GLASS_OWNED + ("color",) and HARD_CODED.search(expr):
+            problems.append(f"Search.qml hard-codes a glass colour/opacity: {name}: {expr}")
+    if ident and re.search(r"\b%s\.(?:%s|color)\b(?:\.\w+)?\s*=(?!=)" % (re.escape(ident), "|".join(GLASS_OWNED)), code):
+        problems.append(f"Search.qml reassigns the shared glass of {ident} at runtime")
+    if ident and re.search(r"\bBinding\s*\{[^{}]*\btarget:\s*%s\b" % re.escape(ident), code):
+        problems.append(f"Search.qml rebinds the shared glass of {ident}")
+    return problems
+
+
 def contract_defect1_glass_styling_and_compositor_blur(ref: str = None) -> list[str]:
     problems = []
-    # Search.qml: must have canonical Glass.radius, visible hairline border, and borderColor
+    # Search.qml: the one shared GlassSurface with its defaults (no per-surface radius, fill, outline or literal)
     s = read(f"{QS}/Search.qml", ref)
     if not s:
         problems.append("Search.qml missing")
     else:
-        if "radius: Glass.radius" not in s:
-            problems.append("Search.qml does not use canonical MiOS spec radius: Glass.radius")
-        if "hairline: true" not in s and "border.width:" not in s:
-            problems.append("Search.qml missing glass border hairline")
-        if "borderColor:" not in s and "border.color:" not in s:
-            problems.append("Search.qml missing glass borderColor")
+        problems += search_glass_errors(s)
 
     # GlassSurface.qml: must have centralized concentric specular highlight rim
     gs = read(f"{QS}/GlassSurface.qml", ref)
@@ -202,6 +303,11 @@ def contract_defect1_glass_styling_and_compositor_blur(ref: str = None) -> list[
     else:
         if "innerSpecular" not in gs and "specular" not in gs.lower():
             problems.append("GlassSurface.qml missing centralized concentric specular highlight rim")
+        # the defaults Search's body takes are the design language's shared fill and corner rule
+        if not re.search(r"^\s*property\s+color\s+color:\s*Glass\.fill\s*$", gs, re.M):
+            problems.append("GlassSurface.qml default fill is not the shared Glass.fill")
+        if not re.search(r"^\s*property\s+real\s+radius:\s*Glass\.corner\(Math\.min\(width,\s*height\)\)\s*$", gs, re.M):
+            problems.append("GlassSurface.qml default radius is not the shared Glass.corner rule")
 
     # Hyprland effects: must define blur and ignorealpha for quickshell and mios-* layer surfaces
     fx = read("usr/share/mios/hypr/hyprland-effects.conf", ref)
@@ -465,6 +571,70 @@ class TestGuiShellUnify(unittest.TestCase):
         with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == path and ref is None else original(rel, ref)}):
             self.assertIn("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)",
                           contract_gnome_phosh_app_launching())
+
+    def test_regression_search_glass_must_stay_the_shared_surface(self):
+        """Planted Search glass defects (each a per-surface variant of the one glass) are each caught by name."""
+        original = read
+        path = f"{QS}/Search.qml"
+        source = original(path)
+        head = "    GlassSurface {\n        id: box\n        anchors.fill: parent\n"
+        fill = "        color: Glass.fill\n"
+        self.assertEqual(source.count(head), 1)
+        self.assertEqual(source.count(fill), 1)
+        self.assertEqual(search_glass_errors(source), [])
+        wide = "searchWindow.theme.withAlpha(Glass.fillHex, %s)"
+        hard = "Search.qml hard-codes a glass colour/opacity: "
+        mutations = (  # (label, anchor, replacement, the problem it must raise)
+            ("per-surface radius literal", head, head + "        radius: 14\n", hard + "radius: 14"),
+            ("Glass.radius override", head, head + "        radius: Glass.radius\n",
+             "Search.qml overrides the shared glass radius: Glass.radius"),
+            ("Rectangle in place of GlassSurface", head, head.replace("GlassSurface", "Rectangle"),
+             "Search.qml body is a Rectangle, not the shared GlassSurface"),
+            ("hard-coded fill opacity", fill, "        color: %s\n" % (wide % "0.72"),
+             hard + "color: " + wide % "0.72"),
+            ("hard-coded colour", fill, '        color: "#cc101014"\n', hard + 'color: "#cc101014"'),
+            ("hard-coded item opacity", head, head + "        opacity: 0.85\n", hard + "opacity: 0.85"),
+            ("panel-opacity fill (f8ca510ad)", fill,
+             "        color: %s\n" % (wide % "searchWindow.theme.panelOpacity"),
+             "Search.qml replaces the shared Glass.fill with " + wide % "searchWindow.theme.panelOpacity"),
+            ("hand-drawn outline (f8ca510ad)", fill,
+             fill + "        hairline: true\n        borderColor: searchWindow.theme.outlineColor\n",
+             "Search.qml overrides the shared glass borderColor: searchWindow.theme.outlineColor"),
+            ("one-line object override", head, "    GlassSurface { id: box; anchors.fill: parent; radius: Glass.radius\n",
+             "Search.qml overrides the shared glass radius: Glass.radius"),
+            ("runtime reassignment", head, head + "        Component.onCompleted: box.radius = Glass.radius\n",
+             "Search.qml reassigns the shared glass of box at runtime"),
+            ("no window-filling body", head, head.replace("anchors.fill: parent", "anchors.centerIn: parent"),
+             "Search.qml has no window-filling glass body"),
+        )
+        for label, anchor, replacement, problem in mutations:
+            with self.subTest(label):
+                mutated = source.replace(anchor, replacement, 1)
+                self.assertNotEqual(mutated, source)
+                fixture = {"read": lambda rel, ref=None, m=mutated: m if rel == path and ref is None else original(rel, ref)}
+                with patch.dict(globals(), fixture):
+                    self.assertIn(problem, contract_defect1_glass_styling_and_compositor_blur())
+        # a commented-out override is not an override; a child row's own concentric radius is not the body's
+        commented = source.replace(head, head + "        // radius: 14\n", 1)
+        self.assertEqual(search_glass_errors(commented), [])
+        self.assertIn("radius: Glass.inner(box.radius, Glass.panelPad)", source)
+
+    def test_regression_glass_surface_defaults_are_the_shared_rule(self):
+        """The defaults Search relies on: a GlassSurface whose default fill or radius drifts is caught."""
+        original = read
+        path = f"{QS}/GlassSurface.qml"
+        source = original(path)
+        for old, new, problem in (
+                ("property color color: Glass.fill", "property color color: Glass.theme.bg",
+                 "GlassSurface.qml default fill is not the shared Glass.fill"),
+                ("property real radius: Glass.corner(Math.min(width, height))", "property real radius: 12",
+                 "GlassSurface.qml default radius is not the shared Glass.corner rule")):
+            with self.subTest(problem):
+                self.assertEqual(source.count(old), 1)
+                mutated = source.replace(old, new, 1)
+                fixture = {"read": lambda rel, ref=None, m=mutated: m if rel == path and ref is None else original(rel, ref)}
+                with patch.dict(globals(), fixture):
+                    self.assertIn(problem, contract_defect1_glass_styling_and_compositor_blur())
 
     def test_positive_defect0_layer_keyboard_focus(self):
         problems = contract_defect0_layer_keyboard_focus(None)
