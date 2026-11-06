@@ -152,7 +152,7 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     CTX=/tmp/build /tmp/build/automation/build.sh; \
     git -c safe.directory=/ctx -C /ctx rev-parse --verify 'HEAD^{commit}' > /usr/share/mios/source-revision; \
     if git -c safe.directory=/ctx -C /ctx diff --quiet --no-ext-diff HEAD -- \
-        automation/ usr/ etc/ config/artifacts/ tools/ src/ VERSION .dotfiles/ \
+        automation/ usr/ etc/ config/artifacts/ tools/ tests/test-hypr3d-crt.py src/ VERSION .dotfiles/ \
         Justfile Containerfile .dockerignore MiOS.md AGENTS.md CLAUDE.md GEMINI.md; then \
         printf '%s\n' clean > /usr/share/mios/source-state; \
     else \
