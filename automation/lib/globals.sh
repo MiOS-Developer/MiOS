@@ -555,6 +555,7 @@ _mios_input MIOS_PATHS_BLADE_ENV MIOS_BLADE_ENV || { return 1 2>/dev/null || exi
 : "${MIOS_BLADE_REQUIRES_MIOS_CRON_DIRECTOR:=service-plane}"
 : "${MIOS_BLADE_REQUIRES_MIOS_DAEMON:=service-plane}"
 : "${MIOS_BLADE_REQUIRES_MIOS_EMBED_BACKFILL:=service-plane}"
+: "${MIOS_BLADE_REQUIRES_MIOS_ENFORCER:=service-plane}"
 : "${MIOS_BLADE_REQUIRES_MIOS_FINETUNE_SERVE:=service-plane}"
 : "${MIOS_BLADE_REQUIRES_MIOS_FORGE:=service-plane}"
 : "${MIOS_BLADE_REQUIRES_MIOS_FORGEJO_RUNNER:=service-plane}"
@@ -4247,7 +4248,7 @@ _mios_input MIOS_PORTS_TTYD_BASH MIOS_PORT_TTYD_BASH MIOS_TTYD_BASH_PORT || { re
 _mios_input MIOS_PORTS_TTYD_POWERSHELL MIOS_PORT_TTYD_POWERSHELL MIOS_TTYD_POWERSHELL_PORT || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PORTS_TTYD_POWERSHELL:=8320}"
 _mios_input MIOS_PORTS_UNBOUND MIOS_PORT_UNBOUND MIOS_UNBOUND_PORT || { return 1 2>/dev/null || exit 1; }
-: "${MIOS_PORTS_UNBOUND:=chrome_cdp_worker,ai_legacy,field_live_chat}"
+: "${MIOS_PORTS_UNBOUND:=field_live_chat}"
 _mios_input MIOS_PORTS_WHISPER MIOS_PORT_WHISPER MIOS_WHISPER_PORT || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PORTS_WHISPER:=8178}"
 _mios_input MIOS_PORTS_WIN_LLM_LIGHT MIOS_PORT_WIN_LLM_LIGHT MIOS_WIN_LLM_LIGHT_PORT || { return 1 2>/dev/null || exit 1; }
@@ -5230,7 +5231,7 @@ _mios_input MIOS_UKI_VERITY_UKI_BUILD MIOS_UKI_VERITY_BUILD || { return 1 2>/dev
 [ -n "${MIOS_UNBOUND_PORT+x}" ] || MIOS_UNBOUND_PORT="${MIOS_PORTS_UNBOUND:-}"
 [ -n "${MIOS_UNIT_PROJECTION_DOC+x}" ] || MIOS_UNIT_PROJECTION_DOC='[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree'"'"'s 120 units are in that state, which is the larger debt behind task_267.'
 : "${MIOS_UNIT_PROJECTION_DRIFT:=hermes-worker-firstboot.service,hermes-worker.path,hermes-worker.service,mios-account-sync.service,mios-additionalimagestores-perms.path,mios-adguard-firstboot.service,mios-agent-pipe.service,mios-agents.service,mios-ai-firstboot.timer,mios-aios-refresh.timer,mios-bound-images-firstboot.service,mios-ceph-bootstrap.service,mios-daemon.service,mios-dashboard-issue.timer,mios-desktop.target,mios-embed-backfill.service,mios-embed-backfill.timer,mios-finetune-serve.service,mios-firewall-ports.service,mios-firstboot.target,mios-forge-firstboot.service,mios-forgejo-runner-firstboot.service,mios-gpu-amd.service,mios-gpu-detect.service,mios-gpu-intel.service,mios-gpu-nvidia.service,mios-gpu-nvidia.service.d/10-cycle-fix.conf,mios-gpu-pv-detect.service,mios-gpu-status.service,mios-ha-node.target,mios-headless.target,mios-hermes-browser-worker.service,mios-hermes-browser.service,mios-hermes-firstboot.service,mios-hybrid.target,mios-k3s-master.target,mios-k3s-worker.target,mios-libexec-perms.path,mios-mcp.service,mios-opencode-gateway.service,mios-pgvector-backup.service,mios-pgvector-backup.timer,mios-podman-gc.service,mios-policy-arbiter.service,mios-shell-session-gc.service,mios-skills-miner.timer,mios-suggestion-refresh.timer,mios-sys-env-refresh.timer,mios-userdb-render.service,mios-webtools-firstboot.service,mios-wsl-firstboot.service,mios-wsl-flatpak-export-sync.path}"
-: "${MIOS_UNIT_PROJECTION_MAX_DRIFT:=55}"
+: "${MIOS_UNIT_PROJECTION_MAX_DRIFT:=52}"
 : "${MIOS_UNIT_PROJECTION_MAX_UNDECLARED:=161}"
 : "${MIOS_UNIT_PROJECTION_MAX_UNDECLARED_USER:=19}"
 : "${MIOS_UNIT_PROJECTION_STRICT_NO_WRITE:=mios-boot-display-report.service,mios-cockpit-link.service,mios-embed-backfill.service,mios-node.service,mios-policy-arbiter.service,mios-rdp-usb@.service}"

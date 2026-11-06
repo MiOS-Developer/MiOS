@@ -9401,6 +9401,7 @@ blade.requires.miosd  MIOS_BLADE_REQUIRES_MIOSD
 blade.requires.mios-webtools-firecrawl-api  MIOS_BLADE_REQUIRES_MIOS_WEBTOOLS_FIRECRAWL_API
 blade.requires.mios-webtools-firecrawl-worker  MIOS_BLADE_REQUIRES_MIOS_WEBTOOLS_FIRECRAWL_WORKER
 blade.requires.mios-webtools-redis  MIOS_BLADE_REQUIRES_MIOS_WEBTOOLS_REDIS
+blade.requires.mios-enforcer  MIOS_BLADE_REQUIRES_MIOS_ENFORCER
 blade.requires.hermes-worker  MIOS_BLADE_REQUIRES_HERMES_WORKER
 blade.requires.mios-searxng  MIOS_BLADE_REQUIRES_MIOS_SEARXNG
 blade.requires.mios-hermes-browser-worker  MIOS_BLADE_REQUIRES_MIOS_HERMES_BROWSER_WORKER
