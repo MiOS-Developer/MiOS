@@ -647,9 +647,6 @@ impl Ui {
         } else {
             world_yaw as i32
         };
-        if self.camera_subject_cut.get() {
-            return to as u16;
-        }
         let turn = (to - from + 540) % 360 - 180;
         (from + turn * i32::from(self.camera_blend) / 100).rem_euclid(360) as u16
     }
@@ -3053,7 +3050,7 @@ impl Ui {
             ]
         };
         screen.render_widget(
-            Paragraph::new(hint_lines.join("\n")).style(Style::default().fg(colors.ink(7))),
+            Paragraph::new(hint_lines.join("\n")).style(Style::default().fg(colors.ink(13))),
             footer,
         );
         let action_row = if narrow_controls {
