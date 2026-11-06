@@ -8996,3 +8996,56 @@ mod camera_continuity_regressions {
         }
     }
 }
+
+#[cfg(test)]
+mod interrupted_yaw_audit {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn interrupted_manual_view_preserves_drawn_yaw_and_sprite() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let mut ui = Ui::configured(game, &config);
+        ui.world_enabled = false;
+        ui.camera_transition_frames = 8;
+        ui.camera_view = CameraView::Pet;
+        ui.camera_from_view = CameraView::Pet;
+        ui.yaw = 135;
+        ui.target_yaw = 135;
+        ui.set_scene(Rect::new(0, 0, 120, 40));
+        let game_before = ui.game.clone();
+        let rng_before = ui.visual_rng;
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.camera_view, CameraView::Face);
+        ui.animate(4);
+        let before_yaw = ui.camera_yaw(ui.yaw);
+        let before_sprite = ui.pet_sprite(&config.game, ui.frame);
+        let before_mix = ui.camera_mix();
+        assert!(ui.camera_blend > 0 && ui.camera_blend < 100);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.camera_view, CameraView::Room);
+        assert_eq!(ui.camera_mix(), before_mix);
+        assert_eq!(
+            ui.camera_yaw(ui.yaw),
+            before_yaw,
+            "An interrupted switch must start from the currently drawn yaw"
+        );
+        assert_eq!(
+            ui.pet_sprite(&config.game, ui.frame),
+            before_sprite,
+            "The actual projected voxel subject must not jump on that frame"
+        );
+        assert_eq!(ui.game, game_before);
+        assert_eq!(ui.visual_rng, rng_before);
+    }
+}
