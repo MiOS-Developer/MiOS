@@ -814,8 +814,35 @@ fn printable_face(text: &str) -> bool {
     !text.is_empty() && text.is_ascii() && !text.bytes().any(|c| c.is_ascii_control())
 }
 
-fn paint_face_character(cell: &mut ratatui::buffer::Cell, colors: &Colors, glyph: char) {
-    cell.set_char(glyph).set_fg(colors.ink(0));
+/// Face strokes use the dark face ink unless it would vanish into the head
+/// under them (a black-bodied species): then, exactly as a silhouette against
+/// its scene, the configured outline separation picks a legible tone. The head
+/// is the material at the face-plane centre (or a legacy face's anchor).
+/// Without lighting there is no configured separation and the ink stays.
+fn face_ink(sprite: &Sprite, colors: &Colors) -> Color {
+    let ink = colors.ink(0);
+    let Some(lighting) = colors.lighting.as_ref().filter(|light| light.enabled) else {
+        return ink;
+    };
+    let head = face_anchor(sprite)
+        .and_then(|(x, y)| sprite.pixel(x as u32, y as u32, 1))
+        .or_else(|| {
+            let face = sprite.face_overlay()?;
+            sprite.pixel(u32::from(face.center_x), u32::from(face.y), 1)
+        });
+    head.map_or(ink, |index| {
+        let head = colors.ink(usize::from(index));
+        silhouette_color(lighting, colors, ink, head, head)
+    })
+}
+
+fn paint_face_character(
+    cell: &mut ratatui::buffer::Cell,
+    colors: &Colors,
+    ink: Color,
+    glyph: char,
+) {
+    cell.set_char(glyph).set_fg(ink);
     if colors.palette.iter().all(|color| *color == Color::Reset) {
         // Native characters must remain distinct even when the body tone uses
         // that same ASCII character and the terminal has no color channels.
@@ -866,9 +893,10 @@ fn draw_front_face(
     {
         return false;
     }
+    let ink = face_ink(sprite, colors);
     for (offset, glyph) in face.text.chars().enumerate() {
         if let Some(cell) = buf.cell_mut(((start + offset as i32) as u16, row as u16)) {
-            paint_face_character(cell, colors, glyph);
+            paint_face_character(cell, colors, ink, glyph);
         }
     }
     true
@@ -1360,9 +1388,9 @@ fn draw_shaded_face(
     projection: Projection,
     area: Rect,
     buf: &mut Buffer,
-    face: (FaceTexture, [f64; 4]),
+    face: (FaceTexture, [f64; 4], Color),
 ) -> bool {
-    let (texture, [left, top, right, bottom]) = face;
+    let (texture, [left, top, right, bottom], stroke_color) = face;
     let (dx, dy) = renderer.packing();
     let count = f64::from(dx * dy);
     let mut cells = Vec::new();
@@ -1430,7 +1458,7 @@ fn draw_shaded_face(
         } else {
             glyph
         };
-        cell.set_char(glyph).set_fg(colors.ink(0));
+        cell.set_char(glyph).set_fg(stroke_color);
         painted = true;
     }
     painted
@@ -1506,6 +1534,7 @@ fn draw_surface_glyphs(
     let Some(texture) = FaceTexture::new(sprite) else {
         return false;
     };
+    let ink = face_ink(sprite, colors);
     let (dx, dy) = renderer.packing();
     let mut visible = Vec::new();
     for row in area.y..area.bottom() {
@@ -1540,7 +1569,7 @@ fn draw_surface_glyphs(
         let mut painted = false;
         for (pos, glyph) in candidates.into_iter().flatten() {
             if let Some(cell) = buf.cell_mut(pos) {
-                paint_face_character(cell, colors, char::from(glyph));
+                paint_face_character(cell, colors, ink, char::from(glyph));
                 painted = true;
             }
         }
@@ -1551,7 +1580,7 @@ fn draw_surface_glyphs(
         for (pos, glyph) in run.into_iter().flatten() {
             if let Some(cell) = buf.cell_mut(pos) {
                 // Preserve the room plane, including terminal tint/opacity.
-                paint_face_character(cell, colors, char::from(glyph));
+                paint_face_character(cell, colors, ink, char::from(glyph));
                 painted = true;
             }
         }
@@ -1594,7 +1623,7 @@ fn draw_surface_glyphs(
         for (pos, glyph) in candidates.into_iter().flatten() {
             if let Some(cell) = buf.cell_mut(pos) {
                 // Preserve the room plane, including terminal tint/opacity.
-                paint_face_character(cell, colors, char::from(glyph));
+                paint_face_character(cell, colors, ink, char::from(glyph));
                 painted = true;
             }
         }
@@ -1603,7 +1632,7 @@ fn draw_surface_glyphs(
     if let Some(candidates) = compact {
         for (pos, glyph) in candidates.into_iter().flatten() {
             if let Some(cell) = buf.cell_mut(pos) {
-                paint_face_character(cell, colors, char::from(glyph));
+                paint_face_character(cell, colors, ink, char::from(glyph));
             }
         }
         return true;
@@ -1650,8 +1679,12 @@ fn draw_camera_face(
     // Native cells use full visible head coverage, including the forehead.
     // Resolution comes from the letterboxed text box on the narrow face
     // surface: native characters, then multi-cell ASCII shading, then the atlas.
-    // One pixel per cell has no sub-cell atlas to switch to.
-    let pixel_atlas = renderer.packing() != (1, 1);
+    // One pixel per cell has no sub-cell atlas to switch to, and half-block
+    // atlas ink is a flat palette pixel: a head that needs a substitute ink
+    // (see face_ink) keeps the shaded strokes, whose glyphs carry it.
+    let stroke_color = face_ink(sprite, colors);
+    let pixel_atlas = renderer.packing() != (1, 1)
+        && !(renderer == Renderer::HalfBlock && stroke_color != colors.ink(0));
     match face_lod(texture, columns, rows, pixel_atlas) {
         FaceLod::Native => {
             return native_fits
@@ -1665,7 +1698,7 @@ fn draw_camera_face(
                 projection,
                 area,
                 buf,
-                (texture, [left, top, right, bottom]),
+                (texture, [left, top, right, bottom], stroke_color),
             );
         }
         FaceLod::Atlas => {}
@@ -1726,7 +1759,7 @@ fn draw_camera_face(
                         } else {
                             '#'
                         };
-                        cell.set_char(mark).set_fg(colors.ink(0));
+                        cell.set_char(mark).set_fg(stroke_color);
                     }
                 }
                 Renderer::HalfBlock if mono => {
@@ -2727,7 +2760,7 @@ mod voxel_lighting_tests {
                         if !area.contains((x, y).into()) {
                             assert_eq!(after[(x, y)], outside[(x, y)]);
                         } else if after[(x, y)] != before[(x, y)] {
-                            assert_eq!(after[(x, y)].fg, colors.ink(0));
+                            assert_eq!(after[(x, y)].fg, face_ink(&sprite, &colors));
                             assert_eq!(after[(x, y)].bg, before[(x, y)].bg);
                             face_cells += 1;
                         }
@@ -6147,6 +6180,56 @@ mod kaomoji_scale_tests {
     }
 
     #[test]
+    fn face_ink_separates_from_the_head_of_every_species() {
+        let config = Config::sample().unwrap();
+        let mut substituted = 0;
+        for depth in [Depth::Ansi, Depth::Indexed, Depth::Rgb] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            let lighting = colors.lighting.clone().unwrap();
+            let minimum = u32::from(lighting.outline_percent.min(100)) * 255 / 100;
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                    for shape in 0..16u8 {
+                        let sprite = Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            0,
+                            0,
+                            false,
+                            Appearance {
+                                shape,
+                                body: shape,
+                                accent: (shape + 5) % 16,
+                            },
+                        );
+                        let (x, y) = face_anchor(&sprite).unwrap();
+                        let head =
+                            colors.ink(usize::from(sprite.pixel(x as u32, y as u32, 1).unwrap()));
+                        let ink = face_ink(&sprite, &colors);
+                        let separation =
+                            |color| luminance(color).unwrap().abs_diff(luminance(head).unwrap());
+                        assert!(
+                            separation(ink) >= minimum,
+                            "{depth:?} {stage:?} {style:?} shape {shape}: face ink {ink:?} on head {head:?}"
+                        );
+                        // The dark ink stays wherever it already reads.
+                        if separation(colors.ink(0)) >= minimum {
+                            assert_eq!(ink, colors.ink(0), "{depth:?} shape {shape}");
+                        } else {
+                            substituted += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            substituted > 0,
+            "a dark-bodied species must exercise the substitute ink"
+        );
+    }
+
+    #[test]
     fn face_lod_tiers_are_ordered_and_keep_the_legacy_atlas_switch() {
         for text in ["(o_O)", "(^_^)", "T_T"] {
             for aspect in [None, Some(0.8), Some(1.6), Some(4.0)] {
@@ -6288,7 +6371,7 @@ mod kaomoji_scale_tests {
                                         );
                                         assert_eq!(
                                             cell.fg,
-                                            colors.ink(0),
+                                            face_ink(&front, &colors),
                                             "{label}: stroke ink at {x},{y}"
                                         );
                                         for sy in 0..dy {
