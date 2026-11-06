@@ -128,6 +128,54 @@ pub enum CameraView {
     Face,
 }
 
+impl CameraView {
+    /// Weight order of a per-mille view mix: Room, Pet, Face.
+    pub const ALL: [CameraView; 3] = [CameraView::Room, CameraView::Pet, CameraView::Face];
+
+    pub fn index(self) -> usize {
+        match self {
+            CameraView::Room => 0,
+            CameraView::Pet => 1,
+            CameraView::Face => 2,
+        }
+    }
+
+    /// This view alone, as a per-mille mix.
+    pub fn one_hot(self) -> [u16; 3] {
+        let mut weights = [0; 3];
+        weights[self.index()] = 1000;
+        weights
+    }
+
+    /// The heaviest view of a mix; ties resolve to the earlier view.
+    pub fn dominant(weights: [u16; 3]) -> Self {
+        let mut best = CameraView::Room;
+        for view in Self::ALL {
+            if weights[view.index()] > weights[best.index()] {
+                best = view;
+            }
+        }
+        best
+    }
+
+    /// The mix drawn `percent` of the way from `source` to this view. The
+    /// rounding remainder belongs to this view, so the weights sum to 1000.
+    pub fn blend_from(self, source: [u16; 3], percent: u16) -> [u16; 3] {
+        let percent = i32::from(percent.min(100));
+        let target = self.one_hot();
+        let mut weights = [0u16; 3];
+        for (index, weight) in weights.iter_mut().enumerate() {
+            let from = i32::from(source[index].min(1000));
+            let to = i32::from(target[index]);
+            *weight = (from + (to - from) * percent / 100).clamp(0, 1000) as u16;
+        }
+        let sum: i32 = weights.iter().map(|&w| i32::from(w)).sum();
+        let own = &mut weights[self.index()];
+        *own = (i32::from(*own) + 1000 - sum).clamp(0, 1000) as u16;
+        weights
+    }
+}
+
 /// Presentation only; camera interpolation never changes pet simulation.
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
@@ -137,6 +185,9 @@ pub struct Camera {
     pub zoom_percent: u16,
     pub from_view: CameraView,
     pub transition_percent: u16,
+    /// Per-mille Room/Pet/Face framing mix the transition starts from. None
+    /// means `from_view` alone, so an interrupted blend never jumps.
+    pub from_weights: Option<[u16; 3]>,
 }
 
 impl Default for Camera {
@@ -147,6 +198,7 @@ impl Default for Camera {
             zoom_percent: 100,
             from_view: CameraView::Pet,
             transition_percent: 100,
+            from_weights: None,
         }
     }
 }
@@ -356,7 +408,33 @@ impl Projection {
                 scale_y,
             }
         };
-        let from = mode(camera.from_view);
+        // A one-view source is used directly, keeping one-hot results exact.
+        let from = match camera.from_weights {
+            Some(weights) if weights.iter().filter(|&&w| w > 0).count() > 1 => {
+                let total = f64::from(weights.iter().map(|&w| u32::from(w)).sum::<u32>());
+                let mut mixed = Self {
+                    left: 0.0,
+                    top: 0.0,
+                    scale: 0.0,
+                    scale_y: 0.0,
+                };
+                for view in CameraView::ALL {
+                    let weight = weights[view.index()];
+                    if weight == 0 {
+                        continue;
+                    }
+                    let share = f64::from(weight) / total;
+                    let framed = mode(view);
+                    mixed.left += framed.left * share;
+                    mixed.top += framed.top * share;
+                    mixed.scale += framed.scale * share;
+                    mixed.scale_y += framed.scale_y * share;
+                }
+                mixed
+            }
+            Some(weights) if weights.iter().any(|&w| w > 0) => mode(CameraView::dominant(weights)),
+            _ => mode(camera.from_view),
+        };
         let to = mode(camera.view);
         let blend = f64::from(camera.transition_percent.min(100)) / 100.0;
         Self {
@@ -4514,6 +4592,7 @@ mod camera_tests {
                             from_view: view,
                             zoom_percent: 50,
                             transition_percent: 100,
+                            ..Camera::default()
                         },
                     );
                     let mut before = Buffer::empty(area);
@@ -4635,6 +4714,7 @@ mod camera_tests {
                                     from_view: view,
                                     zoom_percent: zoom,
                                     transition_percent: 100,
+                                    ..Camera::default()
                                 },
                             );
                             let mut before = Buffer::empty(area);
@@ -6271,6 +6351,7 @@ mod kaomoji_scale_tests {
                         from_view: CameraView::Face,
                         zoom_percent: 150,
                         transition_percent: 100,
+                        ..Camera::default()
                     },
                 );
                 assert!(
@@ -6383,6 +6464,7 @@ mod kaomoji_scale_tests {
                                             from_view: CameraView::Face,
                                             zoom_percent,
                                             transition_percent: 100,
+                                            ..Camera::default()
                                         },
                                     )
                                 };
@@ -6567,6 +6649,7 @@ mod kaomoji_scale_tests {
                                             from_view: CameraView::Face,
                                             zoom_percent,
                                             transition_percent: 100,
+                                            ..Camera::default()
                                         },
                                     );
                                     let mut body = Buffer::empty(area);
@@ -6675,6 +6758,7 @@ mod kaomoji_scale_tests {
                                             from_view: view,
                                             zoom_percent,
                                             transition_percent: 100,
+                                            ..Camera::default()
                                         },
                                     );
                                     let (l, t) = projection.cell(bounds.left, bounds.top, renderer);
