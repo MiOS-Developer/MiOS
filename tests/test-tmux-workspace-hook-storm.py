@@ -2,7 +2,7 @@
 # AI-hint: Two-sided regression test for the tmux-os resize flood: a private tmux server with the MiOS theme hooks and a real pty client resized 60 times; the native relay hook must spawn no interpreter, keep concurrency bounded, drain, and leave the workspace laid out (MIOS_TMUX_STORM_CONF/MIOS_TMUX_STORM_RELAY select the candidate; a legacy conf is the negative control).
 # AI-related: tools/native/mios-agent-relay/src/workspace_hook.rs, tools/native/mios-service-core/src/tmux_theme.rs, usr/share/mios/tmux/mios-theme.tmux.conf, usr/libexec/mios/mios-mcp-server
 # Run with the LIVE theme conf (python hooks, negative control) and the candidate conf (native relay hooks).
-import fcntl, json, os, pty, signal, struct, subprocess, sys, tempfile, termios, time
+import fcntl, json, os, pty, shutil, signal, struct, subprocess, sys, tempfile, termios, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,6 +116,8 @@ try:
 except ProcessLookupError:
     pass
 T('kill-server')
+if not runtime:
+    shutil.rmtree(base, ignore_errors=True)
 
 if label == 'native':
     ok = (res['python_spawned'] == 0 and res['peak_concurrent'] <= 24 and res['left_running'] == 0
