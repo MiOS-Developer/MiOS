@@ -4576,3 +4576,10 @@ tracked in3755. At high zoom in small PiP the outer facial expression crops.
 Physical mobile/Smartwatch clients, a controller assigned to this seat, VT0/tty0,
 ARM64 and other Blades remain unverified. Task3708 remains partial. Current
 localhost transport is native user-local ttyd Bash, not a PowerShell/container.
+
+
+Hosted status update: actual main0275 run42167741940, drift job127737671357,
+completed its behavioral tier with516 passing and48 failing suites; the Rust
+step was not reached. These failures are not certified host-only or baseline
+failures. A separately owned CI triage task3756 records this scope. It does not
+change the final Mon package's337 passing checks or its actual viewport receipts.

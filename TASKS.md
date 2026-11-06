@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
+| pending | 1749 |
 | in_progress | 78 |
 | completed | 1889 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3755 |
+| total | 3756 |
 
 0 record(s) carry at least one override.
 
@@ -4421,6 +4421,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3698` Publish machine OS mirror under the current repository organization -- completed · owner mios-ci-registry · P0 · size M
 - `task_3700` Repair remaining source CI fitness failures without relaxing shrink-only budgets -- in_progress · owner mios-controller-repair · P0 · size L
 - `task_3701` Fail closed when image signature evidence is unavailable -- completed · owner mios-signature-fail-closed · P0 · size M
+- `task_3756` Triage the hosted main behavioral suite failures independently of the Mon release -- pending · owner mios-claude-continuation · P1 · size L
 
 ## input
 

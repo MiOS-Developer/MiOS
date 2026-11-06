@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-06T05:06:18.317300+00:00",
+  "last_updated": "2026-11-06T07:30:15.081109+00:00",
   "total_artifacts": 141,
   "artifacts": [
     {
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "3e0941baf8980b4f0a0695bc49018127407bf24ca988b75910b8b4e2f15b6d78",
-      "size_bytes": 708928,
+      "sha256": "4b64a20a6c2f3ea2d7a55b07cc1debaba5cc13b0dc9474b6e829118c6ae923d0",
+      "size_bytes": 716241,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -129,6 +129,19 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       }
     },
@@ -238,8 +251,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "168a01c4e4e1e81129caa81ecc668eb1da11d4318b9e7f5eec3d0add404edfcb",
-      "size_bytes": 553146,
+      "sha256": "56e42a7f5268eef0361019e64629a7805a74360ab77d7fa6b43b242dd595402f",
+      "size_bytes": 553476,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -308,14 +321,27 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "c5f457856ee75d7e78616681658ff3430a73f750c32cf93037a0c6048cb6e179",
-      "size_bytes": 14642233,
+      "sha256": "f1d4d2c14d70662be62518770941bb6f948163f0589d2a6928bd7df4022cd2b3",
+      "size_bytes": 14647117,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -384,6 +410,19 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       }
     },
@@ -1891,10 +1930,23 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       },
-      "sha256": "2403f5d6ce4a2a8d1cc174708297ad32ecf2956c5d0f9e44d770487e504afbd4",
-      "size_bytes": 227097
+      "sha256": "80a5bc771f8ca3d8bb8c595706d6dc0fc75c2f2f8f3b931fed22e5331d27d404",
+      "size_bytes": 278660
     },
     {
       "path": "tools/native/mios-tamagotchi/src/save.rs",
@@ -1951,10 +2003,23 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       },
-      "sha256": "9d390f27d16f7a3e1325982a2f6b2d28b76d5bc352e8b5a3bb948a1fa9363b04",
-      "size_bytes": 148607
+      "sha256": "27a7cb7f7519b4367dddd697318bbe351d9cee03246af578252d2796be7e079c",
+      "size_bytes": 150422
     },
     {
       "path": "tools/native/mios-tamagotchi/src/tests.rs",
@@ -2045,10 +2110,23 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       },
-      "sha256": "49c159f6a63e68ddb75ce27d94475a42984f96f7711c5e020f389347a8d2be20",
-      "size_bytes": 316630
+      "sha256": "ccd0957a32517ee8a1857b38c3ca3b4ee5b64c34bebc8682e3c5c7e5f123cf6a",
+      "size_bytes": 336681
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -2274,10 +2352,23 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       },
-      "sha256": "9e86433b35859a8c9b569bd14c44c8fe6d3d3b008b058d1c75aab8d5b8af1c6a",
-      "size_bytes": 48717
+      "sha256": "17158c8c001823a2ce55d0298ee3fdeef680b412bcec6fbcfd008aced39d72ff",
+      "size_bytes": 50349
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
@@ -2449,9 +2540,22 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       },
-      "sha256": "f3f98b38117cb68f1addb663b08904c0764d00f323df342913f7738ee47668e9",
+      "sha256": "6749f96d1c4764c9f2c1ebbacce69e25bea70928fb3f8eccf942f0c3bd8a7060",
       "size_bytes": 163128
     },
     {
@@ -2491,10 +2595,23 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_face_console_release": {
+          "source": "0c6900b45c7f70ea8aba8c46cdd232d243ba93bd",
+          "artifact_sha256": "fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea",
+          "miOS_DEV_checks": 337,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-handoff-live/mios-post-main-live.json",
+          "scope": "User-local save-free x86_64 MiOS0.3.0; physical mobile/controller/VT/fleet/image not certified; global CI not green",
+          "followups": [
+            3755,
+            3756
+          ]
         }
       },
-      "sha256": "89517ef57b5a56711a75607940dd4038f533f42e8808906b81eee50c1e5c9b2c",
-      "size_bytes": 3367436
+      "sha256": "a9d379783f7b16ddf7f81cb42386d8e81ba383c9f1b6218a2914b686afe1ba3c",
+      "size_bytes": 3367621
     },
     {
       "path": "usr/share/mios/referenced_names.txt",
