@@ -132,6 +132,12 @@ impl Appearance {
     }
 }
 
+/// A head axis this close to edge-on (a 90 or 270 degree profile) is treated as
+/// back-facing on both sides. In f32, cos(90 deg) is about -4.4e-8 and
+/// cos(270 deg) about +1.2e-8, so a plain `<= 0.0` split the two profiles by
+/// rounding: one mapped no face, the other an undrawable edge-on sliver.
+const EDGE_ON_HEAD_AXIS: f32 = 1e-6;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FaceMapping {
     text: &'static str,
@@ -161,6 +167,50 @@ pub struct Sprite {
     // Q8 packed-pixel camera depth relative to the physical ground anchor.
     voxel_depth: Option<Vec<i32>>,
     voxel_ground: Option<[i32; 2]>,
+}
+
+#[cfg(test)]
+mod profile_symmetry_tests {
+    use super::*;
+    use crate::game::Stage;
+
+    #[test]
+    fn both_profiles_map_the_same_face_for_every_species() {
+        let texels = |sprite: &Sprite| {
+            sprite
+                .face_mapping
+                .as_ref()
+                .map_or(0, |mapping| mapping.texels.iter().flatten().count())
+        };
+        for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+            for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                for shape in 0..16u8 {
+                    let make = |yaw| {
+                        Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            0,
+                            yaw,
+                            false,
+                            Appearance {
+                                shape,
+                                body: shape,
+                                accent: (shape + 5) % 16,
+                            },
+                        )
+                    };
+                    let (left, right) = (texels(&make(90)), texels(&make(270)));
+                    assert_eq!(
+                        (left, right),
+                        (0, 0),
+                        "{stage:?} {style:?} shape {shape}: an edge-on profile maps no face on either side"
+                    );
+                    assert!(texels(&make(45)) > 0 && texels(&make(315)) > 0);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1857,8 +1907,9 @@ impl VoxelModel {
                 for x in 0..sprite.width {
                     let i = usize::from(y) * usize::from(sprite.width) + usize::from(x);
                     // Stepped top facets can remain visible from behind under
-                    // pitch. A back-facing head axis never authorizes facial ink.
-                    if c * cp <= 0.0 || !face_layer[i] || !depth[i].is_finite() {
+                    // pitch. A back-facing head axis never authorizes facial ink;
+                    // neither does an exactly edge-on one (see EDGE_ON_HEAD_AXIS).
+                    if c * cp <= EDGE_ON_HEAD_AXIS || !face_layer[i] || !depth[i].is_finite() {
                         continue;
                     }
                     let vx = (f32::from(x) + 0.5 - (f32::from(size) * 0.5 + 0.5)) / fit;
