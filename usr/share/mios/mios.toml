@@ -107,7 +107,7 @@ unconsumed = [
 # ----------------------------------------------------------------------------
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
-max_drift = 55
+max_drift = 52
 max_undeclared = 161
 max_undeclared_user = 19
 strict_no_write = [
