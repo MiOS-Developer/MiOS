@@ -2398,22 +2398,31 @@ BTN_TL2 = [250, 90]
             let f = audit(&ok.replacen(from, to, 1));
             assert!(f.iter().any(|x| x.contains(why)), "{to}: {f:#?}");
         }
-        // Profile rules of the refined base context, and the camera stick rule.
-        for (row, why) in [
-            ("[keybindings.global.controller.nav.mon_tmux]\ninherits = \"terminal_tmux\"\n", "BTN_START = \"key:ENTER\"\n"),
-            ("[keybindings.global.controller.nav.mon_plain]\ninherits = \"terminal_plain\"\n", "RS_UP = \"tmux:focus up\"\n"),
-            ("[keybindings.global.controller.nav.mon_console_plain]\ninherits = \"console_plain\"\n", "BTN_SOUTH = \"hypr:movefocus left\"\n"),
+        // Profile rules of the refined base context, and the camera stick rule (each edit lands in one profile).
+        let in_profile = |profile: &str, row: &str| {
+            let at = ok
+                .find(&format!("[keybindings.global.controller.nav.{profile}]\n"))
+                .unwrap();
+            let (head, tail) = ok.split_at(at);
+            match row.split_once(" = ") {
+                Some((key, _)) if tail.contains(&format!("\n{key} = ")) => {
+                    let line = tail
+                        .lines()
+                        .find(|l| l.starts_with(&format!("{key} = ")))
+                        .unwrap();
+                    format!("{head}{}", tail.replacen(line, row, 1))
+                }
+                _ => format!("{head}{}", tail.replacen('\n', &format!("\n{row}\n"), 1)),
+            }
+        };
+        for (profile, row, want) in [
+            ("mon_tmux", "BTN_START = \"key:ENTER\"", "app mon (mon_tmux): BTN_START is owned by the capture contract"),
+            ("mon_plain", "RS_UP = \"tmux:focus up\"", "app mon (mon_plain).RS_UP: a camera app's stick rows are key: or none"),
+            ("mon_console_plain", "BTN_SOUTH = \"hypr:movefocus left\"", "app mon (mon_console_plain).BTN_SOUTH: action \"hypr:movefocus left\" cannot run on the console"),
         ] {
-            let bad = ok.replacen(row, &format!("{row}{why}"), 1);
+            let bad = in_profile(profile, row);
             assert_ne!(bad, ok);
             let f = audit(&bad);
-            let want = if why.starts_with("BTN_START") {
-                "app mon (mon_tmux): BTN_START is owned by the capture contract"
-            } else if why.starts_with("RS_UP") {
-                "app mon (mon_plain).RS_UP: a camera app's stick rows are key: or none"
-            } else {
-                "app mon (mon_console_plain).BTN_SOUTH: action \"hypr:movefocus left\" cannot run on the console"
-            };
             assert!(f.iter().any(|x| x.contains(want)), "{want}: {f:#?}");
         }
         // The RS-never-repeats rule is relaxed only inside a camera app: [nav.repeat] still rejects it.
