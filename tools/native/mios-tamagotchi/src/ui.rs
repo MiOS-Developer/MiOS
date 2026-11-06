@@ -5211,7 +5211,12 @@ mod graphics_tests {
             if width >= 66 {
                 let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
                 assert!(!text.contains("Terminal too small"));
-                assert!(text.contains("PET ROOM"));
+                let heading: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+                assert!(
+                    heading.contains(ui.name())
+                        && heading.contains(&format!("{:?}", ui.game.stage(&config.game))),
+                    "{heading}"
+                );
                 assert!(text.contains("QUICK CARE"));
                 let colored = buffer
                     .content
