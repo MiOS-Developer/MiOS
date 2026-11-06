@@ -142,9 +142,17 @@ def _bind_turn(mode):
 
 def t_principal_bind_mode():
     p = g._parse_principal_bind_mode
+
+    def parsed(raw):
+        try:
+            return p(raw)
+        except ValueError as exc:  # a rejected canonical value is a FAIL line, not a crash
+            return exc
+
     for raw, want in (("off", "off"), ("verify", "verify"), ("enforce", "enforce"),
                       ("audit", "verify"), (" AUDIT ", "verify"), (None, "off"), ("", "off")):
-        check(f"bind mode: {raw!r} -> {want}", p(raw) == want, repr(p(raw)))
+        got = parsed(raw)
+        check(f"bind mode: {raw!r} -> {want}", got == want, repr(got))
     # An unknown value is REJECTED with a message naming the key, the value and
     # every accepted spelling -- never silently read as off.
     for bad in ("bogus", "on", "true", ["enforce"]):
