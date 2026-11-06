@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided verification test suite for Milestone M4: Singular Root-Git Substrate,
 # level-by-level .gitignore isolation, Windows host namespace protection, ADR-0030 file budget,
-# bare store .archive/, and standing verification gates.
-# AI-related: .gitignore, usr/share/mios/mios.toml, tools/drift-checks.py, .archive/
-import fnmatch
+# bare store .archive/, the one documented SKILLS archive, and standing verification gates.
+# AI-related: .gitignore, usr/share/mios/mios.toml, tools/drift-checks.py, .archive/, SKILLS/MANIFEST.json, usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh
+import hashlib
+import io
+import json
+import tarfile
 import tempfile
 import os
 import subprocess
 import sys
 import unittest
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from unittest import mock
 
 
 def find_mios_root() -> Path:
@@ -59,6 +63,195 @@ def _fixture_repo(source):
     _git(source, "-c", "user.name=MiOS", "-c", "user.email=mios@example.invalid",
          "commit", "-q", "-m", "root merge fixture")
     return config, executable
+
+
+# --- The root overlay and the deployed-root axiom ---------------------------
+SSOT_PATH = "usr/share/mios/mios.toml"
+# The deployed-host gate that owns the '/'-is-the-Git-top-level axiom (greenboot, advisory).
+ROOT_GIT_GATE = "usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh"
+
+
+def is_git_top_level(path: Path) -> bool:
+    """True only when path itself is the top level of a Git worktree.
+
+    A .git entry is not enough: an empty or foreign .git, or a path nested
+    in another repository, resolves a different (or no) top level.
+    """
+    res = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    return res.returncode == 0 and Path(res.stdout.strip()).resolve() == path.resolve()
+
+
+def overlay_layout_defects(path: Path) -> list:
+    """Why path is not a MiOS root overlay ([] when it is): its own Git top level, tracking the
+    vendor SSOT at the FHS path it is deployed to."""
+    if not is_git_top_level(path):
+        return [f"{path} is not its own Git top level"]
+    tracked = subprocess.run(["git", "-C", str(path), "ls-files", "--error-unmatch", "--", SSOT_PATH],
+                             capture_output=True, text=True)
+    if tracked.returncode != 0:
+        return [f"{path} does not track the vendor SSOT {SSOT_PATH}: {tracked.stderr.strip()}"]
+    return []
+
+
+def container_kind() -> str:
+    """The container this process runs in, '' on a host. WSL is a host, not a container."""
+    if os.environ.get("container"):
+        return os.environ["container"]
+    for marker, kind in ((Path("/run/.containerenv"), "podman"), (Path("/.dockerenv"), "docker")):
+        if marker.exists():
+            return kind
+    try:
+        kind = Path("/run/systemd/container").read_text(encoding="utf-8").strip()
+    except OSError:
+        kind = ""
+    if kind and kind != "wsl":
+        return kind
+    try:
+        probe = subprocess.run(["systemd-detect-virt", "--container"], capture_output=True, text=True)
+    except OSError:
+        return ""
+    kind = probe.stdout.strip()
+    return kind if probe.returncode == 0 and kind not in ("", "none", "wsl") else ""
+
+
+def deployed_root_reason(root: Path, container: str) -> str:
+    """'' when root is a deployed MiOS root, where the axiom applies; otherwise why it does not."""
+    if container:
+        return f"running in a {container} container: {root} is the container image, not a deployed host"
+    if not (root / SSOT_PATH).is_file():
+        return f"{root} carries no MiOS vendor SSOT ({SSOT_PATH}): it is not a deployed MiOS root"
+    return ""
+
+
+def _run_root_gate(root: Path):
+    return subprocess.run(["bash", str(ROOT / ROOT_GIT_GATE), str(root)], capture_output=True, text=True)
+
+
+def _ssot_repo(path: Path, track_ssot: bool = True) -> Path:
+    """A committed fixture root; it tracks the vendor SSOT at its FHS path unless told not to."""
+    tracked = path / (SSOT_PATH if track_ssot else "usr/libexec/mios/config.json")
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("# fixture\n")
+    _git(path.parent, "init", "-q", "-b", "main", str(path))
+    _git(path, "add", "usr")
+    _git(path, "-c", "user.name=MiOS", "-c", "user.email=mios@example.invalid",
+         "commit", "-q", "-m", "root fixture")
+    return path
+
+
+# --- The one documented, generated archive ----------------------------------
+# Canonical archive inventory: its publication record names the only tracked tarball outside vendored/.
+ARCHIVE_INVENTORY = "SKILLS/MANIFEST.json"
+TAR_PATHSPECS = ("*.tar", "*.tar.gz", "*.tgz", ":!usr/share/mios/vendored/**")
+
+
+def _tracked(root: Path, *pathspecs) -> list:
+    res = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", *pathspecs],
+                         capture_output=True, text=True, check=True)
+    return [path for path in res.stdout.split("\0") if path]
+
+
+def archive_publication(root: Path) -> dict:
+    """The inventory's publication record, {} when the tree carries no inventory."""
+    path = root / ARCHIVE_INVENTORY
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8")).get("publication") or {}
+
+
+def undocumented_tar_bundles(root: Path) -> list:
+    """Tracked tarballs outside the vendored store that the inventory does not publish."""
+    documented = archive_publication(root).get("archive_path")
+    return [path for path in _tracked(root, *TAR_PATHSPECS) if path != documented]
+
+
+def archive_drift(root: Path) -> list:
+    """Every way the documented archive differs from the tracked tree it packages; [] when in sync.
+
+    The archive holds exactly the tracked files of its repository directory except itself and its
+    checksum, byte for byte; the checksum file matches the archive; SHA256SUMS matches the payload.
+    """
+    pub = archive_publication(root)
+    directory, archive, checksum = (pub.get(key, "") for key in
+                                    ("repository_directory", "archive_path", "checksum_path"))
+    if not (directory and archive and checksum):
+        return [f"{ARCHIVE_INVENTORY}: publication must name repository_directory, archive_path and checksum_path"]
+    prefix = directory.rstrip("/") + "/"
+    tracked = set(_tracked(root, prefix))
+    defects = [f"{path}: documented by {ARCHIVE_INVENTORY} but not a tracked file of {prefix}"
+               for path in (archive, checksum) if path not in tracked]
+    if defects:
+        return defects
+    data = (root / archive).read_bytes()
+    expected = [hashlib.sha256(data).hexdigest(), PurePosixPath(archive).name]
+    recorded = (root / checksum).read_text(encoding="utf-8").split()
+    if recorded != expected:
+        defects.append(f"{checksum}: records {recorded}, the archive is {expected}")
+    payload = tracked - {archive, checksum}
+    members = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as bundle:
+            for info in bundle.getmembers():
+                if not info.isreg():
+                    defects.append(f"{archive}: member {info.name} is not a regular file")
+                elif info.name in members:
+                    defects.append(f"{archive}: member {info.name} appears twice")
+                else:
+                    members[info.name] = bundle.extractfile(info).read()
+    except (tarfile.TarError, OSError, EOFError) as error:
+        return defects + [f"{archive}: not a readable gzip tar archive: {error}"]
+    defects += [f"{archive}: member {name} is not a tracked file of {prefix}" for name in sorted(set(members) - payload)]
+    defects += [f"{archive}: omits tracked {name}" for name in sorted(payload - set(members))]
+    defects += [f"{archive}: member {name} differs from the tracked file" for name in sorted(payload & set(members))
+                if members[name] != (root / name).read_bytes()]
+    sums_path = prefix + "SHA256SUMS"
+    if sums_path in payload:
+        sums = {}
+        for line in (root / sums_path).read_text(encoding="utf-8").splitlines():
+            digest, _, rel = line.partition("  ")
+            sums[prefix + rel] = digest
+        covered = payload - {sums_path}
+        defects += [f"{sums_path}: lists {name}, which is not in the payload" for name in sorted(set(sums) - covered)]
+        defects += [f"{sums_path}: omits {name}" for name in sorted(covered - set(sums))]
+        defects += [f"{sums_path}: stale digest for {name}" for name in sorted(covered & set(sums))
+                    if hashlib.sha256((root / name).read_bytes()).hexdigest() != sums[name]]
+    return defects
+
+
+def _pack_archive(root: Path) -> None:
+    """Regenerate a fixture's documented archive and checksum from its tracked payload."""
+    pub = archive_publication(root)
+    prefix = pub["repository_directory"].rstrip("/") + "/"
+    payload = sorted(set(_tracked(root, prefix)) - {pub["archive_path"], pub["checksum_path"]})
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as bundle:
+        for name in payload:
+            bundle.add(str(root / name), arcname=name)
+    (root / pub["archive_path"]).write_bytes(buffer.getvalue())
+    digest = hashlib.sha256(buffer.getvalue()).hexdigest()
+    (root / pub["checksum_path"]).write_text(f"{digest}  {PurePosixPath(pub['archive_path']).name}\n")
+
+
+def _archive_fixture(base: Path) -> Path:
+    """A tree shaped like SKILLS/: an inventory, a payload, SHA256SUMS, and its archive, all tracked."""
+    root = base / "tree"
+    skills = root / "SKILLS"
+    (skills / "definitions/demo").mkdir(parents=True)
+    (skills / "definitions/demo/SKILL.md").write_text("# demo skill\n")
+    (skills / "README.md").write_text("demo export\n")
+    (skills / "MANIFEST.json").write_text(json.dumps({"publication": {
+        "repository_directory": "SKILLS", "branch": "main",
+        "archive_path": "SKILLS/demo-skills.tar.gz", "checksum_path": "SKILLS/demo-skills.tar.gz.sha256"}}))
+    (skills / "SHA256SUMS").write_text("".join(
+        f"{hashlib.sha256((skills / rel).read_bytes()).hexdigest()}  {rel}\n"
+        for rel in ("MANIFEST.json", "README.md", "definitions/demo/SKILL.md")))
+    (skills / "demo-skills.tar.gz").write_bytes(b"")
+    (skills / "demo-skills.tar.gz.sha256").write_text("")
+    _git(base, "init", "-q", "-b", "main", str(root))
+    _git(root, "add", "SKILLS")
+    _pack_archive(root)
+    return root
 
 
 class TestRootMergeModes(unittest.TestCase):
@@ -161,43 +354,36 @@ class TestLevelGitignoreIsolation(unittest.TestCase):
 
 
 class TestSingularRootRepositoryAxiomAndHostProtection(unittest.TestCase):
-    """Verify that the deployed host root contains MiOS's git metadata."""
+    """The checkout is a root overlay. The deployed-root axiom (gate: ROOT_GIT_GATE) is asserted only on a
+    deployed root; anywhere else it is skipped with the reason, never counted as a pass."""
 
     @staticmethod
     def host_root() -> Path:
         """The OS root: / on POSIX, the system drive root on Windows."""
         return Path(os.environ.get("SystemDrive", "C:") + "/") if os.name == "nt" else Path("/")
 
-    @staticmethod
-    def is_git_top_level(path: Path) -> bool:
-        """True only when path itself is the top level of a Git worktree.
-
-        A .git entry is not enough: an empty or foreign .git, or a path nested
-        in another repository, resolves a different (or no) top level.
-        """
-        res = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True)
-        return res.returncode == 0 and Path(res.stdout.strip()).resolve() == path.resolve()
-
-    def test_01_repository_overlaid_on_host_root(self):
-        """The host OS root is itself the MiOS Git top level and tracks the SSOT."""
-        root = self.host_root()
-        self.assertTrue(self.is_git_top_level(root),
-                        f"Host root {root} must be the Git top level (MiOS is a root filesystem overlay)")
-        tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch",
-                                  "usr/share/mios/mios.toml"], capture_output=True, text=True)
-        self.assertEqual(tracked.returncode, 0, tracked.stderr)
+    def test_01_checkout_is_a_root_overlay(self):
+        """The checkout is its own Git top level and tracks the SSOT at its deployed FHS path."""
+        self.assertEqual(overlay_layout_defects(ROOT), [],
+                         "MiOS is a root filesystem overlay: the checkout root is the overlay root")
 
     def test_03_planted_negative_controls_fail_the_root_check(self):
-        """Negative control: an empty root, an empty .git, and a nested directory are not roots."""
+        """Negative control: an empty root, an empty .git, a nested directory and an SSOT-less repo are not roots."""
         with tempfile.TemporaryDirectory(prefix="mios-root-check-") as temp:
             empty = Path(temp, "empty")
             empty.mkdir()
             fake = Path(temp, "fake")
             (fake / ".git").mkdir(parents=True)
-            self.assertFalse(self.is_git_top_level(empty))
-            self.assertFalse(self.is_git_top_level(fake))
-        self.assertFalse(self.is_git_top_level(ROOT / "usr/share/mios"))
+            self.assertFalse(is_git_top_level(empty))
+            self.assertFalse(is_git_top_level(fake))
+            self.assertIn("not its own Git top level", overlay_layout_defects(empty)[0])
+            self.assertIn("not its own Git top level", overlay_layout_defects(fake)[0])
+            bare = _ssot_repo(Path(temp, "no-ssot"), track_ssot=False)
+            self.assertTrue(is_git_top_level(bare))
+            self.assertIn("does not track the vendor SSOT", overlay_layout_defects(bare)[0])
+            self.assertEqual(overlay_layout_defects(_ssot_repo(Path(temp, "overlay"))), [])
+        self.assertFalse(is_git_top_level(ROOT / "usr/share/mios"))
+        self.assertIn("not its own Git top level", overlay_layout_defects(ROOT / "usr/share/mios")[0])
 
     def test_02_worktree_reports_zero_untracked_host_folders(self):
         """Positive Control: Verify git status reports 0 untracked host OS folders."""
@@ -207,6 +393,98 @@ class TestSingularRootRepositoryAxiomAndHostProtection(unittest.TestCase):
         for p in untracked:
             self.assertFalse(p.startswith(("Windows", "Program Files", "Users", "$Recycle.Bin")),
                              f"Host operating system folder reported as untracked: {p}")
+
+    def test_04_deployed_root_is_the_git_top_level(self):
+        """On a deployed MiOS root the OS root is the Git top level tracking the SSOT, and its gate agrees."""
+        root = self.host_root()
+        reason = deployed_root_reason(root, container_kind())
+        if reason:
+            self.skipTest(f"deployed-root axiom does not apply: {reason}")
+        self.assertEqual(overlay_layout_defects(root), [],
+                         f"Host root {root} must be the Git top level (MiOS is a root filesystem overlay)")
+        if os.name != "nt":
+            gate = _run_root_gate(root)
+            self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+            self.assertIn(f"OK: {root} is the MiOS Git top level", gate.stdout)
+
+    def test_05_deployed_root_gate_two_sided(self):
+        """The greenboot gate passes an overlay root and fails each planted non-root, as the unit check does."""
+        if os.name == "nt":
+            self.skipTest("the deployed-root gate is a greenboot check; greenboot runs on Linux hosts only")
+        gate = ROOT / ROOT_GIT_GATE
+        self.assertTrue(gate.is_file(), f"{ROOT_GIT_GATE} must exist")
+        self.assertTrue(os.access(gate, os.X_OK), f"{ROOT_GIT_GATE} must be executable: greenboot skips it otherwise")
+        mode = _git(ROOT, "ls-files", "-s", "--", ROOT_GIT_GATE).stdout.split(" ", 1)[0]
+        self.assertEqual(mode, "100755", f"{ROOT_GIT_GATE} must be tracked as executable (git mode {mode or 'untracked'})")
+        with tempfile.TemporaryDirectory(prefix="mios-root-gate-") as temp:
+            empty = Path(temp, "empty")
+            empty.mkdir()
+            fake = Path(temp, "fake")
+            (fake / ".git").mkdir(parents=True)
+            overlay = _ssot_repo(Path(temp, "overlay"))
+            cases = {
+                overlay: "OK: ",
+                _ssot_repo(Path(temp, "no-ssot"), track_ssot=False): "does not track the vendor SSOT",
+                empty: "is not the MiOS Git top level",
+                fake: "is not the MiOS Git top level",
+                overlay / "usr/share/mios": "is not the MiOS Git top level",
+            }
+            for root, message in cases.items():
+                with self.subTest(root=root.name):
+                    result = _run_root_gate(root)
+                    self.assertIn(message, result.stdout, result.stdout + result.stderr)
+                    self.assertEqual(result.returncode == 0, message == "OK: ", result.stdout + result.stderr)
+                    self.assertEqual(result.returncode == 0, overlay_layout_defects(root) == [],
+                                     "the gate and the unit check must agree")
+
+    def test_06_deployed_root_detector_two_sided(self):
+        """A MiOS root on a host applies; a container image or a root without the vendor SSOT does not."""
+        with tempfile.TemporaryDirectory(prefix="mios-root-detect-") as temp:
+            mios_root = Path(temp, "mios")
+            (mios_root / SSOT_PATH).parent.mkdir(parents=True)
+            (mios_root / SSOT_PATH).write_text("# fixture\n")
+            foreign = Path(temp, "foreign")
+            foreign.mkdir()
+            self.assertEqual(deployed_root_reason(mios_root, ""), "")
+            self.assertIn("docker container", deployed_root_reason(mios_root, "docker"))
+            self.assertIn("podman container", deployed_root_reason(mios_root, "podman"))
+            self.assertIn("not a deployed MiOS root", deployed_root_reason(foreign, ""))
+        with mock.patch.dict(os.environ, {"container": "oci"}):
+            self.assertEqual(container_kind(), "oci")
+
+    def test_07_axiom_is_skipped_only_where_it_does_not_apply(self):
+        """Two-sided: a container or foreign root is skipped with its reason (not passed); a deployed root
+        that is not the Git top level fails; a deployed overlay root passes."""
+        if os.name == "nt":
+            self.skipTest("the fixture roots are POSIX paths checked by the greenboot gate")
+        module = sys.modules[__name__]
+        with tempfile.TemporaryDirectory(prefix="mios-root-axiom-") as temp:
+            foreign = Path(temp, "foreign")
+            foreign.mkdir()
+            unmerged = Path(temp, "unmerged")
+            (unmerged / SSOT_PATH).parent.mkdir(parents=True)
+            (unmerged / SSOT_PATH).write_text("# fixture\n")
+            overlay = _ssot_repo(Path(temp, "overlay"))
+            cases = (
+                ("docker", self.host_root(), "skipped", "running in a docker container"),
+                ("", foreign, "skipped", "not a deployed MiOS root"),
+                ("", unmerged, "failed", "must be the Git top level"),
+                ("", overlay, "passed", ""),
+            )
+            for kind, root, outcome, evidence in cases:
+                with self.subTest(outcome=outcome, root=root.name or str(root)), \
+                        mock.patch.object(module, "container_kind", return_value=kind), \
+                        mock.patch.object(type(self), "host_root", staticmethod(lambda root=root: root)):
+                    result = unittest.TestResult()
+                    type(self)("test_04_deployed_root_is_the_git_top_level").run(result)
+                    observed = ("skipped" if result.skipped else "failed" if result.failures or result.errors
+                                else "passed")
+                    detail = [text for _, text in result.skipped + result.failures + result.errors]
+                    self.assertEqual((result.testsRun, observed), (1, outcome), detail)
+                    if evidence:
+                        self.assertIn(evidence, detail[0])
+                    if outcome == "skipped":
+                        self.assertIn("deployed-root axiom does not apply", detail[0])
 
 
 class TestAdr0030FileBudgetRatchet(unittest.TestCase):
@@ -236,7 +514,8 @@ class TestAdr0030FileBudgetRatchet(unittest.TestCase):
 
 
 class TestBareStoreLegacyArchive(unittest.TestCase):
-    """Verifies that .archive/ exists as a git bare store with zero tracked .tar bundles."""
+    """Verifies that .archive/ exists as a git bare store and that no tracked .tar bundle exists beyond
+    the one archive the canonical inventory (SKILLS/MANIFEST.json) publishes, which must match its tree."""
 
     def test_01_archive_bare_store_structure(self):
         """Positive Control: Verify .archive/ contains HEAD and legacy ref."""
@@ -246,11 +525,79 @@ class TestBareStoreLegacyArchive(unittest.TestCase):
         self.assertTrue((archive_dir / "refs/heads/legacy").exists(), ".archive/refs/heads/legacy must exist")
 
     def test_02_zero_tracked_tar_bundles(self):
-        """Positive Control: Verify 0 tracked .tar or .tar.gz archives of historical code in git index."""
-        res = subprocess.run(["git", "-C", str(ROOT), "ls-files", "*.tar", "*.tar.gz", "*.tgz", ":!usr/share/mios/vendored/**"],
-                             capture_output=True, text=True, check=True)
-        matched = [line for line in res.stdout.splitlines() if line.strip()]
-        self.assertEqual(len(matched), 0, f"Found tracked tar bundles: {matched}")
+        """Positive Control: no tracked .tar/.tar.gz/.tgz outside the vendored store except the documented archive."""
+        self.assertEqual(undocumented_tar_bundles(ROOT), [], "Found tracked tar bundles the inventory does not publish")
+        documented = archive_publication(ROOT).get("archive_path")
+        allowed = [path for path in _tracked(ROOT, *TAR_PATHSPECS) if path == documented]
+        if allowed:
+            # Allowed only while it is the generated packaging of its tracked tree.
+            self.assertEqual(archive_drift(ROOT), [], f"{documented} has drifted from the tree it packages")
+
+    def test_03_documented_archive_matches_its_tree(self):
+        """Drift check: the published archive is exactly its tracked directory, and its checksums hold."""
+        pub = archive_publication(ROOT)
+        self.assertEqual(pub.get("archive_path"), "SKILLS/mios-global-skills.tar.gz",
+                         f"{ARCHIVE_INVENTORY} must publish the documented SKILLS archive")
+        self.assertEqual(archive_drift(ROOT), [])
+
+    def test_04_planted_negative_controls_fail_the_archive_allowance(self):
+        """Negative controls: an undocumented tarball anywhere, a stale payload, a missing or extra
+        member, a stale checksum, and an undocumented inventory each fail; the regenerated fixture passes."""
+        with tempfile.TemporaryDirectory(prefix="mios-archive-drift-") as temp:
+            root = _archive_fixture(Path(temp))
+            self.assertEqual(undocumented_tar_bundles(root), [])
+            self.assertEqual(archive_drift(root), [], "the generated fixture must pass GREEN")
+
+            # No broad exemption: a second tarball beside the documented one, or elsewhere, is reported.
+            for extra in ("SKILLS/other-skills.tar.gz", "docs/bundle.tgz", "SKILLS/definitions/demo/x.tar"):
+                (root / extra).parent.mkdir(parents=True, exist_ok=True)
+                (root / extra).write_bytes((root / "SKILLS/demo-skills.tar.gz").read_bytes())
+                _git(root, "add", extra)
+            self.assertEqual(sorted(undocumented_tar_bundles(root)),
+                             ["SKILLS/definitions/demo/x.tar", "SKILLS/other-skills.tar.gz", "docs/bundle.tgz"])
+            _git(root, "rm", "-q", "--cached", "SKILLS/other-skills.tar.gz", "docs/bundle.tgz",
+                 "SKILLS/definitions/demo/x.tar")
+            for extra in ("SKILLS/other-skills.tar.gz", "docs/bundle.tgz", "SKILLS/definitions/demo/x.tar"):
+                (root / extra).unlink()
+
+            readme = root / "SKILLS/README.md"
+            readme.write_text("edited after packing\n")
+            defects = archive_drift(root)
+            self.assertIn("SKILLS/demo-skills.tar.gz: member SKILLS/README.md differs from the tracked file", defects)
+            self.assertIn("SKILLS/SHA256SUMS: stale digest for SKILLS/README.md", defects)
+            readme.write_text("demo export\n")
+            self.assertEqual(archive_drift(root), [])
+
+            added = root / "SKILLS/definitions/new/SKILL.md"
+            added.parent.mkdir(parents=True)
+            added.write_text("# new\n")
+            _git(root, "add", "SKILLS/definitions/new/SKILL.md")
+            defects = archive_drift(root)
+            self.assertIn("SKILLS/demo-skills.tar.gz: omits tracked SKILLS/definitions/new/SKILL.md", defects)
+            self.assertIn("SKILLS/SHA256SUMS: omits SKILLS/definitions/new/SKILL.md", defects)
+
+            # Repacking with the new member fixes the archive; a stale checksum is still caught.
+            checksum = root / "SKILLS/demo-skills.tar.gz.sha256"
+            stale = checksum.read_text()
+            _pack_archive(root)
+            checksum.write_text(stale)
+            defects = archive_drift(root)
+            self.assertTrue(any(d.startswith("SKILLS/demo-skills.tar.gz.sha256: records") for d in defects), defects)
+            self.assertNotIn("SKILLS/demo-skills.tar.gz: omits tracked SKILLS/definitions/new/SKILL.md", defects)
+
+            _git(root, "rm", "-q", "--cached", "SKILLS/definitions/new/SKILL.md")
+            added.unlink()
+            defects = archive_drift(root)
+            self.assertIn("SKILLS/demo-skills.tar.gz: member SKILLS/definitions/new/SKILL.md is not a tracked file of SKILLS/",
+                          defects)
+
+            _pack_archive(root)
+            self.assertEqual(archive_drift(root), [])
+            # Without the inventory's publication record the same archive is an undocumented bundle.
+            manifest = root / ARCHIVE_INVENTORY
+            manifest.write_text(json.dumps({"publication": {}}))
+            self.assertEqual(undocumented_tar_bundles(root), ["SKILLS/demo-skills.tar.gz"])
+            self.assertIn("publication must name", archive_drift(root)[0])
 
 
 class TestStandingGatesAndVersionLiteralsSsot(unittest.TestCase):

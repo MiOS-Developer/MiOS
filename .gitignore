@@ -686,6 +686,7 @@ usr/lib/greenboot/check/required.d/*
 !/usr/lib/greenboot/check/required.d/55-mios-db-check.sh
 !/usr/lib/greenboot/check/wanted.d/
 usr/lib/greenboot/check/wanted.d/*
+!/usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh
 !/usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh
 !/usr/lib/greenboot/check/wanted.d/30-nvidia-cdi.sh
 !/usr/lib/greenboot/check/wanted.d/31-kernel-lockdown.sh
