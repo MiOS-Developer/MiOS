@@ -3136,11 +3136,7 @@ impl Ui {
                 );
             }
         } else {
-            lines.push(Line::from(crate::hud::needs(
-                &self.game,
-                info.width,
-                frame / 14,
-            )));
+            lines.push(Line::from(""));
         }
         if self.game.progress.hatched {
             let indices: Vec<usize> = if budget.saturating_sub(lines.len()) >= 6 {
