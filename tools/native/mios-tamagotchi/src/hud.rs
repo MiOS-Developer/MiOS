@@ -197,14 +197,26 @@ fn number(value: u8) -> String {
         value.to_string()
     }
 }
-/// '*' is exactly100. Micro frames page complete metrics instead of truncating
+/// Wide views name every care metric with a stable cell budget. Compact
+/// '*' is exactly100; micro frames page complete metrics instead of truncating
 /// values or inventing inaccurate percentages.
 pub fn needs(game: &Game, width: u16, page: usize) -> String {
+    let labeled = format!(
+        "Food:{:3} Happy:{:3} Clean:{:3} Energy:{:3} Health:{:3}",
+        game.fullness, game.happiness, game.hygiene, game.energy, game.health
+    );
+    if labeled.len() <= usize::from(width) {
+        return labeled;
+    }
     let f = number(game.fullness);
     let h = number(game.happiness);
     let c = number(game.hygiene);
     let e = number(game.energy);
     let health = number(game.health);
+    let spaced = format!("F{f} H{h} C{c} E{e} +{health}");
+    if spaced.len() <= usize::from(width) {
+        return spaced;
+    }
     let all = format!("F{f}H{h}C{c}E{e}+{health}");
     if all.len() <= usize::from(width) {
         return all;
@@ -255,6 +267,36 @@ mod tests {
         assert!(layout.landscape);
         assert!((f64::from(layout.scene.width) / 151.0 - 1.0 / c.hud_golden_ratio).abs() < 0.02);
     }
+    #[test]
+    fn care_labels_use_stable_width_and_compact_rows_remain_exact() {
+        let c = Config::sample().unwrap();
+        let mut g = Game::new(&c.game, 7);
+        g.fullness = 61;
+        g.happiness = 42;
+        g.hygiene = 73;
+        g.energy = 84;
+        g.health = 95;
+        let wide = needs(&g, 57, 0);
+        for metric in [
+            "Food: 61",
+            "Happy: 42",
+            "Clean: 73",
+            "Energy: 84",
+            "Health: 95",
+        ] {
+            assert!(wide.contains(metric), "{wide}");
+        }
+        assert_eq!(needs(&g, 28, 0), "F61 H42 C73 E84 +95");
+        assert_eq!(needs(&g, 18, 0), "F61H42C73E84+95");
+        let width = wide.len() as u16;
+        for value in [0, 9, 99, 100] {
+            g.fullness = value;
+            assert_eq!(needs(&g, width, 0).len(), usize::from(width));
+            assert!(needs(&g, width, 0).starts_with("Food:"));
+            assert!(!needs(&g, width - 1, 0).contains("Food:"));
+        }
+    }
+
     #[test]
     fn micro_status_pages_retain_all_five_exact_needs_and_currency() {
         let c = Config::sample().unwrap();

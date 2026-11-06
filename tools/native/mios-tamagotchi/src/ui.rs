@@ -6599,6 +6599,72 @@ mod portrait_density_tests {
     use crate::capabilities::Depth;
     use ratatui::{backend::TestBackend, Terminal};
     #[test]
+    fn phone_care_values_are_named_in_the_information_pane_before_training() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 913);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        game.paused = true;
+        game.fullness = 61;
+        game.happiness = 42;
+        game.hygiene = 73;
+        game.energy = 84;
+        game.health = 95;
+        let saved = game.clone();
+        let mut ui = Ui::configured(game, &config);
+        ui.hud_mode = HudMode::Minimal;
+        let area = Rect::new(1, 1, 57, 47);
+        let info = crate::hud::split(
+            area,
+            config.hud_golden_ratio,
+            config.hud_landscape_columns,
+            config.hud_portrait_ratio_percent,
+        )
+        .info;
+        for depth in [Depth::Mono, Depth::Rgb] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            for renderer in [
+                Renderer::Ascii,
+                Renderer::HalfBlock,
+                Renderer::Quadrant,
+                Renderer::Braille,
+            ] {
+                for frame in [0, 28, 56] {
+                    let mut terminal = Terminal::new(TestBackend::new(59, 49)).unwrap();
+                    terminal
+                        .draw(|f| ui.draw(f, &config, renderer, &colors, frame, false))
+                        .unwrap();
+                    let footer = ui.info_footer.get();
+                    assert!(footer.y > info.y);
+                    let rows = (info.y..footer.y)
+                        .map(|y| {
+                            (info.x..info.right())
+                                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                                .collect::<String>()
+                        })
+                        .collect::<Vec<_>>();
+                    let care_row = rows.iter().position(|row| row.contains("Food: 61")).expect(
+                        "care must be inside the information pane, not only the outer border",
+                    );
+                    for metric in ["Happy: 42", "Clean: 73", "Energy: 84", "Health: 95"] {
+                        assert!(
+                            rows[care_row].contains(metric),
+                            "{renderer:?} {depth:?}: {rows:?}"
+                        );
+                    }
+                    let training_row = rows
+                        .iter()
+                        .position(|row| row.contains("Swim"))
+                        .expect("phone retains training details too");
+                    assert!(care_row < training_row);
+                    assert_eq!(ui.game, saved);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn tall_views_show_all_skills_needs_currency_and_controls_without_paging_them_away() {
         let config = Config::sample().unwrap();
         let mut game = Game::new(&config.game, 913);
