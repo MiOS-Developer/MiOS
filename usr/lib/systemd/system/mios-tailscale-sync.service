@@ -10,3 +10,5 @@ ConditionPathExists=/usr/bin/tailscale
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/mios/mios-tailscale-sync
+RuntimeDirectory=mios-tailscale-sync
+RuntimeDirectoryPreserve=yes
