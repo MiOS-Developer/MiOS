@@ -610,7 +610,7 @@ impl Ui {
         self.camera_from_weights = Some(match self.camera_resize_in_flight() {
             // Same view during a resize: the resize keeps carrying the view
             // blend, so the manual blend must not replay its source afterwards.
-            Some(target) if view == self.camera_view => target.one_hot(),
+            Some(_target) if view == self.camera_view => mix,
             _ => mix,
         });
         self.camera_subject_cut.set(false);
