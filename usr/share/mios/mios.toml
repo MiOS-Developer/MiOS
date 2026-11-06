@@ -15954,6 +15954,9 @@ mios-policy-arbiter            = ["service-plane"]
 mios-attest        = ["controller", "service-plane"]   # TPM-quote verifier + onboarding: controller blades only
 mios-registry                  = ["service-plane"]   # local OCI registry
 mios-thermald                  = ["service-plane"]   # CPU/GPU power caps, like mios-powerd: the blade owns the hardware
+mios-power-sampler             = ["service-plane"]   # root RAPL sampler, like mios-thermald: the blade owns the hardware
+ventulusd                      = ["service-plane"]   # fan control (alias mios-fan-control), like mios-thermald: the blade owns the hardware
+mios-fhs-sync                  = ["service-plane"]   # FHS overlay + host-guest topology sync, like mios-thermald: the blade owns the hardware
 mios-wol-proxy                 = ["service-plane"]   # wake-on-LAN relay for the fleet
 # Units that activate a gated unit and cannot work without it. See ADR-0016 D4.
 mios-embed-backfill            = ["service-plane"]

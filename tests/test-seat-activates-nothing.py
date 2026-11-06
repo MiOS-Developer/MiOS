@@ -75,6 +75,24 @@ class TestSeatActivatesNothing(unittest.TestCase):
         for u in sorted(_long_running()):
             self.assertTrue(u in req or u in seat, "%s is classified nowhere" % u)
 
+    def test_the_blade_owns_the_hardware_daemons(self):
+        # Operator ruling: the host hardware / topology daemons run on Blades
+        # only. Each is gated on service-plane exactly like mios-thermald and
+        # mios-powerd, so a seat runs none of them -- not as seat-side, and not
+        # as ungated debt either.
+        req = self.d["blade"]["requires"]
+        seat = set(self.d["blade"].get("seat_side") or [])
+        ungated = set(self.d["blade"].get("ungated") or [])
+        have = set(_caps(self.d["blade"]["archetypes"][SEAT]))
+        shipped = _long_running()
+        for u in ("mios-thermald", "mios-powerd", "mios-power-sampler",
+                  "ventulusd", "mios-fhs-sync"):
+            self.assertIn(u, shipped, u)                 # a real long-running unit
+            self.assertEqual(_caps(req.get(u)), ["service-plane"], u)
+            self.assertNotIn(u, seat, u)
+            self.assertNotIn(u, ungated, u)
+            self.assertFalse(set(_caps(req[u])) <= have, u)   # the seat cannot start it
+
     def test_the_seat_runs_its_front_door_and_nothing_that_serves(self):
         seat = set(self.d["blade"].get("seat_side") or [])
         self.assertIn("mios-agent-pipe", seat)      # reaches the blade
