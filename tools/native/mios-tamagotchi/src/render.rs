@@ -1036,8 +1036,17 @@ fn projected_head_uv(
     x: u32,
     y: u32,
 ) -> Option<([f64; 2], [f64; 2])> {
-    projected_surface_uv(sprite, projection, x, y, valid_head_uv)
+    projected_surface_uv(sprite, projection, x, y, valid_head_uv, 0.25, false)
 }
+
+/// Largest texel-to-texel face UV step still treated as one continuous plane.
+/// An eight-bit face plane is three or four texels tall, so one step reaches
+/// 0.45; a tighter limit drops the derivative and every cell row inside a texel
+/// samples the same glyph band. The orthographic face map has no seams
+/// (occluders are holes, not jumps), so half the UV square stays safe. Being a
+/// plane, it also has one gradient: an edge texel with no face neighbour above
+/// or below (where the parentheses sit) borrows the adjacent texel's.
+const FACE_UV_MAX_STEP: f64 = 0.5;
 
 /// The same nearest material sample authorizes every interpolated UV.
 /// Derivatives refine ink within that pixel, never its depth/visibility mask.
@@ -1047,7 +1056,52 @@ fn projected_face_uv(
     x: u32,
     y: u32,
 ) -> Option<([f64; 2], [f64; 2])> {
-    projected_surface_uv(sprite, projection, x, y, valid_face_uv)
+    projected_surface_uv(
+        sprite,
+        projection,
+        x,
+        y,
+        valid_face_uv,
+        FACE_UV_MAX_STEP,
+        true,
+    )
+}
+
+/// A texel's UV and its derivative per source pixel along x and y; `None`
+/// when no continuous neighbour exists on that axis.
+type TexelUv = ([f64; 2], Option<[f64; 2]>, Option<[f64; 2]>);
+
+fn texel_derivatives(
+    sprite: &Sprite,
+    lookup: fn(&Sprite, u32, u32) -> Option<[f64; 2]>,
+    max_step: f64,
+    (sx, sy): (u32, u32),
+) -> Option<TexelUv> {
+    let uv = lookup(sprite, sx, sy)?;
+    let neighbor = |x, y| {
+        lookup(sprite, x, y).filter(|next| {
+            (next[0] - uv[0]).abs() <= max_step && (next[1] - uv[1]).abs() <= max_step
+        })
+    };
+    let derivative = |forward: Option<[f64; 2]>, backward: Option<[f64; 2]>| -> Option<[f64; 2]> {
+        match (forward, backward) {
+            (Some(a), Some(b)) => Some(std::array::from_fn(|i| (a[i] - b[i]) / 2.0)),
+            (Some(a), None) => Some(std::array::from_fn(|i| a[i] - uv[i])),
+            (None, Some(b)) => Some(std::array::from_fn(|i| uv[i] - b[i])),
+            (None, None) => None,
+        }
+    };
+    Some((
+        uv,
+        derivative(
+            neighbor(sx + 1, sy),
+            sx.checked_sub(1).and_then(|x| neighbor(x, sy)),
+        ),
+        derivative(
+            neighbor(sx, sy + 1),
+            sy.checked_sub(1).and_then(|y| neighbor(sx, y)),
+        ),
+    ))
 }
 
 fn projected_surface_uv(
@@ -1056,29 +1110,44 @@ fn projected_surface_uv(
     x: u32,
     y: u32,
     lookup: fn(&Sprite, u32, u32) -> Option<[f64; 2]>,
+    max_step: f64,
+    planar: bool,
 ) -> Option<([f64; 2], [f64; 2])> {
     let (sx, sy) = projection.source_pixel(sprite, x, y)?;
-    let uv = lookup(sprite, sx, sy)?;
-    let neighbor = |x, y| {
-        lookup(sprite, x, y)
-            .filter(|next| (next[0] - uv[0]).abs() <= 0.25 && (next[1] - uv[1]).abs() <= 0.25)
-    };
-    let derivative = |forward: Option<[f64; 2]>, backward: Option<[f64; 2]>| {
-        std::array::from_fn::<_, 2, _>(|i| match (forward, backward) {
-            (Some(a), Some(b)) => (a[i] - b[i]) / 2.0,
-            (Some(a), None) => a[i] - uv[i],
-            (None, Some(b)) => uv[i] - b[i],
-            _ => 0.0,
+    let (uv, horizontal, vertical) = texel_derivatives(sprite, lookup, max_step, (sx, sy))?;
+    // A planar map has one gradient, so an axis without a neighbour borrows
+    // it from the adjacent texel on the same continuous surface.
+    let borrow = |axis: fn(TexelUv) -> Option<[f64; 2]>, texels: [Option<(u32, u32)>; 2]| {
+        texels.into_iter().flatten().find_map(|texel| {
+            let next = texel_derivatives(sprite, lookup, max_step, texel)?;
+            let continuous = (0..2).all(|i| (next.0[i] - uv[i]).abs() <= max_step);
+            continuous.then(|| axis(next)).flatten()
         })
     };
-    let horizontal = derivative(
-        neighbor(sx + 1, sy),
-        sx.checked_sub(1).and_then(|x| neighbor(x, sy)),
-    );
-    let vertical = derivative(
-        neighbor(sx, sy + 1),
-        sy.checked_sub(1).and_then(|y| neighbor(sx, y)),
-    );
+    let horizontal = horizontal
+        .or_else(|| {
+            planar
+                .then(|| {
+                    borrow(
+                        |texel| texel.1,
+                        [Some((sx, sy + 1)), sy.checked_sub(1).map(|y| (sx, y))],
+                    )
+                })
+                .flatten()
+        })
+        .unwrap_or([0.0; 2]);
+    let vertical = vertical
+        .or_else(|| {
+            planar
+                .then(|| {
+                    borrow(
+                        |texel| texel.2,
+                        [Some((sx + 1, sy)), sx.checked_sub(1).map(|x| (x, sy))],
+                    )
+                })
+                .flatten()
+        })
+        .unwrap_or([0.0; 2]);
     let offset = [
         (f64::from(x) + 0.5 - projection.left) / projection.scale - f64::from(sx) - 0.5,
         (f64::from(y) + 0.5 - projection.top) / projection.scale_y - f64::from(sy) - 0.5,
@@ -5846,6 +5915,82 @@ mod kaomoji_scale_tests {
                 assert!(
                     (stretched / ink - 1.0).abs() > 0.3,
                     "aspect {aspect}: legacy ratio {stretched} should distort"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eight_bit_faces_interpolate_uv_across_the_cell_rows_of_one_texel() {
+        // Eight-bit sprites are 24x24, so a face texel spans several cell rows
+        // at face zoom. Rows inside one texel must still sample distinct glyph
+        // bands, or every intermediate face smears into vertical bars; edge
+        // texels without a face neighbour above or below (the parentheses)
+        // included.
+        for shape in 0..16u8 {
+            let appearance = Appearance {
+                shape,
+                body: shape,
+                accent: (shape + 5) % 16,
+            };
+            for yaw in [0, 45] {
+                let sprite = Sprite::voxel_with_appearance(
+                    Stage::Baby,
+                    Expression::Surprised,
+                    SpriteStyle::EightBit,
+                    0,
+                    yaw,
+                    false,
+                    appearance,
+                );
+                let renderer = Renderer::Ascii;
+                let area = Rect::new(0, 0, 40, 19);
+                let projection = Projection::camera(
+                    &sprite,
+                    SolidBounds::of(&sprite).unwrap(),
+                    area,
+                    renderer,
+                    0,
+                    (500, 500),
+                    Camera {
+                        orbit_degrees: yaw,
+                        view: CameraView::Face,
+                        from_view: CameraView::Face,
+                        zoom_percent: 150,
+                        transition_percent: 100,
+                    },
+                );
+                assert!(
+                    projection.scale_y >= 2.0,
+                    "shape {shape} yaw {yaw}: texel spans rows"
+                );
+                let (mut pairs, mut distinct) = (0, 0);
+                for row in 0..u32::from(area.height) - 1 {
+                    for col in 0..u32::from(area.width) {
+                        let same_texel = projection.source_pixel(&sprite, col, row)
+                            == projection.source_pixel(&sprite, col, row + 1);
+                        if let (true, Some(a), Some(b)) = (
+                            same_texel,
+                            projected_face_uv(&sprite, projection, col, row),
+                            projected_face_uv(&sprite, projection, col, row + 1),
+                        ) {
+                            // Clamped to the UV border lies outside every glyph.
+                            let border = |v: f64| v <= 0.0 || v >= 1.0;
+                            if border(a.0[1]) || border(b.0[1]) {
+                                continue;
+                            }
+                            pairs += 1;
+                            distinct += usize::from((b.0[1] - a.0[1]).abs() > 1e-6);
+                        }
+                    }
+                }
+                assert!(
+                    pairs > 0,
+                    "shape {shape} yaw {yaw}: no face texel spans two rows"
+                );
+                assert_eq!(
+                    distinct, pairs,
+                    "shape {shape} yaw {yaw}: rows inside one texel that keep their v"
                 );
             }
         }
