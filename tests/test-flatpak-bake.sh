@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# AI-hint: Exercises headless Flatpak installation, failure propagation and browser defaults with a real private D-Bus session and isolated command fixtures. The default browser is MiOS-Portal (native Gecko, not a Flatpak): the SSOT names it in every default-browser key, no [[desktop.apps]] browser carries default=true, and the real resolvers (mios-app-type, mios-launch, mios-open-url) dispatch to it. The freedesktop layer agrees: gio and xdg-mime, in isolated XDG dirs holding exported Zen/Epiphany/Firefox Flatpaks and Fedora's vendor mimeapps lists, resolve http/https/html to mios-portal.desktop through the projected etc/xdg/mimeapps.list, and six planted regressions each fail that guard.
-# AI-related: automation/61-flatpak-bake.sh, etc/xdg/mimeapps.list, usr/share/applications/mios-portal.desktop, usr/libexec/mios/mios-hermes-browser, usr/libexec/mios/mios-app-type, usr/libexec/mios/mios-launch, usr/libexec/mios/mios-open-url, usr/share/mios/mios.toml
+# AI-hint: Exercises headless Flatpak installation, failure propagation and browser defaults with a real private D-Bus session and isolated command fixtures. The default browser is MiOS-Portal (native Gecko, not a Flatpak): the SSOT names it in every default-browser key, no [[desktop.apps]] browser carries default=true, and the real resolvers (mios-app-type, mios-launch, mios-open-url) dispatch to it. The freedesktop layer agrees: gio and xdg-mime, in isolated XDG dirs holding exported Zen/Epiphany/Firefox Flatpaks and Fedora's vendor mimeapps lists, resolve http/https/html to mios-portal.desktop through the projected etc/xdg/mimeapps.list. The session copies of the shipped entries Exec executable stubs inside the fixture (GLib skips an entry whose program is missing) and differ from the shipped bytes in nothing else, so the result never depends on the host's installed mios-portal, mios-flatpak-run or flatpak; a separate check requires the tree itself to ship the portal's Exec program as an executable file. Twelve planted regressions fail that guard (Zen named or listed first, stray gnome-/hyprland-mimeapps.list, MIME types moved, no %u, Hidden=true, a [Removed Associations] line, the pre-portal layer) and three fail the shipped-program check.
+# AI-related: automation/61-flatpak-bake.sh, etc/xdg/mimeapps.list, usr/share/applications/mios-portal.desktop, usr/bin/mios-portal, tools/native/mios-browser/src/main.rs, usr/libexec/mios/mios-hermes-browser, usr/libexec/mios/mios-app-type, usr/libexec/mios/mios-launch, usr/libexec/mios/mios-open-url, usr/share/mios/mios.toml
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -183,18 +183,91 @@ for tool in gio xdg-mime update-desktop-database; do
 done
 FD_PATH="$(dirname "$(command -v gio)"):$(dirname "$(command -v xdg-mime)"):/usr/bin:/bin"
 FD_TYPES='x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml'
-# fd_fixture <dir> <applications dir> [etc/xdg dir]: a session's XDG dirs. Data dirs are in Fedora's
-# flatpak profile order (user exports, system exports, /usr/share); the system dir also holds the
-# two vendor lists Fedora's RPMs put next to MiOS's launchers.
+# fd_ships_portal <tree>: the session tier below runs MiOS-Portal's entry against a stub, so the
+# program it Execs is checked here, in the tree: shipped, as an executable file, at the absolute path
+# the [Desktop Entry] Exec names. Prints that path, or the finding.
+fd_ships_portal() {
+    local entry="$1/usr/share/applications/mios-portal.desktop" prog
+    [ -f "$entry" ] || { echo "ships: mios-portal.desktop is not shipped"; return 1; }
+    prog="$(awk '/^\[/ { main = ($0 == "[Desktop Entry]"); next } main && /^Exec=/ { sub(/^Exec=/, ""); sub(/[ \t].*/, ""); print; exit }' "$entry")"
+    case "$prog" in /*) ;; *) echo "ships: mios-portal.desktop Execs '$prog', not an absolute path"; return 1 ;; esac
+    if [ ! -f "$1$prog" ] || [ ! -x "$1$prog" ]; then
+        echo "ships: mios-portal.desktop Execs $prog, which the tree does not ship as an executable file"; return 1
+    fi
+    printf '%s\n' "$prog"
+}
+PORTAL_PROG="$(fd_ships_portal "$ROOT")" || { echo "FAIL $PORTAL_PROG" >&2; exit 1; }
+echo "PASS the tree ships $PORTAL_PROG, the program mios-portal.desktop Execs, as an executable file"
+# ships_plant <name> <expected finding>: ships_<name> mutates a minimal copy of the tree that passes first.
+ships_plant() {
+    local name="$1" expect="$2" t="$TMP/ships/$1" out
+    mkdir -p "$t/usr/share/applications" "$t${PORTAL_PROG%/*}"
+    cp "$ROOT/usr/share/applications/mios-portal.desktop" "$t/usr/share/applications/"
+    cp -p "$ROOT$PORTAL_PROG" "$t$PORTAL_PROG"
+    out="$(fd_ships_portal "$t")" || { echo "FAIL the unplanted copy for $name fails the shipped-program check: $out" >&2; exit 1; }
+    "ships_$name" "$t"
+    if out="$(fd_ships_portal "$t")"; then
+        echo "FAIL planted $name still passed the shipped-program check ($out)" >&2; exit 1
+    fi
+    case "$out" in *"$expect"*) ;; *) echo "FAIL planted $name failed for another reason: $out" >&2; exit 1 ;; esac
+    echo "PASS planted $name fails the shipped-program check ($out)"
+}
+ships_program_missing() { rm -f "${1:?}$PORTAL_PROG"; }
+ships_program_not_executable() { chmod a-x "$1$PORTAL_PROG"; }
+ships_program_bare_name() { sed -i -E 's|^Exec=/[^ ]*/|Exec=|' "$1/usr/share/applications/mios-portal.desktop"; }
+ships_plant program_missing "Execs $PORTAL_PROG, which the tree does not ship as an executable file"
+ships_plant program_not_executable "Execs $PORTAL_PROG, which the tree does not ship as an executable file"
+ships_plant program_bare_name "Execs '${PORTAL_PROG##*/}', not an absolute path"
+# GLib (gio, xdg-open, the OpenURI portal) skips an entry whose Exec or TryExec program is not an
+# executable file, so a session that copied the entries verbatim would test the host's installed
+# mios-portal, mios-flatpak-run and flatpak rather than the tree. fd_stub <entries dir> <session dir>
+# <fixture> copies each entry with its program replaced by an executable stub: an absolute program P
+# becomes <fixture>/stub/P, a PATH name N <fixture>/stub-path/N. No other byte changes.
+fd_stub() {
+    local src="$1" dst="$2" stub="$3/stub" bare="$3/stub-path" f prog
+    mkdir -p "$dst"
+    rm -f "${dst:?}"/*.desktop "${dst:?}/mimeinfo.cache"
+    for f in "$src"/*.desktop; do
+        sed -E -e "s|^((Try)?Exec=)/|\1$stub/|" -e t -e "s|^((Try)?Exec=)([^/\" ])|\1$bare/\3|" "$f" > "$dst/${f##*/}"
+    done
+    # Every Exec and TryExec GLib would read now names a stub...
+    if grep -HE '^[[:space:]]*(Try)?Exec[[:space:]]*=' "$dst"/*.desktop | grep -vE "^[^:]*:(Try)?Exec=($stub|$bare)/"; then
+        echo "guard: the session entries above would still run a host program"; return 1
+    fi
+    # ...which is an executable file here...
+    while IFS= read -r prog; do
+        if ! { mkdir -p "${prog%/*}" && printf '#!/bin/sh\nexit 0\n' > "$prog" && chmod 0755 "$prog"; }; then
+            echo "guard: cannot create the stub $prog"; return 1
+        fi
+    done < <(sed -n -E 's/^(Try)?Exec=([^ ]*).*/\2/p' "$dst"/*.desktop | sort -u)
+    # ...and each copy is the source entry byte for byte once the stub prefix is taken off again.
+    for f in "$src"/*.desktop; do
+        sed -E -e "s|^((Try)?Exec=)$bare/|\1|" -e "s|^((Try)?Exec=)$stub/|\1/|" "$dst/${f##*/}" | cmp -s - "$f" \
+            || { echo "guard: the session copy of ${f##*/} differs from it beyond the program path"; return 1; }
+    done
+    update-desktop-database -q "$dst"
+}
+# fd_session <fixture>: rebuild the session's applications dirs from <fixture>/shipped and <fixture>/exports.
+fd_session() {
+    rm -rf "${1:?}/stub" "${1:?}/stub-path"
+    fd_stub "$1/shipped/applications" "$1/usr/share/applications" "$1" \
+        && fd_stub "$1/exports" "$1/flatpak/share/applications" "$1"
+}
+# fd_fixture <dir> <applications dir> [etc/xdg dir]: a session's XDG dirs. <dir>/shipped holds the
+# tree's entries byte for byte; plants edit them there, and every Exec, %u, MimeType and Hidden check
+# reads them. <dir>/exports holds what `flatpak install` exports for Zen, Epiphany and Firefox. Data
+# dirs are in Fedora's flatpak profile order (user exports, system exports, /usr/share); the system dir
+# also holds the two vendor lists Fedora's RPMs put next to MiOS's launchers.
 fd_fixture() {
-    local r="$1" app
-    mkdir -p "$r/home" "$r/config" "$r/data" "$r/etc-xdg" "$r/user-flatpak/share/applications" \
-        "$r/flatpak/share/applications" "$r/usr/share/applications"
-    cp "$2"/*.desktop "$r/usr/share/applications/"
+    local r="$1" app type
+    case "$r" in *[!A-Za-z0-9/._-]*) echo "FAIL fixture path $r would need Exec quoting; use a plain TMPDIR" >&2; exit 1 ;; esac
+    mkdir -p "$r/home" "$r/config" "$r/data" "$r/etc-xdg" "$r/shipped/applications" "$r/exports" \
+        "$r/user-flatpak/share/applications" "$r/flatpak/share/applications" "$r/usr/share/applications"
+    cp "$2"/*.desktop "$r/shipped/applications/"
     [ -z "${3:-}" ] || cp -R "$3/." "$r/etc-xdg/"
     for app in app.zen_browser.zen org.gnome.Epiphany org.mozilla.firefox; do
         printf '[Desktop Entry]\nType=Application\nName=%s\nExec=/usr/bin/flatpak run %s @@u %%u @@\nMimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;\nX-Flatpak=%s\n' \
-            "$app" "$app" "$app" > "$r/flatpak/share/applications/$app.desktop"
+            "$app" "$app" "$app" > "$r/exports/$app.desktop"
     done
     printf '[Default Applications]\n' > "$r/usr/share/applications/mimeapps.list"
     printf '[Default Applications]\n' > "$r/usr/share/applications/gnome-mimeapps.list"
@@ -202,8 +275,6 @@ fd_fixture() {
         printf '%s=org.mozilla.firefox.desktop\n' "$type" >> "$r/usr/share/applications/mimeapps.list"
         printf '%s=org.gnome.Epiphany.desktop\n' "$type" >> "$r/usr/share/applications/gnome-mimeapps.list"
     done
-    update-desktop-database -q "$r/flatpak/share/applications"
-    update-desktop-database -q "$r/usr/share/applications"
 }
 # fd_default <dir> <XDG_CURRENT_DESKTOP or ""> <gio|xdg-mime> <type>: the desktop ID that tool picks.
 fd_default() {
@@ -221,7 +292,8 @@ fd_default() {
 }
 # fd_guard <dir>: 0 only when the shipped entries and lists make MiOS-Portal the default everywhere.
 fd_guard() {
-    local r="$1" apps="$1/usr/share/applications" entry de tool type got
+    local r="$1" apps="$1/shipped/applications" entry list de tool type got
+    fd_session "$r" || return 1
     entry="$apps/mios-portal.desktop"
     [ -f "$entry" ] || { echo "guard: mios-portal.desktop is not shipped"; return 1; }
     grep -Eq '^Exec=[^ ]+( .*)? %u( |$)' "$entry" || { echo "guard: mios-portal.desktop Exec has no %u"; return 1; }
@@ -232,7 +304,21 @@ fd_guard() {
             echo "guard: mios-zen.desktop declares $type"; return 1
         fi
     done
+    # GLib still resolves a hidden entry as the default, but mios-gui hands it to mios-browser, which refuses it.
+    if awk '/^\[/ { main = ($0 == "[Desktop Entry]"); next } main && /^Hidden[ \t]*=[ \t]*true[ \t]*$/ { hidden = 1 } END { exit !hidden }' "$entry"; then
+        echo "guard: mios-portal.desktop is Hidden=true, which mios-browser refuses to launch"; return 1
+    fi
     [ -f "$r/etc-xdg/mimeapps.list" ] || { echo "guard: etc/xdg/mimeapps.list is not shipped"; return 1; }
+    # GLib still returns a [Default Applications] entry its list disowns under [Removed Associations] (the
+    # removal only drops it from the registered and recommended apps), so gio alone cannot catch this.
+    for list in "$r"/etc-xdg/*mimeapps.list; do
+        if awk '/^\[/ { removed = ($0 ~ /^\[Removed Associations\][ \t]*$/); next }
+                removed && /=/ { sub(/^[^=]*=/, ""); n = split($0, ids, ";")
+                    for (i = 1; i <= n; i++) { gsub(/^[ \t]+|[ \t]+$/, "", ids[i]); if (ids[i] == "mios-portal.desktop") found = 1 } }
+                END { exit !found }' "$list"; then
+            echo "guard: ${list##*/} lists mios-portal.desktop under [Removed Associations]"; return 1
+        fi
+    done
     for de in '' GNOME Hyprland; do
         for tool in gio xdg-mime; do
             for type in $FD_TYPES; do
@@ -246,7 +332,7 @@ fd_guard() {
 FDT="$TMP/freedesktop"
 fd_fixture "$FDT/shipped" "$ROOT/usr/share/applications" "$ROOT/etc/xdg"
 fd_guard "$FDT/shipped" || { echo 'FAIL the shipped freedesktop layer does not make MiOS-Portal the default browser' >&2; exit 1; }
-echo 'PASS gio and xdg-mime resolve http, https and html to mios-portal.desktop over exported Flatpaks and the Fedora lists (GNOME, Hyprland, none)'
+echo 'PASS gio and xdg-mime resolve http, https and html to mios-portal.desktop over exported Flatpaks and the Fedora lists (GNOME, Hyprland, none), with every Exec program a fixture stub'
 # Planted: each one alone must make the guard fail.
 # fd_plant <name> <expected guard finding>: plant_<name> mutates a copy of the shipped layer.
 fd_plant() {
@@ -260,27 +346,46 @@ fd_plant() {
     case "$out" in *"$expect"*) ;; *) echo "FAIL planted $name failed for another reason: $out" >&2; exit 1 ;; esac
     echo "PASS planted $name fails the freedesktop guard ($out)"
 }
+FD_ZEN_MIME='MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;'
+fd_stray_list() {
+    local type
+    printf '[Default Applications]\n' > "$1"
+    for type in $FD_TYPES; do printf '%s=app.zen_browser.zen.desktop;\n' "$type" >> "$1"; done
+}
 plant_zen_flatpak_default() { sed -i -E 's|^(x-scheme-handler/https?)=.*|\1=app.zen_browser.zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
+plant_zen_listed_first() { sed -i -E 's#^(x-scheme-handler/https?|text/html|application/xhtml\+xml)=#\1=app.zen_browser.zen.desktop;#' "$1/etc-xdg/mimeapps.list"; }
 plant_zen_launcher_default() { sed -i 's|^text/html=.*|text/html=mios-zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
 plant_no_default_list() { rm -f "$1/etc-xdg/mimeapps.list"; }
-plant_zen_launcher_mime() {
-    printf 'MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' >> "$1/usr/share/applications/mios-zen.desktop"
-    update-desktop-database -q "$1/usr/share/applications"
+plant_stray_gnome_list() { fd_stray_list "$1/etc-xdg/gnome-mimeapps.list"; }
+plant_stray_hyprland_list() { fd_stray_list "$1/etc-xdg/hyprland-mimeapps.list"; }
+plant_zen_launcher_mime() { sed -i 's|^\[Desktop Entry\]$|&\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;|' "$1/shipped/applications/mios-zen.desktop"; }
+plant_portal_without_url() { sed -i 's|^Exec=\(.*\) %u$|Exec=\1|' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_without_mime() { sed -i '/^MimeType=/d' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_hidden() { sed -i 's|^\[Desktop Entry\]$|&\nHidden=true|' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_removed_association() { printf '\n[Removed Associations]\nx-scheme-handler/https=mios-portal.desktop;\n' >> "$1/etc-xdg/mimeapps.list"; }
+# The layer before MiOS-Portal took the browser types: mios-zen.desktop declared them, the portal's
+# Exec took no URL and it declared none, and no list shipped.
+plant_pre_portal_layer() {
+    sed -i "s|^\[Desktop Entry\]\$|&\n$FD_ZEN_MIME|" "$1/shipped/applications/mios-zen.desktop"
+    plant_portal_without_url "$1"; plant_portal_without_mime "$1"; plant_no_default_list "$1"
 }
-plant_portal_without_url() { sed -i 's|^Exec=\(.*\) %u$|Exec=\1|' "$1/usr/share/applications/mios-portal.desktop"; }
-plant_portal_without_mime() {
-    sed -i '/^MimeType=/d' "$1/usr/share/applications/mios-portal.desktop"
-    update-desktop-database -q "$1/usr/share/applications"
-}
-fd_plant zen_flatpak_default "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http "
-fd_plant zen_launcher_default "gio picks 'mios-zen.desktop' for text/html "
+fd_plant zen_flatpak_default "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='')"
+fd_plant zen_listed_first "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='')"
+fd_plant zen_launcher_default "gio picks 'mios-zen.desktop' for text/html (XDG_CURRENT_DESKTOP='')"
 fd_plant no_default_list 'etc/xdg/mimeapps.list is not shipped'
+fd_plant stray_gnome_list "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='GNOME')"
+fd_plant stray_hyprland_list "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='Hyprland')"
 fd_plant zen_launcher_mime 'mios-zen.desktop declares x-scheme-handler/http'
 fd_plant portal_without_url 'mios-portal.desktop Exec has no %u'
 fd_plant portal_without_mime 'mios-portal.desktop does not declare x-scheme-handler/http'
-# Without the projected list a session opens an exported Flatpak, never MiOS-Portal.
-for de in '' GNOME; do
-    got="$(fd_default "$FDT/no_default_list" "$de" gio x-scheme-handler/https)"
-    [ -n "$got" ] && [ "$got" != mios-portal.desktop ] || { echo "FAIL without etc/xdg/mimeapps.list gio picked '${got:-nothing}'" >&2; exit 1; }
-    echo "PASS without etc/xdg/mimeapps.list gio picks $got (XDG_CURRENT_DESKTOP='$de'), which is why the list ships"
+fd_plant portal_hidden 'mios-portal.desktop is Hidden=true'
+fd_plant portal_removed_association 'mimeapps.list lists mios-portal.desktop under [Removed Associations]'
+fd_plant pre_portal_layer 'mios-portal.desktop Exec has no %u'
+# Without the projected list a session opens an exported Flatpak, never MiOS-Portal; so did the layer before it.
+for layer in no_default_list pre_portal_layer; do
+    for de in '' GNOME Hyprland; do
+        got="$(fd_default "$FDT/$layer" "$de" gio x-scheme-handler/https)"
+        [ -n "$got" ] && [ "$got" != mios-portal.desktop ] || { echo "FAIL planted $layer: gio picked '${got:-nothing}' (XDG_CURRENT_DESKTOP='$de')" >&2; exit 1; }
+        echo "PASS planted $layer: gio picks $got for https (XDG_CURRENT_DESKTOP='$de'), which is why the list ships"
+    done
 done
