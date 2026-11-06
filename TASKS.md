@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
+| pending | 1749 |
 | in_progress | 86 |
 | completed | 1890 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3764 |
+| total | 3765 |
 
 0 record(s) carry at least one override.
 
@@ -4443,6 +4443,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### No epic
 
 - `task_3699` Refresh the installed AI readiness helper used by terminal agent launchers -- completed · owner mios-controller-repair · P0 · size S
+
+## security
+
+### No epic
+
+- `task_3765` Account-sync containment before multiplayer account enablement -- pending · owner mios-tamagotchi-live-coordinator · P0 · size M
 
 ## tamagotchi
 
