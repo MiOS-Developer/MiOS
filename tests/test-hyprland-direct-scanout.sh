@@ -56,10 +56,19 @@ if [[ ! -f "$WAYLAND_SESSION" ]]; then
     _fail "Wayland session entry missing: $WAYLAND_SESSION"
 else
     _pass "Wayland session entry found"
-    if grep -q "Exec=Hyprland" "$WAYLAND_SESSION" && grep -q "DesktopNames=Hyprland" "$WAYLAND_SESSION"; then
-        _pass "Wayland session specifies Exec=Hyprland and DesktopNames=Hyprland"
+    # The session runs MiOS's launcher, which execs Hyprland with the session.lua projection (and the boot
+    # hardware profile); a bare Exec=Hyprland would skip it. The launcher is the SSOT's [desktop.greeter].session_cmd.
+    SESSION_CMD="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["desktop"]["greeter"]["session_cmd"])' \
+        "$REPO_ROOT/usr/share/mios/mios.toml" 2>/dev/null || true)"
+    EXEC_LINE="$(grep -m1 '^Exec=' "$WAYLAND_SESSION" || true)"
+    exec_ok=0
+    if [[ -n "$SESSION_CMD" ]]; then
+        case "$EXEC_LINE" in "Exec=${SESSION_CMD}" | "Exec=${SESSION_CMD} "*) exec_ok=1 ;; esac
+    fi
+    if [[ $exec_ok -eq 1 ]] && grep -qx "DesktopNames=Hyprland" "$WAYLAND_SESSION"; then
+        _pass "Wayland session runs the SSOT session launcher (${SESSION_CMD}) with DesktopNames=Hyprland"
     else
-        _fail "Wayland session entry incomplete"
+        _fail "Wayland session entry incomplete (Exec must start with [desktop.greeter].session_cmd '${SESSION_CMD}': ${EXEC_LINE:-no Exec})"
     fi
 fi
 
