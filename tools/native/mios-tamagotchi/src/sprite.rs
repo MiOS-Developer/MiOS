@@ -163,6 +163,53 @@ pub struct Sprite {
     voxel_ground: Option<[i32; 2]>,
 }
 
+#[cfg(test)]
+impl Sprite {
+    /// A flat, fully authorized face plane of `columns` x `rows` texels in
+    /// material `index`, inside a one-texel empty border. Its UV is affine in
+    /// the texel grid with the given per-texel `step`, centred on (0.5, 0.5)
+    /// and clamped to the unit square, so renderer tests can pin the
+    /// interpolation contract on a known plane.
+    pub(crate) fn synthetic_face_plane(
+        columns: u16,
+        rows: u16,
+        step: [f32; 2],
+        index: u8,
+        text: &'static str,
+    ) -> Self {
+        let (width, height) = (columns + 2, rows + 2);
+        let count = usize::from(width) * usize::from(height);
+        let mut pixels = vec![None; count];
+        let mut texels = vec![None; count];
+        let quantize = |value: f32| (value.clamp(0.0, 1.0) * f32::from(u16::MAX)).round() as u16;
+        for y in 0..rows {
+            for x in 0..columns {
+                let i = usize::from(y + 1) * usize::from(width) + usize::from(x + 1);
+                pixels[i] = Some(index);
+                let u = 0.5 + (f32::from(x) - f32::from(columns - 1) / 2.0) * step[0];
+                let v = 0.5 + (f32::from(y) - f32::from(rows - 1) / 2.0) * step[1];
+                texels[i] = Some([quantize(u), quantize(v)]);
+            }
+        }
+        Self {
+            width,
+            height,
+            pixels,
+            face_overlay: None,
+            face_mapping: Some(FaceMapping {
+                text,
+                texels: texels.clone(),
+                head_texels: texels,
+                aspect_milli: (u32::from(columns) * 1000 / u32::from(rows.max(1)))
+                    .min(u32::from(u16::MAX)) as u16,
+            }),
+            surface_shading: None,
+            voxel_depth: None,
+            voxel_ground: None,
+        }
+    }
+}
+
 impl Sprite {
     /// Full five-glyph texture; UV visibility, rather than a screen label,
     /// determines which part survives yaw and real surface occlusion.
