@@ -7034,3 +7034,7 @@ mod kaomoji_scale_tests {
         assert!(connected >= 32, "only {connected} connected native faces");
     }
 }
+
+#[cfg(test)]
+#[path = "ascii_overlay_diag.rs"]
+mod ascii_overlay_diag;
