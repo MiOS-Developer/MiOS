@@ -11352,12 +11352,14 @@ advertise_routes = ""
 exit_nodes = []
 exit_node_allow_lan_access = true
 
-# Keep an exit node only while its path is not worse than the host's own
-# uplink. Each mios-tailscale-sync run pings `probe` through the exit node and,
-# in parallel, directly through the lowest-metric default route. Loss decides
-# when the paths differ by more than max_extra_loss_pct points; otherwise the
-# exit node may add at most max_extra_rtt_ms. A failing exit node cools down
-# for cooldown_s (recorded in `state`) while the next preference is tried.
+# Exit nodes as a standby failover. Each mios-tailscale-sync run pings `probe`
+# directly through the lowest-metric default route; while that loses at most
+# max_extra_loss_pct and no exit node is active, exit nodes stay on standby
+# (switching one in changes the public IP and drops open connections).
+# Otherwise the candidate is applied and probed against the direct path: loss
+# decides when the paths differ by more than max_extra_loss_pct points, else
+# the exit node may add at most max_extra_rtt_ms. A failing exit node cools
+# down for cooldown_s (recorded in `state`) while the next preference is tried.
 [tailscale.exit_node_health]
 enabled            = true
 probe              = "1.1.1.1"
@@ -11365,7 +11367,7 @@ count              = 10
 interval_s         = 0.2
 max_extra_loss_pct = 10
 max_extra_rtt_ms   = 150
-cooldown_s         = 1800
+cooldown_s         = 300
 state              = "/run/mios-tailscale-sync/exit-health.json"
 
 # Per-vendor enable gate for the [gpu.cdi.<vendor>] wiring above. false here

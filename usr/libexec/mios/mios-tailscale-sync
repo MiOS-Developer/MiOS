@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale, mios-tailscale-sync.timer, test_mios_tailscale_sync.py
-# AI-functions: _load_config, _health_config, find_tailscale, get_status, select_exit_node, build_set_cmd, probe, direct_interface, exit_is_worse, sync_mesh
+# AI-functions: _load_config, _health_config, find_tailscale, get_status, select_exit_node, build_set_cmd, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh
 """'MiOS' Tailscale mesh client synchronization daemon/helper.
 
 Derives Tailscale connection settings from layered mios.toml SSOT:
@@ -23,11 +23,15 @@ node is the first exit_nodes entry that is online, offers itself as one and
 is not cooling down; when none qualifies the exit node is cleared, so egress
 falls back to the host's own default route instead of a dead peer.
 
-With [tailscale.exit_node_health] enabled, every run pings the probe through
-the exit node and, in parallel, directly through the host's lowest-metric
-default route. An exit node that loses clearly more, or matches the loss but
-adds more than max_extra_rtt_ms, is put on cooldown and the next preference
-is tried. --dry-run prints the command without running it or probing.
+With [tailscale.exit_node_health] enabled, exit nodes are a standby failover.
+Every run first probes the host's own lowest-metric default route; while it
+loses at most max_extra_loss_pct and no exit node is active, the exit nodes
+stay on standby -- switching one in just to measure it would change the
+public IP and drop open connections. Otherwise the candidate is applied and
+the probe runs through it and, in parallel, directly. An exit node that loses
+clearly more, or matches the loss but adds more than max_extra_rtt_ms, is put
+on cooldown and the next preference is tried. --dry-run prints the command
+without running it or probing.
 """
 from __future__ import annotations
 import json
@@ -225,6 +229,12 @@ def _save_cooldowns(health: dict, cooling: dict[str, float]) -> None:
         _log(f"could not record exit-node cooldown in {path}: {e}")
 
 
+def _active_exit_ip(status: dict) -> str:
+    """The Tailscale IPv4 of the exit node in use, else ""."""
+    ips = (status.get("ExitNodeStatus") or {}).get("TailscaleIPs") or []
+    return next((ip.split("/")[0] for ip in ips if ":" not in ip), "")
+
+
 def _apply(cmd: list[str]) -> int:
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if res.returncode != 0:
@@ -259,6 +269,13 @@ def sync_mesh(dry_run: bool = False) -> int:
     health = cfg["health"] if cfg["exit_nodes"] else None
     now = time.time()
     cooling = _cooldowns(health, now) if health else {}
+    if health and not dry_run and not _active_exit_ip(status):
+        uplink = direct_interface()
+        direct = probe(health, uplink) if uplink else (100.0, math.inf)
+        if direct[0] <= health["max_extra_loss_pct"]:
+            _log(f"direct uplink {uplink} healthy ({_fmt(direct)}) -- exit nodes on standby")
+            return _apply(build_set_cmd(ts_bin, cfg, ""))
+        _log(f"direct uplink {uplink or 'none'} degraded ({_fmt(direct)}) -- trying exit nodes")
     while True:
         exit_ip, exit_name = select_exit_node(status, cfg["exit_nodes"], frozenset(cooling))
         if cfg["exit_nodes"]:
