@@ -91,6 +91,38 @@ principal_bind_mode = \"enforce\"
 [[ "$(verdict "$r")" == "armed" ]] || die "off-box + both controls must be ARMED, got: $r"
 ok "off-box with both controls on is armed"
 
+# The bind-mode consumer (grounding._parse_principal_bind_mode) reads "audit" as
+# verify and rejects anything else, failing closed. Neither arms a seat: verify
+# only logs a mismatch, and a rejected value must be fixed, not guessed at.
+bound() {
+    posture "${OFFBOX}
+[security]
+api_require_auth = true
+principal_bind_mode = \"$1\"
+"
+}
+r="$(bound verify)"
+[[ "$(verdict "$r")" == "exposed" && "$(detail "$r")" == *"principal_bind_mode is verify, not enforce"* ]] \
+    || die "verify only observes -- it must read exposed, got: $r"
+ok "verify is a gap: it logs a mismatch but binds nothing"
+
+r="$(bound audit)"
+[[ "$(verdict "$r")" == "exposed" ]] || die "audit (the vendor value) must read exposed, got: $r"
+[[ "$(detail "$r")" == *"principal_bind_mode is audit (an alias of verify), not enforce"* ]] \
+    || die "audit must be reported as the verify alias it is, got: $(detail "$r")"
+[[ "$(detail "$r")" != *api_require_auth* ]] || die "must not report a closed gap: $(detail "$r")"
+ok "audit reads as verify, naming only the binding gap"
+
+r="$(bound verfy)"
+[[ "$(verdict "$r")" == "exposed" ]] || die "a rejected bind mode must never read ARMED, got: $r"
+[[ "$(detail "$r")" == *"'verfy' is not a bind mode"*"fails closed to enforce"* ]] \
+    || die "a rejected value must be named, with what the consumer does instead, got: $(detail "$r")"
+ok "an unknown bind mode is reported as rejected, not armed"
+
+r="$(bound ENFORCE)"
+[[ "$(verdict "$r")" == "armed" ]] || die "the mode is case-insensitive like its consumer, got: $r"
+ok "ENFORCE arms the seat like enforce"
+
 # The overlay is ONE mechanism: a LAN address is the same case as a hostname.
 r="$(posture "[ai]
 endpoint = \"http://10.42.0.7:8700/v1\"
@@ -102,4 +134,4 @@ ok "a LAN address is the same case as a remote hostname"
 r="$(posture "$OFFBOX")" || die "_auth_posture must not fail on an exposed seat"
 ok "an exposed seat still resolves -- the check degrades open"
 
-log "PASS: ${PASS}/8 assertions"
+log "PASS: ${PASS}/12 assertions"
