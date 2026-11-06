@@ -6182,6 +6182,8 @@ mod direct_navigation_regressions {
     fn care_with_back_cell(tapping: (u16, u16)) -> (Config, Ui, (u16, u16)) {
         let (config, mut ui) = pet();
         ui.open(Menu::Home);
+        // Numbered choices belong to the painted page, as in a real terminal.
+        draw(&ui, &config, tapping.0, tapping.1);
         ui.handle(key(KeyCode::Char('1')), &config.game);
         assert_eq!(ui.menu, Some(Menu::Care));
         let text = draw(&ui, &config, tapping.0, tapping.1);
