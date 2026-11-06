@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import http.client
+import importlib.util
 import json
 import os
 import re
@@ -38,7 +39,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 _SSOT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
 _IGPU_SCRIPT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "windows", "mios-igpu-server.ps1")
-_LINT_ORACLE_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-hardcode-lint")
+# The Python lint wrapper was retired for the native binary; run the frozen
+# reference the sibling hardcode-lint parity suites use.
+_lint_spec = importlib.util.spec_from_file_location(
+    "mios_hardcode_parity_reference", os.path.join(_HERE, "test_hardcode_lint_parity.py"))
+_lint_reference = importlib.util.module_from_spec(_lint_spec)
+_lint_spec.loader.exec_module(_lint_reference)
+_lint_oracle = _lint_reference.oracle_command
 
 try:
     import tomllib
@@ -656,7 +663,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "test.py"), "w", encoding="utf-8") as fh:
                 fh.write("x = 1\n")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 0)
 
     def test_f6_02_exit_code_zero_on_clean_scan(self):
@@ -664,7 +671,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "clean.sh"), "w", encoding="utf-8") as fh:
                 fh.write("#!/bin/bash\necho 1\n")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 0)
 
     def test_f6_03_exit_code_one_on_violations(self):
@@ -672,7 +679,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "dirty.py"), "w", encoding="utf-8") as fh:
                 fh.write("# " + "2026" + "-10-06\n")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 1)
 
     def test_f6_04_stdout_pass_message_formatting(self):
@@ -680,7 +687,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "valid.toml"), "w", encoding="utf-8") as fh:
                 fh.write("k = 'v'\n")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertRegex(p.stdout, r"\[mios-hardcode-lint\] PASS: \d+ file\(s\) scanned")
 
     def test_f6_05_soft_mode_advisory_exit_zero(self):
@@ -689,7 +696,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
             with open(os.path.join(td, "dirty.py"), "w", encoding="utf-8") as fh:
                 fh.write("# " + "2026" + "-10-06\n")
             env = dict(os.environ, MIOS_HARDCODE_LINT_SOFT="1")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True, env=env)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True, env=env)
             self.assertEqual(p.returncode, 0)
             self.assertIn("advisory, exit 0", p.stderr)
 
@@ -713,7 +720,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "app.py"), "w", encoding="utf-8") as fh:
                 fh.write("def run(): return True\n")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 0)
 
     def test_f7_04_negative_planted_date_and_ip_defect(self):
@@ -721,7 +728,7 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "bad.py"), "w", encoding="utf-8") as fh:
                 fh.write('# ' + '2026' + '-10-06\nip = "198.51.100.1"\n')
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 1)
             self.assertIn("DATE-IN-COMMENT", p.stderr)
             self.assertIn("HARDCODED-PORT/IP", p.stderr)
@@ -997,7 +1004,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             p = os.path.join(td, "bad.ps1")
             with open(p, "wb") as fh:
                 fh.write(b"# Line 1\n# Line 2\n" + (b"x" * 30) + b"\xef\xbb\xbfWrite-Host 1\n")
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 1)
             self.assertIn("HEADER: UTF-8 BOM stranded", res.stderr)
 
@@ -1007,7 +1014,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             p = os.path.join(td, "displaced.sh")
             with open(p, "wb") as fh:
                 fh.write(b"\n\n#!/bin/bash\necho 1\n")
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 1)
             self.assertIn("HEADER: shebang not on line 1", res.stderr)
 
@@ -1017,7 +1024,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             p = os.path.join(td, "clean_id.py")
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write("my_var_8540_suffix = 100\n")
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
 
     def test_b6_04_port_in_brackets_and_markdown_links(self):
@@ -1026,7 +1033,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             p = os.path.join(td, "bracket.py")
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write("lookup_ports = [8540, 8550]\n")
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
 
     def test_b6_05_deeply_nested_docstring_date(self):
@@ -1041,7 +1048,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
                     "            '''Created " + "2026" + "-10-06.'''\n"
                     "            return 1\n"
                 )
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 1)
             self.assertIn("DATE-IN-COMMENT", res.stderr)
 
@@ -1049,13 +1056,13 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
     def test_b7_01_scan_empty_directory_fails(self):
         """B7.1: Scanning empty directory returns exit code 1."""
         with tempfile.TemporaryDirectory() as td:
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 1)
             self.assertIn("scanned 0 files", res.stderr)
 
     def test_b7_02_scan_nonexistent_directory_fails(self):
         """B7.2: Scanning non-existent path returns exit code 1."""
-        res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, "C:\\nonexistent_dir_998877"], capture_output=True, text=True)
+        res = subprocess.run(_lint_oracle(["C:\\nonexistent_dir_998877"]), capture_output=True, text=True)
         self.assertEqual(res.returncode, 1)
 
     def test_b7_03_root_path_with_trailing_slashes_and_dots(self):
@@ -1064,7 +1071,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             with open(os.path.join(td, "app.py"), "w", encoding="utf-8") as fh:
                 fh.write("x = 1\n")
             path_with_slash = td + os.sep
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, path_with_slash], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([path_with_slash]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
 
     def test_b7_04_file_with_unusual_characters_in_name(self):
@@ -1073,7 +1080,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             p = os.path.join(td, "my test file-01.py")
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write("val = 123\n")
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(res.returncode, 0)
 
     def test_b7_05_large_file_scan_bounded(self):
@@ -1083,7 +1090,7 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write("# Large test file\n" + ("x = 1\n" * 50000))
             start = time.time()
-            res = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            res = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             elapsed = time.time() - start
             self.assertEqual(res.returncode, 0)
             self.assertLess(elapsed, 5.0)
@@ -1138,7 +1145,7 @@ class TestTier3PairwiseCombinatorialInteractions(unittest.TestCase):
             with tempfile.TemporaryDirectory() as td:
                 with open(os.path.join(td, "temp.py"), "w", encoding="utf-8") as fh:
                     fh.write("x = 1\n")
-                p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+                p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
                 return p.returncode
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
@@ -1212,7 +1219,7 @@ class TestTier3PairwiseCombinatorialInteractions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "bad.py"), "w", encoding="utf-8") as fh:
                 fh.write("# " + "2026" + "-10-06\n")
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 1)
             self.assertIn("DATE-IN-COMMENT", p.stderr)
 
@@ -1346,7 +1353,7 @@ class TestTier4RealWorldScenarios(unittest.TestCase):
         Simulates pre-commit CI gate execution: runs mios-hardcode-lint across tests/
         and verifies 0 violations and exit code 0.
         """
-        p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, os.path.join(_ROOT, "tests")], capture_output=True, text=True)
+        p = subprocess.run(_lint_oracle([os.path.join(_ROOT, "tests")]), capture_output=True, text=True)
         # Verify it successfully scanned and did not crash
         self.assertIn(p.returncode, (0, 1))
         if p.returncode == 0:
@@ -1366,7 +1373,7 @@ class TestTier4RealWorldScenarios(unittest.TestCase):
                     'TARGET_PORT = "http://localhost:9988/api"\n'
                 )
 
-            p = subprocess.run([sys.executable, _LINT_ORACLE_PATH, td], capture_output=True, text=True)
+            p = subprocess.run(_lint_oracle([td]), capture_output=True, text=True)
             self.assertEqual(p.returncode, 1, "CI gate must reject PR with hardcoded IP/port")
             self.assertIn("HARDCODED-PORT/IP", p.stderr)
             self.assertIn("198.51.100.99", p.stderr)
