@@ -771,6 +771,65 @@ mod typed_build_phases {
         }
     }
 
+    /// A build-time render cannot know the runtime platform. A baked
+    /// `refclock PHC /dev/ptp0` failed chronyd on a bare-metal host whose ptp0
+    /// is a NIC clock ("atlantic ptp"); the refclock is the runtime drop-in's
+    /// decision, so the image must carry none and must load /etc/chrony.d.
+    #[test]
+    fn baked_chrony_render_has_no_refclock_and_loads_runtime_dropins() {
+        let temp = tempfile::tempdir().unwrap();
+        let out = temp.path().join("chrony.conf");
+        let ssot = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../usr/share/mios/mios.toml"
+        );
+        let render = Command::new(env!("CARGO_BIN_EXE_miosd"))
+            .args(["render-chrony", "--toml", ssot, "--out"])
+            .arg(&out)
+            .output()
+            .unwrap();
+        assert!(
+            render.status.success(),
+            "{}",
+            String::from_utf8_lossy(&render.stderr)
+        );
+        let rendered = fs::read_to_string(&out).unwrap();
+        let refclocks: Vec<&str> = rendered
+            .lines()
+            .filter(|l| l.trim_start().starts_with("refclock"))
+            .collect();
+        assert_eq!(
+            refclocks,
+            Vec::<&str>::new(),
+            "the image must not bake a refclock"
+        );
+        assert!(
+            !rendered.contains("/dev/ptp"),
+            "the image must not name a PTP device"
+        );
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|l| *l == "confdir /etc/chrony.d")
+                .count(),
+            1,
+            "the runtime PTP drop-in directory must be loaded exactly once"
+        );
+        for kept in [
+            "makestep 0 0",
+            "maxslewrate 500",
+            "rtcsync",
+            "driftfile /var/lib/chrony/drift",
+        ] {
+            assert_eq!(rendered.lines().filter(|l| *l == kept).count(), 1, "{kept}");
+        }
+        assert_eq!(
+            rendered,
+            include_str!("../../../../etc/chrony.conf"),
+            "committed etc/chrony.conf must be exactly this render"
+        );
+    }
+
     #[test]
     fn unknown_missing_or_competing_native_handlers_fail_without_writes() {
         let _tree = super::tree_lock();

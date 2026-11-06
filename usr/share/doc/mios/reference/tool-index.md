@@ -67,7 +67,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-ceph-snap` | Atomic CephFS subvolume snapshot scheduler and instant rollback daemon (task_738). |
 | `usr/libexec/mios/mios-cephfs-provision` | Automated provisioning utility for CephFS user home subvolumes and path-scoped CephX keyrings. |
 | `usr/libexec/mios/mios-chain-verify` | SEC-03 CLI that verifies the tamper-evident SHA-256 hash chain over the agent-plane `event` table. Reads every chained row (WHERE chain_hash IS NOT NULL) in chain_seq order via mios-pg-query's... |
-| `usr/libexec/mios/mios-chrony-ptp-dropin` | Generates /etc/chrony.d/10-ptp.conf on first boot if /dev/ptp0 exists (PTP hardware present). |
+| `usr/libexec/mios/mios-chrony-ptp-dropin` | Writes /etc/chrony.d/10-ptp.conf with a PHC refclock only when a /sys/class/ptp/ptpN clock_name is "hyperv" (WSL2 / Hyper-V guest), naming that /dev/ptpN; otherwise removes the drop-in it owns. |
 | `usr/libexec/mios/mios-clevis-luks-gen` | Generates clevis LUKS TPM2 binding configuration from mios.toml [security.luks] SSOT. |
 | `usr/libexec/mios/mios-codebase-index` | Comprehensive codebase discovery index -- harvests the AI-hint/header |
 | `usr/libexec/mios/mios-codemode-api.py` | mios_tools -- the in-sandbox Code Mode tool API (WS-2). This module is the LOCAL Python API the model's generated code imports INSIDE the coderun-sandbox. |

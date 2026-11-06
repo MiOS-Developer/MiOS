@@ -230,7 +230,7 @@ delay_mechanism             E2E
 
     @staticmethod
     def generate_chrony_conf(
-        phc_device: Optional[str] = "/dev/ptp0",
+        phc_device: Optional[str] = None,
         nts_servers: Optional[List[str]] = None,
     ) -> str:
         """
@@ -438,7 +438,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.generate_chrony_conf:
         best_iface = daemon.get_best_ptp_interface()
-        phc = f"/dev/ptp{best_iface.phc_index}" if (best_iface and best_iface.phc_index is not None) else "/dev/ptp0"
+        # Only a PHC an interface actually reports (ethtool -T) is a refclock;
+        # never guess /dev/ptp0 -- on bare metal it can be an undisciplined NIC clock.
+        phc = f"/dev/ptp{best_iface.phc_index}" if (best_iface and best_iface.phc_index is not None) else None
         conf = daemon.generator.generate_chrony_conf(phc_device=phc)
         if args.json:
             print(json.dumps({"phc_device": phc, "chrony_conf": conf}, indent=2))

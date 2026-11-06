@@ -1834,21 +1834,41 @@ test_cockpit_projection() {
 test_chrony_ptp_dropin() {
     log "Testing check_chrony_ptp_dropin"
     local dropin_script="${ROOT}/usr/libexec/mios/mios-chrony-ptp-dropin"
-    local orig_val
-    orig_val="$(cat "$dropin_script")"
-    rm -f "$dropin_script"
-    echo "$orig_val" > "$dropin_script"
+    local backup
+    backup="$(mktemp)"
+    cp -p "$dropin_script" "$backup"
 
     echo 'syntax error ((((' >> "$dropin_script"
 
     if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_chrony_ptp_dropin >/dev/null 2>&1; then
-        rm -f "$dropin_script"
-        echo "$orig_val" > "$dropin_script"
+        cp -p "$backup" "$dropin_script"; rm -f "$backup"
         die "Check_chrony_ptp_dropin passed despite syntax error"
     fi
+    cp -p "$backup" "$dropin_script"
 
-    rm -f "$dropin_script"
-    echo "$orig_val" > "$dropin_script"
+    # The bare-metal defect: a helper that ignores clock_name turns any PTP
+    # clock (a NIC's free-running "atlantic ptp") into a trusted refclock.
+    local clock_test
+    # shellcheck disable=SC2016  # the helper's literal source line, not an expansion
+    clock_test="$(printf '[[ "$name" == "%s" ]] || continue' "hyperv")"
+    python3 - "$dropin_script" "$clock_test" <<'PY'
+import sys, pathlib
+path, probe = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+assert text.count(probe) == 1, "clock_name probe not found"
+path.write_text(text.replace(probe, ":"))
+PY
+    if cmp -s "$backup" "$dropin_script"; then
+        rm -f "$backup"
+        die "Check_chrony_ptp_dropin probe did not mutate the helper"
+    fi
+
+    if MIOS_DRIFT_ROOT="$ROOT" MIOS_DRIFT_CHECK_ROOT="$ROOT" bash "${ROOT}/automation/98-drift-checks.sh" check_chrony_ptp_dropin >/dev/null 2>&1; then
+        cp -p "$backup" "$dropin_script"; rm -f "$backup"
+        die "Check_chrony_ptp_dropin passed despite a helper that ignores clock_name"
+    fi
+
+    cp -p "$backup" "$dropin_script"; rm -f "$backup"
     _neg_gate check_chrony_ptp_dropin || die "Check_chrony_ptp_dropin failed after restoration"
     log "Test_chrony_ptp_dropin negative test passed"
 }

@@ -1,8 +1,9 @@
-# AI-hint: systemd oneshot that generates the Chrony PTP drop-in on hosts exposing /dev/ptp0 (WSL2/Hyper-V), before chronyd starts.
+# AI-hint: systemd oneshot that, before chronyd starts, writes the Chrony PHC refclock drop-in only when a PTP clock is Hyper-V's (WSL2/Hyper-V guest) and removes it otherwise.
 [Unit]
 Description=MiOS Chrony PTP Drop-in Generator
 Documentation=man:chrony.conf(5)
-ConditionPathExists=/dev/ptp0
+# No ConditionPathExists=/dev/ptp0: the Hyper-V clock need not be ptp0, and on a
+# host without one the helper must still run to retire a stale drop-in it owns.
 Before=chronyd.service
 
 [Service]

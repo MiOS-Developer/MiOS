@@ -157,7 +157,7 @@
 156	check_daemon_governor	daemon governor runtime limits and cgroup constraints are valid
 157	check_manual_links	all cross-references and internal links in manual docs resolve
 158	check_doc_port_scheme	doc port scheme
-159	check_chrony_ptp_dropin	Chrony PTP drop-in generator is idempotent and leaves canonical chrony.conf unchanged
+159	check_chrony_ptp_dropin	Chrony PTP drop-in: refclock only for a Hyper-V clock, idempotent, stale drop-in retired, canonical chrony.conf unchanged
 160	check_renderer_gate_coverage	renderer gate coverage verified clean
 161	check_smoke_manifest	smoke manifest components in mios.toml exist in source tree; every overlay names a real section, phase or profile
 162	check_negative_coverage	negative test coverage gate: all dispatched checks are covered or exempt

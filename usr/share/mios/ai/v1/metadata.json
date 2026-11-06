@@ -4,7 +4,7 @@
   "total_metadata_entries": 3429,
   "total_hints": 3423,
   "total_functions_indexed": 2134,
-  "total_related_links": 6844,
+  "total_related_links": 6847,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -9935,6 +9935,8 @@
       "hint": "Clock offset jitter and monotonic timestamp ordering validation test suite.",
       "related": [
         "usr/libexec/mios/net/ptp_time_sync.py",
+        "usr/libexec/mios/mios-chrony-ptp-dropin",
+        "etc/chrony.conf",
         "usr/share/mios/mios.toml"
       ],
       "functions": [],
@@ -21846,7 +21848,7 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-chrony-ptp.service",
-      "hint": "systemd oneshot that generates the Chrony PTP drop-in on hosts exposing /dev/ptp0 (WSL2/Hyper-V), before chronyd starts.",
+      "hint": "systemd oneshot that, before chronyd starts, writes the Chrony PHC refclock drop-in only when a PTP clock is Hyper-V's (WSL2/Hyper-V guest) and removes it otherwise.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -26360,11 +26362,12 @@
     },
     {
       "path": "usr/libexec/mios/mios-chrony-ptp-dropin",
-      "hint": "Generates /etc/chrony.d/10-ptp.conf on first boot if /dev/ptp0 exists (PTP hardware present).",
+      "hint": "Writes /etc/chrony.d/10-ptp.conf with a PHC refclock only when a /sys/class/ptp/ptpN clock_name is \"hyperv\" (WSL2 / Hyper-V guest), naming that /dev/ptpN; otherwise removes the drop-in it owns.",
       "related": [
         "/etc/chrony.d/10-ptp.conf",
         "mios-chrony-ptp.service",
-        "/dev/ptp0"
+        "etc/chrony.conf",
+        "/sys/class/ptp"
       ],
       "functions": [],
       "doc": null,

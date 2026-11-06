@@ -153,8 +153,9 @@ fn test_golden_chrony_render_42() {
         "    'makestep 0 0',\n",
         "    'maxslewrate 500',\n",
         "    '',\n",
-        "    '# Hyper-V PTP clock reference when available (WSL2 / VM container host)',\n",
-        "    'refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0 minsamples 4 prefer trust',\n",
+        "    '# Runtime drop-ins: mios-chrony-ptp-dropin writes 10-ptp.conf with a PHC',\n",
+        "    '# refclock only when a Hyper-V PTP clock is present (WSL2 / Hyper-V guest).',\n",
+        "    'confdir /etc/chrony.d',\n",
         "    '',\n",
         "    '# Enable kernel synchronization of the real-time clock (RTC).',\n",
         "    'rtcsync',\n",
@@ -196,8 +197,9 @@ fn test_golden_chrony_render_42() {
     makestep 0 0
     maxslewrate 500
 
-    # Hyper-V PTP clock reference when available (WSL2 / VM container host)
-    refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0 minsamples 4 prefer trust
+    # Runtime drop-ins: mios-chrony-ptp-dropin writes 10-ptp.conf with a PHC
+    # refclock only when a Hyper-V PTP clock is present (WSL2 / Hyper-V guest).
+    confdir /etc/chrony.d
 
     # Enable kernel synchronization of the real-time clock (RTC).
     rtcsync

@@ -3059,6 +3059,7 @@ check_chrony_ptp_dropin() {
     local dropin_script="$ROOT/usr/libexec/mios/mios-chrony-ptp-dropin"
     local service_unit="$ROOT/usr/lib/systemd/system/mios-chrony-ptp.service"
     local canon_conf="$ROOT/etc/chrony.conf"
+    local refclock_tail="poll 3 dpoll -2 offset 0 minsamples 4 prefer trust"
 
     if [[ ! -f "$dropin_script" || ! -f "$service_unit" ]]; then
         _violation "Chrony PTP drop-in generator script or service unit missing"
@@ -3070,26 +3071,75 @@ check_chrony_ptp_dropin() {
         return
     fi
 
-    local tmp_dir tmp_ptp tmp_chrony_d
+    # The image cannot know the runtime platform, so the baked chrony.conf must
+    # carry no refclock and must load the runtime drop-in directory.
+    if [[ -f "$canon_conf" ]]; then
+        if grep -Eq '^[[:space:]]*refclock' "$canon_conf"; then
+            _violation "etc/chrony.conf bakes a refclock; the PHC decision belongs to mios-chrony-ptp-dropin at runtime"
+            return
+        fi
+        if ! grep -qx 'confdir /etc/chrony.d' "$canon_conf"; then
+            _violation "etc/chrony.conf does not load /etc/chrony.d, so the runtime PTP drop-in would be ignored"
+            return
+        fi
+    fi
+
+    local tmp_dir
     tmp_dir="$(mktemp -d)"
-    tmp_ptp="${tmp_dir}/dev_ptp0"
-    tmp_chrony_d="${tmp_dir}/chrony.d"
-    touch "$tmp_ptp"
+    # Fixture host A: bare metal, ptp0 is a NIC PHC ("atlantic ptp") -> no refclock.
+    mkdir -p "$tmp_dir/a/sys/ptp0" "$tmp_dir/a/dev" "$tmp_dir/a/chrony.d"
+    echo "atlantic ptp" > "$tmp_dir/a/sys/ptp0/clock_name"
+    touch "$tmp_dir/a/dev/ptp0"
+    # Fixture host B: NIC PHC on ptp0, Hyper-V clock on ptp1 -> refclock on ptp1.
+    mkdir -p "$tmp_dir/b/sys/ptp0" "$tmp_dir/b/sys/ptp1" "$tmp_dir/b/dev"
+    echo "atlantic ptp" > "$tmp_dir/b/sys/ptp0/clock_name"
+    echo "hyperv" > "$tmp_dir/b/sys/ptp1/clock_name"
+    touch "$tmp_dir/b/dev/ptp0" "$tmp_dir/b/dev/ptp1"
 
     local old_conf_hash="" new_conf_hash=""
     if [[ -f "$canon_conf" ]]; then
         old_conf_hash="$(sha256sum "$canon_conf" | awk '{print $1}')"
     fi
 
-    PTP_DEV="$tmp_ptp" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
+    _ptp_dropin_run() {
+        PTP_SYSFS_DIR="$tmp_dir/$1/sys" PTP_DEV_DIR="$tmp_dir/$1/dev" CHRONY_D="$tmp_dir/$1/chrony.d" \
+            bash "$dropin_script" >/dev/null 2>&1 || true
+    }
 
-    if [[ ! -f "${tmp_chrony_d}/10-ptp.conf" ]]; then
+    _ptp_dropin_run a
+    if [[ -e "$tmp_dir/a/chrony.d/10-ptp.conf" ]]; then
         rm -rf "$tmp_dir"
-        _violation "mios-chrony-ptp-dropin failed to generate 10-ptp.conf when /dev/ptp0 exists"
+        _violation "mios-chrony-ptp-dropin wrote a refclock for a non-Hyper-V PTP clock (atlantic ptp)"
         return
     fi
 
-    PTP_DEV="$tmp_ptp" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
+    _ptp_dropin_run b
+    local want="refclock PHC $tmp_dir/b/dev/ptp1 $refclock_tail"
+    if [[ ! -f "$tmp_dir/b/chrony.d/10-ptp.conf" ]] \
+        || [[ "$(grep -c '^refclock' "$tmp_dir/b/chrony.d/10-ptp.conf")" != "1" ]] \
+        || ! grep -qxF "$want" "$tmp_dir/b/chrony.d/10-ptp.conf"; then
+        rm -rf "$tmp_dir"
+        _violation "mios-chrony-ptp-dropin did not write exactly one refclock for the Hyper-V clock on ptp1"
+        return
+    fi
+
+    local first_hash
+    first_hash="$(sha256sum "$tmp_dir/b/chrony.d/10-ptp.conf" | awk '{print $1}')"
+    _ptp_dropin_run b
+    if [[ "$(sha256sum "$tmp_dir/b/chrony.d/10-ptp.conf" | awk '{print $1}')" != "$first_hash" ]]; then
+        rm -rf "$tmp_dir"
+        _violation "mios-chrony-ptp-dropin is not idempotent"
+        return
+    fi
+
+    # The Hyper-V clock goes away (host moved to bare metal): the owned drop-in is retired.
+    rm -rf "$tmp_dir/b/sys/ptp1"
+    _ptp_dropin_run b
+    if [[ -e "$tmp_dir/b/chrony.d/10-ptp.conf" ]]; then
+        rm -rf "$tmp_dir"
+        _violation "mios-chrony-ptp-dropin left a stale 10-ptp.conf after the Hyper-V clock disappeared"
+        return
+    fi
 
     if [[ -f "$canon_conf" ]]; then
         new_conf_hash="$(sha256sum "$canon_conf" | awk '{print $1}')"
@@ -3101,7 +3151,7 @@ check_chrony_ptp_dropin() {
     fi
 
     rm -rf "$tmp_dir"
-    echo "[98-drift-checks]   Chrony PTP drop-in generator is idempotent and leaves canonical chrony.conf unchanged"
+    echo "[98-drift-checks]   Chrony PTP drop-in: refclock only for a Hyper-V clock, idempotent, stale drop-in retired, canonical chrony.conf unchanged"
 }
 
 check_renderer_gate_coverage() {
