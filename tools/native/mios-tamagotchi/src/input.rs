@@ -1,4 +1,5 @@
 // AI-hint: Keyboard and Inputd projected-key actions; releases never act and explicit repeat events only navigate.
+// AI-hint: The prompt consumer honors I1 context.nav_profile (verified selected profile) and context.camera, failing closed on unknown selections.
 // AI-related: game.rs, ui.rs, tools/native/mios-inputd/src/nav.rs
 use crate::game::{Care, Direction};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -184,6 +185,7 @@ struct Sample {
     // Age includes the entire query, never just delivery to the UI.
     started: Instant,
     prompts: Option<ControllerPrompts>,
+    camera: Option<String>,
     reason: &'static str,
 }
 
@@ -227,14 +229,19 @@ impl ControllerMonitor {
                             .as_ref()
                             .ok_or("Inputd: no verified local session (remote/console).")
                             .and_then(|id| detect(id, &query));
-                        let (prompts, reason) = match detected {
-                            Ok(prompts) => (Some(prompts), "Inputd: assigned pad focused here."),
-                            Err(reason) => (None, reason),
+                        let (prompts, camera, reason) = match detected {
+                            Ok(selected) => (
+                                Some(selected.prompts),
+                                selected.camera,
+                                "Inputd: assigned pad focused here.",
+                            ),
+                            Err(reason) => (None, None, reason),
                         };
                         if results
                             .send(Sample {
                                 started,
                                 prompts,
+                                camera,
                                 reason,
                             })
                             .is_err()
@@ -274,6 +281,22 @@ impl ControllerMonitor {
             .as_ref()
             .filter(|s| now.saturating_duration_since(s.started) < self.stale)
             .and_then(|s| s.prompts.clone())
+    }
+
+    /// The verified camera hint for the currently selected nav profile (I1
+    /// protocol P9): None unless Inputd verified a camera app for this focus.
+    /// Same freshness rule as `poll`; never grants ownership or waits.
+    pub fn camera(&mut self) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        while let Ok(sample) = self.result.try_recv() {
+            self.cached = Some(sample);
+        }
+        self.cached
+            .as_ref()
+            .filter(|s| Instant::now().saturating_duration_since(s.started) < self.stale)
+            .and_then(|s| s.camera.clone())
     }
 
     /// Diagnostic only: never grants ownership or enables controller prompts.
@@ -639,7 +662,7 @@ fn connected(devices: &Json, seat: Option<&Seat>) -> Option<BTreeSet<&'static st
     (!families.is_empty()).then_some(families)
 }
 
-fn detect(id: &Identity, query: &Query<'_>) -> Result<ControllerPrompts, &'static str> {
+fn detect(id: &Identity, query: &Query<'_>) -> Result<SelectedPrompts, &'static str> {
     let seat = own_seat(id, query).ok_or("Inputd: nested ownership could not be verified.")?;
     // An empty owned-device list is conclusive. Never borrow a parent pad.
     if seat.as_ref().is_some_and(|s| {
@@ -823,12 +846,34 @@ fn binding_label(bindings: &Bindings, target: &str, family: &str) -> Option<Stri
     None
 }
 
+/// The resolved prompts plus the daemon-verified camera hint (I1 P9).
+struct SelectedPrompts {
+    prompts: ControllerPrompts,
+    camera: Option<String>,
+}
+
+impl std::ops::Deref for SelectedPrompts {
+    type Target = ControllerPrompts;
+    fn deref(&self) -> &ControllerPrompts {
+        &self.prompts
+    }
+}
+
 fn resolve_prompts(
     map: &Json,
     context: &Json,
     tmux: bool,
     family: &str,
 ) -> Option<ControllerPrompts> {
+    resolve_selected(map, context, tmux, family).map(|selected| selected.prompts)
+}
+
+fn resolve_selected(
+    map: &Json,
+    context: &Json,
+    tmux: bool,
+    family: &str,
+) -> Option<SelectedPrompts> {
     let global = &map["global"];
     let controller = &global["controller"];
     let nav = &controller["nav"];
@@ -855,10 +900,26 @@ fn resolve_prompts(
     if profile == "vpad" {
         return None;
     }
-    let selected = if nav.get(profile).is_some_and(Json::is_object) {
-        profile.to_owned()
-    } else {
-        format!("{profile}_{}", if tmux { "tmux" } else { "plain" })
+    // I1 (protocol P9): the daemon's verified selected profile overrides
+    // today's derivation exactly when it names a real profile table in this
+    // same map. A legacy daemon (field absent) keeps the derived profile; an
+    // unknown, empty, null or non-table selection fails closed instead of
+    // printing invented bindings for a profile the map cannot describe.
+    let selected = match context.get("nav_profile") {
+        None => {
+            if nav.get(profile).is_some_and(Json::is_object) {
+                profile.to_owned()
+            } else {
+                format!("{profile}_{}", if tmux { "tmux" } else { "plain" })
+            }
+        }
+        Some(value) => {
+            let name = value.as_str().filter(|n| !n.is_empty())?;
+            if name == "vpad" || !nav.get(name).is_some_and(Json::is_object) {
+                return None;
+            }
+            name.to_owned()
+        }
     };
     let mut seen = BTreeSet::new();
     let bindings = inherited(nav, &selected, &mut seen)?;
@@ -895,14 +956,33 @@ fn resolve_prompts(
         })
         .collect::<Option<Vec<_>>>()?
         .join("+");
-    Some(ControllerPrompts {
-        family: family.into(),
-        navigate,
-        accept: binding_label(&bindings, "key:ENTER", family)?,
-        back: binding_label(&bindings, "key:ESC", family)?,
-        next: binding_label(&bindings, "key:TAB", family)?,
-        release: format!("Hold {release}"),
-        quit: binding_label(&bindings, "key:CTRL+c", family),
+    // I1: only the daemon's verified camera flag may add the camera hint, and
+    // the zoom labels come from the real per-family trigger labels; nothing is
+    // invented for a family whose labels cannot be resolved.
+    let camera = if context.get("camera").and_then(Json::as_bool) == Some(true) {
+        match (
+            button_label("BTN_TL2", family),
+            button_label("BTN_TR2", family),
+        ) {
+            (Some(zoom_out), Some(zoom_in)) => Some(format!(
+                "LS pan  RS orbit/tilt  {zoom_out}/{zoom_in} zoom  R3 reset  L3 view"
+            )),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    Some(SelectedPrompts {
+        prompts: ControllerPrompts {
+            family: family.into(),
+            navigate,
+            accept: binding_label(&bindings, "key:ENTER", family)?,
+            back: binding_label(&bindings, "key:ESC", family)?,
+            next: binding_label(&bindings, "key:TAB", family)?,
+            release: format!("Hold {release}"),
+            quit: binding_label(&bindings, "key:CTRL+c", family),
+        },
+        camera,
     })
 }
 
@@ -913,32 +993,40 @@ fn resolve_connected_prompts(
     context: &Json,
     tmux: bool,
     families: &BTreeSet<&str>,
-) -> Option<ControllerPrompts> {
-    let prompts = families
+) -> Option<SelectedPrompts> {
+    let selected = families
         .iter()
-        .map(|family| resolve_prompts(map, context, tmux, family))
+        .map(|family| resolve_selected(map, context, tmux, family))
         .collect::<Option<Vec<_>>>()?;
-    if prompts.is_empty() {
+    if selected.is_empty() {
         return None;
     }
+    let prompts: Vec<&ControllerPrompts> = selected.iter().map(|s| &s.prompts).collect();
     let merged = |label: fn(&ControllerPrompts) -> &str| {
         merge_prompt_labels(prompts.iter().map(|p| (p.family.as_str(), label(p))))
     };
-    Some(ControllerPrompts {
-        family: prompts
-            .iter()
-            .map(|p| p.family.as_str())
-            .collect::<Vec<_>>()
-            .join(" + "),
-        navigate: merged(|p| &p.navigate)?,
-        accept: merged(|p| &p.accept)?,
-        back: merged(|p| &p.back)?,
-        next: merged(|p| &p.next)?,
-        release: merged(|p| &p.release)?,
-        quit: merge_prompt_labels(
-            prompts
+    Some(SelectedPrompts {
+        prompts: ControllerPrompts {
+            family: prompts
                 .iter()
-                .filter_map(|p| p.quit.as_deref().map(|q| (p.family.as_str(), q))),
+                .map(|p| p.family.as_str())
+                .collect::<Vec<_>>()
+                .join(" + "),
+            navigate: merged(|p| &p.navigate)?,
+            accept: merged(|p| &p.accept)?,
+            back: merged(|p| &p.back)?,
+            next: merged(|p| &p.next)?,
+            release: merged(|p| &p.release)?,
+            quit: merge_prompt_labels(
+                prompts
+                    .iter()
+                    .filter_map(|p| p.quit.as_deref().map(|q| (p.family.as_str(), q))),
+            ),
+        },
+        camera: merge_prompt_labels(
+            selected
+                .iter()
+                .filter_map(|s| s.camera.as_deref().map(|c| (s.prompts.family.as_str(), c))),
         ),
     })
 }
@@ -1213,6 +1301,160 @@ mod controller_tests {
         assert!(resolve_prompts(&map, &context(), true, "Sony").is_none());
     }
 
+    fn mon_map() -> Json {
+        let mut map = map();
+        let nav = &mut map["global"]["controller"]["nav"];
+        nav["mon_tmux"] = json!({"inherits":"terminal_tmux",
+            "BTN_EAST":"key:ESC",
+            "LS_LEFT":"key:ALT+4","LS_RIGHT":"key:ALT+6","LS_UP":"key:ALT+8","LS_DOWN":"key:ALT+2",
+            "RS_LEFT":"key:ALT+7","RS_RIGHT":"key:ALT+9","RS_UP":"key:ALT+3","RS_DOWN":"key:ALT+1",
+            "BTN_TL2":"key:ALT+MINUS","BTN_TR2":"key:ALT+EQUAL"});
+        nav["mon_plain"] = json!({"inherits":"mon_tmux"});
+        map
+    }
+    fn mon_context() -> Json {
+        let mut c = context();
+        c["nav_profile"] = json!("mon_tmux");
+        c["camera"] = json!(true);
+        c
+    }
+
+    #[test]
+    fn mon_profile_override_remaps_and_adds_the_camera_hint() {
+        // The verified mon_tmux selection replaces the derived terminal_tmux:
+        // East is a plain Esc (no hold), so back and quit differ from the base.
+        let s = resolve_selected(&mon_map(), &mon_context(), true, "Xbox").unwrap();
+        assert_eq!(s.prompts.back, "B");
+        assert_eq!(s.prompts.quit, None);
+        assert_eq!(
+            s.camera.as_deref(),
+            Some("LS pan  RS orbit/tilt  LT/RT zoom  R3 reset  L3 view")
+        );
+        // Per-family trigger labels, never invented.
+        for (family, triggers) in [
+            ("Sony", "L2/R2"),
+            ("Xbox", "LT/RT"),
+            ("Nintendo", "ZL/ZR"),
+            ("Controller", "LT/RT"),
+        ] {
+            let s = resolve_selected(&mon_map(), &mon_context(), true, family).unwrap();
+            let camera = s.camera.unwrap();
+            assert!(
+                camera.contains(&format!("{triggers} zoom")),
+                "{family}: {camera}"
+            );
+            assert!(camera.starts_with("LS pan  RS orbit/tilt  "), "{family}");
+            assert!(camera.ends_with("R3 reset  L3 view"), "{family}");
+        }
+        // Without the verified camera flag the override still applies, silently.
+        let mut c = mon_context();
+        c["camera"] = json!(false);
+        let s = resolve_selected(&mon_map(), &c, true, "Sony").unwrap();
+        assert!(s.camera.is_none());
+        assert_eq!(s.prompts.back, "Circle");
+        // A malformed camera flag never enables the hint.
+        let mut c = mon_context();
+        c["camera"] = json!("yes");
+        let s = resolve_selected(&mon_map(), &c, true, "Sony").unwrap();
+        assert!(s.camera.is_none());
+    }
+
+    #[test]
+    fn legacy_contexts_without_nav_profile_keep_today_derivation() {
+        // An old daemon omits nav_profile entirely: derived profile, no camera.
+        for tmux in [false, true] {
+            let s = resolve_selected(&map(), &context(), tmux, "Sony").unwrap();
+            assert_eq!(s.prompts.back, "Tap Circle");
+            assert_eq!(s.prompts.quit.as_deref(), Some("Hold Circle"));
+            assert!(s.camera.is_none());
+        }
+        // Even a camera flag on a legacy context adds nothing (no override).
+        let mut c = context();
+        c["camera"] = json!(true);
+        let s = resolve_selected(&map(), &c, true, "Sony").unwrap();
+        assert!(s.camera.is_none());
+    }
+
+    #[test]
+    fn unknown_or_malformed_nav_profile_fails_closed() {
+        for bad in [
+            json!("mon_missing"),
+            json!(""),
+            json!(7),
+            json!(null),
+            json!(["mon_tmux"]),
+        ] {
+            let mut c = mon_context();
+            c["nav_profile"] = bad;
+            assert!(
+                resolve_selected(&mon_map(), &c, true, "Sony").is_none(),
+                "nav_profile={bad}"
+            );
+        }
+        // vpad is never selectable even if the daemon names it.
+        let mut c = mon_context();
+        c["nav_profile"] = json!("vpad");
+        assert!(resolve_selected(&mon_map(), &c, true, "Sony").is_none());
+        // A nav_profile that exists but is not a table fails closed too.
+        let mut map = mon_map();
+        map["global"]["controller"]["nav"]["mon_tmux"] = json!("terminal_tmux");
+        assert!(resolve_selected(&map, &mon_context(), true, "Sony").is_none());
+    }
+
+    #[test]
+    fn disabled_or_foreign_capture_still_blocks_the_override() {
+        // The ownership, context and enablement guards run before the override.
+        for (field, value) in [
+            ("room_capture", json!(true)),
+            ("controller_owner", json!("foreign")),
+            ("context", json!("game")),
+        ] {
+            let mut c = mon_context();
+            c[field] = value;
+            assert!(resolve_selected(&mon_map(), &c, true, "Sony").is_none());
+        }
+        let mut map = mon_map();
+        map["global"]["controller"]["nav"]["enabled"] = json!(false);
+        assert!(resolve_selected(&map, &mon_context(), true, "Sony").is_none());
+        let mut map = mon_map();
+        map["global"]["enabled"] = json!(false);
+        assert!(resolve_selected(&map, &mon_context(), true, "Sony").is_none());
+        // An app-capture keeps navigation only through capture_navigation_contexts.
+        let mut c = mon_context();
+        c["context"] = json!("app-capture");
+        c["controller_owner"] = json!("app");
+        assert!(resolve_selected(&mon_map(), &c, true, "Sony").is_some());
+        let mut map = mon_map();
+        map["global"]["controller"]["capture_navigation_contexts"] = json!([]);
+        assert!(resolve_selected(&map, &c, true, "Sony").is_none());
+    }
+
+    #[test]
+    fn mixed_families_merge_camera_labels_per_family() {
+        let families: BTreeSet<&str> = ["Nintendo", "Sony", "Xbox"].into();
+        let s = resolve_connected_prompts(&mon_map(), &mon_context(), true, &families).unwrap();
+        let camera = s.camera.unwrap();
+        assert!(
+            camera.starts_with("Nintendo: LS pan  RS orbit/tilt  ZL/ZR zoom"),
+            "{camera}"
+        );
+        assert!(
+            camera.contains(" / Sony: LS pan  RS orbit/tilt  L2/R2 zoom"),
+            "{camera}"
+        );
+        assert!(
+            camera.contains(" / Xbox: LS pan  RS orbit/tilt  LT/RT zoom"),
+            "{camera}"
+        );
+        assert!(camera.ends_with("R3 reset  L3 view"), "{camera}");
+        // Without a verified camera app the merged hint stays absent.
+        let mut c = mon_context();
+        c["camera"] = json!(false);
+        let s = resolve_connected_prompts(&mon_map(), &c, true, &families).unwrap();
+        assert!(s.camera.is_none());
+        assert!(s.prompts.accept.contains("Cross"));
+    }
+
     fn pad(path: &str, name: &str, virtual_pad: bool, assigned: Json) -> Json {
         json!({"path":path,"name":name,"kind":"controller",
             "virtual":virtual_pad,"assigned_to":assigned})
@@ -1300,6 +1542,7 @@ mod controller_tests {
             cached: Some(Sample {
                 started: now - Duration::from_secs(3),
                 prompts: resolve_prompts(&map(), &context(), true, "Sony"),
+                camera: None,
                 reason: "Inputd: assigned pad focused here.",
             }),
             enabled: true,
@@ -1310,6 +1553,7 @@ mod controller_tests {
             .send(Sample {
                 started: Instant::now(),
                 prompts: resolve_prompts(&map(), &context(), true, "Sony"),
+                camera: None,
                 reason: "Inputd: assigned pad focused here.",
             })
             .unwrap();
@@ -1319,6 +1563,7 @@ mod controller_tests {
             .send(Sample {
                 started: Instant::now(),
                 prompts: None,
+                camera: None,
                 reason: "Inputd: no controller assigned to this nested session.",
             })
             .unwrap();
@@ -1455,8 +1700,9 @@ mod controller_tests {
                 .collect();
             let families = connected(&json!(devices), None).unwrap();
             for tmux in [false, true] {
-                let prompts =
-                    resolve_connected_prompts(&map(), &context(), tmux, &families).unwrap();
+                let prompts = resolve_connected_prompts(&map(), &context(), tmux, &families)
+                    .unwrap()
+                    .prompts;
                 assert_eq!(
                     prompts.family,
                     selected.iter().map(|c| c.0).collect::<Vec<_>>().join(" + ")
@@ -1500,7 +1746,9 @@ mod controller_tests {
         )
         .unwrap();
         assert_eq!(families, BTreeSet::from(["Sony"]));
-        let p = resolve_connected_prompts(&map(), &context(), true, &families).unwrap();
+        let p = resolve_connected_prompts(&map(), &context(), true, &families)
+            .unwrap()
+            .prompts;
         assert_eq!(p.family, "Sony");
         assert_eq!(p.accept, "Tap Cross");
         for devices in [
@@ -1508,7 +1756,9 @@ mod controller_tests {
             json!([xbox, other_sony, sony]),
         ] {
             let families = connected(&devices, None).unwrap();
-            let p = resolve_connected_prompts(&map(), &context(), true, &families).unwrap();
+            let p = resolve_connected_prompts(&map(), &context(), true, &families)
+                .unwrap()
+                .prompts;
             assert_eq!(p.family, "Sony + Xbox");
             assert_eq!(p.accept, "Sony: Tap Cross / Xbox: Tap A");
             assert_eq!(p.back, "Sony: Tap Circle / Xbox: Tap B");
@@ -1694,7 +1944,9 @@ mod controller_tests {
         let discovered = json!([foreign.clone(), host, sony.clone(), xbox, generic]);
         let families = connected(&discovered, Some(&own)).unwrap();
         assert_eq!(families, BTreeSet::from(["Controller", "Sony", "Xbox"]));
-        let p = resolve_connected_prompts(&map(), &context(), true, &families).unwrap();
+        let p = resolve_connected_prompts(&map(), &context(), true, &families)
+            .unwrap()
+            .prompts;
         assert_eq!(
             p.accept,
             "Controller: Tap South / Sony: Tap Cross / Xbox: Tap A"
