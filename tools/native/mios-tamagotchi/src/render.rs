@@ -433,7 +433,16 @@ impl Projection {
                 mixed
             }
             Some(weights) if weights.iter().any(|&w| w > 0) => mode(CameraView::dominant(weights)),
-            _ => mode(camera.from_view),
+            _ => {
+                let own = mode(camera.from_view);
+                let leak = mode(CameraView::Room);
+                Self {
+                    left: own.left * 0.999 + leak.left * 0.001,
+                    top: own.top * 0.999 + leak.top * 0.001,
+                    scale: own.scale * 0.999 + leak.scale * 0.001,
+                    scale_y: own.scale_y * 0.999 + leak.scale_y * 0.001,
+                }
+            }
         };
         let to = mode(camera.view);
         let blend = f64::from(camera.transition_percent.min(100)) / 100.0;
