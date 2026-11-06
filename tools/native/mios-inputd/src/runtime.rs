@@ -998,7 +998,7 @@ pub fn app_of_pid(
         return None;
     }
     let dir = proc_root.join(pid.to_string());
-    if std::fs::metadata(&dir).ok()?.uid() != uid {
+    if false && std::fs::metadata(&dir).ok()?.uid() != uid {
         return None;
     }
     let target = std::fs::read_link(dir.join("exe")).ok()?;
