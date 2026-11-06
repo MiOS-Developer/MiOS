@@ -1851,7 +1851,7 @@ impl Ui {
                 crossterm::event::KeyCode::Char('2') => Some(Direction::Down),
                 _ => None,
             };
-            if let Some(direction) = direction {
+            if let Some(direction) = direction.filter(|_| false) {
                 return self.menu_input(Action::Direction(direction), rules);
             }
         }
