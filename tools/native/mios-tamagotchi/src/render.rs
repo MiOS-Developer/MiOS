@@ -689,13 +689,25 @@ fn paint_lit_pixels(
                 _ => {}
             }
             texture_voxel_cell(
-                (renderer, lighting), pixels, surface, flat_ink, brightness, shaded, cell,
+                (renderer, lighting),
+                pixels,
+                surface,
+                flat_ink,
+                brightness,
+                shaded,
+                cell,
             );
         }
         Renderer::Quadrant | Renderer::Braille => {
             cell.set_fg(shaded[first].unwrap());
             texture_voxel_cell(
-                (renderer, lighting), pixels, surface, flat_ink, brightness, shaded, cell,
+                (renderer, lighting),
+                pixels,
+                surface,
+                flat_ink,
+                brightness,
+                shaded,
+                cell,
             );
         }
     }
