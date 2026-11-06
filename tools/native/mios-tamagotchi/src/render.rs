@@ -926,6 +926,12 @@ impl FaceTexture {
     }
 
     fn sample(self, uv: [f64; 2], footprint: [f64; 2]) -> bool {
+        self.coverage(uv, footprint, 0.75) >= 0.4
+    }
+
+    /// Box-filtered share of glyph ink under a footprint, 0..=1. The atlas caps
+    /// its filter at 0.75 grid units; the shaded tier filters a whole cell.
+    fn coverage(self, uv: [f64; 2], footprint: [f64; 2], max_radius: f64) -> f64 {
         let size = self.grid_box();
         let scale = self.grid_per_uv();
         let grid = if self.aspect.is_some() {
@@ -940,8 +946,8 @@ impl FaceTexture {
         // Capping the filter prevents minification from growing a solid face.
         // Underresolved heads use independently surface-anchored terminal glyphs.
         let radius = [
-            (scale[0] * footprint[0].abs() / 2.0).clamp(0.025, 0.75),
-            (scale[1] * footprint[1].abs() / 2.0).clamp(0.025, 0.75),
+            (scale[0] * footprint[0].abs() / 2.0).clamp(0.025, max_radius),
+            (scale[1] * footprint[1].abs() / 2.0).clamp(0.025, max_radius),
         ];
         let left = (grid[0] - radius[0]).floor() as i32;
         let right = (grid[0] + radius[0]).floor() as i32;
@@ -960,7 +966,7 @@ impl FaceTexture {
                 }
             }
         }
-        coverage / (4.0 * radius[0] * radius[1]) >= 0.4
+        coverage / (4.0 * radius[0] * radius[1])
     }
 
     fn bounds(sprite: &Sprite) -> Option<SolidBounds> {
@@ -1187,6 +1193,133 @@ fn native_micro_candidates(
     empty
 }
 
+/// Face level of detail, measured on the letterboxed text box per glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FaceLod {
+    /// Terminal characters: one cell per glyph.
+    Native,
+    /// The glyph bitmap as multi-cell ASCII shading.
+    Shaded,
+    /// The glyph bitmap in packed pixels.
+    Atlas,
+}
+
+/// Cells per glyph and rows the letterboxed text box needs for each tier.
+/// Below the shaded minimum a glyph cannot be drawn legibly across several
+/// cells, so native characters stay. Packed-pixel renderers keep the original
+/// 5-cell/4.5-row atlas switch; one-pixel-per-cell ASCII would only stamp
+/// binary marks there and keeps the shading at every larger size.
+const SHADED_MIN_CELLS_PER_GLYPH: f64 = 4.0;
+const SHADED_MIN_ROWS: f64 = 4.0;
+const ATLAS_MIN_CELLS_PER_GLYPH: f64 = 5.0;
+const ATLAS_MIN_ROWS: f64 = 4.5;
+/// A cell shows face ink only when its glyph coverage reaches this share.
+const SHADED_MIN_INK: f64 = 0.15;
+
+fn face_lod(texture: FaceTexture, columns: f64, rows: f64, pixel_atlas: bool) -> FaceLod {
+    let fraction = texture.text_fraction();
+    let per_glyph = columns * fraction[0] / texture.text.len() as f64;
+    let rows = rows * fraction[1];
+    if per_glyph < SHADED_MIN_CELLS_PER_GLYPH || rows < SHADED_MIN_ROWS {
+        FaceLod::Native
+    } else if pixel_atlas && per_glyph >= ATLAS_MIN_CELLS_PER_GLYPH && rows >= ATLAS_MIN_ROWS {
+        FaceLod::Atlas
+    } else {
+        FaceLod::Shaded
+    }
+}
+
+/// Intermediate faces: the kaomoji drawn as multi-cell ASCII art on the face
+/// plane, like the voxel shading overlay. Each cell's ramp glyph density
+/// follows how much of the bitmap's ink it covers, normalized so the face's
+/// densest stroke takes the densest glyph at every scale. Only cells wholly on
+/// the mapped face plane take part, so noses, occluders and rear views keep
+/// their surface. One-plane ASCII restores the lit body exactly first, as the
+/// atlas does, so stale marks never survive in stroke gaps; packed cells keep
+/// their pixels as the background behind the stroke's glyph and face ink.
+fn draw_shaded_face(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+    face: (FaceTexture, [f64; 4]),
+) -> bool {
+    let (texture, [left, top, right, bottom]) = face;
+    let (dx, dy) = renderer.packing();
+    let count = f64::from(dx * dy);
+    let mut cells = Vec::new();
+    for row in (top.floor() as i32).max(i32::from(area.y))
+        ..(bottom.ceil() as i32).min(i32::from(area.bottom()))
+    {
+        for col in (left.floor() as i32).max(i32::from(area.x))
+            ..(right.ceil() as i32).min(i32::from(area.right()))
+        {
+            let mut original = [None; 8];
+            let mut surface = [None; 8];
+            let mut ink = 0.0;
+            let mut covered = 0;
+            for y in 0..dy {
+                for x in 0..dx {
+                    let i = usize::from(y * dx + x);
+                    let px = col as u32 * u32::from(dx) + u32::from(x);
+                    let py = row as u32 * u32::from(dy) + u32::from(y);
+                    original[i] = projection.sample(sprite, px, py);
+                    surface[i] = projected_surface_light(sprite, projection, px, py);
+                    // Each packed pixel filters its own footprint; the cell is their mean.
+                    if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
+                        covered += 1;
+                        ink += texture.coverage(uv, footprint, f64::INFINITY) / count;
+                    }
+                }
+            }
+            if covered == dx * dy {
+                let ink = (ink >= SHADED_MIN_INK).then_some(ink.min(1.0));
+                cells.push((col as u16, row as u16, ink, original, surface));
+            }
+        }
+    }
+    let peak = cells.iter().filter_map(|cell| cell.2).fold(0.0, f64::max);
+    // A packed cell's background already holds body pixels, so relighting it
+    // would not reproduce the body; ASCII's background is the room's.
+    let restore = (dx, dy) == (1, 1);
+    let mut painted = false;
+    for (col, row, ink, original, surface) in cells {
+        let Some(cell) = buf.cell_mut((col, row)) else {
+            continue;
+        };
+        if restore {
+            let background = cell.bg;
+            paint_lit_pixels(renderer, colors, original, surface, [false; 8], cell);
+            cell.set_bg(background);
+            painted = true;
+        }
+        let Some(ink) = ink else {
+            continue;
+        };
+        let body = cell.symbol().to_string();
+        let level = (ink / peak * 180.0).round() as u16;
+        let glyph = colors.lighting.as_ref().map_or('#', |light| {
+            let glyph = light.glyph(level);
+            // Monochrome has no ink colour: a stroke never repeats the body glyph.
+            if glyph.to_string() == body {
+                light.glyph(180)
+            } else {
+                glyph
+            }
+        });
+        let glyph = if glyph.to_string() == body {
+            '#'
+        } else {
+            glyph
+        };
+        cell.set_char(glyph).set_fg(colors.ink(0));
+        painted = true;
+    }
+    painted
+}
+
 /// A head with room for the whole expression on one row draws it as one
 /// connected word: anchors spread across a broad head read as separate marks
 /// and let a muzzle sit in the middle of the expression. Every cell is still a
@@ -1399,11 +1532,27 @@ fn draw_camera_face(
     let columns = right - left;
     let rows = bottom - top;
     // Native cells use full visible head coverage, including the forehead.
-    // Atlas resolution comes from the letterboxed text box on the narrow face
-    // surface: a box too small to resolve its glyphs keeps native characters.
-    let fraction = texture.text_fraction();
-    if columns * fraction[0] < texture.text.len() as f64 * 5.0 || rows * fraction[1] < 4.5 {
-        return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
+    // Resolution comes from the letterboxed text box on the narrow face
+    // surface: native characters, then multi-cell ASCII shading, then the atlas.
+    // One pixel per cell has no sub-cell atlas to switch to.
+    let pixel_atlas = renderer.packing() != (1, 1);
+    match face_lod(texture, columns, rows, pixel_atlas) {
+        FaceLod::Native => {
+            return native_fits
+                && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
+        }
+        FaceLod::Shaded => {
+            return draw_shaded_face(
+                sprite,
+                renderer,
+                colors,
+                projection,
+                area,
+                buf,
+                (texture, [left, top, right, bottom]),
+            );
+        }
+        FaceLod::Atlas => {}
     }
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let mut painted = false;
@@ -4520,6 +4669,13 @@ mod camera_tests {
                     scale_y: 6.0 * camera_pixel_aspect(renderer),
                 };
                 let texture = FaceTexture::new(&sprite).unwrap();
+                let face = FaceTexture::bounds(&sprite).unwrap();
+                let (left, top) = projection.cell(face.left, face.top, renderer);
+                let (right, bottom) = projection.cell(face.right, face.bottom, renderer);
+                // One-plane ASCII shades at this size: its gaps are the cells the
+                // shading leaves without ink, and they must equal the body too.
+                let shaded = face_lod(texture, right - left, bottom - top, (dx, dy) != (1, 1))
+                    == FaceLod::Shaded;
                 let mut source = Buffer::empty(area);
                 draw_projection(&sprite, renderer, &colors, projection, area, &mut source);
                 let mut buf = source.clone();
@@ -4539,16 +4695,23 @@ mod camera_tests {
                     for col in area.x..area.right() {
                         let mut clear_gap = true;
                         let mut any_backing = false;
+                        let mut ink = 0.0;
                         for y in 0..dy {
                             for x in 0..dx {
                                 let px = u32::from(col) * u32::from(dx) + u32::from(x);
                                 let py = u32::from(row) * u32::from(dy) + u32::from(y);
                                 let sample = projected_face_uv(&sprite, projection, px, py);
-                                clear_gap &= sample
-                                    .is_some_and(|(uv, footprint)| !texture.sample(uv, footprint));
+                                clear_gap &= sample.is_some_and(|(uv, footprint)| {
+                                    shaded || !texture.sample(uv, footprint)
+                                });
+                                if let Some((uv, footprint)) = sample {
+                                    ink += texture.coverage(uv, footprint, f64::INFINITY)
+                                        / f64::from(dx * dy);
+                                }
                                 any_backing |= sample.is_some();
                             }
                         }
+                        clear_gap &= !shaded || ink < SHADED_MIN_INK;
                         if clear_gap {
                             assert_ne!(buf[(col, row)].symbol(), "X", "{renderer:?}");
                             let py = u32::from(row) * u32::from(dy)
@@ -5686,6 +5849,189 @@ mod kaomoji_scale_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn face_lod_tiers_are_ordered_and_keep_the_legacy_atlas_switch() {
+        for text in ["(o_O)", "(^_^)", "T_T"] {
+            for aspect in [None, Some(0.8), Some(1.6), Some(4.0)] {
+                let texture = FaceTexture { text, aspect };
+                let rank = |lod| match lod {
+                    FaceLod::Native => 0,
+                    FaceLod::Shaded => 1,
+                    FaceLod::Atlas => 2,
+                };
+                for step_rows in 0..40 {
+                    let rows = f64::from(step_rows) * 0.5;
+                    let mut previous = 0;
+                    for step_columns in 0..120 {
+                        let columns = f64::from(step_columns) * 0.5;
+                        let lod = face_lod(texture, columns, rows, true);
+                        assert!(
+                            rank(lod) >= previous,
+                            "{text} {aspect:?} {columns}x{rows}: {lod:?}"
+                        );
+                        previous = rank(lod);
+                        if aspect.is_none() {
+                            let legacy = columns >= text.len() as f64 * 5.0 && rows >= 4.5;
+                            assert_eq!(lod == FaceLod::Atlas, legacy, "{text} {columns}x{rows}");
+                        }
+                        // One pixel per cell shades wherever packed pixels would
+                        // shade or take the atlas, and never takes the atlas.
+                        let cells = face_lod(texture, columns, rows, false);
+                        assert_ne!(cells, FaceLod::Atlas, "{text} {columns}x{rows}");
+                        assert_eq!(cells == FaceLod::Native, lod == FaceLod::Native);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn intermediate_faces_render_the_kaomoji_as_multi_cell_ascii_for_every_species() {
+        let config = Config::sample().unwrap();
+        let ramp: Vec<char> = config.voxel_lighting.ascii_ramp.chars().collect();
+        let mut species_shaded = [0usize; 16];
+        for shape in 0..16u8 {
+            for stage in [Stage::Child, Stage::Adult] {
+                let appearance = Appearance {
+                    shape,
+                    body: shape,
+                    accent: (shape + 5) % 16,
+                };
+                let front = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    0,
+                    false,
+                    appearance,
+                );
+                let rear = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    180,
+                    false,
+                    appearance,
+                );
+                let texture = FaceTexture::new(&front).unwrap();
+                let face = FaceTexture::bounds(&front).unwrap();
+                for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                    for depth in [Depth::Mono, Depth::Rgb] {
+                        let colors = Colors::from_config(&config, depth).unwrap();
+                        for (width, height) in [(40, 12), (56, 16), (64, 20), (80, 24)] {
+                            for zoom_percent in [100, 150, 200, 250, 300] {
+                                let label = format!(
+                                    "shape {shape} {stage:?} {renderer:?} {depth:?} {width}x{height}@{zoom_percent}"
+                                );
+                                let area = Rect::new(0, 0, width, height);
+                                let camera = Camera {
+                                    view: CameraView::Face,
+                                    from_view: CameraView::Face,
+                                    zoom_percent,
+                                    ..Camera::default()
+                                };
+                                let projection = Projection::camera(
+                                    &front,
+                                    SolidBounds::of(&front).unwrap(),
+                                    area,
+                                    renderer,
+                                    0,
+                                    (500, 500),
+                                    camera,
+                                );
+                                let (left, top) = projection.cell(face.left, face.top, renderer);
+                                let (right, bottom) =
+                                    projection.cell(face.right, face.bottom, renderer);
+                                let pixel_atlas = renderer.packing() != (1, 1);
+                                if face_lod(texture, right - left, bottom - top, pixel_atlas)
+                                    != FaceLod::Shaded
+                                {
+                                    continue;
+                                }
+                                let paint = |sprite: &Sprite| {
+                                    let mut buf = Buffer::empty(area);
+                                    draw_projection(
+                                        sprite, renderer, &colors, projection, area, &mut buf,
+                                    );
+                                    let body = buf.clone();
+                                    draw_camera_face(
+                                        sprite, renderer, &colors, projection, area, &mut buf,
+                                    );
+                                    (body, buf)
+                                };
+                                let (rear_body, rear_face) = paint(&rear);
+                                assert!(
+                                    rear_body.content.iter().zip(&rear_face.content).all(
+                                        |(a, b)| {
+                                            a == b
+                                                || !ramp.contains(
+                                                    &b.symbol().chars().next().unwrap_or(' '),
+                                                )
+                                        }
+                                    ),
+                                    "{label}: the rear view gained face strokes"
+                                );
+                                let (body, after) = paint(&front);
+                                let centre = (left + right) / 2.0;
+                                let (mut strokes, mut left_half, mut right_half) =
+                                    (0, false, false);
+                                let (dx, dy) = renderer.packing();
+                                for y in 0..height {
+                                    for x in 0..width {
+                                        if body[(x, y)] == after[(x, y)] {
+                                            continue;
+                                        }
+                                        let cell = &after[(x, y)];
+                                        let glyph = cell.symbol().chars().next().unwrap();
+                                        assert!(
+                                            ramp.contains(&glyph),
+                                            "{label}: {glyph:?} at {x},{y} is not shading"
+                                        );
+                                        assert_eq!(
+                                            cell.fg,
+                                            colors.ink(0),
+                                            "{label}: stroke ink at {x},{y}"
+                                        );
+                                        for sy in 0..dy {
+                                            for sx in 0..dx {
+                                                let px =
+                                                    u32::from(x) * u32::from(dx) + u32::from(sx);
+                                                let py =
+                                                    u32::from(y) * u32::from(dy) + u32::from(sy);
+                                                assert!(
+                                                    projected_face_uv(&front, projection, px, py).is_some(),
+                                                    "{label}: stroke at {x},{y} leaves the face plane"
+                                                );
+                                            }
+                                        }
+                                        strokes += 1;
+                                        left_half |= f64::from(x) + 0.5 < centre;
+                                        right_half |= f64::from(x) + 0.5 > centre;
+                                    }
+                                }
+                                assert!(
+                                    strokes >= texture.text.len(),
+                                    "{label}: only {strokes} shaded cells"
+                                );
+                                assert!(
+                                    left_half && right_half,
+                                    "{label}: both eye halves need strokes"
+                                );
+                                species_shaded[usize::from(shape)] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            species_shaded.iter().all(|n| *n > 0),
+            "every species must reach the shaded tier: {species_shaded:?}"
+        );
     }
 
     #[test]
