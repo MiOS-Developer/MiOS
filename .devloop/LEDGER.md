@@ -4583,3 +4583,50 @@ completed its behavioral tier with516 passing and48 failing suites; the Rust
 step was not reached. These failures are not certified host-only or baseline
 failures. A separately owned CI triage task3756 records this scope. It does not
 change the final Mon package's337 passing checks or its actual viewport receipts.
+
+## MiOS-Mon shaded face verification and live route recovery (2026-11-06)
+
+Task3757 adopts the frozen c0a24f7da render.rs/sprite.rs objects at source
+632f30e97082ee502ad4fd6ceba916b738b6794d. The intermediate shaded-character band
+extends until eight cells per glyph and eight mapped rows. Restored background
+alone cannot claim a rendered expression. Zero-stroke projections use a valid
+native face or caption; exact 90/270-degree profiles share the edge-on epsilon.
+The worker's old-atlas, old-cosine and restoration-as-face plants each fail
+their intended regression; root independently rebuilt the final source.
+
+Fresh empty-target rootless MiOS-DEV proof:326 unit plus13 CLI tests, fatal
+Clippy, crate/workspace formatting, release and static-artifact check pass.
+Image e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf,
+UID1000,4CPU/4GiB, Rust1.99.1, locked x86_64-unknown-linux-musl.
+Artifact SHA-256 4a2047a760c912ad67e8a59d97a23f2483233f3a5d2b58d0bd66dc2b1e8d1a06.
+Proof: /home/mios/.local/state/mios/mios-mons-input-completion/mios-shaded-verify.
+
+The previous console PiP compositor and localhost backend had exited; its
+retained tmux processes and stale registry were not current visual proof.
+After SSOT memory admission, root opened the unique device-isolated PiP
+mios-mons-graphics with the installed native launcher. Its actual compositor,
+nonzero WAYLAND-1 output, pinned parent window and native terminal were resolved
+from returned metadata. Localhost8310 now attaches to this actual nested socket
+using the existing runtime-resolved native authentication. No new service or
+PowerShell/container transport was installed.
+
+Automated actual-game QA passed449 production browser touches across watch,
+portrait and landscape, a normal hatch, settled requested Face100/150/200/300/400,
+all eight45-degree orbit positions, live Room frame changes followed by pause,
+an unlit ANSI16-entry Roster, four-colour dock/hints and20x8 headless ASCII/mono
+cursor navigation with terminal restoration. Initial stale-transport, automatic
+observer-split and camera-selection harness failures remain preserved. The
+camera helper now selects the requested panel view rather than mistaking the
+adaptive effective heading for an explicit Face request.
+
+Consolidated receipt, actual descriptor and captures:
+ /home/mios/.local/state/mios/mios-mons-shaded-live/mios-final-acceptance.json.
+The operator's actual59x30 SSH phone client is attached to this same live game;
+manual phone results are pending and are not certified by browser automation.
+Its adopted preview will be preserved when the published executable is opened.
+Task3755 camera/resize/heading and broader ASCII-overlay work remain separate.
+High zoom can crop the expression. No physical controller is assigned here;
+VT fonts, ARM64, other Blades and image integration remain unverified.
+Publication and immediate user-local installation are the next release steps.
+Hosted main e1da4f053 still reports the previously observed48 behavioral suite
+failures. Task3756 is active; global CI is not claimed clean.

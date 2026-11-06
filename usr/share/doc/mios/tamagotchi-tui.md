@@ -841,3 +841,23 @@ does not move a menu choice or create another touch target. Saved pets describe
 Quit as saving progress and keep birth-code import protected. Monochrome menus
 use reverse-video selection; colored menus select contrasting foreground and
 background colors from the active terminal palette.
+
+## Scaled expressions on voxel faces
+
+Face expressions use three rendering levels. At small sizes the mapped face
+prints readable native characters. Intermediate sizes enlarge those characters
+with ASCII shading on the face surface. The packed glyph atlas begins only when
+there is room for eight terminal cells across each glyph and eight rows in its
+mapped height. Zooming therefore retains the shaded character shapes longer.
+
+The face renderer reports success only after it paints expression strokes.
+Restoring the underlying face colors does not count as drawing an expression.
+A projection with no usable strokes falls back to native face characters when
+they fit, then to the expression caption. This fallback preserves readable
+emotion without drawing a forward-facing label over the back of the head.
+
+Oblique views retain the visible part of the expression. Exact side profiles
+hide the face surface symmetrically at both 90 and 270 degrees; small floating
+point differences must not make one profile show a stray eye. Ears, muzzle,
+species nose, tail and body remain voxel geometry. Face and camera rendering
+does not alter the Mon's seed, life stage, needs or statistics.
