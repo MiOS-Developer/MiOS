@@ -148,6 +148,17 @@ class TestPortalEdge(unittest.TestCase):
             self.assertEqual(fixed.count('name="viewport"'), 1)
             self.assertNotIn("width=980", fixed)
 
+    def test_touch_patch_preserves_focusable_input_and_keyboard_program(self):
+        body = ('<body><textarea class="xterm-helper-textarea" tabindex="0"></textarea>'
+                '<script>document.querySelector("textarea").focus()</script></body>')
+        src = html_h("<html>" + PAGE + body + "</html>")
+        page = portal_edge.ttyd_page(src, ttyd_data(src))
+        self.assertEqual(re.search(r"<body>.*</body>", page).group(0), body)
+        self.assertIn('.xterm-helper-textarea{pointer-events:none}', page)
+        self.assertNotIn('disabled', page)
+        self.assertNotIn('display:none', page)
+        self.assertEqual(page.count('id="mios-terminal-pointer"'), 1)
+
     def test_mobile_viewport_rejects_missing_head_and_duplicate_tags(self):
         for page, needle in [(PAGE.replace("<head>", "").replace("</head>", ""), "head found 0"),
                              (PAGE.replace("</head>", '<meta name=viewport><meta name="viewport"></head>'), "viewport found 2")]:

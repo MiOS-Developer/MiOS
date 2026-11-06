@@ -563,6 +563,14 @@ never grants permission to draw over a beak or occluder, and eggs remain faceles
 
 ## Browser viewport and user-local page trials
 
+The generated page keeps the hidden xterm IME textarea keyboard-focusable while
+excluding it from pointer hit-testing. Chromium touch adjustment otherwise snaps
+some footer taps onto that invisible textarea beside the terminal cursor and
+emits a different SGR row. The narrow textarea rule leaves the visible terminal
+interactive; no game or tmux coordinate offset compensates for this browser issue.
+Browser receipts distinguish an injected diagnostic rule from the regenerated,
+served production page, and physical phone acceptance remains separate.
+
 The native ttyd page is generated from the pinned [ttyd] upstream source and
 validated against its projection golden. It declares a device-width viewport so
 phone-sized browsers resize terminal cells instead of shrinking a desktop layout.
