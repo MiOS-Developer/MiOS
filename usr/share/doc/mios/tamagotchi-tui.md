@@ -693,7 +693,11 @@ not trigger this installation. Preserve adopted pet sessions; use an owned
 fresh preview rather than replacing their process. Retain a post-push receipt
 with the main revision, artifact source/checksum, installed path and live target.
 
-The dedicated development session retains its status-off trial setting.
+Earlier trials used status-off and smallest-client sizing as workarounds.
+The verified development game now uses per-window latest sizing so the focused
+client can fill its own portrait, landscape or watch viewport. The native status
+bar remains available; production touch checks cover top, bottom and absent
+status without a diagnostic page injection.
 Investigation of the earlier top-status click miss found a client-fixture
 coordinate error: a pane capture omits status rows and split-pane offsets,
 while a terminal client's SGR coordinates include them. The native tmux

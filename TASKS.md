@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1747 |
-| in_progress | 81 |
-| completed | 1883 |
+| pending | 1748 |
+| in_progress | 80 |
+| completed | 1885 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3751 |
+| total | 3753 |
 
 0 record(s) carry at least one override.
 
@@ -4476,14 +4476,16 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3746` Archive completed terminal sessions and retain only active development pets -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 - `task_3748` Show all verified assigned controller-family bindings in MiOS-Mon prompts -- completed · owner mios-mons-controller-prompts · P1 · size M
 - `task_3749` Make complete MiOS-Mon menus navigable by touch and terminal cursor keys -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3750` Overhaul the complete MiOS-Mon HUD and menus for consoles and remote viewports -- in_progress · owner mios-mons-console-hud · P1 · size L
-- `task_3751` Frame face close-ups around the Mon head and expose orbiting camera perspectives -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3750` Overhaul the complete MiOS-Mon HUD and menus for consoles and remote viewports -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
+- `task_3751` Frame face close-ups around the Mon head and expose orbiting camera perspectives -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3752` Improve Mon silhouettes and voxel texture shading across terminal scales -- in_progress · owner mios-claude-continuation · P1 · size L
+- `task_3753` Condense HUD headers and expose contextual menu descriptions -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
 
 ## terminal
 
 ### No epic
 
-- `task_3747` Correct browser terminal touch targets and resize-time menu hit-testing -- in_progress · owner mios-claude-continuation · P1 · size S
+- `task_3747` Correct browser terminal touch targets and resize-time menu hit-testing -- completed · owner mios-claude-continuation · P1 · size S
 
 ## test-coverage
 

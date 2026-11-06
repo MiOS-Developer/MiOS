@@ -4352,3 +4352,42 @@ diagnostic CSS injection. Final as-served no-injection touch and keyboard proof
 is still required before publication and installing the new game executable.
 Receipts: mios-browser-pointer-artifact.json, mios-browser-pointer-verify/,
 mios-browser-pointer-live-trial.json under the input-completion receipt root.
+
+## MiOS-Mon production console acceptance and publication
+
+Exact game source7afa8035 (static musl ba5d2d37) remains unchanged. The canonical
+browser page8f455f27 is served live, with no runtime CSS injection. Root's final
+watch/portrait/landscape x top/bottom/off matrix passed all9 cases and1314 actual
+touch presses: each emitted SGR press matched its intended cell, and the pane
+filled the focused browser at20x9/10,43x34/35 or78x19/20 cells. This closes the
+earlier smallest-client coverage gap. The separate real tap-to-focus check typed
+exact M1 into the seed draft, cancelled it and retained Mimo's birth identity.
+These are automated native-browser results, not physical phone certification.
+
+Root independently replayed the actual competing-client resize control:
+new ba5d returns from Care to Main; old d6a4 remains in Care. Both have matching
+baseline controls and exact artifact hashes. An initial fixture exceeded the
+Unix socket path limit before starting; the retained retry uses owned short
+runtime paths. Root's headless20x8 ASCII/mono test also passed CSI navigation,
+SGR/release filtering, no verified Inputd-session fallback and deterministic
+before/after stty equality with exit0. An earlier idle-readline attrs comparison
+was timing-sensitive and remains archived.
+
+Task3747 and the bounded camera task3751 are complete. Task3750 remains open
+for the known overlong room header and legibility follow-up3753. The local
+coding participant accepted separate task3752 in mios-mons-legible-render,
+owning only render.rs/sprite.rs for species outlines and voxel text shading.
+Root retains UI/HUD, canonical tasks, publication and live-install ownership.
+The parallel lane is not part of this verified artifact until separately built
+and reviewed. Physical phone/multi-pad/VT/ARM64/fleet and image integration remain
+separate; the old b139 physical DualSense Games/back proof is historical.
+
+Publication is followed immediately by atomic user-local sample replacement,
+normal-hatch visible preview and post-push checks in the still-open owned PiP.
+The normal OS executable and operator data remain outside this application trial.
+Acceptance receipts under /home/mios/.local/state/mios/mios-mons-input-completion/:
+ mios-production-matrix-result.json,
+ mios-browser-console-keyboard-production-watch-top/,
+ mios-resize-race-confirmed/, mios-headless-resize-stable/,
+ mios-resize-artifact.json, mios-browser-pointer-artifact.json.
+The final main/live identities are recorded in mios-post-main-live.json.
