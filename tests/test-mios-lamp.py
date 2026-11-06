@@ -451,8 +451,14 @@ class DockLampContractIntegration(unittest.TestCase):
         if fixture_text is not None:
             with open(self.fixture_json, "w", encoding="utf-8") as f:
                 f.write(fixture_text)
+        # Quickshell keeps its IPC socket and logs under XDG_RUNTIME_DIR; without one (a root CI container) it builds
+        # the literal path "/run/user/$1", `qs ipc call` never reaches the shell and every state read is empty. A
+        # private runtime dir also keeps this instance out of the operator's /run/user/<uid>/quickshell.
+        runtime = os.path.join(self.tmp, "runtime")
+        os.makedirs(runtime, mode=0o700, exist_ok=True)
         self.env = dict(
             os.environ,
+            XDG_RUNTIME_DIR=runtime,
             QT_QPA_PLATFORM="offscreen",
             MIOS_DOCK_ICONS_JSON=self.dock_json,
             MIOS_LAMP_LAUNCH_JSON=self.launch_json,
