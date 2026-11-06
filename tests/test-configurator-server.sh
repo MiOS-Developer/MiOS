@@ -2,10 +2,14 @@
 # AI-hint: Contract suite for miosd's config server (mios.html & /portal/config): login-gated GET, lossless {"toml"} saves, redaction markers never written, delta-only user tier.
 # AI-related: src/mios-rs/miosd/src/lib.rs, usr/share/mios/configurator/mios.html, usr/share/mios/mios.toml
 #
-# Tiers. The CANDIDATE tier runs against MIOS_MIOSD_BIN, a MiOS-DEV tree build of
-# this checkout, and alone decides the exit status. With MIOS_MIOSD_BIN unset it is
-# NOT RUN and the suite exits 77, which tests/run-suites.sh counts as a failure:
-# the installed binary never certifies the candidate. The INSTALLED-COMPAT tier
+# Tiers. The CANDIDATE tier alone decides the exit status. Its binary is
+# MIOS_MIOSD_BIN (a MiOS-DEV tree build of this checkout), else this checkout's own
+# cargo build of miosd -- CI's `cargo build -p miosd` step leaves it at
+# src/mios-rs/target/debug/miosd -- when that build's dep-info shows it was compiled
+# from these sources and none of them is newer. With neither the candidate is NOT
+# RUN and the suite exits 77, which tests/run-suites.sh counts as a failure (it also
+# scrubs MIOS_MIOSD_BIN): the installed binary never certifies the candidate. The
+# INSTALLED-COMPAT tier
 # reports how the installed /usr/libexec/mios/miosd fares against the same
 # contract; it is informational and never gates. This suite never builds (no
 # cargo), binds a free ephemeral port, and runs every server on temp host/user
@@ -17,6 +21,48 @@ HTML_PATH="${REPO_ROOT}/usr/share/mios/configurator/mios.html"
 INSTALLED=/usr/libexec/mios/miosd
 TMP_DIR="$(mktemp -d)"
 SERVER_PID=""
+
+# tree_build: the freshest cargo build of miosd under this checkout whose dep-info
+# lists this tree's miosd/src/lib.rs and no source newer than the binary.
+tree_build() {
+    python3 - "$REPO_ROOT" <<'PY'
+import glob, os, re, sys
+
+root = os.path.realpath(sys.argv[1])
+lib = os.path.join(root, "src", "mios-rs", "miosd", "src", "lib.rs")
+manifests = [os.path.join(root, "src", "mios-rs", *rel) for rel in
+             (("Cargo.lock",), ("Cargo.toml",), ("miosd", "Cargo.toml"))]
+fresh, why = [], []
+for pattern in ("src/mios-rs/target/*/miosd", "src/mios-rs/target/*/*/miosd",
+                "tools/native/target/*/miosd", "tools/native/target/*/*/miosd"):
+    for binary in sorted(glob.glob(os.path.join(root, pattern))):
+        if not (os.path.isfile(binary) and os.access(binary, os.X_OK)):
+            continue
+        try:
+            with open(binary + ".d", encoding="utf-8") as fh:
+                rule = fh.readline()
+        except OSError:
+            why.append(f"{binary}: no cargo dep-info beside it")
+            continue
+        sources = {os.path.realpath(s.replace("\\ ", " "))
+                   for s in re.split(r"(?<!\\) ", rule.partition(": ")[2].strip()) if s}
+        if lib not in sources:
+            why.append(f"{binary}: compiled from another tree")
+            continue
+        built = os.stat(binary).st_mtime
+        code = [s for s in sources if s.startswith(root + os.sep) and s.endswith(".rs")] + manifests
+        newer = [s for s in code if not os.path.exists(s) or os.stat(s).st_mtime > built]
+        if newer:
+            why.append(f"{binary}: older than {len(newer)} of its sources, e.g. {newer[0]}")
+            continue
+        fresh.append((built, binary))
+if fresh:
+    print(max(fresh)[1])
+else:
+    print("; ".join(why) or "no cargo build of miosd under this checkout", file=sys.stderr)
+    sys.exit(1)
+PY
+}
 
 stop_server() {
     if [[ -n "$SERVER_PID" ]]; then
@@ -117,34 +163,74 @@ st, _, body = save(served)
 check(st == 200 and field(body, "bytes") == 0 and tier_text() == "",
       f"a no-edit save of the GET echo writes nothing (HTTP {st}: {body[:160]!r}, tier {tier_text()!r:.160})")
 
-# C3: user-tier secrets survive a save that echoed their redaction.
+def edit(text, section, key, value):
+    lines = text.split("\n")
+    start = lines.index(f"[{section}]")
+    end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("[")), len(lines))
+    lines[next(j for j in range(start + 1, end) if lines[j].startswith(f"{key} = "))] = f"{key} = {value}"
+    return "\n".join(lines)
+
+def kept(tier):
+    return (tier.get("portal", {}).get("password") == "user-tier-portal-pw"
+            and tier.get("ai", {}).get("api_key") == "user-tier-api-key"
+            and tier.get("git", {}).get("github_token") == "user-tier-gh-token")
+
+# C3: user-tier secrets survive a save that echoed their redaction. github_token is
+# redacted through [security.secret_keys], not by its table and key name.
 with open(user, "w", encoding="utf-8") as fh:
-    fh.write('[portal]\npassword = "user-tier-portal-pw"\n\n[ai]\napi_key = "user-tier-api-key"\n')
+    fh.write('[portal]\npassword = "user-tier-portal-pw"\n\n[ai]\napi_key = "user-tier-api-key"\n\n'
+             '[git]\nuser_name = "user-tier-git-user"\ngithub_token = "user-tier-gh-token"\n')
 st, _, served = call("GET", "/portal/config", headers=auth)
-check(st == 200 and "user-tier-portal-pw" not in served and "user-tier-api-key" not in served,
+check(st == 200 and not any(s in served for s in ("user-tier-portal-pw", "user-tier-api-key", "user-tier-gh-token")),
       "GET redacts the planted user-tier secrets")
-lines = served.split("\n")
-start = lines.index("[identity]")
-end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("[")), len(lines))
-lines[next(j for j in range(start + 1, end) if lines[j].startswith("username = "))] = 'username = "test-operator"'
-st, _, body = save("\n".join(lines))
+edited = edit(served, "identity", "username", '"test-operator"')
+st, _, body = save(edited)
 text = tier_text() or ""
 tier = tomllib.loads(text)
 check(st == 200 and tier.get("identity", {}).get("username") == "test-operator",
       f"an edited echo saved as {{\"toml\": ...}} persists the edit (HTTP {st}: {body[:160]!r})")
-check(tier.get("portal", {}).get("password") == "user-tier-portal-pw"
-      and tier.get("ai", {}).get("api_key") == "user-tier-api-key",
-      f"user-tier portal.password and ai.api_key keep their real values ({text[:200]!r})")
+check(kept(tier), f"user-tier portal.password, ai.api_key and git.github_token keep their real values ({text[:240]!r})")
 check("<redacted>" not in text and "host-tier-cookie-secret" not in text,
       "neither the marker nor a lower-tier secret reaches the user tier")
 check("ports" not in tier, "unchanged [ports] stay in the lower tiers")
 
+# C3, same table: an edit beside each user-tier secret sends the whole [portal]
+# and [git] tables in the delta, so a dropped or lower-tier marker loses the secret.
+st, _, served = call("GET", "/portal/config", headers=auth)
+ttl = tomllib.loads(served)["portal"]["session_ttl"] + 1
+edited = edit(edit(served, "portal", "session_ttl", str(ttl)), "git", "user_name", '"edited-git-user"')
+st, _, body = save(edited)
+text = tier_text() or ""
+tier = tomllib.loads(text)
+check(st == 200 and tier.get("portal", {}).get("session_ttl") == ttl
+      and tier.get("git", {}).get("user_name") == "edited-git-user",
+      f"an echo editing [portal].session_ttl and [git].user_name persists both (HTTP {st}: {body[:160]!r})")
+check(kept(tier), f"the secret beside each edited key keeps its real value ({text[:240]!r})")
+check("<redacted>" not in text and "host-tier-cookie-secret" not in text,
+      "the same-table echo writes neither the marker nor a lower-tier secret")
+
+# Fail-closed: a user.d override that does not parse leaves the hidden values
+# unknown, so the echo is refused with every byte kept; once it parses, the echo saves.
+frag, broken = os.path.join(d, "user.d", "10-broken.toml"), "[portal\npassword = \n"
+os.makedirs(os.path.dirname(frag), exist_ok=True)
+with open(frag, "w", encoding="utf-8") as fh:
+    fh.write(broken)
+st, _, body = save(edited)
+check(st == 500 and "nothing was written" in body and tier_text() == text
+      and open(frag, encoding="utf-8").read() == broken,
+      f"an echo is refused while a user.d override does not parse (HTTP {st}: {body[:160]!r})")
+os.remove(frag)
+st, _, body = save(edited)
+text = tier_text() or ""
+check(st == 200 and kept(tomllib.loads(text)),
+      f"the same echo saves once the override is gone (HTTP {st}: {body[:160]!r})")
+
 # Negative controls: none of these may write.
 st, _, _ = save('[broken_section\nmissing_bracket = "invalid"\n')
 check(st == 422, f"malformed TOML inside the envelope is 422 (HTTP {st})")
-st, _, _ = save("\n".join(lines), {**post_headers, "Origin": "http://evil.example"})
+st, _, _ = save(edited, {**post_headers, "Origin": "http://evil.example"})
 check(st == 403, f"a cross-origin save is 403 (HTTP {st})")
-st, _, _ = save("\n".join(lines), {"Origin": origin, "Content-Type": "application/json"})
+st, _, _ = save(edited, {"Origin": origin, "Content-Type": "application/json"})
 check(st == 403, f"a save without the session is 403 (HTTP {st})")
 check(tier_text() == text, "the rejected saves left the user tier byte-identical")
 print(f"  [{label}] {fails} failed", flush=True)
@@ -163,7 +249,12 @@ else
     status=1
 fi
 
-if [[ -x "$INSTALLED" && "$(readlink -f "$INSTALLED")" != "$(readlink -f "${MIOS_MIOSD_BIN:-/nonexistent}")" ]]; then
+CANDIDATE="${MIOS_MIOSD_BIN:-}"
+if [[ -z "$CANDIDATE" ]] && ! CANDIDATE="$(tree_build 2>"$TMP_DIR/tree-build.why")"; then
+    CANDIDATE=""
+fi
+
+if [[ -x "$INSTALLED" && "$(readlink -f "$INSTALLED")" != "$(readlink -f "${CANDIDATE:-/nonexistent}")" ]]; then
     echo "[test-configurator-server] installed-compat tier: $INSTALLED (informational; never gates)"
     if run_tier installed-compat "$INSTALLED"; then
         echo "  [installed-compat] COMPATIBLE with the current contract"
@@ -172,16 +263,16 @@ if [[ -x "$INSTALLED" && "$(readlink -f "$INSTALLED")" != "$(readlink -f "${MIOS
     fi
 fi
 
-if [[ -z "${MIOS_MIOSD_BIN:-}" ]]; then
-    echo "[test-configurator-server] candidate tier NOT RUN: set MIOS_MIOSD_BIN to a MiOS-DEV tree build of this checkout" >&2
+if [[ -z "$CANDIDATE" ]]; then
+    echo "[test-configurator-server] candidate tier NOT RUN: no fresh tree build ($(cat "$TMP_DIR/tree-build.why")); build miosd from this checkout or set MIOS_MIOSD_BIN to a MiOS-DEV tree build of it" >&2
     exit 77
 fi
-if [[ ! -x "$MIOS_MIOSD_BIN" ]]; then
-    echo "[test-configurator-server] FAIL: MIOS_MIOSD_BIN=$MIOS_MIOSD_BIN is not an executable" >&2
+if [[ ! -x "$CANDIDATE" ]]; then
+    echo "[test-configurator-server] FAIL: MIOS_MIOSD_BIN=$CANDIDATE is not an executable" >&2
     exit 1
 fi
-echo "[test-configurator-server] candidate tier: $MIOS_MIOSD_BIN"
-run_tier candidate "$MIOS_MIOSD_BIN" || status=1
+echo "[test-configurator-server] candidate tier: $CANDIDATE${MIOS_MIOSD_BIN:+ (MIOS_MIOSD_BIN)}"
+run_tier candidate "$CANDIDATE" || status=1
 if [[ "$status" -ne 0 ]]; then
     echo "[test-configurator-server] FAIL: the candidate does not meet the contract" >&2
     exit 1
