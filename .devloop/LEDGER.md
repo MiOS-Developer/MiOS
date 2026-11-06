@@ -4257,3 +4257,34 @@ Summary: /home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-accept
 Main publication will be followed by atomic user-local installation, same-pane
 restart and final actual input/process verification. Post-push receipt:
  /home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json
+
+
+## MiOS-Mon console controls continuation
+
+The isolated input-completion lane contains source7558d12d7de8af1bc2e712b40f9953749b56a371:
+full-frame13-menu HUD, fixed controls/ranges, Face-relative orbit, and actual-head
+close-up fitting. Rootless MiOS-DEV verified304 scoped checks (291unit+13CLI),
+Rust2021 formatting, warning-fatal Clippy and the static x86_64 musl artifact.
+Candidate SHA256:d6a47d4ab4a367b9ff4a8e887d56624a48d553788359e999b50f662143f116a1.
+The four broader gate diagnostic streams match their known failing baseline;
+this is not global CI acceptance.
+
+Actual ASCII/mono20x8 PTY checks passed with display/session environment cleared:
+CSI paging, SGR navigation/release, retained birth, exit and termios restoration.
+The existing browser fixture was corrected to inspect actual xterm client cells,
+but real watch touch Back still failed; retain the failure and investigate the
+wire path before a production mouse translation change. Local registered
+participant mios-claude-continuation owns that coding follow-up under task3747.
+Task3750/3751 remain in progress, with no main push or candidate live install.
+
+The readable DualSense trial on the previous b139 artifact was confirmed by the
+operator: Down selected Games, Cross opened it, Circle returned. Initial failed
+UX was traced to click-to-focus Talk and a managed observer stealing pane focus.
+This narrow physical pass does not certify the new candidate, held keys, phones
+or simultaneous physical pads. Original nested sessions disappeared during the
+interruption; current registry is empty. Historical descriptors are not live
+viewports. The installed separate sample remains b139 until final acceptance.
+
+Receipts: /home/mios/.local/state/mios/mios-mons-input-completion/
+(mios-console-artifact.json, mios-controller-readable-human-result.json,
+mios-headless-console/, mios-browser-console-coordinates-watch-top/).

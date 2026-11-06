@@ -685,12 +685,20 @@ not trigger this installation. Preserve adopted pet sessions; use an owned
 fresh preview rather than replacing their process. Retain a post-push receipt
 with the main revision, artifact source/checksum, installed path and live target.
 
-The dedicated development session currently runs with its tmux status line
-disabled. Live browser testing exposed a top-status mouse offset: the web client
-emitted one row while the application received the previous row. Disabling
-status only in that owned game session restored exact painted-cell alignment.
-Task3747 tracks the general MiOS-Tmux fix; other sessions retain their settings.
-Browser watch/portrait automation verifies this route, not physical phones.
+The dedicated development session retains its status-off trial setting.
+Investigation of the earlier top-status click miss found a client-fixture
+coordinate error: a pane capture omits status rows and split-pane offsets,
+while a terminal client's SGR coordinates include them. The native tmux
+transport subtracts those offsets exactly once. The application consumes the
+resulting pane-local coordinates without another subtraction.
+
+The task3747 MiOS-DEV probe measures independently painted client cells and
+raw input at both ends across top/bottom/off status, one/two/five status rows,
+and single/split panes. Its planted omitted-status control reproduces the
+one-row miss. Browser automation must locate the actual client-buffer cell
+or add the real pane/status offsets before converting it to screen pixels.
+Historical trial receipts are retained. Automated terminal/browser evidence
+does not certify a physical phone or controller.
 
 ## Complete menu touch and cursor navigation
 
@@ -712,3 +720,63 @@ Xbox: Tap A. Identical actions are deduplicated. Tiny captions compact known
 family prefixes and button names while preserving Hold semantics. Unknown
 devices keep generic cardinal labels. Foreign/unassigned controllers do not
 contribute prompts. This does not certify physical phone-controller forwarding.
+
+
+## Console HUD and full-frame menus
+
+Every menu uses a viewport-wide text shell with its title, navigation history,
+visible selection or information-line range, and a fixed two-row control area.
+Care, Games, Talk, Roster, Status, Graphics, Help, Sprite studio, Habitat,
+Training, Birth code and the code editor remain reachable from Home. Moving
+through a list or resizing it keeps the selected row on the visible numbered
+page. Page Up/Down, Home/End, arrows and Tab navigate; Enter/Space accepts and
+Escape returns through the menu history. The editor retains its own text and
+caret controls. Quit and reset remain explicit actions.
+
+The same painted Previous/Next/Accept/Back controls accept terminal mouse
+events and browser taps. Hitboxes are rebuilt from visible cells, discarded
+when a different menu or native modal owns input, and cleared after activation
+until the next repaint. Closing a menu cannot activate the care button behind
+it. Native floating dialogs keep the underlying pet view; inline text is the
+fallback on consoles, SSH, remote terminals and headless PTYs.
+
+Ordinary play retains Auto/Minimal/Full HUD modes, golden-ratio scene/status
+splits, pet identity and life stage, needs, health, illness/pause state and
+currency within the current cell budget. Compact views page complete metrics
+rather than inventing clipped values. Essential menu controls remain static.
+Verified focused controller bindings use their actual family and remaps;
+keyboard controls and Help remain available when no eligible controller is
+focused. Controller navigation does not move the Mon.
+
+The supported compact menu floor is 20x8 cells. Portrait and landscape resize
+through the same geometry. Below the full interactive floor, the emergency
+display preserves quit/back and protects unfinished confirmations. For an
+ASCII-only monochrome terminal, run:
+
+~~~sh
+mios-tamagotchi --sample --renderer ascii --color mono --dialogs inline
+~~~
+
+Use the already attached authorized VT/console, SSH terminal, tmux pane or
+web terminal; basic menus need no desktop compositor or graphics service.
+A pipe or terminal without interactive input produces a read-only snapshot.
+Physical VT fonts, touch devices and remote controller forwarding still need
+their own actual device/session acceptance.
+
+### Three camera perspectives
+
+**Z** cycles Room, Mon and Face close-up. Graphics exposes the same choices.
+**+/-** zoom, **0** resets zoom, and **[ / ]** orbit. Room uses the locked
+30-degree isometric elevation and follows autonomous Mon movement. Mon frames
+the body. Face close-up fits the actual visible mapped head, keeping ears
+without letting a wide tail or long torso shrink the face.
+
+Entering Face turns the camera toward the Mon's front; subsequent orbit input
+rotates relative to that entry direction. Side/rear views preserve real
+surface occlusion. Returning to Mon or Room blends back to the world-oriented
+perspective. Camera, HUD and menu operations remain separate from simulation,
+birth identity, trained statistics and progress saves.
+
+The current simulation follows one local Mon. Large-room and multiplayer
+transport work must preserve this separation and the existing per-seat Inputd
+ownership contract; the camera controls do not establish network play.
