@@ -18,6 +18,7 @@ import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 from typing import Any, Dict, List
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -1051,6 +1052,58 @@ def _load_mios_mcp_server_module():
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
+
+
+class TestVendoredBundleUnpack(unittest.TestCase):
+    """install-native runs on the source tree (CI's workspace) before the unit tier."""
+
+    def setUp(self):
+        import tarfile
+        import tempfile
+        self.mod = _load_mios_mcp_server_module()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vdir = Path(self.tmp.name) / "usr/share/mios/vendored"
+        (self.vdir / "k3s").mkdir(parents=True)
+        self.tracked = "tmux_mcp=v2.0.0\n\n# Locked Python wheel provenance\npython_wheel_openai_version=2.24.0\n"
+        (self.vdir / "VERSIONS.txt").write_text(self.tracked)
+        (self.vdir / "k3s" / "k3s-install.sh").write_text("current\n")
+        stage = Path(self.tmp.name) / "stage"
+        (stage / "k3s").mkdir(parents=True)
+        (stage / "VERSIONS.txt").write_text("tmux_mcp=v1.0.0\n")            # the bundle's stale copy
+        (stage / "k3s" / "k3s-install.sh").write_text("stale\n")
+        (stage / "k3s" / "sha256sum-amd64.txt").write_text("only-in-bundle\n")
+        with tarfile.open(self.vdir / "bin.tar", "w") as tf:
+            for name in ("VERSIONS.txt", "k3s/k3s-install.sh", "k3s/sha256sum-amd64.txt"):
+                tf.add(stage / name, arcname=name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_tracked_files_survive_and_missing_members_unpack(self):
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
+        self.assertEqual((self.vdir / "k3s" / "k3s-install.sh").read_text(), "current\n")
+        self.assertEqual((self.vdir / "k3s" / "sha256sum-amd64.txt").read_text(), "only-in-bundle\n")
+
+    def test_bundle_only_tree_is_fully_unpacked(self):
+        (self.vdir / "VERSIONS.txt").unlink()
+        (self.vdir / "k3s" / "k3s-install.sh").unlink()
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), "tmux_mcp=v1.0.0\n")
+        self.assertEqual((self.vdir / "k3s" / "k3s-install.sh").read_text(), "stale\n")
+
+    def test_member_escaping_the_tree_is_never_written(self):
+        import io
+        import tarfile
+        escape = Path(self.tmp.name) / "escaped.txt"
+        with tarfile.open(self.vdir / "evil.tar", "w") as tf:
+            data = b"x"
+            info = tarfile.TarInfo("../../../escaped.txt")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertFalse(escape.exists())
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
 
 
 class TestAgentCliCatalog(unittest.TestCase):

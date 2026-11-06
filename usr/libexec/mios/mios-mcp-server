@@ -2422,6 +2422,28 @@ def _agent_cli_main(args):
     return 0 if all(row["installed"] for row in rows) else 1
 
 
+def _unpack_vendored_bundles(vdir):
+    """Unpack only the vendored bundle members the tree does not carry yet.
+
+    A checkout tracks every vendored file unpacked as well as packed, and a
+    bundle can be older than the file it duplicates (bin.tar's VERSIONS.txt
+    predates the tracked wheel provenance block), so an existing file is never
+    overwritten: a bundle-only tree still gets its members, a full checkout is
+    left byte-identical. The data filter refuses absolute paths, links out of
+    the tree and device nodes.
+    """
+    for bundle in sorted(vdir.glob("*.tar")):
+        if not bundle.is_file():
+            continue
+        try:
+            with tarfile.open(bundle) as tf:
+                missing = [m for m in tf.getmembers() if not (vdir / m.name).exists()]
+                if missing:
+                    tf.extractall(vdir, members=missing, filter="data")
+        except Exception:
+            pass
+
+
 def _install_native(source_root, target_root):
     """One offline payload installer for bootc, dev, service and agent images.
 
@@ -2432,13 +2454,7 @@ def _install_native(source_root, target_root):
     target = Path(target_root).resolve()
     vdir = source / "usr/share/mios/vendored"
     if vdir.is_dir():
-        for bundle in sorted(vdir.glob("*.tar")):
-            if bundle.is_file():
-                try:
-                    with tarfile.open(bundle) as tf:
-                        tf.extractall(vdir)
-                except Exception:
-                    pass
+        _unpack_vendored_bundles(vdir)
     with (source / "usr/share/mios/mios.toml").open("rb") as handle:
         import tomllib
         config = tomllib.load(handle)["mcp"]
