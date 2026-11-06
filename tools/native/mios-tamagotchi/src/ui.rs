@@ -547,7 +547,7 @@ impl Ui {
         if previous != (u16::MAX, u16::MAX) {
             let target = Self::view_for_stage(self.camera_view, dimensions, stage);
             // An unchanged target keeps the blend already in flight untouched.
-            if target != old_target {
+            if target != old_target || previous != dimensions {
                 self.camera_resize.set(Some((current, target, self.frame)));
             }
         }
