@@ -2,14 +2,17 @@
 # AI-hint: Two-sided regression test for the tmux-os resize flood: a private tmux server with the MiOS theme hooks and a real pty client resized 60 times; the native relay hook must spawn no interpreter, keep concurrency bounded, drain, and leave the workspace laid out (MIOS_TMUX_STORM_CONF/MIOS_TMUX_STORM_RELAY select the candidate; a legacy conf is the negative control).
 # AI-related: tools/native/mios-agent-relay/src/workspace_hook.rs, tools/native/mios-service-core/src/tmux_theme.rs, usr/share/mios/tmux/mios-theme.tmux.conf, usr/libexec/mios/mios-mcp-server
 # Run with the LIVE theme conf (python hooks, negative control) and the candidate conf (native relay hooks).
-import fcntl, json, os, pty, signal, struct, subprocess, sys, termios, time
+import fcntl, json, os, pty, signal, struct, subprocess, sys, tempfile, termios, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 conf = os.environ.get('MIOS_TMUX_STORM_CONF', str(ROOT / 'usr/share/mios/tmux/mios-theme.tmux.conf'))
 label = os.environ.get('MIOS_TMUX_STORM_LABEL', 'native')
 relay = os.environ.get('MIOS_TMUX_STORM_RELAY') or None
-base = Path(os.environ['XDG_RUNTIME_DIR']) / f'mios-stormtest-{label}'
+# A session without a runtime dir (a CI container, a root shell) gets a private one: the server socket and the
+# copied conf must never land in a shared, predictable path.
+runtime = os.environ.get('XDG_RUNTIME_DIR')
+base = Path(runtime) / f'mios-stormtest-{label}' if runtime else Path(tempfile.mkdtemp(prefix=f'mios-stormtest-{label}-'))
 base.mkdir(mode=0o700, exist_ok=True)
 os.chmod(base, 0o700)
 sock = str(base / 'mios-stormtest')
@@ -20,6 +23,9 @@ if relay:
 env = dict(os.environ)
 for k in ('TMUX', 'TMUX_PANE'):
     env.pop(k, None)
+# The pty client is a real terminal: without a TERM tmux refuses to attach ("terminal does not support clear"),
+# no client-* hook ever fires and the run measures nothing.
+env['TERM'] = 'xterm-256color'
 if relay:
     env['PATH'] = f"{Path(relay).parent}:{env['PATH']}"
 T = lambda *a: subprocess.run(['tmux', '-S', sock, *a], env=env, capture_output=True, text=True, timeout=10)
@@ -28,11 +34,34 @@ T('-f', str(base / 'tmux.conf'), 'new-session', '-d', '-s', 'tmux-os', '-x', '20
 T('set-option', '-g', 'exit-empty', 'off')
 
 ARGS=set()
+SERVER = T('display-message', '-p', '#{pid}').stdout.strip()
+def bound_here(pid):
+    # A job that left the server's process tree still names this server: every hook passes TMUX=<socket>,...
+    try:
+        environ = Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+    except OSError:
+        return False
+    return any(e.startswith(f'TMUX={sock},'.encode()) for e in environ)
 def census():
-    out = subprocess.run(['ps', '-u', str(os.getuid()), '-o', 'pid=,args='], capture_output=True, text=True).stdout
-    py, rl = set(), set()
+    # Count only what this private server spawned (its process tree, from the same ps snapshot, so a hook that
+    # exits mid-census is still attributed): a live desktop's own workspace menu or hooks belong to another server.
+    out = subprocess.run(['ps', '-u', str(os.getuid()), '-o', 'pid=,ppid=,args='], capture_output=True, text=True).stdout
+    rows, kids = {}, {}
     for line in out.splitlines():
-        pid, _, args = line.strip().partition(' ')
+        f = line.split(None, 2)
+        if len(f) < 2:
+            continue
+        rows[f[0]] = f[2] if len(f) == 3 else ''
+        kids.setdefault(f[1], []).append(f[0])
+    tree, todo = set(), [SERVER]
+    while todo:
+        for k in kids.get(todo.pop(), []):
+            if k not in tree:
+                tree.add(k); todo.append(k)
+    py, rl = set(), set()
+    for pid, args in rows.items():
+        if pid not in tree and not bound_here(pid):
+            continue
         if 'mios-mcp-server' in args and ('--workspace' in args):
             py.add(pid); ARGS.add(args[:160])
         if '--workspace-hook' in args or ('mios-agent-relay' in args and '--workspace' in args):
