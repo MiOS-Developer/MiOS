@@ -178,7 +178,10 @@ EOF
 
 hyprland_bake_checks() (
     local fixture="$TMP/hyprland-fixture"
-    mkdir -p "$fixture/lib" "$fixture/bin"
+    mkdir -p "$fixture/lib" "$fixture/bin" "$TMP/tests"
+    # Phase 65 runs ../tests/test-hypr3d-crt.py against the compiled hypr3d
+    # plugin; the stubbed builder below compiles none, so stand in for it too.
+    printf '#!/usr/bin/env python3\n' > "$TMP/tests/test-hypr3d-crt.py"
     cp "$ROOT/automation/lib/packages.sh" "$fixture/lib/"
     cp "$TMP/fixture/lib/common.sh" "$fixture/lib/"
     # Run the real bake through compositor and plugin creation, with package
