@@ -350,6 +350,34 @@ def contract_defect5_launch_origin_animation(ref: str = None) -> list[str]:
 
 
 # ---- GNOME & Phosh App Launching & DBusActivatable Bypass ------------------------------------------------------------
+NATIVE_DISPATCH = "tools/native/mios-gen/src/app_preflight.rs"
+
+
+def rust_fn_body(src: str, name: str) -> str:
+    """The brace-balanced body of `fn name(...) ... { ... }` in Rust source, or ""."""
+    m = re.search(r"\bfn %s\s*\(" % re.escape(name), src)
+    if not m:
+        return ""
+    start = src.find("{", m.end())
+    depth = 0
+    for i in range(start, len(src)) if start >= 0 else ():
+        depth += {"{": 1, "}": -1}.get(src[i], 0)
+        if depth == 0:
+            return src[start:i + 1]
+    return ""
+
+
+def native_dispatch_bypasses_dbus_activation(ref: str = None) -> bool:
+    """`mios-gen desktop-dispatch` (dispatch_exec) runs an entry's own Exec even when it is DBusActivatable=true; D-Bus
+    activation is reached only for an entry with no Exec (or GIO's one-instance-per-resource case), never because the
+    entry is DBusActivatable -- the Calls bypass the shell launcher carried before it delegated to the native dispatcher."""
+    body = rust_fn_body(read(NATIVE_DISPATCH, ref), "dispatch_exec")
+    guard = re.search(r'if\s+!fields\.get\("Exec"\)\.is_some_and\(\|s\|\s*!s\.is_empty\(\)\)[^{]*\{\s*return\s+dispatch_activation\(',
+                      body)
+    return bool(guard) and "DBusActivatable" not in body and body.count("dispatch_activation(") == 1 \
+        and "Command::new(&argv[0])" in body
+
+
 def contract_gnome_phosh_app_launching(ref: str = None) -> list[str]:
     problems = []
     launch_sh = read("usr/libexec/mios/mios-desktop-launch", ref)
@@ -358,7 +386,9 @@ def contract_gnome_phosh_app_launching(ref: str = None) -> list[str]:
     else:
         if "XDG_CURRENT_DESKTOP" not in launch_sh or "GNOME:Phosh" not in launch_sh:
             problems.append("mios-desktop-launch does not set XDG_CURRENT_DESKTOP containing GNOME:Phosh")
-        if "DBusActivatable" not in launch_sh:
+        # The bypass lives in the launcher itself, or in the native dispatcher the launcher execs.
+        delegates = re.search(r"^exec mios-gen desktop-dispatch\b", launch_sh, re.M)
+        if "DBusActivatable" not in launch_sh and not (delegates and native_dispatch_bypasses_dbus_activation(ref)):
             problems.append("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)")
 
     sb = read(f"{QS}/Sidebar.qml", ref)
@@ -413,6 +443,28 @@ class TestGuiShellUnify(unittest.TestCase):
         with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == path and ref is None else original(rel, ref)}):
             self.assertIn("Generated drawer escape flags do not preserve uninhibited universal access",
                           drawer_global_escape_contract())
+
+    def test_regression_native_dispatch_must_not_activate_dbus_entries_that_have_an_exec(self):
+        original = read
+        source = original(NATIVE_DISPATCH)
+        guard = '    if !fields.get("Exec").is_some_and(|s| !s.is_empty())\n        || multiple_single_resources'
+        self.assertEqual(source.count(guard), 1)
+        mutated = source.replace(guard, '    if !fields.get("Exec").is_some_and(|s| !s.is_empty())\n'
+                                 '        || fields.get("DBusActivatable").is_some_and(|s| s == "true")\n'
+                                 '        || multiple_single_resources', 1)
+        with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == NATIVE_DISPATCH and ref is None else original(rel, ref)}):
+            self.assertIn("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)",
+                          contract_gnome_phosh_app_launching())
+
+    def test_regression_launcher_must_keep_the_bypassing_dispatcher(self):
+        original = read
+        path = "usr/libexec/mios/mios-desktop-launch"
+        source = original(path)
+        mutated, count = re.subn(r"^exec mios-gen desktop-dispatch .*$", 'exec gtk-launch "$@"', source, count=1, flags=re.M)
+        self.assertEqual(count, 1)
+        with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == path and ref is None else original(rel, ref)}):
+            self.assertIn("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)",
+                          contract_gnome_phosh_app_launching())
 
     def test_positive_defect0_layer_keyboard_focus(self):
         problems = contract_defect0_layer_keyboard_focus(None)
