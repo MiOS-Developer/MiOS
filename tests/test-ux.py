@@ -2094,11 +2094,16 @@ class wot_TestWallpaperOcclusionThrottle(unittest.TestCase):
 
     def test_10_systemd_user_service_spec(self):
         """Verify systemd user service unit exists and contains required directives."""
+        import tomllib
         self.assertTrue(os.path.exists(wot__SERVICE_PATH), f"Service unit {wot__SERVICE_PATH} must exist")
         with open(wot__SERVICE_PATH, "r", encoding="utf-8") as f:
             content = f.read()
 
-        self.assertIn("ExecStart=/usr/libexec/mios/ux/wallpaperd.py --daemon", content)
+        # The unit is the SSOT's [user_units."mios-wallpaper.service"] projection; its daemon is the native
+        # living-wallpaper host (mios-wallpaperd) that replaced the wallpaperd.py daemon in the unit.
+        with open(os.path.join(wot__ROOT, "usr", "share", "mios", "mios.toml"), "rb") as f:
+            exec_start = tomllib.load(f)["user_units"]["mios-wallpaper.service"]["Service"]["ExecStart"]
+        self.assertIn(f"ExecStart={exec_start}\n", content)
         self.assertIn("Restart=on-failure", content)
         self.assertIn("[Unit]", content)
         self.assertIn("[Service]", content)
