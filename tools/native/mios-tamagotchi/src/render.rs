@@ -206,6 +206,28 @@ fn camera_pixel_aspect(renderer: Renderer) -> f64 {
     f64::from(dy) / (2.0 * f64::from(dx))
 }
 
+/// Camera magnification range, in percent of the fitted frame.
+const MIN_ZOOM_PERCENT: u16 = 50;
+const MAX_ZOOM_PERCENT: u16 = 400;
+
+/// The face plane's centre, where the kaomoji is laid out: the mapped face
+/// texel whose UV is nearest (0.5, 0.5), as a source-pixel point. Eggs, legacy
+/// pixel sprites and rear views map no face and have no anchor.
+fn face_anchor(sprite: &Sprite) -> Option<(f64, f64)> {
+    let mut best: Option<(f64, (f64, f64))> = None;
+    for y in 0..u32::from(sprite.height()) {
+        for x in 0..u32::from(sprite.width()) {
+            if let Some(uv) = valid_face_uv(sprite, x, y) {
+                let distance = (uv[0] - 0.5).powi(2) + (uv[1] - 0.5).powi(2);
+                if best.is_none_or(|(nearest, _)| distance < nearest) {
+                    best = Some((distance, (f64::from(x) + 0.5, f64::from(y) + 0.5)));
+                }
+            }
+        }
+    }
+    best.map(|(_, point)| point)
+}
+
 impl Projection {
     fn camera(
         sprite: &Sprite,
@@ -220,7 +242,13 @@ impl Projection {
         let pixel_aspect = camera_pixel_aspect(renderer);
         let width = f64::from(area.width) * f64::from(dx);
         let height = f64::from(area.height) * f64::from(dy);
-        let zoom = f64::from(camera.zoom_percent.clamp(50, 400)) / 100.0;
+        let zoom = f64::from(
+            camera
+                .zoom_percent
+                .clamp(MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT),
+        ) / 100.0;
+        let max_zoom = f64::from(MAX_ZOOM_PERCENT) / 100.0;
+        let anchor = face_anchor(sprite);
         let mode = |view| {
             let mut frame = bounds;
             if view == CameraView::Face {
@@ -289,7 +317,26 @@ impl Projection {
                 frame.bottom = cy + bounds.height() / 2.0;
             }
             let scale_y = scale * pixel_aspect;
-            let (left, top) = if view == CameraView::Room {
+            let centre = (
+                (frame.left + frame.right) / 2.0,
+                (frame.top + frame.bottom) / 2.0,
+            );
+            // Magnifying the close-up zooms into the face, not the ears-to-chin
+            // frame: the anchor keeps the screen point it has at 100% and eases
+            // to the viewport centre by the maximum zoom, so the expression
+            // never slides out of view. Zooming out keeps the fitted framing.
+            let face_pivot =
+                anchor.filter(|_| view == CameraView::Face && micro_face.is_none() && zoom > 1.0);
+            let (left, top) = if let Some((ax, ay)) = face_pivot {
+                let fitted = base.max(f64::EPSILON);
+                let ease = ((zoom - 1.0) / (max_zoom - 1.0)).clamp(0.0, 1.0);
+                let x = width / 2.0 + (ax - centre.0) * fitted;
+                let y = height / 2.0 + (ay - centre.1) * fitted * pixel_aspect;
+                (
+                    x + (width / 2.0 - x) * ease - ax * scale,
+                    y + (height / 2.0 - y) * ease - ay * scale_y,
+                )
+            } else if view == CameraView::Room {
                 (
                     (width - bounds.width() * scale) * f64::from(position.0.min(1000)) / 1000.0
                         - bounds.left * scale,
@@ -298,8 +345,8 @@ impl Projection {
                 )
             } else {
                 (
-                    width / 2.0 - (frame.left + frame.right) / 2.0 * scale,
-                    height / 2.0 - (frame.top + frame.bottom) / 2.0 * scale_y,
+                    width / 2.0 - centre.0 * scale,
+                    height / 2.0 - centre.1 * scale_y,
                 )
             };
             Self {
@@ -5994,6 +6041,109 @@ mod kaomoji_scale_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn face_zoom_keeps_the_expression_in_view_from_100_to_400_percent() {
+        // The close-up frame spans the ears to the chin, so zooming around its
+        // centre slid the expression out of view (live 400% showed body only).
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut cases = 0;
+        for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+            for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                for shape in 0..16u8 {
+                    let appearance = Appearance {
+                        shape,
+                        body: shape,
+                        accent: (shape + 5) % 16,
+                    };
+                    for yaw in [0, 45] {
+                        let sprite = Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            0,
+                            yaw,
+                            false,
+                            appearance,
+                        );
+                        let anchor = face_anchor(&sprite).expect("a front view maps its face");
+                        for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                            for (width, height) in [(40, 19), (80, 24)] {
+                                let area = Rect::new(0, 0, width, height);
+                                let project = |zoom_percent| {
+                                    Projection::camera(
+                                        &sprite,
+                                        SolidBounds::of(&sprite).unwrap(),
+                                        area,
+                                        renderer,
+                                        0,
+                                        (500, 500),
+                                        Camera {
+                                            orbit_degrees: yaw,
+                                            view: CameraView::Face,
+                                            from_view: CameraView::Face,
+                                            zoom_percent,
+                                            transition_percent: 100,
+                                        },
+                                    )
+                                };
+                                let point = |zoom_percent| {
+                                    project(zoom_percent).cell(anchor.0, anchor.1, renderer)
+                                };
+                                let label = format!(
+                                    "{stage:?} {style:?} shape {shape} yaw {yaw} {renderer:?} {width}x{height}"
+                                );
+                                // No jump where the pivot starts.
+                                let (a, b) = (point(100), point(101));
+                                assert!(
+                                    (a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5,
+                                    "{label}: pivot jumps {a:?} -> {b:?}"
+                                );
+                                let centre = (f64::from(width) / 2.0, f64::from(height) / 2.0);
+                                let last = point(MAX_ZOOM_PERCENT);
+                                assert!(
+                                    (last.0 - centre.0).abs() < 0.5 && (last.1 - centre.1).abs() < 0.5,
+                                    "{label}: 400% face centre {last:?}, viewport centre {centre:?}"
+                                );
+                                for zoom_percent in (100..=MAX_ZOOM_PERCENT).step_by(50) {
+                                    let (x, y) = point(zoom_percent);
+                                    assert!(
+                                        (0.0..f64::from(width)).contains(&x)
+                                            && (0.0..f64::from(height)).contains(&y),
+                                        "{label} @{zoom_percent}: face centre {x:.1},{y:.1} out of view"
+                                    );
+                                    let projection = project(zoom_percent);
+                                    let mut body = Buffer::empty(area);
+                                    draw_projection(
+                                        &sprite, renderer, &colors, projection, area, &mut body,
+                                    );
+                                    let mut face = body.clone();
+                                    draw_camera_face(
+                                        &sprite, renderer, &colors, projection, area, &mut face,
+                                    );
+                                    // Expression strokes, never a caption: only
+                                    // the face pass may change these cells.
+                                    let inked = body
+                                        .content
+                                        .iter()
+                                        .zip(&face.content)
+                                        .filter(|(a, b)| a != b)
+                                        .count();
+                                    assert!(
+                                        inked >= 3,
+                                        "{label} @{zoom_percent}: only {inked} face cells in view"
+                                    );
+                                    cases += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 3 * 2 * 16 * 2 * 2 * 2 * 7);
     }
 
     #[test]
