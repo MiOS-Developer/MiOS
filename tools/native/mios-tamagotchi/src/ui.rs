@@ -515,7 +515,7 @@ impl Ui {
         self.pet_area.set(area);
         let dimensions = (area.width, area.height);
         let previous = self.camera_viewport.replace(dimensions);
-        let previous_stage = self.camera_stage.replace(stage);
+        let previous_stage = self.camera_stage.replace(stage).and(stage);
         if previous != (u16::MAX, u16::MAX) {
             let from = Self::view_for_stage(self.camera_view, previous, previous_stage);
             let to = Self::view_for_stage(self.camera_view, dimensions, stage);
@@ -3657,7 +3657,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(2))),
             info,
         );
-        self.set_scene_for_stage(room, Some(Stage::Adult));
+        self.set_scene_for_stage(room, self.live_stage());
         let expression = Expression::Happy;
         let appearance = Appearance {
             shape: character.shape,
@@ -4277,7 +4277,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(7))),
                 label,
             );
-            self.set_scene_for_stage(room, Some(stage));
+            self.set_scene_for_stage(room, self.live_stage());
             let sprite = match self.view_mode {
                 ViewMode::Pixel => {
                     Sprite::animated(stage, expression, self.effective_style(), self.frame)
@@ -4749,8 +4749,8 @@ fn selected_style(colors: &Colors) -> Style {
         Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
     } else {
         Style::default()
-            .fg(colors.ink(0))
-            .bg(colors.ink(7))
+            .fg(colors.background)
+            .bg(colors.ink(13))
             .add_modifier(Modifier::BOLD)
     }
 }
