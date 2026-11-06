@@ -1092,18 +1092,42 @@ class TestVendoredBundleUnpack(unittest.TestCase):
         self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), "tmux_mcp=v1.0.0\n")
         self.assertEqual((self.vdir / "k3s" / "k3s-install.sh").read_text(), "stale\n")
 
-    def test_member_escaping_the_tree_is_never_written(self):
-        import io
+    def _bundle(self, name, members):
         import tarfile
-        escape = Path(self.tmp.name) / "escaped.txt"
-        with tarfile.open(self.vdir / "evil.tar", "w") as tf:
-            data = b"x"
-            info = tarfile.TarInfo("../../../escaped.txt")
-            info.size = len(data)
-            tf.addfile(info, io.BytesIO(data))
+        with tarfile.open(self.vdir / name, "w") as tf:
+            for arcname, data in members:
+                info = tarfile.TarInfo(arcname)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+
+    def test_member_escaping_the_tree_is_never_written(self):
+        # "../../../x" from usr/share/mios/vendored resolves to <tmp>/usr/x.
+        escape = Path(os.path.normpath(self.vdir / "../../../escaped.txt"))
+        self.assertEqual(escape, Path(self.tmp.name) / "usr" / "escaped.txt")
+        self._bundle("evil.tar", [("../../../escaped.txt", b"x")])
         self.mod._unpack_vendored_bundles(self.vdir)
         self.assertFalse(escape.exists())
         self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
+
+    def test_absolute_or_dotted_names_cannot_reach_a_tracked_file(self):
+        self._bundle("odd.tar", [("/VERSIONS.txt", b"absolute\n"), ("nope/../VERSIONS.txt", b"dotted\n")])
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
+        self.assertFalse((self.vdir / "nope").exists())
+
+    def test_a_refused_member_does_not_stop_the_members_after_it(self):
+        self._bundle("mixed.tar", [("../../../escaped.txt", b"x"), ("k3s/after-refusal.txt", b"kept\n")])
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "k3s" / "after-refusal.txt").read_text(), "kept\n")
+
+    def test_an_unreadable_bundle_is_reported_and_the_rest_still_unpack(self):
+        (self.vdir / "a-corrupt.tar").write_bytes(b"not a tar archive" * 64)
+        (self.vdir / "k3s" / "sha256sum-amd64.txt").unlink(missing_ok=True)
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertIn("a-corrupt.tar unreadable", err.getvalue())
+        self.assertEqual((self.vdir / "k3s" / "sha256sum-amd64.txt").read_text(), "only-in-bundle\n")
 
 
 class TestAgentCliCatalog(unittest.TestCase):

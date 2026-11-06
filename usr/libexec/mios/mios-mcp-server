@@ -2429,19 +2429,39 @@ def _unpack_vendored_bundles(vdir):
     bundle can be older than the file it duplicates (bin.tar's VERSIONS.txt
     predates the tracked wheel provenance block), so an existing file is never
     overwritten: a bundle-only tree still gets its members, a full checkout is
-    left byte-identical. The data filter refuses absolute paths, links out of
-    the tree and device nodes.
+    left byte-identical. Each member is judged by the path it would really
+    write: the data filter refuses absolute paths, links out of the tree and
+    device nodes, the name is normalised (so "/x" or "d/../x" cannot reach a
+    tracked "x"), and presence is tested without following links. A refused
+    member or an unreadable bundle is reported and skipped, never silently
+    aborting the members after it.
     """
+    root = os.path.realpath(vdir)
     for bundle in sorted(vdir.glob("*.tar")):
         if not bundle.is_file():
             continue
         try:
             with tarfile.open(bundle) as tf:
-                missing = [m for m in tf.getmembers() if not (vdir / m.name).exists()]
-                if missing:
-                    tf.extractall(vdir, members=missing, filter="data")
-        except Exception:
-            pass
+                for member in tf.getmembers():
+                    try:
+                        safe = tarfile.data_filter(member, root)
+                    except tarfile.FilterError as error:
+                        print(f"[mios-mcp] vendored {bundle.name}: refused {member.name!r}: {error}",
+                              file=sys.stderr)
+                        continue
+                    target = os.path.normpath(os.path.join(root, safe.name))
+                    if target == root or os.path.commonpath([root, target]) != root:
+                        continue
+                    if os.path.lexists(target):
+                        continue
+                    try:
+                        tf.extract(safe.replace(name=os.path.relpath(target, root), deep=False),
+                                   root, filter="data")
+                    except (OSError, tarfile.TarError) as error:
+                        print(f"[mios-mcp] vendored {bundle.name}: {member.name!r} not unpacked: {error}",
+                              file=sys.stderr)
+        except (OSError, tarfile.TarError) as error:
+            print(f"[mios-mcp] vendored bundle {bundle.name} unreadable: {error}", file=sys.stderr)
 
 
 def _install_native(source_root, target_root):
