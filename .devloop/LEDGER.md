@@ -4327,3 +4327,28 @@ Receipts: /home/mios/.local/state/mios/mios-mons-input-completion/
  mios-resize-artifact.json, mios-resize-verified/,
  mios-console-current-preview.json, mios-console-current-localhost.json,
  mios-camera-live-defaults/, mios-touch-back-result.json.
+
+## MiOS-Mon hidden browser input touch correction
+
+Live watch/top tracing found the remaining missed Back tap outside the game:
+Chrome touch adjustment selected xterm's invisible IME textarea beside the
+terminal cursor, changing intended SGR row9 to emitted row10. Radius-zero
+touches, zero page scroll and zero visual-viewport offset ruled out those
+alternatives. The source game resize repair remains required independently.
+
+The canonical portal_edge.py page generator now excludes only the hidden
+textarea from pointer targeting, preserving focusable markup and keyboard code.
+Actual rootless MiOS-DEV passed17 frontend tests, a planted old-page/new-golden
+refusal before output, all29 generation stages and canonical task validation.
+Four broad failing gate diagnostics remain byte-identical to fbc1a259.
+Generated page SHA256:
+8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf.
+The owned user-local page was atomically replaced with its original27d4 page
+backed up; the same337430 backend immediately served the exact new bytes with
+authenticatedHTTP200. No game input or backend restart interrupted worker QA.
+
+The local coding worker continues the nine-cell matrix, explicitly labeling
+diagnostic CSS injection. Final as-served no-injection touch and keyboard proof
+is still required before publication and installing the new game executable.
+Receipts: mios-browser-pointer-artifact.json, mios-browser-pointer-verify/,
+mios-browser-pointer-live-trial.json under the input-completion receipt root.

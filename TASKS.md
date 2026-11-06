@@ -4483,7 +4483,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### No epic
 
-- `task_3747` Correct MiOS-Tmux top-status mouse row translation for graphical terminal clients -- in_progress · owner mios-claude-continuation · P1 · size S
+- `task_3747` Correct browser terminal touch targets and resize-time menu hit-testing -- in_progress · owner mios-claude-continuation · P1 · size S
 
 ## test-coverage
 

@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-06T02:35:37.866266+00:00",
+  "last_updated": "2026-11-06T02:49:24.125030+00:00",
   "total_artifacts": 136,
   "artifacts": [
     {
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "81fc3f987c55a56baa5e06d72c2e011e0a5fee31ea95160f09199579ee357c44",
-      "size_bytes": 699766,
+      "sha256": "ffe990e607c6ea7b81bdfade9d549a6e61f619e95217d5ef61ac6d490796eeaf",
+      "size_bytes": 701287,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -101,6 +101,14 @@
           "checks": 306,
           "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-resize-artifact.json",
           "scope": "x86_64 user-local development; live browser matrix and main installation pending"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       }
     },
@@ -210,8 +218,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "5f0ddbedb46f27c27d03e7cf7fe97a975004d32dd154719be882b28f2b4d6791",
-      "size_bytes": 552697,
+      "sha256": "7500f2ec3f76f1314de44a4b6923d12af73da3fc8795d2d8cd5c07b201e7a578",
+      "size_bytes": 552687,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -252,14 +260,22 @@
           "checks": 306,
           "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-resize-artifact.json",
           "scope": "x86_64 user-local development; live browser matrix and main installation pending"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "b6d4b63af77939aa79965e95658389ba351c747288ef0a38fb6a579c2ad0f956",
-      "size_bytes": 14635797,
+      "sha256": "3d9c0d0a60102b5cf0a31ec2779cfe8badc5b61eaa8e487df66e48c7e1361961",
+      "size_bytes": 14635957,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -300,6 +316,14 @@
           "checks": 306,
           "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-resize-artifact.json",
           "scope": "x86_64 user-local development; live browser matrix and main installation pending"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       }
     },
@@ -1867,10 +1891,18 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       },
-      "sha256": "dc6a6365820726d5745063196772cf2bc90a15f1e55fa2dfe8b55c67457a8571",
-      "size_bytes": 9570
+      "sha256": "d36467dbcb4efeb4dd76d3343d7b91c160423ab385748afb284e77edb2457edd",
+      "size_bytes": 9788
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_portal_edge.py",
@@ -1883,10 +1915,18 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       },
-      "sha256": "37e312a9abbd0b480eb99115b4f500fc54d9352a551b4708ddfec2151f853e46",
-      "size_bytes": 14813
+      "sha256": "416a2c3ef727c61c0f7c64e2e0210c221a553dfccad629b0920bfe0c07794066",
+      "size_bytes": 15495
     },
     {
       "path": "usr/libexec/mios/mios-ttyd-launch",
@@ -1969,10 +2009,18 @@
           "checks": 306,
           "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-resize-artifact.json",
           "scope": "x86_64 user-local development; live browser matrix and main installation pending"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       },
-      "sha256": "c324538c709140ec965886f5d00b7cf9c574b0700eff55e15cd595e64dd63fbb",
-      "size_bytes": 46789
+      "sha256": "2392b407415ed5ac1f250a0dedd2e8a877b0c17a9bebe19b6c2d12babb1d59ea",
+      "size_bytes": 47342
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
@@ -1985,9 +2033,17 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       },
-      "sha256": "f59c2e828eb3267534c6cbc80a15dea5bee17d9142c5729c677e052d3f22bce8",
+      "sha256": "4ce7766fab57f4345eccae2b9deaae22a5c60e43bf530f6d046900892e9ac0a1",
       "size_bytes": 286
     },
     {
@@ -2090,10 +2146,18 @@
           "stages": 29,
           "context": "podman-MiOS-DEV-mios-mons-console-projection-retry",
           "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-console-projection/host.log"
+        },
+        "mios_browser_pointer_verification": {
+          "source": "34606edc3e28f7d8f543c4dee233ec62ab50ab7b",
+          "tests": 17,
+          "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-artifact.json",
+          "live": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-browser-pointer-live-trial.json",
+          "scope": "user-local trial; final no-injection browser acceptance pending"
         }
       },
-      "sha256": "1166d08a7823c01cea6446eab0f69a1c00594c995ff893290454e8d64219c583",
-      "size_bytes": 3367197
+      "sha256": "d162ff5162768aa9b8897cce401ac30125154dc5131086a460654e86fc756296",
+      "size_bytes": 3367306
     },
     {
       "path": "usr/share/mios/referenced_names.txt",
