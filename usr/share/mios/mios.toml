@@ -10621,11 +10621,16 @@ bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
 # hermes MIOS_HERMES_ENDPOINT, crawl4ai MIOS_CRAWL_SERVICE_URL, otelcol_otlp
 # [observability].otel_endpoint, llm_igpu [nodes.local-igpu].endpoint. headscale
 # is the mesh control API and rpc_igpu a llama.cpp RPC socket: neither is a page.
+# devpod_agent is the DevPod agent transport, which miosd rde reads from
+# [ports].devpod_agent and forwards; igpu and win_llm_light are the Windows
+# host's iGPU Vulkan llama.cpp listener and llama-swap proxy. All three serve an
+# API, not a page.
 non_addressable = [
   "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",
   "cockpit_internal", "crawl4ai", "crawl4ai_internal", "field_live_chat", "firecrawl_internal",
   "hermes", "llm_heavy", "llm_light", "node", "pgvector", "pgvector_internal",
   "chrome_cdp_worker", "cockpit_link", "cpu_node", "daemon_agent",
+  "devpod_agent", "igpu", "win_llm_light",
   "firecrawl",
   "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
