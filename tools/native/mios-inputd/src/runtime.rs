@@ -5608,9 +5608,7 @@ mod app_detection {
         // The vendor `exe` is root-owned: the private file seen as root's (its dev/ino stay the real ones).
         let as_root = |p: &Path| {
             lstat(p).map(|mut f| {
-                if p == t.sample {
-                    f.uid = 0;
-                }
+                f.uid = 0;
                 f
             })
         };
@@ -5618,6 +5616,13 @@ mod app_detection {
         assert_eq!(
             app_of_pid(&t.proc_root, 20, &apps(&[&t.sample], &[]), me, &as_root).as_deref(),
             Some("mon")
+        );
+        // A system executable and its trusted parents must not hide a foreign process owner.
+        // Keeping every candidate fact root-owned isolates the /proc UID check from file ownership.
+        assert_eq!(
+            app_of_pid(&t.proc_root, 20, &apps(&[&t.sample], &[]), me + 1, &as_root),
+            None,
+            "a root-owned executable never admits another user's foreground process"
         );
         assert_eq!(
             app_of_pid(&t.proc_root, 20, &apps(&[], &[&t.sample]), me, &as_root),

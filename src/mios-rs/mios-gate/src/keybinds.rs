@@ -1263,9 +1263,11 @@ pub fn controller_audit(
 /// `app_query_timeout_ms`, and each `[nav.apps.<name>]`. An app profile obeys the rules of the base context it
 /// refines, a camera app's stick rows are `key:` or `none`, and only a camera app has a repeat table, the one place a
 /// right-stick flick may repeat. mios-inputd drops an invalid app layer and keeps base navigation; the gate fails it.
+type BindingValidator<'a> = dyn Fn(&str, &str, &Value, bool, &mut Vec<String>) + 'a;
+
 fn app_audit(
     nav: &toml::Table,
-    check_value: &dyn Fn(&str, &str, &Value, bool, &mut Vec<String>),
+    check_value: &BindingValidator<'_>,
     out: &mut Vec<String>,
 ) {
     let ms = |k: &str, lo: i64, hi: i64, out: &mut Vec<String>| -> Option<i64> {
